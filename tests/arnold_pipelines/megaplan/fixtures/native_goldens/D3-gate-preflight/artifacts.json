@@ -1,0 +1,10 @@
+{
+  "awaiting_user.json": "sha256:<content-dependent>",
+  "draft.md": "sha256:<content-dependent>",
+  "panel_review/optimist/v1.md": "sha256:<content-dependent>",
+  "panel_review/pessimist/v1.md": "sha256:<content-dependent>",
+  "panel_review/structuralist/v1.md": "sha256:<content-dependent>",
+  "resume_cursor.json": "sha256:<content-dependent>",
+  "revise/v1.md": "sha256:<content-dependent>",
+  "synth/v1.md": "sha256:<content-dependent>"
+}

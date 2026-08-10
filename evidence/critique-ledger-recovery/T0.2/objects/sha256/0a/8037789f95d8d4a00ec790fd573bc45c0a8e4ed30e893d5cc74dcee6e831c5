@@ -1,0 +1,38 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "The plan_v1.md body consists of 14 bare step headers (e.g. `### Step 1: Port CL1 critique_ledger module verbatim from archive`) with zero numbered substeps, zero file references inside any step, zero domain table names, zero new event-dataclass definitions, and zero schema-field deltas. prep.json produced a concrete `suggested_approach` (the 8 domain tables critique_occurrences/reconciliation_events/disposition_events/response_events/outcome_verification_events/audit_events/ledger_revision_manifests/region_freshness_state, the 3 new event dataclasses FindingResponseEvent/OutcomeVerificationEvent/AuditEvent, and the v1→v2 field delta) that the plan body discarded entirely. The plan validator itself emits three structure_warnings (no Execution/Validation Order, no numbered substeps, no per-step file references). As a result the actionable plan surface does not carry forward the issue hints that the prep phase concretely resolved; an executor reading plan_v1.md gets only titles and must reconstruct the design from prep.json. The semantic intent survives only in plan_v1.meta.json's success_criteria/assumptions, which is not the executor-facing plan body.",
+          "flagged": true
+        },
+        {
+          "detail": "prep.json answered the brief's explicit open question 'What indexes are necessary within the two-week scope for domain/round replay?' with six concrete indexes: (round_label, sequence), (semantic_finding_id) on reconciliation_events, (semantic_finding_id) on disposition_events, (attempt_id, occurrence_id), (canonical_finding_id), and (region_anchor, finding_id). I searched plan_v1.md (no matches for index/round_label/canonical_finding_id/region_anchor) and plan_v1.meta.json; the only two hits were `region_anchors` as a schema field and `fixture index` as a noun phrase. Neither the plan body nor the metadata enumerate the six indexes. Step 4 ('Define CL2 domain DDL migrations') implies they will be defined but never lists them, so this resolved issue hint was dropped rather than carried forward.",
+          "flagged": true
+        },
+        {
+          "detail": "prep_triage.json area A3 item (e) explicitly required '(e) a cross-reference proving every safety-amendment locked decision maps to a concrete schema field or constraint.' The 2026-07-28 safety amendment locked 8 changes (supersedes_event_id correctability, semantic_finding_id deprecation on occurrences, deterministic tripwires, risk-based non-zero audit, mandatory blind discovery, bounded separate active-action projection, structured/audited non-action, region-level freshness anchors). The plan's success_criteria test the *behavior* of several of these (e.g. 'supersedes_event_id/region_anchors/tripwire_state added', 'tripwires trigger needs_reconciliation, never semantic merge'), but neither plan_v1.md nor plan_v1.meta.json contains the requested field-level cross-reference mapping each amendment decision to the exact schema field/constraint that enforces it. This is a partial coverage of an explicit issue hint.",
+          "flagged": true
+        },
+        {
+          "detail": "The plan's metadata faithfully encodes the hard procedural/technical issue hints from prep.json and the user-direction note. Assumption 1 records the unaccepted-CL1-handoff (accepted_for_cl2=false, 5 procedural blockers) and the user direction to 'make conservative repo-backed assumptions, encode them in artifacts, let critique/gate reject'; assumption 3 specifies partial-parse admission as ParseStatus.PARTIAL_RECOVERED with evidence_ref and unavailable_reason, evidence-only occurrences that cannot carry semantic_finding_id or close a finding; assumption 4 requires the cancelled-archive audit before any cancelled code is referenced; assumption 5 fixes the shared-SQLite-connection (separate class, not subclass) atomicity decision; assumption 6 specifies CL2 migrations as versions 5+ appended via default_combined_migrations() without editing ledger_migrations.py. The success_criteria mirror the 15 prep test_expectations (schema_golden, append_atomicity, replay_determinism, active_projection_bounds, correction_supersession, audit_disagreement, tripwire, round_accountability, one_time_import, import_fixtures, freshness/tombstone, negative_mutation, concurrency_crash, compatibility_privacy, wbc_reuse). These issue hints appear adequately addressed in the metadata layer and are consistent with the North Star load-bearing invariants (immutability, append-only reconciliation, read-only replay, no positive projection authority, no semantic merge/closure from similarity).",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-CL2-ISSUE-001",
+      "concern": "None of the 14 plan steps carry a complexity/tier score. plan_v1.md has zero 'complexity' or 'tier' annotations, and the state.json tier_models map (execute tiers 1-10, critique tiers 1-5) has nothing to bind to. Without per-step complexity the dispatch tier cannot be validated; Step 9 (correction + audit-disagreement + tripwire replay tests together) and Step 13 (negative-mutation + concurrency/crash + compatibility/privacy together) are each multi-concern bundles that likely need a higher tier, while Step 1 (verbatim port) is mechanical and low. The complexity audit cannot be performed because scores are entirely absent.",
+      "category": "completeness",
+      "severity_hint": "medium",
+      "evidence": "plan_v1.md lines 7-33 (14 step headers with no substep or complexity annotation); plan_v1.meta.json structure_warnings list the missing substeps/files; state.json tier_models present but no per-step binding."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

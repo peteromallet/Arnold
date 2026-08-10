@@ -1,0 +1,17 @@
+1429504 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_planner_8aa57e44.db
+167936 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_verification.db
+249856 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_all_locations.db
+278528 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_scope.db
+303104 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_gatekeeper_5ef643cf.db
+307200 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_correctness.db
+311296 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_prep-distill_5ef643cf.db
+32768 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_finalizer_8aa57e44.db-shm
+331776 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3
+348160 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_critique_evaluator_8aa57e44.db
+352256 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_prerequisite_ordering.db
+376832 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3
+389120 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_issue_hints.db
+417792 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_prep-triage_5ef643cf.db
+4214792 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_finalizer_8aa57e44.db-wal
+622592 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_prep-research_5ef643cf.db
+888832 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_finalizer_8aa57e44.db

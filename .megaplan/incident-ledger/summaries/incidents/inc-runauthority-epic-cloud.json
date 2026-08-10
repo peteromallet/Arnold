@@ -1,0 +1,52 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 6,
+  "evidence_refs": [
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 220,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/220"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "github_sync.incident_projection",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "github_sync.problem_projection",
+      "status": "open"
+    }
+  ],
+  "generated_at": "2026-07-15T13:36:30.384800+00:00",
+  "incident_id": "inc-runauthority-epic-cloud",
+  "kind": "incident_summary",
+  "latest_actor": "github_sync",
+  "next_expected_event": "six_hour_auditor.diagnosis",
+  "outcome": "published",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-72f87afd3954"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:7681839a61b53ad966141fc7c3e8d365152a9eab614f18a81fec998675267e80",
+    "last_seq": 463,
+    "projection": "incidents"
+  },
+  "state": "github_sync.issue_published",
+  "summary_text": "inc-runauthority-epic-cloud: Published persistent problem problem-72f87afd3954 to GitHub as a new issue"
+}

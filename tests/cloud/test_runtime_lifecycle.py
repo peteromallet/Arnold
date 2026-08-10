@@ -1,0 +1,718 @@
+"""Tests for the per-epic runtime lifecycle wrappers (fixer-unification design
+Phases 4-5; docs/runtime-and-fixer-unification-design-20260807.md rows 12-15).
+
+The wrappers are bash candidates, exercised against a throwaway sandbox:
+a bare git repo plays 'origin', a seeded clone plays the base source repo,
+and ARNOLD_* env overrides redirect every path the scripts touch. The tests
+assert the *outcomes* (worktree created/pushed, manifest state, journal lines,
+worktree removed) rather than which writer path the scripts took, so they pass
+whether or not the runtime_manifest module is present.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+
+CREATE = WRAPPER_DIR / "arnold-runtime-create"
+PROMOTE = WRAPPER_DIR / "arnold-promote"
+CLOSE = WRAPPER_DIR / "arnold-close"
+GC_SWEEP = WRAPPER_DIR / "arnold-gc-sweep"
+
+
+def _git(cwd: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *(("-C", str(cwd)) if cwd else ()), *args],
+        capture_output=True,
+        text=True,
+    )
+
+
+def git(cwd: Path | None, *args: str) -> str:
+    proc = _git(cwd, *args)
+    assert proc.returncode == 0, f"git {' '.join(args)} failed: {proc.stderr}"
+    return proc.stdout.strip()
+
+
+@pytest.fixture
+def sandbox(tmp_path: Path) -> dict[str, object]:
+    origin = tmp_path / "origin.git"
+    git(None, "init", "--bare", str(origin))
+    base_repo = tmp_path / "base-repo"
+    base_repo.mkdir()
+    git(None, "init", str(base_repo))
+    git(base_repo, "remote", "add", "origin", str(origin))
+    git(base_repo, "config", "user.name", "Lifecycle Tests")
+    git(base_repo, "config", "user.email", "lifecycle@example.invalid")
+    git(base_repo, "config", "commit.gpgsign", "false")
+    (base_repo / "README.md").write_text("base seed\n")
+    git(base_repo, "add", "-A")
+    git(base_repo, "commit", "-m", "seed base")
+    git(base_repo, "branch", "-M", "main")
+    git(base_repo, "push", "-u", "origin", "main")
+    git(base_repo, "branch", "base/editable-install")
+    git(base_repo, "push", "origin", "base/editable-install")
+    seed_sha = git(base_repo, "rev-parse", "base/editable-install")
+
+    base_dir = tmp_path / "base"
+    markers = tmp_path / "markers"
+    manifest_dir = markers / "runtime-manifests"
+    schedule_store = tmp_path / "schedule-store"
+    env = os.environ.copy()
+    env.update(
+        {
+            "ARNOLD_BASE_DIR": str(base_dir),
+            "ARNOLD_BASE_REPO": str(base_repo),
+            "ARNOLD_WORKSPACE_MARKERS": str(markers),
+            "ARNOLD_RUNTIME_MANIFEST_DIR": str(manifest_dir),
+            "ARNOLD_RUNTIME_MANIFEST": str(manifest_dir / "runtime-manifest.json"),
+            "ARNOLD_ORIGIN_URL": str(origin),
+            "ARNOLD_PROMOTION_JOURNAL": str(manifest_dir / "promotion-journal.jsonl"),
+            "ARNOLD_SCHEDULE_STORE": str(schedule_store),
+            "PYTHONPATH": str(REPO_ROOT),
+        }
+    )
+
+    def run(
+        script: Path,
+        *args: str,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        full_env = dict(env)
+        if extra_env:
+            full_env.update(extra_env)
+        return subprocess.run(
+            [str(script), *args],
+            cwd=str(REPO_ROOT),
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+
+    def origin_heads(branch: str) -> str:
+        out = _git(None, "ls-remote", str(origin), f"refs/heads/{branch}").stdout.strip()
+        return out.split("\t")[0] if out else ""
+
+    def create(slug: str, base_ref: str = "base/editable-install") -> Path:
+        proc = run(CREATE, slug, base_ref)
+        assert proc.returncode == 0, proc.stderr
+        return base_dir / "runtime-candidates" / slug
+
+    return {
+        "tmp_path": tmp_path,
+        "origin": origin,
+        "base_repo": base_repo,
+        "base_dir": base_dir,
+        "markers": markers,
+        "manifest_dir": manifest_dir,
+        "env": env,
+        "run": run,
+        "origin_heads": origin_heads,
+        "create": create,
+        "seed_sha": seed_sha,
+    }
+
+
+def manifest_path(sandbox: dict[str, object], slug: str) -> Path:
+    return Path(sandbox["manifest_dir"]) / f"{slug}.json"
+
+
+def read_manifest(sandbox: dict[str, object], slug: str) -> dict:
+    return json.loads(manifest_path(sandbox, slug).read_text())
+
+
+def epic_commit(worktree: Path, filename: str, content: str, message: str) -> str:
+    (worktree / filename).write_text(content)
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", message)
+    return git(worktree, "rev-parse", "HEAD")
+
+
+# ── arnold-runtime-create ────────────────────────────────────────────────────
+
+
+def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-a")
+    assert worktree.is_dir()
+    assert (worktree / ".git").exists()
+    branch = git(worktree, "branch", "--show-current")
+    assert branch.startswith("fixer/epic-a-")
+    local_head = git(worktree, "rev-parse", "HEAD")
+    # branch pushed to origin at creation (design rule 4)
+    assert sandbox["origin_heads"](branch) == local_head
+    # manifest written with the full mandatory field set
+    m = read_manifest(sandbox, "epic-a")
+    assert m["epic_id"] == "epic-a"
+    assert m["state"] == "active"
+    assert m["schema"] == "1"
+    assert m["generation"] >= 1
+    assert m["runtime_id"].startswith("epic-a-")
+    assert m["epic"]["runtime_root"] == str(worktree)
+    assert m["epic"]["worktree_path"] == str(worktree)
+    assert m["epic"]["branch"] == branch
+    assert m["epic"]["expected_head"] == local_head
+    assert m["base"]["commit"] == local_head
+    assert m["base"]["ref"] == "base/editable-install"
+    assert m["timestamps"]["created"]
+    assert isinstance(m["promotions"], list)
+    # filled fields: venv, repair bin, deps lockfile (no empty runtime fields)
+    assert m["epic"]["venv_path"] == f"{worktree}/.venv"
+    assert m["base"]["venv_path"] == f"{worktree}/.venv"
+    assert (
+        m["epic"]["repair_bin"]
+        == f"{worktree}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    )
+    assert m["epic"]["deps_lockfile"] == f"{worktree}/pyproject.toml"
+    # policy SHAs computed from the canonical policy modules (best-effort)
+    assert m["policy"]["policy_sha"]
+    assert m["policy"]["model_policy_sha"]
+    # content attestation keys present (schema-required; probe may be empty)
+    assert set(m["indirection"]["attestation"]) >= {
+        "module_file",
+        "module_digest",
+        "mount_id",
+    }
+    # ACTIVE POINTER written as compatibility telemetry ONLY (G1
+    # no-global-pointer fallback): it reflects this epic but is demoted and
+    # never bootstraps — the per-slug manifest is authoritative
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    assert pointer.exists()
+    p = json.loads(pointer.read_text())
+    assert p["epic_id"] == "epic-a"
+    assert p["state"] == "active"
+    assert p["generation"] == 1
+    assert p["compatibility_only"] is True
+    # guard: same slug refuses with exit 2
+    again = sandbox["run"](CREATE, "epic-a", "base/editable-install")
+    assert again.returncode == 2
+
+
+def test_runtime_create_fails_loudly_on_push_failure(sandbox: dict[str, object]) -> None:
+    proc = sandbox["run"](
+        CREATE,
+        "epic-push-fail",
+        "base/editable-install",
+        extra_env={
+            "ARNOLD_ORIGIN_URL": str(Path(sandbox["tmp_path"]) / "missing-origin.git")
+        },
+    )
+    assert proc.returncode != 0
+    assert "push" in proc.stderr.lower()
+    # manifest must NOT be written: push precedes the manifest write
+    assert not manifest_path(sandbox, "epic-push-fail").exists()
+
+
+# ── P1 admission kernel: deviations + compatibility-only pointer ─────────────
+
+
+def _valid_permit(**overrides: str) -> dict:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    permit = {
+        "kind": "allow_manifestless",
+        "id": "permit-abc123",
+        "issued_at": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "actor": "operator@example.invalid",
+        "reason": "manifestless admission permit for lifecycle tests",
+        "evidence": ["chain override --allow-manifestless --reason lifecycle-test"],
+        "chain_digest": "deadbeefdeadbeef",
+    }
+    permit.update(overrides)
+    return permit
+
+
+def _write_policy_sidecar(sandbox: dict[str, object], permit: dict) -> Path:
+    policy_path = Path(sandbox["tmp_path"]) / "runtime-policy.json"
+    policy_path.write_text(json.dumps({"allow_manifestless": permit}, sort_keys=True) + "\n")
+    return policy_path
+
+
+def test_runtime_create_deviations_empty_and_pointer_compatibility_only(
+    sandbox: dict[str, object],
+) -> None:
+    sandbox["create"]("epic-plain")
+    # deviations defaults to [] when no ARNOLD_RUNTIME_POLICY sidecar is set
+    m = read_manifest(sandbox, "epic-plain")
+    assert m["deviations"] == []
+    # the global active pointer is demoted to compatibility-only (G1
+    # no-global-pointer fallback): it is written ONCE with the marker in the
+    # same payload (G2 second re-run) and NEVER bootstraps — every resolver
+    # treats it as ABSENT for admission
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    assert pointer.exists()
+    p = json.loads(pointer.read_text())
+    assert p["epic_id"] == "epic-plain"
+    assert p["compatibility_only"] is True
+
+
+def test_pointer_compatibility_only_survives_promote_and_close(
+    sandbox: dict[str, object],
+) -> None:
+    """G2 second re-run: the global pointer's compatibility_only demotion is
+    DURABLE — the marker survives create -> promote (advance_generation) ->
+    close (set_state), so no resolver can ever admit the pointer."""
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        bootstrap_manifest,
+        is_compatibility_only_pointer,
+        manifest_present,
+    )
+
+    worktree = sandbox["create"]("epic-durable")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "durable fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+
+    # create: pointer carries the marker from the FIRST (only) pointer write
+    assert json.loads(pointer.read_text())["compatibility_only"] is True
+    assert is_compatibility_only_pointer(pointer) is True
+
+    # promote: advance_generation rewrites the pointer — the marker survives
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-durable",
+        str(manifest_path(sandbox, "epic-durable")),
+        extra_env={"ARNOLD_PROMOTE_SKIP_CANARY": "1"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    p = json.loads(pointer.read_text())
+    assert p["compatibility_only"] is True
+    assert p["generation"] == 2
+    assert p["epic"]["expected_head"] == head
+
+    # close: pointer set_state keeps the marker AND the closed state
+    close = sandbox["run"](
+        CLOSE, "epic-durable", str(manifest_path(sandbox, "epic-durable"))
+    )
+    assert close.returncode == 0, close.stderr
+    p = json.loads(pointer.read_text())
+    assert p["compatibility_only"] is True
+    assert p["state"] == "closed"
+
+    # no resolver admits the pointer: the lib gate treats it as ABSENT
+    assert manifest_present(pointer) is False
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(pointer)
+
+
+def test_runtime_create_stamps_allow_manifestless_permit_into_deviations(
+    sandbox: dict[str, object],
+) -> None:
+    permit = _valid_permit()
+    policy_path = _write_policy_sidecar(sandbox, permit)
+    proc = sandbox["run"](
+        CREATE,
+        "epic-permitted",
+        "base/editable-install",
+        extra_env={"ARNOLD_RUNTIME_POLICY": str(policy_path)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    m = read_manifest(sandbox, "epic-permitted")
+    assert len(m["deviations"]) == 1
+    stamped = m["deviations"][0]
+    assert stamped["kind"] == "allow_manifestless"
+    assert stamped["id"] == permit["id"]
+    assert stamped["actor"] == permit["actor"]
+    assert stamped["reason"] == permit["reason"]
+    assert stamped["chain_digest"] == permit["chain_digest"]
+    assert stamped["issued_at"] == permit["issued_at"]
+    assert stamped["expires_at"] == permit["expires_at"]
+    assert stamped["evidence"] == permit["evidence"]
+
+
+def test_runtime_create_fails_loudly_on_expired_permit(sandbox: dict[str, object]) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    expired = _valid_permit(
+        id="permit-expired",
+        issued_at=(now - timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=(now - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    policy_path = _write_policy_sidecar(sandbox, expired)
+    proc = sandbox["run"](
+        CREATE,
+        "epic-expired",
+        "base/editable-install",
+        extra_env={"ARNOLD_RUNTIME_POLICY": str(policy_path)},
+    )
+    assert proc.returncode != 0
+    assert "permit" in proc.stderr.lower()
+    # deny-by-default: creation must not proceed without recording the
+    # declared deviation — the manifest is never written
+    assert not manifest_path(sandbox, "epic-expired").exists()
+
+
+def test_runtime_create_fails_loudly_on_invalid_permit_duration(
+    sandbox: dict[str, object],
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    too_long = _valid_permit(
+        id="permit-too-long",
+        issued_at=(now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=(now + timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    policy_path = _write_policy_sidecar(sandbox, too_long)
+    proc = sandbox["run"](
+        CREATE,
+        "epic-duration",
+        "base/editable-install",
+        extra_env={"ARNOLD_RUNTIME_POLICY": str(policy_path)},
+    )
+    assert proc.returncode != 0
+    assert "permit" in proc.stderr.lower()
+    assert not manifest_path(sandbox, "epic-duration").exists()
+
+
+# ── arnold-close ─────────────────────────────────────────────────────────────
+
+
+def test_close_phase1_fails_on_dirty_tree(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-dirty")
+    (worktree / "uncommitted.txt").write_text("dirty\n")
+    proc = sandbox["run"](CLOSE, "epic-dirty", str(manifest_path(sandbox, "epic-dirty")))
+    assert proc.returncode != 0
+    assert "phase-1" in proc.stderr.lower()
+    assert read_manifest(sandbox, "epic-dirty")["state"] == "active"  # unchanged
+
+
+def test_close_phase1_fails_on_open_lock_file(sandbox: dict[str, object]) -> None:
+    sandbox["create"]("epic-locked")
+    (Path(sandbox["markers"]) / "repair.lock").mkdir(parents=True, exist_ok=True)
+    proc = sandbox["run"](CLOSE, "epic-locked", str(manifest_path(sandbox, "epic-locked")))
+    assert proc.returncode != 0
+    assert "lock" in proc.stderr.lower()
+    assert read_manifest(sandbox, "epic-locked")["state"] == "active"
+
+
+def test_close_closes_clean_pushed_epic(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-clean")
+    proc = sandbox["run"](CLOSE, "epic-clean", str(manifest_path(sandbox, "epic-clean")))
+    assert proc.returncode == 0, proc.stderr
+    m = read_manifest(sandbox, "epic-clean")
+    assert m["state"] == "closed"
+    assert m["timestamps"]["closed"]
+    # backstop tag EXECUTED: present locally AND on the origin (fail-loud push)
+    assert "box-snapshot" in proc.stdout
+    assert "pushed" in proc.stdout
+    local_tags = _git(worktree, "tag", "--list", "box-snapshot/epic-clean-*").stdout.strip()
+    assert local_tags
+    remote_tags = _git(
+        None, "ls-remote", str(sandbox["origin"]), "refs/tags/box-snapshot/epic-clean-*"
+    ).stdout.strip()
+    assert remote_tags
+    # the active pointer (compatibility-only telemetry held by this epic at
+    # creation) is closed too AND stays demoted — pointer set_state must not
+    # strip the marker (G2 second re-run)
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    p = json.loads(pointer.read_text())
+    assert p["state"] == "closed"
+    assert p["compatibility_only"] is True
+
+
+def test_close_phase1_fails_on_live_pidfile(sandbox: dict[str, object]) -> None:
+    sandbox["create"]("epic-livepid")
+    pidfile = Path(sandbox["markers"]) / "epic-livepid.repair-loop.pid"
+    pidfile.write_text(str(os.getpid()))  # the pytest process is live
+    proc = sandbox["run"](
+        CLOSE, "epic-livepid", str(manifest_path(sandbox, "epic-livepid"))
+    )
+    assert proc.returncode != 0
+    assert "live" in proc.stderr.lower()
+    assert read_manifest(sandbox, "epic-livepid")["state"] == "active"
+
+
+def test_close_ignores_dead_pidfile(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-deadpid")
+    pidfile = Path(sandbox["markers"]) / "epic-deadpid.repair-loop.pid"
+    pidfile.write_text("2147483647\n")  # no such process (best-effort liveness)
+    proc = sandbox["run"](
+        CLOSE, "epic-deadpid", str(manifest_path(sandbox, "epic-deadpid"))
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert read_manifest(sandbox, "epic-deadpid")["state"] == "closed"
+
+
+def test_close_fails_loud_when_backstop_tag_push_fails(sandbox: dict[str, object]) -> None:
+    from datetime import datetime
+
+    worktree = sandbox["create"]("epic-tagfail")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "fix\n", "epic fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    # plant a CONFLICTING tag on origin: same name as the backstop, other sha
+    stamp = datetime.now().strftime("%Y%m%d")
+    tag = f"box-snapshot/epic-tagfail-{stamp}"
+    git(Path(sandbox["base_repo"]), "tag", tag, str(sandbox["seed_sha"]))
+    git(Path(sandbox["base_repo"]), "push", "origin", tag)
+    proc = sandbox["run"](
+        CLOSE, "epic-tagfail", str(manifest_path(sandbox, "epic-tagfail"))
+    )
+    assert proc.returncode != 0
+    assert "backstop" in proc.stderr.lower()
+    # close aborted: the epic is NOT closed without an origin-resolvable backstop
+    assert read_manifest(sandbox, "epic-tagfail")["state"] == "active"
+
+
+# ── arnold-gc-sweep ──────────────────────────────────────────────────────────
+
+
+def test_gc_sweep_dry_run_then_restore_proven_removes(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-gc")
+    close = sandbox["run"](CLOSE, "epic-gc", str(manifest_path(sandbox, "epic-gc")))
+    assert close.returncode == 0, close.stderr
+
+    dry = sandbox["run"](GC_SWEEP, "--dry-run", str(sandbox["manifest_dir"]))
+    assert dry.returncode == 0, dry.stderr
+    assert "WOULD-SWEEP" in dry.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-gc").exists()
+
+    no_proof = sandbox["run"](GC_SWEEP, str(sandbox["manifest_dir"]))
+    assert no_proof.returncode == 0, no_proof.stderr
+    assert "restore" in no_proof.stdout.lower()  # SKIP: not restore-proven
+    assert worktree.is_dir()
+
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text(
+        "clean-room restore drilled 2026-08-07\n"
+    )
+    sweep = sandbox["run"](GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"]))
+    assert sweep.returncode == 0, sweep.stderr
+    assert "SWEPT" in sweep.stdout
+    assert not worktree.exists()
+    assert not manifest_path(sandbox, "epic-gc").exists()
+    assert (Path(sandbox["manifest_dir"]) / "archived" / "epic-gc.json").exists()
+
+
+def test_gc_sweep_never_removes_active_manifest_tree(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-live")
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
+    proc = sandbox["run"](GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"]))
+    assert proc.returncode == 0, proc.stderr
+    assert "SKIP" in proc.stdout
+    assert "active" in proc.stdout.lower()
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-live").exists()
+
+
+def test_gc_sweep_lists_manifestless_tree_as_needs_reconcile(
+    sandbox: dict[str, object],
+) -> None:
+    # runner death mid-epic: a tree with no manifest must never be deleted
+    stray = Path(sandbox["base_dir"]) / "runtime-candidates" / "orphan-tree"
+    git(
+        Path(sandbox["base_repo"]),
+        "worktree",
+        "add",
+        "-b",
+        "fixer/orphan-tree-20260807",
+        str(stray),
+        "base/editable-install",
+    )
+    proc = sandbox["run"](GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"]))
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE" in proc.stdout
+    assert stray.is_dir()  # never deleted
+
+
+def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
+    sandbox: dict[str, object],
+) -> None:
+    worktree = sandbox["create"]("epic-schedref")
+    close = sandbox["run"](
+        CLOSE, "epic-schedref", str(manifest_path(sandbox, "epic-schedref"))
+    )
+    assert close.returncode == 0, close.stderr
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
+    # the schedule store references this tree (probe-4 trees must never be swept)
+    store = Path(str(sandbox["env"]["ARNOLD_SCHEDULE_STORE"]))
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "scheduled_jobs.json").write_text(
+        json.dumps({"epic": "epic-schedref", "ref": "some-sha"}), encoding="utf-8"
+    )
+    proc = sandbox["run"](
+        GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "schedule-store-referenced" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-schedref").exists()
+    # dry-run reports the same hard gate
+    dry = sandbox["run"](GC_SWEEP, "--dry-run", str(sandbox["manifest_dir"]))
+    assert dry.returncode == 0, dry.stderr
+    assert "WOULD-SKIP" in dry.stdout
+    assert "schedule-store-referenced" in dry.stdout
+
+
+# ── arnold-promote ───────────────────────────────────────────────────────────
+
+
+def test_promote_fails_when_epic_branch_unpushed(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-unpushed")
+    epic_commit(worktree, "fix.txt", "fix\n", "epic fix (unpushed)")
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-unpushed",
+        str(manifest_path(sandbox, "epic-unpushed")),
+    )
+    assert proc.returncode != 0
+    assert "push" in proc.stderr.lower()
+
+
+def test_promote_gate_blocks_without_marker_or_flag(sandbox: dict[str, object]) -> None:
+    sandbox["create"]("epic-gated")
+    proc = sandbox["run"](PROMOTE, "epic-gated", str(manifest_path(sandbox, "epic-gated")))
+    assert proc.returncode != 0
+    assert "gate" in proc.stderr.lower()
+    assert sandbox["origin_heads"]("base/editable-install")  # base untouched
+
+
+def test_promote_cas_push_journal_warning(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-promo")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "durable fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    from_sha = sandbox["origin_heads"]("base/editable-install")
+
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-promo",
+        str(manifest_path(sandbox, "epic-promo")),
+    )
+    assert proc.returncode == 0, proc.stderr
+    # compare-and-swap push landed on the base branch (no force involved)
+    assert sandbox["origin_heads"]("base/editable-install") == head
+    # design warning: a successful push is NOT a safe cutover
+    assert "NOT a safe cutover" in proc.stdout
+    # promotion journal line appended
+    journal = Path(str(sandbox["env"]["ARNOLD_PROMOTION_JOURNAL"]))
+    lines = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert lines and lines[-1]["slug"] == "epic-promo"
+    assert lines[-1]["from_sha"] == from_sha
+    assert lines[-1]["to_sha"] == head
+    assert lines[-1]["result"] == "pushed"
+    assert lines[-1]["at"]
+    # manifest promotions[] mirror updated
+    m = read_manifest(sandbox, "epic-promo")
+    assert m["promotions"] and m["promotions"][-1]["to_sha"] == head
+
+
+def test_promote_cas_rejection_exits_3(sandbox: dict[str, object]) -> None:
+    wt_a = sandbox["create"]("epic-a")
+    branch_a = git(wt_a, "branch", "--show-current")
+    head_a = epic_commit(wt_a, "a.txt", "a\n", "epic-a fix")
+    git(wt_a, "push", "origin", f"HEAD:refs/heads/{branch_a}")
+    proc_a = sandbox["run"](PROMOTE, "--force-gate", "epic-a", str(manifest_path(sandbox, "epic-a")))
+    assert proc_a.returncode == 0, proc_a.stderr
+    assert sandbox["origin_heads"]("base/editable-install") == head_a
+
+    # a concurrent promotion advances base behind our back (fast-forward from origin)
+    git(Path(sandbox["base_repo"]), "fetch", "origin")
+    git(
+        Path(sandbox["base_repo"]),
+        "checkout",
+        "-B",
+        "base/editable-install",
+        "origin/base/editable-install",
+    )
+    (Path(sandbox["base_repo"]) / "competing.txt").write_text("competing\n")
+    git(Path(sandbox["base_repo"]), "add", "-A")
+    git(Path(sandbox["base_repo"]), "commit", "-m", "competing promotion")
+    competing = git(Path(sandbox["base_repo"]), "rev-parse", "HEAD")
+    git(Path(sandbox["base_repo"]), "push", "origin", "base/editable-install")
+    assert sandbox["origin_heads"]("base/editable-install") == competing
+
+    # a second epic forked from the PRE-competition base: promoting it cannot
+    # fast-forward onto the competing base -> CAS push must be rejected
+    wt_b = sandbox["create"]("epic-b", base_ref=str(sandbox["seed_sha"]))
+    branch_b = git(wt_b, "branch", "--show-current")
+    epic_commit(wt_b, "b.txt", "b\n", "epic-b fix")
+    git(wt_b, "push", "origin", f"HEAD:refs/heads/{branch_b}")
+    proc_b = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-b",
+        str(manifest_path(sandbox, "epic-b")),
+    )
+    assert proc_b.returncode == 3
+    assert "rejected" in proc_b.stderr.lower() or "cas" in proc_b.stderr.lower()
+    # base unchanged by the rejected push
+    assert sandbox["origin_heads"]("base/editable-install") == competing
+
+
+def test_promote_without_canary_flag_keeps_pointer(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-canary")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    assert json.loads(pointer.read_text())["generation"] == 1
+
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-canary",
+        str(manifest_path(sandbox, "epic-canary")),
+    )
+    assert proc.returncode == 0, proc.stderr
+    # the canary gate is structural: steps printed, push journaled, pointer NOT
+    # advanced — a successful push is NOT a safe cutover (design rule 5)
+    assert "canary" in proc.stdout.lower()
+    assert "NOT a safe cutover" in proc.stdout
+    assert "NOT advanced" in proc.stdout
+    assert sandbox["origin_heads"]("base/editable-install") == head  # CAS push landed
+    pointer_after = json.loads(pointer.read_text())
+    assert pointer_after["generation"] == 1  # pointer unchanged
+    assert pointer_after["epic"]["expected_head"] != head
+    assert not list(pointer.parent.glob("runtime-manifest.json.previous-*"))
+
+
+def test_promote_with_canary_flag_advances_pointer(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-canary2")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    pointer_path = str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"])
+
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-canary2",
+        str(manifest_path(sandbox, "epic-canary2")),
+        extra_env={"ARNOLD_PROMOTE_SKIP_CANARY": "1"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "advanced" in proc.stdout.lower()
+    pointer = json.loads(Path(pointer_path).read_text())
+    assert pointer["generation"] == 2
+    assert pointer["epic"]["expected_head"] == head
+    # advance_generation rewrote the pointer — the compatibility_only demotion
+    # survives (G2 second re-run: the marker is a preserved manifest field)
+    assert pointer["compatibility_only"] is True
+    # previous generation retained for rollback
+    retention = Path(pointer_path + ".previous-1.json")
+    assert retention.exists()
+    previous = json.loads(retention.read_text())
+    assert previous["generation"] == 1
+    assert previous["epic"]["expected_head"] != head
+    # the per-slug manifest advanced with the rollback record
+    m = read_manifest(sandbox, "epic-canary2")
+    assert m["generation"] == 2
+    assert m["promotions"][-1]["previous_generation"] == 1
+    assert m["promotions"][-1]["previous_commit"] != head
+    assert m["promotions"][-1]["reason"]

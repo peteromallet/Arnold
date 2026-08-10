@@ -1,0 +1,302 @@
+{
+  "robustness": "thorough",
+  "signals": {
+    "iteration": 1,
+    "idea": "# CL2 \u2014 WBC-backed ledger persistence, import, and replay\n\n## Outcome\n\nImplement the CL1 record contract through existing WBC/plan-local persistence\nseams, with atomic append, idempotent retry, rebuildable projections, read-only\nreplay, and one-time import from retained legacy artifacts. Leave CL3 one stable\ntarget API and fixtures.\n\n## In scope\n\n- Persist critic start/result and immutable occurrence envelopes with WBC\n  attempt/payload references and current raw/custody artifacts.\n- Additively version the CL1 schema so new raw occurrences cannot author\n  `semantic_finding_id`; retain the old field only for explicit legacy reads.\n- Append reconciliation/disposition events and publish a ledger revision only\n  after complete occurrence accounting validates.\n- Persist reconciliation corrections/supersession, independent audit events,\n  plan-region/dependency anchors, and deterministic tripwire state.\n- Persist structured revision-response and independent outcome-verification\n  events in the same finding history; do not create a separate revision ledger.\n- Build cumulative/domain projections and deterministic read-only replay.\n- Build a separate rebuildable active-action projection so closed history does\n  not create a monotonically growing reviser workload.\n- Project explicit `accepted|review_required|disputed|superseded` decision state\n  and `must_act|must_revalidate|context_only` work queues.\n- Build a per-round accountability projection from attempts through occurrences,\n  logical findings, responses, verified outcomes, and reopen conditions.\n- Add current-source import, target-only, future-version, corrupt, redacted,\n  unavailable, duplicate, out-of-order, concurrent, and crash fixtures.\n- Add the target schema reader and explicit `legacy_unknown` import behavior;\n  retain current flag/gate/finalize inputs only until the coordinated cutover.\n- Implement freshness vectors and governed tombstone/unavailable handling.\n\n## Out of scope\n\nEvaluator selection, critic prompt changes, semantic auto-merge policy, reviser\nor gate consumption, live cutover, old artifact deletion, or production\nbackfill of historical semantic relationships.\n\n## Locked decisions\n\n- Start persistence precedes critic dispatch; terminal persistence failure is\n  visible `persistence_failed|indeterminate`, never clean success.\n- Occurrences are never merged away. Semantic identity and occurrence identity\n  remain distinct.\n- Reconciliation decisions are immutable evidence, not unquestionable truth;\n  corrections append a superseding decision and replay retains both.\n- Semantic finding identity is assigned only by reconciliation events, never by\n  a new raw occurrence.\n- Similarity and region/dependency changes may trigger re-review but never\n  perform semantic merge, closure, or suppression.\n- Projections are rebuildable and carry no positive authority.\n- Historical gaps stay explicit; migration never invents duplicate, resolution,\n  evidence, or reopen relationships.\n- WBC inline/reference, retention, redaction, ordering, and effect rules are\n  reused, not reimplemented.\n\n## Open questions\n\n- Which landed backend satisfies one transaction, and where is durable\n  prepare/outbox reconciliation required?\n- What plan-local compatibility files remain necessary for old readers?\n- How are partially parseable failed attempts admitted without promoting an\n  invalid whole payload?\n- What indexes are necessary within the two-week scope for domain/round replay?\n\n## Constraints\n\nConsume only an accepted CL1 handoff. Do not widen schema or ownership without a\nnew reviewed CL1 decision. All writes are idempotent, content-safe, access-\ncontrolled, and fault-tested. Replay issues no model call or external effect.\n\n## Done criteria\n\n- Schema/golden, property, concurrency, crash/fault, compatibility, privacy,\n  WBC ledger/evidence, and existing critique-custody suites pass.\n- Every accepted producer occurrence appears once; duplicate replay is a no-op;\n  partial publication cannot expose an accepted incomplete ledger revision.\n- Projections rebuild byte-equivalently from retained inputs and surface\n  missing/redacted evidence as unknown.\n- Region-anchor changes stale only the affected scoped findings; unknown or\n  cross-cutting scope safely defaults to whole-plan freshness.\n- Correction, audit-disagreement, tripwire, and bounded active-projection\n  fixtures replay deterministically.\n- Round receipts account for every occurrence and active finding; reviser\n  `addressed` claims remain distinct from independently verified\n  `dealt_with|partially_dealt_with|not_dealt_with|unknown` outcomes.\n- The one-time importer preserves all available legacy evidence, marks semantic\n  gaps unknown, and rejects unsupported target versions without partial publish.\n- Negative tests prove ledger/replay cannot mutate plan, gate, lifecycle, queue,\n  Git/provider, delivery, or external-effect state.\n\n## Touchpoints\n\n`arnold/workflow/execution_attempt_ledger.py`, `payload_policy.py`, boundary\nevidence/compatibility/conformance; Megaplan critique custody/runtime, schemas,\nartifact writers, flag registry readers, and focused WBC/critique tests.\n\n## Anti-scope\n\nNo new database service, event bus, authority plane, generalized knowledge\nstore, embeddings, broad historical backfill, dual-write window, or old-reader\nretirement before CL5.\n\n## Written handoff to CL3\n\nWrite and review `docs/critique-ledger/handoffs/cl2-ledger-replay.json` with API/\nschema hashes, backend/atomicity decision, one-time import map, replay hashes,\nfixture index, region/freshness and tripwire rules, audit/correction event rules,\nresponse/outcome event rules, active-projection bounds, round-receipt hashes,\nfault results, backup/restore prerequisites, and unresolved limits. CL3 must\nvalidate the handoff and replay fixtures before constructing a briefing.",
+    "significant_flags": 0,
+    "unresolved_flags": [],
+    "addressed_flags": [],
+    "resolved_flags": [],
+    "weighted_score": 0,
+    "weighted_history": [],
+    "plan_delta_from_previous": null,
+    "recurring_critiques": [],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 1. Weighted score trajectory: 0. Plan deltas: n/a. Recurring critiques: 0. Addressed-unverified flags: 0. Resolved flags: 0. Open significant flags: 0.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": [],
+    "repeated_divergence_fingerprint": null,
+    "unverifiable_checks": [
+      {
+        "id": "issue_hints",
+        "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+        "reason": "parallel critique worker failed for check 'issue_hints': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'",
+        "complexity": 5,
+        "attention": "high_complexity_unverifiable"
+      },
+      {
+        "id": "correctness",
+        "question": "Are the proposed changes technically correct?",
+        "reason": "parallel critique worker failed for check 'correctness': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'; missing_required at /flags/1/producer_category: missing required property 'producer_category'; missing_required at /flags/1/producer_severity: missing required property 'producer_severity'; missing_required at /flags/1/source_check_id: missing required property 'source_check_id'",
+        "complexity": 7,
+        "attention": "high_complexity_unverifiable"
+      },
+      {
+        "id": "scope",
+        "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader \u2014 and is any single step sized to fit one worker turn?",
+        "reason": "parallel critique worker failed for check 'scope': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/4/category: missing required property 'category'; missing_required at /checks/0/findings/4/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/4/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/4/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'; missing_required at /flags/1/producer_category: missing required property 'producer_category'; missing_required at /flags/1/producer_severity: missing required property 'producer_severity'; missing_required at /flags/1/source_check_id: missing required property 'source_check_id'; missing_required at /flags/2/producer_category: missing required property 'producer_category'; missing_required at /flags/2/producer_severity: missing required property 'producer_severity'; missing_required at /flags/2/source_check_id: missing required property 'source_check_id'; missing_required at /flags/3/producer_category: missing required property 'producer_category'; missing_required at /flags/3/producer_severity: missing required property 'producer_severity'; missing_required at /flags/3/source_check_id: missing required property 'source_check_id'",
+        "complexity": 6,
+        "attention": "high_complexity_unverifiable"
+      },
+      {
+        "id": "all_locations",
+        "question": "Does the change touch all locations AND supporting infrastructure?",
+        "reason": "parallel critique worker failed for check 'all_locations': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/4/category: missing required property 'category'; missing_required at /checks/0/findings/4/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/4/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/4/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'",
+        "complexity": 5,
+        "attention": "high_complexity_unverifiable"
+      },
+      {
+        "id": "verification",
+        "question": "Is there convincing verification for the change?",
+        "reason": "parallel critique worker failed for check 'verification': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'",
+        "complexity": 6,
+        "attention": "high_complexity_unverifiable"
+      },
+      {
+        "id": "prerequisite_ordering",
+        "question": "Do tasks that depend on a precondition gracefully handle that precondition only partially holding?",
+        "reason": "parallel critique worker failed for check 'prerequisite_ordering': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'; missing_required at /flags/1/producer_category: missing required property 'producer_category'; missing_required at /flags/1/producer_severity: missing required property 'producer_severity'; missing_required at /flags/1/source_check_id: missing required property 'source_check_id'",
+        "complexity": 6,
+        "attention": "high_complexity_unverifiable"
+      }
+    ],
+    "execution_acceptance_contract": {
+      "scope": "execute",
+      "verification_mode": "verification_suite",
+      "required_checks": [
+        {
+          "id": "issue_hints",
+          "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+          "reason": "parallel critique worker failed for check 'issue_hints': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'",
+          "complexity": 5,
+          "attention": "high_complexity_unverifiable"
+        },
+        {
+          "id": "correctness",
+          "question": "Are the proposed changes technically correct?",
+          "reason": "parallel critique worker failed for check 'correctness': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'; missing_required at /flags/1/producer_category: missing required property 'producer_category'; missing_required at /flags/1/producer_severity: missing required property 'producer_severity'; missing_required at /flags/1/source_check_id: missing required property 'source_check_id'",
+          "complexity": 7,
+          "attention": "high_complexity_unverifiable"
+        },
+        {
+          "id": "scope",
+          "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader \u2014 and is any single step sized to fit one worker turn?",
+          "reason": "parallel critique worker failed for check 'scope': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/4/category: missing required property 'category'; missing_required at /checks/0/findings/4/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/4/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/4/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'; missing_required at /flags/1/producer_category: missing required property 'producer_category'; missing_required at /flags/1/producer_severity: missing required property 'producer_severity'; missing_required at /flags/1/source_check_id: missing required property 'source_check_id'; missing_required at /flags/2/producer_category: missing required property 'producer_category'; missing_required at /flags/2/producer_severity: missing required property 'producer_severity'; missing_required at /flags/2/source_check_id: missing required property 'source_check_id'; missing_required at /flags/3/producer_category: missing required property 'producer_category'; missing_required at /flags/3/producer_severity: missing required property 'producer_severity'; missing_required at /flags/3/source_check_id: missing required property 'source_check_id'",
+          "complexity": 6,
+          "attention": "high_complexity_unverifiable"
+        },
+        {
+          "id": "all_locations",
+          "question": "Does the change touch all locations AND supporting infrastructure?",
+          "reason": "parallel critique worker failed for check 'all_locations': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/4/category: missing required property 'category'; missing_required at /checks/0/findings/4/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/4/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/4/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'",
+          "complexity": 5,
+          "attention": "high_complexity_unverifiable"
+        },
+        {
+          "id": "verification",
+          "question": "Is there convincing verification for the change?",
+          "reason": "parallel critique worker failed for check 'verification': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'",
+          "complexity": 6,
+          "attention": "high_complexity_unverifiable"
+        },
+        {
+          "id": "prerequisite_ordering",
+          "question": "Do tasks that depend on a precondition gracefully handle that precondition only partially holding?",
+          "reason": "parallel critique worker failed for check 'prerequisite_ordering': worker_structural_audit_failed: model output structural audit failed: missing_required at /checks/0/findings/0/category: missing required property 'category'; missing_required at /checks/0/findings/0/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/0/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/0/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/1/category: missing required property 'category'; missing_required at /checks/0/findings/1/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/1/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/1/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/2/category: missing required property 'category'; missing_required at /checks/0/findings/2/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/2/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/2/severity_hint: missing required property 'severity_hint'; missing_required at /checks/0/findings/3/category: missing required property 'category'; missing_required at /checks/0/findings/3/evidence: missing required property 'evidence'; missing_required at /checks/0/findings/3/finding_id: missing required property 'finding_id'; missing_required at /checks/0/findings/3/severity_hint: missing required property 'severity_hint'; missing_required at /flags/0/producer_category: missing required property 'producer_category'; missing_required at /flags/0/producer_severity: missing required property 'producer_severity'; missing_required at /flags/0/source_check_id: missing required property 'source_check_id'; missing_required at /flags/1/producer_category: missing required property 'producer_category'; missing_required at /flags/1/producer_severity: missing required property 'producer_severity'; missing_required at /flags/1/source_check_id: missing required property 'source_check_id'",
+          "complexity": 6,
+          "attention": "high_complexity_unverifiable"
+        }
+      ]
+    },
+    "critique_custody": {
+      "schema_version": "megaplan-critique-custody-v1",
+      "receipt": "critique_custody_v1.json",
+      "receipt_sha256": "sha256:303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed",
+      "finding_count": 0,
+      "finding_ids": [],
+      "flag_ids": [],
+      "loss_count": 0,
+      "admitted": true
+    }
+  },
+  "warnings": [],
+  "criteria_check": {
+    "count": 22,
+    "items": [
+      {
+        "criterion": "CL1 v1 schemas serialize/deserialize byte-equivalently after porting (golden round-trip)",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "v2 additive schemas serialize correctly: new occurrences reject semantic_finding_id in strict mode; supersedes_event_id/region_anchors/tripwire_state added; response/outcome/audit events round-trip; v1 records still deserialize",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "CL2 domain migrations apply idempotently, are crash-resume safe, checksum-validated, and forward-fix-only (no DROP)",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Domain append is atomic in one BEGIN IMMEDIATE: occurrence + manifest + outbox commit together or not at all; simulated mid-tx crash leaves no partial state",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Idempotency-key dedup prevents double-insert; divergent duplicates are quarantined; partial publication cannot expose an incomplete accepted ledger revision",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Replay is read-only and deterministic: same inputs produce byte-identical cumulative, active-action, and round-accountability projections across runs; replay issues no model call, external effect, or mutation",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Active-action projection exposes must_act | must_revalidate | context_only; closed history does not grow must_act; unaudited non-action cannot remove a finding; batch actions enumerate every finding ID",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Correction appends a superseding reconciliation event; replay derives latest decision state while retaining both original and superseding events; superseded decisions do not support clean gate projection",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Audit-disagreement event is appendable; audit failure cannot silently preserve closure; disputed status is visible and actionable in the projection",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Deterministic tripwires fire on region/evidence/dependency change, near-match, audit disagreement, or stale model/schema revision; tripwires trigger needs_reconciliation, never semantic merge/closure/suppression",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Per-round accountability receipt maps attempt -> occurrence -> finding -> response -> verified outcome -> reopen; accounts for every parseable occurrence and active finding; reviser 'addressed' is distinct from independently verified outcome",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "One-time importer preserves all available legacy evidence, marks semantic gaps legacy_unknown, rejects unsupported target versions without partial publish, admits partially-parseable attempts with PARTIAL_RECOVERED status, and never invents duplicate/resolution/evidence/reopen relationships",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Import fixtures pass: current-source, target-only, future-version (rejected), corrupt (partial), redacted (unknown), unavailable (tombstoned), duplicate (idempotent), out-of-order (sequence-corrected), concurrent (WAL-safe), crash (resumable)",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Region-anchor change stales only affected scoped findings; unchanged regions do not trigger re-reconciliation; unknown/cross-cutting scope defaults to whole-plan freshness; redacted/tombstoned evidence is surfaced as unknown and visible, not leaked or suppressed",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Negative tests prove ledger append and replay cannot mutate plan, gate, lifecycle, queue, Git/provider, delivery, or external-effect state; projections carry no positive authority",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Concurrent writers respect WAL single-writer; crash mid-append leaves DB consistent; outbox recovery retries stale pending; idempotency dedup survives crash-restart",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Existing critique-custody and WBC ledger/evidence suites pass unchanged (no regression); plan-local compatibility files remain readable by old readers",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "WBC inline/reference, retention, redaction, ordering, and effect rules are reused from payload_policy.py / durable_refs.py, not reimplemented; CL2 adds domain tables/types without modifying WBC substrate contracts",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "Cancelled CL2 archive audit artifact exists with SHA-256 hashes, per-artifact assessment, and explicit not-adopted boundary",
+        "priority": "must",
+        "requires": [
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "CL3 handoff cl2-ledger-replay.json is written with API/schema hashes, backend/atomicity decision, import map, replay hashes, fixture index, freshness/tripwire/audit/response/outcome rules, projection bounds, round-receipt hashes, fault results, and unresolved limits",
+        "priority": "must",
+        "requires": [
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Each new source file is under ~500 lines and has a single clear responsibility (schemas, semantic loop, store, replay, projections, importer, freshness)",
+        "priority": "should",
+        "requires": [
+          "parse_diff",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Every artifact encodes the unaccepted-CL1-handoff assumption explicitly so critique/gate phases can reject if acceptance is required",
+        "priority": "should",
+        "requires": [
+          "read_files"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [],
+  "critique_custody": {
+    "schema_version": "megaplan-critique-custody-v1",
+    "receipt": "critique_custody_v1.json",
+    "receipt_sha256": "sha256:303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed",
+    "finding_count": 0,
+    "finding_ids": [],
+    "flag_ids": [],
+    "loss_count": 0,
+    "admitted": true
+  }
+}

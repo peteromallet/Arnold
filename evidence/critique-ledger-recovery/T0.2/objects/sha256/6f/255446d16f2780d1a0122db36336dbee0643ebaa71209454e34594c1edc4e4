@@ -1,0 +1,34 @@
+{
+  "allow_human_gates": false,
+  "chain_slug": "critique-ledger",
+  "editable_install_sync": {
+    "reason": "disabled_by_flag",
+    "status": "skipped"
+  },
+  "editable_source_branch": "consolidate/post-m11-f1c0b7384752-96127731661b",
+  "editable_source_head": null,
+  "engine_ref_check": {
+    "advertised_ref": "refs/heads/consolidate/post-m11-f1c0b7384752-96127731661b",
+    "commit": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+    "ref_kind": "branch",
+    "repo": "https://github.com/peteromallet/Arnold.git",
+    "requested_ref": "consolidate/post-m11-f1c0b7384752-96127731661b",
+    "status": "ok"
+  },
+  "identity_digest": "c2d3d05b93",
+  "launch_outcome": {
+    "code": "launch_in_progress",
+    "detail": "cloud chain launch is preparing the remote session",
+    "observed_at": "2026-07-31T18:04:12.395890+00:00",
+    "status": "starting"
+  },
+  "operator_pause": null,
+  "relaunch_command": "{ set -e\necho \"[megaplan-runtime] $(date -Iseconds) validating current source\"\nSRC=/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4\nREF=consolidate/post-m11-f1c0b7384752-96127731661b\nif [ ! -e \"$SRC/.git\" ]; then\n  echo \"[megaplan-runtime] source checkout missing at $SRC\"\n  exit 21\nfi\nBRANCH=\"$(git -C \"$SRC\" branch --show-current)\"\nif [ \"$BRANCH\" != \"$REF\" ]; then\n  echo \"[megaplan-runtime] expected branch $REF at $SRC, observed ${BRANCH:-detached}\"\n  exit 22\nfi\nif [ -n \"$(git -C \"$SRC\" status --porcelain --untracked-files=no)\" ]; then\n  echo \"[megaplan-runtime] refusing dirty tracked source at $SRC\"\n  exit 19\nfi\nexport MEGAPLAN_RUNTIME_SRC=\"$SRC\"\npip install -e \"$MEGAPLAN_RUNTIME_SRC\"\nRUNTIME_REVISION=\"$(git -C \"$MEGAPLAN_RUNTIME_SRC\" rev-parse HEAD)\"\nPYTHONSAFEPATH=1 PYTHONPATH=\"$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}\" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root \"$MEGAPLAN_RUNTIME_SRC\" --expected-revision \"$RUNTIME_REVISION\"\nexport MEGAPLAN_LAUNCH_RUNTIME_SRC=\"$MEGAPLAN_RUNTIME_SRC\"\necho \"[megaplan-runtime] current source accepted at $RUNTIME_REVISION\"\ntrue; } >> .megaplan/cloud-chain-critique-ledger-accountability-v2-20260728.log 2>&1 && if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; export ARNOLD_REPAIR_QUEUE_ROOT=\"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}\"; export ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions; export ARNOLD_REPAIR_SESSION=critique-ledger-accountability-v2-20260728; export ARNOLD_REPAIR_RUN_KIND=chain; ENGINE_DIR=\"${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}\"; if [ -z \"$ENGINE_DIR\" ]; then ENGINE_DIR=/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4; fi; cd /workspace/critique-ledger-accountability-v2-20260728/Arnold && PYTHONSAFEPATH=1 PYTHONPATH=\"$ENGINE_DIR:${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec /workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml --project-dir /workspace/critique-ledger-accountability-v2-20260728/Arnold --no-git-refresh >> /workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/cloud-chain-critique-ledger-accountability-v2-20260728.log 2>&1",
+  "remote_spec": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+  "run_kind": "chain",
+  "session": "critique-ledger-accountability-v2-20260728",
+  "should_run": true,
+  "started_at": "2026-07-31T18:04:12.395815+00:00",
+  "updated_at": "2026-07-31T16:47:37.244683+00:00",
+  "workspace": "/workspace/critique-ledger-accountability-v2-20260728/Arnold"
+}

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "a91d6266e8097d713e55172f03e81c09416e7b7f2ef9fb457a768e912b386e84",
+  "created_at": "2026-07-31T15:21:37Z",
+  "source": "lifecycle_failure",
+  "session": "cl2-wbc-backed-ledger-20260731-1411",
+  "workspace": "/workspace/critique-ledger-accountability-v2-20260728/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+  "queue_dir": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+    "plan_name": "cl2-wbc-backed-ledger-20260731-1411",
+    "retry_strategy": "repair_phase_contract",
+    "workspace_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "deterministic_phase_failure",
+    "current_state": "blocked",
+    "phase_or_step": "plan",
+    "milestone_or_plan": "cl2-wbc-backed-ledger-20260731-1411",
+    "gate_recommendation": "Repair or change the deterministic phase contract before resuming; re-running the same phase output cannot make progress.",
+    "blocked_task_id": "phase:plan",
+    "event_signature": ""
+  },
+  "problem_signature_key": "c9beb5209c42d8535295ad978ae70da7ed6016573ca56bc689c73cdef412cce7",
+  "blocker_fingerprint": {
+    "schema_version": 1,
+    "current_state": "blocked",
+    "retry_strategy": "repair_phase_contract",
+    "failure_kind": "deterministic_phase_failure",
+    "phase_or_step": "plan",
+    "milestone_or_plan": "cl2-wbc-backed-ledger-20260731-1411",
+    "blocked_task_id": "phase:plan",
+    "target_fingerprint": "repair-target:v1:ea524967f5fa1a5bc4471e5c40619ec322b36289e53afac3c4d3dc8365400de2"
+  },
+  "blocker_id": "blocker:v2:4916c13be0c7520eb662df5e2fbd6cb93fd7e76950253c44e1b5cc88b35df661",
+  "predecessor_request_id": "",
+  "provenance": {
+    "producer": "lifecycle_failure",
+    "session": "cl2-wbc-backed-ledger-20260731-1411",
+    "run_kind": "plan"
+  },
+  "evidence_refs": [
+    {
+      "kind": "problem_signature_digest",
+      "sha256": "c34a535d52b31dda3c5ef3f6890c7bd96c8fa965f9945ee0dd51894a15767ed6"
+    },
+    {
+      "kind": "redacted_root_cause_hint_digest",
+      "sha256": "212c904f4183fd661db9406be5cd1a07fe079fa0d8eda4f252f6a62cc96efe52"
+    }
+  ],
+  "root_cause_hint_hash": "212c904f4183fd661db9406be5cd1a07fe079fa0d8eda4f252f6a62cc96efe52",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "repair_identity": {
+    "environment": "/workspace/critique-ledger-accountability-v2-20260728/Arnold",
+    "session": "cl2-wbc-backed-ledger-20260731-1411",
+    "chain": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+    "plan_revision": "sha256:7262f07225bc3fd1",
+    "phase": "plan",
+    "task": "phase:plan",
+    "attempt": "1",
+    "normalized_failure_kind": "deterministic_phase_failure",
+    "blocker_or_phase_result_hash": "sha256:559a948f5e72ebe0c3741b8a40fbff470f141bbd28d41b3cb6d76c5d72a84110",
+    "fence": "fence:1785511297198379622:4096",
+    "evidence_cursor_digest": "sha256:6a921f97fe01bbd315c6b8c0a7a4b9ed7582d6972c34953148bf1905b5dffe98",
+    "terminal_receipt_expectations": [
+      "five_minute",
+      "one_hour",
+      "next_three_hour"
+    ]
+  },
+  "repair_identity_key": ""
+}

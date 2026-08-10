@@ -1,0 +1,54 @@
+{
+  "artifact_refs": [],
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "replan",
+      "details": {
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "authority_transition": "replan",
+        "contract_ref": "override_replan_authority",
+        "evidence_hashes": {
+          "phase_result.json": "a0382034c545d9d6904dc0e3d7846adf7d9b2fb07997612d194a7b21f1aec540",
+          "state.json": "a0cb92308fcd40af866b6a69a7aae5dba88422df8a6c416512b64109eb841971"
+        },
+        "freshness_token": "inv-override_replan_authority",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "optional_evidence_refs": [
+          "phase_result.json"
+        ],
+        "required_evidence_refs": [
+          "state.json"
+        ]
+      },
+      "evidence_refs": [
+        "state.json",
+        "phase_result.json"
+      ],
+      "role": "reviewer",
+      "scope": "override.replan"
+    }
+  ],
+  "boundary_id": "override_replan_authority",
+  "capability_effects": [
+    "authority",
+    "phase_result",
+    "receipt",
+    "state_history"
+  ],
+  "external_effect_refs": [],
+  "fixture_id": "override_replan_authority",
+  "path_hashes": {
+    "phase_result_path": "sha256:a0382034c545d9d6904dc0e3d7846adf7d9b2fb07997612d194a7b21f1aec540",
+    "receipt_path": "sha256:d8104c5d59ff23a574b531858f0cbfa476d2102587b31fb0dec80fed96ff8090",
+    "semantic_health_path": "sha256:27647e8eef0830c3c4e568a2e39d7ce4e4340150f929f59bbc91b0f9364a09eb",
+    "state_path": "sha256:a0cb92308fcd40af866b6a69a7aae5dba88422df8a6c416512b64109eb841971"
+  },
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_replan_authority/phase_result.json",
+  "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_replan_authority",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_replan_authority/boundary_receipts/override_replan_authority.json",
+  "reducer_promotion": false,
+  "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_replan_authority/semantic_health.json",
+  "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_replan_authority/state.json"
+}

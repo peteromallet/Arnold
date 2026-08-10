@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+#
+# arnold-close — per-epic runtime lifecycle: TWO-PHASE CLOSE
+#
+# Provenance: fixer-unification design 2026-08-07, Phase 5
+#   design: docs/runtime-and-fixer-unification-design-20260807.md
+#     - §4 Phase 5 (safe GC + close protocol — the ONLY deletion phase) + §6 row 14
+#     - §2 design rule 6: GC on close — close verifies everything committed and
+#       pushed, then atomically sets manifest.state=closed
+#   briefing: docs/megaplan-fixer-briefing-20260807.md — "Push before live."
+#
+# Usage: arnold-close <slug> <manifest-path>
+#
+#   Phase 1 — verify:
+#     a. all git state committed (git status --porcelain empty in the epic worktree)
+#     b. all git state pushed (local HEAD == origin/<epic branch> HEAD)
+#     c. no open lock files under the marker dir (manifest-writer locks
+#        <name>.json.lock are excluded — they are serialization locks, not
+#        runtime liveness)
+#     d. no live runtime processes: every recorded PID in the marker dir
+#        (<session>.<role>.pid pidfiles, plain integer content) must NOT be
+#        live under `ps -p`. Best-effort by design: an unparseable pidfile or
+#        a missing `ps` is noted, not fatal — the pidfile convention is
+#        advisory liveness evidence (authoritative liveness lives in
+#        repair_lock/liveness_lease). The check spans the whole marker root,
+#        matching the existing lock-file check: close is a box-quiescence
+#        protocol, not a per-epic one.
+#   Phase 2 — push the backstop tag (EXECUTED, fail-loud): create
+#     box-snapshot/<slug>-<YYYYMMDD> at the worktree HEAD and push it to
+#     origin. A failed push leaves the tag local and exits non-zero — the epic
+#     is NOT closed without an origin-resolvable backstop snapshot.
+#   Phase 3 — atomically set manifest state=closed via the runtime_manifest
+#     CLI set_state (fail-loud: no silent fallback — a closed manifest written
+#     outside the authoritative writer would skip validation).
+#
+#   Consistency: when the active-generation pointer currently holds THIS epic
+#   (the file AT the stable path IS the active generation), close through the
+#   pointer as well so bootstrappers observe state=closed. This is verified
+#   best-effort: a failure is WARNED loudly, not fatal — the authoritative
+#   close (the per-slug manifest) has already succeeded.
+#
+# Environment overrides (all optional):
+#   ARNOLD_ORIGIN_URL         push/verify target (URL or remote name) (default: origin)
+#   ARNOLD_WORKSPACE_MARKERS  marker/lock state root                  (default: $ARNOLD_BASE_DIR/markers)
+#   ARNOLD_BASE_DIR           used only for the markers default        (default: /workspace)
+#   ARNOLD_RUNTIME_MANIFEST   active-pointer path (when it holds this epic) (default: <manifest-dir>/runtime-manifest.json)
+#
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: arnold-close <slug> <manifest-path>" >&2
+  exit 64
+fi
+
+SLUG="$1"
+MANIFEST="$2"
+
+[[ -f "$MANIFEST" ]] || {
+  echo "arnold-close: manifest '$MANIFEST' not found" >&2
+  exit 1
+}
+
+_json_get() {
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    if not isinstance(d, dict) or key not in d:
+        print("")
+        sys.exit(0)
+    d = d[key]
+if d is None:
+    print("")
+elif isinstance(d, (dict, list)):
+    print(json.dumps(d))
+else:
+    print(str(d))
+' "$1" "$2"
+}
+
+BASE_DIR="${ARNOLD_BASE_DIR:-/workspace}"
+MARKERS="${ARNOLD_WORKSPACE_MARKERS:-$BASE_DIR/markers}"
+REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
+
+WORKTREE="$(_json_get "$MANIFEST" epic.worktree_path)"
+BRANCH="$(_json_get "$MANIFEST" epic.branch)"
+if [[ -z "$WORKTREE" || ! -d "$WORKTREE" ]]; then
+  echo "arnold-close: manifest '$MANIFEST' has no resolvable epic.worktree_path (got '$WORKTREE')" >&2
+  exit 1
+fi
+if [[ -z "$BRANCH" ]]; then
+  echo "arnold-close: manifest '$MANIFEST' is missing epic.branch" >&2
+  exit 1
+fi
+
+# ── Phase 1: verify ----------------------------------------------------------
+# 1a. All git state committed.
+DIRTY="$(git -C "$WORKTREE" status --porcelain)"
+if [[ -n "$DIRTY" ]]; then
+  echo "arnold-close: phase-1 FAILED — worktree '$WORKTREE' is dirty (uncommitted state cannot be closed):" >&2
+  echo "$DIRTY" >&2
+  exit 1
+fi
+
+# 1b. All git state pushed to origin.
+LOCAL_HEAD="$(git -C "$WORKTREE" rev-parse HEAD)"
+ORIGIN_HEAD="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/heads/$BRANCH" | awk '{print $1}')"
+if [[ -z "$ORIGIN_HEAD" ]]; then
+  echo "arnold-close: phase-1 FAILED — refs/heads/$BRANCH does not exist on '$REMOTE'; push before closing (nothing authoritative runs unpushed)" >&2
+  exit 1
+fi
+if [[ "$LOCAL_HEAD" != "$ORIGIN_HEAD" ]]; then
+  echo "arnold-close: phase-1 FAILED — local HEAD $LOCAL_HEAD != origin/$BRANCH $ORIGIN_HEAD; push before closing" >&2
+  exit 1
+fi
+
+# 1c. No open lock files under the marker dir. Manifest-writer locks
+#     (<name>.json.lock) are excluded: they are writer-serialization locks that
+#     persist after a write, not runtime liveness indicators.
+if [[ -d "$MARKERS" ]]; then
+  OPEN_LOCKS="$(find "$MARKERS" -name '*.lock' ! -name '*.json.lock' 2>/dev/null || true)"
+  if [[ -n "$OPEN_LOCKS" ]]; then
+    echo "arnold-close: phase-1 FAILED — open lock files under '$MARKERS':" >&2
+    echo "$OPEN_LOCKS" >&2
+    exit 1
+  fi
+fi
+
+# 1d. No live runtime processes: recorded PIDs in the marker dir must not be
+#     live (best-effort — see the header; unparseable pidfiles are noted, not
+#     fatal).
+if [[ -d "$MARKERS" ]]; then
+  LIVE_PIDS=()
+  while IFS= read -r pidfile; do
+    [[ -n "$pidfile" ]] || continue
+    recorded="$(cat "$pidfile" 2>/dev/null || true)"
+    if [[ "$recorded" =~ ^[0-9]+$ ]]; then
+      if ps -p "$recorded" >/dev/null 2>&1; then
+        LIVE_PIDS+=("$pidfile (pid $recorded)")
+      fi
+    else
+      echo "arnold-close: note — unparseable pidfile '$pidfile' (content '${recorded:-<empty>}'); skipping liveness check (best-effort)" >&2
+    fi
+    done < <(find "$MARKERS" -name '*.pid' 2>/dev/null || true)
+    if [[ ${#LIVE_PIDS[@]} -gt 0 ]]; then
+      echo "arnold-close: phase-1 FAILED — live runtime processes recorded under '$MARKERS':" >&2
+      for entry in "${LIVE_PIDS[@]}"; do
+        echo "  $entry" >&2
+      done
+      exit 1
+    fi
+  fi
+
+# ── Phase 2: backstop tag — EXECUTED, fail-loud -------------------------------
+# The tag is the origin-resolvable snapshot PINNING THE CLOSED HEAD (rollback
+# target). A failed push leaves the tag local and the epic NOT closed. A
+# pre-existing tag that does NOT point at the closed HEAD is a conflict, not
+# an idempotent re-run — fail loudly.
+STAMP="$(date +%Y%m%d)"
+TAG="box-snapshot/$SLUG-$STAMP"
+if git -C "$WORKTREE" rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+  EXISTING_TAG_SHA="$(git -C "$WORKTREE" rev-parse "refs/tags/$TAG^{commit}")"
+  if [[ "$EXISTING_TAG_SHA" != "$LOCAL_HEAD" ]]; then
+    echo "arnold-close: FAILED — backstop tag '$TAG' already exists at $EXISTING_TAG_SHA, not the closed HEAD $LOCAL_HEAD. Reconcile (or repoint the tag at HEAD) before closing." >&2
+    exit 1
+  fi
+else
+  if ! git -C "$WORKTREE" tag "$TAG"; then
+    echo "arnold-close: FAILED to create backstop tag '$TAG' — nothing closed" >&2
+    exit 1
+  fi
+fi
+if ! git -C "$WORKTREE" push "$REMOTE" "$TAG" >/dev/null 2>&1; then
+  echo "arnold-close: FAILED to push backstop tag '$TAG' to '$REMOTE' — the tag stays local and epic '$SLUG' is NOT closed. Push the tag manually or reconcile, then re-run close." >&2
+  exit 1
+fi
+# Verify the ORIGIN tag pins the closed HEAD (a stale tag must never pass as a
+# backstop snapshot; peel annotated tags via ^{}).
+ORIGIN_TAG_SHA="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/tags/$TAG^{}" 2>/dev/null | awk '{print $1}')"
+if [[ -z "$ORIGIN_TAG_SHA" ]]; then
+  ORIGIN_TAG_SHA="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/tags/$TAG" 2>/dev/null | awk '{print $1}')"
+fi
+if [[ "$ORIGIN_TAG_SHA" != "$LOCAL_HEAD" ]]; then
+  echo "arnold-close: FAILED — origin backstop tag 'refs/tags/$TAG' points at '${ORIGIN_TAG_SHA:-<missing>}', not the closed HEAD $LOCAL_HEAD. Epic NOT closed." >&2
+  exit 1
+fi
+echo "arnold-close: backstop tag '$TAG' pushed to '$REMOTE' (pins $LOCAL_HEAD)"
+
+# ── Phase 3: atomically set manifest state=closed via the CLI (fail-loud) -----
+if ! python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest set_state "$MANIFEST" closed >/dev/null 2>&1 \
+   || [[ "$(_json_get "$MANIFEST" state)" != "closed" ]]; then
+  echo "arnold-close: FAILED — runtime_manifest set_state subcommand missing/failed for '$MANIFEST'. The backstop tag is pushed but the epic is NOT closed (no silent fallback: a manifest write outside the authoritative writer would skip validation)." >&2
+  exit 1
+fi
+
+# Consistency: if the active pointer holds THIS epic, close through it too so
+# the file AT the stable bootstrap path reflects state=closed (best-effort,
+# verified; warned loudly on failure — the authoritative close has succeeded).
+POINTER="${ARNOLD_RUNTIME_MANIFEST:-$(dirname "$MANIFEST")/runtime-manifest.json}"
+if [[ -f "$POINTER" ]] && [[ "$(_json_get "$POINTER" epic_id)" == "$SLUG" ]]; then
+  if ! python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest set_state "$POINTER" closed >/dev/null 2>&1 \
+     || [[ "$(_json_get "$POINTER" state)" != "closed" ]]; then
+    echo "arnold-close: WARNING — active pointer '$POINTER' still claims epic '$SLUG' is active (pointer set_state failed). The per-slug manifest is closed, but bootstrappers will observe a stale active generation until the pointer is reconciled." >&2
+  else
+    echo "arnold-close: active pointer '$POINTER' closed for '$SLUG'"
+  fi
+fi
+
+echo "arnold-close: epic '$SLUG' closed — manifest '$MANIFEST' now state=closed"
+echo "arnold-close: backstop snapshot '$TAG' is on '$REMOTE'; run arnold-gc-sweep with --restore-proven to reclaim the runtime."

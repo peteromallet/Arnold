@@ -1,0 +1,26 @@
+{
+  "idea": "write a joke about parsers",
+  "prep": "<artifact_root>/prep/v1.md",
+  "prep_prompt": "<artifact_root>/prep/prompt_v1.md",
+  "config": {
+    "mode": "creative",
+    "form": "joke",
+    "project_dir": "."
+  },
+  "_creative_artifacts": {
+    "prep": "<artifact_root>/prep/v1.md",
+    "execute_creative": "<artifact_root>/execute_creative/v1.md",
+    "critique_creative": "<artifact_root>/critique_creative/v1.md",
+    "revise_creative": "<artifact_root>/revise_creative/v1.md",
+    "finalize": "<artifact_root>/finalize/v1.md"
+  },
+  "_creative_last_stage": "finalize",
+  "execute_creative": "<artifact_root>/execute_creative/v1.md",
+  "execute_creative_prompt": "<artifact_root>/execute_creative/prompt_v1.md",
+  "critique_creative": "<artifact_root>/critique_creative/v1.md",
+  "critique_creative_prompt": "<artifact_root>/critique_creative/prompt_v1.md",
+  "revise_creative": "<artifact_root>/revise_creative/v1.md",
+  "revise_creative_prompt": "<artifact_root>/revise_creative/prompt_v1.md",
+  "finalize": "<artifact_root>/finalize/v1.md",
+  "finalize_prompt": "<artifact_root>/finalize/prompt_v1.md"
+}

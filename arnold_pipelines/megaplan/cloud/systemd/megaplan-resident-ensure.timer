@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Megaplan Discord resident every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=megaplan-resident-ensure.service
+
+[Install]
+WantedBy=timers.target

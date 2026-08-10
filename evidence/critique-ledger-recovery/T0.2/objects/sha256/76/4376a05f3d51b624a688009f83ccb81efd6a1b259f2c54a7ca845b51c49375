@@ -1,0 +1,490 @@
+{
+  "schema": "megaplan.candidate_graph_admission",
+  "schema_version": 1,
+  "candidate_id": "candidate:b1d7a3d9089f9941c2c4f2d994a065c24826cfe602068ca2fb34554c3265895d",
+  "candidate_graph_hash": "b1d7a3d9089f9941c2c4f2d994a065c24826cfe602068ca2fb34554c3265895d",
+  "task_contract_hash": "sha256:5a9086e63d97ed4b9f419f5b3d547a824c5ece85dcbdf0f60b7c0041427dd78f",
+  "admitted": false,
+  "failure_fingerprint": "569ae868b3eddd1270681ca248c9af9a700daf22ab4bc7b2b8209026c952c678",
+  "diagnostics": [
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T3_impl",
+      "dependency_id": "T2"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T4_impl",
+      "dependency_id": "T2"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T5_impl",
+      "dependency_id": "T2"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T5_impl",
+      "dependency_id": "T4"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T6_impl",
+      "dependency_id": "T2"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T6_impl",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T7_impl",
+      "dependency_id": "T5"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T7_impl",
+      "dependency_id": "T6"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T8_impl",
+      "dependency_id": "T6"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T9_impl",
+      "dependency_id": "T8"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T10",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T10",
+      "dependency_id": "T7"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T10",
+      "dependency_id": "T9"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T11_impl",
+      "dependency_id": "T2"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T12_impl",
+      "dependency_id": "T5"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T12_impl",
+      "dependency_id": "T11"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T13_impl",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T13_impl",
+      "dependency_id": "T12"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15",
+      "dependency_id": "T5"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15",
+      "dependency_id": "T7"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15",
+      "dependency_id": "T9"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15",
+      "dependency_id": "T13"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T16",
+      "dependency_id": "T5"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T17",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T17",
+      "dependency_id": "T12"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T17",
+      "dependency_id": "T13"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T18",
+      "dependency_id": "T13"
+    },
+    {
+      "code": "dependency_graph_invalid",
+      "message": "Unknown dependency ID 'T2' for task 'T3_impl'"
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T1 and T3_impl overlap on ['arnold/critique_ledger/semantic_loop.py', 'tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T1 and T17 overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T2_impl and T17 overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T3_impl and T17 overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T5_impl and T16 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T6_impl and T8_impl overlap on ['arnold/critique_ledger/projections.py', 'tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T6_impl and T9_impl overlap on ['arnold/critique_ledger/projections.py', 'tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T6_impl and T10 overlap on ['tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T7_impl and T10 overlap on ['tests/arnold/critique_ledger/test_replay.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T8_impl and T9_impl overlap on ['arnold/critique_ledger/projections.py', 'tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T8_impl and T10 overlap on ['tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T9_impl and T10 overlap on ['tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T11_impl and T12_impl overlap on ['arnold/critique_ledger/importer.py', 'tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T11_impl and T17 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T12_impl and T17 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    }
+  ],
+  "observed_at": "2026-07-31T18:18:07Z",
+  "report": {
+    "schema_version": "megaplan-task-feasibility-v2",
+    "task_contract_hash": "sha256:5a9086e63d97ed4b9f419f5b3d547a824c5ece85dcbdf0f60b7c0041427dd78f",
+    "plan_hash": "sha256:0f7f2c44ccf469fae721d26dea804e903ff915b1613a45ff53acf26313a83398",
+    "seed_epoch": null,
+    "task_count": 29,
+    "edge_count": 45,
+    "root_count": 0,
+    "max_width": 0,
+    "batches": [],
+    "critical_path_task_ids": [],
+    "critical_path_task_count": 0,
+    "critical_path_minutes": 0.0,
+    "seriality": 0.0,
+    "estimated_dispatch_minutes": 0,
+    "execute_phase_timeout_minutes": 60.0,
+    "warnings": [
+      {
+        "code": "task_count_high",
+        "message": "Task count exceeds 24; inspect scope."
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T3_impl",
+        "dependency_id": "T2"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T4_impl",
+        "dependency_id": "T2"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T5_impl",
+        "dependency_id": "T2"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T5_impl",
+        "dependency_id": "T4"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T6_impl",
+        "dependency_id": "T2"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T6_impl",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T7_impl",
+        "dependency_id": "T5"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T7_impl",
+        "dependency_id": "T6"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T8_impl",
+        "dependency_id": "T6"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T9_impl",
+        "dependency_id": "T8"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T10",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T10",
+        "dependency_id": "T7"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T10",
+        "dependency_id": "T9"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T11_impl",
+        "dependency_id": "T2"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T12_impl",
+        "dependency_id": "T5"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T12_impl",
+        "dependency_id": "T11"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T13_impl",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T13_impl",
+        "dependency_id": "T12"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15",
+        "dependency_id": "T5"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15",
+        "dependency_id": "T7"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15",
+        "dependency_id": "T9"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15",
+        "dependency_id": "T13"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T16",
+        "dependency_id": "T5"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T17",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T17",
+        "dependency_id": "T12"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T17",
+        "dependency_id": "T13"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T18",
+        "dependency_id": "T13"
+      },
+      {
+        "code": "dependency_graph_invalid",
+        "message": "Unknown dependency ID 'T2' for task 'T3_impl'"
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T1 and T3_impl overlap on ['arnold/critique_ledger/semantic_loop.py', 'tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T1 and T17 overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T2_impl and T17 overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T3_impl and T17 overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T5_impl and T16 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T6_impl and T8_impl overlap on ['arnold/critique_ledger/projections.py', 'tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T6_impl and T9_impl overlap on ['arnold/critique_ledger/projections.py', 'tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T6_impl and T10 overlap on ['tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T7_impl and T10 overlap on ['tests/arnold/critique_ledger/test_replay.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T8_impl and T9_impl overlap on ['arnold/critique_ledger/projections.py', 'tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T8_impl and T10 overlap on ['tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T9_impl and T10 overlap on ['tests/arnold/critique_ledger/test_projections.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T11_impl and T12_impl overlap on ['arnold/critique_ledger/importer.py', 'tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T11_impl and T17 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T12_impl and T17 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      }
+    ],
+    "admitted": false
+  }
+}

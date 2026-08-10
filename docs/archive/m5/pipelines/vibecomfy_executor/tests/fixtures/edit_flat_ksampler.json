@@ -1,0 +1,4 @@
+{
+  "query": "Set the KSampler seed to 12345 and the steps to 30.",
+  "graph": "tests/fixtures/agent_edit/flat.json"
+}

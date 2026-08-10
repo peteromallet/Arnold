@@ -1,0 +1,12 @@
+{
+  "critique_creative/prompt_v1.md": "sha256:<content-dependent>",
+  "critique_creative/v1.md": "sha256:<content-dependent>",
+  "execute_creative/prompt_v1.md": "sha256:<content-dependent>",
+  "execute_creative/v1.md": "sha256:<content-dependent>",
+  "finalize/prompt_v1.md": "sha256:<content-dependent>",
+  "finalize/v1.md": "sha256:<content-dependent>",
+  "prep/prompt_v1.md": "sha256:<content-dependent>",
+  "prep/v1.md": "sha256:<content-dependent>",
+  "revise_creative/prompt_v1.md": "sha256:<content-dependent>",
+  "revise_creative/v1.md": "sha256:<content-dependent>"
+}

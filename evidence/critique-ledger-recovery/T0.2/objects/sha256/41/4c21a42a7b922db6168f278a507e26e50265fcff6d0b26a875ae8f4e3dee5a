@@ -1,0 +1,1363 @@
+{
+  "task_contract_version": 2,
+  "tasks": [
+    {
+      "id": "T1",
+      "objective": "Port the CL1 v1 schema package byte-faithfully from the paused archive.",
+      "description": "Step 1: Copy the archived CL1 schemas and package exports without semantic edits, add the package test marker and golden fixture/test, and record the archived unaccepted-handoff provenance in test expectations.",
+      "estimated_minutes": 12,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/schemas.py",
+          "arnold/critique_ledger/__init__.py",
+          "tests/arnold/critique_ledger/__init__.py",
+          "tests/arnold/critique_ledger/test_schemas_golden.py",
+          "tests/fixtures/critique_ledger/schema_golden_cases.json"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_schemas_golden.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 4,
+      "complexity_justification": "The copy is mechanically bounded, but schemas.py is a serialized contract whose byte-level compatibility is consumed by later tasks, so unnoticed drift is non-local and warrants tier 4."
+    },
+    {
+      "id": "T2",
+      "objective": "Port the CL1 pure semantic loop byte-faithfully from the paused archive.",
+      "description": "Step 1: Copy semantic_loop.py and its archived behavioral tests without adopting any cancelled CL2 persistence code; retain the evaluator as the sole semantic reconciliation authority.",
+      "estimated_minutes": 12,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "The archived semantic loop imports the ported CL1 schema types.",
+          "required_output": "Byte-faithful arnold/critique_ledger/schemas.py and package exports"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/semantic_loop.py",
+          "tests/arnold/critique_ledger/test_semantic_loop.py",
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_semantic_loop.py",
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 4,
+      "complexity_justification": "This is a large but exact source/test port; the semantic loop is an evaluator contract, so accidental edits can alter finding identity and disposition behavior despite the mechanical procedure."
+    },
+    {
+      "id": "T3",
+      "objective": "Add the v2 version envelope and strict occurrence identity boundary while preserving v1 reads.",
+      "description": "Step 2: Extend schemas.py additively so v1 records still deserialize, v2 records round-trip deterministically, and strict new occurrences reject semantic_finding_id because occurrences cannot author finding identity.",
+      "estimated_minutes": 12,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "The additive v2 envelope must preserve the exact v1 schema behavior established by the port.",
+          "required_output": "Ported v1 schemas and golden compatibility cases"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/schemas.py",
+          "tests/arnold/critique_ledger/test_schemas_golden.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_schemas_golden.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 5,
+      "complexity_justification": "This changes the serialized schema/version contract and enforces the load-bearing occurrence-versus-semantic-identity boundary while maintaining old-reader compatibility."
+    },
+    {
+      "id": "T4",
+      "objective": "Complete the additive v2 event dataclasses needed for reconciliation accountability and freshness.",
+      "description": "Step 2: Add supersedes_event_id, region_anchors, tripwire_state, and response, verified-outcome, and audit-disagreement event types with deterministic serialization, validation, package exports, and v1-compatible round trips.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T3"
+      ],
+      "dependency_reasons": {
+        "T3": {
+          "kind": "write_conflict",
+          "reason": "This task extends the same schema and golden-test files after the v2 envelope is established.",
+          "required_output": "Stable v2 version envelope and strict occurrence validation in schemas.py"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/schemas.py",
+          "arnold/critique_ledger/__init__.py",
+          "tests/arnold/critique_ledger/test_schemas_golden.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_schemas_golden.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "Several interdependent event contracts must remain append-only, version-compatible, and expressive enough for three projections; omissions could pass basic serialization tests yet break later custody reconstruction."
+    },
+    {
+      "id": "T5",
+      "objective": "Make semantic reconciliation consume and emit v2 events without assigning identity to occurrences.",
+      "description": "Step 3: Update semantic_loop.py for v2 occurrence, supersession, audit, response, outcome, region-anchor, and tripwire fields while preserving pure evaluator-owned equivalence, split, refinement, regression, reopen, and no-additional-findings judgments.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T2",
+        "T4"
+      ],
+      "dependency_reasons": {
+        "T2": {
+          "kind": "consumes_output",
+          "reason": "The v2 adaptation must be a reviewable delta from the byte-faithful CL1 semantic loop.",
+          "required_output": "Ported CL1 semantic_loop.py and baseline behavioral tests"
+        },
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "The loop must use the finalized additive v2 event dataclasses and validation rules.",
+          "required_output": "Complete v2 schema event API and package exports"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/semantic_loop.py",
+          "tests/arnold/critique_ledger/test_semantic_loop.py",
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_semantic_loop.py",
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "This modifies the pure semantic state machine across multiple judgment types, where a subtle authority leak or erased occurrence would violate core ledger invariants."
+    },
+    {
+      "id": "T6",
+      "objective": "Define forward-only CL2 domain migrations as versions 5 and above in a combined registry.",
+      "description": "Step 4: Create CL2 DDL for immutable occurrences, reconciliation and disposition events, response/outcome/audit links, manifests, quarantine, and projection inputs; expose default_combined_migrations() without editing arnold/workflow/ledger_migrations.py.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T4"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "The domain columns and constraints must represent the finalized v2 event fields and versions.",
+          "required_output": "Complete v2 schema field and event definitions"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/cl2_migrations.py",
+          "tests/arnold/critique_ledger/test_cl2_migrations.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_cl2_migrations.py",
+          "tests/arnold/workflow/test_ledger_migrations.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "The migration registry is a durable database contract with checksum and crash-resume requirements; an ordering or DDL mistake can strand existing databases and cannot be repaired by rollback."
+    },
+    {
+      "id": "T7",
+      "objective": "Implement one-transaction domain append with manifest and WBC outbox custody.",
+      "description": "Step 5: Build a separate CritiqueLedgerStore over the shared SQLite connection that uses BEGIN IMMEDIATE and the existing outbox/payload contracts so an event, its manifest, and outbox row commit atomically or not at all.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T4",
+        "T6"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "Append validation and serialization consume the finalized v2 event contracts.",
+          "required_output": "Complete v2 event dataclasses and serializers"
+        },
+        "T6": {
+          "kind": "consumes_output",
+          "reason": "The store writes the domain tables and constraints created by CL2 migrations.",
+          "required_output": "Versioned CL2 domain DDL and combined migration registry"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/store.py",
+          "tests/arnold/critique_ledger/test_store_append.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_store_append.py",
+          "tests/arnold/workflow/test_ledger_outbox.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 7,
+      "complexity_justification": "This crosses two durable table families on one connection and must preserve all-or-nothing custody under exceptions; a transaction-boundary error can expose accepted but incomplete ledger state."
+    },
+    {
+      "id": "T8",
+      "objective": "Enforce append idempotency, divergent-duplicate quarantine, and complete-revision publication.",
+      "description": "Step 5: Extend the domain store so equal idempotency retries deduplicate, divergent payloads quarantine, partial accepted revisions remain invisible, and crash-restart preserves single logical insertion and the explicit unaccepted-CL1 metadata.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T7"
+      ],
+      "dependency_reasons": {
+        "T7": {
+          "kind": "write_conflict",
+          "reason": "Idempotency and publication extend the same store transaction and tests after atomic append exists.",
+          "required_output": "Atomic domain event, manifest, and outbox append implementation"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/store.py",
+          "tests/arnold/critique_ledger/test_store_append.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_store_append.py",
+          "tests/arnold/workflow/test_attempt_ledger_store.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 7,
+      "complexity_justification": "Deduplication, quarantine, and visibility form a data-integrity state boundary; a race or hash comparison defect can silently double-insert or publish an incomplete accepted revision."
+    },
+    {
+      "id": "T9",
+      "objective": "Build a deterministic read-only replay engine over accepted ledger events.",
+      "description": "Step 6: Read immutable accepted events in canonical order, validate hashes/schema compatibility, and emit byte-stable replay state without database writes, model calls, external effects, or lifecycle authority.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T5",
+        "T8"
+      ],
+      "dependency_reasons": {
+        "T5": {
+          "kind": "consumes_output",
+          "reason": "Replay must apply the v2 semantic event rules and accepted-decision semantics.",
+          "required_output": "V2-aware pure semantic reconciliation behavior"
+        },
+        "T8": {
+          "kind": "consumes_output",
+          "reason": "Replay reads only complete accepted revisions exposed by the finalized store query contract.",
+          "required_output": "Idempotent store with quarantine and complete-revision visibility"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/replay.py",
+          "tests/arnold/critique_ledger/test_replay.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_replay.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "Replay must deterministically fold append-only histories while proving negative side effects and rejecting unaccepted/superseded authority, which is subtle across ordering and version edges."
+    },
+    {
+      "id": "T10",
+      "objective": "Derive cumulative and bounded per-domain finding projections from replay state.",
+      "description": "Step 6: Implement rebuildable projections that retain every attempt and occurrence, expose one cumulative logical finding history, provide bounded domain views, and distinguish all four no-finding/no-blocking/no-match claims.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T9"
+      ],
+      "dependency_reasons": {
+        "T9": {
+          "kind": "consumes_output",
+          "reason": "Projections fold the canonical, hash-validated, read-only replay state.",
+          "required_output": "Deterministic accepted-event replay API"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/projections.py",
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "The projection must preserve full immutable custody while bounding domain context, and conflating occurrence, finding, or absence claims would silently drop critique evidence."
+    },
+    {
+      "id": "T11",
+      "objective": "Derive the bounded must_act, must_revalidate, and context_only active-action projection.",
+      "description": "Step 7: Add active categorization so closed history does not grow must_act, unaudited or boilerplate non-action cannot remove a finding, stale/disputed items revalidate, and every batch response enumerates each finding ID.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T10"
+      ],
+      "dependency_reasons": {
+        "T10": {
+          "kind": "write_conflict",
+          "reason": "The active view extends the same projections module and test surface from cumulative finding state.",
+          "required_output": "Cumulative and per-domain finding projection API"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/projections.py",
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "This projection controls what later revision consumers must address without gaining execution authority; incorrect filtering could hide an open or unsupported non-action finding."
+    },
+    {
+      "id": "T12",
+      "objective": "Derive a per-round accountability receipt linking custody through independent outcome.",
+      "description": "Step 8: Map attempt to occurrence to accepted finding to revision response or structured non-action to independently verified outcome and reopen state, accounting for every parseable occurrence and active finding without treating reviser addressed as verified.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T11"
+      ],
+      "dependency_reasons": {
+        "T11": {
+          "kind": "write_conflict",
+          "reason": "Round receipts extend the same projection files and consume the finalized active-finding categories.",
+          "required_output": "Bounded active-action projection with enumerated finding IDs"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/projections.py",
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "The receipt joins multiple append-only identities and must prove completeness without becoming a second authority; dropped links can be hard to detect from any one table."
+    },
+    {
+      "id": "T13",
+      "objective": "Replay superseding corrections and audit disagreements as visible non-clean decision state.",
+      "description": "Step 9: Preserve original and superseding reconciliation events, derive only the current accepted decision, prevent superseded decisions from supporting a clean gate view, and make audit disagreement reopen closure into disputed actionable state.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T12"
+      ],
+      "dependency_reasons": {
+        "T12": {
+          "kind": "write_conflict",
+          "reason": "Correction and dispute semantics alter the replay/projection state consumed by finalized accountability receipts.",
+          "required_output": "Accountability projections over baseline accepted decision state"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/replay.py",
+          "arnold/critique_ledger/projections.py",
+          "tests/arnold/critique_ledger/test_replay.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_replay.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "Supersession and audit disagreement change derived decision state while retaining immutable history; a precedence defect could silently resurrect invalid closure authority."
+    },
+    {
+      "id": "T14",
+      "objective": "Replay deterministic tripwires only as needs_reconciliation signals.",
+      "description": "Step 9: Add replay cases for evidence/dependency change, near-match, audit disagreement, and stale model/schema revision so triggers are deterministic and can never merge, close, suppress, or assign semantic identity.",
+      "estimated_minutes": 12,
+      "depends_on": [
+        "T13"
+      ],
+      "dependency_reasons": {
+        "T13": {
+          "kind": "write_conflict",
+          "reason": "Tripwire state extends the same replay/projection implementation and tests after supersession precedence is fixed.",
+          "required_output": "Correction-aware and audit-dispute-aware replay state"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/replay.py",
+          "arnold/critique_ledger/projections.py",
+          "tests/arnold/critique_ledger/test_replay.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_replay.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 5,
+      "complexity_justification": "The trigger set is bounded, but it touches semantic-authority boundaries where an accidental automatic closure or merge would violate the North Star even if outputs remain deterministic."
+    },
+    {
+      "id": "T15",
+      "objective": "Implement the resumable one-time legacy importer with evidence-preserving gap semantics.",
+      "description": "Step 10: Import supported legacy attempts atomically into the domain store, preserve raw evidence and source order, label absent semantics legacy_unknown, admit partial parses only as PARTIAL_RECOVERED evidence, reject unsupported targets without publication, and never invent relationships.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T4",
+        "T8"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "Legacy normalization targets the finalized v2 schema and PARTIAL_RECOVERED constraints.",
+          "required_output": "Complete v2 schema event types and validation"
+        },
+        "T8": {
+          "kind": "consumes_output",
+          "reason": "The importer publishes through idempotent atomic store revisions and quarantine behavior.",
+          "required_output": "Final domain store append, idempotency, quarantine, and visibility API"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/importer.py",
+          "tests/arnold/critique_ledger/test_importer.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_importer.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 7,
+      "complexity_justification": "The importer crosses untrusted legacy formats and durable publication, where an over-eager recovery could invent semantic truth and an under-scoped transaction could partially publish unsupported data."
+    },
+    {
+      "id": "T16",
+      "objective": "Cover current, target-only, future-version, and corrupt legacy import fixtures.",
+      "description": "Step 10: Add exact fixtures and importer tests proving normal current-source import, target-only preservation, fail-closed future-version rejection, and corrupt-input partial recovery with explicit unavailable fields.",
+      "estimated_minutes": 12,
+      "depends_on": [
+        "T15"
+      ],
+      "dependency_reasons": {
+        "T15": {
+          "kind": "consumes_output",
+          "reason": "The fixture assertions exercise the implemented importer result and status contracts.",
+          "required_output": "Core atomic legacy importer with gap and partial-recovery semantics"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_importer.py",
+          "tests/fixtures/critique_ledger/cl2-current-source.json",
+          "tests/fixtures/critique_ledger/cl2-target-only.json",
+          "tests/fixtures/critique_ledger/cl2-future-version.json",
+          "tests/fixtures/critique_ledger/cl2-corrupt.json"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_importer.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 4,
+      "complexity_justification": "The fixture family is bounded, but it probes version and corruption boundaries where loose assertions could permit partial publication or synthesized evidence."
+    },
+    {
+      "id": "T17",
+      "objective": "Cover redacted, unavailable, duplicate, and out-of-order legacy import fixtures.",
+      "description": "Step 10: Extend importer fixtures and assertions so redaction and tombstones remain visible unknowns without leakage, duplicates are idempotent, and out-of-order source evidence receives deterministic corrected sequence without rewriting payloads.",
+      "estimated_minutes": 12,
+      "depends_on": [
+        "T16"
+      ],
+      "dependency_reasons": {
+        "T16": {
+          "kind": "write_conflict",
+          "reason": "This fixture family extends the same importer test module after its base cases are established.",
+          "required_output": "Importer test harness and first fixture family"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_importer.py",
+          "tests/fixtures/critique_ledger/cl2-redacted.json",
+          "tests/fixtures/critique_ledger/cl2-unavailable.json",
+          "tests/fixtures/critique_ledger/cl2-duplicate.json",
+          "tests/fixtures/critique_ledger/cl2-out-of-order.json"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_importer.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 4,
+      "complexity_justification": "These cases combine privacy, idempotency, and ordering contracts in one localized importer test surface; each is deterministic but mistakes can hide evidence or leak redacted content."
+    },
+    {
+      "id": "T18",
+      "objective": "Cover concurrent and interrupted legacy imports with deterministic resume.",
+      "description": "Step 10: Add concurrent-WAL and simulated-crash fixtures/tests proving one-time import deduplicates across writers, leaves no partial accepted revision, and resumes to the same canonical sequence and hashes.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T17"
+      ],
+      "dependency_reasons": {
+        "T17": {
+          "kind": "write_conflict",
+          "reason": "Concurrency and crash assertions extend the same importer test module after all content fixtures exist.",
+          "required_output": "Complete deterministic importer fixture harness for content and ordering cases"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_importer.py",
+          "tests/fixtures/critique_ledger/cl2-concurrent.json",
+          "tests/fixtures/critique_ledger/cl2-crash.json"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_importer.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 6,
+      "complexity_justification": "Reproducible concurrency and crash tests require careful transaction interleavings, and a false-positive test could miss duplicate publication after restart."
+    },
+    {
+      "id": "T19",
+      "objective": "Compute deterministic region-freshness vectors with scoped staleness.",
+      "description": "Step 11: Hash plan-region, dependency, evidence, contract, repository, model, schema, and profile anchors so only affected scoped findings stale, unchanged regions remain fresh, and unknown or cross-cutting scope conservatively uses whole-plan freshness.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T4",
+        "T14"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "Freshness vectors consume the region-anchor and tripwire fields defined in v2 schemas.",
+          "required_output": "V2 region anchor and tripwire schema contracts"
+        },
+        "T14": {
+          "kind": "consumes_output",
+          "reason": "Freshness changes must feed the existing needs_reconciliation-only replay tripwire contract.",
+          "required_output": "Deterministic non-authoritative tripwire replay behavior"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/freshness.py",
+          "tests/arnold/critique_ledger/test_freshness.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_freshness.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "Selective invalidation spans several hash anchors; under-invalidation hides stale closure while over-invalidation defeats bounded re-review, making the scope algorithm demanding but contained."
+    },
+    {
+      "id": "T20",
+      "objective": "Govern redacted and tombstoned freshness evidence as visible unknown state.",
+      "description": "Step 11: Extend freshness handling so retention, redaction, and unavailable evidence use WBC durable-reference policy, surface explicit unknown/tombstoned status, never leak content, and cannot silently suppress or close a finding.",
+      "estimated_minutes": 12,
+      "depends_on": [
+        "T15",
+        "T19"
+      ],
+      "dependency_reasons": {
+        "T15": {
+          "kind": "consumes_output",
+          "reason": "Governed freshness consumes importer legacy_unknown, PARTIAL_RECOVERED, evidence_ref, and unavailable_reason representations.",
+          "required_output": "Importer evidence-gap and partial-recovery output contract"
+        },
+        "T19": {
+          "kind": "write_conflict",
+          "reason": "Tombstone and redaction behavior extends the same freshness module and test file.",
+          "required_output": "Deterministic region-freshness vector implementation"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/freshness.py",
+          "tests/arnold/critique_ledger/test_freshness.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_freshness.py",
+          "tests/arnold/workflow/test_payload_policy.py",
+          "tests/arnold/workflow/test_durable_refs.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 5,
+      "complexity_justification": "This is a bounded policy integration, but privacy leakage and treating missing evidence as closure are consequential failures that require deliberate WBC contract reuse."
+    },
+    {
+      "id": "T21",
+      "objective": "Publish the read-only cancelled CL2 archive audit with hashes and adoption boundaries.",
+      "description": "Step 12: Identify the plan-referenced five pre-amendment cancelled CL2 artifacts, record SHA-256 and a per-artifact compliance assessment, state that none is portable as-is, and distinguish the verbatim CL1 port from any patterns explicitly not adopted.",
+      "estimated_minutes": 10,
+      "depends_on": [
+        "T2"
+      ],
+      "dependency_reasons": {
+        "T2": {
+          "kind": "consumes_output",
+          "reason": "The audit must accurately distinguish the completed verbatim CL1 port from cancelled CL2 material.",
+          "required_output": "Complete CL1 schemas and semantic-loop port provenance"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "docs/critique-ledger/cl2-cancelled-archive-audit.md"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [],
+        "max_seconds": 0,
+        "max_runs": 0
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "docs",
+      "complexity": 3,
+      "complexity_justification": "The artifact is a localized hash-and-assessment document with clear boundaries; judgment is required to classify patterns, but no runtime contract is changed."
+    },
+    {
+      "id": "T22",
+      "objective": "Prove ledger append and replay cannot mutate external authority state.",
+      "description": "Step 13: Add negative tests that instrument plan, gate, lifecycle, queue, Git/provider, delivery, model-call, and external-effect seams and prove store, importer, freshness, replay, and projections carry no positive authority or mutation path.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T8",
+        "T14",
+        "T20"
+      ],
+      "dependency_reasons": {
+        "T8": {
+          "kind": "consumes_output",
+          "reason": "Negative mutation coverage must exercise the finalized domain append surface.",
+          "required_output": "Final atomic and idempotent CritiqueLedgerStore API"
+        },
+        "T14": {
+          "kind": "consumes_output",
+          "reason": "Negative mutation coverage must exercise replay, projection, correction, dispute, and tripwire paths.",
+          "required_output": "Final replay and projection behavior through deterministic tripwires"
+        },
+        "T20": {
+          "kind": "consumes_output",
+          "reason": "Negative mutation coverage must include importer/freshness evidence-policy paths.",
+          "required_output": "Final freshness and governed tombstone behavior"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_negative_mutation.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_negative_mutation.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 6,
+      "complexity_justification": "The test spans several authority seams and must distinguish harmless reads from prohibited mutation; incomplete instrumentation could give false confidence about an execution-authority leak."
+    },
+    {
+      "id": "T23",
+      "objective": "Prove WAL writer, crash recovery, outbox retry, and restart idempotency behavior.",
+      "description": "Step 13: Extend store tests with controlled concurrent writers, mid-append failure, stale pending outbox recovery, and crash-restart deduplication, asserting database consistency and no incomplete accepted revision.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T8"
+      ],
+      "dependency_reasons": {
+        "T8": {
+          "kind": "consumes_output",
+          "reason": "Fault tests target the finalized append, idempotency, quarantine, and publication implementation.",
+          "required_output": "Final CritiqueLedgerStore transaction and deduplication behavior"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_store_append.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_store_append.py",
+          "tests/arnold/workflow/test_ledger_outbox.py",
+          "tests/arnold/workflow/test_attempt_ledger_store.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 6,
+      "complexity_justification": "Deterministic fault injection around SQLite single-writer and outbox recovery is technically subtle, and timing-dependent tests can otherwise pass without exercising the dangerous window."
+    },
+    {
+      "id": "T24",
+      "objective": "Prove v1 compatibility and WBC privacy, retention, reference, ordering, and effect reuse.",
+      "description": "Step 13: Add focused compatibility/privacy assertions that old v1 records and plan-local readers remain valid, partial/redacted/tombstoned payloads do not leak, and CL2 imports existing payload_policy.py and durable_refs.py behavior rather than reimplementing it.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T4",
+        "T18",
+        "T20"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "Compatibility assertions compare finalized v2 serialization against v1 golden behavior.",
+          "required_output": "Complete additive v2 schema implementation"
+        },
+        "T18": {
+          "kind": "write_conflict",
+          "reason": "This task extends test_importer.py after all importer fixture and crash cases are complete.",
+          "required_output": "Complete importer test module and fixture index"
+        },
+        "T20": {
+          "kind": "consumes_output",
+          "reason": "Privacy assertions exercise final governed tombstone and redaction handling.",
+          "required_output": "WBC-backed redaction, retention, and tombstone freshness behavior"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_schemas_golden.py",
+          "tests/arnold/critique_ledger/test_importer.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_schemas_golden.py",
+          "tests/arnold/critique_ledger/test_importer.py",
+          "tests/arnold/workflow/test_ledger_payload_enforcement.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 5,
+      "complexity_justification": "The assertions cover multiple compatibility and privacy boundaries, but they are confined to two test files and existing WBC contracts rather than changing production behavior."
+    },
+    {
+      "id": "T25",
+      "objective": "Publish the CL3 handoff with exact implementation, replay, fixture, and fault evidence.",
+      "description": "Step 14: Write and mechanically review cl2-ledger-replay.json with API/schema hashes, backend/atomicity decision, unaccepted-CL1 assumption, import map, replay and receipt hashes, fixture index, freshness/tripwire/audit/response/outcome rules, bounds, fault results, and unresolved limits.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T5",
+        "T6",
+        "T14",
+        "T18",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24"
+      ],
+      "dependency_reasons": {
+        "T5": {
+          "kind": "consumes_output",
+          "reason": "The handoff records the final semantic-loop API and schema compatibility hashes.",
+          "required_output": "Final v2-aware semantic-loop source and test evidence"
+        },
+        "T6": {
+          "kind": "consumes_output",
+          "reason": "The handoff records the migration registry, backend, and DDL hashes.",
+          "required_output": "Final CL2 migration implementation and migration test results"
+        },
+        "T14": {
+          "kind": "consumes_output",
+          "reason": "The handoff records replay, projection, correction, audit-disagreement, and tripwire rules and hashes.",
+          "required_output": "Final replay/projection source and narrow test evidence"
+        },
+        "T18": {
+          "kind": "consumes_output",
+          "reason": "The handoff includes the complete importer fixture index and crash/concurrency results.",
+          "required_output": "Complete importer fixture corpus and focused results"
+        },
+        "T20": {
+          "kind": "consumes_output",
+          "reason": "The handoff records freshness vectors and governed tombstone rules.",
+          "required_output": "Final freshness implementation and narrow test evidence"
+        },
+        "T21": {
+          "kind": "consumes_output",
+          "reason": "The handoff links the cancelled-archive audit and explicit not-adopted boundary.",
+          "required_output": "Hashed cancelled CL2 archive audit artifact"
+        },
+        "T22": {
+          "kind": "consumes_output",
+          "reason": "The handoff records proof that CL2 has no positive mutation authority.",
+          "required_output": "Negative mutation test results"
+        },
+        "T23": {
+          "kind": "consumes_output",
+          "reason": "The handoff records domain store concurrency, crash, retry, and restart results.",
+          "required_output": "Store fault-injection test results"
+        },
+        "T24": {
+          "kind": "consumes_output",
+          "reason": "The handoff records compatibility/privacy limits and reuse evidence.",
+          "required_output": "V1 compatibility and WBC policy reuse test results"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "docs/critique-ledger/handoffs/cl2-ledger-replay.json"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [],
+        "max_seconds": 0,
+        "max_runs": 0
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "docs",
+      "complexity": 5,
+      "complexity_justification": "The output is one document, but it must accurately bind hashes and results from every CL2 contract; stale or omitted evidence would make CL3 compatibility checks unsafe."
+    }
+  ],
+  "validation_jobs": [],
+  "critique_resolution_coverage": [],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Do the ported v1 schema bytes and golden cases match the paused CL1 archive while explicitly exposing accepted_for_cl2=false provenance?",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Is semantic_loop.py a faithful CL1 port with no cancelled-CL2 persistence or execution authority introduced?",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Do v1 records still deserialize identically while strict v2 occurrences reject semantic_finding_id?",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Do all v2 reconciliation, response, outcome, audit, supersession, region, and tripwire event types round-trip deterministically without changing v1 semantics?",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does the v2 semantic loop preserve evaluator-only judgment and immutable occurrence custody across equivalence, split, refinement, regression, reopen, and no-additional-findings paths?",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Are CL2 migrations versioned 5+, checksum-stable, idempotent, crash-resumable, forward-only, and supplied through a combined registry without editing the WBC migrator?",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Can any injected exception leave an occurrence, manifest, or outbox row committed without the other two?",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Do equal retries deduplicate, divergent retries quarantine, and incomplete revisions remain invisible across crash-restart?",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Do repeated replays produce byte-identical state while issuing no write, model call, external effect, or lifecycle mutation?",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Does the cumulative projection retain every attempt and occurrence while domain projections remain bounded and the four absence claims stay distinct?",
+      "verdict": ""
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "question": "Can any unaudited non-action, boilerplate response, or omitted batch ID remove a finding from must_act or must_revalidate?",
+      "verdict": ""
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "question": "Does each receipt account for every parseable occurrence and active finding through response, independent outcome, and reopen without equating addressed with verified?",
+      "verdict": ""
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "question": "Are original and superseding events both retained while only current accepted decisions can support clean projections and audit disagreement remains actionable?",
+      "verdict": ""
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "question": "Do all deterministic tripwires produce only needs_reconciliation and never semantic merge, closure, suppression, or identity assignment?",
+      "verdict": ""
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "question": "Does the importer preserve all available evidence, publish atomically, mark gaps unknown, constrain partial records to evidence-only use, and invent no semantic relationships?",
+      "verdict": ""
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "question": "Do current and target-only inputs preserve evidence while future versions fail before publish and corrupt inputs expose only valid recovered subsets?",
+      "verdict": ""
+    },
+    {
+      "id": "SC17",
+      "task_id": "T17",
+      "question": "Are redacted and unavailable evidence visible without leakage, duplicates idempotent, and out-of-order records corrected without payload rewriting?",
+      "verdict": ""
+    },
+    {
+      "id": "SC18",
+      "task_id": "T18",
+      "question": "Do concurrent and crash-resumed imports converge on one byte-identical accepted revision with no partial rows?",
+      "verdict": ""
+    },
+    {
+      "id": "SC19",
+      "task_id": "T19",
+      "question": "Does a region-only edit stale exactly affected scoped findings while unknown or cross-cutting scope falls back to whole-plan freshness?",
+      "verdict": ""
+    },
+    {
+      "id": "SC20",
+      "task_id": "T20",
+      "question": "Are redacted and tombstoned evidence represented as visible unknown state through WBC policy with neither content leakage nor silent closure?",
+      "verdict": ""
+    },
+    {
+      "id": "SC21",
+      "task_id": "T21",
+      "question": "Does the audit hash and assess each of the five cancelled CL2 artifacts and state an explicit not-adopted boundary?",
+      "verdict": ""
+    },
+    {
+      "id": "SC22",
+      "task_id": "T22",
+      "question": "Are all relevant plan, gate, lifecycle, queue, provider, delivery, model, and external-effect seams instrumented so a forbidden mutation would fail the test?",
+      "verdict": ""
+    },
+    {
+      "id": "SC23",
+      "task_id": "T23",
+      "question": "Do controlled writer and crash interleavings exercise the dangerous transaction windows and prove outbox recovery plus restart deduplication?",
+      "verdict": ""
+    },
+    {
+      "id": "SC24",
+      "task_id": "T24",
+      "question": "Do compatibility and privacy tests prove old readers still work and that WBC payload/reference/retention/effect rules are reused rather than cloned?",
+      "verdict": ""
+    },
+    {
+      "id": "SC25",
+      "task_id": "T25",
+      "question": "Does the CL3 handoff contain exact current hashes, complete fixture/fault evidence, the unaccepted-CL1 assumption, projection bounds, and every unresolved limit?",
+      "verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Proceed under settled decision SD1 even though the archived CL1 handoff has accepted_for_cl2=false and five procedural blockers; encode that assumption in store metadata, importer output, tests, audit context, and the CL3 handoff so a downstream gate can reject it visibly.",
+    "All six plan-critique workers failed their own structural output audit. Clearance contains zero finding IDs, so critique_resolution_coverage must remain exactly empty; absence of cleared findings is not evidence that implementation risks were independently reviewed.",
+    "Port CL1 schemas.py, semantic_loop.py, and __init__.py from /workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/ before making reviewable v2 deltas; do not adopt cancelled CL2 files before the read-only audit.",
+    "The approved verbatim port creates archived files of roughly 731 and 1206 lines, which conflicts with the plan's non-blocking preference that each new source stay under roughly 500 lines. Preserve verbatim provenance and record this unresolved should-level limit in the CL3 handoff rather than silently refactoring or claiming both conditions hold.",
+    "CL2 migrations start at version 5 and are passed via default_combined_migrations() to SqliteLedgerMigrator; do not edit arnold/workflow/ledger_migrations.py, use DROP, rewrite applied checksums, or add backward migration authority.",
+    "CritiqueLedgerStore shares the SqliteAttemptLedgerStore SQLite connection and WAL/BEGIN IMMEDIATE discipline but remains a separate class, not a subclass or parallel execution/lifecycle authority.",
+    "Reuse arnold/workflow/payload_policy.py, durable_refs.py, ledger_outbox.py, and existing retention, redaction, ordering, and effect rules. CL2 may add domain tables and types but must not fork or reimplement WBC substrate contracts.",
+    "Every critic attempt and parseable occurrence, including failed attempts and valid no_additional_findings, remains immutable and addressable; strict new and PARTIAL_RECOVERED occurrences cannot carry semantic_finding_id or close findings.",
+    "Only current accepted reconciliation decisions may drive projections. Corrections, audit disagreements, superseded decisions, raw occurrences, and near matches remain durable evidence and cannot independently author identity, merge, closure, or suppression.",
+    "Replay and all projections are read-only rebuildable views with exact input/output hashes; they must issue no model call, external effect, database mutation, plan/gate/lifecycle transition, queue action, or provider/delivery write.",
+    "Keep the cumulative ledger complete and the active-action projection bounded. must_act, must_revalidate, and context_only must not collapse dispositions, and every requested active finding requires an enumerated response or structured non-action.",
+    "Round accountability must distinguish reviser response from independent verified outcome and link attempt, occurrence, accepted finding, response/non-action, outcome, rationale, evidence limit, and reopen condition without becoming a second authority.",
+    "Region, evidence, dependency, contract, repository, schema/model/profile, near-match, and audit-disagreement tripwires trigger re-review only. Unknown or cross-cutting region scope defaults to whole-plan freshness, while unrelated region edits do not force full re-adjudication.",
+    "Legacy imports must fail closed for unsupported targets, resume idempotently, preserve source payloads and ordering evidence, mark unavailable semantics legacy_unknown, and expose redacted/tombstoned evidence as unknown without leakage or invented relationships.",
+    "The harness owns authoritative integration and full-suite validation. Its post-execute scope must include the new tests/arnold/critique_ledger suite plus unchanged workflow regressions for attempt_ledger_store, ledger_outbox, ledger_migrations, ledger_payload_enforcement, payload_policy, durable_refs, and execution_attempt_ledger because plan-time blast-radius confidence is low.",
+    "After implementation, inspect every new source for single responsibility and record any unavoidable size exception; do not sacrifice custody, compatibility, or verbatim-port provenance merely to satisfy the approximate 500-line preference.",
+    "No deployment, restart, chain launch, runtime mutation, dual-write period, silent fallback, embedding database, semantic threshold authority, repair queue, rollout dashboard, or plan-local JSON authority is in CL2 scope."
+  ],
+  "meta_commentary": "Execute in DAG order, treating each task as one bounded implementation turn with at most one diagnostic rerun of its narrow selectors. T1-T5 establish the archived CL1 baseline and additive v2 semantic contract; T6-T8 establish forward-only DDL and atomic WBC-backed custody; T9-T14 build deterministic replay and projections; T15-T20 cover import and freshness; T21 is the independent cancelled-archive audit; T22-T24 author focused fault, authority-negative, compatibility, and privacy evidence; T25 binds exact final hashes and results for CL3. Do not add a model task for integration or full-suite testing because the harness owns post-execute validation. The only unresolved plan tension is the should-level under-500-line preference versus the settled byte-faithful port of the 731-line schemas.py and 1206-line semantic_loop.py; keep it explicit in the handoff. No human-only prerequisite exists, so execution should not pause for user action.",
+  "user_actions": []
+}

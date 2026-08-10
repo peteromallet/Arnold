@@ -1,0 +1,16 @@
+{
+  "schema": "t0.0.source-manifest.v1",
+  "captured_at": "2026-08-02T12:55:01Z",
+  "collector": "Codex shell inspection; sha256sum/stat/rg/pytest",
+  "runtime_commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+  "clock_basis": "local UTC wall clock",
+  "claims": [
+    {"claim": "read-only current-source API", "path": "/private/tmp/arnold-post-c7-release-recovery/arnold_pipelines/run_authority/current_source.py", "sha256": "2f51b752435022962ba87b2b35c3caf91565c0bbfea9945e570441a884b3321c", "size": 8560, "excerpt": "evaluate_current_source; SATISFIED only for current grant/fence/attempt/accepted decision"},
+    {"claim": "typed decision has no writer", "path": "/private/tmp/arnold-post-c7-release-recovery/arnold_pipelines/run_authority/contracts.py", "sha256": "94b95017ee7f2646cff9a273fb48966cfd56bb56d019f28b2ee0033db3898c16", "size": 20516, "excerpt": "Decision contract outcomes accepted/rejected/quarantined/superseded"},
+    {"claim": "projection is pure", "path": "/private/tmp/arnold-post-c7-release-recovery/arnold_pipelines/run_authority/reducer.py", "sha256": "5e40b4342c09cdd51561aa80dcca354eb47390f5ddaed12f61e2a136ae90c2ef", "size": 16467, "excerpt": "reduce_run_authority projects supplied records"},
+    {"claim": "M11 binding zero-authority/retirement constraints", "path": ".megaplan/initiatives/custody-control-plane/briefs/m11-conformance-and-legacy-retirement.md", "sha256": "98d189f5fa23cbf40bfdce723a50f91c75b2052c2630046c9d7d61211557e5f3", "size": 30452, "excerpt": "current installed path and fail-closed authority requirements"},
+    {"claim": "incident task and coordinates", "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md", "sha256": "3e3d3aa7cda07a2416e60c2566cf01db4d83e370c4a2df6ba88c56539cb2ff9e", "size": 96514, "excerpt": "T0.0, tuple, RA-CONTAIN blocked"},
+    {"claim": "v2 branch/workspace/profile", "path": "docs/arnold/critique-ledger-epic-explainer.md", "sha256": "7b5e6952de2df207237144abc0889587784d37f9c8926fe91b20754204c1c3f4", "size": 10362, "excerpt": "branch, workspace, partnered-5-glm"}
+  ],
+  "remote_claims": []
+}

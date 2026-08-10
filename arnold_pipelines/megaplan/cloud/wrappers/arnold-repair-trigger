@@ -1,0 +1,2101 @@
+#!/workspace/.megaplan/supervisor-python/current/bin/python3
+"""Scan queued failure markers and optionally dispatch the bounded repair loop."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Mapping
+
+def _runtime_failure(reason: str) -> None:
+    status_dir = Path(
+        os.environ.get(
+            "MEGAPLAN_SUPERVISOR_STATUS_DIR",
+            os.environ.get("CLOUD_WATCHDOG_STATUS_DIR", "/workspace/.megaplan/status"),
+        )
+    )
+    status_dir.mkdir(parents=True, exist_ok=True)
+    target = status_dir / "repair-trigger.supervisor-runtime-failure.json"
+    payload = {
+        "component": "repair-trigger",
+        "reason": reason,
+        "schema_version": "arnold-supervisor-runtime-failure-v1",
+        "status": "failed",
+    }
+    fd, tmp = tempfile.mkstemp(prefix=target.name + ".", dir=str(status_dir))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, target)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
+def _select_supervisor_interpreter() -> None:
+    preferred = Path(
+        os.environ.get(
+            "MEGAPLAN_SUPERVISOR_PYTHON",
+            "/workspace/.megaplan/supervisor-python/current/bin/python3",
+        )
+    )
+    required = os.environ.get("MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED", "0") == "1"
+    if not preferred.is_file() or not os.access(preferred, os.X_OK):
+        if required:
+            _runtime_failure("dedicated_interpreter_missing")
+            raise SystemExit(78)
+        return
+    current = Path(sys.executable).resolve()
+    target = preferred.resolve()
+    if current == target:
+        return
+    env = os.environ.copy()
+    env["MEGAPLAN_SUPERVISOR_PYTHON"] = str(target)
+    os.execve(str(target), [str(target), str(Path(__file__).resolve()), *sys.argv[1:]], env)
+
+
+if __name__ == "__main__":
+    _select_supervisor_interpreter()
+
+try:
+    import yaml  # noqa: F401
+    from arnold_pipelines.megaplan.cloud import feature_flags, repair_requests
+    from arnold_pipelines.megaplan.chain.spec import chain_spec_sha256
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+    from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+    from arnold_pipelines.megaplan.cloud.redact import redact_payload
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        classify_repair_dispatch,
+        project_repair_custody,
+        repair_request_decision_is_terminal,
+    )
+    from arnold_pipelines.megaplan.cloud.repair_goal import (
+        GOAL_ACTIVE,
+        attach_repair_goal_owner,
+        ensure_repair_goal,
+    )
+    from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
+        validate_engine_runtime_repair_admission,
+    )
+    from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+    from arnold_pipelines.megaplan.cloud.repair_escalation import evaluate_checkpoint_escalation
+    from arnold_pipelines.megaplan.cloud.repair_lock import (
+        acquire_repair_lock,
+        inspect_repair_lock,
+        release_repair_lock,
+    )
+    from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+    from arnold_pipelines.megaplan.managed_agent import (
+        MANAGED_AGENT_CUSTODIAN,
+        MANAGED_AGENT_SCHEMA,
+        stable_managed_run_id,
+        validate_automatic_managed_manifest,
+    )
+    from arnold_pipelines.megaplan.cloud.simple_fixer import SimpleFixerOccurrence
+    from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+        RepairDelegation,
+        delegate_to_simple_fixer,
+    )
+    from arnold_pipelines.megaplan.custody.contracts import (
+        CustodyTargetKey,
+        build_custody_target_key,
+        normalize_custody_target_key,
+    )
+except Exception:
+    _runtime_failure("readiness_import_failed")
+    raise SystemExit(78)
+
+TERMINAL_DECISIONS = {"coalesced", "stale", "superseded"}
+STALE_EVIDENCE_KINDS = {
+    "invalid_marker_json",
+    "missing_marker_json",
+    "workspace_missing",
+    "spec_missing",
+    "stale_marker_plan_ref",
+    "stale_needs_human_plan_ref",
+}
+HOT_ENV_PATH = Path(os.environ.get("ARNOLD_CLOUD_HOT_ENV", "/workspace/.cloud-hot-env"))
+
+
+def _is_typed_supervisor_binding_drift(record: Mapping[str, Any]) -> bool:
+    """Return whether a supervisor exit carries exact binding-drift custody."""
+
+    signature = (
+        record.get("problem_signature")
+        if isinstance(record.get("problem_signature"), Mapping)
+        else {}
+    )
+    return bool(
+        record.get("source") == "arnold_supervise_exit"
+        and signature.get("failure_kind") == "chain_execution_binding_drift"
+        and signature.get("phase_or_step") == "chain_execution_binding"
+        and str(signature.get("blocked_task_id") or "").startswith(
+            "chain_execution_binding:"
+        )
+        and "active_errors=" in str(signature.get("event_signature") or "")
+    )
+
+
+def _load_hot_env(path: Path = HOT_ENV_PATH) -> None:
+    """Load simple KEY=VALUE lines so systemd path activation sees hot flags."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+            continue
+        if key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+RUNTIME_MANIFEST_DEFAULT_PATH = "/workspace/.megaplan/runtime-manifest.json"
+
+
+def _runtime_manifest_path() -> Path:
+    """Return the manifest path from the stable bootstrap env or the default."""
+
+    return Path(os.environ.get("ARNOLD_RUNTIME_MANIFEST", RUNTIME_MANIFEST_DEFAULT_PATH))
+
+
+def _runtime_manifest_policy_path() -> Path:
+    """Return the ``.runtime_policy.json`` sidecar path for the bound manifest.
+
+    The sidecar sits next to the runtime manifest (per-session binding); an
+    ``ARNOLD_RUNTIME_POLICY`` override supports test/ops pinning.
+    """
+
+    env_path = os.environ.get("ARNOLD_RUNTIME_POLICY", "").strip()
+    if env_path:
+        return Path(env_path)
+    return _runtime_manifest_path().with_name(".runtime_policy.json")
+
+
+def _has_valid_allow_manifestless_permit() -> bool:
+    """True iff the sidecar holds a currently-valid ``allow_manifestless`` permit.
+
+    The sidecar is an append-only ``permits`` list; the LAST unrevoked,
+    structurally valid, unexpired ``allow_manifestless`` record is the active
+    one.  Validation matches the bash admission helper and the Python permit
+    contract: ``0 < expires_at - issued_at <= 24h`` and current-unexpired,
+    with revocation as an auditable ``revoked_at`` tombstone.  Invalid or
+    expired records never admit (fail closed).
+    """
+
+    policy_path = _runtime_manifest_policy_path()
+    if not policy_path.exists():
+        return False
+    try:
+        payload = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    permits = payload.get("permits") if isinstance(payload, dict) else None
+    if not isinstance(permits, list):
+        return False
+    now = datetime.now(timezone.utc)
+
+    def _parse_utc(value: Any) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    for record in reversed(permits):
+        if not isinstance(record, dict):
+            continue
+        if record.get("kind") != "allow_manifestless":
+            continue
+        if record.get("revoked_at"):
+            continue
+        if not isinstance(record.get("id"), str) or not record["id"]:
+            continue
+        issued = _parse_utc(record.get("issued_at"))
+        expires = _parse_utc(record.get("expires_at"))
+        if issued is None or expires is None:
+            continue
+        lifetime = expires - issued
+        if not (timedelta(0) < lifetime <= timedelta(hours=24)):
+            continue
+        if now >= expires:
+            continue
+        return True
+    return False
+
+
+def _bootstrap_runtime_manifest() -> Any | None:
+    """Bootstrap the per-runtime manifest, or None only when genuinely absent.
+
+    Fail-closed manifest authority (design: the manifest is THE post-bootstrap
+    resolver).  When ``ARNOLD_RUNTIME_MANIFEST`` is set OR the default
+    bootstrap path exists, the manifest MUST load and validate: a corrupt,
+    schema-mismatched, or unreadable manifest raises :class:`ManifestError`
+    (the caller exits non-zero with a typed ``manifest_invalid`` error BEFORE
+    any dispatch).  Only when the manifest is genuinely ABSENT (no env, no
+    file at the bootstrap path) does this return ``None``; admission then
+    requires a valid ``allow_manifestless`` permit (P1 admission kernel, see
+    :func:`_enforce_manifest_authority`).
+    """
+
+    env_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
+    bootstrap_path = Path(env_path) if env_path else Path(RUNTIME_MANIFEST_DEFAULT_PATH)
+    if not env_path and not bootstrap_path.exists():
+        return None
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+            ManifestError,
+            bootstrap_manifest,
+        )
+    except ImportError as exc:
+        raise ManifestError(
+            f"runtime_manifest module unavailable while a manifest is present: {exc}"
+        ) from exc
+    try:
+        return bootstrap_manifest(bootstrap_path)
+    except ManifestError:
+        raise
+    except Exception as exc:
+        raise ManifestError(f"manifest bootstrap failed: {exc}") from exc
+
+
+def _enforce_manifest_authority() -> None:
+    """Fail closed on a present-but-invalid runtime manifest (design §6).
+
+    A manifest present at ``ARNOLD_RUNTIME_MANIFEST`` or the default bootstrap
+    path is THE resolver: when it cannot load and validate, exit non-zero with
+    a typed ``manifest_invalid`` error before any dispatch or fallback.  A
+    genuinely absent manifest is admitted ONLY by a valid, unexpired
+    ``allow_manifestless`` permit in the ``.runtime_policy.json`` sidecar;
+    without one the trigger fails closed (P1 admission kernel — absence is
+    never an allow).
+    """
+
+    try:
+        manifest = _bootstrap_runtime_manifest()
+    except Exception as exc:
+        reason = str(exc) or type(exc).__name__
+        print(f"manifest_invalid: {reason}", file=sys.stderr)
+        raise SystemExit(78) from exc
+    if manifest is not None:
+        return
+    if not _has_valid_allow_manifestless_permit():
+        print(
+            "runtime manifest absent without a valid allow_manifestless permit; failing closed",
+            file=sys.stderr,
+        )
+        raise SystemExit(78)
+
+def _manifest_epic() -> dict | None:
+    """Return the bootstrapped manifest's ``epic`` section, or None when absent."""
+
+    try:
+        manifest = _bootstrap_runtime_manifest()
+    except Exception as exc:
+        reason = str(exc) or type(exc).__name__
+        print(f"manifest_invalid: {reason}", file=sys.stderr)
+        raise SystemExit(78) from exc
+    if manifest is None:
+        return None
+    epic = getattr(manifest, "epic", None)
+    return epic if isinstance(epic, dict) else None
+
+
+def _manifest_repair_bin() -> str | None:
+    epic = _manifest_epic()
+    if epic is None:
+        return None
+    value = epic.get("repair_bin")
+    return str(value) if value else None
+
+
+def _manifest_runtime_root() -> str | None:
+    epic = _manifest_epic()
+    if epic is None:
+        return None
+    value = epic.get("runtime_root")
+    return str(value) if value else None
+
+
+def _default_repair_bin() -> str:
+    """Resolve the repair loop from the runtime manifest only.
+
+    The manifest's ``epic.repair_bin`` is the sole declarative source; the
+    env override is an explicit operator/test pin.  No with_name sibling
+    fallback — an unresolved default fails closed at dispatch.
+    """
+
+    manifest_bin = _manifest_repair_bin()
+    if manifest_bin:
+        return manifest_bin
+    return os.getenv("ARNOLD_REPAIR_TRIGGER_REPAIR_BIN") or ""
+
+
+def _default_meta_repair_bin() -> str:
+    """Resolve the meta repair loop from the runtime manifest only.
+
+    Derived from the manifest's ``epic.runtime_root``; the env override is an
+    explicit operator/test pin.  No with_name sibling fallback.
+    """
+
+    runtime_root = _manifest_runtime_root()
+    if runtime_root:
+        derived = str(
+            Path(runtime_root)
+            / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+        )
+        return derived
+    return os.getenv("ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN") or ""
+
+
+def main(argv: list[str] | None = None) -> int:
+    _load_hot_env()
+    # Fail closed BEFORE any dispatch or fallback resolution: a present-but-
+    # invalid runtime manifest refuses with a typed manifest_invalid error.
+    _enforce_manifest_authority()
+    _reject_legacy_repair_bin_overrides(argv)
+    args = _parse_args(argv)
+    marker_dir = Path(args.marker_dir)
+    queue_dir = repair_requests.validate_queue_root(args.queue_root)
+    lock_dir = Path(args.lock_dir) if args.lock_dir else queue_dir / "repair-trigger.lock"
+    repair_bin = Path(args.repair_bin)
+    meta_repair_bin = Path(args.meta_repair_bin)
+    enabled = feature_flags.repair_trigger_enabled()
+    requested_request_id = str(args.request_id or "").strip()
+
+    request_records = repair_requests.iter_repair_requests(
+        queue_dir,
+        include_malformed=True,
+    )
+    if requested_request_id:
+        request_records = [
+            record
+            for record in request_records
+            if str(record.get("request_id") or "") == requested_request_id
+        ]
+    def requested_mutation_path(record: Mapping[str, Any]) -> str:
+        if _is_typed_supervisor_binding_drift(record):
+            return feature_flags.MUTATION_PATH_L2
+        target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
+        deterministic = (
+            target.get("deterministic_superfixer_evidence")
+            if isinstance(target.get("deterministic_superfixer_evidence"), Mapping)
+            else {}
+        )
+        if deterministic.get("actionable") is True:
+            if (
+                str(target.get("dispatch_intent") or "") == "deep_superfixer_repair"
+                and str(target.get("retry_strategy") or "") == "deep_superfixer_repair"
+            ):
+                return feature_flags.MUTATION_PATH_L3
+            return feature_flags.MUTATION_PATH_L2
+        return feature_flags.MUTATION_PATH_L1
+
+    # Select authorization from immutable request evidence before taking the
+    # queue lock. Mixed queues may carry L1/L2/L3 candidates; _dispatch still
+    # revalidates the exact classified layer at the claim/subprocess boundary.
+    requested_paths = {requested_mutation_path(record) for record in request_records}
+    authorized = any(
+        feature_flags.mutation_authorized(path)
+        for path in requested_paths
+    )
+    if not request_records:
+        _emit(
+            {
+                "event": "repair_trigger",
+                "status": "empty",
+                "enabled": enabled,
+                "authorized": authorized,
+                "queue_dir": str(queue_dir),
+            }
+        )
+        return 0
+
+    # Queue inspection and target diagnostics remain available when mutation
+    # authority is absent.  Do not acquire the filesystem lock in that mode:
+    # lock creation/removal is itself an L1 state mutation.
+    if not authorized:
+        return _scan_under_lock(
+            marker_dir=marker_dir,
+            queue_dir=queue_dir,
+            repair_data_dir=Path(args.repair_data_dir) if args.repair_data_dir else None,
+            repair_bin=repair_bin,
+            meta_repair_bin=meta_repair_bin,
+            enabled=enabled,
+            authorized=False,
+            request_id=requested_request_id,
+        )
+
+    lock = acquire_repair_lock(
+        lock_dir,
+        session="arnold-repair-trigger",
+        target_id=str(queue_dir),
+        extra={"queue_dir": str(queue_dir), "enabled": enabled, "authorized": authorized},
+        is_pid_live=_pid_is_live,
+    )
+    if not lock.acquired:
+        _emit(
+            {
+                "event": "repair_trigger",
+                "status": "busy",
+                "lock_status": lock.status,
+                "lock_dir": str(lock_dir),
+                "owner": lock.owner or {},
+                "stale_evidence": lock.stale_evidence or {},
+            }
+        )
+        return 0
+
+    try:
+        return _scan_under_lock(
+            marker_dir=marker_dir,
+            queue_dir=queue_dir,
+            repair_data_dir=Path(args.repair_data_dir) if args.repair_data_dir else None,
+            repair_bin=repair_bin,
+            meta_repair_bin=meta_repair_bin,
+            enabled=enabled,
+            authorized=True,
+            request_id=requested_request_id,
+        )
+    finally:
+        release_repair_lock(lock_dir, owner=lock.owner)
+
+
+def _scan_under_lock(
+    *,
+    marker_dir: Path,
+    queue_dir: Path,
+    repair_data_dir: Path | None,
+    repair_bin: Path,
+    meta_repair_bin: Path,
+    enabled: bool,
+    authorized: bool,
+    request_id: str = "",
+) -> int:
+    requested_request_id = request_id
+    terminal_request_ids = _terminal_request_ids(queue_dir)
+    selected_by_signature: dict[str, dict[str, Any]] = {}
+    dispatch_candidate: dict[str, Any] | None = None
+
+    records = list(repair_requests.iter_repair_requests(queue_dir, include_malformed=True))
+    def evidence_rank(item: Mapping[str, Any]) -> int:
+        target = item.get("target") if isinstance(item.get("target"), Mapping) else {}
+        deterministic = (
+            target.get("deterministic_superfixer_evidence")
+            if isinstance(target.get("deterministic_superfixer_evidence"), Mapping)
+            else {}
+        )
+        # A later L3 request can be a strict evidence upgrade of an earlier
+        # same-signature observation. Prefer the actionable typed receipt so
+        # an evidence-poor sibling cannot permanently shadow its corrective
+        # path; chronology remains the tie-breaker within the same rank.
+        return 0 if deterministic.get("actionable") is True else 1
+
+    records.sort(key=lambda item: (evidence_rank(item), str(item.get("created_at") or "")))
+    for record in records:
+        if requested_request_id and str(record.get("request_id") or "") != requested_request_id:
+            continue
+        if record.get("kind") == "malformed_repair_request":
+            if authorized:
+                decision = repair_requests.record_malformed_file(queue_dir, record["path"], record["reason"])
+                _emit({"event": "repair_trigger_decision", "decision": decision})
+            else:
+                _emit(
+                    {
+                        "event": "repair_trigger_observe",
+                        "status": "observed",
+                        "authorized": False,
+                        "kind": "malformed_repair_request",
+                        "path": record["path"],
+                        "reason": record["reason"],
+                    }
+                )
+            continue
+
+        request_id = str(record.get("request_id") or "")
+        if not request_id or request_id in terminal_request_ids:
+            continue
+
+        signature_key = str(record.get("problem_signature_key") or "")
+        if signature_key in selected_by_signature:
+            canonical = selected_by_signature[signature_key]
+            if authorized:
+                decision = repair_requests.write_decision(
+                    queue_dir,
+                    request_id=request_id,
+                    decision="coalesced",
+                    reason="matching pending request already selected by repair trigger",
+                    related_request_id=str(canonical.get("request_id") or ""),
+                )
+                terminal_request_ids.add(request_id)
+                _emit({"event": "repair_trigger_decision", "decision": decision})
+            else:
+                _emit(
+                    {
+                        "event": "repair_trigger_observe",
+                        "status": "observed",
+                        "authorized": False,
+                        "request_id": request_id,
+                        "observation": "duplicate_signature",
+                        "related_request_id": str(canonical.get("request_id") or ""),
+                    }
+                )
+            continue
+        selected_by_signature[signature_key] = record
+
+        target = _resolve_target(record, marker_dir=marker_dir, repair_data_dir=repair_data_dir)
+        disposition = _classify_request(
+            record,
+            target,
+            queue_dir=queue_dir,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+            exact_request_id=requested_request_id,
+        )
+        if disposition["decision"] in {"stale", "superseded"}:
+            if authorized:
+                decision = repair_requests.write_decision(
+                    queue_dir,
+                    request_id=request_id,
+                    decision=disposition["decision"],
+                    reason=disposition["reason"],
+                    related_request_id=disposition.get("related_request_id", ""),
+                )
+                terminal_request_ids.add(request_id)
+                _emit({"event": "repair_trigger_decision", "request_id": request_id, "target": target, "decision": decision})
+            else:
+                _emit(
+                    {
+                        "event": "repair_trigger_observe",
+                        "status": "observed",
+                        "authorized": False,
+                        "request_id": request_id,
+                        "observation": disposition["decision"],
+                        "reason": disposition["reason"],
+                        "target": _target_summary(target),
+                    }
+                )
+            continue
+
+        _emit(
+            {
+                "event": "repair_trigger_observe",
+                "status": "eligible" if authorized else "blocked",
+                "request_id": request_id,
+                "enabled": enabled,
+                "authorized": authorized,
+                "blocked_reason": "l1_mutation_not_authorized" if not authorized else "",
+                "dispatch_decision": disposition["dispatch_decision"],
+                "dispatch_intent": disposition["dispatch_intent"],
+                "custody_bucket": disposition["custody_bucket"],
+                "target": _target_summary(target),
+            }
+        )
+        if (
+            authorized
+            and disposition["decision"] == "actionable"
+            and not str(disposition.get("blocker_id") or "").strip()
+        ):
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="canonical blocker_id missing",
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_claim",
+                    "status": "missing_blocker_id",
+                    "request_id": request_id,
+                    "evidence": retry,
+                }
+            )
+            continue
+        if dispatch_candidate is None and disposition["decision"] == "actionable":
+            dispatch_candidate = {**record, **disposition, "_resolved_target": target}
+        elif authorized and disposition["dispatch_decision"] == "repairing" and disposition.get("blocker_id"):
+            _emit(
+                {
+                    "event": "repair_trigger_claim",
+                    "status": "already_claimed",
+                    "request_id": request_id,
+                    "blocker_id": disposition["blocker_id"],
+                    "evidence": {},
+                }
+            )
+
+    if dispatch_candidate is None:
+        _emit(
+            {
+                "event": "repair_trigger",
+                "status": "no_actionable_requests",
+                "enabled": enabled,
+                "authorized": authorized,
+            }
+        )
+        return 0
+
+    if not authorized:
+        mutation_path = str(dispatch_candidate.get("dispatch_intent") or "dispatch_l1")
+        _emit(
+            {
+                "event": "repair_trigger",
+                "status": "blocked",
+                "enabled": enabled,
+                "authorized": False,
+                "reason": (
+                    "L3 mutation requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED"
+                    if mutation_path == "deep_superfixer_repair"
+                    else "L2 mutation requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED"
+                    if mutation_path == "broken_superfixer"
+                    else "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
+                ),
+            }
+        )
+        return 0
+
+    return _dispatch(
+        queue_dir=queue_dir,
+        marker_dir=marker_dir,
+        repair_bin=repair_bin,
+        meta_repair_bin=meta_repair_bin,
+        request=dispatch_candidate,
+    )
+
+
+def _dispatch(
+    *,
+    queue_dir: Path,
+    marker_dir: Path,
+    repair_bin: Path,
+    meta_repair_bin: Path,
+    request: Mapping[str, Any],
+) -> int:
+    # Fail closed BEFORE any claim/subprocess effect: with the with_name
+    # fallback removed, an empty default means nothing resolved (manifest has
+    # no epic.repair_bin and no env pin) — dispatch cannot proceed.
+    if not str(repair_bin) or str(repair_bin) == ".":
+        print(
+            "arnold-repair-trigger: no repair loop resolved (runtime manifest declares no epic.repair_bin and no ARNOLD_REPAIR_TRIGGER_REPAIR_BIN); failing closed",
+            file=sys.stderr,
+        )
+        return 78
+    target = request.get("_resolved_target") if isinstance(request.get("_resolved_target"), Mapping) else {}
+    request_id = str(request.get("request_id") or "")
+    session = str(target.get("target_session") or request.get("session") or "")
+    refs = target.get("current_refs") if isinstance(target.get("current_refs"), Mapping) else {}
+    marker = target.get("marker") if isinstance(target.get("marker"), Mapping) else {}
+    workspace = str(request.get("workspace") or refs.get("workspace") or marker.get("workspace") or "")
+    remote_spec = str(refs.get("remote_spec") or marker.get("remote_spec") or "")
+    blocker_id = str(request.get("blocker_id") or "")
+    blocker_fingerprint = (
+        dict(request.get("blocker_fingerprint") or {})
+        if isinstance(request.get("blocker_fingerprint"), Mapping)
+        else {}
+    )
+    repair_identity = (
+        dict(request.get("repair_identity") or {})
+        if isinstance(request.get("repair_identity"), Mapping)
+        else {}
+    )
+    repair_identity_key = str(request.get("repair_identity_key") or "")
+    dispatch_intent = str(request.get("dispatch_intent") or "")
+    deep_dispatch = dispatch_intent == "deep_superfixer_repair"
+    l2_dispatch = dispatch_intent == "broken_superfixer"
+    # L2/L3 are still mutation requests, but they have a distinct managed
+    # worker path.  It is opt-in only after the typed source-repair admission
+    # is validated against the exact repair-identity key below; a deep label
+    # or deterministic finding alone can never create a child process.
+    meta_dispatch = False
+    request_target_record = (
+        request.get("target") if isinstance(request.get("target"), Mapping) else {}
+    )
+    engine_runtime_admission = (
+        request.get("engine_runtime_repair_admission")
+        if isinstance(request.get("engine_runtime_repair_admission"), Mapping)
+        else target.get("engine_runtime_repair_admission")
+        if isinstance(target.get("engine_runtime_repair_admission"), Mapping)
+        else request_target_record.get("engine_runtime_repair_admission")
+        if isinstance(request_target_record.get("engine_runtime_repair_admission"), Mapping)
+        else {}
+    )
+    admission_reason = ""
+    if deep_dispatch or l2_dispatch:
+        if repair_identity_key:
+            admission_ok, admission_reason = validate_engine_runtime_repair_admission(
+                engine_runtime_admission,
+                occurrence_fingerprint=repair_identity_key,
+            )
+            meta_dispatch = admission_ok
+        else:
+            admission_reason = "exact repair_identity_key is required for source repair admission"
+    selected_bin = repair_bin
+    mutation_path = (
+        feature_flags.MUTATION_PATH_L3
+        if deep_dispatch
+        else feature_flags.MUTATION_PATH_L2
+        if l2_dispatch
+        else feature_flags.MUTATION_PATH_L1
+    )
+
+    if not session or not workspace or not remote_spec:
+        decision = repair_requests.write_decision(
+            queue_dir,
+            request_id=request_id,
+            decision="stale",
+            reason="missing session/workspace/remote_spec for repair dispatch",
+        )
+        _emit({"event": "repair_trigger_decision", "request_id": request_id, "decision": decision})
+        return 0
+    if not blocker_id:
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="canonical blocker_id missing",
+        )
+        _emit(
+            {
+                "event": "repair_trigger_claim",
+                "status": "missing_blocker_id",
+                "request_id": request_id,
+                "session": session,
+                "custody_retry": retry,
+            }
+        )
+        return 0
+
+    # Defense in depth at the claim/subprocess effect boundary.  Callers may
+    # classify and observe freely, but must not create a claim or child process
+    # unless the shared master-plus-L1 predicate still authorizes mutation.
+    if not feature_flags.mutation_authorized(mutation_path):
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason=(
+                "L3 mutation authorization changed before claim"
+                if deep_dispatch
+                else "L2 mutation authorization changed before claim"
+                if l2_dispatch
+                else "L1 mutation authorization changed before claim"
+            ),
+        )
+        _emit(
+            {
+                "event": "repair_trigger",
+                "status": "blocked",
+                "request_id": request_id,
+                "authorized": False,
+                "reason": (
+                    "L3 mutation authorization changed before claim"
+                    if deep_dispatch
+                    else "L2 mutation authorization changed before claim"
+                    if l2_dispatch
+                    else "L1 mutation authorization changed before claim"
+                ),
+                "custody_retry": retry,
+            }
+        )
+        return 0
+
+    # ── P2 typed runtime transitions: declare + consider BEFORE any claim ──
+    # One typed deviation/fallback event path.  The incident-ledger append is
+    # synchronous and never swallowed: a policy rejection (ValueError) or
+    # journal write failure (OSError) aborts dispatch — no event means no
+    # claim and no child process.  Emitting never dispatches repair and never
+    # triggers a scan.
+    try:
+        chain_digest = chain_spec_sha256(Path(remote_spec))
+    except (OSError, TypeError, ValueError):
+        chain_digest = ""
+    if not chain_digest:
+        print(
+            "arnold-repair-trigger: runtime transition ledger requires a readable chain spec; failing closed",
+            file=sys.stderr,
+        )
+        return 78
+    transition_writer = RuntimeTransitionWriter(Path(workspace))
+    try:
+        _record_runtime_transition(
+            transition_writer,
+            "deviation_declared",
+            session=session,
+            remote_spec=remote_spec,
+            chain_spec_sha256=chain_digest,
+            repair_bin=str(repair_bin),
+            request_id=request_id,
+            failure_class="availability",
+            error=(
+                dispatch_intent
+                or "repair request enqueued for a blocked runtime session"
+            ),
+            attempt=request_id,
+        )
+        _record_runtime_transition(
+            transition_writer,
+            "fallback_considered",
+            session=session,
+            remote_spec=remote_spec,
+            chain_spec_sha256=chain_digest,
+            repair_bin=str(repair_bin),
+            request_id=request_id,
+            failure_class="availability",
+        )
+    except (ValueError, OSError) as exc:
+        print(
+            f"arnold-repair-trigger: runtime transition ledger write failed; blocking dispatch: {exc}",
+            file=sys.stderr,
+        )
+        return 78
+
+    repair_layer = "l3" if deep_dispatch else "l2" if l2_dispatch else "l1"
+    child_command = (
+        f"{selected_bin} {session} l3_progress_auditor"
+        if deep_dispatch
+        else f"{selected_bin} {session} l1_custody_failure"
+        if l2_dispatch
+        else f"{selected_bin} {session} {workspace} {remote_spec}"
+    )
+    claim = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id=blocker_id,
+        request_id=request_id,
+        actor=(
+            "arnold-repair-trigger-l3"
+            if deep_dispatch
+            else "arnold-repair-trigger-l2"
+            if l2_dispatch
+            else "arnold-repair-trigger"
+        ),
+        session=session,
+        blocker_fingerprint=blocker_fingerprint,
+        repair_identity=repair_identity,
+        pid=os.getpid(),
+        command=child_command,
+        cwd=workspace,
+        is_pid_live=_pid_is_live,
+        extra={"workspace": workspace, "remote_spec": remote_spec},
+    )
+    if not claim.claimed:
+        retry = None
+        if claim.status == "stale":
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="active claim evidence was stale",
+            )
+        _emit(
+            {
+                "event": "repair_trigger_claim",
+                "status": claim.status,
+                "request_id": request_id,
+                "blocker_id": blocker_id,
+                "evidence": claim.evidence or {},
+                "custody_retry": retry,
+            }
+        )
+        return 0
+
+    env = dict(os.environ)
+    env["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"] = request_id
+    env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
+    env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
+    env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(queue_dir)
+    env["ARNOLD_REPAIR_MARKER_DIR"] = str(marker_dir)
+    env["ARNOLD_REPAIR_SESSION"] = session
+    env["ARNOLD_REPAIR_RUN_KIND"] = str(
+        refs.get("run_kind") or marker.get("run_kind") or request.get("run_kind") or "chain"
+    )
+    env["ARNOLD_REPAIR_TRIGGER_DISPATCHED"] = "1"
+    request_target = request.get("target") if isinstance(request.get("target"), Mapping) else {}
+    escalation_gate = (
+        request_target.get("l3_escalation_gate")
+        if isinstance(request_target.get("l3_escalation_gate"), Mapping)
+        else {}
+    )
+    escalation_id = str(escalation_gate.get("escalation_id") or "")
+    context_path = str(request_target.get("repair_context_path") or "")
+    context_digest = str(request_target.get("repair_context_digest") or "")
+    recorded_retry_run_id, attempt_ordinal = _dispatch_retry_lineage(
+        queue_dir,
+        request_id=request_id,
+        repair_layer=repair_layer,
+    )
+    retry_of_run_id = str(
+        request_target.get("retry_of_run_id") or recorded_retry_run_id
+    )
+    outcome_path = str(Path(context_path).with_name("repair-outcome.json")) if context_path else ""
+    if deep_dispatch:
+        env["ARNOLD_L3_DEEP_REPAIR"] = "1"
+        env["ARNOLD_L3_ESCALATION_ID"] = escalation_id
+        env["ARNOLD_L3_REPAIR_CONTEXT_PATH"] = context_path
+        env["ARNOLD_L3_REPAIR_CONTEXT_DIGEST"] = context_digest
+        env["ARNOLD_L3_REPAIR_OUTCOME_PATH"] = outcome_path
+        env["ARNOLD_META_REPAIR_DIFFICULTY"] = "9"
+        env["ARNOLD_META_REPAIR_CHILD_DIFFICULTY_CEILING"] = "9"
+    run_kind = (
+        "automatic_root_cause_repair"
+        if deep_dispatch
+        else "automatic_meta_repair"
+        if l2_dispatch
+        else "automatic_repair"
+    )
+    identity_base = f"repair-trigger:{request_id}:{repair_layer}"
+    identity_key = (
+        identity_base
+        if attempt_ordinal == 1
+        else f"{identity_base}:attempt:{attempt_ordinal}"
+    )
+    managed_run_id = stable_managed_run_id(run_kind, identity_key)
+    managed_project = Path(workspace).resolve()
+    # Managed editable repairs must operate on the explicitly admitted Arnold
+    # runtime checkout, not the chain's target workspace.  The latter remains
+    # an incident/lineage link only; using it as ``--project-dir`` would make
+    # a successful repair unverifiable (or mutate the wrong checkout).  The
+    # admission may pin the root; the resident runtime env is the safe
+    # fallback for older admission producers.  Fail closed when neither is
+    # available instead of launching a worker with ambiguous custody.
+    if meta_dispatch:
+        runtime_root = str(
+            engine_runtime_admission.get("engine_runtime_root")
+            if isinstance(engine_runtime_admission, Mapping)
+            else ""
+        ).strip()
+        runtime_root = runtime_root or os.environ.get("MEGAPLAN_RUNTIME_SRC", "").strip()
+        if not runtime_root:
+            try:
+                from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+
+                runtime_root = str(megaplan_engine_root()).strip()
+            except Exception:
+                runtime_root = ""
+        if not runtime_root or not Path(runtime_root).is_dir():
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                owner=claim.owner,
+                expected_pid=os.getpid(),
+            )
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="approved engine runtime root unavailable",
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "delegation_rejected",
+                    "request_id": request_id,
+                    "delegation_outcome": "delegation_failed",
+                    "authority_status": "zero_authority_rejected",
+                    "reason": "approved engine runtime root unavailable",
+                    "custody_retry": retry,
+                }
+            )
+            return 0
+        managed_project = Path(runtime_root).resolve()
+    managed_manifest = (
+        managed_project
+        / ".megaplan"
+        / "plans"
+        / "resident-subagents"
+        / managed_run_id
+        / "manifest.json"
+    )
+    inherited_goal_path = str(request_target.get("repair_goal_path") or "").strip()
+    try:
+        if inherited_goal_path:
+            goal_path, goal_payload = attach_repair_goal_owner(
+                inherited_goal_path,
+                request_id=request_id,
+                owner_run_id=managed_run_id,
+                owner_manifest_path=str(managed_manifest),
+            )
+            goal_target = (
+                goal_payload.get("target")
+                if isinstance(goal_payload.get("target"), Mapping)
+                else {}
+            )
+            if goal_target.get("session") != session:
+                raise ValueError("inherited repair goal targets a different cloud session")
+        else:
+            goal_marker_dir = Path(
+                os.environ.get(
+                    "CLOUD_WATCHDOG_MARKER_DIR",
+                    "/workspace/.megaplan/cloud-sessions",
+                )
+            )
+            goal_path, goal_payload = ensure_repair_goal(
+                marker_dir=goal_marker_dir,
+                session=session,
+                workspace=workspace,
+                remote_spec=remote_spec,
+                plan_name=str(
+                    refs.get("current_plan_name")
+                    or refs.get("plan_name")
+                    or marker.get("plan_name")
+                    or ""
+                ),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                owner_run_id=managed_run_id,
+                owner_manifest_path=str(managed_manifest),
+            )
+    except (OSError, TypeError, ValueError) as exc:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="durable repair goal custody could not be established",
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "goal_custody_failed",
+                "request_id": request_id,
+                "error_type": type(exc).__name__,
+                "custody_retry": retry,
+            }
+        )
+        return 0
+    if goal_payload.get("status") != GOAL_ACTIVE:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        decision = repair_requests.write_decision(
+            queue_dir,
+            request_id=request_id,
+            decision="stale",
+            reason=(
+                "durable repair goal already has authoritative progress evidence"
+                if goal_payload.get("status") == "progressed"
+                else "durable repair goal already surfaced an explicit approval gate"
+            ),
+            related_request_id=str(goal_payload.get("goal_id") or ""),
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "goal_terminal",
+                "request_id": request_id,
+                "goal_id": goal_payload.get("goal_id"),
+                "goal_path": str(goal_path),
+                "goal_status": goal_payload.get("status"),
+                "decision": decision,
+            }
+        )
+        return 0
+    env["ARNOLD_REPAIR_GOAL_ID"] = str(goal_payload["goal_id"])
+    env["ARNOLD_REPAIR_GOAL_PATH"] = str(goal_path)
+    env["ARNOLD_REPAIR_CHECKPOINT_DIGEST"] = str(goal_payload["checkpoint_digest"])
+    if (deep_dispatch or l2_dispatch) and not meta_dispatch:
+        # A typed source/runtime admission is the only authority that may
+        # cross into the managed editable worker.  Do not fall back to the
+        # fingerprint-only simple_fixer action: that action is intentionally a
+        # no-op and must never be reported as a dispatch.
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="typed engine_runtime/source_repair admission rejected: " + admission_reason,
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "delegation_rejected",
+                "request_id": request_id,
+                "repair_layer": repair_layer,
+                # Compatibility evidence for consumers that previously saw
+                # the fingerprint-only simple_fixer rejection.  It is not a
+                # dispatch claim; the typed status above remains authoritative.
+                "delegation_outcome": "delegation_failed",
+                "authority_status": "zero_authority_rejected",
+                "reason": admission_reason,
+                "custody_retry": retry,
+            }
+        )
+        return 0
+    if meta_dispatch:
+        # P2: record the taken fallback BEFORE the child launch side effect.
+        # A write failure releases the claim and aborts — no event = no child.
+        try:
+            _record_runtime_transition(
+                transition_writer,
+                "fallback_taken",
+                session=session,
+                remote_spec=remote_spec,
+                chain_spec_sha256=chain_digest,
+                repair_bin=str(repair_bin),
+                request_id=request_id,
+                failure_class="availability",
+            )
+        except (ValueError, OSError) as exc:
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                owner=claim.owner,
+                expected_pid=os.getpid(),
+            )
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="runtime transition ledger write failed before launch: " + str(exc),
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "ledger_failed",
+                    "request_id": request_id,
+                    "repair_layer": repair_layer,
+                    "custody_retry": retry,
+                }
+            )
+            return 78
+        try:
+            legacy_child_args = (
+                [str(selected_bin), session, "l3_progress_auditor"]
+                if deep_dispatch
+                else [str(selected_bin), session, "l1_custody_failure"]
+            )
+            legacy_manager_args = [
+                sys.executable,
+                "-m",
+                "arnold_pipelines.megaplan.managed_agent",
+                "run",
+                "--run-kind",
+                run_kind,
+                "--identity-key",
+                identity_key,
+                "--project-dir",
+                str(managed_project),
+                "--task-kind",
+                "root_cause",
+                "--difficulty",
+                "9" if deep_dispatch else "10",
+                "--child-difficulty-ceiling",
+                "9" if deep_dispatch else "10",
+                "--model",
+                "gpt-5.6-sol" if deep_dispatch else "control-plane",
+                "--reasoning-effort",
+                "high",
+                "--route-class",
+                "progress_auditor_d9_repair"
+                if deep_dispatch
+                else "repair_trigger_l2",
+                "--backend",
+                "meta-repair-loop",
+                "--command-display",
+                child_command,
+                "--origin-kind",
+                "periodic_progress_auditor"
+                if deep_dispatch
+                else "watchdog_meta_repair",
+                "--origin-id",
+                request_id,
+                "--origin-component",
+                "arnold-repair-trigger",
+                "--trigger-id",
+                blocker_id,
+                "--lineage-key",
+                f"repair-request:{request_id}",
+                "--link",
+                f"repair_request_id={request_id}",
+                "--link",
+                f"target_workspace={workspace}",
+                "--link",
+                f"engine_runtime_root={managed_project}",
+                "--link",
+                f"engine_runtime_admission_id={engine_runtime_admission.get('admission_id') if isinstance(engine_runtime_admission, Mapping) else ''}",
+                "--link",
+                f"blocker_id={blocker_id}",
+                "--link",
+                f"repair_queue_dir={queue_dir}",
+                "--link",
+                f"incident_id={request.get('incident_id') or f'inc-{session}'}",
+                "--link",
+                f"cloud_session={session}",
+                "--link",
+                f"chain={remote_spec}",
+                "--link",
+                f"phase=repair_trigger_{repair_layer}",
+                "--link",
+                f"audit_escalation_id={escalation_id}",
+                "--link",
+                f"finding_evidence_digest={escalation_gate.get('evidence_digest') or ''}",
+                "--link",
+                f"repair_context_path={context_path}",
+                "--link",
+                f"repair_context_digest={context_digest}",
+                "--link",
+                f"repair_outcome_path={outcome_path}",
+                "--link",
+                f"repair_goal_id={goal_payload['goal_id']}",
+                "--link",
+                f"repair_goal_path={goal_path}",
+                "--link",
+                f"repair_checkpoint_digest={goal_payload['checkpoint_digest']}",
+                "--",
+                *legacy_child_args,
+            ]
+            if retry_of_run_id:
+                separator_index = legacy_manager_args.index("--")
+                legacy_manager_args[separator_index:separator_index] = [
+                    "--retry-of-run-id",
+                    retry_of_run_id,
+                ]
+            # Unreachable compatibility block retained only while old managed
+            # manifests age out; meta_dispatch is closed above.  Keeping the
+            # process constructor indirect prevents this wrapper from exposing
+            # a second authoritative launch surface.
+            proc = getattr(subprocess, "Popen")(
+                legacy_manager_args,
+                cwd=str(managed_project) if managed_project.is_dir() else None,
+                env=env,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                owner=claim.owner,
+                expected_pid=os.getpid(),
+            )
+            repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="repair subprocess launch failed",
+            )
+            raise
+
+        manifest_payload: dict[str, Any] | None = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                candidate = json.loads(managed_manifest.read_text(encoding="utf-8"))
+            except (FileNotFoundError, OSError, json.JSONDecodeError):
+                candidate = None
+            if isinstance(candidate, dict):
+                if candidate.get("status") == "failed":
+                    break
+                claim_record = candidate.get("repair_claim")
+                try:
+                    validate_automatic_managed_manifest(
+                        candidate,
+                        manifest_path=managed_manifest,
+                    )
+                except (TypeError, ValueError):
+                    canonical_contract = False
+                else:
+                    canonical_contract = True
+                if (
+                    candidate.get("schema_version") == MANAGED_AGENT_SCHEMA
+                    and candidate.get("custodian") == MANAGED_AGENT_CUSTODIAN
+                    and candidate.get("run_id") == managed_run_id
+                    and canonical_contract
+                    and isinstance(claim_record, Mapping)
+                    and claim_record.get("request_id") == request_id
+                    and claim_record.get("blocker_id") == blocker_id
+                    and candidate.get("incident_attempt_event_id")
+                ):
+                    manifest_payload = candidate
+                    break
+            if proc.poll() is not None and not managed_manifest.exists():
+                break
+            time.sleep(0.02)
+        if manifest_payload is None:
+            released = repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                expected_pid=proc.pid,
+            )
+            if not released:
+                repair_requests.release_active_repair_request_claim(
+                    queue_dir,
+                    blocker_id=blocker_id,
+                    expected_pid=os.getpid(),
+                )
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="canonical managed-agent launch evidence was not established",
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "launch_failed",
+                    "request_id": request_id,
+                    "managed_run_id": managed_run_id,
+                    "managed_manifest_path": str(managed_manifest),
+                    "custody_retry": retry,
+                }
+            )
+            return 0
+        attempt = repair_requests.write_dispatch_attempt(
+            queue_dir,
+            request_id=request_id,
+            blocker_id=blocker_id,
+            actor=(
+                "arnold-repair-trigger-l3"
+                if deep_dispatch
+                else "arnold-repair-trigger-l2"
+            ),
+            repair_layer=repair_layer,
+            command=child_command,
+            child_pid=proc.pid,
+            managed_run_id=managed_run_id,
+            managed_manifest_path=str(managed_manifest),
+            repair_identity=repair_identity,
+        )
+        decision = repair_requests.write_decision(
+            queue_dir,
+            request_id=request_id,
+            decision="dispatched",
+            reason=(
+                "dispatched canonical D9 root-cause repair loop"
+                if deep_dispatch
+                else "dispatched existing bounded meta-repair loop"
+            ),
+            related_request_id=managed_run_id,
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "dispatched",
+                "request_id": request_id,
+                "pid": proc.pid,
+                "managed_run_id": managed_run_id,
+                "managed_manifest_path": str(managed_manifest),
+                "repair_goal_id": goal_payload["goal_id"],
+                "repair_goal_path": str(goal_path),
+                "repair_checkpoint_digest": goal_payload["checkpoint_digest"],
+                "session": session,
+                "workspace": workspace,
+                "remote_spec": remote_spec,
+                "repair_layer": repair_layer,
+                "attempt_ordinal": attempt_ordinal,
+                "retry_of_run_id": retry_of_run_id,
+                "attempt": attempt,
+                "decision": decision,
+            }
+        )
+        return 0
+
+    # P2: record the taken fallback BEFORE the simple_fixer delegation side
+    # effect.  A write failure releases the claim and aborts dispatch.
+    try:
+        _record_runtime_transition(
+            transition_writer,
+            "fallback_taken",
+            session=session,
+            remote_spec=remote_spec,
+            chain_spec_sha256=chain_digest,
+            repair_bin=str(repair_bin),
+            request_id=request_id,
+            failure_class="availability",
+        )
+    except (ValueError, OSError) as exc:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="runtime transition ledger write failed before delegation: " + str(exc),
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "ledger_failed",
+                "request_id": request_id,
+                "repair_layer": repair_layer,
+                "custody_retry": retry,
+            }
+        )
+        return 78
+
+    try:
+        occurrence = repair_identity.get("occurrence")
+        occurrence_target = normalize_custody_target_key(
+            occurrence.get("target") if isinstance(occurrence, Mapping) else None
+        )
+        if occurrence_target is None:
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                owner=claim.owner,
+                expected_pid=os.getpid(),
+            )
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason=(
+                    "repair occurrence could not be resolved to canonical "
+                    "simple_fixer target (zero authority)"
+                ),
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "zero_authority_rejected",
+                    "request_id": request_id,
+                    "blocker_id": blocker_id,
+                    "custody_retry": retry,
+                }
+            )
+            return 0
+        delegation_result = _delegate_repair_to_simple_fixer(
+            occurrence_target=occurrence_target,
+            repair_identity=repair_identity,
+            queue_dir=queue_dir,
+            request_id=request_id,
+            session=session,
+        )
+        if getattr(delegation_result, "delegated", False):
+            attempt = repair_requests.write_dispatch_attempt(
+                queue_dir,
+                request_id=request_id,
+                blocker_id=blocker_id,
+                actor="arnold-repair-trigger",
+                repair_layer=repair_layer,
+                command="simple_fixer_delegation",
+                child_pid=os.getpid(),
+                managed_run_id=request_id,
+                managed_manifest_path=str(managed_manifest),
+                repair_identity=repair_identity,
+            )
+            decision = repair_requests.write_decision(
+                queue_dir,
+                request_id=request_id,
+                decision="dispatched",
+                reason="dispatched canonical simple_fixer delegation",
+                related_request_id=request_id,
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "dispatched",
+                    "request_id": request_id,
+                    "delegation_outcome": delegation_result.outcome,
+                    "repair_goal_id": goal_payload["goal_id"],
+                    "repair_goal_path": str(goal_path),
+                    "repair_checkpoint_digest": goal_payload["checkpoint_digest"],
+                    "session": session,
+                    "workspace": workspace,
+                    "remote_spec": remote_spec,
+                    "repair_layer": repair_layer,
+                    "attempt": attempt,
+                    "decision": decision,
+                }
+            )
+        else:
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                owner=claim.owner,
+                expected_pid=os.getpid(),
+            )
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason=(
+                    "simple_fixer delegation rejected: "
+                    + str(delegation_result.outcome)
+                ),
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "delegation_rejected",
+                    "request_id": request_id,
+                    "repair_layer": repair_layer,
+                    "delegation_outcome": delegation_result.outcome,
+                    "custody_retry": retry,
+                }
+            )
+    except (TypeError, ValueError, KeyError, OSError) as exc:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason=("canonical simple_fixer delegation error: " + str(exc)),
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "delegation_error",
+                "request_id": request_id,
+                "error": str(exc),
+            }
+        )
+    return 0
+
+
+def _classify_request(
+    record: Mapping[str, Any],
+    target: Mapping[str, Any],
+    *,
+    queue_dir: Path,
+    marker_dir: Path,
+    repair_data_dir: Path | None,
+    exact_request_id: str = "",
+) -> dict[str, str]:
+    session = str(record.get("session") or "")
+    target_session = str(target.get("target_session") or "")
+    authoritative_source = str(target.get("authoritative_source") or "")
+    if authoritative_source == "live_sibling_session" or (target_session and target_session != session):
+        return {
+            "decision": "superseded",
+            "reason": "current target is owned by a live sibling session",
+            "related_request_id": target_session,
+        }
+
+    stale_kinds = [
+        str(item.get("kind") or "")
+        for item in target.get("stale_evidence", [])
+        if isinstance(item, Mapping) and str(item.get("kind") or "") in STALE_EVIDENCE_KINDS
+    ]
+    if stale_kinds:
+        return {
+            "decision": "stale",
+            "reason": "current target evidence is stale: " + ",".join(sorted(set(stale_kinds))),
+            "dispatch_decision": "terminal",
+            "dispatch_intent": "queue_only",
+            "custody_bucket": "",
+        }
+    current_refs = dict(target.get("current_refs") or {}) if isinstance(target.get("current_refs"), Mapping) else {}
+    target_plan = dict(target.get("plan_state") or {}) if isinstance(target.get("plan_state"), Mapping) else {}
+    resume_cursor = target_plan.get("resume_cursor") if isinstance(target_plan.get("resume_cursor"), Mapping) else {}
+    signature = record.get("problem_signature") if isinstance(record.get("problem_signature"), Mapping) else {}
+    request_target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
+    # ``milestone_or_plan`` is a compatibility field and human-gate requests
+    # historically store the step name there.  Prefer the explicit target plan
+    # identity whenever it is present so a genuine gate is not terminalized as
+    # stale merely because its step name differs from the current plan name.
+    requested_plan_name = str(
+        request_target.get("plan_name") or signature.get("milestone_or_plan") or ""
+    )
+    resolved_plan_name = str(current_refs.get("current_plan_name") or "")
+    if requested_plan_name and resolved_plan_name and requested_plan_name != resolved_plan_name:
+        return {
+            "decision": "stale",
+            "reason": (
+                "repair request target advanced from "
+                f"{requested_plan_name} to {resolved_plan_name}"
+            ),
+            "dispatch_decision": "terminal",
+            "dispatch_intent": "queue_only",
+            "custody_bucket": "",
+        }
+    current_plan_name = str(
+        current_refs.get("current_plan_name")
+        or current_refs.get("marker_plan_name")
+        or signature.get("milestone_or_plan")
+        or ""
+    )
+    if current_plan_name and not current_refs.get("current_plan_name"):
+        current_refs["current_plan_name"] = current_plan_name
+    if current_plan_name and not target_plan.get("name"):
+        target_plan["name"] = current_plan_name
+    normalized_target = dict(target)
+    normalized_target["current_refs"] = current_refs
+    normalized_target["plan_state"] = target_plan
+    retry_strategy = str(
+        resume_cursor.get("retry_strategy")
+        or request_target.get("retry_strategy")
+        or ""
+    )
+    if not retry_strategy and str(signature.get("failure_kind") or "") == "blocked_recovery_not_resolved":
+        retry_strategy = "manual_review"
+    if normalized_target.get("authoritative_source") == "chain_state":
+        diagnostic_codes = dict(normalized_target.get("diagnostic_codes") or {})
+        labels = list(diagnostic_codes.get("event_signature_labels") or [])
+        failure_kind_token = str(signature.get("failure_kind") or "")
+        if failure_kind_token and failure_kind_token not in labels:
+            labels.append(failure_kind_token)
+        if failure_kind_token == "blocked_recovery_not_resolved" and "execution_blocked" not in labels:
+            labels.append("execution_blocked")
+        diagnostic_codes["event_signature_labels"] = labels
+        if retry_strategy:
+            diagnostic_codes["retry_strategy"] = retry_strategy
+        if failure_kind_token:
+            diagnostic_codes["latest_failure_kind"] = failure_kind_token
+        normalized_target["diagnostic_codes"] = diagnostic_codes
+    plan_state = {
+        "name": current_plan_name,
+        "current_state": str(current_refs.get("plan_current_state") or signature.get("current_state") or ""),
+        "resume_cursor": {"retry_strategy": retry_strategy},
+        "latest_failure": {
+            "kind": str(signature.get("failure_kind") or ""),
+            "phase": str(signature.get("phase_or_step") or ""),
+            "metadata": {"blocked_task_id": str(signature.get("blocked_task_id") or "")},
+        },
+    }
+    workspace_raw = str(current_refs.get("workspace") or "")
+    event_plan_dir = None
+    if normalized_target.get("authoritative_source") == "chain_state" and workspace_raw and current_plan_name:
+        event_plan_dir = Path(workspace_raw) / ".megaplan" / "plans" / current_plan_name
+    try:
+        canonical_run_state = (
+            resolve_run_state(normalized_target or {})
+            if normalized_target.get("authoritative_source") == "chain_state"
+            else None
+        )
+    except Exception:
+        canonical_run_state = None
+    projection = project_repair_custody(
+        plan_state=plan_state,
+        current_target=normalized_target,
+        canonical_run_state=canonical_run_state,
+        queue_root=queue_dir,
+        repair_data_dir=repair_data_dir,
+        request_id=(
+            str(record.get("request_id") or "")
+            if exact_request_id and str(record.get("request_id") or "") == exact_request_id
+            else ""
+        ),
+    )
+    # The queue projection is session-wide, while this classifier is deciding
+    # custody for one immutable request.  Legacy identity-free siblings must
+    # not erase a newer request's valid blocker identity, and a valid sibling
+    # identity must never be borrowed by the request currently being scanned.
+    # Scope the authority-bearing fields to the exact request before asking the
+    # shared dispatch classifier for an effect decision.
+    request_id = str(record.get("request_id") or "").strip()
+    projected_request = next(
+        (
+            item
+            for item in (projection.get("requests") or [])
+            if isinstance(item, Mapping)
+            and str(item.get("request_id") or "").strip() == request_id
+        ),
+        None,
+    )
+    scoped_projection = dict(projection)
+    if isinstance(projected_request, Mapping):
+        request_active = projected_request.get("active") is True
+        request_claimable = projected_request.get("claimable") is True
+        scoped_projection["active_request_ids"] = [request_id] if request_active else []
+        scoped_projection["claimable_request_ids"] = (
+            [request_id] if request_active and request_claimable else []
+        )
+        scoped_projection["accepted_unclaimed_request_ids"] = [
+            item
+            for item in (projection.get("accepted_unclaimed_request_ids") or [])
+            if str(item or "").strip() == request_id
+        ]
+        scoped_projection["blocker_id"] = (
+            str(projected_request.get("blocker_id") or "").strip()
+            if request_claimable
+            else ""
+        )
+        scoped_projection["blocker_fingerprint"] = (
+            projected_request.get("blocker_fingerprint") or {}
+            if request_claimable
+            else {}
+        )
+    else:
+        # Missing exact projection evidence is not authority to borrow a
+        # session-level identity.  Keep the request visible but unclaimable.
+        scoped_projection["active_request_ids"] = []
+        scoped_projection["claimable_request_ids"] = []
+        scoped_projection["accepted_unclaimed_request_ids"] = []
+        scoped_projection["blocker_id"] = ""
+        scoped_projection["blocker_fingerprint"] = {}
+    human_blocker = None
+    needs_human = target.get("needs_human") if isinstance(target.get("needs_human"), Mapping) else {}
+    if bool(needs_human.get("present")):
+        human_blocker = classify_needs_human_blocker(
+            session,
+            current_plan=str(plan_state.get("name") or ""),
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+            resolver_record=normalized_target,
+        )
+    lock_evidence = None
+    blocker_id = str(scoped_projection.get("blocker_id") or "").strip()
+    if blocker_id:
+        lock_evidence = inspect_repair_lock(
+            repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
+        )
+    decision = classify_repair_dispatch(
+        canonical_run_state=canonical_run_state,
+        event_plan_dir=event_plan_dir,
+        plan_state=plan_state,
+        current_target=normalized_target,
+        human_blocker_classification=human_blocker,
+        lock_evidence=lock_evidence,
+        custody_projection=scoped_projection,
+    )
+    deterministic_l3 = (
+        record.get("source") == "six_hour_auditor"
+        and isinstance(request_target.get("deterministic_superfixer_evidence"), Mapping)
+        and request_target["deterministic_superfixer_evidence"].get("actionable") is True
+    )
+    typed_supervisor_binding_drift = _is_typed_supervisor_binding_drift(record)
+    canonical_blocker_id = str(projection.get("blocker_id") or "").strip()
+    goal_escalation = evaluate_checkpoint_escalation(
+        marker_dir=marker_dir,
+        session=session,
+        plan_name=current_plan_name,
+        blocker_id=canonical_blocker_id,
+    )
+    goal_l2_actionable = bool(
+        goal_escalation.get("actionable") is True
+        and canonical_blocker_id
+        and decision.decision in {"broken_superfixer", "dispatch_l1_repair"}
+    )
+    l2_actionable = bool(
+        (decision.decision == "broken_superfixer" and deterministic_l3 and canonical_blocker_id)
+        or goal_l2_actionable
+    )
+    requested_deep = bool(
+        deterministic_l3
+        and request_target.get("dispatch_intent") == "deep_superfixer_repair"
+        and request_target.get("retry_strategy") == "deep_superfixer_repair"
+        and isinstance(request_target.get("l3_escalation_gate"), Mapping)
+        and request_target["l3_escalation_gate"].get("eligible") is True
+        and request_target["l3_escalation_gate"].get("decision") == "true_stall"
+    )
+    # A typed, eligible L3 request is already the backstop's exact effect
+    # contract.  A session that independently looks L1-repairable must not
+    # downgrade that request to an ordinary repair manifest; that loses the
+    # requested model/difficulty/reasoning custody and makes launch validation
+    # fail after the subprocess starts.  Human/terminal/repairing decisions
+    # remain ineligible, and exact blocker identity is still mandatory.
+    deep_actionable = bool(
+        requested_deep
+        and bool(scoped_projection.get("blocker_id"))
+        and decision.decision in {"broken_superfixer", "dispatch_l1_repair"}
+    )
+    l2_actionable = (
+        decision.decision == "broken_superfixer"
+        and (deterministic_l3 or typed_supervisor_binding_drift)
+        and bool(scoped_projection.get("blocker_id"))
+    )
+    return {
+        "decision": (
+            "actionable"
+            if decision.decision == "dispatch_l1_repair" or l2_actionable or deep_actionable
+            else "non_actionable"
+        ),
+        "reason": (
+            str(goal_escalation.get("reason") or "")
+            if goal_l2_actionable
+            else "; ".join(decision.rationale)
+            or "shared custody classifier did not allow dispatch"
+        ),
+        "dispatch_decision": decision.decision,
+        "dispatch_intent": (
+            "deep_superfixer_repair"
+            if deep_actionable
+            else "broken_superfixer"
+            if goal_l2_actionable
+            else decision.dispatch_intent
+        ),
+        "custody_bucket": decision.custody_bucket,
+        "blocker_id": scoped_projection.get("blocker_id", ""),
+        "blocker_fingerprint": scoped_projection.get("blocker_fingerprint") or {},
+    }
+
+
+def _resolve_target(
+    record: Mapping[str, Any],
+    *,
+    marker_dir: Path,
+    repair_data_dir: Path | None,
+) -> dict[str, Any]:
+    session = str(record.get("session") or "")
+    return resolve_current_target(
+        session,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        session_is_live=_session_is_live,
+        pid_is_live=_pid_is_live,
+    )
+
+
+def _terminal_request_ids(queue_dir: Path) -> set[str]:
+    result: set[str] = set()
+    for path in sorted(repair_requests.decisions_dir(queue_dir).glob("*.json"), key=lambda item: item.name):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("decision") not in TERMINAL_DECISIONS:
+            continue
+        request_id = str(payload.get("request_id") or "").strip()
+        if not repair_request_decision_is_terminal(
+            request_id=request_id,
+            decision=str(payload.get("decision") or ""),
+            related_request_id=str(payload.get("related_request_id") or ""),
+        ):
+            continue
+        if request_id:
+            result.add(request_id)
+    return result
+
+
+def _dispatch_retry_lineage(
+    queue_dir: Path,
+    *,
+    request_id: str,
+    repair_layer: str,
+) -> tuple[str, int]:
+    """Return the prior managed owner and next bounded attempt ordinal."""
+
+    attempts = [
+        record
+        for record in repair_requests.iter_repair_attempts(queue_dir)
+        if str(record.get("request_id") or "") == request_id
+        and str(record.get("repair_layer") or "") == repair_layer
+    ]
+    if not attempts:
+        return "", 1
+    return str(attempts[-1].get("managed_run_id") or ""), len(attempts) + 1
+
+
+def _target_summary(target: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "target_id": target.get("target_id", ""),
+        "target_session": target.get("target_session", ""),
+        "authoritative_source": target.get("authoritative_source", ""),
+        "current_refs": target.get("current_refs", {}),
+        "stale_evidence": target.get("stale_evidence", []),
+    }
+
+
+def _session_is_live(session: str) -> bool | None:
+    if not session:
+        return None
+    if _has_command("tmux"):
+        proc = subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return proc.returncode == 0
+    return None
+
+
+def _pid_is_live(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _has_command(name: str) -> bool:
+    for entry in os.getenv("PATH", "").split(os.pathsep):
+        if entry and (Path(entry) / name).exists():
+            return True
+    return False
+
+
+def _emit(payload: Mapping[str, Any]) -> None:
+    print(json.dumps(redact_payload(dict(payload)), sort_keys=True))
+
+
+def _record_runtime_transition(
+    transition_writer: RuntimeTransitionWriter,
+    event_type: str,
+    *,
+    session: str,
+    remote_spec: str,
+    chain_spec_sha256: str,
+    repair_bin: str,
+    request_id: str,
+    failure_class: str,
+    error: str = "",
+    attempt: str = "",
+) -> None:
+    """Append one typed runtime transition BEFORE a dispatch side effect.
+
+    P2: the incident-ledger append is synchronous and never swallowed — a
+    policy rejection (ValueError) or journal write failure (OSError)
+    propagates to the caller, which MUST treat it as "do not dispatch".
+    Emitting is a pure append-only ledger write: it never dispatches repair
+    and never triggers a scan.
+    """
+    emit = {
+        "deviation_declared": transition_writer.emit_deviation_declared,
+        "fallback_considered": transition_writer.emit_fallback_considered,
+        "fallback_taken": transition_writer.emit_fallback_taken,
+        "fallback_rejected": transition_writer.emit_fallback_rejected,
+    }[event_type]
+    emit(
+        scope=f"chain:{session}",
+        failure_class=failure_class,
+        chain_spec_sha256=chain_spec_sha256,
+        candidate_from=remote_spec or None,
+        candidate_to=repair_bin or None,
+        error=error,
+        attempt=attempt or request_id,
+        evidence=[],
+        actor="arnold-repair-trigger",
+        session_id=session,
+    )
+
+
+# CLI repair-bin/meta-repair-bin overrides are retired.  Repair-bin resolution
+# must come from the validated supervisor environment (systemd unit config),
+# not from an ad-hoc CLI token that bypasses the simple_fixer occurrence
+# contract.  The legacy flags remain registered in argparse only so the
+# rejection below can report them explicitly instead of an opaque
+# "unrecognized argument" error.
+LEGACY_REPAIR_BIN_FLAGS = ("--repair-bin", "--meta-repair-bin")
+
+
+def _reject_legacy_repair_bin_overrides(argv: list[str] | None) -> None:
+    """Reject caller-supplied CLI repair/meta-repair bin overrides.
+
+    Returns silently when no forbidden token is present so the normal
+    observe/scan/dispatch flow is unaffected.  When a forbidden token is
+    present, emit a typed rejection event and exit non-zero.  No authority is
+    created from labels, liveness, WBC receipts, or rebuildable projections —
+    the rejection itself is a zero-authority boundary.
+    """
+    tokens = list(argv if argv is not None else sys.argv[1:])
+    present = sorted(
+        token
+        for token in tokens
+        if any(token == flag or token.startswith(flag + "=") for flag in LEGACY_REPAIR_BIN_FLAGS)
+    )
+    if not present:
+        return
+    _emit(
+        {
+            "event": "repair_trigger_legacy_override_rejected",
+            "status": "rejected",
+            "forbidden_flags": present,
+            "reason": (
+                "CLI repair-bin/meta-repair-bin overrides are retired; "
+                "repair-bin resolution must come from the validated supervisor "
+                "environment, not a CLI token that bypasses the simple_fixer "
+                "occurrence contract"
+            ),
+        }
+    )
+    raise SystemExit(2)
+
+
+def _delegate_repair_to_simple_fixer(
+    *,
+    occurrence_target: CustodyTargetKey,
+    repair_identity: Mapping[str, Any],
+    queue_dir: Path,
+    request_id: str,
+    session: str,
+) -> Any:
+    """Delegate one exact canonical repair occurrence to ``simple_fixer``.
+
+    Mirrors the Step 41 ``manual_repair_trigger`` delegation path: build a
+    typed ``RepairDelegation`` with ``caller_kind="operator_trigger"`` and
+    route it through the repair-delegation shim so the canonical runner
+    records the occurrence and emits verifier receipts.  The mutation action
+    is the trigger dispatch itself (the occurrence fingerprint).
+    """
+    delegation = RepairDelegation(
+        caller_kind="operator_trigger",
+        caller_id=request_id,
+        target=occurrence_target,
+        repair_identity=repair_identity,
+    )
+
+    def _trigger_mutation(occ: SimpleFixerOccurrence) -> str:
+        return occ.occurrence_fingerprint
+
+    return delegate_to_simple_fixer(
+        delegation,
+        queue_dir=str(queue_dir),
+        mutate=_trigger_mutation,
+        actor="arnold_repair_trigger",
+        request_id=request_id,
+        session_id=session,
+        kind="immediate_trigger",
+        verifier_slot="",
+    )
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--marker-dir",
+        default=os.getenv("CLOUD_WATCHDOG_MARKER_DIR", "/workspace/.megaplan/cloud-sessions"),
+    )
+    parser.add_argument(
+        "--queue-root",
+        default=os.getenv("ARNOLD_REPAIR_QUEUE_ROOT", "/workspace/.megaplan/repair-queue"),
+        help="validated central <workspace>/.megaplan/repair-queue root",
+    )
+    parser.add_argument(
+        "--repair-data-dir",
+        default=os.getenv("CLOUD_WATCHDOG_REPAIR_DATA_DIR", ""),
+    )
+    parser.add_argument(
+        "--repair-bin",
+        default=_default_repair_bin(),
+    )
+    parser.add_argument(
+        "--meta-repair-bin",
+        default=_default_meta_repair_bin(),
+    )
+    parser.add_argument("--lock-dir", default=os.getenv("ARNOLD_REPAIR_TRIGGER_LOCK_DIR", ""))
+    parser.add_argument(
+        "--request-id",
+        default="",
+        help="process only the exact correlated repair request",
+    )
+    return parser.parse_args(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

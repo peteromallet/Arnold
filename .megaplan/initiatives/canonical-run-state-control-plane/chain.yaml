@@ -1,0 +1,22 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1-canonical-run-state-control-plane
+  idea: .megaplan/initiatives/canonical-run-state-control-plane/briefs/m1-canonical-run-state-control-plane.md
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  branch: canonical-run-state-control-plane
+  prep_clarify: false
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 24
+  poll_sleep: 8.0

@@ -1,0 +1,23 @@
+{
+  "config": {
+    "project_dir": "/tmp/boundary-fixture"
+  },
+  "created_at": "2026-07-08T00:00:00Z",
+  "current_phase": "review",
+  "current_state": "executed",
+  "history": [
+    {
+      "result": "success",
+      "step": "review"
+    }
+  ],
+  "iteration": 1,
+  "last_gate": {},
+  "latest_failure": null,
+  "meta": {
+    "current_invocation_id": "inv-review_cap_authority"
+  },
+  "name": "boundary-fixture-review_cap_authority",
+  "plan_versions": [],
+  "sessions": {}
+}

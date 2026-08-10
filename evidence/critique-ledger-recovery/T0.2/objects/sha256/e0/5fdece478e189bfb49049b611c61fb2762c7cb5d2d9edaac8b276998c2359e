@@ -1,0 +1,42 @@
+{
+  "checks": [
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "The plan's assumption #6 states 'CL2 migrations are versions 5+ appended to the M6A registry via default_combined_migrations()' but this function does NOT exist anywhere in the codebase. The only migration factory is default_m6a_migrations() in arnold/workflow/ledger_migrations.py:468 (returns versions 1-4). The SqliteLedgerMigrator.__init__ (ledger_migrations.py:758-766) does accept a custom migrations: Optional[Sequence[Migration]] parameter and defaults to default_m6a_migrations() when None, so the plumbing for passing a combined registry exists. The executor must define the combining function (default_combined_migrations or equivalent) in the new arnold/critique_ledger/cl2_migrations.py to produce default_m6a_migrations() + cl2_migrations. This is a missing glue-code reference, not a design flaw — the referenced function name is invented and the executor will need to create it.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified the CL1 archive source files exist at the stated path with matching line counts: schemas.py is 731 lines, semantic_loop.py is 1206 lines, __init__.py is 73 lines — all three match the plan's Overview claims exactly. The cancelled CL2 archive also contains 5 additional pre-amendment files (cl2_migrations.py, m6_importer.py, manifest_store.py, ledger_writer.py, wbc_bridge.py) that the plan correctly identifies as not-portable-as-is. The cancelled cl2_migrations.py uses a derived-index DDL design (init_cl2_tables, revision_manifests/round_attempts/domain_findings tables) and imports from a wbc_bridge module — completely different from the plan's Migration-framework approach, confirming it must be rebuilt fresh. No CL1 files are missing from the port scope.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the WBC substrate integration points all exist as described: SqliteAttemptLedgerStore at attempt_ledger_store.py:1117 with _append_tx at :1905 (single-terminal enforcement) and append_event at :2096; SqliteLedgerOutbox at ledger_outbox.py:299 with append_event_with_outbox at :339 (abstract at :186); SqliteLedgerMigrator at ledger_migrations.py:748. The migration registry's validation (_validate_registry at :432) enforces a strict contiguous run — default_m6a_migrations() is versions 1-4 so CL2 appending 5+ produces a valid contiguous 1..N sequence. The domain store will share the SQLite connection for zero-network atomic cross-table writes as claimed. No substrate code needs editing.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified that porting the CL1 archive and creating the new arnold/critique_ledger package will not trip the conformance suite (arnold/conformance/checks.py). The archive files contain zero references to megaplan, PlanState, tiebreaker, arnold.pipeline, or any Megaplan package names — so check_import_coupling, check_semantic_coupling, and check_package_name_staleness will all pass. check_never_port_artifacts only flags runtime artifacts (.db-wal, logs/, runs/, .megaplan/_archived-plans/) not source code. check_public_workflow_layering only scans __init__.py files under pipelines/ paths. No conformance allowlist updates are needed as glue code for the new package.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the test infrastructure: tests/conftest.py exists at the top level and the plan creates tests/arnold/critique_ledger/__init__.py plus 8 test files. The existing test directory pattern is inconsistent (tests/arnold/agent/ and tests/arnold/control/ have __init__.py; tests/arnold/workflow/ does not), so the plan's choice to add __init__.py is consistent with some existing dirs and valid for pytest discovery. No pyproject.toml, pytest.ini, or CI registration changes are needed for the new test directory. The test_blast_radius correctly enables full_suite_fallback since CL2 shares the SQLite WAL substrate.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-CL2-COMBINED-MIGRATIONS",
+      "concern": "Plan assumption references default_combined_migrations() which does not exist in the codebase. The executor must create this combining function in the new cl2_migrations.py module. While the SqliteLedgerMigrator accepts a custom migrations parameter (verified at ledger_migrations.py:761), the specific function name is invented and could cause executor confusion or a search-and-fail loop.",
+      "category": "completeness",
+      "severity_hint": "low",
+      "evidence": "Plan assumption #6: 'CL2 migrations are versions 5+ appended to the M6A registry via default_combined_migrations()'. Search for default_combined_migrations in the active worktree returns 0 results. Only default_m6a_migrations() exists at ledger_migrations.py:468. SqliteLedgerMigrator.__init__ at :758 accepts migrations: Optional[Sequence[Migration]] = None, defaulting to default_m6a_migrations()."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

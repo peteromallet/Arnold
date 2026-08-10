@@ -1,0 +1,3 @@
+Read-only forensic probe. Do not edit files, launch/kill processes, or send messages.
+
+Verify the observation path for agent-edit-verifiable-transaction-spine: import roots, pinned revision 282c89a58288f59381c34d342c4262af2fffab4f, dirty /workspace/arnold, clean deployed source revision 4847a74c67d02d714dd9399f9728f60b139cc28e, /usr/local wrapper hashes, and supported on-box status route. Assess whether any apparent state is an observation artifact. Explain the exact runtime/source/deployed-wrapper skew, if present, and safe reconciliation constraints. Do not inspect unrelated session internals beyond avoiding interference. Return concise evidence, under 400 words.

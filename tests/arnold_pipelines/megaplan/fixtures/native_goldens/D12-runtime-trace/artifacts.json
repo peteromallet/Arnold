@@ -1,0 +1,8 @@
+{
+  "draft/prompt_v1.md": "sha256:<content-dependent>",
+  "draft/v1.md": "sha256:<content-dependent>",
+  "emit/prompt_v1.md": "sha256:<content-dependent>",
+  "emit/v1.md": "sha256:<content-dependent>",
+  "tighten/prompt_v1.md": "sha256:<content-dependent>",
+  "tighten/v1.md": "sha256:<content-dependent>"
+}

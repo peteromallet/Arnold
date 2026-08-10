@@ -1,0 +1,12 @@
+[Unit]
+Description=Megaplan next-three-hour DeepSeek plan progress audit
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Execute the wrapper from the workspace checkout so updates propagate without
+# rebuilding the container image.  The timer controls the three-hour cadence;
+# this service is a latency-optimized reconciliation backstop, not the
+# authoritative recovery path (the event trigger owns that).
+ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor

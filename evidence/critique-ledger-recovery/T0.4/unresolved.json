@@ -1,0 +1,825 @@
+{
+  "fail_closed": true,
+  "inventory_id": "t04-f48576bb2a057af16c937d71",
+  "rule": "An unavailable, missing, blocked, or indeterminate owner record is not treated as absent, safe, terminal, released, or redispatchable.",
+  "schema": "t0.4.unresolved.v1",
+  "unresolved": [
+    {
+      "authority_classification": "ambiguous",
+      "category": "incident",
+      "confidence": "low",
+      "current_state": "indeterminate",
+      "downstream_checklist_tasks": [
+        "T4.4"
+      ],
+      "gap_or_reason": "Unknown external outcome remains indeterminate and no-redispatchable.",
+      "ids": {},
+      "logical_identity_scope": {
+        "incident_scope": "cl2-wbc-backed-ledger-20260731-1411",
+        "occurrence_kind": "external-effect-outcome-unknown",
+        "owner_record_path_or_uri": "UNAVAILABLE: WBC ambiguity view",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: WBC ambiguity view",
+      "owner_system": "Incident ledger/projector",
+      "prerequisite_authority": [
+        "Incident ledger/projector"
+      ],
+      "record_id": "record-09692f9fd9411d8179786551b93524a5e539dadc23b482e3d07e671841c6d162",
+      "required_later_action": "no-redispatch",
+      "source_evidence": [
+        {
+          "claim_index": 161,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/5a/bf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "sha256": "5abf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed"
+        },
+        {
+          "claim_index": 164,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/38/1b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "sha256": "381b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298"
+        },
+        {
+          "claim_index": 198,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\n  \"schema_version\": \"megaplan-critique-custody-v1\",\n  \"iteration\": 1,\n  \"produced_at\": \"2026-07-31T15:51:39Z\",\n  \"plan_artifact\": \"plan_v1.md\",\n  \"plan_sha256\": \"sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922\",\n  \"critique_artifact\": \"critique_v1.json\",\n  \"critique_sha256\": \"sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8\",\n  \"critique_payload_digest\": \"sha256:5aac511e1ba8d347c689e9b2d75bbd660d7cd2fee6419818fdeac3808d5bc75f\",\n  \"raw_sources\": [\n    {\n      \"artifact\": \"critique_raw_v1.txt\",\n      \"sha256\": \"sha256:83a00300ad6a2502c3fd8f04f50b47f5ce60496614534ebf6bf9fc85c85e1b0d\"\n    },\n    {\n      \"artifact\": \"critique_check_all_locations_producer_v1.json\",\n      \"sha256\": \"sha256:68ca75da5663708a636f915728b2e12205026c8abd423d83f3e302f0076fee68\"\n    },\n    {\n      \"artifact\": \"critique_check_correctness_producer_v1.json\",\n      \"sha256\":",
+          "object_path": "objects/sha256/30/3803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "sha256": "303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed"
+        }
+      ],
+      "target_id": "target-9af2370c8c7a303cb4a2f3035a6649c33f131089a72a51e1be48ad0bc99ec3cf"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "custody",
+      "confidence": "high",
+      "current_state": "missing",
+      "downstream_checklist_tasks": [
+        "T4.3"
+      ],
+      "gap_or_reason": "T0.2 preserves custody-shaped artifacts and WBC attempt stores, but not a current Custody owner query/receipt. Do not plain-release or reuse the target key.",
+      "ids": {},
+      "logical_identity_scope": {
+        "bounded_query_scope": "T0.2 preserved scope",
+        "missing_authority_class": "Custody target/lease/epoch/fence-token/claim owner records",
+        "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+      "owner_system": "Custody",
+      "prerequisite_authority": [
+        "fail-closed owner authority"
+      ],
+      "record_id": "record-42cd1ad68a442fd3eee69213df0beab48c0c80cda082ed0b83c870843c2d6863",
+      "required_later_action": "expire",
+      "source_evidence": [
+        {
+          "claim_index": 198,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\n  \"schema_version\": \"megaplan-critique-custody-v1\",\n  \"iteration\": 1,\n  \"produced_at\": \"2026-07-31T15:51:39Z\",\n  \"plan_artifact\": \"plan_v1.md\",\n  \"plan_sha256\": \"sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922\",\n  \"critique_artifact\": \"critique_v1.json\",\n  \"critique_sha256\": \"sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8\",\n  \"critique_payload_digest\": \"sha256:5aac511e1ba8d347c689e9b2d75bbd660d7cd2fee6419818fdeac3808d5bc75f\",\n  \"raw_sources\": [\n    {\n      \"artifact\": \"critique_raw_v1.txt\",\n      \"sha256\": \"sha256:83a00300ad6a2502c3fd8f04f50b47f5ce60496614534ebf6bf9fc85c85e1b0d\"\n    },\n    {\n      \"artifact\": \"critique_check_all_locations_producer_v1.json\",\n      \"sha256\": \"sha256:68ca75da5663708a636f915728b2e12205026c8abd423d83f3e302f0076fee68\"\n    },\n    {\n      \"artifact\": \"critique_check_correctness_producer_v1.json\",\n      \"sha256\":",
+          "object_path": "objects/sha256/30/3803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "sha256": "303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed"
+        },
+        {
+          "claim_index": 161,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/5a/bf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "sha256": "5abf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed"
+        },
+        {
+          "claim_index": 164,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/38/1b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "sha256": "381b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298"
+        },
+        {
+          "claim_index": 14,
+          "claim_logical_name": "captures/remote-commands/inventory-plan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "0\t1785507111.8228596570\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.plan.lock\n0\t1785507112.6508435010\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.events.supervision-checkpoint.lock\n0\t1785507333.7475294620\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.routing_ledger.lock\n10073\t1785516438.9027183640\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/boundary_receipts/history/override_force_proceed_authority/v1.json\n10073\t1785516438.9047183250\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2",
+          "object_path": "objects/sha256/10/e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5",
+          "query_basis": "remote command inventory: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "sha256": "10e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5"
+        }
+      ],
+      "target_id": "target-8a9abcbbba5f80edad3a260605120653b942091cba99bc87fce460eb56171d96"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "run_authority",
+      "confidence": "high",
+      "current_state": "missing",
+      "downstream_checklist_tasks": [
+        "T4.2"
+      ],
+      "gap_or_reason": "T0.2 captured the session/plan/initiative scope but no persisted Run Authority owner ledger. Do not interpret this as no grants; fail closed and revoke the exact T4.2 tuple.",
+      "ids": {},
+      "logical_identity_scope": {
+        "bounded_query_scope": "T0.2 preserved scope",
+        "missing_authority_class": "Run Authority grant/decision/fence/revocation owner records",
+        "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+      "owner_system": "Run Authority",
+      "prerequisite_authority": [
+        "fail-closed owner authority"
+      ],
+      "record_id": "record-433909823c2c890e8c86dfa7f0e52b0e05732b33a72338bc6f4d056e68bb639e",
+      "required_later_action": "revoke",
+      "source_evidence": [
+        {
+          "claim_index": 23,
+          "claim_logical_name": "remote-workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\n  \"allow_human_gates\": false,\n  \"chain_slug\": \"critique-ledger\",\n  \"editable_install_sync\": {\n    \"reason\": \"disabled_by_flag\",\n    \"status\": \"skipped\"\n  },\n  \"editable_source_branch\": \"consolidate/post-m11-f1c0b7384752-96127731661b\",\n  \"editable_source_head\": null,\n  \"engine_ref_check\": {\n    \"advertised_ref\": \"refs/heads/consolidate/post-m11-f1c0b7384752-96127731661b\",\n    \"commit\": \"c7bcb06af536acfe759c1b31a785afc19afe92d4\",\n    \"ref_kind\": \"branch\",\n    \"repo\": \"https://[redacted-url]\n    \"requested_ref\": \"consolidate/post-m11-f1c0b7384752-96127731661b\",\n    \"status\": \"ok\"\n  },\n  \"identity_digest\": \"c2d3d05b93\",\n  \"launch_outcome\": {\n    \"code\": \"launch_in_progress\",\n    \"detail\": \"cloud chain launch is preparing the remote session\",\n    \"observed_at\": \"2026-07-31T18:04:12.395890+00:00\",\n    \"status\": \"starting\"\n  },\n  \"operator_pause\": null,\n  \"relaunch_command\": \"{ set -e\\necho \\",
+          "object_path": "objects/sha256/6f/255446d16f2780d1a0122db36336dbee0643ebaa71209454e34594c1edc4e4",
+          "query_basis": "/opt/megaplan-cloud/workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json",
+          "sha256": "6f255446d16f2780d1a0122db36336dbee0643ebaa71209454e34594c1edc4e4"
+        },
+        {
+          "claim_index": 14,
+          "claim_logical_name": "captures/remote-commands/inventory-plan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "0\t1785507111.8228596570\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.plan.lock\n0\t1785507112.6508435010\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.events.supervision-checkpoint.lock\n0\t1785507333.7475294620\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.routing_ledger.lock\n10073\t1785516438.9027183640\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/boundary_receipts/history/override_force_proceed_authority/v1.json\n10073\t1785516438.9047183250\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2",
+          "object_path": "objects/sha256/10/e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5",
+          "query_basis": "remote command inventory: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "sha256": "10e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5"
+        },
+        {
+          "claim_index": 40,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/cloud.yaml",
+          "claim_status": "hash-verified-redacted",
+          "minimal_safe_excerpt": "provider: ssh\n\nrepo:\n  url: https://[redacted-url]\n  branch: megaplan/critique-ledger-accountability-v2-20260728\n  workspace: /workspace/critique-ledger-accountability-v2-20260728/Arnold\n\nagents:\n  default: codex\n\ncodex:\n  model: gpt-5.6-sol\n  reasoning: high\n\nchain_session: critique-ledger-accountability-v2-20260728\nmode: chain\n\nchain:\n  spec: /workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml\n\nmegaplan:\n  ref: consolidate/post-m11-f1c0b7384752-96127731661b\n  codex_auth=[redacted]\n  repo: https://[redacted-url]\n  src_path: /workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4\n\nresources:\n  volume: agent-volume\n  port: 8080\n\nssh:\n  host: 159.69.51.216\n  user: root\n  port: 22\n  remote_dir: /opt/megaplan-cloud/deploy\n  workspace_dir: /opt/megaplan-cloud/workspace\n  container: megaplan-cloud-agent\n\nsecrets: [",
+          "object_path": "objects/sha256/cd/0e31ae88b2c25f4327111bf0d878c527f8d778a8e80d48e643508a68e00143",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/cloud.yaml",
+          "sha256": "cd0e31ae88b2c25f4327111bf0d878c527f8d778a8e80d48e643508a68e00143"
+        }
+      ],
+      "target_id": "target-32eaf453d300f8d453d1ec3dac7b2ebb285c576abe16ec7cce5860c350eb1cc2"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "notification",
+      "confidence": "high",
+      "current_state": "missing",
+      "downstream_checklist_tasks": [
+        "T4.4"
+      ],
+      "gap_or_reason": "Both bounded notification scans exited 0 with empty output; absence of persisted records is not proof of no delivery. Provider was not queried.",
+      "ids": {},
+      "logical_identity_scope": {
+        "bounded_query_scope": "T0.2 preserved scope",
+        "missing_authority_class": "Notification incident/intent/delivery receipt/message/provider records",
+        "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+      "owner_system": "Notification owner",
+      "prerequisite_authority": [
+        "fail-closed owner authority"
+      ],
+      "record_id": "record-45908de649c66955af17b8dcc2e7cde741329b9a5c797e29578627baae0e13a5",
+      "required_later_action": "reconcile",
+      "source_evidence": [
+        {
+          "claim_index": 16,
+          "claim_logical_name": "captures/remote-commands/notification-content-scan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "",
+          "object_path": "objects/sha256/e3/b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "query_basis": "remote command: rg -l --hidden --no-ignore -i '(notify|notification|discord|escalat|provider)' /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411 /opt/megaplan-cloud/workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json 2>/dev/null | sort",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "claim_index": 17,
+          "claim_logical_name": "captures/remote-commands/notification-name-inventory.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "",
+          "object_path": "objects/sha256/e3/b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "query_basis": "remote command: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan -xdev -type f -iname '*notif*' -o -iname '*discord*' -o -iname '*escalat*' -printf '%s %p\\n' 2>/dev/null | sort",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "target_id": "target-561aace39b3a65cc16876c2ce85eeae7b69bc793d412749fc211e66a78a6946f"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "wbc",
+      "confidence": "low",
+      "current_state": "unavailable",
+      "downstream_checklist_tasks": [
+        "T4.4"
+      ],
+      "gap_or_reason": "WBC attempt stores and ledgers are preserved, but GLEK/provider outcome completeness is not proven; preserve INDETERMINATE and deny redispatch.",
+      "ids": {},
+      "logical_identity_scope": {
+        "owner_record_path_or_uri": "UNAVAILABLE: complete WBC owner reconciliation view not in T0.2",
+        "target_tuple": {
+          "base_branch": "megaplan/critique-ledger-accountability-v2-20260728",
+          "branch": "megaplan/critique-ledger-accountability-v2/cl2-ledger-replay",
+          "depth": "high",
+          "plan": "cl2-wbc-backed-ledger-20260731-1411",
+          "plan_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "profile": "partnered-5-glm",
+          "robustness": "thorough",
+          "runtime": {
+            "branch": "consolidate/post-m11-f1c0b7384752-96127731661b",
+            "commit": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "image": "megaplan-cloud-agent",
+            "model_routes": [
+              "codex:gpt-5.6-sol:high",
+              "hermes:deepseek:deepseek-v4-pro",
+              "hermes:zhipu:glm-5.2"
+            ],
+            "python_requires": ">=3.11",
+            "source_path": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "wrapper": "/usr/local/bin/entrypoint.sh"
+          },
+          "selection": {
+            "chain_record": "chain-501c561132ce",
+            "chain_slug": "critique-ledger",
+            "target_milestone": "cl2-ledger-replay"
+          },
+          "session": "critique-ledger-accountability-v2-20260728",
+          "spec": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+          "workspace": "/workspace/critique-ledger-accountability-v2-20260728/Arnold"
+        },
+        "wbc_record_kind": "operation|GLEK|intent|attempt|outcome|provider_receipt|ambiguity"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: complete WBC owner reconciliation view not in T0.2",
+      "owner_system": "WBC",
+      "prerequisite_authority": [
+        "WBC"
+      ],
+      "record_id": "record-4a56a36e9c983b74bc778bcdae8458703c055b8384db648b677adbdffdb6e6f9",
+      "required_later_action": "reconcile",
+      "source_evidence": [
+        {
+          "claim_index": 161,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/5a/bf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "sha256": "5abf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed"
+        },
+        {
+          "claim_index": 164,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/38/1b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "sha256": "381b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298"
+        },
+        {
+          "claim_index": 198,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\n  \"schema_version\": \"megaplan-critique-custody-v1\",\n  \"iteration\": 1,\n  \"produced_at\": \"2026-07-31T15:51:39Z\",\n  \"plan_artifact\": \"plan_v1.md\",\n  \"plan_sha256\": \"sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922\",\n  \"critique_artifact\": \"critique_v1.json\",\n  \"critique_sha256\": \"sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8\",\n  \"critique_payload_digest\": \"sha256:5aac511e1ba8d347c689e9b2d75bbd660d7cd2fee6419818fdeac3808d5bc75f\",\n  \"raw_sources\": [\n    {\n      \"artifact\": \"critique_raw_v1.txt\",\n      \"sha256\": \"sha256:83a00300ad6a2502c3fd8f04f50b47f5ce60496614534ebf6bf9fc85c85e1b0d\"\n    },\n    {\n      \"artifact\": \"critique_check_all_locations_producer_v1.json\",\n      \"sha256\": \"sha256:68ca75da5663708a636f915728b2e12205026c8abd423d83f3e302f0076fee68\"\n    },\n    {\n      \"artifact\": \"critique_check_correctness_producer_v1.json\",\n      \"sha256\":",
+          "object_path": "objects/sha256/30/3803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "sha256": "303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed"
+        },
+        {
+          "claim_index": 206,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/events.ndjson",
+          "claim_status": "hash-verified-redacted",
+          "minimal_safe_excerpt": "{\"kind\":\"state_written\",\"payload\":{\"effect\":null,\"effect_class\":\"state_write\",\"schema_version\":0,\"state\":{\"config\":{\"adaptive_critique\":true,\"agent\":\"\",\"auto_approve\":true,\"completion_contract_mode\":\"shadow\",\"critic_model\":\"\",\"critic_model_explicit\":false,\"deepseek_provider\":\"direct\",\"depth\":\"high\",\"full_suite_backstop_mode\":\"shadow\",\"max_tasks_per_batch\":5,\"mode\":\"code\",\"phase_model\":[\"plan=hermes:zhipu:glm-5.2\",\"prep=hermes:deepseek:deepseek-v4-pro\",\"critique=hermes:deepseek:deepseek-v4-pro\",\"critique_evaluator=hermes:zhipu:glm-5.2\",\"revise=hermes:zhipu:glm-5.2\",\"gate=hermes:deepseek:deepseek-v4-pro\",\"finalize=hermes:zhipu:glm-5.2\",\"execute=hermes:zhipu:glm-5.2\",\"feedback=hermes:zhipu:glm-5.2\",\"loop_plan=hermes:zhipu:glm-5.2\",\"loop_execute=hermes:zhipu:glm-5.2\",\"review=hermes:zhipu:glm-5.2\",\"tiebreaker_researcher=hermes:zhipu:glm-5.2\",\"tiebreaker_challenger=hermes:zhipu:glm-5.2\"],\"prep",
+          "object_path": "objects/sha256/6e/6fae8bff8c98e854674763933c00902b4a617d5383d9484ed9f11866891f57",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/events.ndjson",
+          "sha256": "6e6fae8bff8c98e854674763933c00902b4a617d5383d9484ed9f11866891f57"
+        },
+        {
+          "claim_index": 244,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/routing_ledger.jsonl",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\"actual_model\":\"deepseek-v4-pro\",\"agent\":\"hermes\",\"attempted_specs\":[\"hermes:deepseek:deepseek-v4-pro\"],\"complexity\":null,\"configured_specs\":[\"hermes:deepseek:deepseek-v4-pro\"],\"failed_attempt_reasons\":[],\"fallback_trigger\":null,\"phase\":\"prep\",\"resolved_model\":\"deepseek:deepseek-v4-pro\",\"selected_spec\":\"hermes:deepseek:deepseek-v4-pro\",\"selected_spec_index\":0,\"selected_spec_total\":1,\"step_label\":\"prep-triage\",\"tier\":null,\"tier_routing_active\":false,\"ts\":\"2026-07-31T14:15:33.748031+00:00\"}\n{\"actual_model\":\"deepseek-v4-pro\",\"agent\":\"hermes\",\"attempted_specs\":[\"hermes:deepseek:deepseek-v4-pro\"],\"complexity\":null,\"configured_specs\":[\"hermes:deepseek:deepseek-v4-pro\"],\"failed_attempt_reasons\":[],\"fallback_trigger\":null,\"phase\":\"prep\",\"resolved_model\":\"deepseek:deepseek-v4-pro\",\"selected_spec\":\"hermes:deepseek:deepseek-v4-pro\",\"selected_spec_index\":0,\"selected_spec_total\":1,\"step_label\":\"A4\",",
+          "object_path": "objects/sha256/41/f91afc232f47502590b0100d913f764c9ccf32fb3de80a19862247aa08c2d1",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/routing_ledger.jsonl",
+          "sha256": "41f91afc232f47502590b0100d913f764c9ccf32fb3de80a19862247aa08c2d1"
+        }
+      ],
+      "target_id": "target-v2-wbc-glexams-operations-intents-attempts-outcomes-receipts"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "runtime_vector",
+      "confidence": "high",
+      "current_state": "blocked",
+      "downstream_checklist_tasks": [
+        "T4.1"
+      ],
+      "gap_or_reason": "The exact read-only container probe failed with OCI ENOSPC; host/image/process facts cannot substitute for the blocked import/config probe.",
+      "ids": {},
+      "logical_identity_scope": {
+        "bounded_query_scope": "T0.2 preserved scope",
+        "missing_authority_class": "Container interpreter/import/config/model-route probe",
+        "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+      "owner_system": "Cloud operations",
+      "prerequisite_authority": [
+        "fail-closed owner authority"
+      ],
+      "record_id": "record-644b0faa51b4948c36db504537d94be4ff0b80a58d2a50d1a33f7e7791603ce9",
+      "required_later_action": "verify",
+      "source_evidence": [
+        {
+          "claim_index": 2,
+          "claim_logical_name": "captures/remote-commands/container-exec-probe.txt",
+          "claim_status": "blocked-observation",
+          "minimal_safe_excerpt": "OCI runtime exec failed: write /tmp/runc-process208137953: no space left on device\n",
+          "object_path": "objects/sha256/f1/13812851238791204ed80295719e843365d295540000a464278f1c0e66d54b",
+          "query_basis": "remote command: docker exec megaplan-cloud-agent bash -lc 'true'",
+          "sha256": "f113812851238791204ed80295719e843365d295540000a464278f1c0e66d54b"
+        },
+        {
+          "claim_index": 3,
+          "claim_logical_name": "captures/remote-commands/container-metadata.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\"Status\":\"running\",\"Running\":true,\"Paused\":false,\"Restarting\":false,\"OOMKilled\":false,\"Dead\":false,\"Pid\":1487,\"ExitCode\":0,\"Error\":\"\",\"StartedAt\":\"2026-07-31T17:44:53.484803176Z\",\"FinishedAt\":\"2026-07-31T17:43:46.67617943Z\"} \"sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94\" [\"/usr/local/bin/entrypoint.sh\"] \"/workspace\" \"megaplan-cloud-agent\" null [{\"Type\":\"bind\",\"Source\":\"/opt/megaplan-cloud/cache/pip\",\"Destination\":\"/root/.cache/pip\",\"Mode\":\"\",\"RW\":true,\"Propagation\":\"rprivate\"},{\"Type\":\"bind\",\"Source\":\"/opt/megaplan-cloud/cache/npm\",\"Destination\":\"/root/.npm\",\"Mode\":\"\",\"RW\":true,\"Propagation\":\"rprivate\"},{\"Type\":\"bind\",\"Source\":\"/opt/megaplan-cloud/workspace\",\"Destination\":\"/workspace\",\"Mode\":\"\",\"RW\":true,\"Propagation\":\"rprivate\"}]\n",
+          "object_path": "objects/sha256/6b/1c39b560b0c23c6c6cda970fe096d89ade3fa3d71892915ed7fb09cb429044",
+          "query_basis": "remote command: docker inspect megaplan-cloud-agent --format '{{json .State}} {{json .Image}} {{json .Config.Cmd}} {{json .Config.WorkingDir}} {{json .Config.Image}} {{json .Config.Entrypoint}} {{json .Mounts}}'",
+          "sha256": "6b1c39b560b0c23c6c6cda970fe096d89ade3fa3d71892915ed7fb09cb429044"
+        },
+        {
+          "claim_index": 19,
+          "claim_logical_name": "captures/remote-commands/plan-store-metadata.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "1429504 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_planner_8aa57e44.db\n167936 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_verification.db\n249856 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_all_locations.db\n278528 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_critique_scope.db\n303104 /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.hermes_state/state_hermes_g",
+          "object_path": "objects/sha256/40/5412b18687a7bb3f1e4ec14a3a190c780fd9229daa6225c7c1154cc1711904",
+          "query_basis": "remote command: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411 -xdev -type f \\( -name '*.db' -o -name '*.sqlite3' -o -name '*-wal' -o -name '*-shm' \\) -printf '%s %p\\n' 2>/dev/null | sort",
+          "sha256": "405412b18687a7bb3f1e4ec14a3a190c780fd9229daa6225c7c1154cc1711904"
+        }
+      ],
+      "target_id": "target-1558d84058b3bac662a189d49c65a574544d72845cff941ea1b1f372df3246e8"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "custody",
+      "confidence": "low",
+      "current_state": "unavailable",
+      "downstream_checklist_tasks": [
+        "T4.3"
+      ],
+      "gap_or_reason": "Custody owner record for lease/epoch/fence token claims is not established in T0.2; no plain release or key reuse is safe.",
+      "ids": {},
+      "logical_identity_scope": {
+        "custody_record_kind": "target|lease|epoch|fence_token|claim",
+        "owner_record_path_or_uri": "UNAVAILABLE: Custody owner ledger not in T0.2",
+        "target_tuple": {
+          "base_branch": "megaplan/critique-ledger-accountability-v2-20260728",
+          "branch": "megaplan/critique-ledger-accountability-v2/cl2-ledger-replay",
+          "depth": "high",
+          "plan": "cl2-wbc-backed-ledger-20260731-1411",
+          "plan_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "profile": "partnered-5-glm",
+          "robustness": "thorough",
+          "runtime": {
+            "branch": "consolidate/post-m11-f1c0b7384752-96127731661b",
+            "commit": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "image": "megaplan-cloud-agent",
+            "model_routes": [
+              "codex:gpt-5.6-sol:high",
+              "hermes:deepseek:deepseek-v4-pro",
+              "hermes:zhipu:glm-5.2"
+            ],
+            "python_requires": ">=3.11",
+            "source_path": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "wrapper": "/usr/local/bin/entrypoint.sh"
+          },
+          "selection": {
+            "chain_record": "chain-501c561132ce",
+            "chain_slug": "critique-ledger",
+            "target_milestone": "cl2-ledger-replay"
+          },
+          "session": "critique-ledger-accountability-v2-20260728",
+          "spec": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+          "workspace": "/workspace/critique-ledger-accountability-v2-20260728/Arnold"
+        }
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: Custody owner ledger not in T0.2",
+      "owner_system": "Custody",
+      "prerequisite_authority": [
+        "Custody"
+      ],
+      "record_id": "record-8be49bc9671d7df7ceb8bf55631e189aef40cb5c910fbd3e3b985b8ea17959b9",
+      "required_later_action": "expire",
+      "source_evidence": [
+        {
+          "claim_index": 198,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\n  \"schema_version\": \"megaplan-critique-custody-v1\",\n  \"iteration\": 1,\n  \"produced_at\": \"2026-07-31T15:51:39Z\",\n  \"plan_artifact\": \"plan_v1.md\",\n  \"plan_sha256\": \"sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922\",\n  \"critique_artifact\": \"critique_v1.json\",\n  \"critique_sha256\": \"sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8\",\n  \"critique_payload_digest\": \"sha256:5aac511e1ba8d347c689e9b2d75bbd660d7cd2fee6419818fdeac3808d5bc75f\",\n  \"raw_sources\": [\n    {\n      \"artifact\": \"critique_raw_v1.txt\",\n      \"sha256\": \"sha256:83a00300ad6a2502c3fd8f04f50b47f5ce60496614534ebf6bf9fc85c85e1b0d\"\n    },\n    {\n      \"artifact\": \"critique_check_all_locations_producer_v1.json\",\n      \"sha256\": \"sha256:68ca75da5663708a636f915728b2e12205026c8abd423d83f3e302f0076fee68\"\n    },\n    {\n      \"artifact\": \"critique_check_correctness_producer_v1.json\",\n      \"sha256\":",
+          "object_path": "objects/sha256/30/3803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "sha256": "303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed"
+        },
+        {
+          "claim_index": 161,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/5a/bf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "sha256": "5abf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed"
+        },
+        {
+          "claim_index": 164,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/38/1b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "sha256": "381b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298"
+        },
+        {
+          "claim_index": 14,
+          "claim_logical_name": "captures/remote-commands/inventory-plan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "0\t1785507111.8228596570\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.plan.lock\n0\t1785507112.6508435010\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.events.supervision-checkpoint.lock\n0\t1785507333.7475294620\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.routing_ledger.lock\n10073\t1785516438.9027183640\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/boundary_receipts/history/override_force_proceed_authority/v1.json\n10073\t1785516438.9047183250\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2",
+          "object_path": "objects/sha256/10/e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5",
+          "query_basis": "remote command inventory: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "sha256": "10e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5"
+        }
+      ],
+      "target_id": "target-v2-custody-leases-epochs-fence-tokens-claims"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "notification",
+      "confidence": "high",
+      "current_state": "hash-verified",
+      "downstream_checklist_tasks": [],
+      "gap_or_reason": "Successful bounded empty notification scan; absence is not safety. This row never replaces the owner record.",
+      "ids": {},
+      "logical_identity_scope": {
+        "logical_name": "captures/remote-commands/notification-name-inventory.txt",
+        "owner_record_path_or_uri": "remote command: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan -xdev -type f -iname '*notif*' -o -iname '*discord*' -o -iname '*escalat*' -printf '%s %p\\n' 2>/dev/null | sort",
+        "scope": "T0.2-preserved-read-only-snapshot",
+        "target_plan": null,
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "remote command: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan -xdev -type f -iname '*notif*' -o -iname '*discord*' -o -iname '*escalat*' -printf '%s %p\\n' 2>/dev/null | sort",
+      "owner_system": "Notification owner",
+      "prerequisite_authority": [
+        "Notification owner"
+      ],
+      "record_id": "record-8e0fbce073697b56f71edaaf3c7e41b16549b1c13c9b2b54641ec91c0a62d5cf",
+      "required_later_action": "preserve",
+      "source_evidence": [
+        {
+          "claim_index": 17,
+          "claim_logical_name": "captures/remote-commands/notification-name-inventory.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "",
+          "object_path": "objects/sha256/e3/b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "query_basis": "remote command: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan -xdev -type f -iname '*notif*' -o -iname '*discord*' -o -iname '*escalat*' -printf '%s %p\\n' 2>/dev/null | sort",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "target_id": "target-67f3269a9f2d211635c3aa238dcfa671069217eaf4c55f0a13b4f7ce0da77b5a"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "run_authority",
+      "confidence": "low",
+      "current_state": "unavailable",
+      "downstream_checklist_tasks": [
+        "T4.2"
+      ],
+      "gap_or_reason": "No current Run Authority grant/fence/revocation owner record was preserved; exact tuple is the fail-closed revoke target, not evidence that no grant existed.",
+      "ids": {},
+      "logical_identity_scope": {
+        "authority_record_kind": "grant|decision|fence|revocation",
+        "owner_record_path_or_uri": "UNAVAILABLE: Run Authority owner ledger not in T0.2",
+        "target_tuple": {
+          "base_branch": "megaplan/critique-ledger-accountability-v2-20260728",
+          "branch": "megaplan/critique-ledger-accountability-v2/cl2-ledger-replay",
+          "depth": "high",
+          "plan": "cl2-wbc-backed-ledger-20260731-1411",
+          "plan_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "profile": "partnered-5-glm",
+          "robustness": "thorough",
+          "runtime": {
+            "branch": "consolidate/post-m11-f1c0b7384752-96127731661b",
+            "commit": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "image": "megaplan-cloud-agent",
+            "model_routes": [
+              "codex:gpt-5.6-sol:high",
+              "hermes:deepseek:deepseek-v4-pro",
+              "hermes:zhipu:glm-5.2"
+            ],
+            "python_requires": ">=3.11",
+            "source_path": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "wrapper": "/usr/local/bin/entrypoint.sh"
+          },
+          "selection": {
+            "chain_record": "chain-501c561132ce",
+            "chain_slug": "critique-ledger",
+            "target_milestone": "cl2-ledger-replay"
+          },
+          "session": "critique-ledger-accountability-v2-20260728",
+          "spec": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+          "workspace": "/workspace/critique-ledger-accountability-v2-20260728/Arnold"
+        }
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: Run Authority owner ledger not in T0.2",
+      "owner_system": "Run Authority",
+      "prerequisite_authority": [
+        "Run Authority"
+      ],
+      "record_id": "record-a42441eaadcd5d33fc7c6835cddc3dbf653c032a132c3fb6e587fd9b2e458592",
+      "required_later_action": "revoke",
+      "source_evidence": [
+        {
+          "claim_index": 23,
+          "claim_logical_name": "remote-workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\n  \"allow_human_gates\": false,\n  \"chain_slug\": \"critique-ledger\",\n  \"editable_install_sync\": {\n    \"reason\": \"disabled_by_flag\",\n    \"status\": \"skipped\"\n  },\n  \"editable_source_branch\": \"consolidate/post-m11-f1c0b7384752-96127731661b\",\n  \"editable_source_head\": null,\n  \"engine_ref_check\": {\n    \"advertised_ref\": \"refs/heads/consolidate/post-m11-f1c0b7384752-96127731661b\",\n    \"commit\": \"c7bcb06af536acfe759c1b31a785afc19afe92d4\",\n    \"ref_kind\": \"branch\",\n    \"repo\": \"https://[redacted-url]\n    \"requested_ref\": \"consolidate/post-m11-f1c0b7384752-96127731661b\",\n    \"status\": \"ok\"\n  },\n  \"identity_digest\": \"c2d3d05b93\",\n  \"launch_outcome\": {\n    \"code\": \"launch_in_progress\",\n    \"detail\": \"cloud chain launch is preparing the remote session\",\n    \"observed_at\": \"2026-07-31T18:04:12.395890+00:00\",\n    \"status\": \"starting\"\n  },\n  \"operator_pause\": null,\n  \"relaunch_command\": \"{ set -e\\necho \\",
+          "object_path": "objects/sha256/6f/255446d16f2780d1a0122db36336dbee0643ebaa71209454e34594c1edc4e4",
+          "query_basis": "/opt/megaplan-cloud/workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json",
+          "sha256": "6f255446d16f2780d1a0122db36336dbee0643ebaa71209454e34594c1edc4e4"
+        },
+        {
+          "claim_index": 14,
+          "claim_logical_name": "captures/remote-commands/inventory-plan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "0\t1785507111.8228596570\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.plan.lock\n0\t1785507112.6508435010\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.events.supervision-checkpoint.lock\n0\t1785507333.7475294620\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.routing_ledger.lock\n10073\t1785516438.9027183640\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/boundary_receipts/history/override_force_proceed_authority/v1.json\n10073\t1785516438.9047183250\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2",
+          "object_path": "objects/sha256/10/e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5",
+          "query_basis": "remote command inventory: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "sha256": "10e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5"
+        },
+        {
+          "claim_index": 40,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/cloud.yaml",
+          "claim_status": "hash-verified-redacted",
+          "minimal_safe_excerpt": "provider: ssh\n\nrepo:\n  url: https://[redacted-url]\n  branch: megaplan/critique-ledger-accountability-v2-20260728\n  workspace: /workspace/critique-ledger-accountability-v2-20260728/Arnold\n\nagents:\n  default: codex\n\ncodex:\n  model: gpt-5.6-sol\n  reasoning: high\n\nchain_session: critique-ledger-accountability-v2-20260728\nmode: chain\n\nchain:\n  spec: /workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml\n\nmegaplan:\n  ref: consolidate/post-m11-f1c0b7384752-96127731661b\n  codex_auth=[redacted]\n  repo: https://[redacted-url]\n  src_path: /workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4\n\nresources:\n  volume: agent-volume\n  port: 8080\n\nssh:\n  host: 159.69.51.216\n  user: root\n  port: 22\n  remote_dir: /opt/megaplan-cloud/deploy\n  workspace_dir: /opt/megaplan-cloud/workspace\n  container: megaplan-cloud-agent\n\nsecrets: [",
+          "object_path": "objects/sha256/cd/0e31ae88b2c25f4327111bf0d878c527f8d778a8e80d48e643508a68e00143",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/cloud.yaml",
+          "sha256": "cd0e31ae88b2c25f4327111bf0d878c527f8d778a8e80d48e643508a68e00143"
+        }
+      ],
+      "target_id": "target-v2-run-authority-grants-decisions-fences-revocations"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "writer_effect_surface",
+      "confidence": "low",
+      "current_state": "unavailable",
+      "downstream_checklist_tasks": [
+        "T4.4"
+      ],
+      "gap_or_reason": "Notification/provider effect surface is not observed; unknown delivery must remain no-redispatchable.",
+      "ids": {},
+      "logical_identity_scope": {
+        "owner_record_path_or_uri": "UNAVAILABLE: no persisted notification owner record",
+        "surface": "notification/provider effect path",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: no persisted notification owner record",
+      "owner_system": "Writers/effect boundary",
+      "prerequisite_authority": [
+        "Writers/effect boundary"
+      ],
+      "record_id": "record-b171bbeb6556eb57e2e3cf399dcee24fcfa677289233a6d138038acd7854cda0",
+      "required_later_action": "no-redispatch",
+      "source_evidence": [
+        {
+          "claim_index": 16,
+          "claim_logical_name": "captures/remote-commands/notification-content-scan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "",
+          "object_path": "objects/sha256/e3/b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "query_basis": "remote command: rg -l --hidden --no-ignore -i '(notify|notification|discord|escalat|provider)' /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411 /opt/megaplan-cloud/workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json 2>/dev/null | sort",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "claim_index": 17,
+          "claim_logical_name": "captures/remote-commands/notification-name-inventory.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "",
+          "object_path": "objects/sha256/e3/b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "query_basis": "remote command: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan -xdev -type f -iname '*notif*' -o -iname '*discord*' -o -iname '*escalat*' -printf '%s %p\\n' 2>/dev/null | sort",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "target_id": "target-b29c21af378d341bab14a7aa9141e75fe5bad7a4a89dbee8edc00c8e4effe6c7"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "notification",
+      "confidence": "high",
+      "current_state": "hash-verified",
+      "downstream_checklist_tasks": [],
+      "gap_or_reason": "Successful bounded empty notification scan; absence is not safety. This row never replaces the owner record.",
+      "ids": {},
+      "logical_identity_scope": {
+        "logical_name": "captures/remote-commands/notification-content-scan.txt",
+        "owner_record_path_or_uri": "remote command: rg -l --hidden --no-ignore -i '(notify|notification|discord|escalat|provider)' /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411 /opt/megaplan-cloud/workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json 2>/dev/null | sort",
+        "scope": "T0.2-preserved-read-only-snapshot",
+        "target_plan": null,
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "remote command: rg -l --hidden --no-ignore -i '(notify|notification|discord|escalat|provider)' /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411 /opt/megaplan-cloud/workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json 2>/dev/null | sort",
+      "owner_system": "Notification owner",
+      "prerequisite_authority": [
+        "Notification owner"
+      ],
+      "record_id": "record-c23fb9134225640fdbafed0f379ccd5201fa1ae37d8b7d29f29555fae127d208",
+      "required_later_action": "preserve",
+      "source_evidence": [
+        {
+          "claim_index": 16,
+          "claim_logical_name": "captures/remote-commands/notification-content-scan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "",
+          "object_path": "objects/sha256/e3/b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "query_basis": "remote command: rg -l --hidden --no-ignore -i '(notify|notification|discord|escalat|provider)' /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411 /opt/megaplan-cloud/workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v2-20260728.json 2>/dev/null | sort",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "target_id": "target-bfffc42ceb3a4a3e81cff3e06a88447c996bf9214378e1491603f41997602927"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "cloud_generation",
+      "confidence": "high",
+      "current_state": "missing",
+      "downstream_checklist_tasks": [
+        "T4.1"
+      ],
+      "gap_or_reason": "T0.2 gap says runtime candidate arnold/manifest had no regular file; package metadata is present but generation manifest authority is absent.",
+      "ids": {},
+      "logical_identity_scope": {
+        "bounded_query_scope": "T0.2 preserved scope",
+        "missing_authority_class": "Runtime candidate manifest",
+        "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+      "owner_system": "Release/cloud runtime owner",
+      "prerequisite_authority": [
+        "fail-closed owner authority"
+      ],
+      "record_id": "record-cc87884615ad93a7da59195b8fdf4da9c23e89a39024e0c2283c36ce6bded683",
+      "required_later_action": "verify",
+      "source_evidence": [
+        {
+          "claim_index": 317,
+          "claim_logical_name": "remote-workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/pyproject.toml",
+          "claim_status": "hash-verified-redacted",
+          "minimal_safe_excerpt": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[project]\nname = \"arnold\"\nversion = \"0.23.0\"\ndescription = \"Arnold — AI agent harness for coordinating Claude and GPT to make and execute extremely robust plans, with Megaplan as the flagship planning pipeline plugin\"\nrequires-python = \">=3.11\"\nlicense = { text = \"OSNL-0.2\" }\nauthors = [redacted]\n    { name = \"Peter O'Malley\" },\n]\nkeywords = [\"ai\", \"planning\", \"orchestration\", \"claude\", \"codex\", \"arnold\", \"megaplan\"]\nclassifiers = [\n    \"Development Status :: 3 - Alpha\",\n    \"Environment :: Console\",\n    \"Intended Audience :: Developers\",\n    \"Topic :: Software Development :: Quality Assurance\",\n    \"Topic :: Scientific/Engineering :: Artificial Intelligence\",\n]\ndependencies = [\n    \"pyyaml>=6.0\",\n    \"pydantic>=2.0\",\n    \"python-ulid>=3.0\",\n    \"psutil>=5.9\",\n    # Resident/subagent workers validate source edits ",
+          "object_path": "objects/sha256/69/72c6338e2785bcbabc2e0b1df77c7f423aa8aeb31ec5afdb297df909f8a002",
+          "query_basis": "/opt/megaplan-cloud/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/pyproject.toml",
+          "sha256": "6972c6338e2785bcbabc2e0b1df77c7f423aa8aeb31ec5afdb297df909f8a002"
+        },
+        {
+          "claim_index": 318,
+          "claim_logical_name": "remote-workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/uv.lock",
+          "claim_status": "hash-verified-redacted",
+          "minimal_safe_excerpt": "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\nresolution-markers = [\n    \"python_full_version >= '3.13'\",\n    \"python_full_version < '3.13'\",\n]\n\n[[package]]\nname = \"aiohappyeyeballs\"\nversion = \"2.6.1\"\nsource = { registry = \"https://[redacted-url] }\nsdist = { url = \"https://[redacted-url] hash = \"sha256:c3f9d0113123803ccadfdf3f0faa505bc78e6a72d1cc4806cbd719826e943558\", size = 22760, upload-time = \"2025-03-12T01:42:48.764Z\" }\nwheels = [\n    { url = \"https://[redacted-url] hash = \"sha256:f349ba8f4b75cb25c99c5c2d84e997e485204d2902a9597802b0371f09331fb8\", size = 15265, upload-time = \"2025-03-12T01:42:47.083Z\" },\n]\n\n[[package]]\nname = \"aiohttp\"\nversion = \"3.13.3\"\nsource = { registry = \"https://[redacted-url] }\ndependencies = [\n    { name = \"aiohappyeyeballs\" },\n    { name = \"aiosignal\" },\n    { name = \"attrs\" },\n    { name = \"frozenlist\" },\n    { name = \"multidict\" },\n    { name = \"propc",
+          "object_path": "objects/sha256/eb/0679a8d70d8b31a96786c69053bad57c661c1c073c5a5612931dc619ee374c",
+          "query_basis": "/opt/megaplan-cloud/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/uv.lock",
+          "sha256": "eb0679a8d70d8b31a96786c69053bad57c661c1c073c5a5612931dc619ee374c"
+        },
+        {
+          "claim_index": 14,
+          "claim_logical_name": "captures/remote-commands/inventory-plan.txt",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "0\t1785507111.8228596570\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.plan.lock\n0\t1785507112.6508435010\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.events.supervision-checkpoint.lock\n0\t1785507333.7475294620\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.routing_ledger.lock\n10073\t1785516438.9027183640\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/boundary_receipts/history/override_force_proceed_authority/v1.json\n10073\t1785516438.9047183250\tf\t/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2",
+          "object_path": "objects/sha256/10/e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5",
+          "query_basis": "remote command inventory: find -P /opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411",
+          "sha256": "10e45b0d242468d327449cf8a6f5487ec87f0e64ce85fbcdf1f0dc4a1208d3c5"
+        }
+      ],
+      "target_id": "target-fa6357a9db9ffcd14560377850181546a34a43d0749ef258f6cded58e96c6830"
+    },
+    {
+      "authority_classification": "ambiguous",
+      "category": "wbc",
+      "confidence": "high",
+      "current_state": "indeterminate",
+      "downstream_checklist_tasks": [
+        "T4.4"
+      ],
+      "gap_or_reason": "WBC-adjacent stores exist, but no complete owner reconciliation proving every external outcome. INDETERMINATE is a required preserved state.",
+      "ids": {},
+      "logical_identity_scope": {
+        "bounded_query_scope": "T0.2 preserved scope",
+        "missing_authority_class": "Complete WBC GLEK/provider receipt/ambiguity owner view",
+        "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+        "target_plan": "cl2-wbc-backed-ledger-20260731-1411",
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "UNAVAILABLE: see gap reason",
+      "owner_system": "WBC",
+      "prerequisite_authority": [
+        "fail-closed owner authority"
+      ],
+      "record_id": "record-f3972e81ff27cbd57c637fb4ad268373e48bbf027dd949f8b7031d031dc3a5f0",
+      "required_later_action": "no-redispatch",
+      "source_evidence": [
+        {
+          "claim_index": 161,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/5a/bf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.phase_wbc_attempts.sqlite3",
+          "sha256": "5abf5e407ddec9a5b79ae573c1ebd6812b73d3b1196f0d3e76afefe0ee1cc5ed"
+        },
+        {
+          "claim_index": 164,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "[binary content omitted]",
+          "object_path": "objects/sha256/38/1b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/.worker_dispatch_wbc_attempts.sqlite3",
+          "sha256": "381b05c7de3c00f00945347e9df1eecca4683727e2253c4d18ccfd8bf87c4298"
+        },
+        {
+          "claim_index": 198,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "claim_status": "hash-verified",
+          "minimal_safe_excerpt": "{\n  \"schema_version\": \"megaplan-critique-custody-v1\",\n  \"iteration\": 1,\n  \"produced_at\": \"2026-07-31T15:51:39Z\",\n  \"plan_artifact\": \"plan_v1.md\",\n  \"plan_sha256\": \"sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922\",\n  \"critique_artifact\": \"critique_v1.json\",\n  \"critique_sha256\": \"sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8\",\n  \"critique_payload_digest\": \"sha256:5aac511e1ba8d347c689e9b2d75bbd660d7cd2fee6419818fdeac3808d5bc75f\",\n  \"raw_sources\": [\n    {\n      \"artifact\": \"critique_raw_v1.txt\",\n      \"sha256\": \"sha256:83a00300ad6a2502c3fd8f04f50b47f5ce60496614534ebf6bf9fc85c85e1b0d\"\n    },\n    {\n      \"artifact\": \"critique_check_all_locations_producer_v1.json\",\n      \"sha256\": \"sha256:68ca75da5663708a636f915728b2e12205026c8abd423d83f3e302f0076fee68\"\n    },\n    {\n      \"artifact\": \"critique_check_correctness_producer_v1.json\",\n      \"sha256\":",
+          "object_path": "objects/sha256/30/3803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/critique_custody_v1.json",
+          "sha256": "303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed"
+        },
+        {
+          "claim_index": 206,
+          "claim_logical_name": "remote-workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/events.ndjson",
+          "claim_status": "hash-verified-redacted",
+          "minimal_safe_excerpt": "{\"kind\":\"state_written\",\"payload\":{\"effect\":null,\"effect_class\":\"state_write\",\"schema_version\":0,\"state\":{\"config\":{\"adaptive_critique\":true,\"agent\":\"\",\"auto_approve\":true,\"completion_contract_mode\":\"shadow\",\"critic_model\":\"\",\"critic_model_explicit\":false,\"deepseek_provider\":\"direct\",\"depth\":\"high\",\"full_suite_backstop_mode\":\"shadow\",\"max_tasks_per_batch\":5,\"mode\":\"code\",\"phase_model\":[\"plan=hermes:zhipu:glm-5.2\",\"prep=hermes:deepseek:deepseek-v4-pro\",\"critique=hermes:deepseek:deepseek-v4-pro\",\"critique_evaluator=hermes:zhipu:glm-5.2\",\"revise=hermes:zhipu:glm-5.2\",\"gate=hermes:deepseek:deepseek-v4-pro\",\"finalize=hermes:zhipu:glm-5.2\",\"execute=hermes:zhipu:glm-5.2\",\"feedback=hermes:zhipu:glm-5.2\",\"loop_plan=hermes:zhipu:glm-5.2\",\"loop_execute=hermes:zhipu:glm-5.2\",\"review=hermes:zhipu:glm-5.2\",\"tiebreaker_researcher=hermes:zhipu:glm-5.2\",\"tiebreaker_challenger=hermes:zhipu:glm-5.2\"],\"prep",
+          "object_path": "objects/sha256/6e/6fae8bff8c98e854674763933c00902b4a617d5383d9484ed9f11866891f57",
+          "query_basis": "/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/events.ndjson",
+          "sha256": "6e6fae8bff8c98e854674763933c00902b4a617d5383d9484ed9f11866891f57"
+        }
+      ],
+      "target_id": "target-3c1d0c47410c7c8548f05da277e8badb157d4d57b1d0c05f87733de1fd8f3937"
+    },
+    {
+      "authority_classification": "unavailable",
+      "category": "runtime_vector",
+      "confidence": "high",
+      "current_state": "blocked",
+      "downstream_checklist_tasks": [],
+      "gap_or_reason": "Direct runtime observation; no sensitive payload copied. This row never replaces the owner record.",
+      "ids": {},
+      "logical_identity_scope": {
+        "logical_name": "captures/remote-commands/container-exec-probe.txt",
+        "owner_record_path_or_uri": "remote command: docker exec megaplan-cloud-agent bash -lc 'true'",
+        "scope": "T0.2-preserved-read-only-snapshot",
+        "target_plan": null,
+        "target_session": "critique-ledger-accountability-v2-20260728"
+      },
+      "owner_record_path_or_uri": "remote command: docker exec megaplan-cloud-agent bash -lc 'true'",
+      "owner_system": "Cloud operations",
+      "prerequisite_authority": [
+        "Cloud operations"
+      ],
+      "record_id": "record-f8f392cc0faf93d3b80aaf2eb84aa470d2cd489d61c23dad1d044ea413899bc6",
+      "required_later_action": "preserve",
+      "source_evidence": [
+        {
+          "claim_index": 2,
+          "claim_logical_name": "captures/remote-commands/container-exec-probe.txt",
+          "claim_status": "blocked-observation",
+          "minimal_safe_excerpt": "OCI runtime exec failed: write /tmp/runc-process208137953: no space left on device\n",
+          "object_path": "objects/sha256/f1/13812851238791204ed80295719e843365d295540000a464278f1c0e66d54b",
+          "query_basis": "remote command: docker exec megaplan-cloud-agent bash -lc 'true'",
+          "sha256": "f113812851238791204ed80295719e843365d295540000a464278f1c0e66d54b"
+        }
+      ],
+      "target_id": "target-c2cb6d59456bc45c27aa33987bab924bf51a80b2dffb09dfc1cbd031764d88bf"
+    }
+  ]
+}

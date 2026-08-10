@@ -1,0 +1,18 @@
+{
+  "final": true,
+  "stage_sequence": [
+    "prep__pc0",
+    "execute_creative__pc1",
+    "critique_creative__pc2",
+    "revise_creative__pc3",
+    "finalize__pc4"
+  ],
+  "cursor_stage": "creative__finalize__pc4",
+  "cursor_pc": 5,
+  "run_path": "root",
+  "step_path": null,
+  "call_site_path": [],
+  "tree_file": "tree.json",
+  "tree_node_count": 6,
+  "status": "completed"
+}

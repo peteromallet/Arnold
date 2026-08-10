@@ -1,0 +1,24 @@
+base_branch: fix/vj24-selector-contract-20260805
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1
+  idea: .megaplan/initiatives/critique-ledger-vj24-migration-20260805/briefs/m1.md
+  branch: megaplan/critique-ledger-vj24-migration-20260805/m1
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: full
+  depth: high
+  with_prep: true
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0

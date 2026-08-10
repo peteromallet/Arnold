@@ -1,0 +1,155 @@
+{
+  "schema": "m10.execute-mutation-sinks.v1",
+  "generated_by": "T23 manual inventory",
+  "milestone": "M10",
+  "notes": [
+    "Every mutating call site in arnold_pipelines/megaplan/execute/batch.py",
+    "is inventoried. A static stale-anchor check validates completeness.",
+    "All rows are disposition=action_off for M10 (SD3). Three local/process",
+    "rows and three terminal/publication rows are selected for routing in",
+    "Steps 13D2-13D3 through execute/effect_gate.py."
+  ],
+  "modules_inventoried": [
+    "arnold_pipelines/megaplan/execute/batch.py"
+  ],
+  "sinks": [
+    {
+      "sink_id": "execute:batch.py::_prepare_scoped_batch_checkpoint",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "_prepare_scoped_batch_checkpoint",
+      "def_line": 1676,
+      "effect_family": "local_workspace",
+      "disposition": "migrated",
+      "routing_shard": "13D2",
+      "global_effect_key_recipe": "execute:local_workspace:batch{N}:_prepare_scoped_batch_checkpoint",
+      "source_anchor": "batch.py:L1676",
+      "owner": "m10-execute",
+      "reason": "Batch checkpoint persistence. Step 13D2 local workspace row 1 of 3.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::_prepare_scoped_batch_checkpoint"
+    },
+    {
+      "sink_id": "execute:batch.py::_stamp_result_envelopes",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "_stamp_result_envelopes",
+      "def_line": 1622,
+      "effect_family": "local_workspace",
+      "disposition": "migrated",
+      "routing_shard": "13D2",
+      "global_effect_key_recipe": "execute:local_workspace:batch{N}:_stamp_result_envelopes",
+      "source_anchor": "batch.py:L1622",
+      "owner": "m10-execute",
+      "reason": "Result envelope stamping mutates state. Step 13D2 local workspace row 2 of 3.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::_stamp_result_envelopes"
+    },
+    {
+      "sink_id": "execute:batch.py::_run_execute_worker_with_configured_fallback",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "_run_execute_worker_with_configured_fallback",
+      "def_line": 1082,
+      "effect_family": "process",
+      "disposition": "migrated",
+      "routing_shard": "13D2",
+      "global_effect_key_recipe": "execute:process:batch{N}:_run_execute_worker",
+      "source_anchor": "batch.py:L1082",
+      "owner": "m10-execute",
+      "reason": "Subprocess worker execution. Step 13D2 process row 3 of 3.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::_run_execute_worker"
+    },
+    {
+      "sink_id": "execute:batch.py::_emit_batch_boundary_receipt",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "_emit_batch_boundary_receipt",
+      "def_line": 1833,
+      "effect_family": "publication_handoff",
+      "disposition": "migrated",
+      "routing_shard": "13D3",
+      "global_effect_key_recipe": "execute:publication_handoff:batch{N}:_emit_batch_boundary_receipt",
+      "source_anchor": "batch.py:L1833",
+      "owner": "m10-execute",
+      "reason": "Boundary receipt publication. Step 13D3 publication handoff row 1 of 3.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::_emit_batch_boundary_receipt"
+    },
+    {
+      "sink_id": "execute:batch.py::_stamp_batch_scope",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "_stamp_batch_scope",
+      "def_line": 1272,
+      "effect_family": "terminal",
+      "disposition": "migrated",
+      "routing_shard": "13D3",
+      "global_effect_key_recipe": "execute:terminal:batch{N}:_stamp_batch_scope",
+      "source_anchor": "batch.py:L1272",
+      "owner": "m10-execute",
+      "reason": "Batch scope stamping is a terminal acceptance operation. Step 13D3 terminal row 2 of 3.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::_stamp_batch_scope"
+    },
+    {
+      "sink_id": "execute:batch.py::save_state_merge_meta",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "save_state_merge_meta",
+      "def_line": 46,
+      "effect_family": "terminal",
+      "disposition": "migrated",
+      "routing_shard": "13D3",
+      "global_effect_key_recipe": "execute:terminal:batch{N}:save_state_merge_meta",
+      "source_anchor": "batch.py:L46",
+      "owner": "m10-execute",
+      "reason": "Final state merge persistence. Step 13D3 terminal row 3 of 3.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::save_state_merge_meta"
+    },
+    {
+      "sink_id": "execute:batch.py::handle_execute_one_batch",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "handle_execute_one_batch",
+      "def_line": 3144,
+      "effect_family": "local_workspace",
+      "disposition": "action_off",
+      "global_effect_key_recipe": "execute:local_workspace:batch{N}:handle_execute_one_batch",
+      "source_anchor": "batch.py:L3144",
+      "owner": "m10-execute",
+      "reason": "Main batch handler entry point. Too broad for bounded 3-row shard; remains action_off.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::handle_execute_one_batch"
+    },
+    {
+      "sink_id": "execute:batch.py::handle_execute_auto_loop",
+      "module": "arnold_pipelines/megaplan/execute/batch.py",
+      "enclosing_function": "handle_execute_auto_loop",
+      "def_line": 4518,
+      "effect_family": "process",
+      "disposition": "action_off",
+      "global_effect_key_recipe": "execute:process:batch{N}:handle_execute_auto_loop",
+      "source_anchor": "batch.py:L4518",
+      "owner": "m10-execute",
+      "reason": "Auto-loop handler. Too broad for bounded 3-row shard; remains action_off.",
+      "expiry": "M11",
+      "bypass_test_id": "m10_execute_bypass::batch::handle_execute_auto_loop"
+    }
+  ],
+  "routed_rows": {
+    "13D2_local_workspace": [
+      "execute:batch.py::_prepare_scoped_batch_checkpoint",
+      "execute:batch.py::_stamp_result_envelopes"
+    ],
+    "13D2_process": [
+      "execute:batch.py::_run_execute_worker_with_configured_fallback"
+    ],
+    "13D3_publication": [
+      "execute:batch.py::_emit_batch_boundary_receipt"
+    ],
+    "13D3_terminal": [
+      "execute:batch.py::_stamp_batch_scope",
+      "execute:batch.py::save_state_merge_meta"
+    ]
+  },
+  "action_off_rows": [
+    "execute:batch.py::handle_execute_one_batch",
+    "execute:batch.py::handle_execute_auto_loop"
+  ]
+}

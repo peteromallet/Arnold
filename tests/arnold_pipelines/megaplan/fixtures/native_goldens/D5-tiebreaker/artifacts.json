@@ -1,0 +1,8 @@
+{
+  "pairwise_bracket/v1.json": "sha256:<content-dependent>",
+  "score_candidates/candidate_0.json": "sha256:<content-dependent>",
+  "score_candidates/candidate_1.json": "sha256:<content-dependent>",
+  "score_candidates/candidate_2.json": "sha256:<content-dependent>",
+  "score_candidates/v1.json": "sha256:<content-dependent>",
+  "winner/v1.json": "sha256:<content-dependent>"
+}

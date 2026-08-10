@@ -1,0 +1,958 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.6
+--------
+workdir: /Users/peteromalley/Documents/Arnold
+model: gpt-5.6-luna
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: medium
+reasoning summaries: none
+session id: 019fcd9f-66eb-7501-8425-c35d3cae6643
+--------
+user
+You are a bounded Luna code auditor. Read the compact evidence brief and Sol verdict in `evidence/critique-ledger-recovery/`. Do NOT use rg, find, git, recursive listing, or any subagent. Use at most five `sed`/`nl` reads, only these paths: `arnold_pipelines/megaplan/cloud/providers/ssh.py`, `arnold_pipelines/megaplan/cloud/cli.py` (lines 2350-2395 and 550-575), `pyproject.toml` (lines 50-58), `arnold/cli/__init__.py` (lines 100-150), and `tests/cloud/test_cloud_chain_command.py` (only tests around resume). Return under 700 words: exact observed runtime identity gap, one patch boundary, and four acceptance tests. Do not edit.
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+I’ll inspect the evidence directory for the brief/verdict, then use only the permitted source/test excerpts. I won’t modify files.
+exec
+/bin/zsh -lc 'ls -1 evidence/critique-ledger-recovery' in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+T0.0
+T0.2
+T0.4
+luna_swarm
+sol-broader-review-20260804.md
+sol-broader-review-brief-20260804.md
+sol-broader-review-compact-brief-20260804.md
+sol-review-r5-20260804.md
+
+exec
+/bin/zsh -lc "sed -n '1,240p' evidence/critique-ledger-recovery/sol-broader-review-compact-brief-20260804.md evidence/critique-ledger-recovery/sol-review-r5-20260804.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+# Sol judgement request (compact evidence-only brief)
+
+Take a firm architectural position from the evidence below. Do not inspect the repository or delegate. Return under 1200 words with: (a) root-cause tree, (b) whether the current fixes are root-level or local mitigation, (c) ranked independent Luna audit directions, (d) shortest safe immediate recovery, and (e) shared-system hardening plus acceptance tests.
+
+## Observed facts
+
+1. The cloud session `critique-ledger-accountability-v3-r5-20260803`, plan `cl2-wbc-backed-ledger-20260803-1357`, failed at VJ8 before worker dispatch. State recorded `pre_dispatch_validation_failed`, `phase=execute`, `worker_dispatched=false`, `exit_code=1`, occurrence `validation-8a0d0d672f63643cc82e`, fingerprint `8a0d0d672f63643cc82ef81841ab9493b87bfe69671c5da9d961dc60c878c4d3`.
+2. The VJ8 suite initially had 126 tests, 122 pass and 4 failures. All four were stale expectations around divergent same-idempotency-key ledger events and exact retry canonicalization. After repairing the implementation/tests, the exact suite is 130 passed.
+3. Recovery was made occurrence-bound: a receipt binds the failure fingerprint, occurrence, job, source revision, passing test result, and runtime code hash. Recovery now rejects stale/mismatched evidence and does not clear real U1/quality blockers. Status now exposes latest_failure and projects `finalized` to execute because finalized is an execute-entry state.
+4. The same plan is now `state=finalized`, `execution_state=ready`, `next_step=execute`, with U1/quality blockers still unresolved and authoritative.
+5. The canonical local `cloud resume` wrapper failed before dispatch. Its SSH provider runs `cd <workspace> && arnold status --plan <plan>`. On the container, `arnold` resolves to `/root/.pyenv/shims/arnold`, whose installed `arnold.cli` exposes a different legacy interface and requires `--artifact-root`. The intended megaplan CLI works only when invoked through `/workspace/runtime-venvs/arnold-wbc-full-20260804/bin/python -m arnold_pipelines.megaplan ...`.
+6. Earlier evidence showed: managed runner lease startup errors were swallowed; marker “launch success” could mean only tmux/state was observed; stale phase_result.json could outrank newer state.latest_failure; resident and chain code used different dirty/pinned runtime lineages; watchdog snapshots could be stale or unreadable; `/whats-cooking` could time out while collecting a snapshot.
+7. Luna audits already found: no remote provider-key preflight; alias/auth allowlists are not one source of truth; resident may import dirty `/workspace/arnold` while the chain uses pinned c116; liveness must be lease/process identity, not tmux; observer responses need bounded work and stale-data labeling.
+
+## Constraints
+
+Do not fabricate CL1/U1 handoffs, resolve quality blockers to force progress, create a new chain, or claim liveness without a fresh lease-bound process identity. The fix must generalize to every cloud megaplan pipeline.
+# Sol review brief: r5 execution block and lease gap
+
+Date: 2026-08-04 UTC
+Scope: `critique-ledger-accountability-v3-r5-20260803`, plan
+`cl2-wbc-backed-ledger-20260803-1357` on the cloud agentbox.
+
+## Decision requested
+
+Give a firm judgement on (a) why this run stopped, (b) whether the intended
+source fix is to update stale tests or to undo the new idempotency behavior,
+(c) the safest resume point, and (d) the durable lease/observer fix so a
+managed run cannot execute without authoritative custody. Distinguish facts
+from inference and do not recommend a blind relaunch.
+
+## Durable evidence
+
+- Cloud process at the time of observation: chain wrapper PID 377534 and
+  chain process PID 377538, launched from the pinned runtime
+  `/workspace/runtime-candidates/arnold-wbc-full-20260804` at revision
+  `c116f38cc83de11a1a508eff6153205504d1ba5a`.
+- At 15:18:31Z, `megaplan introspect` showed `display_state=executing`,
+  `execution_state=executing`, `active_phase=execute`, attempt 6,
+  model `zhipu:glm-5.2`, liveness `progressing` (“last event 1s ago”),
+  `latest_failure=null`, an in-flight `llm_call_start`, and event sequence
+  9223 with fresh token-heartbeat events. `doctor` separately reported phase,
+  LLM liveness, cost, and no orphan process as OK.
+- The active step initially had no `runner_lease`. The marker lease file was
+  still bound to a dead earlier PID 373187 and had expired at 14:26:20Z.
+  The launch command exported `ARNOLD_REPAIR_SESSION` but the managed lease
+  startup failure is swallowed, so the chain was allowed to run unbound.
+- As containment only, a liveness lease sidecar was attached to the already
+  live PID 377538 at 15:20:48Z. It created runner fence 8, target PID 377538,
+  and renewed successfully. This did not restart or duplicate the chain.
+- The chain then exited/block-recorded at 15:21:17Z. At 15:24:48Z the chain
+  PID and sidecar were both gone. `state.json` is authoritative:
+  `current_state=blocked`, with `latest_failure.kind=pre_dispatch_validation_failed`,
+  `phase=execute`, `job_id=VJ8`, `exit_code=1`,
+  `retryable_infrastructure=false`, `worker_dispatched=false`,
+  `suggested_action=Repair the failing validation gate before resuming execute.`
+- The exact gate command was:
+
+  ```text
+  timeout 120s pytest tests/arnold/workflow/test_attempt_ledger_store.py \
+    tests/arnold/workflow/test_attempt_ledger_static_negative_checks.py \
+    --tb=short -q --tb=no --no-header -rA
+  ```
+
+  It returned 1. Re-running against the stopped worktree produced 126 tests:
+  122 passed and 4 failed. All four failures are legacy expectations that a
+  divergent event with the same idempotency key silently deduplicates:
+
+  - `test_append_dedups_on_duplicate_idempotency_key`
+  - `test_duplicate_of_pre_terminal_event_returns_existing_after_terminal`
+  - `test_duplicate_of_terminal_event_returns_existing`
+  - `test_dedup_does_not_persist_duplicate_row`
+
+  Each now raises `arnold.workflow.attempt_ledger_store.IdempotencyConflictError`
+  with “already exists with divergent canonical content.”
+- The worker’s durable batch-5 notes say T6 intentionally added
+  `IdempotencyConflictError` and a shared `canonical_event_json` helper, and
+  explicitly says divergent same-key retries must raise; it also says the
+  outbox path was not yet completed and T4 was not started. The plan’s critique
+  flags likewise require content-safe divergence rather than silent dedup.
+- The same worker notes report a stale editable-runtime import problem during
+  foreground verification: `arnold.workflow` resolved to
+  `/workspace/runtime-candidates/arnold-4ed98585fda8c76a8ebfba04b856b6aa9b685a47-live`
+  instead of the session worktree. The exact re-run from the worktree does
+  import the worktree and exposes the four semantic expectation failures above.
+- Current worktree inspection shows `arnold/workflow/attempt_ledger_store.py`,
+  `arnold/workflow/ledger_outbox.py`, and tests are dirty. The helper is
+  imported by the outbox, but `canonical_event_json` is not currently
+  re-exported from `arnold.workflow` despite the worker note claiming it was.
+
+## Constraints
+
+- Do not treat fresh event/token sidecars as custody authority.
+- Do not kill/relaunch a process while an exact live runner is still active.
+- Do not mutate the blocked plan’s state by hand; resume only through its
+  typed recovery path after the gate contract is repaired.
+- Preserve completed batches T1–T3 and the partial T6 evidence; do not silently
+  discard or replay them.
+
+## Questions Sol must answer
+
+1. Is `IdempotencyConflictError` the correct contract and are these four tests
+   stale, or is the implementation wrong? What exact minimal test/code changes
+   should be made before resume?
+2. Does the uncompleted outbox path make T6 unsafe to accept even after the
+   four expectation tests are updated? What is the smallest coherent repair?
+3. Can this plan resume from the typed VJ8 block without restarting T1–T3,
+   and what receipt/evidence checks must be performed first?
+4. What launch invariant prevents a managed chain from running when lease
+   acquisition fails? Recommend the precise fail-closed startup/lease handoff,
+   stale-owner recovery, and observer classification changes.
+5. Give a short ordered recovery plan and identify anything that must remain a
+   follow-up rather than being smuggled into this resume.
+
+## Fresh evidence gathered after cancelling the first Sol review
+
+- The authoritative cloud observation at `2026-08-04T15:37:00Z` is no longer
+  executing: `introspect` reports `plan_state=blocked`,
+  `display_state=blocked`, `execution_state=blocked`, `active_phase=null`,
+  `liveness=stalled`, and `block_details.recoverable_via=["recover-blocked"]`.
+  The event journal's last event is `2026-08-04T15:21:17.996Z`; there is no
+  chain process and no sidecar. This answers the immediate question: it is not
+  cooking now.
+- The current marker is not authoritative for a live run:
+  `runner_pid=null`, `runner_start_identity=null`, `lease=null`, last marker
+  update `2026-08-04T14:21:43Z`. The target container itself is healthy and has
+  325G free on its host-backed `/workspace` volume. A separate, old container
+  named `megaplan-cloud-agent` is exited with a historical Docker-rootfs
+  `no space left on device` error; it is not the r5 target and must not be
+  confused with the active target container.
+- The current introspect payload retains a stale unmatched `llm_call_start`
+  from `2026-08-04T14:23:35Z` (GLM-5.2) even though the phase is null, the
+  process is gone, and the state is blocked. This is telemetry/projection
+  residue, not evidence of a live model call. It is a second control-plane
+  smell: terminal/block transitions must close or quarantine in-flight-call
+  records.
+- The exact VJ8 command was rerun in the cloud worktree with the pinned runtime.
+  It completed in 11.67s with `126` tests total: `122 passed`, `4 failed`.
+  Running only the four failures shows all raise
+  `arnold.workflow.attempt_ledger_store.IdempotencyConflictError` from
+  `_append_tx` because the same key's canonical event content differs. The
+  tests currently assert silent deduplication. This is a deterministic source
+  contract mismatch, not a provider outage, timeout, or worker-dispatch failure.
+- The plan history shows a pattern rather than a single incident: three
+  critique attempts failed structural validation before one succeeded;
+  finalize had six invalid-schema rejections, then a missing-required-field
+  structural audit failure, a usage-limit failure, and later a successful
+  Sol finalize; execute then hit four `VJ2 exited None` validation failures,
+  a blocked state, and finally the current `VJ8 exited 1` block. The system did
+  preserve these typed history entries, but notification/observer surfaces did
+  not collapse them into one incident lineage.
+- The pinned r5 config confirms the intended routing is
+  `profile=partnered-5-glm`, execute via `hermes:zhipu:glm-5.2`, and finalize
+  via `codex:gpt-5.6-sol:high`. The current VJ8 failure happened before any
+  execute worker was dispatched (`worker_dispatched=false`), so changing the
+  execute model cannot fix this gate.
+
+## Additional questions for the consolidated Sol judgement
+
+6. Given the fresh VJ8 reproduction, decide whether the four tests should be
+   rewritten to assert content-safe divergence, or whether the implementation
+   should preserve legacy silent deduplication. Treat the plan brief's
+   “content-safe” and “divergent same-key retry raises” language as binding
+   evidence, not as an assumption.
+7. Decide whether stale in-flight LLM telemetry after a blocked terminal state
+   is merely an observer bug or evidence that recovery could accidentally
+   resurrect an old call. Recommend the smallest fail-closed repair.
+8. Account for the repeated critique/finalize/VJ2 failures as one incident
+   lineage: what should be automatic retry/fixer behavior, what should be a
+   hard block, and how should notifications be deduplicated?
+9. State the shortest safe path from the current typed block to a resumed run,
+   including the exact evidence gates for the test-contract repair, outbox
+   completion, runtime/lease custody, and one clean VJ8 pass.
+
+## Luna cross-checks (fresh, read-only)
+
+- Credential/lifecycle audit: the current r5 launcher has the GLM/Zhipu keys and
+  base URLs in its isolated empty-parent-env probe; the pinned runtime is
+  `/workspace/runtime-candidates/arnold-wbc-full-20260804` at `c116f38`. The
+  routing ledger shows 8/8 post-13:47 calls selecting and actually using
+  `hermes:zhipu:glm-5.2`, with no fallback. The stale “missing
+  OpenAI credentials” message belongs to an earlier 13:47 relaunch artifact,
+  not the VJ8 failure.
+- State-machine audit: `state.json` and the VJ8 artifact independently prove a
+  deterministic pre-dispatch block (`126 passed, 4 failed`,
+  `worker_dispatched=false`, `retryable_infrastructure=false`). The stale
+  chain-health/session projections still say gated/running, while introspect
+  says blocked; status surfaces are therefore reading incompatible projections.
+  The observer/doctor surface also omits the decisive `latest_failure` detail
+  and suggests a generic force-proceed path, which is unsafe for a validation
+  block.
+- The state-machine audit additionally found T6's `ledger_outbox.py` write not
+  represented in its declared write set and outbox tests not yet run. It
+  recommends an occurrence-scoped `recover-blocked` bound to the VJ8 fingerprint
+  and repair commit, never a generic force-proceed, followed by a fresh lease,
+  one clean VJ8/outbox/static-suite pass, and projection/notification refresh.
+- Route/control-plane audit: the lease gap was real at launch (managed lease
+  acquisition failure was swallowed); attaching a sidecar later proved only
+  liveness, not startup custody. The invariant must be fail-closed: no chain
+  process may dispatch or mutate plan state until it holds a marker-bound lease
+  for its exact PID/start identity/container/fence. Stale owners need an
+  explicit fenced handoff, not a marker overwrite.
+- Recovery audit found another concrete state-machine smell: the current
+  `state.json` VJ8 block is newer and has `resume_cursor.retry_strategy=
+  repair_validation_failure`, but the older `phase_result.json` still says
+  `exit_kind=external_error`. The `_external_error_requires_resume` helper
+  consults that stale phase result as well as the latest failure, so
+  `recover-blocked` may misclassify this deterministic validation failure and
+  demand a generic `resume`. Recovery must bind to the newest failure
+  occurrence (or reject stale phase results) before choosing a transition.
+- Route/observer audit adds two status-surface facts: the target container's
+  PID 1 is only an HTTP health server, not the chain runner; and the resident
+  container/watchdog snapshot writer is not a durable chain supervisor. The
+  `/opt/.../.megaplan/status/cloud-status.json` snapshot is stale (generated
+  2026-08-03 18:10Z) and the watchdog sweep stopped around 17:51Z, explaining
+  `/whats-cooking` stale/duplicate “running” reports. A stale `phase_result.json`
+  also carries the old missing-OpenAI-credentials narrative despite successful
+  GLM calls later in the same run. Status must join artifacts by occurrence ID
+  and freshness, never display an old provider error as the current cause.
+- A later blocker-recovery inspection reports `can_continue=false` and
+  `has_terminal_blockers=true`: synthetic U1 prerequisite blockers cover the
+  pending tasks with zero recorded resolutions, and a quality blocker reports
+  that `finalize.json` still has pending tasks without authoritative execution
+  updates. Therefore `recover-blocked` is not a generic resume button even
+  after VJ8 is repaired. The U1/quality evidence must be resolved or explicitly
+  scoped by an approved transition; it must not be marked resolved merely to
+  bypass the gate.
+
+## Sol execution constraint
+
+The evidence above is complete. Make the judgement from this brief only; do
+not inspect the repository or launch tools. Return a firm, concise decision
+(contract choice, safe recovery order, and durable fixes), with no code edits.
+
+## Sol judgement (GPT-5.6 Sol, high reasoning; 2026-08-04)
+
+Sol's firm conclusion: VJ8 is a deterministic pre-dispatch validation failure,
+not a model, credential, container, disk, timeout, or worker failure. The
+`IdempotencyConflictError` behavior is correct and the four legacy tests must
+be updated to distinguish identical-content deduplication from divergent
+
+exec
+/bin/zsh -lc "sed -n '241,520p' evidence/critique-ledger-recovery/sol-review-r5-20260804.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+matching lease as unowned activity/custody violation. Terminal/block
+transitions must quarantine unmatched LLM telemetry; status and notifications
+must join by occurrence ID and freshness. Automatic repair is appropriate for
+bounded schema/provider failures, but deterministic VJ8 remains a hard source
+block with one deduplicated incident lineage.
+
+exec
+/bin/zsh -lc "sed -n '1,260p' arnold_pipelines/megaplan/cloud/providers/ssh.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+from __future__ import annotations
+
+import base64
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.spec import CloudSpec, SshSpec
+from arnold_pipelines.megaplan.types import CliError
+
+from .base import Provider, _logs_follow, _missing_cli_error, _write_redacted_output
+
+
+INSTALL_LINK = "Install: https://www.openssh.com/"
+
+
+class SshProvider(Provider):
+    def __init__(self, spec: CloudSpec) -> None:
+        self._spec = spec
+        self._ssh = spec.ssh or SshSpec(host="localhost")
+        self._ssh_binary = shutil.which("ssh")
+        self._scp_binary = shutil.which("scp")
+        self._rsync_binary = shutil.which("rsync")
+        if self._ssh_binary is None:
+            _missing_cli_error("ssh", INSTALL_LINK.removeprefix("Install: "))
+        if self._scp_binary is None and self._rsync_binary is None:
+            _missing_cli_error("scp/rsync", INSTALL_LINK.removeprefix("Install: "))
+
+    def _target(self) -> str:
+        if self._ssh.user:
+            return f"{self._ssh.user}@{self._ssh.host}"
+        return self._ssh.host
+
+    def _ssh_transport_argv(self) -> list[str]:
+        argv = [self._ssh_binary or "ssh", "-p", str(self._ssh.port)]
+        if self._ssh.identity_file:
+            argv.extend(["-i", self._ssh.identity_file])
+        return argv
+
+    def _run(
+        self,
+        argv: list[str],
+        *,
+        capture_output: bool = True,
+        input: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            kwargs: dict[str, object] = {
+                "capture_output": capture_output,
+                "text": True,
+                "check": False,
+            }
+            if input is not None:
+                kwargs["input"] = input
+            result = subprocess.run(argv, **kwargs)
+        except FileNotFoundError as exc:
+            raise CliError("provider_failed", str(exc)) from exc
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise CliError("provider_failed", stderr or f"Command failed: {' '.join(argv)}")
+        return result
+
+    def _remote_run(
+        self,
+        command: str,
+        *,
+        capture_output: bool = True,
+        input: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._run(
+            [*self._ssh_transport_argv(), self._target(), command],
+            capture_output=capture_output,
+            input=input,
+        )
+
+    def _sync_deploy_dir(self, deploy_dir: Path) -> None:
+        remote_dir = shlex.quote(self._ssh.remote_dir)
+        if self._rsync_binary is not None:
+            self._remote_run(f"mkdir -p {remote_dir}")
+            self._run(
+                [
+                    self._rsync_binary,
+                    "-az",
+                    "-e",
+                    shlex.join(self._ssh_transport_argv()),
+                    f"{deploy_dir}/",
+                    f"{self._target()}:{remote_dir}/",
+                ]
+            )
+            return
+        sys.stderr.write("WARN: rsync unavailable; falling back to scp -r\n")
+        self._remote_run(f"rm -rf {remote_dir} && mkdir -p {remote_dir}")
+        self._run(
+            [
+                self._scp_binary or "scp",
+                "-r",
+                "-P",
+                str(self._ssh.port),
+                *(["-i", self._ssh.identity_file] if self._ssh.identity_file else []),
+                f"{deploy_dir}/.",
+                f"{self._target()}:{remote_dir}",
+            ]
+        )
+
+    def build(self, deploy_dir: Path) -> int:
+        self._sync_deploy_dir(deploy_dir)
+        self._remote_run(
+            f"docker build -t {shlex.quote(self._ssh.container)} {shlex.quote(self._ssh.remote_dir)}"
+        )
+        return 0
+
+    def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> int:
+        del deploy_dir
+        env_path = f"{self._ssh.remote_dir}/.env"
+        env_lines = [f"PORT={self._spec.resources.port}"]
+        env_lines.extend(f"{name}={value}" for name, value in secrets.items())
+        self._remote_run(
+            "mkdir -p "
+            f"{shlex.quote(self._ssh.remote_dir)} "
+            f"{shlex.quote(self._ssh.workspace_dir)} "
+            f"{shlex.quote(f'{self._ssh.cache_dir}/pip')} "
+            f"{shlex.quote(f'{self._ssh.cache_dir}/npm')}"
+        )
+        self._remote_run(f"cat > {shlex.quote(env_path)}", input="\n".join(env_lines) + "\n")
+        self._remote_run(
+            f"docker rm -f {shlex.quote(self._ssh.container)} >/dev/null 2>&1 || true"
+        )
+        self._remote_run(
+            " ".join(
+                [
+                    "docker run -d",
+                    f"--name {shlex.quote(self._ssh.container)}",
+                    "--restart unless-stopped",
+                    f"--env-file {shlex.quote(env_path)}",
+                    f"-p {self._spec.resources.port}:{self._spec.resources.port}",
+                    f"-v {shlex.quote(self._ssh.workspace_dir)}:/workspace",
+                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/pip')}:/root/.cache/pip",
+                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/npm')}:/root/.npm",
+                    shlex.quote(self._ssh.container),
+                ]
+            )
+        )
+        return 0
+
+    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        return self._remote_run(
+            f"docker exec {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(command)}"
+        )
+
+    def upload_file(self, src: Path, dest: str) -> None:
+        payload = base64.b64encode(src.read_bytes()).decode("ascii")
+        parent = Path(dest).parent.as_posix()
+        inner = f"mkdir -p {shlex.quote(parent)} && base64 -d > {shlex.quote(dest)}"
+        self._remote_run(
+            f"docker exec -i {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(inner)}",
+            input=payload,
+        )
+
+    def upload_archive(self, src: Path, dest_dir: str) -> None:
+        payload = base64.b64encode(src.read_bytes()).decode("ascii")
+        inner = f"mkdir -p {shlex.quote(dest_dir)} && base64 -d | tar -xzf - -C {shlex.quote(dest_dir)}"
+        self._remote_run(
+            f"docker exec -i {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(inner)}",
+            input=payload,
+        )
+
+    def read_remote_file(self, path: str) -> str:
+        result = self._remote_run(
+            f"docker exec {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(f'cat {shlex.quote(path)}')}"
+        )
+        return result.stdout
+
+    def attach(self) -> int:
+        self._remote_run(
+            f"docker exec -it {shlex.quote(self._ssh.container)} tmux attach -t agent",
+            capture_output=False,
+        )
+        return 0
+
+    def logs(self, *, follow: bool = True) -> int:
+        argv = f"docker logs {'-f ' if follow else '--tail 200 '}{shlex.quote(self._ssh.container)}"
+        if follow:
+            return _logs_follow(
+                [*self._ssh_transport_argv(), self._target(), argv.strip()],
+                secret_names=self._spec.secrets,
+                env=os.environ,
+            )
+        result = self._remote_run(argv.strip())
+        _write_redacted_output(result, secret_names=self._spec.secrets, env=os.environ)
+        return 0
+
+    def status_payload(self, *, plan: str | None, workspace: str) -> dict:
+        command = f"cd {shlex.quote(workspace)} && arnold status"
+        if plan is not None:
+            command += f" --plan {shlex.quote(plan)}"
+        result = self.ssh_exec(command)
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict):
+            raise CliError("provider_failed", "arnold status did not return a JSON object")
+        return payload
+
+    def down(self) -> int:
+        self._remote_run(f"docker stop {shlex.quote(self._ssh.container)}")
+        return 0
+
+    def destroy(self, *, volume: str | None = None) -> int:
+        del volume
+        self._remote_run(
+            f"docker rm -f {shlex.quote(self._ssh.container)} >/dev/null 2>&1 || true && rm -rf {shlex.quote(self._ssh.remote_dir)}"
+        )
+        return 0
+
+exec
+/bin/zsh -lc "sed -n '550,575p' arnold_pipelines/megaplan/cloud/cli.py; sed -n '2350,2395p' arnold_pipelines/megaplan/cloud/cli.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+            result = provider.ssh_exec(args.command)
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            return 0
+
+        if action == "resume":
+            resume_workspace = _resolve_resume_workspace(root, args, spec, provider)
+            payload = provider.status_payload(
+                plan=getattr(args, "plan", None),
+                workspace=resume_workspace,
+            )
+            next_step = payload.get("next_step")
+            if not isinstance(next_step, str) or not next_step:
+                raise CliError("invalid_status", "Remote status did not include a next_step")
+            plan_name = getattr(args, "plan", None)
+            if payload.get("state") == "failed" and isinstance(plan_name, str) and plan_name:
+                argv = ["resume", "--plan", plan_name]
+            else:
+                from arnold_pipelines.megaplan.auto import _phase_command
+
+                argv = list(_phase_command(next_step, substrate=cloud_substrate))
+                if plan_name:
+                    argv.extend(["--plan", plan_name])
+            command = f"cd {shlex.quote(resume_workspace)} && arnold {shlex.join(argv)}"
+            result = provider.ssh_exec(command)
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            return 0
+def _chain_start_command(
+    remote_spec_path: str,
+    *,
+    project_dir: str | None = None,
+    engine_dir: str | None = None,
+    one_shot: bool = False,
+    no_git_refresh: bool = False,
+    log_relative: str = _CHAIN_LOG_RELATIVE,
+) -> str:
+    """Construct the ``python -m arnold_pipelines.megaplan chain start`` command with canonical quoting.
+
+    Both ``_run_chain_wrapper`` and ``cloud_supervise_tick`` use this helper
+    so the session name, log path, trusted env var, and shell quoting stay
+    consistent across all entry points.
+    """
+    flags = f"--spec {shlex.quote(remote_spec_path)}"
+    if project_dir:
+        flags += f" --project-dir {shlex.quote(project_dir)}"
+    if one_shot:
+        flags += " --one"
+    if no_git_refresh:
+        flags += " --no-git-refresh"
+    log_target = (
+        shlex.quote(str(PurePosixPath(project_dir) / log_relative))
+        if project_dir
+        else shlex.quote(log_relative)
+    )
+    prefix = (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
+    if engine_dir:
+        cwd = shlex.quote(project_dir or engine_dir)
+        engine_path = shlex.quote(engine_dir)
+        prefix += (
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+        )
+    return (
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
+        f">> {log_target} 2>&1"
+    )
+
+
+def _write_session_marker_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
+
+exec
+/bin/zsh -lc "awk 'FILENAME==\"pyproject.toml\" && NR>=50 && NR<=58 {print} FILENAME==\"arnold/cli/__init__.py\" && NR>=100 && NR<=150 {print} FILENAME==\"tests/cloud/test_cloud_chain_command.py\" && /resume/ {for(i=1;i<=18;i++){if((getline line)>0) print NR \":\" line}}' pyproject.toml arnold/cli/__init__.py tests/cloud/test_cloud_chain_command.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+    "PyJWT[crypto]",
+    "discord.py>=2.6,<3",
+]
+
+[project.scripts]
+arnold = "arnold.cli:main"
+agentbox = "agentbox.cli:main"
+
+[project.optional-dependencies]
+"""Arnold CLI dispatch layer.
+
+Routes:
+* ``arnold workflow ...`` directly to ``arnold.cli.workflow``.
+* ``arnold status/trace/inspect/override`` to ``arnold.cli.operators``.
+* ``arnold approve/deny/cancel/resume`` to ``arnold.cli.execution``.
+
+Legacy Megaplan subcommands are removed in M6; the only supported top-level
+verbs are the workflow runtime and the operator projection commands.
+"""
+
+from __future__ import annotations
+
+import sys
+from typing import Sequence
+
+
+# Commands that are implemented directly against the workflow/execution runtime.
+_WORKFLOW_COMMAND = "workflow"
+_OPERATOR_COMMANDS = frozenset({"status", "trace", "inspect", "override"})
+_EXECUTION_COMMANDS = frozenset({"approve", "deny", "cancel", "resume"})
+
+
+def cli_entry() -> None:
+232:    _run_cloud_chains,
+233:    _run_preflight,
+234:    _run_sync_megaplan,
+235:    _run_launch_epic_wrapper,
+236:    _run_bootstrap_wrapper,
+237:    _status_should_use_chain,
+238:    _tmux_chain_launch_command,
+239:    _validate_chain_spec_location,
+240:    build_cloud_parser,
+241:    cloud_chain_status_payload,
+242:    run_cloud_cli,
+243:)
+244:from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value
+245:from arnold_pipelines.megaplan.cloud.spec import (
+246:    ChainSubSpec,
+247:    CloudSpec,
+248:    CodexSpec,
+249:    MegaplanSpec,
+1080:    spec = CloudSpec(
+1081:        provider="ssh",
+1082:        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+1083:        agents={"default": "codex"},
+1084:        codex=CodexSpec(),
+1085:        mode="idle",
+1086:        megaplan=MegaplanSpec(),
+1087:        resources=ResourcesSpec(),
+1088:        secrets=[],
+1089:        ssh=SshSpec(host="testhost"),
+1090:    )
+1091:    marker = {
+1092:        "workspace": "/workspace/chain-51d959cf/vibecomfy",
+1093:        "remote_spec": "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml",
+1094:    }
+1095:    chain_state = chain_module.ChainState(
+1096:        current_plan_name="milestone-demo",
+1097:        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+1103:        Path("/repo"),
+1104:        argparse.Namespace(plan="milestone-demo"),
+1105:        spec,
+1106:        _ResumeProvider(chain_state),
+1107:    )
+1108:
+1109:    assert workspace == "/workspace/chain-51d959cf/vibecomfy"
+1110:
+1111:
+1112:def test_latest_failure_summary_bubbles_plan_state_message() -> None:
+1113:    summary = _latest_failure_from_plan_status(
+1114:        {
+1115:            "status": "stalled",
+1116:            "latest_failure": {
+1117:                "kind": "agent_deps_missing",
+1118:                "phase": "plan",
+1119:                "message": "Claude routes through Shannon, but bun is missing",
+1120:                "metadata": {"ignored": True},
+1228:    commands: list[str] = []
+1229:
+1230:    class Provider:
+1231:        def status_payload(self, *, plan: str | None, workspace: str) -> dict:
+1232:            assert plan == "milestone-demo"
+1233:            assert workspace == "/workspace/chain-51d959cf/vibecomfy"
+1234:            return {
+1235:                "state": "failed",
+1236:                "next_step": "review",
+1237:                "valid_next": ["review"],
+1238:            }
+1239:
+1240:        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+1241:            commands.append(command)
+1242:            return subprocess.CompletedProcess([], 0, "", "")
+1243:
+1244:    monkeypatch.setattr(
+1245:        "arnold_pipelines.megaplan.cloud.cli._load_cloud_spec",
+1254:        lambda root, args, spec, provider: "/workspace/chain-51d959cf/vibecomfy",
+1255:    )
+1256:
+1257:    args = _cloud_parser().parse_args(["cloud", "resume", "--plan", "milestone-demo"])
+1258:
+1259:    rc = run_cloud_cli(tmp_path, args)
+1260:
+1261:    assert rc == 0
+1262:    assert commands == [
+1263:        "cd /workspace/chain-51d959cf/vibecomfy && arnold resume --plan milestone-demo"
+1264:    ]
+1265:
+1266:
+1267:def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> None:
+1268:    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
+1269:    chain_yaml = (
+1270:        "milestones:\n"
+1271:        "  - label: m1\n"
+
+exec
+/bin/zsh -lc "awk 'FILENAME==\"arnold/cli/__init__.py\" && FNR>=100 && FNR<=150 {print FNR \":\" "'$0} FILENAME=="tests/cloud/test_cloud_chain_command.py" && FNR>=1215 && FNR<=1268 {print FNR ":" $0}'"' arnold/cli/__init__.py tests/cloud/test_cloud_chain_command.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+1215:    ``process_evidence``, ``chain_health_evidence``, and ``active_step_evidence`` fields."""
+1216:    script = _cloud_chains_command()
+1217:
+1218:    assert '"marker_evidence"' in script
+1219:    assert '"tmux_evidence"' in script
+1220:    assert '"process_evidence"' in script
+1221:    assert '"chain_health_evidence"' in script
+1222:    assert '"active_step_evidence"' in script
+1223:    # Status convenience mirrors
+1224:    assert '"marker_status"' in script
+1225:    assert '"tmux_status"' in script
+1226:    assert '"process_status"' in script
+1227:    assert '"chain_health_status"' in script
+1228:    assert '"active_step_status"' in script
+1229:
+1230:
+1231:def test_cloud_status_since_parser_accepts_duration() -> None:
+1232:    now = _parse_cloud_status_since("2026-07-04T12:00:00Z")
+1233:    assert now is not None
+1234:
+1235:    cutoff = _parse_cloud_status_since("12h", now=now)
+1236:
+1237:    assert cutoff is not None
+1238:    assert cutoff.isoformat() == "2026-07-04T00:00:00+00:00"
+1239:
+1240:
+1241:def test_cloud_status_since_filter_uses_real_plan_state_not_watchdog_mtime() -> None:
+1242:    payload = {
+1243:        "sessions": [
+1244:            {
+1245:                "session": "old-but-reobserved",
+1246:                "status": "complete",
+1247:                "watchdog_repairing": False,
+1248:                "should_be_running": False,
+1249:                "watchdog_evidence": {"updated_at": "2026-07-04T08:00:00Z"},
+1250:                "latest_plan_state": {
+1251:                    "status": "present",
+1252:                    "updated_at": "2026-07-03T08:00:00Z",
+1253:                    "plan": "old-plan",
+1254:                    "state": "done",
+1255:                },
+1256:                "operator_status": {"status": "complete"},
+1257:            },
+1258:            {
+1259:                "session": "recent",
+1260:                "status": "complete",
+1261:                "watchdog_repairing": False,
+1262:                "should_be_running": False,
+1263:                "latest_plan_state": {
+1264:                    "status": "present",
+1265:                    "updated_at": "2026-07-04T04:00:00Z",
+1266:                    "plan": "recent-plan",
+1267:                    "state": "done",
+1268:                },
+
+exec
+/bin/zsh -lc "awk 'FILENAME==\"arnold/cli/__init__.py\" && FNR>=1 && FNR<=150 {print FNR \":\" "'$0} FILENAME=="tests/cloud/test_cloud_chain_command.py" && FNR>=1040 && FNR<=1115 {print FNR ":" $0} FILENAME=="tests/cloud/test_cloud_chain_command.py" && FNR>=1190 && FNR<=1210 {print FNR ":" $0}'"' arnold/cli/__init__.py tests/cloud/test_cloud_chain_command.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+1:"""Arnold CLI dispatch layer.
+2:
+3:Routes:
+4:* ``arnold workflow ...`` directly to ``arnold.cli.workflow``.
+5:* ``arnold status/trace/inspect/override`` to ``arnold.cli.operators``.
+6:* ``arnold approve/deny/cancel/resume`` to ``arnold.cli.execution``.
+7:
+8:Legacy Megaplan subcommands are removed in M6; the only supported top-level
+9:verbs are the workflow runtime and the operator projection commands.
+10:"""
+11:
+12:from __future__ import annotations
+13:
+14:import sys
+15:from typing import Sequence
+16:
+17:
+18:# Commands that are implemented directly against the workflow/execution runtime.
+19:_WORKFLOW_COMMAND = "workflow"
+20:_OPERATOR_COMMANDS = frozenset({"status", "trace", "inspect", "override"})
+21:_EXECUTION_COMMANDS = frozenset({"approve", "deny", "cancel", "resume"})
+22:
+23:
+24:def cli_entry() -> None:
+25:    """Console-script entry point registered in pyproject.toml."""
+26:    sys.exit(main())
+27:
+28:
+29:def main(argv: Sequence[str] | None = None) -> int:
+30:    """Dispatch to the workflow CLI or operator commands."""
+31:    args = list(sys.argv[1:] if argv is None else argv)
+32:    if not args:
+33:        _print_usage()
+34:        return 2
+35:    if args[0] in {"-h", "--help"}:
+36:        _print_usage()
+37:        return 0
+38:
+39:    command = args[0]
+40:    rest = args[1:]
+41:
+42:    if command == _WORKFLOW_COMMAND:
+43:        from arnold.cli.workflow import main as _workflow_main
+44:
+45:        return _workflow_main(rest)
+46:
+47:    if command in _OPERATOR_COMMANDS:
+48:        from arnold.cli.operators import main as _operators_main
+49:
+50:        return _operators_main([command, *rest])
+51:
+52:    if command in _EXECUTION_COMMANDS:
+53:        from arnold.cli.execution import main as _execution_main
+54:
+55:        return _execution_main([command, *rest], prog="arnold")
+56:
+57:    print(f"arnold: unknown command {command!r}", file=sys.stderr)
+58:    _print_usage(file=sys.stderr)
+59:    return 2
+60:
+61:
+62:def _print_usage(*, file=None) -> None:  # type: ignore[no-untyped-def]
+63:    target = file or sys.stdout
+64:    print(
+65:        "usage: arnold workflow {check,manifest,dot,dry-run,run,resume,describe} | "
+66:        "arnold {status,trace,inspect,override,approve,deny,cancel,resume}",
+67:        file=target,
+68:    )
+69:
+70:
+71:__all__ = ["cli_entry", "main"]
+1040:                "valid_next": ["review"],
+1041:            }
+1042:
+1043:        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+1044:            commands.append(command)
+1045:            return subprocess.CompletedProcess([], 0, "", "")
+1046:
+1047:    monkeypatch.setattr(
+1048:        "arnold_pipelines.megaplan.cloud.cli._load_cloud_spec",
+1049:        lambda root, args: _cloud_spec(),
+1050:    )
+1051:    monkeypatch.setattr(
+1052:        "arnold_pipelines.megaplan.cloud.cli._provider_for_action",
+1053:        lambda spec, args: Provider(),
+1054:    )
+1055:    monkeypatch.setattr(
+1056:        "arnold_pipelines.megaplan.cloud.cli._resolve_resume_workspace",
+1057:        lambda root, args, spec, provider: "/workspace/chain-51d959cf/vibecomfy",
+1058:    )
+1059:
+1060:    args = _cloud_parser().parse_args(["cloud", "resume", "--plan", "milestone-demo"])
+1061:
+1062:    rc = run_cloud_cli(tmp_path, args)
+1063:
+1064:    assert rc == 0
+1065:    assert commands == [
+1066:        "cd /workspace/chain-51d959cf/vibecomfy && arnold resume --plan milestone-demo"
+1067:    ]
+1068:
+1069:
+1070:def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> None:
+1071:    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
+1072:    chain_yaml = (
+1073:        "milestones:\n"
+1074:        "  - label: m1\n"
+1075:        "    idea: idea.md\n"
+1076:    )
+1077:    chain_state = chain_module.ChainState(
+1078:        current_milestone_index=0,
+1079:        current_plan_name="milestone-demo",
+1080:        last_state="prepped",
+1081:        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+1082:        chain_session="megaplan-chain-demo",
+1083:    ).to_dict()
+1084:    spec = CloudSpec(
+1085:        provider="ssh",
+1086:        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+1087:        agents={"default": "codex"},
+1088:        codex=CodexSpec(),
+1089:        mode="idle",
+1090:        megaplan=MegaplanSpec(),
+1091:        resources=ResourcesSpec(),
+1092:        secrets=[],
+1093:        ssh=SshSpec(host="testhost"),
+1094:    )
+1095:
+1096:    payload = cloud_chain_status_payload(
+1097:        Path("/repo"),
+1098:        argparse.Namespace(remote_spec=remote_spec, cloud_yaml=None),
+1099:        spec,
+1100:        _StatusProvider(
+1101:            remote_spec=remote_spec,
+1102:            chain_yaml=chain_yaml,
+1103:            chain_state=chain_state,
+1104:            plan_status={"status": "running"},
+1105:            runner_probe="process_alive\n",
+1106:        ),
+1107:    )
+1108:
+1109:    assert payload["runner"]["status"] == "alive"
+1110:    assert payload["runner"]["tmux_status"] == "missing"
+1111:    assert payload["runner"]["process_status"] == "alive"
+1112:    assert payload["effective_status"] == "running"
+1113:
+1114:
+1115:def test_cloud_chains_command_lists_marker_only_live_process_sessions() -> None:
+1190:    assert "is_canonical_session_marker_path(marker)" in script
+1191:
+1192:
+1193:def test_cloud_chains_command_emits_latest_plan_state_evidence() -> None:
+1194:    script = _cloud_chains_command()
+1195:
+1196:    assert "def _latest_plan_state_evidence(workspace):" in script
+1197:    assert '"latest_plan_state"' in script
+1198:    assert '"active_phase"' in script
+1199:    assert '".megaplan" / "plans"' in script
+1200:    assert 'plans_dir.glob("*/state.json")' in script
+1201:
+1202:
+1203:def test_cloud_chains_command_emits_event_activity_evidence() -> None:
+1204:    script = _cloud_chains_command()
+1205:
+1206:    assert "def _event_activity_evidence(workspace, plan_name):" in script
+1207:    assert '"event_activity_evidence"' in script
+1208:    assert '"event_activity_status"' in script
+1209:    assert 'plans" / plan_name / "events.ndjson"' in script
+1210:    assert 'plan_name = latest_plan_state.get("plan")' in script
+
+codex
+Observed runtime identity gap:
+
+- `cloud resume` first runs remote `arnold status`, then executes `cd <workspace> && arnold resume --plan <plan>`.
+- On the target container, `arnold` resolves to `/root/.pyenv/shims/arnold`, whose entry point is `arnold.cli:main`.
+- That CLI explicitly contains the legacy interface and does not expose the Megaplan command surface; it requires `--artifact-root`.
+- The actual chain uses the pinned Megaplan runtime via `python -P -m arnold_pipelines.megaplan ...`, with the intended runtime/source path supplied separately.
+- Therefore status/resume use an unpinned legacy console script, while chain execution uses the pinned Megaplan module. The failure occurs before dispatch and is an invocation-lineage mismatch, not a VJ8 or provider failure.
+
+Patch boundary:
+
+Change only the cloud remote Megaplan command adapter: centralize the canonical pinned-runtime/module invocation and use it for both SSH status and resume. Preserve the existing workspace, plan arguments, quoting, and typed recovery behavior. Do not alter ledger semantics, VJ8 expectations, blocker state, lease policy, or recovery transitions in this patch.
+
+Acceptance tests:
+
+1. `SshProvider.status_payload()` emits a remote command invoking the canonical Megaplan module/runtime, never bare `arnold status`, while preserving `--plan`.
+
+2. `cloud resume --plan <plan>` emits the same canonical runtime identity for the resume command and never invokes bare `arnold resume`.
+
+3. A mocked SSH integration test captures both status and resume commands and verifies identical runtime lineage, correct workspace `cd`, exact plan propagation, and shell-safe quoting.
+
+4. A container-level smoke test runs the generated status/resume commands against the pinned runtime and verifies there is no legacy `--artifact-root` error, no fallback to `/root/.pyenv/shims/arnold`, and the typed plan state remains unchanged until the canonical command begins.
+tokens used
+30,301

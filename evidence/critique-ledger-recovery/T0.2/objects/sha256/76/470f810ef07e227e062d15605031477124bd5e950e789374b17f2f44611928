@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "timestamp": "2026-07-31T15:41:14Z",
+  "hash": "sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922",
+  "questions": [
+    "Does the reviewer/gate accept proceeding against the unaccepted CL1 handoff? The safety amendment requires an amended, reviewed handoff before execution resumes. This plan proceeds per user direction but encodes the gap. If the gate rejects, the plan must halt until the 5 procedural blockers are resolved.",
+    "Are the response/outcome/audit event dataclass field sets complete enough for the round-accountability and active-projection logic, or will CL3 need additional fields? The plan defines them per the amendment, but CL3 (reviser/gate consumption) may surface missing fields. The handoff records the schema hashes so CL3 can validate compatibility.",
+    "Should the cancelled-archive audit (Step 12) be produced before Step 1 so the executor can reference reusable patterns during porting? Default: no \u2014 the port is verbatim from CL1 (not the cancelled CL2), so the audit is not on the critical path. Reorder only if the executor needs cancelled-CL2 patterns."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "CL1 v1 schemas serialize/deserialize byte-equivalently after porting (golden round-trip)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "v2 additive schemas serialize correctly: new occurrences reject semantic_finding_id in strict mode; supersedes_event_id/region_anchors/tripwire_state added; response/outcome/audit events round-trip; v1 records still deserialize",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "CL2 domain migrations apply idempotently, are crash-resume safe, checksum-validated, and forward-fix-only (no DROP)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Domain append is atomic in one BEGIN IMMEDIATE: occurrence + manifest + outbox commit together or not at all; simulated mid-tx crash leaves no partial state",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Idempotency-key dedup prevents double-insert; divergent duplicates are quarantined; partial publication cannot expose an incomplete accepted ledger revision",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Replay is read-only and deterministic: same inputs produce byte-identical cumulative, active-action, and round-accountability projections across runs; replay issues no model call, external effect, or mutation",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Active-action projection exposes must_act | must_revalidate | context_only; closed history does not grow must_act; unaudited non-action cannot remove a finding; batch actions enumerate every finding ID",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Correction appends a superseding reconciliation event; replay derives latest decision state while retaining both original and superseding events; superseded decisions do not support clean gate projection",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Audit-disagreement event is appendable; audit failure cannot silently preserve closure; disputed status is visible and actionable in the projection",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Deterministic tripwires fire on region/evidence/dependency change, near-match, audit disagreement, or stale model/schema revision; tripwires trigger needs_reconciliation, never semantic merge/closure/suppression",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Per-round accountability receipt maps attempt -> occurrence -> finding -> response -> verified outcome -> reopen; accounts for every parseable occurrence and active finding; reviser 'addressed' is distinct from independently verified outcome",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "One-time importer preserves all available legacy evidence, marks semantic gaps legacy_unknown, rejects unsupported target versions without partial publish, admits partially-parseable attempts with PARTIAL_RECOVERED status, and never invents duplicate/resolution/evidence/reopen relationships",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Import fixtures pass: current-source, target-only, future-version (rejected), corrupt (partial), redacted (unknown), unavailable (tombstoned), duplicate (idempotent), out-of-order (sequence-corrected), concurrent (WAL-safe), crash (resumable)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Region-anchor change stales only affected scoped findings; unchanged regions do not trigger re-reconciliation; unknown/cross-cutting scope defaults to whole-plan freshness; redacted/tombstoned evidence is surfaced as unknown and visible, not leaked or suppressed",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Negative tests prove ledger append and replay cannot mutate plan, gate, lifecycle, queue, Git/provider, delivery, or external-effect state; projections carry no positive authority",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Concurrent writers respect WAL single-writer; crash mid-append leaves DB consistent; outbox recovery retries stale pending; idempotency dedup survives crash-restart",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Existing critique-custody and WBC ledger/evidence suites pass unchanged (no regression); plan-local compatibility files remain readable by old readers",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "WBC inline/reference, retention, redaction, ordering, and effect rules are reused from payload_policy.py / durable_refs.py, not reimplemented; CL2 adds domain tables/types without modifying WBC substrate contracts",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Cancelled CL2 archive audit artifact exists with SHA-256 hashes, per-artifact assessment, and explicit not-adopted boundary",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "CL3 handoff cl2-ledger-replay.json is written with API/schema hashes, backend/atomicity decision, import map, replay hashes, fixture index, freshness/tripwire/audit/response/outcome rules, projection bounds, round-receipt hashes, fault results, and unresolved limits",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Each new source file is under ~500 lines and has a single clear responsibility (schemas, semantic loop, store, replay, projections, importer, freshness)",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Every artifact encodes the unaccepted-CL1-handoff assumption explicitly so critique/gate phases can reject if acceptance is required",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Proceed against the archived, technically-coherent CL1 handoff whose accepted_for_cl2 is false (5 procedural blockers). This follows the user direction for this unattended run: make conservative repo-backed assumptions, encode them in artifacts, let critique/gate reject. The unaccepted status is recorded in store metadata, importer output, and the CL3 handoff. If a review phase requires acceptance first, the plan halts at that gate.",
+    "CL2 writes new domain events to SQLite tables, not to plan-local JSON. Existing reader paths remain untouched and readable until the coordinated CL5 cutover. Full per-file compatibility inventory is deferred to a focused CL5 task.",
+    "Partially-parseable attempts are admitted with ParseStatus.PARTIAL_RECOVERED, an evidence_ref to the recovered subset, and unavailable_reason for unparseable fields. The invalid portion is never promoted or synthesized. Partial occurrences are evidence-only (cannot carry semantic_finding_id, cannot close a finding).",
+    "All 5 cancelled CL2 artifacts are pre-amendment and none is portable as-is. A formal audit (Step 12) with SHA-256 hashes and per-artifact compliance is produced before any cancelled code is referenced. The archive is read-only reference material.",
+    "The domain store shares the SQLite connection with SqliteAttemptLedgerStore (same DB, WAL) for zero-network atomic cross-table writes, but is a separate class \u2014 not a subclass, not a parallel authority.",
+    "CL2 migrations are versions 5+ appended to the M6A registry via default_combined_migrations(), passed to SqliteLedgerMigrator(store, migrations); ledger_migrations.py is not edited."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/custody/test_projections.py",
+        "reason": "bounded basename match for arnold/critique_ledger/projections.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/kernel/test_replay.py",
+        "reason": "bounded basename match for arnold/critique_ledger/replay.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/workflow/test_attempt_ledger_store.py",
+        "reason": "Regression safety net: CL2 shares the SQLite WAL connection and BEGIN IMMEDIATE substrate"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/workflow/test_ledger_outbox.py",
+        "reason": "Regression safety net: CL2 appends via the outbox crash-recovery pattern"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/workflow/test_ledger_migrations.py",
+        "reason": "Regression safety net: CL2 migrations extend the M6A registry versions 5+"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/workflow/test_ledger_payload_enforcement.py",
+        "reason": "Regression safety net: ensures WBC payload/retention/redaction contracts are not reimplemented or broken"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/workflow/test_payload_policy.py",
+        "reason": "Regression safety net: payload policy reuse invariant"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/workflow/test_execution_attempt_ledger.py",
+        "reason": "Regression safety net: the attempt-ledger event schema the domain store co-locates with"
+      }
+    ],
+    "changed_surfaces": [
+      "arnold/critique_ledger/__init__.py",
+      "arnold/critique_ledger/cl2_migrations.py",
+      "arnold/critique_ledger/freshness.py",
+      "arnold/critique_ledger/importer.py",
+      "arnold/critique_ledger/projections.py",
+      "arnold/critique_ledger/replay.py",
+      "arnold/critique_ledger/schemas.py",
+      "arnold/critique_ledger/semantic_loop.py",
+      "arnold/critique_ledger/store.py",
+      "tests/arnold/critique_ledger/__init__.py",
+      "tests/arnold/critique_ledger/test_schemas_golden.py",
+      "tests/arnold/critique_ledger/test_cl2_migrations.py",
+      "tests/arnold/critique_ledger/test_store_append.py",
+      "tests/arnold/critique_ledger/test_replay.py",
+      "tests/arnold/critique_ledger/test_projections.py",
+      "tests/arnold/critique_ledger/test_importer.py",
+      "tests/arnold/critique_ledger/test_freshness.py",
+      "tests/arnold/critique_ledger/test_negative_mutation.py",
+      "docs/critique-ledger/cl2-cancelled-archive-audit.md",
+      "docs/critique-ledger/handoffs/cl2-ledger-replay.json"
+    ],
+    "always_run": [],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Declared pytest selector path(s) do not exist, so the default stays on the full-suite path: tests/arnold/critique_ledger/test_cl2_migrations.py, tests/arnold/critique_ledger/test_freshness.py, tests/arnold/critique_ledger/test_importer.py, tests/arnold/critique_ledger/test_negative_mutation.py, tests/arnold/critique_ledger/test_projections.py, tests/arnold/critique_ledger/test_replay.py, tests/arnold/critique_ledger/test_schemas_golden.py, tests/arnold/critique_ledger/test_store_append.py. Tracked 10 changed non-test Python surface(s). Used bounded basename search under tests/ for at least one changed surface. Some changed Python surfaces have no deterministic selector, so the default stays on the full-suite path. Ignored documentation-only change(s) for selector derivation: docs/critique-ledger/cl2-cancelled-archive-audit.md, docs/critique-ledger/handoffs/cl2-ledger-replay.json. Candidate: CL2 is a new module that shares the SQLite WAL/BEGIN IMMEDIATE/outbox/migration substrate with the landed WBC attempt-ledger. The new tests/arnold/critique_ledger/ directory is the primary surface; the workflow store/outbox/migration/payload tests are scoped as regression safety nets because CL2 reuses (not reimplements) those contracts. full_suite_fallback is enabled because the shared connection means a substrate-level regression could surface anywhere in the workflow test tree. Floor widened the candidate by preserving deterministic selector(s). Dropped nonexistent pytest path(s) from plan-time baseline metadata: tests/arnold/critique_ledger.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": [
+        "arnold/critique_ledger/__init__.py",
+        "arnold/critique_ledger/cl2_migrations.py",
+        "arnold/critique_ledger/freshness.py",
+        "arnold/critique_ledger/importer.py",
+        "arnold/critique_ledger/projections.py",
+        "arnold/critique_ledger/replay.py",
+        "arnold/critique_ledger/schemas.py",
+        "arnold/critique_ledger/semantic_loop.py",
+        "arnold/critique_ledger/store.py",
+        "tests/arnold/critique_ledger/__init__.py"
+      ]
+    },
+    "missing_test_selectors": [
+      "tests/arnold/critique_ledger"
+    ]
+  },
+  "structure_warnings": [
+    "Plan should include `## Execution Order` or `## Validation Order`.",
+    "Each step section should include at least one numbered substep.",
+    "Each step section should reference at least one file in backticks."
+  ]
+}

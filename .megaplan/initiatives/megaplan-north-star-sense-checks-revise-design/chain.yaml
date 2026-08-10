@@ -1,0 +1,22 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1-megaplan-north-star-sense-checks-revise-design
+  idea: .megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/briefs/m1-megaplan-north-star-sense-checks-revise-design.md
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  depth: high
+  branch: megaplan-north-star-sense-checks-revise-design
+  prep_clarify: false
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 24
+  poll_sleep: 8.0

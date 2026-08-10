@@ -1,0 +1,20 @@
+{
+  "grammar_version": "arnold.workflow.authoring.v2",
+  "source_path": "tests/fixtures/workflow_authoring/m3/invalid_m3_hidden_finalize_fallback.py",
+  "outcome": "invalid",
+  "group": "s5",
+  "expected_diagnostics": [
+    {
+      "code": "AWF244_HANDLER_PURITY_VIOLATION",
+      "message": "finalize fallback must be visible in FINALIZE_POLICY route surfaces instead of relying on hidden handler fallback logic",
+      "source_span": {
+        "path": "tests/fixtures/workflow_authoring/m3/invalid_m3_hidden_finalize_fallback.py",
+        "start_line": 12,
+        "start_column": 5,
+        "end_line": 12,
+        "end_column": 65
+      },
+      "component_ref": "arnold_pipelines.megaplan.workflows.components:FINALIZE_POLICY"
+    }
+  ]
+}

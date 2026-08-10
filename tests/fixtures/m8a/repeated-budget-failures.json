@@ -1,0 +1,242 @@
+{
+  "task_contract_version": 2,
+  "tasks": [
+    {
+      "id": "T1",
+      "objective": "Implement bounded behavior T1.",
+      "description": "Implement bounded behavior T1 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t1.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t1.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T2",
+      "objective": "Implement bounded behavior T2.",
+      "description": "Implement bounded behavior T2 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 4,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "T2 imports the contract created by T1.",
+          "required_output": "src/t1.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t2.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t2.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T3",
+      "objective": "Implement complex retry-policy normalization with proof-test contract.",
+      "description": "Implement bounded behavior T3 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 7,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 14,
+      "depends_on": [
+        "T2"
+      ],
+      "dependency_reasons": {
+        "T2": {
+          "kind": "consumes_output",
+          "reason": "T3 imports the contract created by T2.",
+          "required_output": "src/t2.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t3.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t3.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "objective": "Implement executor circuit counter with deterministic signature normalization.",
+      "description": "Implement bounded behavior T4 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 7,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 14,
+      "depends_on": [
+        "T3"
+      ],
+      "dependency_reasons": {
+        "T3": {
+          "kind": "consumes_output",
+          "reason": "T4 imports the contract created by T3.",
+          "required_output": "src/t3.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t4.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t4.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "objective": "Implement budget-exhaustion typed blocker emission.",
+      "description": "Implement bounded behavior T5 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 5,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 8,
+      "depends_on": [
+        "T4"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "T5 imports the contract created by T4.",
+          "required_output": "src/t4.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t5.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t5.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T6",
+      "objective": "Implement bounded behavior T6.",
+      "description": "Implement bounded behavior T6 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T5"
+      ],
+      "dependency_reasons": {
+        "T5": {
+          "kind": "consumes_output",
+          "reason": "T6 imports the contract created by T5.",
+          "required_output": "src/t5.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t6.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t6.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    }
+  ],
+  "validation_jobs": []
+}

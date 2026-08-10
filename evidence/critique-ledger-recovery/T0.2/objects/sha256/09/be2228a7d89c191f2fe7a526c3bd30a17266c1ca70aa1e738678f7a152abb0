@@ -1,0 +1,13 @@
+{
+  "schema": "megaplan.phase_result",
+  "schema_version": 1,
+  "phase_result_contract_version": 1,
+  "phase": "plan",
+  "invocation_id": "601f13383f9b406e",
+  "exit_kind": "internal_error",
+  "blocked_tasks": [],
+  "deviations": [],
+  "artifacts_written": [],
+  "cli_provenance": {},
+  "external_error": null
+}

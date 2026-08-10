@@ -1,0 +1,599 @@
+{
+  "schema": "arnold.critique_ledger.unfinished_work_custody.v3",
+  "captured_at": "2026-08-02T23:15:00+02:00",
+  "contract_updated_at": "2026-08-03T02:40:21Z",
+  "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "canonical_checklist": {
+    "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
+    "sha256": "edddb198701c7567325aac5827100321addbe9e7c5dd458c1329628e82472e0c",
+    "task_count": 55,
+    "status": "PRESERVED_SOURCE_CHECKLIST_NOT_CURRENT_FINITE_CANARY_CUT_AUTHORITY"
+  },
+  "live_cloud_evidence": [
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/live-containment-capacity-observation-20260802T214853Z.json",
+      "sha256": "b1c42795d81d5c8f259ccbc21626fbf6e05c093e18c6c52dcf176d6fb133082b",
+      "status": "TYPED_STOPPED_PREDECESSOR_AND_ENOSPC_OBSERVATION"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/capacity-bootstrap-reclaim-adversarial-review-luna-20260802.md",
+      "sha256": "3ef7f27fd337d64c9ba3639075e264ee6e7ed641fafd70b348d666a702eda1ef",
+      "status": "BOUNDED_BOOTSTRAP_RECLAIM_REVIEW"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/zero-recovery-cl2-canary-launch-design-review.md",
+      "sha256": "7a962e6241bece0e81cff350a225b188fd9568ca01d1d1d2908a9f99fef20d77",
+      "status": "SUPERSEDED_PRE_PRIVILEGE_REVIEW_DESIGN_EVIDENCE_ONLY"
+    }
+  ],
+  "prelaunch_release_gates": [
+    {
+      "id": "accepted_finite_canary_candidate",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary release operator and independent exact-commit reviewer",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "trusted_host_control_state",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "bounded_fence_reclaim",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "durable_failure_reconciliation",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "built_image_four_phase_smoke",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary release operator",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "live_capacity_and_predeploy",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary release operator through the typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "finite_canary_and_stable_exit",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary runner and independent conformance reviewer",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "remote_custody_and_fresh_clone",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "release custody operator and independent reconstruction reviewer",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    }
+  ],
+  "trusted_host_control_state_contract": {
+    "global_containment_marker": {
+      "schema": "arnold.cloud.zero_recovery_marker.v2",
+      "exact_fields": ["schema", "profile", "scope", "active"],
+      "transaction_independent": true,
+      "publish_after": [
+        "durable_unit_containment_proof",
+        "durable_systemd_job_containment_proof",
+        "durable_session_containment_proof",
+        "durable_process_containment_proof"
+      ],
+      "canonical_reuse": "ALLOWED_ONLY_AFTER_FRESH_DURABLE_CONTAINMENT_REPROOF",
+      "mismatch": "HARD_NO_GO"
+    },
+    "per_attempt_records": {
+      "records": ["intent", "apply", "verify", "failure"],
+      "exact_binding_fields": ["transaction_id", "transaction_digest", "action"],
+      "fresh_retry": "NEW_SUPPORTED_TRANSACTION_AND_FRESH_EVIDENCE"
+    },
+    "failure_evidence": {
+      "pre_intent": "NO_MUTATION_FAIL_CLOSED_SUPPORTED_CALLER_CAPTURED_TYPED_ERROR",
+      "post_intent_partial_post_prune": "DURABLE_O_EXCL_HOST_FAILURE_RECEIPT"
+    }
+  },
+  "capacity_cut": {
+    "prelaunch": {
+      "task_id": "T0.3/scoped-prelaunch-capacity-reclaim",
+      "status": "NO_GO_UNTIL_ACCEPTED_FRESH_RECEIPT",
+      "owner": "finite-canary release operator through the typed SSH zero-recovery provider",
+      "live_no_go_receipt": {
+        "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/live-containment-capacity-observation-20260802T214853Z.json",
+        "sha256": "b1c42795d81d5c8f259ccbc21626fbf6e05c093e18c6c52dcf176d6fb133082b"
+      },
+      "reclaim_review": {
+        "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/capacity-bootstrap-reclaim-adversarial-review-luna-20260802.md",
+        "sha256": "3ef7f27fd337d64c9ba3639075e264ee6e7ed641fafd70b348d666a702eda1ef",
+        "status": "NO_GO_CURRENT_IMPLEMENTATION_CONDITIONAL_STRATEGY_ONLY"
+      },
+      "exact_fixed_reclaim_operation": ["docker", "builder", "prune", "-f"],
+      "fresh_capacity_receipt": {
+        "path": null,
+        "sha256": null,
+        "status": "PENDING"
+      }
+    },
+    "follow_up": {
+      "task_id": "T0.3/platform-capacity-and-storage-hardening",
+      "owner": "F1",
+      "proof_path": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
+      "scope": "reserved-capacity owner, quotas/watermarks, ENOSPC/corruption/crash guarantees, lifecycle retention, broad storage reclaim and physically minimal image"
+    }
+  },
+  "isolation_receipt_contract": {
+    "status": "PENDING_EXACT_CANDIDATE_AND_LIVE_RECEIPT",
+    "required_host_child_identity": [
+      "realpath",
+      "st_dev",
+      "st_ino",
+      "uid",
+      "gid",
+      "initial_mode",
+      "runtime_mode",
+      "access_transition_receipt_sha256",
+      "created_empty",
+      "never_reused",
+      "parent_realpath"
+    ],
+    "required_mount_identity": {
+      "container_destination": "/workspace",
+      "mount_type": "bind",
+      "rw": true,
+      "propagation": "rprivate",
+      "forbidden_mounts": [
+        "preserved_parent",
+        "sibling_workspaces",
+        "docker_socket",
+        "shared_cache"
+      ]
+    },
+    "required_model_privilege_identity": {
+      "uid": "dedicated_non_root",
+      "gid": "dedicated_non_root",
+      "no_new_privileges": true,
+      "capability_sets": {
+        "effective": [],
+        "permitted": [],
+        "inheritable": [],
+        "ambient": [],
+        "bounding": []
+      },
+      "strict_child_environment": {
+        "exact_keys": ["LANG", "LC_ALL", "HOME", "CODEX_HOME", "TMPDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "PATH", "USER", "LOGNAME", "MEGAPLAN_TURN_ID", "PYTHONNOUSERSITE", "PYTHONDONTWRITEBYTECODE", "GIT_CONFIG_NOSYSTEM"],
+        "inherits_root_secrets": false,
+        "inherits_proxy_credentials": false,
+        "writable_path_entries": false
+      },
+      "writable_paths": ["exact_precreated_phase_output_inode", "fresh_phase_local_codex_state"],
+      "forbidden_writes": ["source", ".git", "plan_state", "gate", "runner", "installed_engine", "root_auth", "later_phase_state"],
+      "global_scratch_writable": false,
+      "uid_processes_before_phase": 0,
+      "surviving_processes_after_phase": 0
+    },
+    "required_resource_envelope": {
+      "container_pids_max": 256,
+      "container_memory_bytes": 4294967296,
+      "container_memory_swap_bytes": 4294967296,
+      "model_processes_max": 64,
+      "model_file_bytes_max": 67108864,
+      "core_bytes_max": 0,
+      "aggregate_runtime_tmpfs_bytes": 268435456,
+      "runtime_tmpfs_options": ["rw", "noexec", "nosuid", "nodev"]
+    },
+    "required_evidence": [
+      "complete_mount_inventory_sha256",
+      "container_id",
+      "image_id",
+      "predeploy_observation_sha256",
+      "run_observation_sha256",
+      "stop_observation_sha256"
+    ]
+  },
+  "model_evidence_contract": {
+    "finite_canary_label": "codex_cli_turn_context",
+    "required_bindings": ["exact_root_built_argv", "sealed_rollout_sha256", "phase", "dispatch_id", "source_commit", "source_tree"],
+    "forbidden_claims": ["provider_observed", "cryptographic_backend_identity", "billing_model_identity"],
+    "server_attestation_status": "DEFERRED_TO_F2_FAIL_CLOSED_UNKNOWN_WHEN_UNAVAILABLE"
+  },
+  "dirty_snapshot_commits": [
+    {
+      "lane": "t1.1-admission",
+      "snapshot_commit": "b122d6fc936a119c81883ed3698b8be4d746fa4e",
+      "snapshot_tree": "a8e19bce43139d319825a5d72113ae86255c2319",
+      "base_commit": "3ed353f8aa3d0df450c563c3cb8d76c87349e32d",
+      "disposition": "ARCHIVE_ONLY_PARTIAL_TREE_DO_NOT_MERGE_PENDING_CUSTODY_TAG"
+    },
+    {
+      "lane": "t1.2-partial-contract-bundles",
+      "snapshot_commit": "e552a159d9d531ae5ec913c6cefff40fecbf07c6",
+      "snapshot_tree": "6dd39f4b970218e711838b54b283161cd621e5de",
+      "base_commit": "2f1500aea1d03fbf13df5c796b17bd03d17bb79c",
+      "disposition": "ARCHIVE_ONLY_PARTIAL_TREE_DO_NOT_MERGE_PENDING_CUSTODY_TAG"
+    },
+    {
+      "lane": "t1.7-storage",
+      "snapshot_commit": "7bb70ac85e96413eaa53c08c5a0976b72493dc20",
+      "snapshot_tree": "d394c9a3c2118e99e5d2835e396266a7a018a8e3",
+      "base_commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+      "disposition": "ARCHIVE_ONLY_PARTIAL_TREE_DO_NOT_MERGE_PENDING_CUSTODY_TAG"
+    }
+  ],
+  "dirty_capture_recipe": {
+    "status_sha256": "sha256(raw stdout bytes from: git status --porcelain=v1 --untracked-files=all)",
+    "worktree_diff_sha256": "sha256(raw stdout bytes from: git diff --binary --no-ext-diff --)",
+    "index_diff_sha256": "sha256(raw stdout bytes from: git diff --binary --no-ext-diff --cached HEAD --)",
+    "untracked_files": "git ls-files --others --exclude-standard -z; record each repo-relative path, POSIX mode and sha256(raw file bytes)"
+  },
+  "operational_substrates": [
+    {
+      "id": "cloud-observation-preflight-repair-v2",
+      "disposition": "CONSUMED_BOUNDED_SUBSTRATE"
+    },
+    {
+      "id": "t1.9-zero-recovery-launcher",
+      "disposition": "CONSUMED_ON_SUCCESS"
+    }
+  ],
+  "deferred_obligations": [
+    {
+      "id": "F1.platform_capacity_storage_hardening",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.platform_capacity_storage_hardening"
+    },
+    {
+      "id": "F1.physically_minimal_image",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.physically_minimal_image"
+    },
+    {
+      "id": "F1.cross_pipeline_model_isolation",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.cross_pipeline_model_isolation"
+    },
+    {
+      "id": "F1.t1_5_monotonic_consumed_grant",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_5_monotonic_consumed_grant"
+    },
+    {
+      "id": "F1.production_recovery_owner",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.production_recovery_owner"
+    },
+    {
+      "id": "F1.exact_occurrence_handoff",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.exact_occurrence_handoff"
+    },
+    {
+      "id": "F1.notification_occurrence_version_custody",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.notification_occurrence_version_custody"
+    },
+    {
+      "id": "F1.t1_5_topology_retirement",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_5_topology_retirement"
+    },
+    {
+      "id": "F1.t1_7_transactional_storage",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_7_transactional_storage"
+    },
+    {
+      "id": "F1.t1_10_notification_policy",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_10_notification_policy"
+    },
+    {
+      "id": "F2.t1_1_universal_admission",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_1_universal_admission"
+    },
+    {
+      "id": "F2.t1_2_attempt_model_handling",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_2_attempt_model_handling"
+    },
+    {
+      "id": "F2.provider_attested_model_identity",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.provider_attested_model_identity"
+    },
+    {
+      "id": "F2.t1_3_transport_integration",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_3_transport_integration"
+    },
+    {
+      "id": "F2.t1_4_t1_6_release_closure",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_4_t1_6_release_closure"
+    }
+  ],
+  "items": [
+    {
+      "id": "cloud-observation-preflight-rejected-v1",
+      "path": "/private/tmp/arnold-critique-recovery-cloud-observation-preflight-20260802",
+      "commit": "96d368de54876aaaec205290e2640d9daf78f3ea",
+      "tree": "e2f3633739acaa75ccb9324365a1b8b966fc4f4f",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/PROVIDER/cloud-observation-preflight-independent-review-luna.md",
+      "evidence_sha256": "84384d99578e0992a05ab11996d49cc753e343131c7583f483f232f7a5ddefa9",
+      "status": "CLEAN_REJECTED_PENDING_BOUNDED_REPAIR_NOT_PREDEPLOY_AUTHORITY",
+      "acceptance_path": "superseded by a bounded repair; retain as rejected evidence and never deploy"
+    },
+    {
+      "id": "cloud-observation-preflight-repair-v2",
+      "path": "/private/tmp/arnold-critique-recovery-cloud-observation-preflight-20260802",
+      "base_commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+      "commit": "26aca6ace7f0af3279ca5b311e6983d4904a4d3a",
+      "tree": "5503c69c36bbd5a404742139d5c93cddad48edf3",
+      "status": "CLEAN_ACCEPTED_BOUNDED_SOURCE_INTEGRATION_NOT_PREDEPLOY_AUTHORITY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "patch_sha256": "41665957b8c8fdba4df5344d1bb66d1eb3fc41278283a1c765e673908a9c9934",
+      "implementation_evidence": ".megaplan/subagents/critique-ledger-recovery/PROVIDER/cloud-observation-preflight-implementation-result-sol.md",
+      "implementation_evidence_sha256": "6454319248b199f084f837d152e2ebba8652c0de4f13c5e84d4a5b19e8544ded",
+      "independent_review": ".megaplan/subagents/critique-ledger-recovery/PROVIDER/cloud-observation-preflight-independent-review-pass2-luna.md",
+      "independent_review_sha256": "92e17377883c3affbcadb9716e69bb5403deff6ca6f7d2833e55e61fbb3c3028",
+      "acceptance_path": "integrate exact commit only; immediately before mutation obtain a fresh expiring privileged predeploy receipt and rebind its observed target identity to the exact deploy target"
+    },
+    {
+      "id": "t1.2-partial-contract-bundles",
+      "path": "/private/tmp/arnold-critique-recovery-contract-bundles-20260802",
+      "commit": "2f1500aea1d03fbf13df5c796b17bd03d17bb79c",
+      "tree": "0e060b37eb8bcea19d7cefa03f00842ed92b5558",
+      "status": "DIRTY_PRESERVED_4_PATHS",
+      "status_sha256": "298b49e1c487fb35110aeb3e9f971528756c5039e5741d2b36bf8b7a1a4a5a7b",
+      "worktree_diff_sha256": "909574ddadf2557be2cf1ab125d8faf40cf8c5aa6216e63ae76626af0551dc42",
+      "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_files": [
+        {
+          "path": "arnold_pipelines/megaplan/orchestration/critique_attempts.py",
+          "mode": "0644",
+          "sha256": "2a8601b2e4c7005fbd33a1dcee9edd00fcd3ab3cff0ffcbe6500071496b8a98d"
+        }
+      ],
+      "acceptance_path": "independent semantic review, clean descendant integration, installed route proof"
+    },
+    {
+      "id": "run-authority-containment",
+      "path": "/private/tmp/arnold-critique-recovery-ra-contain-20260802",
+      "commit": "48e13e1bcbc6769aff753270331d52ac1c148125",
+      "tree": "550421e34c1e789e31d173fdf35fdd7fd55ce287",
+      "status": "CLEAN_LOCAL_INTEGRATION_ELIGIBLE_NOT_T0_COMPLETE",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T0.0/ra-contain-independent-review-pass14-luna-result.md",
+      "evidence_sha256": "c1636abf3ec58dccc5575e3c7046ed0d2e6e81da06b1f1f3b8b0494e9169089a",
+      "acceptance_path": "clean integration, exact install, owner-issued production decision/revision/fence/receipt"
+    },
+    {
+      "id": "t1.1-admission",
+      "path": "/private/tmp/arnold-critique-recovery-t1-1-admission-20260802",
+      "commit": "3ed353f8aa3d0df450c563c3cb8d76c87349e32d",
+      "tree": "f6c83fca884e9631c7518810ee521d75389815b3",
+      "status": "DIRTY_PRESERVED_19_PATHS_6_PASS_1_FAIL",
+      "status_sha256": "c560b7085db39c1a8ba6bf8862f2644d3b1f364dac03ac8a0352cad2ac8ce0d4",
+      "worktree_diff_sha256": "af398c34c607594f757b341eaadfb3f136a0279bbea53a3cb2eb66e3fec4d384",
+      "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_files": [
+        {
+          "path": "arnold_pipelines/run_authority/owner_client.py",
+          "mode": "0644",
+          "sha256": "f3e93f5c819c8805095a9ce7ea51bd2dee2a224f9388113d981158a3d87dc606"
+        },
+        {
+          "path": "tests/arnold_pipelines/run_authority/conformance_backend.py",
+          "mode": "0644",
+          "sha256": "fa4c44883af4bdd8715e6ad797962c15ab8e2b06d014e0f318add2708df59213"
+        },
+        {
+          "path": "tests/arnold_run_authority_owner/__init__.py",
+          "mode": "0644",
+          "sha256": "c3351ecb8f82ad7c8749dcad8162b193e24ca1fa2a418cea682d8333405c7335"
+        },
+        {
+          "path": "tests/arnold_run_authority_owner/endpoint.py",
+          "mode": "0644",
+          "sha256": "7f2a76fa74031b72d33982481f8fce5387554d4ba410713c80effe81050fa04b"
+        }
+      ],
+      "acceptance_path": "repair failing final-milestone validation, independent review, clean integration, installed owner/backend conformance"
+    },
+    {
+      "id": "t1.7-storage",
+      "path": "/private/tmp/arnold-critique-recovery-t1-7-storage-20260802",
+      "commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+      "tree": "83a22fc5f5930cbcbe5a439129706bb90bb28a92",
+      "status": "DIRTY_PRESERVED_16_PATHS_STAGED_AND_UNSTAGED_79_PASS_1_FAIL",
+      "status_sha256": "e92a389f3ddf9ecba4dc527301fc055cd69f0a6b84b942d5d562bffcc837b430",
+      "worktree_diff_sha256": "2f10dc3bfcec5d4510c33894ab1c2b0b8394cbb94a65699ff3c9b9e3c7c960e0",
+      "index_diff_sha256": "930731f38780d5e17c307ebf614c8094037d4d239c2525651baa96ef18fc1cb1",
+      "acceptance_path": "repair exact failing node, semantic crash/ENOSPC review, clean commit and installed-wheel proof"
+    },
+    {
+      "id": "t1.10-notification-rejected",
+      "path": "/private/tmp/arnold-critique-recovery-notification-ux-20260802",
+      "commit": "0c3d662024bc0497ed3979991a20b3b48ecf19cd",
+      "tree": "d4c10e167be87e1655704d1beeaf92d6c4e46526",
+      "status": "CLEAN_REJECTED_EVIDENCE_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.10/notification-ux-independent-review-pass4-luna-result.md",
+      "evidence_sha256": "2fba7fd07882c98b2080ae9867dc8a739b77625b311dadad820547636ab9584b",
+      "acceptance_path": "independently rebuilt owner-backed notification outbox after stable canary; never wholesale integrate"
+    },
+    {
+      "id": "t1.5-oversized-rejected",
+      "path": "/private/tmp/arnold-critique-recovery-simple-fixer-20260802",
+      "commit": "939c763ae492a72efdd74941d431045b0f0ea61d",
+      "tree": "c78890fd9998241f8767210b36036e63c17eda5a",
+      "status": "CLEAN_REJECTED_EVIDENCE_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.5/t1-5-independent-review-pass1-sol-result.md",
+      "evidence_sha256": "9c0a4ebc7afd39466dcb12241d72bf8b994ad1a936cf5b0205bdb39d66f0e1d6",
+      "acceptance_path": "mine evidence only; narrow independent reimplementation after canary"
+    },
+    {
+      "id": "t1.5-pass3-rejected",
+      "path": "/private/tmp/arnold-critique-recovery-t1-5-operational-pass3-20260802",
+      "commit": "9642193a063d91a6be364f2d11a04b221eae30cf",
+      "tree": "27a3d61dff39a4c1a26a8a736dc85ce727c57b7c",
+      "status": "CLEAN_HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.5/t1-5-operational-pass3-independent-review-luna.md",
+      "evidence_sha256": "290fcd8b2132b5834c6e6fe961a2640329bfb133eb1acd618f82fed2b3d8d13a",
+      "acceptance_path": "external monotonic consumed-grant authority plus deletion/rollback no-redispatch proof"
+    },
+    {
+      "id": "t1.8-bounded-release-component",
+      "path": "/private/tmp/arnold-critique-recovery-gen-deploy-bootstrap-20260802",
+      "commit": "06d41e6b7148db4e5b464131762d63fd697db056",
+      "tree": "a8a67b2e01b9129673afdc7931cb3ffdce03a2de",
+      "status": "CLEAN_ACCEPTED_BOUNDED_LOCAL_STAGE_A_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.8/gen-deploy-pass5-root-adjudication.md",
+      "evidence_sha256": "9fdb7ebf585aeddc0571b726cefcda9d3fdb5cae52d8d3f512999c688af1db2b",
+      "acceptance_path": "clean integration, production adapter, deploy and live installed-vector proof"
+    },
+    {
+      "id": "t1.3-bounded-transport-component",
+      "path": "/private/tmp/arnold-critique-recovery-contract-bundles-20260802",
+      "shared_dirty_lane": "t1.2-partial-contract-bundles",
+      "commit": "2f1500aea1d03fbf13df5c796b17bd03d17bb79c",
+      "tree": "0e060b37eb8bcea19d7cefa03f00842ed92b5558",
+      "status": "ACCEPTED_STAGE_A_COMPONENT_ONLY",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.3/contract-bundles-independent-review-pass6-luna-result.md",
+      "evidence_sha256": "88dba10059ebbcf5e9aad6801f603da665cffbb16a068d012ecd18ca6b248edb",
+      "scope": "transport/authenticated raw target-bound contract component only; not T1.2 model-attempt completion, integrated route, installed production authority or cloud launch authority",
+      "acceptance_path": "extract the accepted component from the shared dirty T1.2 lane into a clean descendant, qualify conflicts/package/install, and obtain installed route proof without treating surrounding dirty T1.2 work as accepted"
+    },
+    {
+      "id": "t5.1-evidence-schema",
+      "path": "/private/tmp/arnold-critique-recovery-t5-1-20260802",
+      "commit": "7c254f7f0d15ba4e835a6fe7cae40b47d29ef7cd",
+      "tree": "27e7b22ef0d7f3faeaa6b7cbcd63aabb2872d7e9",
+      "status": "CLEAN_CANDIDATE_FOUR_OWNER_DECISIONS_OUTSTANDING",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T5.1/t5-1-independent-review-pass3-luna-result.md",
+      "evidence_sha256": "00909428779d6258e11e68b6ea21b90eb46d8ff4394c2efc569554dbb5036609",
+      "acceptance_path": "resolve four owner decisions, independent replacement acceptance, recompute T5.2 and bind T5.3-T5.6"
+    },
+    {
+      "id": "t1.4-prepared-empty-lane",
+      "path": "/private/tmp/arnold-critique-recovery-incident-stall-notify-20260802",
+      "commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+      "tree": "83a22fc5f5930cbcbe5a439129706bb90bb28a92",
+      "status": "CLEAN_NO_EDITS_PREPARED_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "explicitly superseded by zero-recovery canary; future rebuild from accepted production owner interfaces"
+    },
+    {
+      "id": "t1.9-zero-recovery-launcher",
+      "status": "IMPLEMENTED_FINITE_CANARY_LAUNCHER_PENDING_LIVE_ACCEPTANCE",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.9/t1-9-stage-a-implementation-delta-v2-sol.md",
+      "evidence_sha256": "9a604b05637d2f9eba54db6a6f42e488e2d2979105a6b0d1d6dcb5665688ad11",
+      "zero_recovery_brief": ".megaplan/subagents/critique-ledger-recovery/T1.9/t1-9-zero-recovery-implementation-brief-luna.md",
+      "zero_recovery_brief_sha256": "b72ed9dae58099a854106c5baea00d7164d127f252c21cab17b009825350c75a",
+      "acceptance_path": "bounded zero-recovery implementation, deny-before-mutation hostile tests, installed parity and independent review; then create the real finite canary spec, exact proof map, independent conformance receipt and typed content-addressed completion receipt consumed by this epic's finite_canary_receipt gate—never fabricate normal-chain done state"
+    }
+  ]
+}

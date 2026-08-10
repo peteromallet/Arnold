@@ -1,0 +1,1168 @@
+{
+  "task_contract_version": 2,
+  "tasks": [
+    {
+      "id": "T1",
+      "objective": "Implement bounded behavior T1.",
+      "description": "Implement bounded behavior T1 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t1.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t1.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T2",
+      "objective": "Implement bounded behavior T2.",
+      "description": "Implement bounded behavior T2 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "T2 imports the contract created by T1.",
+          "required_output": "src/t1.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t2.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t2.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T3",
+      "objective": "Implement bounded behavior T3.",
+      "description": "Implement bounded behavior T3 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T2"
+      ],
+      "dependency_reasons": {
+        "T2": {
+          "kind": "consumes_output",
+          "reason": "T3 imports the contract created by T2.",
+          "required_output": "src/t2.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t3.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t3.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T4",
+      "objective": "Implement bounded behavior T4.",
+      "description": "Implement bounded behavior T4 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T3"
+      ],
+      "dependency_reasons": {
+        "T3": {
+          "kind": "consumes_output",
+          "reason": "T4 imports the contract created by T3.",
+          "required_output": "src/t3.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t4.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t4.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T5",
+      "objective": "Implement bounded behavior T5.",
+      "description": "Implement bounded behavior T5 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T4"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "T5 imports the contract created by T4.",
+          "required_output": "src/t4.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t5.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t5.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T6",
+      "objective": "Implement bounded behavior T6.",
+      "description": "Implement bounded behavior T6 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T5"
+      ],
+      "dependency_reasons": {
+        "T5": {
+          "kind": "consumes_output",
+          "reason": "T6 imports the contract created by T5.",
+          "required_output": "src/t5.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t6.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t6.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T7",
+      "objective": "Implement bounded behavior T7.",
+      "description": "Implement bounded behavior T7 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T6"
+      ],
+      "dependency_reasons": {
+        "T6": {
+          "kind": "consumes_output",
+          "reason": "T7 imports the contract created by T6.",
+          "required_output": "src/t6.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t7.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t7.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T8",
+      "objective": "Implement bounded behavior T8.",
+      "description": "Implement bounded behavior T8 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T7"
+      ],
+      "dependency_reasons": {
+        "T7": {
+          "kind": "consumes_output",
+          "reason": "T8 imports the contract created by T7.",
+          "required_output": "src/t7.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t8.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t8.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T9",
+      "objective": "Implement bounded behavior T9.",
+      "description": "Implement bounded behavior T9 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T8"
+      ],
+      "dependency_reasons": {
+        "T8": {
+          "kind": "consumes_output",
+          "reason": "T9 imports the contract created by T8.",
+          "required_output": "src/t8.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t9.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t9.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T10",
+      "objective": "Implement bounded behavior T10.",
+      "description": "Implement bounded behavior T10 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T9"
+      ],
+      "dependency_reasons": {
+        "T9": {
+          "kind": "consumes_output",
+          "reason": "T10 imports the contract created by T9.",
+          "required_output": "src/t9.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t10.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t10.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T11",
+      "objective": "Implement bounded behavior T11.",
+      "description": "Implement bounded behavior T11 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T10"
+      ],
+      "dependency_reasons": {
+        "T10": {
+          "kind": "consumes_output",
+          "reason": "T11 imports the contract created by T10.",
+          "required_output": "src/t10.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t11.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t11.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T12",
+      "objective": "Implement bounded behavior T12.",
+      "description": "Implement bounded behavior T12 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T11"
+      ],
+      "dependency_reasons": {
+        "T11": {
+          "kind": "consumes_output",
+          "reason": "T12 imports the contract created by T11.",
+          "required_output": "src/t11.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t12.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t12.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T13",
+      "objective": "Implement bounded behavior T13.",
+      "description": "Implement bounded behavior T13 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T12"
+      ],
+      "dependency_reasons": {
+        "T12": {
+          "kind": "consumes_output",
+          "reason": "T13 imports the contract created by T12.",
+          "required_output": "src/t12.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t13.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t13.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T14",
+      "objective": "Implement bounded behavior T14.",
+      "description": "Implement bounded behavior T14 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T13"
+      ],
+      "dependency_reasons": {
+        "T13": {
+          "kind": "consumes_output",
+          "reason": "T14 imports the contract created by T13.",
+          "required_output": "src/t13.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t14.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t14.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T15",
+      "objective": "Implement bounded behavior T15.",
+      "description": "Implement bounded behavior T15 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T14"
+      ],
+      "dependency_reasons": {
+        "T14": {
+          "kind": "consumes_output",
+          "reason": "T15 imports the contract created by T14.",
+          "required_output": "src/t14.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t15.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t15.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T16",
+      "objective": "Implement bounded behavior T16.",
+      "description": "Implement bounded behavior T16 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T15"
+      ],
+      "dependency_reasons": {
+        "T15": {
+          "kind": "consumes_output",
+          "reason": "T16 imports the contract created by T15.",
+          "required_output": "src/t15.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t16.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t16.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T17",
+      "objective": "Implement bounded behavior T17.",
+      "description": "Implement bounded behavior T17 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T16"
+      ],
+      "dependency_reasons": {
+        "T16": {
+          "kind": "consumes_output",
+          "reason": "T17 imports the contract created by T16.",
+          "required_output": "src/t16.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t17.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t17.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T18",
+      "objective": "Implement bounded behavior T18.",
+      "description": "Implement bounded behavior T18 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T17"
+      ],
+      "dependency_reasons": {
+        "T17": {
+          "kind": "consumes_output",
+          "reason": "T18 imports the contract created by T17.",
+          "required_output": "src/t17.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t18.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t18.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T19",
+      "objective": "Implement bounded behavior T19.",
+      "description": "Implement bounded behavior T19 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T18"
+      ],
+      "dependency_reasons": {
+        "T18": {
+          "kind": "consumes_output",
+          "reason": "T19 imports the contract created by T18.",
+          "required_output": "src/t18.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t19.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t19.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T20",
+      "objective": "Implement bounded behavior T20.",
+      "description": "Implement bounded behavior T20 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T19"
+      ],
+      "dependency_reasons": {
+        "T19": {
+          "kind": "consumes_output",
+          "reason": "T20 imports the contract created by T19.",
+          "required_output": "src/t19.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t20.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t20.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T21",
+      "objective": "Implement bounded behavior T21.",
+      "description": "Implement bounded behavior T21 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T20"
+      ],
+      "dependency_reasons": {
+        "T20": {
+          "kind": "consumes_output",
+          "reason": "T21 imports the contract created by T20.",
+          "required_output": "src/t20.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t21.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t21.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T22",
+      "objective": "Implement bounded behavior T22.",
+      "description": "Implement bounded behavior T22 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T21"
+      ],
+      "dependency_reasons": {
+        "T21": {
+          "kind": "consumes_output",
+          "reason": "T22 imports the contract created by T21.",
+          "required_output": "src/t21.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t22.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t22.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T23",
+      "objective": "Implement bounded behavior T23.",
+      "description": "Implement bounded behavior T23 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T22"
+      ],
+      "dependency_reasons": {
+        "T22": {
+          "kind": "consumes_output",
+          "reason": "T23 imports the contract created by T22.",
+          "required_output": "src/t22.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t23.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t23.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T24",
+      "objective": "Implement bounded behavior T24.",
+      "description": "Implement bounded behavior T24 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T23"
+      ],
+      "dependency_reasons": {
+        "T23": {
+          "kind": "consumes_output",
+          "reason": "T24 imports the contract created by T23.",
+          "required_output": "src/t23.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t24.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t24.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T25",
+      "objective": "Implement bounded behavior T25.",
+      "description": "Implement bounded behavior T25 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T24"
+      ],
+      "dependency_reasons": {
+        "T24": {
+          "kind": "consumes_output",
+          "reason": "T25 imports the contract created by T24.",
+          "required_output": "src/t24.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t25.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t25.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T26",
+      "objective": "Implement bounded behavior T26.",
+      "description": "Implement bounded behavior T26 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T25"
+      ],
+      "dependency_reasons": {
+        "T25": {
+          "kind": "consumes_output",
+          "reason": "T26 imports the contract created by T25.",
+          "required_output": "src/t25.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t26.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t26.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T27",
+      "objective": "Implement bounded behavior T27.",
+      "description": "Implement bounded behavior T27 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T26"
+      ],
+      "dependency_reasons": {
+        "T26": {
+          "kind": "consumes_output",
+          "reason": "T27 imports the contract created by T26.",
+          "required_output": "src/t26.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t27.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t27.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T28",
+      "objective": "Implement bounded behavior T28.",
+      "description": "Implement bounded behavior T28 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T27"
+      ],
+      "dependency_reasons": {
+        "T27": {
+          "kind": "consumes_output",
+          "reason": "T28 imports the contract created by T27.",
+          "required_output": "src/t27.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t28.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t28.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T29",
+      "objective": "Implement bounded behavior T29.",
+      "description": "Implement bounded behavior T29 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T28"
+      ],
+      "dependency_reasons": {
+        "T28": {
+          "kind": "consumes_output",
+          "reason": "T29 imports the contract created by T28.",
+          "required_output": "src/t28.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t29.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t29.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T30",
+      "objective": "Implement bounded behavior T30.",
+      "description": "Implement bounded behavior T30 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "T29"
+      ],
+      "dependency_reasons": {
+        "T29": {
+          "kind": "consumes_output",
+          "reason": "T30 imports the contract created by T29.",
+          "required_output": "src/t29.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t30.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t30.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    }
+  ],
+  "validation_jobs": []
+}

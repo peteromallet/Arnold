@@ -1,0 +1,119 @@
+{
+  "schema": "megaplan.candidate_graph_admission",
+  "schema_version": 1,
+  "candidate_id": "candidate:900b3d29ea020d8f83fb9db7ea6df484e2413012d0b1526ca190d2a34d95b58a",
+  "candidate_graph_hash": "900b3d29ea020d8f83fb9db7ea6df484e2413012d0b1526ca190d2a34d95b58a",
+  "task_contract_hash": "sha256:70c33ecc4d4e0b00966af1e7e8a96f5f78c5eb2514ebb73569b6db6be1a86c01",
+  "admitted": false,
+  "failure_fingerprint": "bd2131b4034d885108687c176c640f66b2c468b38d864eee347d46fec77aca6a",
+  "diagnostics": [
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T16 and T19 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "critical_path_infeasible",
+      "message": "Estimated critical path exceeds 80% of the configured execute-phase timeout."
+    },
+    {
+      "code": "dispatch_budget_infeasible",
+      "message": "Estimated sequential batch dispatch exceeds 80% of the configured execute-phase timeout."
+    }
+  ],
+  "observed_at": "2026-07-31T16:54:38Z",
+  "report": {
+    "schema_version": "megaplan-task-feasibility-v2",
+    "task_contract_hash": "sha256:70c33ecc4d4e0b00966af1e7e8a96f5f78c5eb2514ebb73569b6db6be1a86c01",
+    "plan_hash": "sha256:2afab746399dfedf0e775f5a13b06a499c649b3d62a11e54e6649ee6433173ce",
+    "seed_epoch": null,
+    "task_count": 21,
+    "edge_count": 32,
+    "root_count": 2,
+    "max_width": 3,
+    "batches": [
+      [
+        "T1",
+        "T17"
+      ],
+      [
+        "T2"
+      ],
+      [
+        "T3"
+      ],
+      [
+        "T4",
+        "T5"
+      ],
+      [
+        "T6"
+      ],
+      [
+        "T7"
+      ],
+      [
+        "T8",
+        "T13"
+      ],
+      [
+        "T9",
+        "T14"
+      ],
+      [
+        "T10",
+        "T15",
+        "T19"
+      ],
+      [
+        "T11",
+        "T16"
+      ],
+      [
+        "T12",
+        "T18"
+      ],
+      [
+        "T20"
+      ],
+      [
+        "T21"
+      ]
+    ],
+    "critical_path_task_ids": [
+      "T1",
+      "T2",
+      "T3",
+      "T5",
+      "T6",
+      "T7",
+      "T8",
+      "T9",
+      "T15",
+      "T16",
+      "T18",
+      "T20",
+      "T21"
+    ],
+    "critical_path_task_count": 13,
+    "critical_path_minutes": 174.0,
+    "seriality": 0.619048,
+    "estimated_dispatch_minutes": 178.0,
+    "execute_phase_timeout_minutes": 60.0,
+    "warnings": [],
+    "diagnostics": [
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T16 and T19 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "critical_path_infeasible",
+        "message": "Estimated critical path exceeds 80% of the configured execute-phase timeout."
+      },
+      {
+        "code": "dispatch_budget_infeasible",
+        "message": "Estimated sequential batch dispatch exceeds 80% of the configured execute-phase timeout."
+      }
+    ],
+    "admitted": false
+  }
+}

@@ -1,0 +1,1119 @@
+{
+  "F01_F17_overview": {
+    "executor_launcher_owned_findings": [
+      "F10",
+      "F11",
+      "F13"
+    ],
+    "observability_projection_owned_findings": [
+      "F06",
+      "F14",
+      "F16"
+    ],
+    "planner_compiler_owned_findings": [
+      "F07",
+      "F08",
+      "F09",
+      "F12"
+    ],
+    "run_authority_owned_findings": [
+      "F01",
+      "F05"
+    ],
+    "total_findings": 17,
+    "transition_writer_repair_custody_owned_findings": [
+      "F15"
+    ],
+    "wbc_owned_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F17"
+    ]
+  },
+  "composite_hash": "sha256:3437084066612c8d91f3c13fa02682612d3956136fd50e0e6abada48177eaabf",
+  "dispatch_and_external_effects_status": {
+    "dispatch_enabled": false,
+    "evidence": [
+      "arnold/workflow/execution_attempt_ledger.py line 45: \"This is schema-only \u2014 no I/O, mutation, or runtime effects.\"",
+      "arnold/workflow/boundary_templates.py line 100: \"Profiles are declarative: they do not route or dispatch.\"",
+      "No SqliteAttemptLedgerStore, outbox, or adapter code exists at current HEAD (904560e).",
+      "External effect event types (EXTERNAL_EFFECT_INTENT, EXTERNAL_EFFECT_OUTCOME) exist only as schema declarations in AttemptEventType enum.",
+      "External effect template (BoundaryTemplateKind.EXTERNAL_EFFECT) is a declarative template profile only.",
+      "No producer adoption path exists; all WBC store rows (66-70) are blocked substrate/adoption."
+    ],
+    "external_effects_enabled": false
+  },
+  "findings": {
+    "F01": {
+      "acceptance_proof": "M7 freezes identity and quarantine semantics; M10 enforces dispatch and terminal closure. Captured T7/T12 replay proves cross-binding is impossible and every request/claim/attempt/decision/index ends terminal.",
+      "canonical_owner": "Run Authority",
+      "m6a_substrate_relevance": "run-authority-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 11,
+      "non_wbc_rows": 10,
+      "other_owner_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "Run Authority M1-M3 completion receipts",
+          "owner": "Run Authority",
+          "row_index": 0,
+          "status_raw": "blocked evidence"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair request queue",
+          "owner": "custody-control-plane",
+          "row_index": 45,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair locks/leases",
+          "owner": "custody-control-plane",
+          "row_index": 46,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair-data/repair contract",
+          "owner": "custody-control-plane",
+          "row_index": 47,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L1 repair loop",
+          "owner": "custody-control-plane",
+          "row_index": 48,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L2 meta-repair",
+          "owner": "custody-control-plane",
+          "row_index": 49,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L3/audit repair",
+          "owner": "custody-control-plane",
+          "row_index": 50,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "source/install/retrigger repair",
+          "owner": "custody-control-plane",
+          "row_index": 51,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "cloud repair wrappers",
+          "owner": "custody-control-plane",
+          "row_index": 63,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "cloud/source initiative repair",
+          "owner": "custody-control-plane",
+          "row_index": 64,
+          "status_raw": "partial"
+        }
+      ],
+      "root_cause": "repair identity was request/session oriented and was not revalidated against the live attempt and normalized failure signature.",
+      "title": "stale repair identity attached T7 evidence to T12",
+      "wbc_owned_rows": 1,
+      "wbc_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "repair receipt adoption",
+          "row_index": 88,
+          "status_raw": "legacy"
+        }
+      ]
+    },
+    "F02": {
+      "acceptance_proof": "M6A/M8 make block/exit writes durable; M10 runs deterministic lost/duplicate/out-of-order trigger fixtures and a real eligible blocked-run prove p95 under five minutes plus missed-event recovery by the six-hour backstop.",
+      "canonical_owner": "WBC",
+      "m6a_substrate_relevance": "directly-addressed-by-m6a",
+      "migration_matrix_row_count": 14,
+      "non_wbc_rows": 7,
+      "other_owner_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "Run Authority M1-M3 completion receipts",
+          "owner": "Run Authority",
+          "row_index": 0,
+          "status_raw": "blocked evidence"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "Canonical `runauthority-epic` retirement",
+          "owner": "Run Authority",
+          "row_index": 1,
+          "status_raw": "blocked evidence"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "Runner/publication/human/recovery views",
+          "owner": "Run Authority",
+          "row_index": 11,
+          "status_raw": "substrate"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "six-hour unblocker",
+          "owner": "Megaplan Maintenance",
+          "row_index": 42,
+          "status_raw": "planned"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "human-blocker markers/classifier",
+          "owner": "custody-control-plane",
+          "row_index": 44,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "independent recovery verification",
+          "owner": "custody-control-plane",
+          "row_index": 52,
+          "status_raw": "planned"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "event-driven recovery trigger",
+          "owner": "custody-control-plane",
+          "row_index": 90,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "blocked/process-exit state depended on hourly discovery.",
+      "title": "scan-driven recovery added 1h38m44s",
+      "wbc_owned_rows": 7,
+      "wbc_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "row_index": 66,
+          "status_raw": "blocked substrate/adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC payload/privacy/retention/encryption",
+          "row_index": 67,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC schema/data migration",
+          "row_index": 68,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal producer adoption",
+          "row_index": 69,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal consumer adoption",
+          "row_index": 70,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "prerequisite-satisfied",
+          "consumer_surface": "WBC semantic findings",
+          "row_index": 71,
+          "status_raw": "prerequisite-WBC"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "prep/plan/revise stages",
+          "row_index": 22,
+          "status_raw": "in-flight-WBC"
+        }
+      ]
+    },
+    "F03": {
+      "acceptance_proof": "M6A/M8 make WBC receipt/attempt evidence durable; M7 joins custody identity; M8A implements verify-only adoption. Valid T7/T12 fixtures skip full replay; any altered contract, tree, test set, or fence rejects adoption and executes normally.",
+      "canonical_owner": "WBC",
+      "m6a_substrate_relevance": "directly-addressed-by-m6a",
+      "migration_matrix_row_count": 17,
+      "non_wbc_rows": 9,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "repair request queue",
+          "owner": "custody-control-plane",
+          "row_index": 45,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair locks/leases",
+          "owner": "custody-control-plane",
+          "row_index": 46,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair-data/repair contract",
+          "owner": "custody-control-plane",
+          "row_index": 47,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L1 repair loop",
+          "owner": "custody-control-plane",
+          "row_index": 48,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L2 meta-repair",
+          "owner": "custody-control-plane",
+          "row_index": 49,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L3/audit repair",
+          "owner": "custody-control-plane",
+          "row_index": 50,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "source/install/retrigger repair",
+          "owner": "custody-control-plane",
+          "row_index": 51,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "cloud repair wrappers",
+          "owner": "custody-control-plane",
+          "row_index": 63,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "cloud/source initiative repair",
+          "owner": "custody-control-plane",
+          "row_index": 64,
+          "status_raw": "partial"
+        }
+      ],
+      "root_cause": "repair receipts lacked current grant/task/revision/tree/test/fence proof and could not become accepted checkpoints.",
+      "title": "repair results were not adoptable and work replayed",
+      "wbc_owned_rows": 8,
+      "wbc_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "row_index": 66,
+          "status_raw": "blocked substrate/adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC payload/privacy/retention/encryption",
+          "row_index": 67,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC schema/data migration",
+          "row_index": 68,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal producer adoption",
+          "row_index": 69,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal consumer adoption",
+          "row_index": 70,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "prerequisite-satisfied",
+          "consumer_surface": "WBC semantic findings",
+          "row_index": 71,
+          "status_raw": "prerequisite-WBC"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "prep/plan/revise stages",
+          "row_index": 22,
+          "status_raw": "in-flight-WBC"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair receipt adoption",
+          "row_index": 88,
+          "status_raw": "legacy"
+        }
+      ]
+    },
+    "F04": {
+      "acceptance_proof": "M6A supplies the store, M8 adopts review/rework producers, and M10 proves replay. Two review/rework cycles preserve byte-identical attempt 1, monotonic ordinals, causal parents, and deterministic current projection.",
+      "canonical_owner": "WBC",
+      "m6a_substrate_relevance": "directly-addressed-by-m6a",
+      "migration_matrix_row_count": 9,
+      "non_wbc_rows": 1,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "compatibility aliases (`planning`, old paths)",
+          "owner": "Native Parity",
+          "row_index": 79,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "`execution`, batch, and review aliases acted as both current view and historical record.",
+      "title": "mutable aliases overwrote attempt history",
+      "wbc_owned_rows": 8,
+      "wbc_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "row_index": 66,
+          "status_raw": "blocked substrate/adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC payload/privacy/retention/encryption",
+          "row_index": 67,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC schema/data migration",
+          "row_index": 68,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal producer adoption",
+          "row_index": 69,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal consumer adoption",
+          "row_index": 70,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "prerequisite-satisfied",
+          "consumer_surface": "WBC semantic findings",
+          "row_index": 71,
+          "status_raw": "prerequisite-WBC"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "prep/plan/revise stages",
+          "row_index": 22,
+          "status_raw": "in-flight-WBC"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair receipt adoption",
+          "row_index": 88,
+          "status_raw": "legacy"
+        }
+      ]
+    },
+    "F05": {
+      "acceptance_proof": "M9. Captured review-rework input renders `executing attempt 2` everywhere with 100% cursor/hash agreement; torn evidence becomes unknown.",
+      "canonical_owner": "Run Authority",
+      "m6a_substrate_relevance": "run-authority-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 5,
+      "non_wbc_rows": 5,
+      "other_owner_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "Run Authority M1-M3 completion receipts",
+          "owner": "Run Authority",
+          "row_index": 0,
+          "status_raw": "blocked evidence"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "fallback chains/model seam",
+          "owner": "Megaplan runtime",
+          "row_index": 25,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "chain state writer/driver",
+          "owner": "custody-control-plane",
+          "row_index": 28,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "chain advancement/guards",
+          "owner": "Run Authority",
+          "row_index": 29,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "chain completion manifests",
+          "owner": "Megaplan chain",
+          "row_index": 30,
+          "status_raw": "substrate"
+        }
+      ],
+      "root_cause": "independent precedence rules reduced mutable snapshots and sidecars, allowing `repairing`, `executing`, and `finalized` simultaneously.",
+      "title": "plan, chain, cloud, repair, and introspection disagreed",
+      "wbc_owned_rows": 0,
+      "wbc_surfaces": []
+    },
+    "F06": {
+      "acceptance_proof": "M7 lands/proves the writer boundary; M9 proves complete rebuild. At least 10,000 heartbeats yield sequences 0..9999, one rebuild, monotonic valid concurrent reads, zero false stalls, and recorded bytes/time.",
+      "canonical_owner": "Observability/projection",
+      "m6a_substrate_relevance": "observability-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 6,
+      "non_wbc_rows": 4,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "Graph/native-program projections",
+          "owner": "Native Parity",
+          "row_index": 8,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "effect ledger/enforcement",
+          "owner": "Native Platform",
+          "row_index": 19,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "CLI status/projection",
+          "owner": "custody-control-plane",
+          "row_index": 33,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "status projection module",
+          "owner": "custody-control-plane",
+          "row_index": 35,
+          "status_raw": "partial"
+        }
+      ],
+      "root_cause": "every heartbeat performed a quadratic full-file compatibility rewrite and exposed partial destinations to readers.",
+      "title": "heartbeat projection rewrote a growing journal non-atomically",
+      "wbc_owned_rows": 2,
+      "wbc_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "row_index": 66,
+          "status_raw": "blocked substrate/adoption"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "receipts/routing/cost ledgers",
+          "row_index": 18,
+          "status_raw": "partial"
+        }
+      ]
+    },
+    "F07": {
+      "acceptance_proof": "M8A. Replaying both finalized plans flags the observed serial chains and produces safe independent waves without changing semantics.",
+      "canonical_owner": "Planner/compiler",
+      "m6a_substrate_relevance": "planner-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 5,
+      "non_wbc_rows": 5,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "fallback chains/model seam",
+          "owner": "Megaplan runtime",
+          "row_index": 25,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "chain state writer/driver",
+          "owner": "custody-control-plane",
+          "row_index": 28,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "chain advancement/guards",
+          "owner": "Run Authority",
+          "row_index": 29,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "chain completion manifests",
+          "owner": "Megaplan chain",
+          "row_index": 30,
+          "status_raw": "substrate"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "planner DAG dependencies/routing",
+          "owner": "Planner/compiler",
+          "row_index": 81,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "`depends_on` mixed semantic prerequisites with routing/order and finalization did not report critical path or usable parallelism.",
+      "title": "fully serial DAGs were admitted without feasibility proof",
+      "wbc_owned_rows": 0,
+      "wbc_surfaces": []
+    },
+    "F08": {
+      "acceptance_proof": "M8A. T7/T12 and later complexity-8/9 fixtures either split or fail admission; no partial implementation is discarded when proof budget ends.",
+      "canonical_owner": "Planner/compiler",
+      "m6a_substrate_relevance": "planner-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 2,
+      "non_wbc_rows": 2,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "planner DAG dependencies/routing",
+          "owner": "Planner/compiler",
+          "row_index": 81,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "complexity/task proof budgets",
+          "owner": "Planner/compiler",
+          "row_index": 82,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "complexity 7\u20139 tasks bundled implementation and proof under one uniform 90-iteration ceiling.",
+      "title": "high-complexity tasks exhausted fixed worker budgets",
+      "wbc_owned_rows": 0,
+      "wbc_surfaces": []
+    },
+    "F09": {
+      "acceptance_proof": "M8A. Strategy T10/T12/T15 equivalents make zero model calls and reproduce the same pass/fail semantics.",
+      "canonical_owner": "Planner/compiler",
+      "m6a_substrate_relevance": "planner-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 3,
+      "non_wbc_rows": 3,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "planner DAG dependencies/routing",
+          "owner": "Planner/compiler",
+          "row_index": 81,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "complexity/task proof budgets",
+          "owner": "Planner/compiler",
+          "row_index": 82,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "deterministic validation tasks",
+          "owner": "Planner/compiler",
+          "row_index": 83,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "no-file checks were compiled as ordinary model tasks.",
+      "title": "deterministic validation consumed model calls",
+      "wbc_owned_rows": 0,
+      "wbc_surfaces": []
+    },
+    "F10": {
+      "acceptance_proof": "M8A. Invalid-ref and dirty/divergent-checkout fixtures stop within the configured bounded attempts and never create repeated chain starts.",
+      "canonical_owner": "Executor/launcher",
+      "m6a_substrate_relevance": "executor-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 12,
+      "non_wbc_rows": 7,
+      "other_owner_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "Run Authority M1-M3 completion receipts",
+          "owner": "Run Authority",
+          "row_index": 0,
+          "status_raw": "blocked evidence"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "Canonical `runauthority-epic` retirement",
+          "owner": "Run Authority",
+          "row_index": 1,
+          "status_raw": "blocked evidence"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "six-hour unblocker",
+          "owner": "Megaplan Maintenance",
+          "row_index": 42,
+          "status_raw": "planned"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "human-blocker markers/classifier",
+          "owner": "custody-control-plane",
+          "row_index": 44,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "complexity/task proof budgets",
+          "owner": "Planner/compiler",
+          "row_index": 82,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "deterministic validation tasks",
+          "owner": "Planner/compiler",
+          "row_index": 83,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "normalized executor failure circuit",
+          "owner": "Executor/launcher",
+          "row_index": 87,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "launcher did not validate/suggest once and lacked a startup retry circuit tied to source/runtime provenance.",
+      "title": "invalid source refs retried for 2h09m",
+      "wbc_owned_rows": 5,
+      "wbc_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "row_index": 66,
+          "status_raw": "blocked substrate/adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC payload/privacy/retention/encryption",
+          "row_index": 67,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC schema/data migration",
+          "row_index": 68,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal producer adoption",
+          "row_index": 69,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal consumer adoption",
+          "row_index": 70,
+          "status_raw": "blocked adoption"
+        }
+      ]
+    },
+    "F11": {
+      "acceptance_proof": "M8A. Empty/invalid model, divergent checkout, import leakage, repeated timeout, and compaction fixtures terminate within bounds with exact reasons and no duplicate effect.",
+      "canonical_owner": "Executor/launcher",
+      "m6a_substrate_relevance": "executor-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 2,
+      "non_wbc_rows": 2,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "provider/summary/import/compaction policy",
+          "owner": "Executor/launcher",
+          "row_index": 85,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "normalized executor failure circuit",
+          "owner": "Executor/launcher",
+          "row_index": 87,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "worker configuration/import boundaries were mutable, repeated invalid model requests were not terminal, and provider/compaction budgets were not joined to one attempt circuit.",
+      "title": "provider timeout, invalid summary model, import leakage, and compaction churn",
+      "wbc_owned_rows": 0,
+      "wbc_surfaces": []
+    },
+    "F12": {
+      "acceptance_proof": "M8A. Six-task fixture splits into bounded waves with exact grants and identical accepted output.",
+      "canonical_owner": "Planner/compiler",
+      "m6a_substrate_relevance": "planner-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 5,
+      "non_wbc_rows": 4,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "planner DAG dependencies/routing",
+          "owner": "Planner/compiler",
+          "row_index": 81,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "complexity/task proof budgets",
+          "owner": "Planner/compiler",
+          "row_index": 82,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "deterministic validation tasks",
+          "owner": "Planner/compiler",
+          "row_index": 83,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "review rework fanout",
+          "owner": "Planner/compiler",
+          "row_index": 86,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "review rework bypassed finalized dispatch-wave limits.",
+      "title": "oversized rework exceeded the five-task ceiling",
+      "wbc_owned_rows": 1,
+      "wbc_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "finalize/execute/review/feedback stages",
+          "row_index": 24,
+          "status_raw": "partial"
+        }
+      ]
+    },
+    "F13": {
+      "acceptance_proof": "M8A. T7 plus T12 opens the circuit before a third blind retry; unrelated failures do not collide.",
+      "canonical_owner": "Executor/launcher",
+      "m6a_substrate_relevance": "executor-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 1,
+      "non_wbc_rows": 1,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "normalized executor failure circuit",
+          "owner": "Executor/launcher",
+          "row_index": 87,
+          "status_raw": "legacy"
+        }
+      ],
+      "root_cause": "circuit identity included task-specific text and every retry was treated as novel.",
+      "title": "repeated normalized budget failures did not stop retries",
+      "wbc_owned_rows": 0,
+      "wbc_surfaces": []
+    },
+    "F14": {
+      "acceptance_proof": "M6 freezes unknown baselines/schema; M8A emits executor fields; M9 joins projections. Replays reconcile totals and never label legitimate M4 implementation/review as waste; missing cost has an explicit reason.",
+      "canonical_owner": "Observability/projection",
+      "m6a_substrate_relevance": "observability-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 10,
+      "non_wbc_rows": 8,
+      "other_owner_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "`.pypeline` and named subworkflows",
+          "owner": "Native Parity",
+          "row_index": 6,
+          "status_raw": "substrate, manifest absent"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "PC adjacent work",
+          "owner": "Portfolio gate",
+          "row_index": 91,
+          "status_raw": "gate"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "Kernel `WorkflowManifest` identity",
+          "owner": "Native Platform",
+          "row_index": 2,
+          "status_raw": "substrate"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "effect ledger/enforcement",
+          "owner": "Native Platform",
+          "row_index": 19,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "worker/process fanout",
+          "owner": "Megaplan runtime",
+          "row_index": 26,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "complexity/task proof budgets",
+          "owner": "Planner/compiler",
+          "row_index": 82,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "review rework fanout",
+          "owner": "Planner/compiler",
+          "row_index": 86,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "work/token/cost classification",
+          "owner": "Observability",
+          "row_index": 89,
+          "status_raw": "planned"
+        }
+      ],
+      "root_cause": "telemetry lacked joined task/batch/attempt/repair identities and stage decomposition.",
+      "title": "productive and replayed time/tokens/cost were not authoritative",
+      "wbc_owned_rows": 2,
+      "wbc_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "row_index": 66,
+          "status_raw": "blocked substrate/adoption"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "receipts/routing/cost ledgers",
+          "row_index": 18,
+          "status_raw": "partial"
+        }
+      ]
+    },
+    "F15": {
+      "acceptance_proof": "M7 writer/identity contract and M10 fault matrix. Every success, failure, cancellation, supersession, timeout, and escalation closes exactly one custody chain; overlap fixture accepts only one actor.",
+      "canonical_owner": "TransitionWriter/repair custody",
+      "m6a_substrate_relevance": "repair-custody-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 10,
+      "non_wbc_rows": 9,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "repair request queue",
+          "owner": "custody-control-plane",
+          "row_index": 45,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair locks/leases",
+          "owner": "custody-control-plane",
+          "row_index": 46,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair-data/repair contract",
+          "owner": "custody-control-plane",
+          "row_index": 47,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L1 repair loop",
+          "owner": "custody-control-plane",
+          "row_index": 48,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L2 meta-repair",
+          "owner": "custody-control-plane",
+          "row_index": 49,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "L3/audit repair",
+          "owner": "custody-control-plane",
+          "row_index": 50,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "source/install/retrigger repair",
+          "owner": "custody-control-plane",
+          "row_index": 51,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "cloud repair wrappers",
+          "owner": "custody-control-plane",
+          "row_index": 63,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "cloud/source initiative repair",
+          "owner": "custody-control-plane",
+          "row_index": 64,
+          "status_raw": "partial"
+        }
+      ],
+      "root_cause": "request, claim, attempt, decision, index, worker, and repair terminalization were separate best-effort paths.",
+      "title": "custody records and overlaps were left open or contradictory",
+      "wbc_owned_rows": 1,
+      "wbc_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "repair receipt adoption",
+          "row_index": 88,
+          "status_raw": "legacy"
+        }
+      ]
+    },
+    "F16": {
+      "acceptance_proof": "M9 reason fixtures fire once with exact evidence IDs and never match a same-basename unrelated session; M10/M11 verify recovery reporting.",
+      "canonical_owner": "Observability/projection",
+      "m6a_substrate_relevance": "observability-owned-out-of-m6a-scope",
+      "migration_matrix_row_count": 3,
+      "non_wbc_rows": 3,
+      "other_owner_surfaces": [
+        {
+          "classification": "residual",
+          "consumer_surface": "Graph/native-program projections",
+          "owner": "Native Parity",
+          "row_index": 8,
+          "status_raw": "legacy"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "CLI status/projection",
+          "owner": "custody-control-plane",
+          "row_index": 33,
+          "status_raw": "partial"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "status projection module",
+          "owner": "custody-control-plane",
+          "row_index": 35,
+          "status_raw": "partial"
+        }
+      ],
+      "root_cause": "findings used labels/basenames and omitted deterministic exact IDs.",
+      "title": "auditor reasons were heuristic and could join unrelated sessions",
+      "wbc_owned_rows": 0,
+      "wbc_surfaces": []
+    },
+    "F17": {
+      "acceptance_proof": "M6 freezes the vector, M8 adopts it, M11 proves old-reader/ new-writer and new-reader/old-run behavior plus source/install/cloud/resident SHA equality in canary/live evidence.",
+      "canonical_owner": "WBC",
+      "m6a_substrate_relevance": "directly-addressed-by-m6a",
+      "migration_matrix_row_count": 8,
+      "non_wbc_rows": 0,
+      "other_owner_surfaces": [],
+      "root_cause": "source, editable install, wrapper, worker, and running process provenance were not one enforced version vector.",
+      "title": "mixed source/install/runtime versions could invalidate every proof",
+      "wbc_owned_rows": 8,
+      "wbc_surfaces": [
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "row_index": 66,
+          "status_raw": "blocked substrate/adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC payload/privacy/retention/encryption",
+          "row_index": 67,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC schema/data migration",
+          "row_index": 68,
+          "status_raw": "blocked substrate"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal producer adoption",
+          "row_index": 69,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "blocked",
+          "consumer_surface": "WBC universal consumer adoption",
+          "row_index": 70,
+          "status_raw": "blocked adoption"
+        },
+        {
+          "classification": "prerequisite-satisfied",
+          "consumer_surface": "WBC semantic findings",
+          "row_index": 71,
+          "status_raw": "prerequisite-WBC"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "prep/plan/revise stages",
+          "row_index": 22,
+          "status_raw": "in-flight-WBC"
+        },
+        {
+          "classification": "residual",
+          "consumer_surface": "repair receipt adoption",
+          "row_index": 88,
+          "status_raw": "legacy"
+        }
+      ]
+    }
+  },
+  "generated_at": "2026-07-19T21:59:12.176925+00:00",
+  "generator": "hermes-executor: T2 substrate mapping",
+  "m6_merge_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+  "producer_adoption_status": {
+    "claimed": false,
+    "evidence": [
+      "Row 66 (WBC declarations/attempt ledger): blocked substrate/adoption",
+      "Row 67 (WBC payload/privacy/retention/encryption): blocked substrate",
+      "Row 68 (WBC schema/data migration): blocked substrate",
+      "Row 69 (WBC universal producer adoption): blocked adoption",
+      "Row 70 (WBC universal consumer adoption): blocked adoption",
+      "No SqliteAttemptLedgerStore exists at current HEAD.",
+      "Plan assumption: \"No universal producer or consumer migration is included in M6A; exports and support records must not claim adoption.\""
+    ]
+  },
+  "repository_head": "904560e44aaa0f6ae59f0834ad062b017666adaa",
+  "schema": "m6a.f01-f17-substrate-map.v1",
+  "sources": {
+    "finding_prevention_register": "evidence/finding-prevention-register.json",
+    "migration_matrix": "evidence/migration-matrix-reconciled.json",
+    "prerequisite_resolution": "evidence/m6a-prerequisite-resolution.json"
+  }
+}

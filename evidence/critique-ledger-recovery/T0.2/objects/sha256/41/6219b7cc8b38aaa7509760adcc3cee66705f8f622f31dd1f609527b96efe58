@@ -1,0 +1,251 @@
+{
+  "boundary_id": "override_recover_blocked_authority",
+  "workflow_id": "megaplan-review",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s6.override.recover_blocked.1",
+  "invocation_id": "601f13383f9b406e",
+  "artifact_refs": [
+    "state.json"
+  ],
+  "state_observation": {
+    "current_state": "initialized",
+    "override_action": "recover-blocked",
+    "route_signal": "recover_blocked"
+  },
+  "outcome": "complete",
+  "authority_records": [
+    {
+      "actor": "operator",
+      "role": "human.override",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "recover-blocked",
+      "scope": "override.recover_blocked",
+      "evidence_refs": [
+        "state.json"
+      ],
+      "details": {
+        "authority_transition": "recover-blocked",
+        "contract_ref": "override_recover_blocked_authority",
+        "required_evidence_refs": [
+          "state.json"
+        ],
+        "optional_evidence_refs": [
+          "phase_result.json"
+        ],
+        "evidence_hashes": {
+          "state.json": "619c914fb0f6b9b72e7edb7c13b416e371e2d514957ca22300d20c73e305f9b8"
+        },
+        "freshness_token": "601f13383f9b406e",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "route_signal": "recover_blocked",
+        "declared_target_ref": "recovery_predecessor",
+        "policy_route_ref": "megaplan.override.recover_blocked",
+        "wbc_transition_evidence": {
+          "schema": "arnold.megaplan.override_wbc_transition_evidence.v1",
+          "writer_id": "megaplan.override.wbc.recover_blocked",
+          "surface_name": "megaplan.override.wbc.recover_blocked",
+          "transition": "recover-blocked",
+          "subject": "cl2-wbc-backed-ledger-20260731-1411",
+          "source_record": {
+            "schema": "arnold.megaplan.canonical_source_binding.v1",
+            "source_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold_pipelines/megaplan/handlers/override.py",
+            "project_relative_path": "arnold_pipelines/megaplan/handlers/override.py",
+            "exists": true,
+            "semantic_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+            "file_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+            "git_revision": "bf25a699f85315e1a282df55502ba275253411f9",
+            "git_blob": "361de0439990fc85815b9cf42aaadb93cf6405be",
+            "git_path": "arnold_pipelines/megaplan/handlers/override.py",
+            "errors": []
+          },
+          "rules": [],
+          "fixture_safety": {
+            "authorized": false,
+            "reason": ""
+          },
+          "action_boundary": {
+            "gate_result": "authorized",
+            "action_type": "repair",
+            "target_digest": "c364cd1a64c8ced5e247de05924d4e08f6f2913474d6efcdca3f0f8ba4b111e1",
+            "checks": [
+              {
+                "source": "run_authority_grant",
+                "outcome": "satisfied",
+                "detail": "grant 'recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e:grant' is current",
+                "observed_at": "2026-07-31T15:19:52Z",
+                "observed_value": {
+                  "grant_id": "recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e:grant"
+                },
+                "identity": "grant_id"
+              },
+              {
+                "source": "run_authority_fence",
+                "outcome": "satisfied",
+                "detail": "coordinator fence 357138417 is current",
+                "observed_at": "2026-07-31T15:19:52Z",
+                "observed_value": {
+                  "fence_token": 357138417
+                },
+                "identity": "fence_token"
+              },
+              {
+                "source": "custody_lease",
+                "outcome": "satisfied",
+                "detail": "lease 'lease:recover-blocked:cl2-wbc-backed-ledger-20260731-1411' is active (epoch=1)",
+                "observed_at": "2026-07-31T15:19:52Z",
+                "observed_value": {
+                  "lease_id": "lease:recover-blocked:cl2-wbc-backed-ledger-20260731-1411",
+                  "custody_epoch": 1,
+                  "acquired_at": "2026-07-20T00:00:00+00:00",
+                  "expires_at": "2999-01-01T00:00:00+00:00",
+                  "owner_host": "override-wbc",
+                  "owner_pid": "0",
+                  "status": "active"
+                },
+                "identity": "custody_epoch"
+              },
+              {
+                "source": "wbc_attempt",
+                "outcome": "satisfied",
+                "detail": "WBC attempt 'override:recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e' has consistent status 'pending'",
+                "observed_at": "2026-07-31T15:19:52Z",
+                "observed_value": {
+                  "wbc_attempt_reference": "override:recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e",
+                  "matching_record_count": 1,
+                  "status": "unknown"
+                },
+                "identity": ""
+              }
+            ],
+            "enforcement_enabled": true,
+            "validated_at": "2026-07-31T15:19:52Z",
+            "diagnostics": {
+              "m7_schema_version": 1,
+              "shadow_enforcement": false,
+              "enforcement_env_var": "ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT",
+              "action_boundary": "repair",
+              "checks_summary": {
+                "run_authority_grant": "satisfied",
+                "run_authority_fence": "satisfied",
+                "custody_lease": "satisfied",
+                "wbc_attempt": "satisfied"
+              }
+            }
+          },
+          "required_capability": "override.recover_blocked",
+          "details": {
+            "route_signal": "recover_blocked",
+            "declared_target_ref": "recovery_predecessor",
+            "policy_route_ref": "megaplan.override.recover_blocked"
+          }
+        }
+      }
+    }
+  ],
+  "details": {
+    "dispatch_surface": "workflow.native_policy",
+    "route_signal": "recover_blocked",
+    "declared_target_ref": "recovery_predecessor",
+    "policy_route_ref": "megaplan.override.recover_blocked",
+    "wbc_transition_evidence": {
+      "schema": "arnold.megaplan.override_wbc_transition_evidence.v1",
+      "writer_id": "megaplan.override.wbc.recover_blocked",
+      "surface_name": "megaplan.override.wbc.recover_blocked",
+      "transition": "recover-blocked",
+      "subject": "cl2-wbc-backed-ledger-20260731-1411",
+      "source_record": {
+        "schema": "arnold.megaplan.canonical_source_binding.v1",
+        "source_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold_pipelines/megaplan/handlers/override.py",
+        "project_relative_path": "arnold_pipelines/megaplan/handlers/override.py",
+        "exists": true,
+        "semantic_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+        "file_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+        "git_revision": "bf25a699f85315e1a282df55502ba275253411f9",
+        "git_blob": "361de0439990fc85815b9cf42aaadb93cf6405be",
+        "git_path": "arnold_pipelines/megaplan/handlers/override.py",
+        "errors": []
+      },
+      "rules": [],
+      "fixture_safety": {
+        "authorized": false,
+        "reason": ""
+      },
+      "action_boundary": {
+        "gate_result": "authorized",
+        "action_type": "repair",
+        "target_digest": "c364cd1a64c8ced5e247de05924d4e08f6f2913474d6efcdca3f0f8ba4b111e1",
+        "checks": [
+          {
+            "source": "run_authority_grant",
+            "outcome": "satisfied",
+            "detail": "grant 'recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e:grant' is current",
+            "observed_at": "2026-07-31T15:19:52Z",
+            "observed_value": {
+              "grant_id": "recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e:grant"
+            },
+            "identity": "grant_id"
+          },
+          {
+            "source": "run_authority_fence",
+            "outcome": "satisfied",
+            "detail": "coordinator fence 357138417 is current",
+            "observed_at": "2026-07-31T15:19:52Z",
+            "observed_value": {
+              "fence_token": 357138417
+            },
+            "identity": "fence_token"
+          },
+          {
+            "source": "custody_lease",
+            "outcome": "satisfied",
+            "detail": "lease 'lease:recover-blocked:cl2-wbc-backed-ledger-20260731-1411' is active (epoch=1)",
+            "observed_at": "2026-07-31T15:19:52Z",
+            "observed_value": {
+              "lease_id": "lease:recover-blocked:cl2-wbc-backed-ledger-20260731-1411",
+              "custody_epoch": 1,
+              "acquired_at": "2026-07-20T00:00:00+00:00",
+              "expires_at": "2999-01-01T00:00:00+00:00",
+              "owner_host": "override-wbc",
+              "owner_pid": "0",
+              "status": "active"
+            },
+            "identity": "custody_epoch"
+          },
+          {
+            "source": "wbc_attempt",
+            "outcome": "satisfied",
+            "detail": "WBC attempt 'override:recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e' has consistent status 'pending'",
+            "observed_at": "2026-07-31T15:19:52Z",
+            "observed_value": {
+              "wbc_attempt_reference": "override:recover-blocked:cl2-wbc-backed-ledger-20260731-1411:601f13383f9b406e",
+              "matching_record_count": 1,
+              "status": "unknown"
+            },
+            "identity": ""
+          }
+        ],
+        "enforcement_enabled": true,
+        "validated_at": "2026-07-31T15:19:52Z",
+        "diagnostics": {
+          "m7_schema_version": 1,
+          "shadow_enforcement": false,
+          "enforcement_env_var": "ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT",
+          "action_boundary": "repair",
+          "checks_summary": {
+            "run_authority_grant": "satisfied",
+            "run_authority_fence": "satisfied",
+            "custody_lease": "satisfied",
+            "wbc_attempt": "satisfied"
+          }
+        }
+      },
+      "required_capability": "override.recover_blocked",
+      "details": {
+        "route_signal": "recover_blocked",
+        "declared_target_ref": "recovery_predecessor",
+        "policy_route_ref": "megaplan.override.recover_blocked"
+      }
+    }
+  }
+}

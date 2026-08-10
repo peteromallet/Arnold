@@ -1,0 +1,77 @@
+{
+  "findings": [
+    {
+      "area": "A1",
+      "brief": "The CL1 implementation (arnold/critique_ledger/schemas.py defining CritiqueOccurrenceEnvelope, FindingReconciliationEvent, FindingDispositionEvent, DomainBriefingEnvelope, LedgerRevisionManifest plus semantic_loop.py) and the CL1 handoff (cl1-contract-oracle.json) exist only in the cancelled archive, not in the current workspace. The handoff has accepted_for_cl2: false with five blocking reasons. Determine: (a) the complete file manifest that must be ported from the archive to the current workspace, (b) which handoff blockers are procedural vs technical and whether the constraint 'consume only an accepted CL1 handoff' can be satisfied by accepting the handoff as-is with noted blockers or whether a re-review/amendment is required, (c) what the safety amendment changes about the CL1 contract that the archived handoff does not yet reflect, and (d) the minimum viable path to an accepted CL1 contract baseline that CL2 can consume.",
+      "status": "error",
+      "findings": [],
+      "files": [],
+      "code_refs": [],
+      "confidence": "low",
+      "error": "Duplicate idempotency key '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce:started' for attempt '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce' has divergent content: divergent_payload"
+    },
+    {
+      "area": "A2",
+      "brief": "The cancelled CL2 run (cl2-wbc-backed-ledger-20260724-0351, blocked at iteration 7) left uncommitted implementation artifacts in the archive: cl2_migrations.py, m6_importer.py, ledger_writer.py, wbc_bridge.py, and manifest_store.py in arnold/critique_ledger/. The user direction explicitly requires 'preserve and audit the cancelled CL2 archive; never adopt its uncommitted work implicitly.' Produce: (a) a complete inventory of every uncommitted CL2 artifact with file hashes, (b) a per-artifact assessment of whether it satisfies the amended contract (reconciliation corrections/supersession, independent audit events, plan-region/dependency anchors, tripwire state, response/outcome events, active-action projection, per-round accountability projection, freshness vectors) or was written against the pre-amendment CL2 scope, (c) identification of any artifacts that can be ported as-is, any that need amendment, and any that must be rejected, and (d) an explicit boundary list of what the current CL2 must NOT implicitly adopt from the cancelled run.",
+      "status": "error",
+      "findings": [],
+      "files": [],
+      "code_refs": [],
+      "confidence": "low",
+      "error": "Duplicate idempotency key '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce:started' for attempt '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce' has divergent content: divergent_payload"
+    },
+    {
+      "area": "A3",
+      "brief": "The task requires additively versioning the CL1 schema so new raw occurrences cannot author semantic_finding_id, retaining the old field only for explicit legacy reads. The archived v1 schemas (cl.schema.v1) define CritiqueOccurrenceEnvelope with semantic_finding_id as a first-class field. Produce: (a) the concrete v1\u2192v2 delta \u2014 exactly which fields change, which are deprecated, which new fields are added per the safety amendment (supersedes_event_id, plan-region anchors, tripwire state, etc.), (b) the v2 schema version identifier (e.g., cl.schema.v2) and CompatibilityProfile enum additions, (c) the legacy-read compatibility contract (how v1 records with semantic_finding_id are read under v2, and the ParseStatus/legacy_unknown boundary for partial-parse admission), (d) the migration rules that must be encoded as additive DDL (never drop columns) in the ledger_migrations framework, and (e) a cross-reference proving every safety-amendment locked decision maps to a concrete schema field or constraint.",
+      "status": "error",
+      "findings": [],
+      "files": [],
+      "code_refs": [],
+      "confidence": "low",
+      "error": "Duplicate idempotency key '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce:started' for attempt '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce' has divergent content: divergent_payload"
+    },
+    {
+      "area": "A4",
+      "brief": "WBC backend atomicity sufficiency for critique-ledger domain events",
+      "status": "complete",
+      "findings": [
+        "BACKEND FOUND: SqliteAttemptLedgerStore (attempt_ledger_store.py:1117-1157) is the landed backend satisfying 'one transaction' \u2014 SQLite WAL mode, isolation_level=None for explicit BEGIN IMMEDIATE control, busy-retry with exponential backoff (30 attempts, 10ms base). It already provides atomic multi-table writes (e.g., reserve_global_effect writes attempt_reservations + global_effect_reservations in one BEGIN IMMEDIATE at lines 1386-1499) and atomic event+outbox writes (append_event_with_outbox at ledger_outbox.py:339-545).",
+        "EXTENSIBILITY \u2014 YES, WITH NEW TABLES: The existing store CAN be extended for critique-ledger domain writes. The transactional core (_append_tx at attempt_ledger_store.py:1905-2094) enforces monotonic sequence, idempotency-key dedup, single-terminal, and post-terminal rejection \u2014 but is tightly coupled to the attempt_events table schema and LedgerEvent dataclass. New domain tables (critique_occurrences, reconciliation_events, disposition_events, audit_events, ledger_revision_manifests) are needed because the existing schema has no columns for occurrence_id, finding_id, semantic_finding_id, round_label, disposition families, or revision manifests.",
+        "MULTI-TABLE ATOMICITY \u2014 PROVEN: The store already demonstrates the exact pattern needed. reserve_global_effect (lines 1386-1499) atomically writes to attempt_reservations AND global_effect_reservations in one BEGIN IMMEDIATE. append_event_with_outbox (ledger_outbox.py:339-545) atomically writes to attempt_events AND outbox_records. For CL2, occurrence INSERT + revision manifest INSERT + projection UPSERT can execute inside one BEGIN IMMEDIATE on the same connection \u2014 no new transaction coordinator, two-phase commit, or external coordinator is needed.",
+        "OUTBOX RECONCILIATION \u2014 SATISFIED: SqliteLedgerOutbox (ledger_outbox.py:299-861) satisfies the durable prepare/outbox reconciliation requirement. It provides: (a) atomic event+outbox write \u2014 'A ledger event with outbox intent is NEVER committed without its outbox records' (line 8-10), (b) get_stale_pending() for crash recovery \u2014 'records that represent outbox intent never delivered because the delivery agent crashed' (lines 700-726), (c) retry_failed() with MAX_RETRY_COUNT=10, (d) full status lifecycle: PENDING \u2192 DISPATCHED/DELIVERED/FAILED/TOMBSTONED, (e) get_outbox_summary() for per-attempt reconciliation. The outbox table lives in the same SQLite database, sharing the store's connection for zero-network-cost atomic transactions (lines 303-318).",
+        "INDEX GAP \u2014 EXISTING vs NEEDED: Existing indexes serve only attempt-level queries: idx_attempt_events_idempotency (UNIQUE on attempt_id, idempotency_key), idx_global_effect_attempt, idx_global_effect_outcome_glek (UNIQUE), idx_global_effect_conflict_attempt, idx_outbox_attempt_id, idx_outbox_status, idx_legacy_cls_source, idx_legacy_cls_migration. For domain/round replay within two-week scope, the following ADDITIONAL indexes are necessary: (a) (round_label, sequence) on occurrences for round-scoped replay, (b) (semantic_finding_id) on reconciliation events for finding history replay, (c) (semantic_finding_id) on disposition events for decision-state projection, (d) (attempt_id, occurrence_id) for occurrence lookup, (e) (canonical_finding_id) for reconciliation join, (f) (region_anchor, finding_id) for scoped freshness \u2014 none of these exist in the current schema.",
+        "NEW CODE REQUIRED \u2014 YES: Beyond the existing AttemptLedgerStore/SqliteLedgerOutbox/SqliteLedgerMigrator, the following new store/adapter code is needed for CL2: (a) domain-specific SQLite tables with appropriate indexes, (b) domain-specific append methods reusing the BEGIN IMMEDIATE pattern but operating on critique-ledger dataclasses (CritiqueOccurrenceEnvelope, FindingReconciliationEvent, FindingDispositionEvent from the paused epic's schemas.py), (c) rebuildable projection read paths (cumulative/domain, active-action, per-round accountability), (d) deterministic read-only replay that issues no model call or external effect, (e) one-time importer from legacy artifacts, (f) region-freshness tracking with staleness scoping, (g) freshness vectors and governed tombstone/unavailable handling. The existing infrastructure (connection management, WAL, busy-retry, migration, outbox) provides the substrate but not the domain schema.",
+        "SCHEMA ADDITIVITY: The CL1 CritiqueOccurrenceEnvelope (schemas.py:182-312) carries semantic_finding_id as a field. CL2 task requires additive versioning so new raw occurrences CANNOT author semantic_finding_id. This means adding a new schema_version (e.g., cl.schema.v2) or a discriminator column, with the old field retained only for explicit legacy reads. The existing from_dict with strict/preserve modes (schemas.py:251-312) supports this pattern \u2014 unknown fields in strict mode raise ValueError, and preserve mode stores them in _extra.",
+        "CONTRADICTION/MISSING EVIDENCE: (a) The task asks 'Which landed backend satisfies one transaction' \u2014 the answer is clearly SqliteAttemptLedgerStore with SQLite WAL, but the task also references 'plan-local persistence seams' which may include file-backed artifacts not covered by the SQLite store. The ledger_payload_store.py provides file-backed payload storage but was not fully explored for this area. (b) The task references 'WBC inline/reference, retention, redaction, ordering, and effect rules are reused, not reimplemented' \u2014 the payload_policy.py and durable_refs.py provide the schema contracts for this reuse, but the existing store's enforcement of these policies is in ledger_payload_store.py (1413 lines), which was only partially examined. (c) The paused epic's CL1 schemas define domain types but no existing persistence layer for them \u2014 the gap between schema-only dataclasses and the WBC persistence substrate is exactly what CL2 must bridge."
+      ],
+      "files": [
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/attempt_ledger_store.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_outbox.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_migrations.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_payload_store.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/payload_policy.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/durable_refs.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/execution_attempt_ledger.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/tests/arnold/workflow/test_attempt_ledger_store.py"
+      ],
+      "code_refs": [
+        "SqliteAttemptLedgerStore.__init__ (attempt_ledger_store.py:1127-1157) \u2014 WAL mode, isolation_level=None, connection management",
+        "SqliteAttemptLedgerStore._append_tx (attempt_ledger_store.py:1905-2094) \u2014 BEGIN IMMEDIATE with idempotency dedup, post-terminal rejection, monotonic sequence, causal predecessor, sequence gap checks",
+        "SqliteAttemptLedgerStore._begin_immediate_retry (attempt_ledger_store.py:1882-1903) \u2014 busy-retry with exponential backoff",
+        "SqliteAttemptLedgerStore.reserve_global_effect (attempt_ledger_store.py:1386-1514) \u2014 multi-table atomicity pattern: attempt_reservations + global_effect_reservations in one BEGIN IMMEDIATE",
+        "SqliteLedgerOutbox.append_event_with_outbox (ledger_outbox.py:339-545) \u2014 atomic event + outbox write in one BEGIN IMMEDIATE",
+        "SqliteLedgerOutbox.get_stale_pending (ledger_outbox.py:700-726) \u2014 crash recovery: detect outbox records never delivered",
+        "SqliteLedgerOutbox.retry_failed (ledger_outbox.py:586-662) \u2014 retry with MAX_RETRY_COUNT guard",
+        "SqliteLedgerMigrator (ledger_migrations.py:748-1000) \u2014 versioned, checksum-validated, forward-fix-only migration system",
+        "CritiqueOccurrenceEnvelope (schemas.py:182-312) \u2014 CL1 domain dataclass with semantic_finding_id field that CL2 must restrict for new occurrences",
+        "FindingReconciliationEvent (schemas.py:315-398) \u2014 CL1 reconciliation event with canonical_finding_id, semantic_finding_id, occurrence_ids",
+        "FindingDispositionEvent (schemas.py:401-488) \u2014 CL1 disposition with eight canonical families",
+        "InlinePayloadPolicy / RetentionPayloadPolicy (payload_policy.py:157-340) \u2014 WBC inline/retention schema contracts to be reused",
+        "LedgerEvent / ExecutionAttemptLedger (execution_attempt_ledger.py) \u2014 existing attempt-level event schema that the store is coupled to"
+      ],
+      "confidence": "high",
+      "error": ""
+    }
+  ]
+}

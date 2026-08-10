@@ -1,0 +1,3 @@
+Use the full megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`; read-only.
+
+Resolve target from canonical status, then inspect external publication truth for `workflow-boundary-contracts-corrective-20260710`: target repo branch/head/base/ahead/dirty state, commit `3e788c90717be970af8945b3739cca40ee1e5894`, prior repair commits referenced by repair-data/auditor, remote containment, PR/CI if applicable. Do not push. Decide whether attempt 66's fix actually landed in the target and whether any repair claim falsely relies on unavailable PR evidence. Return under 400 words with exact git refs and evidence.

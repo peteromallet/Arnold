@@ -1,0 +1,44 @@
+{
+  "f1-owner-storage-recovery-hardening": [
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json",
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/immediate-fix-and-category-hardening-20260805.md",
+    ".megaplan/incident-ledger/evidence/critique-v3-r5-vj24-20260805-sol-launch-cutline.md",
+    "evidence/critique-ledger-recovery/F1/vj24-causal-lineage-acceptance.json",
+    "evidence/critique-ledger-recovery/F1/host-observer-notification-acceptance.json"
+  ],
+  "f2-admission-model-effect-release-closure": [
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/incident-specific-control-amendment-20260804.md",
+    ".megaplan/incident-ledger/evidence/critique-v3-r5-vj24-20260805-sol-launch-cutline.md",
+    "evidence/critique-ledger-recovery/F2/selector-result-contract-acceptance.json",
+    "evidence/critique-ledger-recovery/F2/entry-point-admission-acceptance.json",
+    "evidence/critique-ledger-recovery/F2/vj24-category-replay-acceptance.json"
+  ],
+  "f3-cl2-real-work-and-publication": [
+    "evidence/critique-ledger-recovery/T6.3/",
+    "evidence/critique-ledger-recovery/T6.4/",
+    "evidence/critique-ledger-recovery/T6.5/"
+  ],
+  "f4-cl3-cl5-epic-completion": [
+    "evidence/critique-ledger-recovery/T6.6/"
+  ],
+  "f5-product-release-and-deploy": [
+    "evidence/critique-ledger-recovery/T7.1/",
+    "evidence/critique-ledger-recovery/T7.2/",
+    "evidence/critique-ledger-recovery/T7.3/"
+  ],
+  "f6-production-acceptance": [
+    "evidence/critique-ledger-recovery/T7.4/",
+    "evidence/critique-ledger-recovery/T7.5/"
+  ],
+  "f7-evidence-and-incident-closeout": [
+    "evidence/critique-ledger-recovery/T3.6/",
+    "evidence/critique-ledger-recovery/T4.6/",
+    "evidence/critique-ledger-recovery/T8.1/",
+    "evidence/critique-ledger-recovery/T8.2/",
+    "evidence/critique-ledger-recovery/T8.3/",
+    "evidence/critique-ledger-recovery/T8.4/"
+  ],
+  "f8-seven-day-durability": [
+    "evidence/critique-ledger-recovery/T8.5/"
+  ]
+}

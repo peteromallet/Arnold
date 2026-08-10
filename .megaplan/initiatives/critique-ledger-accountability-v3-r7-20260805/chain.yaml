@@ -1,0 +1,98 @@
+base_branch: fix/r7-fresh-child-launch-20260805
+anchors:
+  north_star: NORTHSTAR.md
+fresh_child_admission:
+  enabled: true
+  authority_journal_path: .megaplan/authority/run-authority.sqlite3
+  wbc_ledger_path: .megaplan/authority/wbc.sqlite3
+  custody_lease_dir: .megaplan/authority/custody
+  approval_receipt: sha256:65ea8b1d4bcbce039de81d534626f1d3682611c873b7c598d81ccefb273107bd
+  approval_actor: operator:user-requested-independent-child
+  parent_occurrence_digest: sha256:b99f162b05a2e5f6f98147df233b8956d001f1009d6b93a2b46a7c2a6c57292e
+  blocker_or_phase_result_hash: sha256:r6-finalize-artifact-mismatch
+  normalized_failure_kind: legacy_child_missing_authority
+  chain_identity: critique-ledger-accountability-v3-r7-launch-20260805
+  source_revision: 9a497be315d05d915fc6a886c00de49efc0b5062
+  environment: cloud
+  session: critique-ledger-accountability-v3-r7-launch-20260805
+  chain: critique-ledger-accountability-v3-r7
+  phase: plan
+  task: cl2-ledger-replay
+  lease_ttl_seconds: 1800
+launch_preconditions:
+- name: r5 remains immutable evidence and r7 is explicitly independent
+  kind: artifact
+  path: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/prelaunch-disposition.json
+  check:
+    kind: contains_text
+    text: arnold.megaplan.critique_r5_independent_child_disposition.v1
+- name: r7 chain specification is present in the uploaded launch workspace
+  kind: artifact
+  path: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/chain.yaml
+  check: exists
+milestones:
+- label: cl2-ledger-replay
+  idea: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md
+  branch: megaplan/critique-ledger-accountability-v3-r7-20260805/cl2-ledger-replay
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: medium
+  depth: high
+  with_prep: true
+  deepseek_provider: direct
+  prep_direction: Consume the landed CL1 contract/oracle and implement the append/replay
+    milestone from the clean c116-based runtime. Use the shared selector lifecycle,
+    typed Run Authority journal CAS, and canonical Custody/WBC stores; preserve the
+    quarantined r5 evidence and never infer authority from markers, state JSON, PID,
+    or model prose.
+  notes: This is a fresh child, not a same-occurrence resume. Any missing owner evidence
+    fails closed and is handed to the post-relaunch epic.
+- label: cl3-routing-briefings
+  depends_on:
+  - cl2-ledger-replay
+  idea: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl3-evaluator-routing-and-briefings.md
+  branch: megaplan/critique-ledger-accountability-v3-r7-20260805/cl3-routing-briefings
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: medium
+  depth: medium
+  with_prep: true
+  deepseek_provider: direct
+- label: cl4-reconcile-role-flow
+  depends_on:
+  - cl3-routing-briefings
+  idea: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl4-reconciliation-reviser-gate.md
+  branch: megaplan/critique-ledger-accountability-v3-r7-20260805/cl4-reconcile-role-flow
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: medium
+  depth: medium
+  with_prep: true
+  deepseek_provider: direct
+- label: cl5-cutover-retirement
+  depends_on:
+  - cl4-reconcile-role-flow
+  idea: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl5-big-bang-cutover-and-retirement.md
+  branch: megaplan/critique-ledger-accountability-v3-r7-20260805/cl5-cutover-retirement
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  deepseek_provider: direct
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  execution_binding: required
+  intended_initiative_revision: b0ee1bd54c17b0ff9664008629bdb73ca4e5c223
+  initiative_path: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805
+  require_editable_runtime_match: false
+  robustness: medium
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0

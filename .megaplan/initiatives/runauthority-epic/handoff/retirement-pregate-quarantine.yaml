@@ -1,0 +1,9 @@
+schema: megaplan-initiative-retirement-v1
+initiative: runauthority-epic
+retired_at: 2026-07-14T19:27:16Z
+successor: custody-control-plane
+superseded_by: custody-control-plane
+scope: metadata_only
+completion_manifest: completion-manifest.json
+completion_manifest_sha256: d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55
+reason: Exact landed milestone receipts accepted and canonical chain verification reported zero divergences.

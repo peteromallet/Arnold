@@ -1,0 +1,338 @@
+{
+  "schema": "megaplan.candidate_graph_admission",
+  "schema_version": 1,
+  "candidate_id": "candidate:e7c2c69f095978335db8b55f6a2fc607b44bab83e295f84528c7a7249a89e51b",
+  "candidate_graph_hash": "e7c2c69f095978335db8b55f6a2fc607b44bab83e295f84528c7a7249a89e51b",
+  "task_contract_hash": "sha256:8006736cb84bf827e3aa621c49f625bde7c1ab7627d0b47edd9eda081ba65ff6",
+  "admitted": false,
+  "failure_fingerprint": "ed143c428b55ba0bd028082a516e2da56cae700db3984370b5a0a0e74d7f3444",
+  "diagnostics": [
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T4_impl",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T5_impl",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T6_impl",
+      "dependency_id": "T5"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T7_impl",
+      "dependency_id": "T6"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T8",
+      "dependency_id": "T7"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T9_impl",
+      "dependency_id": "T4"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T10",
+      "dependency_id": "T9"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T12_impl",
+      "dependency_id": "T11"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T13",
+      "dependency_id": "T9"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T14",
+      "dependency_id": "T12"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15_impl",
+      "dependency_id": "T9"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T16_impl",
+      "dependency_id": "T15"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T17_impl",
+      "dependency_id": "T16"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T18_impl",
+      "dependency_id": "T9"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T18_impl",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T19",
+      "dependency_id": "T18"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T19",
+      "dependency_id": "T16"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T21",
+      "dependency_id": "T12"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T21",
+      "dependency_id": "T17"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T23",
+      "dependency_id": "T12"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T23",
+      "dependency_id": "T17"
+    },
+    {
+      "code": "dependency_graph_invalid",
+      "message": "Unknown dependency ID 'T3' for task 'T4_impl'"
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T1 and T4_impl overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T2 and T4_impl overlap on ['arnold/critique_ledger/semantic_loop.py', 'tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T2 and T23 overlap on ['arnold/critique_ledger/__init__.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T6_impl and T22 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T7_impl and T22 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+    }
+  ],
+  "observed_at": "2026-07-31T18:34:25Z",
+  "report": {
+    "schema_version": "megaplan-task-feasibility-v2",
+    "task_contract_hash": "sha256:8006736cb84bf827e3aa621c49f625bde7c1ab7627d0b47edd9eda081ba65ff6",
+    "plan_hash": "sha256:3a75ba2d7c22f0ed2714a03a47899cea825c6388c4ebb6f2d1c1334a84f0ba5d",
+    "seed_epoch": null,
+    "task_count": 36,
+    "edge_count": 47,
+    "root_count": 0,
+    "max_width": 0,
+    "batches": [],
+    "critical_path_task_ids": [],
+    "critical_path_task_count": 0,
+    "critical_path_minutes": 0.0,
+    "seriality": 0.0,
+    "estimated_dispatch_minutes": 0,
+    "execute_phase_timeout_minutes": 60.0,
+    "warnings": [
+      {
+        "code": "task_count_high",
+        "message": "Task count exceeds 24; inspect scope."
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T4_impl",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T5_impl",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T6_impl",
+        "dependency_id": "T5"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T7_impl",
+        "dependency_id": "T6"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T8",
+        "dependency_id": "T7"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T9_impl",
+        "dependency_id": "T4"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T10",
+        "dependency_id": "T9"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T12_impl",
+        "dependency_id": "T11"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T13",
+        "dependency_id": "T9"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T14",
+        "dependency_id": "T12"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15_impl",
+        "dependency_id": "T9"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T16_impl",
+        "dependency_id": "T15"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T17_impl",
+        "dependency_id": "T16"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T18_impl",
+        "dependency_id": "T9"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T18_impl",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T19",
+        "dependency_id": "T18"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T19",
+        "dependency_id": "T16"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T21",
+        "dependency_id": "T12"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T21",
+        "dependency_id": "T17"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T23",
+        "dependency_id": "T12"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T23",
+        "dependency_id": "T17"
+      },
+      {
+        "code": "dependency_graph_invalid",
+        "message": "Unknown dependency ID 'T3' for task 'T4_impl'"
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T1 and T4_impl overlap on ['tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T2 and T4_impl overlap on ['arnold/critique_ledger/semantic_loop.py', 'tests/arnold/critique_ledger/test_schemas_golden.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T2 and T23 overlap on ['arnold/critique_ledger/__init__.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T6_impl and T22 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T7_impl and T22 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+      }
+    ],
+    "admitted": false
+  }
+}

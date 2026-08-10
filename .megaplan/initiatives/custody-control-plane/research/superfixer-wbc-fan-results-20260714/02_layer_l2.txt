@@ -1,0 +1,40 @@
+Now I have all the evidence needed. Let me compile the final audit.
+
+---
+
+## L2 Meta-Repair Audit: `workflow-boundary-contracts-corrective-20260710`
+
+**Target resolved** from `cloud status --all` at `2026-07-14T00:28:21Z`: plan `s3-megaplan-boundary-coverage-20260713-1934`, 2/4 milestones (73%), plan=91% executing, runner=live, repair dispatch=repairing (req/claim/attempt=1/0/1, budget=2/3).
+
+### Per-Axis Verdicts
+
+**ACT — PASS.** L2 was initially *absent*: the early L0 watchdog return swallowed `repair_exhausted` and repeated no-advance evidence before `compute_meta_repair_trigger` could fire (`superfixer-custody-recovery-20260713.md` L31-33). L2 was later explicitly activated via bounded retrigger with trigger `l1_custody_failure`, creating meta-repair record `928ad038-19fa-4c98-bc35-82b9683c08a1` (handoff L34-37).
+
+**TRACKED — PASS.** The meta-repair record UUID is recorded at `/workspace/arnold/.megaplan/initiatives/workflow-boundary-contracts/handoff/superfixer-custody-recovery-20260713.md` L35. The record lives at `repair-data/meta/928ad038-19fa-4c98-bc35-82b9683c08a1.json` on the box (unreachable via SSH but corroborated by handoff). Cloud status confirms repair custody chain is operational.
+
+**FIXED — PASS.** L2 diagnosed the dead-step reconciliation defect, cleared the stale `executed` plan / dead PID `1412472` / blocked chain shape, and exposed the next review defect without falsely claiming terminal success (handoff L34-37). Permanent prevention commits on `editible-install` (`91a33dab28`, `c8558ed084`, `03997b4f75`) close stale dispatch custody, prevent queue starvation, and repair superfixer launch contracts.
+
+**INTENT — PASS.** L2 was triggered with `l1_custody_failure` — correct: request `7473fa42...` had zero claims/attempts and no typed blocker identity (handoff L25-27). L2 scoped its intervention to clearing the stale dead-step shape without over-reaching into plan advancement or gate relaxation.
+
+**CONTEXT — PASS.** L2 had: the dead active-step PID, blocked chain state, `executed` plan state, the zero-claim request, and the `custody_missing` evidence. `meta_repair_policy.py` (L89-156) enforces recursion prevention (max 1 attempt → `NEEDS_HUMAN` escalation) and separate commit/push gating via `ARNOLD_META_REPAIR_COMMIT_ENABLED`.
+
+### S3 Assessment & Older Handling
+
+**L2 was NOT required for the latest S3 stop.** S3 shows a live runner (PID via status), 91% plan execution, and normal repairing dispatch — not a dead-stop or custody-failure scenario. The `custody_unavailable` diagnostic is read-only projection, not an L2 trigger condition.
+
+**Older repeated deterministic failures:** The original C1 gate spun 34 times on identical `north_star_actions` schema rejection (`notes/2026-07-11-c1-repair-unavailable-root-cause.md` L9-11). S2 later spun 51 times on the same key stripped by a handwritten allowlist (`research/north-star-actions-systemic-architecture-audit-20260713.md` L32). In both cases, L2 was *not triggered* because the early L0 return path prevented `repair_exhausted` evidence from reaching `compute_meta_repair_trigger` — this was the defect that the superfixer custody recovery repaired.
+
+**Non-interference:** L2's bounded retrigger (single record `928ad038...`) did not create a duplicate chain, hand-advance state, or weaken gates. The original chain PID `1854068` remained alive, was later re-adopted as PID `2009128` by the watchdog at runtime `cd3128fcd4`, and advanced through C1→S2→S3 (handoff L101-107). L2 correctly avoided interference with the live recovering chain.
+
+### Summary
+
+| Axis | Verdict |
+|------|---------|
+| ACT | PASS |
+| TRACKED | PASS |
+| FIXED | PASS |
+| INTENT | PASS |
+| CONTEXT | PASS |
+| L2 required for S3? | NO — live runner, normal progress |
+| Older deterministic failures handled? | Initially missed (L0 return-path defect); post-fix correctly triggered |
+| Avoided live-chain interference? | PASS — bounded, no duplicate/state mutation |

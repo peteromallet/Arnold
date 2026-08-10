@@ -1,0 +1,107 @@
+{
+  "root_path": "root",
+  "nodes": [
+    {
+      "path": "root",
+      "parent_path": null,
+      "run_path": "root",
+      "step_path": null,
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "pipeline",
+      "name": "root",
+      "children": [
+        "root/prep",
+        "root/execute_creative",
+        "root/critique_creative",
+        "root/revise_creative",
+        "root/finalize"
+      ],
+      "metadata": {
+        "program_name": "creative",
+        "program_stable_id": null,
+        "status": "running"
+      }
+    },
+    {
+      "path": "root/prep",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/prep",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "prep",
+      "children": [],
+      "metadata": {
+        "pc": 0,
+        "op": "phase",
+        "stage_id": "prep__pc0"
+      }
+    },
+    {
+      "path": "root/execute_creative",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/execute_creative",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "execute_creative",
+      "children": [],
+      "metadata": {
+        "pc": 1,
+        "op": "phase",
+        "stage_id": "execute_creative__pc1"
+      }
+    },
+    {
+      "path": "root/critique_creative",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/critique_creative",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "critique_creative",
+      "children": [],
+      "metadata": {
+        "pc": 2,
+        "op": "phase",
+        "stage_id": "critique_creative__pc2"
+      }
+    },
+    {
+      "path": "root/revise_creative",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/revise_creative",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "revise_creative",
+      "children": [],
+      "metadata": {
+        "pc": 3,
+        "op": "phase",
+        "stage_id": "revise_creative__pc3"
+      }
+    },
+    {
+      "path": "root/finalize",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/finalize",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "finalize",
+      "children": [],
+      "metadata": {
+        "pc": 4,
+        "op": "phase",
+        "stage_id": "finalize__pc4"
+      }
+    }
+  ]
+}

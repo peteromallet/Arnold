@@ -1,0 +1,145 @@
+{
+  "schema": "cl.failure-atomicity-table.v1",
+  "generated_at": "2026-07-24T00:00:00Z",
+  "description": "Encodes every critique ledger failure mode with detection boundary, fail-closed action, allowed WBC PersistenceStatus values, forbidden writes, recovery evidence, and admission consequence.",
+  "failure_modes": [
+    {
+      "failure_mode": "start_persistence_failed",
+      "description": "Critique producer start event fails to persist to the attempt ledger.",
+      "detection_boundary": "execution_attempt_ledger.write_start() returns PersistenceStatus.PERSISTENCE_FAILED",
+      "allowed_persistence_status": ["persistence_failed"],
+      "fail_closed_action": "Abort the critique attempt — no occurrence is created. Record failure in attempt ledger as FAILED.",
+      "forbidden_writes": ["CritiqueOccurrenceEnvelope", "FindingReconciliationEvent", "FindingDispositionEvent"],
+      "recovery_evidence": "Attempt ledger start-failure receipt with PersistenceStatus.PERSISTENCE_FAILED",
+      "admission_consequence": "BLOCKED — no critique occurrence admissible. Attempt must be retried."
+    },
+    {
+      "failure_mode": "start_persistence_indeterminate",
+      "description": "Critique producer start event persistence status is INDETERMINATE — cannot confirm whether the attempt was recorded.",
+      "detection_boundary": "execution_attempt_ledger.write_start() returns PersistenceStatus.INDETERMINATE",
+      "allowed_persistence_status": ["indeterminate"],
+      "fail_closed_action": "Treat as failure: no occurrence is created. Record INDETERMINATE status with reopen condition for manual resolution.",
+      "forbidden_writes": ["CritiqueOccurrenceEnvelope", "FindingReconciliationEvent", "FindingDispositionEvent"],
+      "recovery_evidence": "Attempt ledger INDETERMINATE receipt + manual authority review",
+      "admission_consequence": "BLOCKED — INDETERMINATE persistence fails the test rather than being treated as clean success."
+    },
+    {
+      "failure_mode": "producer_parse_failed",
+      "description": "Critique producer output cannot be parsed as a valid finding.",
+      "detection_boundary": "ParseStatus.FAILED in critique producer output parsing",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Record failed attempt with ParseStatus.FAILED, no findings emitted. Attempt completes with empty finding set.",
+      "forbidden_writes": ["FindingReconciliationEvent", "FindingDispositionEvent"],
+      "recovery_evidence": "Attempt ledger completion receipt with ParseStatus.FAILED",
+      "admission_consequence": "FAILED attempt — no findings admitted. Does not block other attempts."
+    },
+    {
+      "failure_mode": "producer_dropped",
+      "description": "Critique producer custody fails — attempt is dropped before output.",
+      "detection_boundary": "Critique custody receipt indicates ParseStatus.DROPPED",
+      "allowed_persistence_status": ["durable", "persistence_failed"],
+      "fail_closed_action": "Record dropped attempt with ParseStatus.DROPPED. Attempt is a custody failure, not a finding failure.",
+      "forbidden_writes": ["FindingReconciliationEvent", "FindingDispositionEvent"],
+      "recovery_evidence": "Custody failure receipt with ParseStatus.DROPPED",
+      "admission_consequence": "DROPPED — custody failure. Does not produce findings."
+    },
+    {
+      "failure_mode": "producer_malformed",
+      "description": "Critique producer output is parseable but structurally malformed — preserved as unavailable/unknown evidence.",
+      "detection_boundary": "ParseStatus.MALFORMED in critique producer output parsing",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Record malformed output with ParseStatus.MALFORMED. Preserve as unavailable evidence with explicit limitation.",
+      "forbidden_writes": ["FindingReconciliationEvent", "FindingDispositionEvent"],
+      "recovery_evidence": "Malformed output preserved with EvidenceAvailability.UNAVAILABLE and reopen condition",
+      "admission_consequence": "MALFORMED — evidence preserved but findings not admitted pending manual review."
+    },
+    {
+      "failure_mode": "reconciliation_coverage_incomplete",
+      "description": "Not all parseable occurrences have a matching FindingReconciliationEvent.",
+      "detection_boundary": "Semantic loop reconciliation pass — occurrence_count != reconciliation_count",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Reject the revision manifest. Do not produce briefings or projections. Raise typed validation failure.",
+      "forbidden_writes": ["DomainBriefingEnvelope", "LedgerRevisionManifest"],
+      "recovery_evidence": "Unreconciled occurrence list with occurrence_ids missing reconciliation",
+      "admission_consequence": "BLOCKED — incomplete reconciliation coverage prevents manifest construction."
+    },
+    {
+      "failure_mode": "disposition_coverage_incomplete",
+      "description": "Not all reconciled findings have a matching FindingDispositionEvent.",
+      "detection_boundary": "Semantic loop disposition pass — finding_count != disposition_count",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Reject the revision manifest. Do not produce briefings. Raise typed validation failure.",
+      "forbidden_writes": ["DomainBriefingEnvelope", "LedgerRevisionManifest"],
+      "recovery_evidence": "Undisposed finding list with canonical_finding_ids missing disposition",
+      "admission_consequence": "BLOCKED — incomplete disposition coverage prevents manifest construction."
+    },
+    {
+      "failure_mode": "budget_truncation_without_spillover",
+      "description": "Briefing budget exceeded but no spillover envelope linked — findings silently truncated.",
+      "detection_boundary": "DomainBriefingEnvelope.validate_budget() detects silent truncation",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Reject the briefing. Raise DomainBriefingBudgetError with overflow findings linked.",
+      "forbidden_writes": ["DomainBriefingEnvelope (invalid)"],
+      "recovery_evidence": "Overflow finding list with linked spillover DomainBriefingEnvelope reference",
+      "admission_consequence": "BLOCKED — silent truncation is forbidden. Must produce linked spillover envelope."
+    },
+    {
+      "failure_mode": "stale_evidence_reference",
+      "description": "Briefing or projection references evidence whose content hash no longer matches the current manifest.",
+      "detection_boundary": "Content hash recomputation — stored hash != fresh hash",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Flag as stale. Do not admit stale evidence. Require regeneration from source.",
+      "forbidden_writes": ["LedgerRevisionManifest (with stale reference)"],
+      "recovery_evidence": "Stale hash report with stored vs recomputed hash pairs",
+      "admission_consequence": "BLOCKED — stale evidence references are rejected."
+    },
+    {
+      "failure_mode": "unsupported_schema_version",
+      "description": "Evidence artifact declares an unsupported or future schema version.",
+      "detection_boundary": "Schema version check against SUPPORTED_VERSIONS",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Reject with typed SchemaVersionError. Do not attempt compatibility-preserve mode for unknown versions.",
+      "forbidden_writes": ["Any event with unsupported schema"],
+      "recovery_evidence": "Schema version mismatch report with expected vs actual version",
+      "admission_consequence": "BLOCKED — unsupported schema versions are rejected. Corrupt or future-version inputs fail validation."
+    },
+    {
+      "failure_mode": "duplicate_event_identity",
+      "description": "Two events share the same identity (occurrence_id, reconciliation_id, or disposition_id).",
+      "detection_boundary": "Identity uniqueness check during append-only event construction",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Reject the duplicate. Preserve the first-occurring event. Log duplicate detection.",
+      "forbidden_writes": ["Duplicate event with same identity"],
+      "recovery_evidence": "Duplicate detection log with event identity and first-occurrence timestamp",
+      "admission_consequence": "BLOCKED — duplicate events are not idempotent append; second event is rejected."
+    },
+    {
+      "failure_mode": "missing_ownership_authority",
+      "description": "Event producer is not in the source_to_owner_matrix for the claimed domain.",
+      "detection_boundary": "Ownership validation against source_to_owner_matrix.json",
+      "allowed_persistence_status": ["durable"],
+      "fail_closed_action": "Reject the event. Log unauthorized producer attempt.",
+      "forbidden_writes": ["Any event from unauthorized producer"],
+      "recovery_evidence": "Ownership validation failure report with producer identity and claimed domain",
+      "admission_consequence": "BLOCKED — events from unauthorized producers are rejected."
+    },
+    {
+      "failure_mode": "terminal_persistence_failure",
+      "description": "Final manifest persistence fails — all event processing was successful but the durable write fails.",
+      "detection_boundary": "LedgerRevisionManifest persistence returns PersistenceStatus.PERSISTENCE_FAILED or INDETERMINATE",
+      "allowed_persistence_status": ["persistence_failed", "indeterminate"],
+      "fail_closed_action": "FAIL the entire revision. Do not admit as clean success. Record terminal persistence failure with retry predicate.",
+      "forbidden_writes": ["LedgerRevisionManifest (unpersisted)"],
+      "recovery_evidence": "Terminal persistence failure receipt with retry predicate",
+      "admission_consequence": "BLOCKED — terminal persistence failure is not clean success. INDETERMINATE fails the test."
+    }
+  ],
+  "cross_reference": {
+    "wbc_enums_used": {
+      "PersistenceStatus": ["durable", "persistence_failed", "indeterminate"],
+      "ParseStatus": ["FAILED", "DROPPED", "MALFORMED", "TOMBSTONED", "NO_ADDITIONAL_FINDINGS"],
+      "EvidenceAvailability": ["RETAINED", "GOVERNED_REFERENCE", "UNAVAILABLE"]
+    },
+    "fail_closed_principle": "Every failure mode has a detection boundary, a fail-closed action, and forbidden writes. No failure mode is silently accepted — INDETERMINATE persistence always fails the test rather than being treated as clean success."
+  }
+}

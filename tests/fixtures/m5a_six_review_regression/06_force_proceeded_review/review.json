@@ -1,0 +1,18 @@
+{
+  "schema": "megaplan.review",
+  "schema_version": 1,
+  "plan_name": "m5a-regression-06",
+  "milestone": "m5a",
+  "disposition": "force_proceed",
+  "force_proceeded": true,
+  "rework_count": 3,
+  "rework_cap": 3,
+  "unresolved_issues": [
+    "reviewer noted: acceptance snapshot hash did not match committed evidence",
+    "reviewer noted: divergence between declared and actual file hashes"
+  ],
+  "notes": "Review force-proceeded at the rework cap with 2 unresolved issues. Max review rework reached.",
+  "reviewed_by": "code-review-bot",
+  "reviewed_at": "2026-07-15T00:00:00Z",
+  "status": "force_proceeded"
+}

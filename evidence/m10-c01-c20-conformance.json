@@ -1,0 +1,366 @@
+{
+  "bound_files": {
+    "allowlist/repair_effect_allowlist": "26cfde59e5c651cd81b55a04859a275be99678c86cc41bd32306e2ac9b004078",
+    "authority/current_source": "95c1bd9f133b8530b71cbcdedb25ad60463f0330cd898ba972c907999c898a01",
+    "custody/action_gate": "9474b49cc972a4f77aa4de698a9d34fd1f0297378e95230228a2ebe3471e1536",
+    "custody/action_validator": "c6a0bb262224ade0237bbaa9018f6afd8284cfa12a00f7735f7973b1996ff5c8",
+    "custody/lease_store": "0cde6c9e61c82fd6ce22bacd5ef30c8bfe83845a49c14357c2f683dbf532846f",
+    "effects/attempt_ledger_store": "07bd7c682ac08658ed2d33d155785eb2f1a656d156e66fa3171050fd8db13731",
+    "effects/effect_fault_matrix": "6e2a15dfedc87fb44a3f1609f226e36032719e17086010cb1113ea7b22222c6e",
+    "effects/effect_protocol": "ca3b69d9df13cba3f2a0d944aa5e9a9c05739f8f9523ff28cb6df56cdf19d9b8",
+    "effects/effect_reconciliation": "5737b4a474955c078387a3a2712bcfe5ecc73ca41062c59f9c403ebd4b4e3d5f",
+    "effects/execution_attempt_ledger": "1837f03cf1ad3500f50d4a5b3faa422c252314484566dfb96796747a53d6484d",
+    "effects/ledger_outbox": "af0fdb838aac48f5188508ff3caed9aeb2b1a4fa1d953bac8b0da022b060ba35",
+    "kernel/effect_ledger": "f0ed25767cba7ed16a4a8450069fcaca72b3248da26fc9e4184572cb74308019",
+    "recovery/recovery_events": "f2c0ff7afaf7551a509abb0caf268ae715ef4c9572e5c88a5b3be75b7b1bcb0d",
+    "recovery/recovery_verifier": "267158034df3bca0da8f215ee913ec1f561b24bc281e9ea90f94e578ceb95ae0",
+    "recovery/six_hour_auditor": "244d10f6c51396b63035099ec2b4f9381d25e2ff319abaea977a964c1c4c1679",
+    "recovery/watchdog": "64783378edde4793dc8fea0df21b716c1ea43b20d9ac621690aa9a0d13117ba5",
+    "schema/schema_parity": "d106ebf5f144fca8bf9d970da056fbe5d7b8d7e8dc90f64c9dd851544e789ac6",
+    "source/runtime_attestation": "4d6680f2c3a007f869e42847f780396cd54446ae58337dc58b64ab376e702ed1",
+    "source/seed_rematerialize": "d8377cbd7ccba6021bf4b747777549de92404dcc45d3aeaef384aed0f409c395",
+    "verifiability/criteria_verifiability": "1d94f5875c1df60691b1ef7633d1f40afd158171f922d4d92491aaafdbedab02"
+  },
+  "c01_c03": {
+    "criteria": [
+      {
+        "criterion_text": "Imported-decision C01-C03: launch is blocked until source, seed epoch, runtime, marker, supervisor, and every executable consumer attest to one exact content-addressed revision; changed seed material ",
+        "priority": "must",
+        "requires": [
+          "run_shell",
+          "read_files",
+          "run_tests",
+          "read_build_output",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Imported-decision C04-C20: schema, authority, occurrence identity, recovery, effects, projection truth, evidence, replay, deferral, and retirement are one machine-verifiable structural contract; missi",
+        "priority": "must",
+        "requires": [
+          "run_shell",
+          "read_files",
+          "run_tests",
+          "read_build_output",
+          "parse_diff",
+          "run_linter"
+        ]
+      }
+    ],
+    "criterion_indices": [
+      2,
+      3
+    ],
+    "rejects_mixed_revision": true,
+    "runtime_attestation_hash": "4d6680f2c3a007f869e42847f780396cd54446ae58337dc58b64ab376e702ed1",
+    "seed_bound": true,
+    "seed_rematerialize_hash": "d8377cbd7ccba6021bf4b747777549de92404dcc45d3aeaef384aed0f409c395",
+    "source_bound": true
+  },
+  "c04": {
+    "criterion": {
+      "criterion_text": "Fresh candidate-bound deterministic feasibility evidence is produced after gate. Post-gate receipts carry explicit epoch/seed binding distinguishing them from pre-gate estimates. Finalize.py validates",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff",
+        "read_build_output"
+      ]
+    },
+    "criterion_index": 4,
+    "fail_closed": true,
+    "schema_parity_hash": "d106ebf5f144fca8bf9d970da056fbe5d7b8d7e8dc90f64c9dd851544e789ac6",
+    "schema_phases_count": 8
+  },
+  "c05": {
+    "criterion": {
+      "criterion_text": "Fresh candidate-bound deterministic feasibility evidence is produced after gate. Post-gate receipts carry explicit epoch/seed binding distinguishing them from pre-gate estimates. Finalize.py validates",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff",
+        "read_build_output"
+      ]
+    },
+    "criterion_index": 4,
+    "seed_epoch_flows_through_finalize": true,
+    "v2_missing_epoch_rejected": true
+  },
+  "c06_c09": {
+    "action_gate_hash": "9474b49cc972a4f77aa4de698a9d34fd1f0297378e95230228a2ebe3471e1536",
+    "action_validator_hash": "c6a0bb262224ade0237bbaa9018f6afd8284cfa12a00f7735f7973b1996ff5c8",
+    "criteria": [
+      {
+        "criterion_text": "Duplicate WBC attempt/outbox keys compare canonical content; divergent duplicates raise typed conflicts and persist quarantine evidence.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "One stable global logical-effect reservation spans attempts; concurrent or retried attempts cannot apply the same provider effect twice after lost acknowledgement. GLEK inputs are snapshotted at first",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Per-attempt terminality supports multiple distinct effects, while an unresolved global effect remains terminally indeterminate, action-off, and escalated until safe reconciliation.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Custody raw writes are unavailable to production callers, lease invariants enforce owner/process/epoch/TTL/fencing, and domain actions use a separate non-bearer action gate.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "run_linter",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Run Authority and WBC validators reread authoritative current sources; synthetic, projection-only, outbox-only, stale, conflicted, or cross-attempt-inconsistent evidence denies authorization.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Every fake provider or transport call follows durable reserve/start/intent/global reservation; failed persistence produces zero calls.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files"
+        ]
+      }
+    ],
+    "criterion_indices": [
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "current_source_hash": "95c1bd9f133b8530b71cbcdedb25ad60463f0330cd898ba972c907999c898a01",
+    "double_fenced_rereads_required": true,
+    "lease_store_hash": "0cde6c9e61c82fd6ce22bacd5ef30c8bfe83845a49c14357c2f683dbf532846f",
+    "projection_only_denied": true,
+    "raw_writes_unavailable_to_production": true,
+    "synthetic_evidence_denied": true
+  },
+  "c10_c14": {
+    "attempt_ledger_store_hash": "07bd7c682ac08658ed2d33d155785eb2f1a656d156e66fa3171050fd8db13731",
+    "criteria": [
+      {
+        "criterion_text": "One stable global logical-effect reservation spans attempts; concurrent or retried attempts cannot apply the same provider effect twice after lost acknowledgement. GLEK inputs are snapshotted at first",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Per-attempt terminality supports multiple distinct effects, while an unresolved global effect remains terminally indeterminate, action-off, and escalated until safe reconciliation.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Custody raw writes are unavailable to production callers, lease invariants enforce owner/process/epoch/TTL/fencing, and domain actions use a separate non-bearer action gate.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "run_linter",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Normal, compensation, execute, Git, SSH, GitHub issue publication, delivery, loop/git, bakeoff, CLI, skills/subagent-launcher, MegaLoop user-command (both _run_user_command and _run_monitored_command)",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "run_linter",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Execute and Git mutation inventories (including bakeoff, CLI, and loop modules) are source-anchored and complete; each implementation shard changes no more than three inventoried sinks (action_off row",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "The WBC discovery-root generator includes cloud/, chain/, custody/, loop/, resident/, bakeoff/, cli/, and skills/ directories; the regenerated final inventory is joined row by row to the regenerated f",
+        "priority": "must",
+        "requires": [
+          "run_shell",
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      }
+    ],
+    "criterion_indices": [
+      6,
+      7,
+      8,
+      11,
+      12,
+      13
+    ],
+    "effect_fault_matrix_hash": "6e2a15dfedc87fb44a3f1609f226e36032719e17086010cb1113ea7b22222c6e",
+    "effect_protocol_hash": "ca3b69d9df13cba3f2a0d944aa5e9a9c05739f8f9523ff28cb6df56cdf19d9b8",
+    "effect_reconciliation_hash": "5737b4a474955c078387a3a2712bcfe5ecc73ca41062c59f9c403ebd4b4e3d5f",
+    "execution_attempt_ledger_hash": "1837f03cf1ad3500f50d4a5b3faa422c252314484566dfb96796747a53d6484d",
+    "glek_snapshotted_atomically": true,
+    "indeterminate_outcome_action_off": true,
+    "ledger_outbox_hash": "af0fdb838aac48f5188508ff3caed9aeb2b1a4fa1d953bac8b0da022b060ba35",
+    "terminal_cas_enforced": true
+  },
+  "c15_c17": {
+    "all_scenarios_reconciled": true,
+    "criteria": [
+      {
+        "criterion_text": "The WBC discovery-root generator includes cloud/, chain/, custody/, loop/, resident/, bakeoff/, cli/, and skills/ directories; the regenerated final inventory is joined row by row to the regenerated f",
+        "priority": "must",
+        "requires": [
+          "run_shell",
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Deferred rows are durably action-off, excluded from supported counts, and cause conformance failure if they dispatch or lack owner, expiry, source hash, and bypass evidence.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion_text": "Provider reconciliation adopts APPLIED evidence without redispatch, permits retry only through provider idempotency or authoritative NOT_APPLIED reservation transfer, and keeps UNKNOWN action-off.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      }
+    ],
+    "criterion_indices": [
+      13,
+      14,
+      15
+    ],
+    "deferred_boundary_count": 750,
+    "disjoint_sets_verified": true,
+    "fault_matrix_hash": "b0d1cc3270da7cdb24314733ddbe74b256fc592a65242982fb4bf47247786b12",
+    "non_mutating_count": 386,
+    "scenario_count": 17,
+    "supported_boundary_count": 32
+  },
+  "c18": {
+    "auditor_is_primary_mutator": false,
+    "criterion": {
+      "criterion_text": "Cross-host transfer/reclaim accepts one current epoch and rejects stale-owner renew, complete, cancel, publish, deliver, GitHub, Git, SSH, loop/git, bakeoff, CLI, and Discord operations.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    "criterion_index": 16,
+    "independent_verifier_required": true,
+    "negative_control_required": true,
+    "next_three_hour_reconciliation_present": true,
+    "p95_seconds": 420.0,
+    "positive_proof_cadence": "next_three_hour",
+    "recovery_verifier_hash": "267158034df3bca0da8f215ee913ec1f561b24bc281e9ea90f94e578ceb95ae0",
+    "six_hour_auditor_hash": "244d10f6c51396b63035099ec2b4f9381d25e2ff319abaea977a964c1c4c1679",
+    "six_hour_backstop_is_compatibility_alias": true,
+    "six_hour_names_compatibility_only": true,
+    "slo_receipt_present": true,
+    "slo_target_seconds": 300.0,
+    "watchdog_hash": "64783378edde4793dc8fea0df21b716c1ea43b20d9ac621690aa9a0d13117ba5"
+  },
+  "c19": {
+    "all_deferred_action_off": true,
+    "criterion": {
+      "criterion_text": "Provider reconciliation adopts APPLIED evidence without redispatch, permits retry only through provider idempotency or authoritative NOT_APPLIED reservation transfer, and keeps UNKNOWN action-off.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    "criterion_index": 15,
+    "deferred_count": 750,
+    "deferred_excluded_from_supported": true
+  },
+  "c20": {
+    "criterion": {
+      "criterion_text": "Candidate-bound C01-C20 conformance includes launch, schema, feasibility, authority, custody, global effects, inventory, deferral, fault, replay, migration, rollback, recovery, and forged/stale negati",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "run_tests",
+        "read_build_output",
+        "parse_diff",
+        "run_linter"
+      ]
+    },
+    "criterion_index": 19,
+    "mutating_repair_action_off": true,
+    "production_effects_action_off": true
+  },
+  "conformance_pass": true,
+  "constraints": {
+    "candidate_bound": true,
+    "installed_runtime_only": true,
+    "production_effects_action_off": true
+  },
+  "content_hash": "ba052c4175f08a67b17c23fcf8cce71a88729c112e6b69d69aa26f0d3cc7169e",
+  "generated_at": "2026-07-30T16:43:28.054849+00:00",
+  "inventory": {
+    "execute_mutation_sinks": 8,
+    "git_mutation_sinks": 25,
+    "inventory_hash": "55628d9d9a86519df66101ef90f886e3ff43420496e2fe53c3cdbbdc10745d11",
+    "wbc_boundary_inventory_rows": 1208
+  },
+  "milestone": "M10",
+  "schema_version": 1,
+  "step": "23A-23E",
+  "verifiability": {
+    "accepted_count": 23,
+    "all_must_criteria_verifiable": true,
+    "rejected_count": 0,
+    "rejected_criteria": []
+  }
+}

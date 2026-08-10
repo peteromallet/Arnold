@@ -1,0 +1,45 @@
+{
+  "pipelines": [
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:09255e89b8ec7f90612ccae382bf01b4ff39228c47f777c73f2d253042dcf362",
+      "name": "megaplan",
+      "seam_ids": [],
+      "stable_id": "megaplan.core",
+      "typed_contract_capable": false
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:09255e89b8ec7f90612ccae382bf01b4ff39228c47f777c73f2d253042dcf362",
+      "name": "planning",
+      "seam_ids": [],
+      "stable_id": "megaplan.planning",
+      "typed_contract_capable": true
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "native:doc",
+      "name": "doc",
+      "seam_ids": [],
+      "stable_id": "megaplan.doc",
+      "typed_contract_capable": true
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "native:creative",
+      "name": "creative",
+      "seam_ids": [],
+      "stable_id": "megaplan.creative",
+      "typed_contract_capable": true
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "native:jokes",
+      "name": "jokes",
+      "seam_ids": [],
+      "stable_id": "megaplan.jokes",
+      "typed_contract_capable": false
+    }
+  ],
+  "version": 1
+}

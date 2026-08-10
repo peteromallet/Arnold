@@ -1,0 +1,30 @@
+{
+  "checks": [
+    {
+      "id": "verification",
+      "question": "Is there convincing verification for the change?",
+      "guidance": "Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch \u2014 does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.",
+      "findings": [
+        {
+          "detail": "This is a planning-phase review (no code written yet), so I verified the plan's verification DESIGN against the repository. The verification plan is convincing and complete. I cross-referenced all 22 success criteria against the 8 proposed test files (tests/arnold/critique_ledger/test_{schemas_golden,cl2_migrations,store_append,replay,projections,importer,freshness,negative_mutation}.py) plus the 6 workflow regression nets and found a 1:1 mapping: every 'must' and 'should' criterion has a concrete named test or read_files/parse_diff check. The techniques specified are sound and standard — golden round-trip for byte-equivalence (Step 1), idempotency+crash-resume+checksum-guard for migrations (Step 4), atomicity-with-simulated-mid-tx-crash for the append layer (Step 5), canonical-hash determinism across two runs for replay (Step 6), and a 10-fixture import matrix (Step 10). I confirmed the repo grounding the plan depends on: (a) arnold/critique_ledger/ genuinely does not exist in the workspace (clean port target); (b) the CL1 archive at /workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/ contains schemas.py (731 lines, verified), semantic_loop.py (1206 lines, verified), __init__.py, plus the 5 cancelled-CL2 artifacts (cl2_migrations.py, m6_importer.py, ledger_writer.py, manifest_store.py, wbc_bridge.py); (c) archived schemas.py has SCHEMA_VERSION='cl.schema.v1', SUPPORTED_VERSIONS, CritiqueOccurrenceEnvelope, FindingReconciliationEvent, CompatibilityProfile, canonical_hash, ParseStatus (confirming Steps 1-2 are feasible); (d) archived semantic_loop.py replay_full has the hardcoded 'schema_version != SCHEMA_VERSION' checks at lines 1008 and 1082 that Step 3 must relax (confirming Step 3's described work is accurate); (e) the WBC substrate files exist with the claimed contracts: SqliteAttemptLedgerStore (BEGIN IMMEDIATE, idempotency-key dedup, single-terminal enforcement, DivergentDuplicateError), SqliteLedgerOutbox (append_event_with_outbox, get_stale_pending, retry_failed), SqliteLedgerMigrator (constructor accepts a custom migrations registry; _validate_registry enforces contiguous versions; default_m6a_migrations() returns versions 1-4 so CL2 versions 5+ is correct); (f) all 6 workflow regression-safety-net test files exist (test_attempt_ledger_store.py, test_ledger_outbox.py, test_ledger_migrations.py, test_ledger_payload_enforcement.py, test_payload_policy.py, test_execution_attempt_ledger.py). The 'reuse not reimplement' invariant is structurally enforced: changed_surfaces lists only arnold/critique_ledger/* new files + docs/, with zero arnold/workflow/* files, confirming CL2 does not modify the WBC substrate. There are no untested success criteria.",
+          "flagged": false
+        },
+        {
+          "detail": "The metadata test_blast_radius.selectors array (plan_v1.meta.json lines 179-219) includes two phantom path selectors that reference non-existent test files: 'tests/arnold_pipelines/megaplan/custody/test_projections.py' (reason: 'bounded basename match for arnold/critique_ledger/projections.py') and 'tests/arnold/kernel/test_replay.py' (reason: 'bounded basename match for arnold/critique_ledger/replay.py'). I confirmed via filesystem search that neither test_projections.py nor test_replay.py exists anywhere under the project root, and neither tests/arnold_pipelines/ nor tests/arnold/kernel/ are relevant CL2 paths. These selectors will silently match zero tests at execution time. The actual impact is nil because full_suite_fallback is true and the metadata rationale explicitly explains the floor stays on the full-suite path when selectors miss, but the two phantom 'bounded basename match' entries are a data-quality inaccuracy that could mislead a reviewer or downstream gate into believing targeted projection/replay coverage exists when it does not — the only live regression coverage is the 6 workflow substrate tests. The plan.md's own test_blast_radius (which uses 'tests/arnold/critique_ledger/' as the primary selector) is correct; the discrepancy is purely in the machine-derived metadata.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-VERIF-001",
+      "concern": "Phantom test selectors in metadata test_blast_radius: 'tests/arnold_pipelines/megaplan/custody/test_projections.py' and 'tests/arnold/kernel/test_replay.py' are labeled 'bounded basename match' but neither file exists in the repo. They will match zero tests; only full_suite_fallback=true prevents a silent coverage gap for projection/replay verification. Mitigated but worth correcting so scoped-execution reports are not misleading.",
+      "category": "completeness",
+      "severity_hint": "low",
+      "evidence": "plan_v1.meta.json lines 180-188; filesystem search for test_projections.py / test_replay.py returns zero results under /workspace/critique-ledger-accountability-v2-20260728/Arnold"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

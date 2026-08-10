@@ -1,0 +1,151 @@
+{
+  "meta": {
+    "schema_version": "wbc.support_manifest.v1",
+    "manifest_id": "arnold.workflow.support_manifest",
+    "description": "M6A WBC substrate support record covering implemented store, outbox, migration, payload, and trace modules. Producer/consumer adoption, Run Authority grants, Custody leases, and status cutover are outside M6A scope and not claimed here.",
+    "generated_by": "M6A — T18 substrate API export and support manifest",
+    "timestamp_utc": "2026-07-20T01:15:00Z",
+    "owners": {
+      "wbc": "Workflow Boundary Contracts — owns the substrate store, outbox, migration, payload, and trace boundaries defined here."
+    }
+  },
+  "handoff": {
+    "m6_base_contract_revision": {
+      "schema_version": "arnold.workflow.execution_attempt_ledger.v1",
+      "merge_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+      "merge_commit_short": "24afce006",
+      "description": "M6 WBC merge commit that landed the ExecutionAttemptLedger schema, boundary contracts, and payload policy into the consolidated codebase."
+    },
+    "m6a_store_api_revision": {
+      "store_version": "arnold.workflow.attempt_ledger_store.v1",
+      "description": "SqliteAttemptLedgerStore with WAL-mode transactional append, reservation, monotonic sequence, idempotency-key uniqueness, exactly-one-terminal enforcement, durable start/terminal gates, persistence-failure diagnostics, reconciliation diagnostics, gap queries, and source cursors."
+    },
+    "implementation_commit": {
+      "full": "904560e44aaa0f6ae59f0834ad062b017666adaa",
+      "short": "904560e44",
+      "tree": "d8afc661dac37f5cad2054fc6f2879f2834a2a65"
+    },
+    "migration_version": {
+      "registry": "default_m6a_migrations",
+      "applied_versions": [1, 2],
+      "migration_names": ["m6a_substrate_baseline", "m6a_forward_fix_policy_anchor"],
+      "checksum_domain": "arnold.workflow.ledger_migrations.v1",
+      "policy": "forward-fix-only; UNKNOWN/UNRECONSTRUCTABLE for legacy records; success never synthesized from logs, markers, receipts, or mutable state"
+    },
+    "runtime_vector": {
+      "outbox_version": "arnold.workflow.ledger_outbox.v1",
+      "payload_store_version": "arnold.workflow.ledger_payload_store.v1",
+      "trace_schema_version": "arnold.workflow.ledger_trace.v1",
+      "adapter_version": "arnold.adapters.ledger_store_adapter.v1",
+      "cli_version": "tools.wbc_ledger_cli.v1",
+      "backend": "SQLite 3.x WAL mode",
+      "locking": "retry-on-SQLITE_BUSY with exponential backoff (50ms base, 2s cap)",
+      "encryption": "pluggable EncryptionProvider with fail-closed semantics for CONFIDENTIAL/RESTRICTED payloads"
+    }
+  },
+  "substrate_modules": [
+    {
+      "module_id": "arnold.workflow.attempt_ledger_store",
+      "module_name": "Attempt Ledger Store",
+      "kind": "substrate_store",
+      "producer_path": "arnold/workflow/attempt_ledger_store.py",
+      "owner": "wbc",
+      "support_status": "supported",
+      "m6a_milestone": "m6a",
+      "description": "SqliteAttemptLedgerStore providing transactional attempt reservation and append APIs with monotonic sequence enforcement, idempotency-key deduplication, exactly-one-terminal-event guarantee, post-terminal rejection, durable start/terminal gates with typed incomplete/indeterminate/incoherent statuses, persistence-failure diagnostics, reconciliation diagnostics, gap queries, source cursors, and crash-reopen consistency checks. All invariants enforced inside single SQLite BEGIN IMMEDIATE transactions.",
+      "public_api": [
+        "AttemptLedgerStore", "SqliteAttemptLedgerStore",
+        "AttemptReservation", "AppendResult",
+        "GateStatus", "StartGateResult", "TerminalGateResult",
+        "GapEntry", "SourceCursor",
+        "AttemptLedgerError", "MonotonicSequenceError", "PostTerminalAppendError"
+      ],
+      "exception_metadata": {},
+      "visible_non_conformant": []
+    },
+    {
+      "module_id": "arnold.workflow.ledger_outbox",
+      "module_name": "Ledger Outbox",
+      "kind": "substrate_outbox",
+      "producer_path": "arnold/workflow/ledger_outbox.py",
+      "owner": "wbc",
+      "support_status": "supported",
+      "m6a_milestone": "m6a",
+      "description": "SqliteLedgerOutbox providing atomic ledger-event + outbox-record creation inside the same SQLite transaction, at-least-once retry with idempotency-key deduplication, ack state tracking, stale-pending crash recovery, retry-limit enforcement (MAX_RETRY_COUNT=10), and reconciliation queries (get_failed, get_stale_pending, get_outbox_summary). Outbox records are append-only projection state — they record delivery intent without granting dispatch authority.",
+      "public_api": [
+        "LedgerOutbox", "SqliteLedgerOutbox",
+        "OutboxStatus", "OutboxRecord", "AppendWithOutboxResult",
+        "MAX_RETRY_COUNT", "RetryLimitExceededError"
+      ],
+      "exception_metadata": {},
+      "visible_non_conformant": []
+    },
+    {
+      "module_id": "arnold.workflow.ledger_migrations",
+      "module_name": "Ledger Migrations",
+      "kind": "substrate_migration",
+      "producer_path": "arnold/workflow/ledger_migrations.py",
+      "owner": "wbc",
+      "support_status": "supported",
+      "m6a_milestone": "m6a",
+      "description": "SqliteLedgerMigrator with deterministic versioned migrations, SHA-256 checksum validation, crash-resume behavior (each migration in its own BEGIN IMMEDIATE transaction), forward-fix-only policy, idempotent duplicate-backfill, mixed reader/writer compatibility under WAL snapshots, and legacy record classification (BACKFILLED/CORRUPT/UNRECONSTRUCTABLE/UNKNOWN) with ClassificationEvidence and ClassificationSafetyError ensuring success is never synthesized from logs, markers, receipts, or mutable state.",
+      "public_api": [
+        "LedgerMigrator", "SqliteLedgerMigrator",
+        "Migration", "MigrationRecord", "MigrationState", "MigrationResult",
+        "ChecksumMismatch",
+        "LegacyClassification", "ClassificationEvidence", "LegacyRecordClassification",
+        "MigrationError", "MigrationChecksumMismatchError", "MigrationRegistryError",
+        "MigrationOrderError", "ClassificationSafetyError",
+        "compute_migration_checksum", "default_m6a_migrations"
+      ],
+      "exception_metadata": {},
+      "visible_non_conformant": []
+    },
+    {
+      "module_id": "arnold.workflow.ledger_payload_store",
+      "module_name": "Ledger Payload Store",
+      "kind": "substrate_payload",
+      "producer_path": "arnold/workflow/ledger_payload_store.py",
+      "owner": "wbc",
+      "support_status": "supported",
+      "m6a_milestone": "m6a",
+      "description": "SqliteLedgerPayloadStore enforcing six payload/reference boundaries before byte persistence (fail-closed): inline threshold via InlinePayloadPolicy, redaction of protected fields, tenant/workflow access cross-checks, secret-key pattern rejection, digest-only preservation rejection, and protected-class encryption with fail-closed semantics when no provider/key is configured. Also provides retention expiry enforcement, legal hold override, tombstone markers with DeletionEvidence, DurableRef generation, and pluggable EncryptionProvider with key-version awareness.",
+      "public_api": [
+        "LedgerPayloadStore", "SqliteLedgerPayloadStore",
+        "AccessContext", "StoredPayload", "DeletionEvidence",
+        "EncryptionProvider", "StaticKeyEncryptionProvider",
+        "PayloadStoreError", "PayloadInlineThresholdError", "PayloadSecretKeyError",
+        "PayloadDigestOnlyError", "PayloadRedactionError", "PayloadTenantAccessError",
+        "PayloadProtectedEncryptionError", "PayloadNotFoundError",
+        "PayloadExpiredError", "PayloadLegalHoldError", "PayloadTombstoneError"
+      ],
+      "exception_metadata": {},
+      "visible_non_conformant": []
+    },
+    {
+      "module_id": "arnold.workflow.ledger_trace",
+      "module_name": "Ledger Trace",
+      "kind": "substrate_trace",
+      "producer_path": "arnold/workflow/ledger_trace.py",
+      "owner": "wbc",
+      "support_status": "supported",
+      "m6a_milestone": "m6a",
+      "description": "Non-authoritative machine-readable trace emission for WBC ledger operations. LedgerTrace binds contract version, store/API revision, code/config versions, adapter identity, run/attempt/tenant identity, parent attempt, and causal lineage. Content-addressed via SHA-256 over canonical JSON with digest and emitted_at_ns excluded from the pre-image. Factory functions (make_append_trace, make_query_trace, make_reconcile_trace) provide stable trace construction. Traces are rebuildable projections — they never mint authority, leases, or delivery decisions.",
+      "public_api": [
+        "LedgerTrace", "TraceOperation",
+        "LEDGER_TRACE_SCHEMA_VERSION",
+        "compute_trace_digest", "make_trace_with_digest",
+        "make_append_trace", "make_query_trace", "make_reconcile_trace",
+        "trace_to_json", "trace_from_json"
+      ],
+      "exception_metadata": {},
+      "visible_non_conformant": []
+    }
+  ],
+  "out_of_scope": {
+    "producer_consumer_adoption": "Producer/consumer adoption paths are outside M6A scope. The substrate provides the durable store, outbox, migration, payload, and trace boundaries; actual producer integration belongs to later milestones.",
+    "run_authority_grants": "Run Authority grants, authority facts, views, routing decisions, and execution verdicts are outside M6A scope and are not claimed by this support record.",
+    "custody_leases": "Custody leases (cloud/authority/orchestration/resident) are outside M6A scope and remain unchanged by this substrate work.",
+    "status_cutover": "Status cutover from schema-only to runtime-adopted state is outside M6A scope. The substrate is implementation-complete for store/outbox/migration/payload/trace but does not claim runtime adoption."
+  }
+}

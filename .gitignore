@@ -1,0 +1,117 @@
+__pycache__/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.codex/
+.claude/
+.megaplan/
+!.megaplan/
+!.megaplan/initiatives/
+!.megaplan/initiatives/**
+!.megaplan/tickets/
+# Re-ignore runtime artifacts that accumulate under committed initiative
+# directories.  ``!.megaplan/initiatives/**`` above un-ignores the entire
+# initiative tree, but chain-state files, repair-queue markers, and any
+# *.megaplan/* runtime scaffolding inside initiatives must stay ignored so
+# they cannot dirty git_tracked launch preconditions.
+.megaplan/initiatives/**/.megaplan/
+.megaplan/initiatives/**/chain_state.json
+.megaplan/initiatives/**/repair-queue/
+!.megaplan/tickets/**
+!.megaplan/ideas/
+!.megaplan/ideas/**
+.megaplan/**/.DS_Store
+.megaplan/worker_tmp/
+.megaplan/.state-locks/
+.megaplan/cloud-chain.log
+.megaplan/cloud-chain-*.log
+.megaplan/m2-auto.log
+.megaplan/m6-test.log
+.megaplan/system_logs/
+.megaplan/resident/
+.megaplan/debt.json
+.megaplan/epics/
+.megaplan/profiles.toml
+.megaplan/schemas/
+.megaplan/telemetry/
+.megaplan/verification/
+.megaplan/plans/
+chain_state.json
+.desloppify/
+.desloppify.bak-*
+.doubledip/
+.env
+.env.*
+*.env
+!.env.example
+.DS_Store
+dist/
+*.egg-info/
+activity-summary-*.md
+megaplan/cloud/_reference/
+arnold_pipelines/megaplan/data/_codex_skills/
+
+# Local/generated planning inputs and cloud runner specs.
+cloud.yaml
+cloud.*.yaml
+chain.yaml
+!.megaplan/initiatives/**/chain.yaml
+plan.md
+!tests/fixtures/m5a_six_review_regression/04_stale_metadata/plan.md
+/plan_v*.md
+/.plan_v*.md
+planning-bot-spec.md
+idea-*.txt
+ideas/
+*-critique_output.json
+sample_*.json
+
+# Generated audit/design reports from one-off planning runs.
+docs/arnold-merge-design.md
+docs/sprint-0-spike-report.md
+docs/persistence-storage-audit.md
+
+# Vendored Hermes runtime should stay lean; these paths are external docs,
+# benchmarks, generated runs, or standalone apps.
+megaplan/agent/assets/
+megaplan/agent/auto_improve/
+megaplan/agent/batch_runner.py
+megaplan/agent/cli-config.yaml.example
+megaplan/agent/datagen-config-examples/
+megaplan/agent/evals/
+megaplan/agent/landingpage/
+megaplan/agent/mini-swe-agent
+megaplan/agent/package*.json
+megaplan/agent/RELEASE_v*.md
+megaplan/agent/rl_cli.py
+megaplan/agent/setup-hermes.sh
+megaplan/agent/tinker-atropos
+megaplan/agent/website/
+
+# Supabase CLI local cache
+supabase/.temp/
+
+# Ephemeral agentic run scaffolding
+.megaplan-agentic/
+
+# Runtime mirror; not source
+.megaplan/runtime/editable-engine
+
+# CL2 delivery sidecar (post-commit delivery commit + tree hashes; never embedded
+# in the committed handoff). Created at CL2 finalization (Step 15.4) and captured
+# additionally as a `git notes` entry on the delivery commit. A commit/tree cannot
+# contain its own hash, so both post-commit values live only here + the git note.
+docs/critique-ledger/handoffs/.cl2_delivery_commit.txt
+
+# Runtime state that must never be committed to main (initialized at runtime).
+.megaplan/authority/
+.megaplan/repair-queue/
+.megaplan/cloud-logs/
+.megaplan/system_logs/
+.megaplan/runs/
+.megaplan/incident-evidence/
+.megaplan/watchdog-run-logs/
+.megaplan/test_store/
+.megaplan/*.log
+.megaplan/manual-occurrence-*.log
+.megaplan/strategy.projection.json
