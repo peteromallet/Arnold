@@ -4130,7 +4130,7 @@ def _project_auto_dispatch(
     # workflow_cursor_mismatch and the drive must stop before dispatch.
     if (
         state.get("current_state")
-        and observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+        and observed_phase_source in {"active_step", "resume_cursor", "latest_failure", "last_step"}
     ):
         try:
             from arnold_pipelines.megaplan._core.workflow import workflow_next

@@ -1371,6 +1371,15 @@ def run_omp_step(
                     f"object",
                     extra={"raw_output": raw},
                 )
+            # Apply the harness payload normalizers (critique severity_hint
+            # enum mapping, execute bookkeeping-field strip, plan criterion
+            # flattening) BEFORE the strict audit so known flexible fields
+            # normalize instead of failing the enum/unknown-field gates.
+            from arnold_pipelines.megaplan.workers.hermes import (
+                clean_parsed_payload,
+            )
+
+            clean_parsed_payload(exact_payload, schema, step)
             try:
                 _reject_unknown_schema_fields(
                     exact_payload, strict_capture_schema, step
