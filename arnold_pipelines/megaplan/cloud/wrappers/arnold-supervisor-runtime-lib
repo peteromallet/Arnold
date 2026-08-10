@@ -244,6 +244,31 @@ arnold_runtime_manifest_path() {
   printf '%s' "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}"
 }
 
+arnold_runtime_manifest_is_compatibility_only() {
+  # G2 correction 1: a manifest file carrying ``"compatibility_only": true``
+  # is a NON-AUTHORITATIVE pointer — compatibility telemetry ONLY.  Every
+  # resolver treats such a pointer as ABSENT for admission (falls through to
+  # the permit check → block when no valid permit); it can never select a
+  # runtime.  Returns 0 for such a pointer, 1 for absent files, corrupt JSON,
+  # and authoritative manifests.  Dependency-independent (stdlib JSON only).
+  local manifest_path="${1:-}"
+  [[ -n "$manifest_path" && -f "$manifest_path" ]] || return 1
+  "${MEGAPLAN_SUPERVISOR_STDLIB_PYTHON:-python3}" - "$manifest_path" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if isinstance(payload, dict) and payload.get("compatibility_only") is True:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 arnold_runtime_manifest_epic_field() {
   local field="${1:-}"
   local manifest_path
@@ -251,6 +276,10 @@ arnold_runtime_manifest_epic_field() {
   [[ -n "$field" ]] || return 0
   manifest_path="$(arnold_runtime_manifest_path)"
   [[ -f "$manifest_path" ]] || return 0
+  # A compatibility_only pointer is NON-AUTHORITATIVE telemetry (G2
+  # correction 1): field reads must never let the global pointer select a
+  # runtime — permit-admitted manifestless runs keep the legacy fallback.
+  arnold_runtime_manifest_is_compatibility_only "$manifest_path" && return 0
   python3 - "$manifest_path" "$field" <<'PY'
 import json
 import pathlib
@@ -274,4 +303,114 @@ except Exception:
 if isinstance(value, str) and value:
     print(value)
 PY
+}
+
+# ── P1 admission authority (per-epic admission kernel) ──────────────────────
+# The per-runtime manifest is THE admission resolver for wrapper entry.  A
+# PRESENT manifest must load and declare epic.branch (missing/corrupt exits
+# 78 — fail closed, never a silent fallback).  A genuinely ABSENT manifest is
+# admitted only by a valid, unexpired ``allow_manifestless`` permit in the
+# ``.runtime_policy.json`` sidecar (same directory as the manifest; an
+# ``ARNOLD_RUNTIME_POLICY`` env override supports per-session binding).  The
+# sidecar is an append-only ``permits`` list; the LAST unrevoked, structurally
+# valid, unexpired ``allow_manifestless`` record is the active one.  Expired
+# permits stay loadable — expiry rejects admission, it never invalidates a
+# previously admitted runtime.
+
+arnold_runtime_manifest_policy_path() {
+  local manifest_path
+  manifest_path="$(arnold_runtime_manifest_path)"
+  printf '%s' "${ARNOLD_RUNTIME_POLICY:-$(dirname "$manifest_path")/.runtime_policy.json}"
+}
+
+arnold_manifest_allow_manifestless() {
+  # Returns 0 iff a valid, unexpired allow_manifestless permit exists in the
+  # .runtime_policy.json sidecar; returns 1 (fail closed) otherwise.  The
+  # embedded check is dependency-independent (stdlib JSON only) and mirrors
+  # the Python-side admission contract: 0 < expires_at - issued_at <= 24h and
+  # current-unexpired, with revocation as an auditable revoked_at tombstone.
+  local policy_path
+  policy_path="$(arnold_runtime_manifest_policy_path)"
+  [[ -f "$policy_path" ]] || return 1
+  "${MEGAPLAN_SUPERVISOR_STDLIB_PYTHON:-python3}" - "$policy_path" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import sys
+
+policy = pathlib.Path(sys.argv[1])
+try:
+    payload = json.loads(policy.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+permits = payload.get("permits") if isinstance(payload, dict) else None
+if not isinstance(permits, list):
+    raise SystemExit(1)
+now = dt.datetime.now(dt.timezone.utc)
+
+
+def parse_utc(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
+
+
+for record in reversed(permits):
+    if not isinstance(record, dict):
+        continue
+    if record.get("kind") != "allow_manifestless":
+        continue
+    if record.get("revoked_at"):
+        continue
+    if not isinstance(record.get("id"), str) or not record["id"]:
+        continue
+    issued = parse_utc(record.get("issued_at"))
+    expires = parse_utc(record.get("expires_at"))
+    if issued is None or expires is None:
+        continue
+    lifetime = expires - issued
+    if not (dt.timedelta(0) < lifetime <= dt.timedelta(hours=24)):
+        continue
+    if now >= expires:
+        continue
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+arnold_runtime_manifest_authority() {
+  # P1 admission gate — sole manifest authority resolver for wrapper entry.
+  #   present + valid (epic.branch, NOT compatibility_only) => pass
+  #   present + invalid (corrupt / no epic.branch)          => exit 78
+  #   compatibility_only pointer / absent / unbound          => permit check
+  #   absent  + valid unexpired permit                       => pass
+  #   absent  + no permit                                    => exit 78
+  # A ``compatibility_only`` pointer is NON-AUTHORITATIVE (G2 correction 1):
+  # the bootstrap-path global pointer is compatibility telemetry ONLY and
+  # can never select a runtime — admission treats it as ABSENT and falls
+  # through to the permit check (G1 no-global-pointer fallback).
+  local component="${1:-unknown}"
+  local manifest_path branch
+  manifest_path="$(arnold_runtime_manifest_path)"
+  if [[ -f "$manifest_path" ]]; then
+    if ! arnold_runtime_manifest_is_compatibility_only "$manifest_path"; then
+      branch="$(arnold_runtime_manifest_epic_field branch)"
+      if [[ -n "$branch" ]]; then
+        return 0
+      fi
+      printf '%s\n' "runtime manifest present without epic.branch; failing closed" >&2
+      exit 78
+    fi
+  fi
+  if ! arnold_manifest_allow_manifestless; then
+    printf '%s\n' "runtime manifest absent without a valid allow_manifestless permit; failing closed" >&2
+    exit 78
+  fi
+  return 0
 }

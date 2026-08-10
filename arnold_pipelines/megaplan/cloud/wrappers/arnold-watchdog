@@ -142,81 +142,15 @@ EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
 KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
 KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
-# Phase 2: launcher binaries resolve from the per-runtime manifest after one
-# stable bootstrap path.  The manifest is tried first; env + SRC_DIR remain
-# the fallback chain so behavior is unchanged when no manifest exists.
-RUNTIME_MANIFEST_PATH="${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}"
+# P1 admission authority: the shared lib gate is the SOLE manifest resolver.
+# A present manifest must validate with an epic.branch; a genuinely absent
+# manifest is admitted only by a valid unexpired allow_manifestless permit
+# (.runtime_policy.json sidecar).  Runs BEFORE any field read or dispatch.
+arnold_runtime_manifest_authority watchdog
 
-runtime_manifest_field() {
-  # Print one dotted epic field from the runtime manifest, or nothing when the
-  # manifest is absent/unreadable so callers keep their legacy fallback chain.
-  # Prefers the canonical runtime_manifest reader; falls back to a plain JSON
-  # read when the module is not importable yet (pre-bootstrap launcher).
-  local field="$1"
-  # Callers pass dotted paths (epic.repair_bin / epic.runtime_root); the epic
-  # block is the only section launchers read, so normalize to the bare key.
-  field="${field#epic.}"
-  [[ -n "$field" ]] || return 0
-  [[ -f "$RUNTIME_MANIFEST_PATH" ]] || return 0
-  python3 - "$RUNTIME_MANIFEST_PATH" "$field" <<'PY'
-import json
-import pathlib
-import sys
 
-path, field = sys.argv[1], sys.argv[2]
-value = None
-try:
-    from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
-
-    manifest = bootstrap_manifest(pathlib.Path(path))
-    epic = getattr(manifest, "epic", None)
-    value = epic.get(field) if isinstance(epic, dict) else None
-except Exception:
-    try:
-        payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-        epic = payload.get("epic") if isinstance(payload, dict) else None
-        value = epic.get(field) if isinstance(epic, dict) else None
-    except Exception:
-        sys.exit(0)
-if isinstance(value, str) and value:
-    print(value)
-PY
-}
-
-# Fail-closed manifest authority (design §6): when ARNOLD_RUNTIME_MANIFEST is
-# set OR the default bootstrap path exists, the manifest MUST load and
-# validate.  A present-but-invalid manifest (corrupt / schema-mismatch /
-# unreadable) exits non-zero with a typed ``manifest_invalid`` error BEFORE
-# any dispatch or fallback.  Only a genuinely ABSENT manifest (no env, no
-# file at the bootstrap path) keeps the env -> with_name fallback — today's
-# box state, documented as bootstrap-only backward compat.
-enforce_runtime_manifest_authority() {
-  local env_set=0
-  [[ -n "${ARNOLD_RUNTIME_MANIFEST:-}" ]] && env_set=1
-  if [[ "$env_set" == "0" && ! -e "$RUNTIME_MANIFEST_PATH" ]]; then
-    return 0
-  fi
-  local invalid=""
-  invalid="$(python3 - "$RUNTIME_MANIFEST_PATH" <<'PY' 2>&1 || true
-import pathlib
-import sys
-try:
-    from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
-    bootstrap_manifest(pathlib.Path(sys.argv[1]))
-except Exception as exc:
-    print(f"manifest_invalid: {exc}", file=sys.stderr)
-    sys.exit(78)
-PY
-)"
-  if [[ -n "$invalid" ]]; then
-    printf '%s\n' "$invalid" >&2
-    exit 78
-  fi
-}
-enforce_runtime_manifest_authority
-
-MANIFEST_REPAIR_BIN="$(runtime_manifest_field epic.repair_bin)"
-MANIFEST_RUNTIME_ROOT="$(runtime_manifest_field epic.runtime_root)"
+MANIFEST_REPAIR_BIN="$(arnold_runtime_manifest_epic_field epic.repair_bin)"
+MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
 # Dispatch runtime source: when the manifest supplies BOTH epic.repair_bin
 # and epic.runtime_root, the repair-loop child executes AND imports its code
 # from the SAME runtime (the manifest runtime_root), so the selected

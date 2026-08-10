@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -13,20 +14,26 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 from arnold_pipelines.megaplan.cloud import shadow_attestation
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    COMPATIBILITY_ONLY_KEY,
     MANIFEST_FILENAME,
     MANIFEST_SCHEMA_VERSION,
     ManifestError,
     RuntimeManifest,
     active_manifest_path,
+    add_deviation,
     advance_generation,
     append_promotion,
     attest_runtime,
     bootstrap_manifest,
+    has_valid_allow_manifestless_permit,
+    is_compatibility_only_pointer,
     list_manifests,
     load_manifest,
     load_manifest_by_epic,
     main,
+    manifest_present,
     set_state,
+    validate_deviation,
     write_active_pointer,
     write_manifest,
 )
@@ -103,6 +110,24 @@ def _make_manifest(**overrides: object) -> dict[str, object]:
 
 def _make_manifest_obj(**overrides: object) -> RuntimeManifest:
     return RuntimeManifest.from_dict(_make_manifest(**overrides))
+
+
+def _make_deviation(**overrides: object) -> dict[str, object]:
+    """A structurally valid, currently-unexpired deviation record (defaults to
+    ``kind=allow_manifestless``, issued now, expiring in 1h)."""
+    now = datetime.now(timezone.utc)
+    record: dict[str, object] = {
+        "kind": "allow_manifestless",
+        "id": "perm-0001",
+        "issued_at": now.isoformat(timespec="seconds"),
+        "expires_at": (now + timedelta(hours=1)).isoformat(timespec="seconds"),
+        "actor": "operator",
+        "reason": "box migration window",
+        "evidence": ["incident-42", "approval-email"],
+        "chain_digest": "sha256:deadbeef",
+    }
+    record.update(overrides)
+    return record
 
 
 def _make_attestation_tree(tmp_path: Path) -> Path:
@@ -292,6 +317,241 @@ def test_append_promotion() -> None:
         append_promotion(manifest, ["not", "a", "dict"])
 
 
+# ── deviations (expiring exception records) ─────────────────────────────────
+
+
+def test_from_dict_defaults_deviations_to_empty_list() -> None:
+    manifest = _make_manifest_obj()
+    assert manifest.deviations == []
+    # the fixture itself carries no deviations key (old-manifest shape)
+    assert "deviations" not in _make_manifest()
+
+
+def test_deviations_round_trip_preserved(tmp_path: Path) -> None:
+    record = _make_deviation()
+    manifest = _make_manifest_obj(deviations=[record])
+    assert manifest.deviations == [record]
+    path = tmp_path / "m.json"
+    write_manifest(manifest, path)
+    loaded = load_manifest(path)
+    assert loaded == manifest
+    assert loaded.deviations == [record]
+    # the serialized JSON on disk actually carries the list
+    assert json.loads(path.read_text(encoding="utf-8"))["deviations"] == [record]
+    # a second read→write cycle preserves it as well
+    write_manifest(loaded, path)
+    assert load_manifest(path).deviations == [record]
+
+
+def test_all_transitions_preserve_deviations() -> None:
+    record = _make_deviation()
+    manifest = _make_manifest_obj(deviations=[record])
+    closed = set_state(manifest, "closed")
+    assert closed.deviations == [record]
+    advanced = advance_generation(manifest, "newsha001", reason="preserve check")
+    assert advanced.deviations == [record]
+    promoted = append_promotion(
+        manifest,
+        {
+            "previous_generation": 1,
+            "previous_commit": "c1",
+            "reason": "rollback record",
+            "at": "2026-08-07T12:00:00+00:00",
+        },
+    )
+    assert promoted.deviations == [record]
+    assert manifest.deviations == [record]  # original untouched
+
+
+def test_manifest_rejects_non_list_deviations() -> None:
+    with pytest.raises(ManifestError, match="deviations"):
+        _make_manifest_obj(deviations="not-a-list")
+    with pytest.raises(ManifestError, match="deviations"):
+        _make_manifest_obj(deviations={"kind": "allow_manifestless"})
+
+
+def test_manifest_rejects_non_object_deviation_entries() -> None:
+    with pytest.raises(ManifestError, match="deviations"):
+        _make_manifest_obj(deviations=[_make_deviation(), "not-an-object"])
+
+
+def test_validate_deviation_rejects_non_object_record() -> None:
+    with pytest.raises(ManifestError, match="object"):
+        validate_deviation("not-a-dict")
+    with pytest.raises(ManifestError, match="object"):
+        validate_deviation(["not", "a", "dict"])
+
+
+def test_validate_deviation_rejects_missing_fields() -> None:
+    for field_name in (
+        "kind",
+        "id",
+        "issued_at",
+        "expires_at",
+        "actor",
+        "reason",
+        "evidence",
+        "chain_digest",
+    ):
+        bad = dict(_make_deviation())
+        del bad[field_name]
+        with pytest.raises(ManifestError, match=field_name):
+            validate_deviation(bad)
+
+
+def test_validate_deviation_rejects_empty_string_fields() -> None:
+    for field_name in ("kind", "id", "actor", "reason", "chain_digest"):
+        bad = _make_deviation(**{field_name: ""})
+        with pytest.raises(ManifestError, match=field_name):
+            validate_deviation(bad)
+
+
+def test_validate_deviation_rejects_non_utc_timestamps() -> None:
+    naive = _make_deviation(issued_at="2026-08-07T00:00:00")  # no tz info
+    with pytest.raises(ManifestError, match="UTC"):
+        validate_deviation(naive)
+    offset = _make_deviation(expires_at="2026-08-07T00:00:00+05:00")  # wrong offset
+    with pytest.raises(ManifestError, match="UTC"):
+        validate_deviation(offset)
+    unparsable = _make_deviation(issued_at="not-a-date")
+    with pytest.raises(ManifestError, match="ISO8601"):
+        validate_deviation(unparsable)
+    empty = _make_deviation(expires_at="")
+    with pytest.raises(ManifestError, match="expires_at"):
+        validate_deviation(empty)
+
+
+def test_validate_deviation_rejects_bad_evidence() -> None:
+    not_list = _make_deviation(evidence="not-a-list")
+    with pytest.raises(ManifestError, match="evidence"):
+        validate_deviation(not_list)
+    non_strings = _make_deviation(evidence=["ok", 42])
+    with pytest.raises(ManifestError, match="evidence"):
+        validate_deviation(non_strings)
+
+
+def test_validate_deviation_accepts_empty_evidence() -> None:
+    # contract: evidence is a list of strings; an empty list is structurally valid
+    record = _make_deviation(evidence=[])
+    assert validate_deviation(record) == record
+
+
+def test_validate_deviation_rejects_expired() -> None:
+    now = datetime.now(timezone.utc)
+    record = _make_deviation(
+        issued_at=(now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        expires_at=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
+    )
+    with pytest.raises(ManifestError, match="expired"):
+        validate_deviation(record)
+
+
+def test_validate_deviation_rejects_lifetime_outside_bounds() -> None:
+    now = datetime.now(timezone.utc)
+    too_long = _make_deviation(
+        issued_at=now.isoformat(timespec="seconds"),
+        expires_at=(now + timedelta(hours=25)).isoformat(timespec="seconds"),
+    )
+    with pytest.raises(ManifestError, match="24h"):
+        validate_deviation(too_long)
+    zero = _make_deviation(
+        issued_at=now.isoformat(timespec="seconds"),
+        expires_at=now.isoformat(timespec="seconds"),
+    )
+    with pytest.raises(ManifestError, match="24h"):
+        validate_deviation(zero)
+    backwards = _make_deviation(
+        issued_at=now.isoformat(timespec="seconds"),
+        expires_at=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
+    )
+    with pytest.raises(ManifestError, match="24h"):
+        validate_deviation(backwards)
+
+
+def test_validate_deviation_returns_record_unchanged_on_success() -> None:
+    record = _make_deviation()
+    assert validate_deviation(record) is record
+    # extra keys (e.g. a revoked_at tombstone) are tolerated + preserved
+    tombstoned = _make_deviation(revoked_at="2026-08-07T00:00:00+00:00")
+    assert validate_deviation(tombstoned) == tombstoned
+
+
+def test_has_valid_allow_manifestless_permit() -> None:
+    now = datetime.now(timezone.utc)
+    valid = _make_deviation()
+    assert (
+        has_valid_allow_manifestless_permit(
+            _make_manifest_obj(deviations=[valid])
+        )
+        is True
+    )
+    # no deviations at all -> no permit
+    assert has_valid_allow_manifestless_permit(_make_manifest_obj()) is False
+    # wrong kind does not admit
+    wrong_kind = dict(valid, kind="manifest_missing")
+    assert (
+        has_valid_allow_manifestless_permit(
+            _make_manifest_obj(deviations=[wrong_kind])
+        )
+        is False
+    )
+    # expired permit does not admit
+    expired = _make_deviation(
+        issued_at=(now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        expires_at=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
+    )
+    assert (
+        has_valid_allow_manifestless_permit(
+            _make_manifest_obj(deviations=[expired])
+        )
+        is False
+    )
+    # revoked permit (auditable tombstone) does not admit
+    revoked = dict(valid, revoked_at="2026-08-07T00:00:00+00:00")
+    assert (
+        has_valid_allow_manifestless_permit(
+            _make_manifest_obj(deviations=[revoked])
+        )
+        is False
+    )
+    # one valid permit wins even among invalid/expired records; a bad record
+    # cannot poison admission
+    mixed = _make_manifest_obj(deviations=[expired, {"kind": "garbage"}, valid])
+    assert has_valid_allow_manifestless_permit(mixed) is True
+    # a malformed record alone never admits
+    malformed = _make_manifest_obj(deviations=[{"kind": "allow_manifestless"}])
+    assert has_valid_allow_manifestless_permit(malformed) is False
+
+
+def test_add_deviation_appends_immutably() -> None:
+    manifest = _make_manifest_obj()
+    record = _make_deviation()
+    updated = add_deviation(manifest, record)
+    assert updated is not manifest
+    assert updated.deviations == [record]
+    assert manifest.deviations == []  # original untouched
+    second = _make_deviation(id="perm-0002")
+    again = add_deviation(updated, second)
+    assert again.deviations == [record, second]
+    assert updated.deviations == [record]  # intermediate also untouched
+
+
+def test_add_deviation_rejects_invalid_record_and_leaves_manifest_untouched() -> None:
+    manifest = _make_manifest_obj()
+    now = datetime.now(timezone.utc)
+    expired = _make_deviation(
+        issued_at=(now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        expires_at=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
+    )
+    with pytest.raises(ManifestError, match="expired"):
+        add_deviation(manifest, expired)
+    missing = dict(_make_deviation())
+    del missing["chain_digest"]
+    with pytest.raises(ManifestError, match="chain_digest"):
+        add_deviation(manifest, missing)
+    assert manifest.deviations == []
+
+
 # ── attestation ─────────────────────────────────────────────────────────────
 
 
@@ -393,6 +653,192 @@ def test_bootstrap_manifest_empty_pointer_raises(tmp_path: Path) -> None:
     pointer.write_text("# nothing here\n", encoding="utf-8")
     with pytest.raises(ManifestError, match="no manifest path"):
         bootstrap_manifest(pointer)
+
+
+# ── compatibility_only pointer (G2 correction 1) ───────────────────────────
+
+
+def _compatibility_pointer(path: Path) -> Path:
+    """A full manifest JSON additionally marked ``compatibility_only: true`` —
+    the exact shape arnold-runtime-create writes as compatibility telemetry."""
+    payload = dict(_make_manifest(runtime_id="telemetry-pointer"))
+    payload[COMPATIBILITY_ONLY_KEY] = True
+    _write_json(path, payload)
+    return path
+
+
+def test_is_compatibility_only_pointer_detects_marker(tmp_path: Path) -> None:
+    pointer = _compatibility_pointer(tmp_path / "pointer.json")
+    assert is_compatibility_only_pointer(pointer) is True
+    # a plain valid manifest (no marker) is NOT compatibility telemetry
+    real = tmp_path / "real.json"
+    write_manifest(_make_manifest_obj(), real)
+    assert is_compatibility_only_pointer(real) is False
+    # absent / non-JSON files are not compatibility pointers (they fail on
+    # their own as absent/invalid)
+    assert is_compatibility_only_pointer(tmp_path / "missing.json") is False
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{not json", encoding="utf-8")
+    assert is_compatibility_only_pointer(corrupt) is False
+    # marker must be the literal boolean true
+    falsy = tmp_path / "falsy.json"
+    _write_json(falsy, {**dict(_make_manifest()), COMPATIBILITY_ONLY_KEY: "true"})
+    assert is_compatibility_only_pointer(falsy) is False
+
+
+def test_bootstrap_manifest_rejects_compatibility_only_pointer(
+    tmp_path: Path,
+) -> None:
+    """A compatibility_only pointer is NON-AUTHORITATIVE: the resolver treats
+    it as ABSENT (raises) so it can never select a runtime."""
+    pointer = _compatibility_pointer(tmp_path / "runtime-manifest.json")
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(pointer)
+    # same rejection through a directory bootstrap (canonical filename)
+    directory = tmp_path / "manifest-dir"
+    _compatibility_pointer(directory / MANIFEST_FILENAME)
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(directory)
+    # same rejection through a legacy pointer file naming the marked target
+    legacy = tmp_path / "bootstrap"
+    legacy.write_text(f"{pointer}\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(legacy)
+
+
+def test_manifest_present_treats_compatibility_only_as_absent(
+    tmp_path: Path,
+) -> None:
+    """Admission probe: present+valid+authoritative is True; everything else
+    (missing, corrupt, schema-invalid, or a compatibility_only pointer) is
+    ABSENT (False)."""
+    real = tmp_path / "real.json"
+    write_manifest(_make_manifest_obj(), real)
+    assert manifest_present(real) is True
+    assert manifest_present(tmp_path / "missing.json") is False
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{not json", encoding="utf-8")
+    assert manifest_present(corrupt) is False
+    invalid = tmp_path / "invalid.json"
+    _write_json(invalid, _make_manifest(schema="99"))
+    assert manifest_present(invalid) is False
+    pointer = _compatibility_pointer(tmp_path / "pointer.json")
+    assert manifest_present(pointer) is False
+
+
+# ── compatibility_only as a preserved manifest field (G2 second re-run) ──────
+
+
+def test_from_dict_defaults_compatibility_only_false() -> None:
+    """Old manifests (schema "1", no marker) load with compatibility_only False
+    — authoritative; only the explicit boolean True demotes a pointer."""
+    manifest = _make_manifest_obj()
+    assert manifest.compatibility_only is False
+    assert COMPATIBILITY_ONLY_KEY not in _make_manifest()
+    loaded = RuntimeManifest.from_dict(
+        dict(_make_manifest(), compatibility_only=True)
+    )
+    assert loaded.compatibility_only is True
+
+
+def test_manifest_rejects_non_bool_compatibility_only() -> None:
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        _make_manifest_obj(compatibility_only="true")
+
+
+def test_to_dict_round_trip_preserves_compatibility_only() -> None:
+    marked = _make_manifest_obj(compatibility_only=True)
+    payload = marked.to_dict()
+    assert payload[COMPATIBILITY_ONLY_KEY] is True
+    # serialized JSON round trip (the write_manifest path) keeps the marker
+    round_tripped = RuntimeManifest.from_dict(json.loads(json.dumps(payload)))
+    assert round_tripped.compatibility_only is True
+    assert round_tripped.to_dict()[COMPATIBILITY_ONLY_KEY] is True
+
+
+def test_write_active_pointer_carries_marker_and_demotion_is_durable(
+    tmp_path: Path,
+) -> None:
+    """The pointer is written with the marker as part of the manifest payload,
+    and once demoted it STAYS demoted across every subsequent pointer write —
+    a promote/close transition can never re-admit the global pointer."""
+    pointer = tmp_path / "pointer.json"
+    marked = _make_manifest_obj(generation=1, compatibility_only=True)
+    write_active_pointer(marked, pointer)
+    payload = json.loads(pointer.read_text())
+    assert payload[COMPATIBILITY_ONLY_KEY] is True
+    assert is_compatibility_only_pointer(pointer) is True
+    # the marker is a preserved field: the pointer reads back as a manifest
+    # (resolvers refuse it) and a generation switch keeps it demoted
+    assert load_manifest(pointer).compatibility_only is True
+    write_active_pointer(_make_manifest_obj(generation=2), pointer)
+    payload = json.loads(pointer.read_text())
+    assert payload[COMPATIBILITY_ONLY_KEY] is True
+    assert payload["generation"] == 2
+    assert is_compatibility_only_pointer(pointer) is True
+
+
+def test_generic_write_manifest_cannot_readmit_demoted_active_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G2 final fix: the generic write_manifest() path can target the active
+    pointer — an AUTHORITATIVE manifest (compatibility_only False/absent)
+    written over a demoted pointer must NOT re-admit it. The demotion
+    invariant lives in the lowest-level writer, so no writer can strip the
+    marker from the active pointer."""
+    pointer = tmp_path / "runtime-manifest.json"
+    _compatibility_pointer(pointer)  # demoted active pointer
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+    assert is_compatibility_only_pointer(pointer) is True
+
+    # the generic write path with a fully authoritative manifest payload
+    write_manifest(_make_manifest_obj(runtime_id="readmit-attempt"), pointer)
+
+    # the pointer still carries the marker in the WRITTEN payload …
+    assert is_compatibility_only_pointer(pointer) is True
+    payload = json.loads(pointer.read_text())
+    assert payload[COMPATIBILITY_ONLY_KEY] is True
+    assert payload["runtime_id"] == "readmit-attempt"  # content was written
+    # … the manifest reads back demoted, …
+    assert load_manifest(pointer).compatibility_only is True
+    # … admission treats it as ABSENT, …
+    assert manifest_present(pointer) is False
+    # … and bootstrap refuses to select a runtime from it.
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(active_manifest_path())
+
+
+def test_write_manifest_does_not_force_marker_on_per_slug_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the ACTIVE POINTER path is protected: a per-slug authoritative
+    manifest written to a DIFFERENT path is never forced to carry the
+    compatibility_only marker, even while the active pointer is demoted."""
+    pointer = tmp_path / "runtime-manifest.json"
+    _compatibility_pointer(pointer)  # demoted active pointer
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+
+    slug = tmp_path / "slugs" / "epic-demo" / "runtime-manifest.json"
+    write_manifest(_make_manifest_obj(runtime_id="per-slug"), slug)
+
+    # the per-slug manifest is authoritative — no marker was forced
+    assert is_compatibility_only_pointer(slug) is False
+    assert manifest_present(slug) is True
+    assert load_manifest(slug).compatibility_only is False
+    assert json.loads(slug.read_text()).get(COMPATIBILITY_ONLY_KEY, False) is False
+    # and the active pointer is untouched (still demoted)
+    assert is_compatibility_only_pointer(pointer) is True
+
+
+def test_reconstruct_preserves_compatibility_only() -> None:
+    """Every immutable transition (advance_generation / set_state) carries the
+    marker — promote and close cannot strip it from the pointer."""
+    marked = _make_manifest_obj(compatibility_only=True)
+    advanced = advance_generation(marked, "newsha001", reason="preserve marker")
+    assert advanced.compatibility_only is True
+    closed = set_state(advanced, "closed")
+    assert closed.compatibility_only is True
+    assert closed.to_dict()[COMPATIBILITY_ONLY_KEY] is True
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -612,3 +1058,52 @@ def test_cli_advance_generation_exits_2_on_missing_manifest(tmp_path: Path) -> N
         "r",
     )
     assert proc.returncode == 2
+
+
+def test_cli_add_deviation_round_trip_inline_and_file(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    env = _cli_env(tmp_path)
+    record = json.dumps(_make_deviation(id="cli-perm-1"))
+    proc = _run_cli(env, "add_deviation", str(path), record)
+    assert proc.returncode == 0, proc.stderr
+    manifest = load_manifest(path)
+    assert [d["id"] for d in manifest.deviations] == ["cli-perm-1"]
+    assert manifest.deviations[0]["kind"] == "allow_manifestless"
+    # @FILE form appends a second record
+    record_file = tmp_path / "deviation.json"
+    record_file.write_text(json.dumps(_make_deviation(id="cli-perm-2")), encoding="utf-8")
+    proc_file = _run_cli(env, "add_deviation", str(path), f"@{record_file}")
+    assert proc_file.returncode == 0, proc_file.stderr
+    assert [d["id"] for d in load_manifest(path).deviations] == [
+        "cli-perm-1",
+        "cli-perm-2",
+    ]
+    # the manifest with deviations survives a re-read round trip
+    assert _run_cli(env, "read", str(path)).returncode == 0
+    read_out = json.loads(_run_cli(env, "read", str(path)).stdout)
+    assert [d["id"] for d in read_out["deviations"]] == [
+        "cli-perm-1",
+        "cli-perm-2",
+    ]
+
+
+def test_cli_add_deviation_rejects_bad_record(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    env = _cli_env(tmp_path)
+    assert _run_cli(env, "add_deviation", str(path), "not-json").returncode == 2
+    missing_field = json.dumps(dict(_make_deviation(), reason=""))
+    assert _run_cli(env, "add_deviation", str(path), missing_field).returncode == 2
+    now = datetime.now(timezone.utc)
+    expired = json.dumps(
+        _make_deviation(
+            issued_at=(now - timedelta(hours=2)).isoformat(timespec="seconds"),
+            expires_at=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
+        )
+    )
+    assert _run_cli(env, "add_deviation", str(path), expired).returncode == 2
+    assert _run_cli(
+        env, "add_deviation", str(path), f"@{tmp_path / 'missing.json'}"
+    ).returncode == 2
+    assert load_manifest(path).deviations == []  # nothing was appended

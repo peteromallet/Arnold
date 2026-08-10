@@ -9,8 +9,10 @@ bash -n; everything else is asserted against the script text.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,12 +25,47 @@ REPAIR_LOOP = (
 _SKIP_ENV = {"ARNOLD_REPAIR_LOOP_SKIP_SELF_COPY": "1"}
 
 
+def _write_allow_manifestless_policy(tmp_path: Path) -> Path:
+    """A valid unexpired allow_manifestless permit sidecar.
+
+    These tests exercise the mode/dry-run seam, NOT admission: since the P1
+    admission kernel (G2 correction 3) the repair-loop entry gate requires a
+    valid permit for manifestless invocations, so every subprocess run pins
+    ``ARNOLD_RUNTIME_POLICY`` to a freshly-written sidecar.
+    """
+    now = datetime.now(timezone.utc)
+    policy = {
+        "permits": [
+            {
+                "kind": "allow_manifestless",
+                "id": "permit-mode-seam-1",
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(hours=1)).isoformat(),
+                "actor": "mode-seam-test",
+                "reason": "mode-seam dry-run harness (admission not under test)",
+                "evidence": ["mode-seam harness injects a valid permit"],
+                "chain_digest": "deadbeef" * 4,
+            }
+        ]
+    }
+    policy_path = tmp_path / ".runtime_policy.json"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+    return policy_path
+
+
+def _policy_env(tmp_path: Path) -> dict[str, str]:
+    env = {**os.environ, "TMPDIR": str(tmp_path)}
+    env["ARNOLD_RUNTIME_POLICY"] = str(_write_allow_manifestless_policy(tmp_path))
+    env.pop("ARNOLD_RUNTIME_MANIFEST", None)
+    return env
+
+
 def _script_text() -> str:
     return REPAIR_LOOP.read_text(encoding="utf-8")
 
 
 def _run_dry_run(tmp_path: Path, *extra_args: str, skip_self_copy: bool = True) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "TMPDIR": str(tmp_path)}
+    env = _policy_env(tmp_path)
     if skip_self_copy:
         env.update(_SKIP_ENV)
     return subprocess.run(
@@ -37,7 +74,7 @@ def _run_dry_run(tmp_path: Path, *extra_args: str, skip_self_copy: bool = True) 
         text=True,
         check=False,
         env=env,
-        timeout=60,
+        timeout=90,
     )
 
 
@@ -102,8 +139,7 @@ def test_proactive_dry_run_works_with_self_copy_snapshot(tmp_path: Path) -> None
     """The immutable-snapshot self-copy path must also reach the dry-run exit."""
     evidence = _approval_evidence(tmp_path)
     env = {
-        **os.environ,
-        "TMPDIR": str(tmp_path),
+        **_policy_env(tmp_path),
         "FIXER_REPLAY_APPROVED": "1",
         "FIXER_REPLAY_EVIDENCE_PATH": str(evidence),
     }
@@ -133,8 +169,7 @@ def test_select_mode_models_maps_proactive_to_flash(tmp_path: Path) -> None:
     # Proactive WITH replay approval evidence projects the Flash model set.
     evidence = _approval_evidence(tmp_path)
     env = {
-        **os.environ,
-        "TMPDIR": str(tmp_path),
+        **_policy_env(tmp_path),
         **_SKIP_ENV,
         "FIXER_REPLAY_APPROVED": "1",
         "FIXER_REPLAY_EVIDENCE_PATH": str(evidence),
@@ -164,8 +199,7 @@ def test_reactive_dry_run_warns_on_hot_env_model_overrides(tmp_path: Path) -> No
     """*_MODEL overrides are flagged (credentials-only hot-env) but reactive
     continues with a loud warning; the override never routes the models."""
     env = {
-        **os.environ,
-        "TMPDIR": str(tmp_path),
+        **_policy_env(tmp_path),
         **_SKIP_ENV,
         "CLOUD_WATCHDOG_REPAIR_OWNER_MODEL": "some:override-model",
     }
@@ -188,8 +222,7 @@ def test_proactive_dry_run_fails_closed_on_hot_env_model_overrides(
 ) -> None:
     evidence = _approval_evidence(tmp_path)
     env = {
-        **os.environ,
-        "TMPDIR": str(tmp_path),
+        **_policy_env(tmp_path),
         **_SKIP_ENV,
         "FIXER_REPLAY_APPROVED": "1",
         "FIXER_REPLAY_EVIDENCE_PATH": str(evidence),
@@ -215,7 +248,7 @@ def test_proactive_noop_guard_exists_in_script() -> None:
 
 
 def test_invalid_mode_rejected(tmp_path: Path) -> None:
-    env = {**os.environ, "TMPDIR": str(tmp_path), **_SKIP_ENV}
+    env = {**_policy_env(tmp_path), **_SKIP_ENV}
     result = subprocess.run(
         ["bash", str(REPAIR_LOOP), "--mode=bogus", "--dry-run", "s", "w", "r"],
         capture_output=True,

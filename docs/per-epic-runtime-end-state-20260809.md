@@ -343,3 +343,40 @@ these folded in):
      relocate repair-loop's python-bearing definitions after init.
    - Preserve the supplied baseline (972 passed / 20 failed) while correcting
      this failure classification.
+
+### G2 gate (2026-08-10): NO-GO → corrections committed as P1-fix before P2
+
+1. **The global pointer must never select a runtime.** `compatibility_only`
+   pointers are REJECTED by every resolver (bash lib `arnold_runtime_manifest_
+   authority` and `runtime_manifest.py` `active_manifest_path`/bootstrap treat
+   a `compatibility_only` pointer as ABSENT → permit check → block).
+   `arnold-runtime-create` stops verifying the pointer bootstraps the latest
+   epic (write is kept as compatibility telemetry only).
+2. **Unbound production launch BLOCKS.** `require_runtime_manifest_permit`
+   requires binding when `MEGAPLAN_TRUSTED_CONTAINER=1` (unbound →
+   `runtime_manifest_binding_required` block BEFORE `load_chain_state` /
+   `bind_execution_identity`); the inert path exists only for explicit local
+   dev (trusted-container unset). Behavioral test: unbound production launch
+   calls NEITHER load nor bind.
+3. **Leaf wrappers are independently gated.** `arnold-repair-loop`,
+   `arnold-kimi-goal-operator`, `arnold-meta-repair-loop` call
+   `arnold_runtime_manifest_authority` at entry (before ARNOLD_SRC selection /
+   manifest reads): present+invalid → 78; absent + no valid permit → 78.
+   Direct invocation fails closed, not via the expected parent.
+4. **Legacy selectors (ARNOLD_SRC / SYNC_BRANCH fallbacks) may remain only
+   behind a validated expiring manifestless permit** and must be ledgered in
+   P2; silent use is closed by #3.
+
+### G2 second re-run (2026-08-10): NO-GO → one remaining blocker
+
+Global-pointer demotion is not durable: `arnold-runtime-create` writes the
+pointer as authoritative first, then marks `compatibility_only` in a separate
+operation (crash/race window), and `write_active_pointer()` serializes via
+`manifest.to_dict()` which DROPS the unknown marker — so `advance_generation`
+(arnold-promote) and pointer `set_state` (arnold-close) permanently strip it,
+after which the resolver's default global path can admit the pointer and select
+a runtime. Fix: make `compatibility_only` an explicit, preserved manifest
+field (schema stays 1, optional, carried by every read/write transition incl.
+`_reconstruct`), write the pointer ONCE with the marker set (atomic), and add
+lifecycle tests proving the pointer remains non-authoritative across
+create → promote → close.

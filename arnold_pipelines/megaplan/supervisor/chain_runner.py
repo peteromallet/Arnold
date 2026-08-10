@@ -334,6 +334,11 @@ def run_chain(
     if anchor_requirement.warning:
         writer(f"[supervisor-chain] WARNING: {anchor_requirement.warning}\n")
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
+    # P1 admission gate: fires BEFORE any chain state load so a rejected
+    # admission never touches state or binds an execution identity. Manifest
+    # present+valid passes; a manifestless session passes only with a valid
+    # unexpired allow_manifestless permit; else block (CliError).
+    chain_spec.require_runtime_manifest_permit(spec_path)
     chain_state = chain_spec.load_chain_state(spec_path)
     env = resolve_execution_environment(
         root=root,

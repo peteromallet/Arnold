@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import stat
 import subprocess
+import uuid
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -39,6 +41,9 @@ from arnold_pipelines.megaplan._core.io import (
     now_utc,
     projection_snapshot_path,
     rebuild_projection_atomically,
+)
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    is_compatibility_only_pointer,
 )
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.profiles import (
@@ -2275,6 +2280,352 @@ def save_runtime_policy(spec_path: Path, overrides: dict[str, Any]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(overrides, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+# ── P1 admission kernel: expiring permit records + manifest gate ────────────
+#
+# Settled contract (2026-08-09, codex-approved): chain execution is
+# fail-closed against the runtime manifest. A session that binds a runtime
+# manifest (per-session, never the global pointer) must carry a present+valid
+# manifest; a manifestless session must carry a valid unexpired
+# ``allow_manifestless`` permit. Permits are expiring exception records with
+# the settled shape (``kind``, immutable ``id``, server-stamped
+# ``issued_at``, ``expires_at``, ``actor``, ``reason``, ``evidence``,
+# ``chain_digest``) validated against ``0 < expires_at - issued_at <= 24h``
+# and current-unexpired at admission. Revocation is an auditable ``revoked_at``
+# tombstone — never a silent delete. Expired records stay loadable; expiry
+# rejects admission/addition only.
+
+PERMIT_KIND_ALLOW_MANIFESTLESS = "allow_manifestless"
+PERMIT_MAX_LIFETIME = timedelta(hours=24)
+# The session binding env: the ONLY source of the manifest path for Python-side
+# admission. There is deliberately NO fallback to the global active pointer
+# (``/workspace/.megaplan/runtime-manifest.json``) — per-session admission must
+# never cross-select another runtime's manifest (G1 correction 1/2).
+RUNTIME_MANIFEST_BINDING_ENV = "ARNOLD_RUNTIME_MANIFEST"
+# Production-launch marker (G2 correction 2): ``MEGAPLAN_TRUSTED_CONTAINER=1``
+# marks a launch inside the trusted container, which REQUIRES a session-bound
+# runtime manifest. An unbound launch blocks (``runtime_manifest_binding_
+# required``) BEFORE any chain state load or execution-identity binding; the
+# inert no-binding path exists only for explicit local dev (trust env unset).
+TRUSTED_CONTAINER_ENV = "MEGAPLAN_TRUSTED_CONTAINER"
+# Explicit sidecar override honored by BOTH the box-side bash helper and the
+# Python gate so they always see the same permit record.
+RUNTIME_POLICY_BINDING_ENV = "ARNOLD_RUNTIME_POLICY"
+
+
+def runtime_policy_sidecar_path(spec_path: Path) -> Path:
+    """The permit sidecar path (``.runtime_policy.json``) for a chain session.
+
+    Resolution order mirrors the box-side helper exactly, so the bash and
+    Python gates read the SAME permit record:
+
+    1. ``ARNOLD_RUNTIME_POLICY`` when set (explicit override on both sides);
+    2. the session manifest's directory (``dirname(ARNOLD_RUNTIME_MANIFEST)``)
+       when a session manifest is bound — the box-side default;
+    3. the per-spec sidecar beside chain state (legacy/local, no session
+       binding) — preserves the existing local override machinery.
+    """
+    explicit = os.environ.get(RUNTIME_POLICY_BINDING_ENV, "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    manifest = session_runtime_manifest_path()
+    if manifest is not None:
+        return manifest.parent / ".runtime_policy.json"
+    return _runtime_policy_path_for(spec_path)
+
+
+def _load_permit_sidecar(spec_path: Path) -> dict[str, Any]:
+    """Read the session sidecar object (``{}`` when absent or unreadable)."""
+    path = runtime_policy_sidecar_path(spec_path)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def _save_permit_sidecar(spec_path: Path, policy: dict[str, Any]) -> None:
+    """Atomically persist the session sidecar."""
+    path = runtime_policy_sidecar_path(spec_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def chain_spec_sha256(spec_path: Path) -> str:
+    """Content digest of the chain spec file, ``sha256:<hex>``."""
+    return "sha256:" + hashlib.sha256(spec_path.read_bytes()).hexdigest()
+
+
+def _validate_permit_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Validate a permit record against the settled contract via the shared
+    resolver (one validator for both the runtime-manifest ``deviations[]`` and
+    the sidecar ``permits[]``). Raises :class:`CliError` on rejection."""
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+            validate_deviation,
+        )
+    except ImportError as exc:  # pragma: no cover - guarded import
+        raise CliError(
+            "invalid_permit",
+            f"shared deviation validator unavailable: {exc}",
+        ) from exc
+    try:
+        return validate_deviation(record)
+    except ValueError as exc:
+        raise CliError("invalid_permit", str(exc)) from exc
+
+
+def _load_runtime_permit_records(spec_path: Path) -> list[dict[str, Any]]:
+    """The session sidecar's append-only ``permits`` list (default ``[]``)."""
+    policy = _load_permit_sidecar(spec_path)
+    records = policy.get("permits")
+    if records is None:
+        return []
+    if not isinstance(records, list) or not all(
+        isinstance(record, dict) for record in records
+    ):
+        raise CliError(
+            "invalid_permit",
+            "runtime policy sidecar `permits` must be a list of objects",
+        )
+    return records
+
+
+def _save_runtime_permit_records(
+    spec_path: Path, records: list[dict[str, Any]]
+) -> None:
+    """Persist the ``permits`` list, preserving every other sidecar key."""
+    policy = _load_permit_sidecar(spec_path)
+    policy["permits"] = records
+    _save_permit_sidecar(spec_path, policy)
+
+
+def issue_allow_manifestless_permit(
+    spec_path: Path,
+    *,
+    reason: str,
+    expires_at: str,
+    actor: str,
+    evidence: list[str] | None = None,
+    issued_at: str | None = None,
+) -> dict[str, Any]:
+    """Issue a new validated ``allow_manifestless`` permit into the sidecar.
+
+    The record is server-stamped (``issued_at`` = UTC now unless injected for
+    tests), gets a fresh immutable ``id``, carries the chain spec digest, and
+    is validated against the settled permit contract (non-empty fields, UTC
+    ISO8601 timestamps, ``0 < expires_at - issued_at <= 24h``,
+    current-unexpired) BEFORE the sidecar write. Records are APPENDED to an
+    auditable ``permits`` list — the active permit is the latest
+    ``allow_manifestless`` record that is unrevoked, valid, and unexpired.
+    Returns the written record.
+    """
+    if not reason or not str(reason).strip():
+        raise CliError("invalid_permit", "permit `reason` must be a non-empty string")
+    if not actor or not str(actor).strip():
+        raise CliError("invalid_permit", "permit `actor` must be a non-empty string")
+    if not expires_at or not str(expires_at).strip():
+        raise CliError(
+            "invalid_permit",
+            "permit `expires_at` must be a non-empty ISO8601 timestamp",
+        )
+    record: dict[str, Any] = {
+        "kind": PERMIT_KIND_ALLOW_MANIFESTLESS,
+        "id": uuid.uuid4().hex,
+        "issued_at": issued_at or now_utc(),
+        "expires_at": expires_at,
+        "actor": actor,
+        "reason": reason,
+        "evidence": list(evidence or []),
+        "chain_digest": chain_spec_sha256(spec_path),
+    }
+    _validate_permit_record(record)
+    records = _load_runtime_permit_records(spec_path)
+    records.append(record)
+    _save_runtime_permit_records(spec_path, records)
+    return record
+
+
+def _active_allow_manifestless_index(
+    records: list[dict[str, Any]],
+) -> int | None:
+    """Index of the ACTIVE permit, or None.
+
+    The active permit is the LATEST ``allow_manifestless`` record; it is
+    active only while unrevoked, structurally valid, and unexpired. A revoked
+    or expired latest record never resurrects an earlier one (fail-closed).
+    """
+    latest: int | None = None
+    for index, record in enumerate(records):
+        if record.get("kind") == PERMIT_KIND_ALLOW_MANIFESTLESS:
+            latest = index
+    if latest is None:
+        return None
+    record = records[latest]
+    if record.get("revoked_at"):
+        return None
+    try:
+        _validate_permit_record(record)
+    except CliError:
+        return None
+    return latest
+
+
+def revoke_allow_manifestless_permit(
+    spec_path: Path, *, revoked_at: str | None = None
+) -> dict[str, Any] | None:
+    """Tombstone the active ``allow_manifestless`` permit (auditable revoke).
+
+    Stamps ``revoked_at`` (UTC now unless injected for tests) on the active
+    record and writes the sidecar; the record is NEVER deleted. Returns the
+    tombstoned record, or None when there is no active permit to revoke.
+    """
+    records = _load_runtime_permit_records(spec_path)
+    index = _active_allow_manifestless_index(records)
+    if index is None:
+        return None
+    tombstoned = {**records[index], "revoked_at": revoked_at or now_utc()}
+    records[index] = tombstoned
+    _save_runtime_permit_records(spec_path, records)
+    return tombstoned
+
+
+def active_allow_manifestless_permit(spec_path: Path) -> dict[str, Any] | None:
+    """The active (unrevoked, valid, unexpired) permit record, or None."""
+    records = _load_runtime_permit_records(spec_path)
+    index = _active_allow_manifestless_index(records)
+    if index is None:
+        return None
+    return records[index]
+
+
+def has_valid_allow_manifestless_permit(spec_path: Path) -> bool:
+    """True iff the sidecar holds a currently valid ``allow_manifestless`` permit."""
+    return active_allow_manifestless_permit(spec_path) is not None
+
+
+def session_runtime_manifest_path() -> Path | None:
+    """The session-bound runtime manifest path, or None when nothing is bound.
+
+    The binding is MANDATORY and explicit: only ``ARNOLD_RUNTIME_MANIFEST``
+    (set per launch/session by the cloud dispatch path) is consulted. There is
+    deliberately NO fallback to the global active pointer
+    (``/workspace/.megaplan/runtime-manifest.json``) — per-session admission
+    must never cross-select another runtime's manifest.
+    """
+    raw = os.environ.get(RUNTIME_MANIFEST_BINDING_ENV, "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def _trusted_container() -> bool:
+    """True when this launch runs inside the trusted container.
+
+    ``MEGAPLAN_TRUSTED_CONTAINER=1`` marks production launches (G2 correction
+    2). Exact ``"1"`` match — identical to the cloud binding default in
+    ``execution_binding.py`` so the two P1 gates always agree on the box.
+    """
+    return os.environ.get(TRUSTED_CONTAINER_ENV) == "1"
+
+
+def _require_valid_allow_manifestless_permit(spec_path: Path) -> None:
+    """Manifestless admission: pass only with a valid unexpired permit.
+
+    Called when the bound manifest is ABSENT on disk or is a
+    ``compatibility_only`` pointer (treated as absent, G2 correction 1) —
+    either way no runtime is selectable, so the expiring ``allow_manifestless``
+    permit on the ``.runtime_policy.json`` sidecar is the only admission path;
+    else block (CliError, mirroring the box-side ``exit 78``).
+    """
+    if has_valid_allow_manifestless_permit(spec_path):
+        return
+    raise CliError(
+        "runtime_manifest_permit_required",
+        "chain runtime admission denied: no runtime manifest is bound and no "
+        "valid unexpired allow_manifestless permit is on record. Bind a "
+        "runtime manifest for this session or grant a permit with `megaplan "
+        "chain override --allow-manifestless --reason R --expires-at T "
+        "--actor A`.",
+    )
+
+
+def require_runtime_manifest_permit(spec_path: Path) -> None:
+    """Fail-closed chain admission gate; fires BEFORE any chain state load.
+
+    Enforcement is in force exactly when a session manifest path is bound
+    (``ARNOLD_RUNTIME_MANIFEST``, set per launch/session by the cloud dispatch
+    path) OR when the launch runs inside the trusted container
+    (``MEGAPLAN_TRUSTED_CONTAINER=1``). The box-side
+    ``arnold_runtime_manifest_authority`` helper applies the same rule to
+    wrapper-level admission.
+
+    Rule:
+    - No session binding => no runtime regime is in force (legacy local
+      operation) UNLESS ``MEGAPLAN_TRUSTED_CONTAINER=1``, in which case the
+      launch BLOCKS (``runtime_manifest_binding_required``) BEFORE any chain
+      state load or execution-identity binding — production launches REQUIRE a
+      session-bound manifest. The inert path exists only for explicit local
+      dev (trusted-container unset).
+    - A session-bound manifest that is present AND valid AND authoritative
+      (never a ``compatibility_only`` pointer) => pass.
+    - A ``compatibility_only`` pointer at the bound path is NON-AUTHORITATIVE
+      telemetry — treated as ABSENT for admission (G2 correction 1): the
+      permit check applies.
+    - A present-but-invalid bound manifest => block (CliError). The permit
+      only ever authorizes MANIFESTLESS operation — it never rescues a broken
+      manifest (fail-closed, mirroring the box-side ``exit 78`` authority).
+    - A bound manifest that is absent on disk => manifestless: pass only with
+      a valid unexpired ``allow_manifestless`` permit on the
+      ``.runtime_policy.json`` sidecar; else block.
+
+    The bound manifest path is the ONLY manifest source — there is never a
+    fallback to the global active pointer (``/workspace/.megaplan/
+    runtime-manifest.json``).
+    """
+    manifest_path = session_runtime_manifest_path()
+    if manifest_path is None:
+        if _trusted_container():
+            raise CliError(
+                "runtime_manifest_binding_required",
+                "chain runtime admission denied: MEGAPLAN_TRUSTED_CONTAINER=1 "
+                "requires a session-bound runtime manifest "
+                "(ARNOLD_RUNTIME_MANIFEST); refusing to start an unbound "
+                "production launch before any state load or identity binding.",
+            )
+        return
+    if not manifest_path.exists():
+        _require_valid_allow_manifestless_permit(spec_path)
+        return
+    if is_compatibility_only_pointer(manifest_path):
+        # Non-authoritative compatibility telemetry: treated as ABSENT for
+        # admission (G2 correction 1) — the permit check applies.
+        _require_valid_allow_manifestless_permit(spec_path)
+        return
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+            load_manifest,
+        )
+    except ImportError as exc:  # pragma: no cover - guarded import
+        raise CliError(
+            "runtime_manifest_invalid",
+            f"shared runtime-manifest resolver unavailable: {exc}",
+        ) from exc
+    try:
+        load_manifest(manifest_path)
+    except (OSError, ValueError) as exc:
+        raise CliError(
+            "runtime_manifest_invalid",
+            "chain runtime admission denied: bound runtime manifest is "
+            f"invalid: {exc}",
+        ) from exc
 
 
 def effective_chain_policy(

@@ -98,6 +98,14 @@ if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
     --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
 fi
 arnold_supervisor_runtime_init meta-repair-loop "$ARNOLD_SRC" || exit $?
+# P1 admission authority (G2 correction 3): the shared lib gate is the SOLE
+# manifest resolver for wrapper entry — a present-but-invalid manifest exits
+# 78, and an absent manifest (including the compatibility_only global
+# pointer, which is treated as ABSENT) is admitted only by a valid unexpired
+# allow_manifestless permit.  Direct invocation therefore fails closed, not
+# via the expected parent.  Runs BEFORE any manifest field read or ARNOLD_SRC
+# use below.
+arnold_runtime_manifest_authority meta-repair-loop
 LAUNCHER="${MEGAPLAN_META_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 export LAUNCHER SUBAGENT_SKILL
@@ -115,28 +123,11 @@ META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
 # Fixer-unification: prefer the per-epic runtime manifest's declared epic
 # branch so meta-repair commits target the runtime's own branch; the legacy
 # env/default chain applies to manifest-less runtimes only.
-_MANIFEST_EPIC_BRANCH="$(PYTHONPATH="${ARNOLD_SRC:-/workspace/arnold}:${PYTHONPATH:-}" python3 - "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}" <<'PY' 2>/dev/null || true
-import json, pathlib, sys
-try:
-    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-    epic = payload.get("epic") if isinstance(payload, dict) else {}
-    value = epic.get("branch") if isinstance(epic, dict) else None
-    if isinstance(value, str) and value:
-        print(value)
-except Exception:
-    pass
-PY
-)"
+_MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
 if [[ -n "$_MANIFEST_EPIC_BRANCH" ]]; then
   SYNC_BRANCH="$_MANIFEST_EPIC_BRANCH"
 else
   SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
-fi
-# Fail-closed manifest authority (codex review fix #3): a present manifest
-# without an epic branch must not silently fall back to the shared branch.
-if [[ -f "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}" && -z "$_MANIFEST_EPIC_BRANCH" ]]; then
-  echo "arnold-meta-repair-loop: runtime manifest present without epic.branch; failing closed" >&2
-  exit 78
 fi
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
