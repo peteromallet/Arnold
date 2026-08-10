@@ -321,3 +321,25 @@ these folded in):
    `bind_execution_identity`; the supervisor binding path is aligned.
 5. **Baseline must be reported.** Baseline focused pytest counts (per file
    chunk) must accompany the gate re-run.
+
+### G1 second re-run (2026-08-10): NO-GO → two further amendments
+
+1. **Session-manifest binding must have NO global-pointer fallback.** Per-session
+   binding closes cross-selection only if the bound manifest path is MANDATORY
+   and the shared resolver has no fallback to
+   `/workspace/.megaplan/runtime-manifest.json`. `arnold-runtime-create` must
+   either STOP updating the global active pointer or explicitly demote it to
+   non-authoritative compatibility state — with tests proving admission,
+   dispatch, and watchdog NEVER consult it.
+2. **Python-before-init classification corrected (the earlier note was wrong).**
+   - `arnold-kimi-goal-operator`: manifest-read heredoc runs before ANY runtime
+     init — genuine violation; add Kimi to the runtime-order regression suite.
+   - `arnold-meta-repair-loop`: inits at ~line 100, reads manifest at ~118 —
+     AFTER init; NOT a violation.
+   - The named failing test covers watchdog/repair-loop/meta/progress-auditor
+     and fails on **arnold-repair-loop** because python-bearing FUNCTION
+     DEFINITIONS appear textually before the init call (though only invoked
+     after). Fix: make the test prove EXECUTION ordering, or deliberately
+     relocate repair-loop's python-bearing definitions after init.
+   - Preserve the supplied baseline (972 passed / 20 failed) while correcting
+     this failure classification.
