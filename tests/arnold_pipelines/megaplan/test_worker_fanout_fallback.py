@@ -293,8 +293,10 @@ def test_scatter_worker_unit_passes_subprocess_wbc_dispatch(monkeypatch, tmp_pat
     spec = captured["wbc_dispatch"]
     assert spec is not None
     assert spec.writer_id == "megaplan.worker_dispatch.subprocess"
+    # The dispatch key (unit output path) suffixes the WBC source identity so
+    # parallel fanout units of the same phase/spec/attempt stay distinct.
     assert spec.expected_source_version.endswith(
-        ":subprocess:review:claude:claude-sonnet-4-6:high:1"
+        ":subprocess:review:claude:claude-sonnet-4-6:high:1:out.json"
     )
 
 
