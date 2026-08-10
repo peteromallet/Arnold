@@ -105,3 +105,101 @@ model implementation, and generation-level CAS/fencing for promotion.
 - Deliberately masked: watchdog-ensure / progress-audit / resident-ensure
   timers (zero-authority design); the fenced `liveness_unknown` session cohort
   and the stale `vj24-migration` worker are parked fail-closed, not repaired.
+
+## The systemic problem this feeds into (2026-08-09, codex + 12-slice swarm)
+
+Every safety mechanism is undermined the same way: **deviations are cheap,
+silent, and unrecorded** — absence = allow, fallback = silence, override = no
+memory. ~200 instances mapped across 12 slices. Headlines:
+
+- **SHADOW_PASS**: the production action gate (`custody/action_validator.py`)
+  defaults `ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=0` — runs every check,
+  passes anyway. A parallel dead gate exists (`custody/action_gate.py`).
+- **Attestation opt-in**: `MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED` defaults 0;
+  the box's env files conflict (0 vs 1).
+- **Env-var zoo**: 6 runtime selectors + 3 SYNC_BRANCH vars + ~45 resident
+  vars + ~12 feature flags + a generic `config_resolver` env layer +
+  `.cloud-hot-env` (3 conflicting env files on the box).
+- **Duplication**: manifest reader re-implemented 7 ways; ~30 twin modules
+  across `arnold` vs `arnold_pipelines`; wrappers copied ~40x; 5 hardcoded
+  expected_head SHAs; the active scheduler pins a local-only commit.
+- **Recurrence**: 31 problems / 29 open; stale_active_step ×53; "nothing
+  expires" codified in research/m9-compatibility-expiry-map.md.
+- **13 tests bless the fallbacks**; 3 of 4 new enforcement gates have only
+  text-presence tests.
+
+Strategy (codex): exceptions as declared expiring permits, fallbacks as typed
+state transitions, one config source, deny-by-default, watcher verifies
+absence. Refined to **four primitives**: (1) one manifest admission path,
+(2) one typed deviation/fallback event path, (3) deny-by-default gates,
+(4) expiring exception records.
+
+## Implementation plan (codex-refined; one commit per phase, oracle gates between)
+
+| Phase | Deliverable | Key files |
+|---|---|---|
+| P1 Admission kernel | `deviations[]` + expiry in manifest; `chain override --allow-manifestless --reason --expires-at --actor --evidence` (24h max, `.runtime_policy.json` sidecar); consolidate 7 manifest readers onto the lib; absent manifest blocks unless permit | `cloud/runtime_manifest.py`, `chain/spec.py`, `chain/__init__.py`, `arnold-supervisor-runtime-lib`, 6 wrappers, `resident/scheduler.py` |
+| P2 Typed transitions | 5 ledger events emitted before dispatch (`manifest_selected`, `deviation_declared`, `fallback_considered/taken/rejected`); write-failure blocks dispatch; watchdog/auditor flag absence | `incident/ledger.py`, `cloud/watchdog.py`, `cloud/six_hour_auditor.py` |
+| P3 Default deny | Enforcement + attestation default on; SHADOW_PASS never authorizes | `custody/action_validator.py`, `controlled_writer_registry.py`, `canary.py`, `compatibility.py`, `runtime_attestation.py` |
+| P4 Config cleanup | `.cloud-hot-env` credentials-only; delete 6 selectors + 3 SYNC_BRANCH vars + baked pins; delete `_core/config_resolver.py` | `cloud_hot_upload.py`, `entrypoint.sh.tmpl`, `_core/io.py`, `feature_flags.py` |
+| P5 Deletion + deploy | Delete dead `action_gate.py` + tests; deploy manifest-based scheduler `-r7` to box; masked/duplicate units = blocking | `custody/action_gate.py`, 5 adapters, box `/usr/local/bin` |
+| **P6 Reconcile milestone** | **End-of-epic reconciliation as a default megaplan stage (below)** | `chain/spec.py`, `chain/reconcile.py`, `chain/git_ops.py`, `managed_agent.py`, `arnold-close/gc-sweep` |
+
+**Oracle gates** (codex check-ins; pause, present diff+test+grep evidence, one
+question each): G1 before any edit (baseline + fallback inventory);
+G2 P1→P2 (manifest-only selection proven); G3 P2→P3 (ledger failure blocks
+dispatch); G4 P4→P5 (nothing can authorize without attestation); G5 final
+(deletion safe + one unmasked scheduler path); **G6 before P6 default-on
+rollout** (product/no-op fixtures, merge AND reject reach close, idempotent).
+
+**Do NOT build:** heartbeat leases, fencing epochs, quarantine workers, new
+event bus/db, generalized permit engine, watcher as action authority.
+
+## P6 — end-of-epic reconcile milestone (default ON, part of the megaplan process)
+
+Reconciliation is a **generated final `kind: reconcile` milestone** in the
+chain, not a side hook. `ChainSpec.reconciliation.enabled` defaults `true`
+(initiative opt-out = `false`); `scaffold_epic()` appends:
+
+```yaml
+- label: reconcile
+  kind: reconcile
+  idea: briefs/reconcile.md
+  branch: reconcile/<epic>-<date>
+  target_branch: main
+  merge_policy: review          # forced even if chain is auto
+  phase_model: [execute=codex]
+  depends_on: [<previous-terminal-milestone>]
+```
+
+- Legacy chains: idempotent `ensure_reconcile_milestone()` before execution
+  identity binding; date/branch persisted, not recomputed.
+- **Execute** = `automatic_reconcile` managed-agent run (Codex), given the two
+  rubric docs + `git log --first-parent` + candidate commits; outputs **JSON of
+  selected commit SHAs** (selection, not narrative — the per-phase commit
+  history IS the description). Controller validates reachability, excludes
+  chain-control commits, cherry-picks onto `reconcile/<epic>-<date>` from
+  `main`; conflicts fail closed.
+- **Skip** = controller-computed `compute_reconcile_scope()` (engine-source
+  allowlist − promotion-ledger evidence; uncertainty ⇒ PR required). No-op
+  still writes `reconcile-verification.json` accepted by the completion guard.
+- **PR** = `_ensure_reconcile_pr()` (base `main`); completion guard validates
+  against the recorded target. Merged → delete PR branch; **rejected → delete
+  PR branch, record per on_failure, proceed to close** (history preserves
+  everything; no ticket ceremony). Operator DM via `completion_delivery`.
+- **Close/GC** = idempotent terminal finalizer: `arnold-close` (backstop tag
+  `box-snapshot/<epic>-<date>`, `state=closed`) → `arnold-gc-sweep
+  --restore-proven` (worktree/venv + manifest-declared `fixer/<epic>-<date>`
+  branch local+remote).
+
+**Exploration checklist before P6** (all read-only): (1) `chain/spec.py`
+writers + `briefs.scaffold_epic()`; (2) `chain/__init__.py` binding +
+completion guard with a generated final milestone; (3) `chain/git_ops.py` gh
+auth + PR-to-main capability; (4) `workers/_impl.py`/`execute/batch.py`/
+`managed_agent.py` custom-execute path; (5) `runtime_manifest.py` +
+lifecycle tests (close ordering, restore proof); (6) resident
+`awaiting_pr_merge` DM behavior; (7) fixtures: promoted-only, product-change,
+cherry-pick conflict, merged/rejected PR, missing gh auth, interrupted
+cleanup. **Risks:** spec mutation after binding, base-vs-main completion
+checks, false no-op, cherry-pick conflicts, model-selecting chain-control
+commits, on_failure vs always-close, GC before restore proof.
