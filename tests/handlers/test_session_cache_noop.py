@@ -104,6 +104,53 @@ def test_revise_noop_detector_raises_cache_hit_suspected(
     assert error.extra["ticket"] == "01KRXNZZGRV17PHZRJ2Q56SPS3"
 
 
+def test_revise_identical_allowed_when_no_flags_exist(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A byte-identical revision is legitimate when critique raised no flags.
+
+    With no actionable flags there is nothing to change; the harness records
+    the no-op revision instead of mis-firing the cache_hit_suspected guard
+    (which exists to catch session-cache replays when flags WERE raised).
+    """
+    make_args = plan_fixture.make_args
+    handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_gate(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    # Critique raised flags; erase them so revise has nothing actionable.
+    from arnold_pipelines.megaplan._core import save_flag_registry
+    save_flag_registry(plan_fixture.plan_dir, {"flags": []})
+
+    state = load_state(plan_fixture.plan_dir)
+    identical_plan = (
+        _build_mock_payload("revise", state, plan_fixture.plan_dir)["plan"].rstrip()
+        + "\n"
+    )
+
+    def fake_run_step_with_worker(
+        step: str,
+        state: dict,
+        plan_dir: Path,
+        args: argparse.Namespace,
+        **kwargs: object,
+    ):
+        assert step == "revise"
+        return _worker_with_plan(state, plan_dir, identical_plan, "revise-session-noop"), "codex", "persistent", True
+
+    monkeypatch.setattr(workers, "run_step_with_worker", fake_run_step_with_worker)
+
+    _mark_for_revise(plan_fixture)
+    handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    plan_v2 = (plan_fixture.plan_dir / "plan_v2.md").read_text(encoding="utf-8")
+    assert plan_v2 == identical_plan
+    state = load_state(plan_fixture.plan_dir)
+    assert state["iteration"] == 2
+    assert state["current_state"] != "blocked"
+
+
 def test_revise_cost_sanity_guard_aborts(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,

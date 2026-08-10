@@ -1224,6 +1224,7 @@ def _write_plan_version(
     plan_text: str,
     meta_fields: dict[str, Any],
     plan_filename: str | None = None,
+    allow_identical: bool = False,
 ) -> tuple[str, str, dict[str, Any]]:
     plan_text = _normalize_plan_text(plan_text)
     # Verify the immutable predecessor chain before structural validation or
@@ -1255,6 +1256,7 @@ def _write_plan_version(
         is_primary_plan_artifact
         and isinstance(prior_version, dict)
         and prior_version.get("hash") == new_hash
+        and not allow_identical
     ):
         raise CliError(
             "cache_hit_suspected",

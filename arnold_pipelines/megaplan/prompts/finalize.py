@@ -141,6 +141,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           - `routing_group`: `""` unless independent tasks intentionally share context or overlapping writes; routing groups influence batching but grant no dependency authority
           - `write_set`: `{{ "paths": [...], "complete": true }}`, declaring every planned output path. Mutating tasks must name 1-5 unique paths; split larger write sets.
           - `narrow_tests`: `{{ "selectors": [...], "max_seconds": 120, "max_runs": 2 }}`. Use at most 3 changed-behavior selectors; use zero budgets for tasks that require no tests. Integration/full-suite checks belong to the harness.
+          - `narrow_tests.selectors` entries MUST be pytest node selectors (repository-relative paths, optionally with a `::test_name` suffix, e.g. `"tests/test_greeter.py"` or `"tests/test_greeter.py::test_greet"`). NEVER put a shell command (no `python -m pytest ...`, no `python -c ...`) in a selector; commands are not valid selectors and the validation job compiler rejects them at execute admission. The harness derives and runs the actual test commands from these paths.
           - `checkpoint`: for complexity 7-10, require `{{ "required": true, "max_interval_seconds": 300, "records": ["completed_subobjectives", "remaining_subobjectives", "output_hashes", "test_state"] }}`; for lower complexity use `{{ "required": false, "max_interval_seconds": 300, "records": [] }}`
           - `status`: always `"pending"` at finalize time
           - `executor_notes`: always `""` at finalize time

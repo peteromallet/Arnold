@@ -204,17 +204,32 @@ def _revise_retry_feedback(state: PlanState) -> str:
         if entry.get("result") != "error":
             return ""
         message = entry.get("message")
-        if not isinstance(message, str) or "structural validation" not in message:
+        if not isinstance(message, str):
             return ""
-        return textwrap.dedent(
-            f"""
-            PRIOR REVISE ATTEMPT FAILED STRUCTURAL VALIDATION:
-            {message}
-            Correct that exact failure in this retry. The `plan` field must contain
-            at least one concrete numbered step heading, for example:
-            `## Step 1: Implement and verify the scoped change`.
-            """
-        ).strip()
+        if "structural validation" in message:
+            return textwrap.dedent(
+                f"""
+                PRIOR REVISE ATTEMPT FAILED STRUCTURAL VALIDATION:
+                {message}
+                Correct that exact failure in this retry. The `plan` field must contain
+                at least one concrete numbered step heading, for example:
+                `## Step 1: Implement and verify the scoped change`.
+                """
+            ).strip()
+        if "cache_hit_suspected" in message or "byte-identical" in message:
+            return textwrap.dedent(
+                """
+                PRIOR REVISE ATTEMPT RETURNED THE PLAN BYTE-IDENTICAL TO THE
+                PREVIOUS PLAN VERSION (cache_hit_suspected):
+                The `plan` field you return MUST differ from the prior plan
+                version. If no critique flags were raised, still make at least a
+                minimal wording or structure refinement (for example a clearer
+                step heading, an explicit \"No critique flags were raised\" note
+                in the execution order, or a sharper success criterion) so the
+                new version is not byte-identical. Never echo the prior plan
+                unchanged.
+                """
+            ).strip()
     return ""
 
 
@@ -408,6 +423,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
           - `reason`: a concise explanation of what was changed or why the flag was rejected
           - `where`: a pointer to the plan section / files the change or claim points at (e.g., "Phase 2 — Step 3", "README.md §API")
         - Include `changes_summary` as a short plain-English summary of what changed in the revision. If there were no concrete flags, say that explicitly (for example: `No critique flags were raised; refined wording and kept the plan aligned for execution.`).
+        - The `plan` field MUST NOT be byte-identical to the current plan version. Even when no critique flags were raised, make at least a minimal wording or structure refinement (a clearer step heading, a sharper success criterion, or an explicit `No critique flags were raised` note) so the revised version is visibly a new revision. Returning the current plan verbatim fails the revision.
         - Preserve or improve success criteria quality. Each criterion must have a `priority` of `must`, `should`, or `info`. Promote or demote priorities if critique feedback reveals a criterion was over- or under-weighted.
         - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}}`.
         - For code-mode plans with any `run_tests` success criterion, include or preserve the model-owned `test_blast_radius` proposal in the structured output. Use this exact shape: `{{"strategy":"scoped","selectors":[{{"kind":"path","value":"tests/test_relevant.py","reason":"covers the changed surface"}}],"changed_surfaces":["src/relevant.py"],"full_suite_fallback":true,"rationale":"Why these tests cover the planned changes."}}`. Do not invent `confidence`, `always_run`, or `import_graph`; the harness derives those fields deterministically after validating the proposal.

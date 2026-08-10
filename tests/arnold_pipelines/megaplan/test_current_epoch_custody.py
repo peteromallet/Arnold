@@ -56,3 +56,40 @@ def test_revise_retry_feedback_surfaces_the_exact_structural_failure() -> None:
     assert "PRIOR REVISE ATTEMPT FAILED STRUCTURAL VALIDATION" in feedback
     assert "Plan must include at least one step section" in feedback
     assert "## Step 1:" in feedback
+
+
+def test_revise_retry_feedback_surfaces_byte_identical_cache_hit() -> None:
+    state = {
+        "history": [
+            {
+                "step": "revise",
+                "result": "error",
+                "message": (
+                    "revise produced byte-identical content to prior plan version "
+                    "- likely a session-cache replay. See ticket."
+                ),
+            }
+        ]
+    }
+
+    feedback = _revise_retry_feedback(state)  # type: ignore[arg-type]
+
+    assert "PRIOR REVISE ATTEMPT RETURNED THE PLAN BYTE-IDENTICAL" in feedback
+    assert "MUST differ" in feedback
+    assert "Never echo the prior plan" in feedback
+
+
+def test_revise_retry_feedback_ignores_unrelated_history() -> None:
+    state = {
+        "history": [
+            {
+                "step": "plan",
+                "result": "error",
+                "message": "plan failed",
+            }
+        ]
+    }
+
+    feedback = _revise_retry_feedback(state)  # type: ignore[arg-type]
+
+    assert feedback == ""

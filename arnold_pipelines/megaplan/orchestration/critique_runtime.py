@@ -1947,11 +1947,19 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         }
         if revise_blast_radius is not None:
             revise_meta_fields["test_blast_radius"] = revise_blast_radius
+        # A revision may legitimately be byte-identical to the prior plan only
+        # when critique raised NO flags at all (nothing actionable to change).
+        # When flags exist, byte-identical output remains a hard
+        # cache_hit_suspected failure: it means the model echoed the plan
+        # instead of addressing the flagged issues.
+        _flag_registry = load_flag_registry(plan_dir)
+        _had_actionable_flags = bool(_flag_registry.get("flags"))
         try:
             plan_filename, meta_filename, meta = _write_plan_version(
                 plan_dir=plan_dir, state=state, step="revise", version=version,
                 worker=worker, plan_filename=f"plan_v{version}.md", plan_text=plan_text,
                 meta_fields=revise_meta_fields,
+                allow_identical=not _had_actionable_flags,
             )
         except CliError as error:
             if error.code == "cache_hit_suspected":
