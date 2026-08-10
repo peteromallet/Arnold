@@ -21,7 +21,13 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _chain_anchor_uploads,
     _chain_launch_verification_command,
     _chain_project_root,
+    _chain_runtime_policy_upload,
+    _chain_runtime_probe_and_create_command,
+    _chain_runtime_provenance_payload,
     _chain_start_command,
+    _manifest_runtime_activate_command,
+    _parse_chain_runtime_binding,
+    _refresh_then_chain_start_command,
     _cloud_chains_command,
     _cloud_session_plan_state,
     _derive_chain_launch_context,
@@ -475,6 +481,203 @@ def test_isolated_chain_spec_enables_post_hot_env_runtime_gate() -> None:
     assert ". /workspace/.cloud-hot-env" in command
 
 
+# ── P1 producer routing: per-epic runtime creation + manifest binding ────────
+
+
+def _runtime_binding(**overrides: Any) -> dict[str, Any]:
+    binding = {
+        "manifest_path": "/workspace/.megaplan/demo-abc123.json",
+        "runtime_src": "/workspace/runtime-candidates/demo-abc123",
+        "runtime_revision": "a" * 40,
+        "runtime_id": "demo-abc123-20260810",
+        "slug": "demo-abc123",
+        "created": True,
+        "policy_path": None,
+    }
+    binding.update(overrides)
+    return binding
+
+
+def test_chain_runtime_probe_and_create_command_embeds_create_and_policy() -> None:
+    command = _chain_runtime_probe_and_create_command(
+        slug="demo-abc123",
+        manifest_path="/workspace/.megaplan/demo-abc123.json",
+        runtime_src="/workspace/runtime-candidates/demo-abc123",
+        manifest_dir="/workspace/.megaplan",
+        base_repo="/workspace/arnold",
+        base_ref="editible-install",
+        policy_path="/workspace/chain/.megaplan/plans/.chains/demo.runtime_policy.json",
+    )
+    # absent manifest → arnold-runtime-create ON THE BOX with the policy env
+    assert "arnold-runtime-create" in command
+    assert "export ARNOLD_RUNTIME_POLICY=/workspace/chain/.megaplan/plans/.chains/demo.runtime_policy.json" in command
+    assert "export ARNOLD_BASE_REPO=/workspace/arnold" in command
+    assert 'if [ -f "$MANIFEST" ]; then' in command
+    assert '"epic_id": payload.get("epic_id", "")' in command
+    # the launched chain binds THIS manifest (per-session, no global pointer)
+    assert "/workspace/.megaplan/demo-abc123.json" in command
+
+
+def test_chain_runtime_probe_and_create_command_omits_policy_without_sidecar() -> None:
+    command = _chain_runtime_probe_and_create_command(
+        slug="demo-abc123",
+        manifest_path="/workspace/.megaplan/demo-abc123.json",
+        runtime_src="/workspace/runtime-candidates/demo-abc123",
+        manifest_dir="/workspace/.megaplan",
+        base_repo="/workspace/arnold",
+        base_ref="editible-install",
+        policy_path=None,
+    )
+    assert "ARNOLD_RUNTIME_POLICY" not in command
+
+
+def test_chain_runtime_policy_upload_ships_existing_sidecar(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.chain.spec import _runtime_policy_path_for
+
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    sidecar = _runtime_policy_path_for(spec_path)
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text(
+        json.dumps({"permits": [{"kind": "allow_manifestless", "id": "perm-1"}]}),
+        encoding="utf-8",
+    )
+
+    uploads: list[tuple[Path, str]] = []
+
+    class CaptureProvider:
+        def upload_file(self, src: Path, dest: str) -> None:
+            uploads.append((src, dest))
+
+    remote = _chain_runtime_policy_upload(
+        spec_path,
+        workspace="/workspace/demo/app",
+        provider=CaptureProvider(),
+    )
+
+    # the sidecar travels to the box so arnold-runtime-create can stamp an
+    # allow_manifestless permit into the created manifest (P1 producer routing)
+    assert remote == f"/workspace/demo/app/.megaplan/plans/.chains/{sidecar.name}"
+    assert uploads == [(sidecar, remote)]
+
+
+def test_chain_runtime_policy_upload_skips_without_sidecar(tmp_path: Path) -> None:
+    spec_dir = tmp_path / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    uploads: list[tuple[Path, str]] = []
+
+    class CaptureProvider:
+        def upload_file(self, src: Path, dest: str) -> None:
+            uploads.append((src, dest))
+
+    remote = _chain_runtime_policy_upload(
+        spec_path,
+        workspace="/workspace/demo/app",
+        provider=CaptureProvider(),
+    )
+
+    assert remote is None
+    assert uploads == []
+
+
+def test_manifest_runtime_activate_command_exports_binding_env() -> None:
+    command = _manifest_runtime_activate_command(_runtime_binding())
+    # the launch env is bound to the created runtime's path (G1: no
+    # global-pointer fallback)
+    assert 'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"' in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$RUNTIME_SRC"' in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"' in command
+    assert 'export ARNOLD_RUNTIME_MANIFEST="$MANIFEST"' in command
+    assert "/workspace/runtime-candidates/demo-abc123" in command
+    # fail closed when the bound runtime disappeared
+    assert "exit 23" in command
+    assert "manifest-bound runtime worktree missing" in command
+
+
+def test_refresh_then_chain_start_command_uses_activate_when_bound() -> None:
+    command = _refresh_then_chain_start_command(
+        "/workspace/chain/.megaplan/initiatives/demo/chain.yaml",
+        spec=_cloud_spec(),
+        project_dir="/workspace/chain",
+        log_relative=".megaplan/cloud-chain.log",
+        runtime_binding=_runtime_binding(),
+    )
+    # manifest-bound runtime: the editable-install refresh is skipped
+    assert "activating manifest-bound runtime" in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+    assert "megaplan-refresh" not in command
+    assert "pip install -e" not in command
+    assert 'export ARNOLD_RUNTIME_MANIFEST="$MANIFEST"' in command
+
+
+def test_parse_chain_runtime_binding_accepts_binding_record() -> None:
+    payload = {
+        "present": True,
+        "created": 1,
+        "epic_id": "demo-abc123",
+        "runtime_id": "demo-abc123-20260810",
+        "runtime_src": "/workspace/runtime-candidates/demo-abc123",
+        "runtime_revision": "a" * 40,
+    }
+    result = subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+    binding = _parse_chain_runtime_binding(
+        result,
+        slug="demo-abc123",
+        default_runtime_src="/workspace/runtime-candidates/demo-abc123",
+    )
+    assert binding["runtime_revision"] == "a" * 40
+    assert binding["runtime_src"] == "/workspace/runtime-candidates/demo-abc123"
+    assert binding["created"] is True
+
+
+def test_parse_chain_runtime_binding_rejects_unreadable_output() -> None:
+    result = subprocess.CompletedProcess([], 0, "", "")
+    with pytest.raises(CliError) as excinfo:
+        _parse_chain_runtime_binding(
+            result,
+            slug="demo-abc123",
+            default_runtime_src="/workspace/runtime-candidates/demo-abc123",
+        )
+    assert excinfo.value.code == "chain_runtime_probe_unreadable"
+
+
+def test_parse_chain_runtime_binding_rejects_epic_mismatch() -> None:
+    payload = {
+        "present": True,
+        "epic_id": "other-epic",
+        "runtime_revision": "a" * 40,
+    }
+    result = subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+    with pytest.raises(CliError) as excinfo:
+        _parse_chain_runtime_binding(
+            result,
+            slug="demo-abc123",
+            default_runtime_src="/workspace/runtime-candidates/demo-abc123",
+        )
+    assert excinfo.value.code == "chain_runtime_epic_mismatch"
+
+
+def test_chain_runtime_provenance_payload_records_bound_manifest() -> None:
+    payload = _chain_runtime_provenance_payload(
+        _runtime_binding(created=True, policy_path="/workspace/chain/.megaplan/plans/.chains/demo.runtime_policy.json"),
+        policy_path="/workspace/chain/.megaplan/plans/.chains/demo.runtime_policy.json",
+    )
+    # launch provenance: the session marker records the exact manifest path
+    # this launch is bound to (G1 per-session binding)
+    assert payload["binding"] == "manifest_bound"
+    assert payload["path"] == "/workspace/.megaplan/demo-abc123.json"
+    assert payload["runtime_src"] == "/workspace/runtime-candidates/demo-abc123"
+    assert payload["expected_head"] == "a" * 40
+    assert payload["created_by_launch"] is True
+    assert payload["policy_path"].endswith("demo.runtime_policy.json")
+
+
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
     result = _phase_model_by_label_from_preflight(
         {
@@ -653,6 +856,22 @@ class _LaunchEpicProvider:
                 "plan_dirs": ["m1"],
             }
             return subprocess.CompletedProcess([], 0, json.dumps(result) + "\n", "")
+        if "ARNOLD_RUNTIME_MANIFEST_DIR" in command:
+            # P1 producer routing: the per-epic runtime probe/create command
+            # must return one JSON binding record (see
+            # _RUNTIME_MANIFEST_BINDING_READER). The test fakes a manifest
+            # already present on the box.
+            slug_match = re.search(r"SLUG='([^']+)'", command)
+            slug = slug_match.group(1) if slug_match else "demo"
+            binding = {
+                "present": True,
+                "created": 0,
+                "epic_id": slug,
+                "runtime_id": f"runtime-{slug}",
+                "runtime_src": f"/workspace/runtime-candidates/{slug}",
+                "runtime_revision": "a" * 40,
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(binding, sort_keys=True) + "\n", "")
         if "tmux new-session" in command or "session already running for this chain" in command:
             marker_path, marker_payload = _parse_marker_write(command)
             self.markers[marker_path] = marker_payload

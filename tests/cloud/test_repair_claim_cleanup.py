@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud import repair_requests
@@ -13,6 +14,37 @@ from tests.cloud.repair_identity_fixtures import repair_identity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+
+
+def _write_allow_manifestless_policy(tmp_path: Path) -> Path:
+    """A valid unexpired allow_manifestless permit sidecar.
+
+    This test exercises the repair-loop shutdown/claim-release path, not
+    admission: the P1 admission kernel (G2 correction 3) gates every wrapper
+    entry, so the direct invocation pins a valid permit.
+    """
+    now = datetime.now(timezone.utc)
+    policy_path = tmp_path / ".runtime_policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "permits": [
+                    {
+                        "kind": "allow_manifestless",
+                        "id": "permit-claim-cleanup-1",
+                        "issued_at": now.isoformat(),
+                        "expires_at": (now + timedelta(hours=1)).isoformat(),
+                        "actor": "claim-cleanup-test",
+                        "reason": "claim-release path harness (admission not under test)",
+                        "evidence": ["claim-cleanup harness injects a valid permit"],
+                        "chain_digest": "deadbeef" * 4,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return policy_path
 
 
 def _write_plan(plan_dir: Path) -> None:
@@ -161,6 +193,8 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
     env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
     env["TMPDIR"] = str(snapshot_dir)
+    env["ARNOLD_RUNTIME_POLICY"] = str(_write_allow_manifestless_policy(tmp_path))
+    env.pop("ARNOLD_RUNTIME_MANIFEST", None)
 
     proc = subprocess.Popen(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"],

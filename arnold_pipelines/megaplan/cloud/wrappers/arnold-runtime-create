@@ -22,12 +22,15 @@
 #      via the runtime_manifest CLI, falling back to direct JSON when the CLI
 #      is absent
 #   4. write the ACTIVE POINTER <manifest-dir>/runtime-manifest.json via
-#      write_active_pointer (the file AT the stable path IS the active
-#      generation — launchers bootstrap from it). SINGLE-WRITER RULE: one
-#      active pointer, one authoritative writer; this creation is the moment a
-#      slug BECOMES the active epic (arnold-promote switches the pointer on
-#      advancement, arnold-close on closing). The pointer write is verified
-#      end-to-end with bootstrap_manifest(pointer).
+#      write_active_pointer — COMPATIBILITY-ONLY since the P1 admission
+#      kernel: the per-epic manifest is authoritative and admission/dispatch/
+#      watchdog NEVER resolve through the pointer (G1 no-global-pointer
+#      fallback). The pointer is written ONCE, atomically, with
+#      'compatibility_only': true IN THE SAME PAYLOAD (G2 second re-run: the
+#      marker is a preserved manifest field, so no two-step write and no
+#      promote/close transition can strip it); it is never verified to
+#      bootstrap the epic (G2 correction 1 — bootstrap_manifest refuses it
+#      by design).
 #   5. print the manifest path + runtime_id
 #
 # Environment overrides (all optional; tests redirect the sandbox with these):
@@ -37,6 +40,11 @@
 #   ARNOLD_WORKSPACE_MARKERS    marker/lock state root                (default: $ARNOLD_BASE_DIR/markers)
 #   ARNOLD_RUNTIME_MANIFEST_DIR dir of per-epic runtime manifests     (default: $ARNOLD_BASE_DIR/.megaplan)
 #   ARNOLD_RUNTIME_MANIFEST     active-pointer path (bootstrap root)  (default: $ARNOLD_RUNTIME_MANIFEST_DIR/runtime-manifest.json)
+#   ARNOLD_RUNTIME_POLICY       per-chain runtime policy sidecar (.runtime_policy.json)
+#                               holding an optional allow_manifestless permit;
+#                               when present and valid it is stamped into
+#                               manifest deviations[0] (invalid/expired permit
+#                               = fail loud, deny-by-default; empty by default)
 #
 set -euo pipefail
 
@@ -140,11 +148,110 @@ fi
 MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX")"
 python3 - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" <<'PY'
 import json, os, sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 path, slug, branch, runtime_root, head, base_ref, stamp = sys.argv[1:8]
 owner = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# ── P1 admission kernel: allow_manifestless permit → manifest deviations[0] ──
+# The permit record contract (settled): {kind, id, issued_at, expires_at,
+# actor, reason, evidence[], chain_digest}, UTC ISO timestamps, duration
+# 0 < expires_at - issued_at <= 24h, current-unexpired. The sidecar
+# (ARNOLD_RUNTIME_POLICY) may hold the permit as a direct
+# {"allow_manifestless": {...}} object, inside a "permits"/"deviations" list,
+# or as the sidecar root. Absent env/file → deviations stay empty (default).
+# Present-but-invalid/expired permit → fail loud, deny-by-default: creation
+# must never proceed without recording the declared deviation.
+
+def _utc_parse(value, label):
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            f"arnold-runtime-create: permit {label} {value!r} is not a valid UTC ISO timestamp"
+        ) from exc
+
+
+def _allow_manifestless_candidates(raw):
+    if not isinstance(raw, dict):
+        raise SystemExit("arnold-runtime-create: runtime policy sidecar must be a JSON object")
+    candidates = []
+    direct = raw.get("allow_manifestless")
+    if isinstance(direct, dict):
+        candidates.append(direct)
+    for key in ("permits", "deviations"):
+        items = raw.get(key)
+        if isinstance(items, list):
+            candidates.extend(
+                item for item in items
+                if isinstance(item, dict) and item.get("kind") == "allow_manifestless"
+            )
+    if isinstance(raw.get("kind"), str) and raw.get("kind") == "allow_manifestless":
+        candidates.append(raw)
+    return candidates
+
+
+def _validate_permit(permit):
+    if not isinstance(permit, dict):
+        raise SystemExit("arnold-runtime-create: allow_manifestless permit must be an object")
+    if permit.get("kind") != "allow_manifestless":
+        raise SystemExit(
+            f"arnold-runtime-create: permit kind {permit.get('kind')!r} is not 'allow_manifestless'"
+        )
+    for field in ("id", "issued_at", "expires_at", "actor", "reason", "chain_digest"):
+        value = permit.get(field)
+        if not isinstance(value, str) or not value:
+            raise SystemExit(
+                f"arnold-runtime-create: allow_manifestless permit missing required field {field!r}"
+            )
+    evidence = permit.get("evidence")
+    if evidence is not None and not isinstance(evidence, list):
+        raise SystemExit("arnold-runtime-create: allow_manifestless permit 'evidence' must be a list")
+    issued = _utc_parse(permit["issued_at"], "issued_at")
+    expires = _utc_parse(permit["expires_at"], "expires_at")
+    duration = expires - issued
+    if duration <= timedelta(0) or duration > timedelta(hours=24):
+        raise SystemExit(
+            f"arnold-runtime-create: allow_manifestless permit duration {duration} is outside (0, 24h]"
+        )
+    now_utc = datetime.now(timezone.utc)
+    if now_utc < issued or now_utc >= expires:
+        raise SystemExit(
+            f"arnold-runtime-create: allow_manifestless permit {permit['id']!r} is expired or not yet valid "
+            f"(issued_at={permit['issued_at']}, expires_at={permit['expires_at']})"
+        )
+
+
+def _load_allow_manifestless_permit(policy_path):
+    try:
+        with open(policy_path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"arnold-runtime-create: runtime policy sidecar unreadable at {policy_path}: {exc}"
+        ) from exc
+    candidates = _allow_manifestless_candidates(raw)
+    if not candidates:
+        return None
+    # Deny-by-default: ANY present allow_manifestless permit that fails
+    # validation fails the creation — a broken override must surface loudly.
+    for permit in candidates:
+        _validate_permit(permit)
+    return candidates[0]
+
+
+deviations = []
+policy_path = os.environ.get("ARNOLD_RUNTIME_POLICY", "").strip()
+if policy_path:
+    permit = _load_allow_manifestless_permit(policy_path)
+    if permit is not None:
+        deviations.append(permit)
+        print(
+            f"arnold-runtime-create: stamped allow_manifestless permit {permit['id']!r} "
+            f"into manifest deviations[0]",
+            file=sys.stderr,
+        )
 
 # Policy SHAs from the canonical policy modules — import-guarded, best-effort:
 # if a module cannot be imported the SHA stays "" and a note is printed (the
@@ -195,6 +302,7 @@ manifest = {
         "attestation": {"module_file": "", "module_digest": "", "mount_id": ""},
     },
     "policy": {"policy_sha": policy_sha, "model_policy_sha": model_policy_sha, "sync_policy": {}},
+    "deviations": deviations,
     "promotions": [],
     "timestamps": {"created": now, "updated": now, "closed": None},
     "gc_policy": {"closed_only": True, "restore_proven_required": True},
@@ -240,43 +348,81 @@ finally:
         os.unlink(tmp)
 PY
 fi
+# P1 admission kernel: the runtime_manifest CLI round-trips the payload
+# through the RuntimeManifest dataclass, which may not carry the optional
+# top-level `deviations` key yet. When the written file lost it, re-write the
+# full payload directly (schema-valid; from_dict ignores unknown keys) so the
+# deviation record ALWAYS persists — an allow_manifestless permit that
+# silently disappears from the manifest would be a silent fallback.
+python3 - "$MANIFEST_PATH" "$MANIFEST_TMP" <<'PY'
+import json, os, sys, tempfile
+
+path, src = sys.argv[1:3]
+with open(path, encoding="utf-8") as fh:
+    written = json.load(fh)
+if "deviations" in written:
+    raise SystemExit(0)
+with open(src, encoding="utf-8") as fh:
+    payload = json.load(fh)
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".runtime-manifest-", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, path)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+PY
 rm -f "$MANIFEST_TMP"
 manifest_valid "$MANIFEST_PATH" "$SLUG" || {
   echo "arnold-runtime-create: manifest write FAILED for '$MANIFEST_PATH'" >&2
   exit 1
 }
 
-# (d) Write the ACTIVE POINTER (bootstrap contract, design rule 3). The file
-# AT the stable path IS the active generation. Single-writer rule: one active
-# pointer, one authoritative writer — this creation makes the slug the active
-# epic; arnold-promote/arnold-close switch it later. Warn when the pointer
-# currently names a DIFFERENT epic (operator should reconcile — only one epic
-# may hold the active generation).
+# (d) Write the ACTIVE POINTER — COMPATIBILITY-ONLY since the P1 admission
+# kernel (G1 no-global-pointer fallback). The per-epic manifest at
+# $MANIFEST_PATH is authoritative: admission, dispatch, and watchdog resolve
+# through the per-session manifest path a launch bound, NEVER through this
+# file. The pointer is written ONCE with 'compatibility_only': true IN THE
+# SAME payload (atomic — G2 second re-run; the marker is a preserved manifest
+# field, so promote/close cannot strip it), as compatibility telemetry ONLY;
+# it is never verified to bootstrap the epic (G2 correction 1).
+# Warn when the pointer currently names a DIFFERENT epic (informational only —
+# the pointer is not the identity; the per-slug manifest is).
 if [[ -f "$POINTER" ]]; then
   POINTER_EPIC="$(_json_get "$POINTER" epic_id)"
   if [[ -n "$POINTER_EPIC" && "$POINTER_EPIC" != "$SLUG" ]]; then
-    echo "arnold-runtime-create: note — active pointer '$POINTER' currently held by epic '$POINTER_EPIC'; single-writer rule: this creation makes '$SLUG' the active epic" >&2
+    echo "arnold-runtime-create: note — active pointer '$POINTER' currently held by epic '$POINTER_EPIC' (compatibility-only; per-epic manifests are authoritative)" >&2
   fi
 fi
 if ! python3 -c '
 import sys
-from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest, write_active_pointer
-write_active_pointer(load_manifest(sys.argv[1]))
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    RuntimeManifest,
+    load_manifest,
+    write_active_pointer,
+)
+# G2 second re-run: write the pointer ONCE with the marker in the SAME
+# payload (atomic) — never an authoritative manifest re-marked in a separate
+# operation (crash/race window). The per-slug manifest stays authoritative.
+per_slug = load_manifest(sys.argv[1])
+pointer_manifest = RuntimeManifest.from_dict(
+    dict(per_slug.to_dict(), compatibility_only=True)
+)
+write_active_pointer(pointer_manifest)
 ' "$MANIFEST_PATH" 2>/dev/null; then
-  echo "arnold-runtime-create: FAILED to write the active pointer '$POINTER' — launchers would bootstrap a missing manifest. The per-slug manifest exists; do NOT treat this runtime as live until the pointer resolves." >&2
+  echo "arnold-runtime-create: FAILED to write the active pointer '$POINTER'. The per-slug manifest exists and is authoritative; the compatibility-only pointer is degraded." >&2
   exit 1
 fi
-# Verify the bootstrap contract end-to-end: bootstrap_manifest(pointer) must
-# resolve to THIS epic (the same entry point every launcher uses).
-POINTER_EPIC_AFTER="$(python3 -c '
-import sys
-from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
-print(bootstrap_manifest(sys.argv[1]).epic_id)
-' "$POINTER" 2>/dev/null || true)"
-if [[ "$POINTER_EPIC_AFTER" != "$SLUG" ]]; then
-  echo "arnold-runtime-create: pointer verification FAILED — bootstrap_manifest('$POINTER') resolved to '${POINTER_EPIC_AFTER:-<nothing>}', expected '$SLUG'" >&2
-  exit 1
-fi
+echo "arnold-runtime-create: WARNING — active pointer '$POINTER' is COMPATIBILITY-ONLY (marked 'compatibility_only': true). Per-epic manifests are authoritative; admission/dispatch/watchdog must NOT resolve through this pointer (G1 no-global-pointer fallback)." >&2
+# G2 correction 1 + second re-run: the pointer is compatibility telemetry ONLY,
+# written atomically with the marker as part of the manifest payload (and the
+# runtime_manifest lib keeps the demotion durable across promote/close). We do
+# NOT verify it bootstraps this epic (bootstrap_manifest refuses
+# compatibility_only pointers by design), and no resolver may select a runtime
+# through it.
 
 # (e) Report the manifest path + runtime_id.
 RUNTIME_ID="$(_json_get "$MANIFEST_PATH" runtime_id)"
@@ -284,5 +430,5 @@ RUNTIME_ID="$(_json_get "$MANIFEST_PATH" runtime_id)"
 echo "arnold-runtime-create: runtime '$SLUG' created (runtime_id=$RUNTIME_ID)"
 echo "  branch:   $BRANCH (pushed to $REMOTE)"
 echo "  runtime:  $RUNTIME_DIR"
-echo "  manifest: $MANIFEST_PATH"
-echo "  pointer:  $POINTER (active generation; launchers bootstrap from it)"
+echo "  manifest: $MANIFEST_PATH (authoritative)"
+echo "  pointer:  $POINTER (COMPATIBILITY-ONLY; per-epic manifests are authoritative — G1 no-global-pointer fallback)"

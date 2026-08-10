@@ -149,6 +149,72 @@ REACTIVE_LEGACY_INVESTIGATOR_MODEL="gpt-5.6-sol"
 REACTIVE_LEGACY_BROKERED_INVESTIGATOR_MODEL="deepseek:deepseek-v4-pro"
 REACTIVE_LEGACY_OWNER_MODEL="gpt-5.6-sol"
 
+EARLY_SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
+REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${EARLY_SAFE_SESSION}.repair-loop.pid}"
+REPAIR_PID_FILE_OWNED=0
+
+release_early_repair_pid_claim() {
+  local current_pid=""
+  if [[ "$REPAIR_PID_FILE_OWNED" == "1" && -r "$REPAIR_PID_FILE" ]]; then
+    read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
+    if [[ "$current_pid" == "$$" ]]; then
+      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+    fi
+  fi
+}
+
+# Process custody must precede interpreter attestation and Python imports.
+# The durable repair lock below upgrades this cheap claim before any mutation.
+mkdir -p "$(dirname "$REPAIR_PID_FILE")"
+early_existing_pid=""
+if [[ -r "$REPAIR_PID_FILE" ]]; then
+  read -r early_existing_pid < "$REPAIR_PID_FILE" || early_existing_pid=""
+  # A bare PID from the shared volume is neither live nor dead evidence across
+  # container PID namespaces.  Preserve this legacy projection and let the
+  # namespace-bound durable lock below decide admission.
+fi
+if [[ ! -e "$REPAIR_PID_FILE" ]] \
+  && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+  REPAIR_PID_FILE_OWNED=1
+fi
+
+REPAIR_QUEUE_DIR="${CLOUD_WATCHDOG_REPAIR_QUEUE_DIR:-$(dirname "$MARKER_DIR")/repair-queue}"
+ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
+DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
+STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
+SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
+FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
+FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
+ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+# The immutable-snapshot re-exec keeps ARNOLD_REPAIR_LOOP_ORIGIN at the
+# authoritative origin path, so the origin-adjacent lib is the first source
+# even when BASH_SOURCE points at the tmp snapshot.  Only re-derive from
+# BASH_SOURCE when the origin-adjacent lib is absent (direct execution).
+SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/arnold-supervisor-runtime-lib"
+# A repair trigger may select an isolated, pre-attested runtime for one repair
+# child without changing the global editable install or the watchdog runtime.
+ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
+# P1 admission authority (G2 correction 3): the shared lib gate is the SOLE
+# manifest resolver for wrapper entry — a present-but-invalid manifest exits
+# 78, and an absent manifest (including the compatibility_only global
+# pointer, which is treated as ABSENT) is admitted only by a valid unexpired
+# allow_manifestless permit.  Direct invocation therefore fails closed, not
+# via the expected parent.  Runs BEFORE any manifest field read or ARNOLD_SRC
+# use below.
+arnold_runtime_manifest_authority repair-loop
+
 resolve_policy_model() {
   # Print the canonical model for one mode/rung from the fixer model policy
   # table, or exit non-zero with a typed error when a gated row lacks durable
@@ -383,57 +449,7 @@ if [[ "$REPAIR_LOOP_DRY_RUN" == "1" ]]; then
     "dry-run: noop_decision=$dry_run_noop"
   exit 0
 fi
-EARLY_SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
-REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${EARLY_SAFE_SESSION}.repair-loop.pid}"
-REPAIR_PID_FILE_OWNED=0
 
-release_early_repair_pid_claim() {
-  local current_pid=""
-  if [[ "$REPAIR_PID_FILE_OWNED" == "1" && -r "$REPAIR_PID_FILE" ]]; then
-    read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
-    if [[ "$current_pid" == "$$" ]]; then
-      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
-    fi
-  fi
-}
-
-# Process custody must precede interpreter attestation and Python imports.
-# The durable repair lock below upgrades this cheap claim before any mutation.
-mkdir -p "$(dirname "$REPAIR_PID_FILE")"
-early_existing_pid=""
-if [[ -r "$REPAIR_PID_FILE" ]]; then
-  read -r early_existing_pid < "$REPAIR_PID_FILE" || early_existing_pid=""
-  # A bare PID from the shared volume is neither live nor dead evidence across
-  # container PID namespaces.  Preserve this legacy projection and let the
-  # namespace-bound durable lock below decide admission.
-fi
-if [[ ! -e "$REPAIR_PID_FILE" ]] \
-  && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
-  REPAIR_PID_FILE_OWNED=1
-fi
-
-REPAIR_QUEUE_DIR="${CLOUD_WATCHDOG_REPAIR_QUEUE_DIR:-$(dirname "$MARKER_DIR")/repair-queue}"
-ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
-DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
-SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
-FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
-FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
-ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
-SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/arnold-supervisor-runtime-lib"
-# A repair trigger may select an isolated, pre-attested runtime for one repair
-# child without changing the global editable install or the watchdog runtime.
-ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
-if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
-  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
-fi
-if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
-  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
-fi
-# shellcheck disable=SC1090
-. "$SUPERVISOR_RUNTIME_LIB"
-arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
 # Fixer-unification: the per-epic runtime manifest is the preferred push
 # target.  When it declares an epic branch, repair source fixes belong THERE
 # (arnold-promote is the only path that advances the base); the legacy
@@ -443,17 +459,6 @@ if [[ -n "$MANIFEST_EPIC_BRANCH" ]]; then
   SYNC_BRANCH="$MANIFEST_EPIC_BRANCH"
 else
   SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
-fi
-# Fail-closed manifest authority (codex review fix #3): a PRESENT manifest
-# that declares no epic.branch must never silently fall back to the shared
-# editable branch — that is exactly the wrong-branch repair the per-epic
-# design eliminates. Only a genuinely absent manifest keeps the legacy
-# fallback (today's manifest-less box state).
-if [[ -f "$(arnold_runtime_manifest_path)" && -z "$MANIFEST_EPIC_BRANCH" ]]; then
-  printf '[repair-loop %s] runtime manifest exists but declares no epic.branch; failing closed (would repair the wrong branch)\n' \
-    "$(date -Iseconds)" >>"$LOG" 2>&1 || true
-  echo "arnold-repair-loop: runtime manifest present without epic.branch; failing closed" >&2
-  exit 78
 fi
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"

@@ -4005,6 +4005,279 @@ def _megaplan_use_current_runtime_command(spec: CloudSpec | None = None) -> str:
     return "\n".join(lines)
 
 
+def _chain_runtime_manifest_dir() -> str:
+    """Box-side directory of per-epic runtime manifests (matches the
+    arnold-runtime-create wrapper default ``$ARNOLD_BASE_DIR/.megaplan``)."""
+    return (
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "").strip()
+        or "/workspace/.megaplan"
+    )
+
+
+def _chain_runtime_manifest_path(slug: str) -> str:
+    """Box-side per-epic runtime manifest path for *slug*."""
+    return f"{_chain_runtime_manifest_dir().rstrip('/')}/{slug}.json"
+
+
+def _chain_runtime_worktree_path(slug: str) -> str:
+    """Box-side runtime worktree path for *slug* (matches the wrapper's
+    ``$ARNOLD_BASE_DIR/runtime-candidates/<slug>`` default)."""
+    base_dir = os.environ.get("ARNOLD_BASE_DIR", "").strip() or "/workspace"
+    return f"{base_dir.rstrip('/')}/runtime-candidates/{slug}"
+
+
+# Reader used by the box-side probe: prints one JSON binding record from the
+# per-epic manifest — {"present": true, "created": 0|1, "epic_id",
+# "runtime_id", "runtime_src", "runtime_revision"}. Any failure exits non-zero
+# (set -e in the calling command), so the launch fails loudly.
+_RUNTIME_MANIFEST_BINDING_READER = """import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+created = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+payload = json.loads(path.read_text(encoding="utf-8"))
+epic = payload.get("epic") or {}
+print(json.dumps({
+    "present": True,
+    "created": created,
+    "epic_id": payload.get("epic_id", ""),
+    "runtime_id": payload.get("runtime_id", ""),
+    "runtime_src": epic.get("runtime_root", ""),
+    "runtime_revision": epic.get("expected_head", ""),
+}, sort_keys=True))
+"""
+
+
+def _chain_runtime_policy_upload(
+    local_spec_path: Path,
+    *,
+    workspace: str,
+    provider,
+) -> str | None:
+    """Upload the per-chain runtime policy sidecar (`.runtime_policy.json`,
+    written by ``chain override``) to the box so arnold-runtime-create can
+    stamp an ``allow_manifestless`` permit into the manifest. Returns the
+    remote path, or None when no sidecar exists."""
+    from arnold_pipelines.megaplan.chain.spec import _runtime_policy_path_for
+
+    policy_path = _runtime_policy_path_for(local_spec_path)
+    if not policy_path.exists():
+        return None
+    remote = (
+        f"{workspace.rstrip('/')}/.megaplan/plans/.chains/{policy_path.name}"
+    )
+    provider.upload_file(policy_path, remote)
+    return remote
+
+
+def _chain_runtime_probe_and_create_command(
+    *,
+    slug: str,
+    manifest_path: str,
+    runtime_src: str,
+    manifest_dir: str,
+    base_repo: str,
+    base_ref: str,
+    policy_path: str | None,
+) -> str:
+    """Box-side probe for the per-epic runtime manifest; creates the runtime
+    when absent.
+
+    Prints one JSON binding record on stdout (see
+    ``_RUNTIME_MANIFEST_BINDING_READER``). When the manifest is absent the
+    command invokes ``arnold-runtime-create`` ON THE BOX (worktree + pushed
+    epic branch + manifest, permit stamped into ``deviations[0]`` when
+    ``ARNOLD_RUNTIME_POLICY`` points at a valid sidecar) and then reads the
+    binding back. Any failure — unreadable manifest, unresolvable base ref,
+    push failure, invalid/expired permit — exits non-zero so the launch fails
+    loudly BEFORE the chain session starts (deny-by-default)."""
+    create_env = [
+        f"export ARNOLD_BASE_REPO={shlex.quote(base_repo)}",
+        f"export ARNOLD_RUNTIME_MANIFEST_DIR={shlex.quote(manifest_dir)}",
+    ]
+    if policy_path:
+        create_env.append(f"export ARNOLD_RUNTIME_POLICY={shlex.quote(policy_path)}")
+    return "\n".join(
+        [
+            "set -euo pipefail",
+            f"SLUG={shlex.quote(slug)}",
+            f"MANIFEST={shlex.quote(manifest_path)}",
+            f"BASE_REPO={shlex.quote(base_repo)}",
+            f"BASE_REF={shlex.quote(base_ref)}",
+            'if [ -f "$MANIFEST" ]; then',
+            '  python3 - "$MANIFEST" 0 <<\'PY\'',
+            _RUNTIME_MANIFEST_BINDING_READER,
+            "PY",
+            "else",
+            "  CREATE_BIN=/usr/local/bin/arnold-runtime-create",
+            '  if [ ! -x "$CREATE_BIN" ]; then',
+            '    CREATE_BIN="$BASE_REPO/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"',
+            "  fi",
+            # Best-effort ref refresh so creation resolves the configured
+            # engine ref (the launch's own refresh would run too late).
+            '  git -C "$BASE_REPO" fetch origin "$BASE_REF" 2>/dev/null || true',
+            *create_env,
+            '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
+            '  python3 - "$MANIFEST" 1 <<\'PY\'',
+            _RUNTIME_MANIFEST_BINDING_READER,
+            "PY",
+            "fi",
+        ]
+    )
+
+
+def _parse_chain_runtime_binding(
+    result: subprocess.CompletedProcess[str],
+    *,
+    slug: str,
+    default_runtime_src: str,
+) -> dict[str, Any]:
+    """Strictly parse the probe/create binding record; deny-by-default on any
+    unreadable, mismatched, or incomplete record."""
+    raw = (result.stdout or "").strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            "chain_runtime_probe_unreadable",
+            (
+                "cloud chain runtime probe did not return a binding record"
+                f" (stdout={raw[:200]!r})"
+            ),
+        ) from exc
+    if not isinstance(payload, dict) or not payload.get("present"):
+        raise CliError(
+            "chain_runtime_probe_missing",
+            "cloud chain runtime probe reported no per-epic runtime manifest",
+        )
+    if payload.get("epic_id") != slug:
+        raise CliError(
+            "chain_runtime_epic_mismatch",
+            (
+                f"cloud chain runtime manifest epic_id {payload.get('epic_id')!r} "
+                f"does not match chain slug {slug!r}"
+            ),
+        )
+    runtime_revision = str(payload.get("runtime_revision") or "")
+    if not runtime_revision:
+        raise CliError(
+            "chain_runtime_manifest_incomplete",
+            "cloud chain runtime manifest declares no epic.expected_head",
+        )
+    return {
+        "runtime_src": str(payload.get("runtime_src") or default_runtime_src),
+        "runtime_revision": runtime_revision,
+        "runtime_id": str(payload.get("runtime_id") or ""),
+        "created": bool(payload.get("created")),
+    }
+
+
+def _ensure_chain_runtime_binding(
+    *,
+    provider,
+    launch_ctx: ChainLaunchContext,
+    launch_spec: CloudSpec,
+    local_spec_path: Path,
+) -> dict[str, Any]:
+    """P1 producer routing: probe for this chain's per-epic runtime manifest
+    on the box; create it when absent; return the manifest-bound runtime
+    binding (manifest path, worktree, revision). Fails loudly on probe or
+    creation failure — the per-epic runtime is mandatory (deny-by-default)."""
+    slug = launch_ctx.slug
+    manifest_path = _chain_runtime_manifest_path(slug)
+    runtime_src = _chain_runtime_worktree_path(slug)
+    manifest_dir = _chain_runtime_manifest_dir()
+    base_repo = (launch_spec.megaplan.src_path or "/workspace/arnold").rstrip("/")
+    base_ref = (launch_spec.megaplan.ref or "").strip() or "main"
+    policy_path = _chain_runtime_policy_upload(
+        local_spec_path,
+        workspace=launch_ctx.workspace,
+        provider=provider,
+    )
+    command = _chain_runtime_probe_and_create_command(
+        slug=slug,
+        manifest_path=manifest_path,
+        runtime_src=runtime_src,
+        manifest_dir=manifest_dir,
+        base_repo=base_repo,
+        base_ref=base_ref,
+        policy_path=policy_path,
+    )
+    result = provider.ssh_exec(command)
+    if result.returncode != 0:
+        _relay_output(result, secret_names=launch_spec.secrets, env=os.environ)
+        raise CliError(
+            "chain_runtime_create_failed",
+            (
+                (result.stderr or result.stdout)
+                or "remote per-epic runtime probe/creation failed"
+            ).strip(),
+            extra={
+                "runtime_manifest": manifest_path,
+                "runtime_src": runtime_src,
+            },
+        )
+    binding = _parse_chain_runtime_binding(
+        result,
+        slug=slug,
+        default_runtime_src=runtime_src,
+    )
+    binding["manifest_path"] = manifest_path
+    binding["slug"] = slug
+    binding["policy_path"] = policy_path
+    return binding
+
+
+def _chain_runtime_provenance_payload(
+    binding: Mapping[str, Any],
+    *,
+    policy_path: str | None,
+) -> dict[str, Any]:
+    """Launch provenance: which runtime manifest path this session is bound to
+    (recorded in the session marker; G1 per-session binding)."""
+    return {
+        "path": str(binding["manifest_path"]),
+        "runtime_src": str(binding["runtime_src"]),
+        "runtime_id": str(binding.get("runtime_id") or ""),
+        "expected_head": str(binding["runtime_revision"]),
+        "binding": "manifest_bound",
+        "created_by_launch": bool(binding.get("created")),
+        "policy_path": policy_path,
+    }
+
+
+def _manifest_runtime_activate_command(binding: Mapping[str, Any]) -> str:
+    """Validate the manifest-bound runtime exists and export the binding env
+    (MEGAPLAN_RUNTIME_SRC / MEGAPLAN_LAUNCH_RUNTIME_* / ARNOLD_RUNTIME_MANIFEST)
+    so the chain start resolves THROUGH this epic's manifest path — no
+    editable-install refresh, no global-pointer fallback. Fail closed (exit
+    23) when the worktree or manifest is missing."""
+    runtime_src = str(binding["runtime_src"])
+    runtime_revision = str(binding["runtime_revision"])
+    manifest_path = str(binding["manifest_path"])
+    return "\n".join(
+        [
+            "set -e",
+            'echo "[megaplan-runtime] $(date -Iseconds) activating manifest-bound runtime"',
+            f"RUNTIME_SRC={shlex.quote(runtime_src)}",
+            f"RUNTIME_REVISION={shlex.quote(runtime_revision)}",
+            f"MANIFEST={shlex.quote(manifest_path)}",
+            'if [ ! -d "$RUNTIME_SRC/.git" ]; then',
+            '  echo "[megaplan-runtime] manifest-bound runtime worktree missing at $RUNTIME_SRC"',
+            "  exit 23",
+            "fi",
+            'if [ ! -f "$MANIFEST" ]; then',
+            '  echo "[megaplan-runtime] manifest-bound runtime manifest missing at $MANIFEST"',
+            "  exit 23",
+            "fi",
+            'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"',
+            'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$RUNTIME_SRC"',
+            'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"',
+            'export ARNOLD_RUNTIME_MANIFEST="$MANIFEST"',
+            'echo "[megaplan-runtime] manifest-bound runtime accepted: $RUNTIME_SRC @ $RUNTIME_REVISION"',
+            "true",
+        ]
+    )
+
+
 def _refresh_then_chain_start_command(
     remote_spec_path: str,
     *,
@@ -4018,21 +4291,29 @@ def _refresh_then_chain_start_command(
     repair_session: str | None = None,
     repair_run_kind: str = "chain",
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
+    runtime_binding: Mapping[str, Any] | None = None,
 ) -> str:
-    runtime_src_path = (
-        str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
-        if project_dir
-        else None
-    )
-    refresh = (
-        _megaplan_refresh_command(
-            spec,
-            force_clean_editable_install=force_clean_editable_install,
-            runtime_src_path=runtime_src_path,
+    if runtime_binding is not None:
+        # Manifest-bound per-epic runtime (P1 producer routing): the runtime
+        # IS the code. Skip the editable-install refresh entirely and bind
+        # the launch env to the created runtime — no editable-install and no
+        # global-pointer fallback.
+        refresh = _manifest_runtime_activate_command(runtime_binding)
+    else:
+        runtime_src_path = (
+            str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
+            if project_dir
+            else None
         )
-        if refresh_editable_install
-        else _megaplan_use_current_runtime_command(spec)
-    )
+        refresh = (
+            _megaplan_refresh_command(
+                spec,
+                force_clean_editable_install=force_clean_editable_install,
+                runtime_src_path=runtime_src_path,
+            )
+            if refresh_editable_install
+            else _megaplan_use_current_runtime_command(spec)
+        )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
@@ -4054,6 +4335,7 @@ def _tmux_chain_launch_command(
     marker_path: str | None = None,
     identity_digest: str | None = None,
     marker_payload: dict[str, Any] | None = None,
+    runtime_binding: Mapping[str, Any] | None = None,
 ) -> str:
     """Return a single shell command that ensures a tmux session is running the chain.
 
@@ -4079,6 +4361,7 @@ def _tmux_chain_launch_command(
         repair_session=name,
         repair_run_kind="chain",
         repair_marker_dir=str(PurePosixPath(marker).parent),
+        runtime_binding=runtime_binding,
     )
     digest = identity_digest or ""
     marker_payload = marker_payload or {
@@ -5349,6 +5632,48 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         )
         raise
     marker_payload["engine_ref_check"] = engine_ref_check
+    # ── P1 producer routing: per-epic runtime creation + manifest binding ──
+    # Probe for this chain's per-epic runtime manifest on the box; when
+    # absent, invoke arnold-runtime-create ON THE BOX to create the runtime
+    # worktree + pushed epic branch + manifest (stamping any allow_manifestless
+    # permit from the runtime policy sidecar into manifest deviations[0]).
+    # The launch env is then bound to the created runtime's path
+    # (MEGAPLAN_RUNTIME_SRC / ARNOLD_RUNTIME_MANIFEST) with NO global-pointer
+    # fallback (G1), and the bound manifest path is recorded as launch
+    # provenance in the session marker.
+    runtime_binding = _ensure_chain_runtime_binding(
+        provider=provider,
+        launch_ctx=launch_ctx,
+        launch_spec=launch_spec,
+        local_spec_path=local_spec_path,
+    )
+    marker_payload["runtime_manifest"] = _chain_runtime_provenance_payload(
+        runtime_binding,
+        policy_path=runtime_binding.get("policy_path"),
+    )
+    sys.stderr.write(
+        "cloud chain runtime binding: "
+        f"slug={launch_ctx.slug} "
+        f"manifest={runtime_binding['manifest_path']} "
+        f"runtime={runtime_binding['runtime_src']} "
+        f"created_by_launch={bool(runtime_binding.get('created'))} "
+        f"expected_head={str(runtime_binding.get('runtime_revision') or '')[:12]}\n"
+    )
+    # Rebind the recorded relaunch command so a resume re-uses this exact
+    # manifest-bound runtime instead of the editable-install refresh path.
+    marker_payload["relaunch_command"] = _refresh_then_chain_start_command(
+        remote_spec_path,
+        spec=launch_spec,
+        project_dir=launch_ctx.workspace,
+        runtime_binding=runtime_binding,
+        log_relative=launch_ctx.log_relative,
+        no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
+        force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+        refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
+        repair_session=launch_session,
+        repair_run_kind="chain",
+        repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
+    )
     if bool(getattr(args, "fresh", False)):
         stop_result = provider.ssh_exec(
             _tmux_chain_stop_for_fresh_command(
@@ -5392,6 +5717,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
             force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
             refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
+            runtime_binding=runtime_binding,
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)

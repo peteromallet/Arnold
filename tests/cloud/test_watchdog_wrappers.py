@@ -206,7 +206,15 @@ def test_fixer_wrappers_prefer_manifest_epic_branch_push_target() -> None:
     for wrapper_name in ("arnold-kimi-goal-operator", "arnold-meta-repair-loop"):
         text = _wrapper(wrapper_name)
         assert 'SYNC_BRANCH="$_MANIFEST_EPIC_BRANCH"' in text
-        assert "runtime-manifest.json" in text
+        # G2 correction 3: the entry authority gate runs before the field read.
+        component = {
+            "arnold-kimi-goal-operator": "kimi-goal-operator",
+            "arnold-meta-repair-loop": "meta-repair-loop",
+        }[wrapper_name]
+        assert f"arnold_runtime_manifest_authority {component}" in text
+        assert text.index(f"arnold_runtime_manifest_authority {component}") < text.index(
+            "_MANIFEST_EPIC_BRANCH="
+        )
 
 
 def test_supervisor_runtime_lib_exposes_manifest_epic_field_helper() -> None:
@@ -304,9 +312,21 @@ def test_repair_loop_delivery_broker_and_fail_closed_manifest_authority() -> Non
     assert "verify_remote_delivery_target()" in text
     assert "delivery target violation" in text
     assert "failed:delivery_target_violation" in text
-    assert "runtime manifest present without epic.branch; failing closed" in text
-    for wrapper_name in ("arnold-kimi-goal-operator", "arnold-meta-repair-loop"):
-        assert "runtime manifest present without epic.branch; failing closed" in _wrapper(wrapper_name)
+    # G2 correction 3: the shared lib gate is the SOLE manifest authority and
+    # runs at entry — a present-but-invalid manifest exits 78, an absent one
+    # needs a permit.  The message texts live in the lib, not the wrappers.
+    for wrapper_name in ("arnold-repair-loop", "arnold-kimi-goal-operator", "arnold-meta-repair-loop"):
+        wrapper = _wrapper(wrapper_name)
+        component = {
+            "arnold-repair-loop": "repair-loop",
+            "arnold-kimi-goal-operator": "kimi-goal-operator",
+            "arnold-meta-repair-loop": "meta-repair-loop",
+        }[wrapper_name]
+        assert f"arnold_runtime_manifest_authority {component}" in wrapper
+        # The gate runs BEFORE the first manifest field read (SYNC_BRANCH).
+        assert wrapper.index(f"arnold_runtime_manifest_authority {component}") < wrapper.index(
+            "arnold_runtime_manifest_epic_field branch"
+        )
 
 
 @pytest.mark.parametrize(

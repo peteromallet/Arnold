@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -173,15 +174,81 @@ def _load_hot_env(path: Path = HOT_ENV_PATH) -> None:
         os.environ[key] = value
 
 RUNTIME_MANIFEST_DEFAULT_PATH = "/workspace/.megaplan/runtime-manifest.json"
-WITH_NAME_REPAIR_BIN_DEPRECATION = (
-    "with_name repair-bin resolution is deprecated — bootstrap from the runtime manifest"
-)
 
 
 def _runtime_manifest_path() -> Path:
     """Return the manifest path from the stable bootstrap env or the default."""
 
     return Path(os.environ.get("ARNOLD_RUNTIME_MANIFEST", RUNTIME_MANIFEST_DEFAULT_PATH))
+
+
+def _runtime_manifest_policy_path() -> Path:
+    """Return the ``.runtime_policy.json`` sidecar path for the bound manifest.
+
+    The sidecar sits next to the runtime manifest (per-session binding); an
+    ``ARNOLD_RUNTIME_POLICY`` override supports test/ops pinning.
+    """
+
+    env_path = os.environ.get("ARNOLD_RUNTIME_POLICY", "").strip()
+    if env_path:
+        return Path(env_path)
+    return _runtime_manifest_path().with_name(".runtime_policy.json")
+
+
+def _has_valid_allow_manifestless_permit() -> bool:
+    """True iff the sidecar holds a currently-valid ``allow_manifestless`` permit.
+
+    The sidecar is an append-only ``permits`` list; the LAST unrevoked,
+    structurally valid, unexpired ``allow_manifestless`` record is the active
+    one.  Validation matches the bash admission helper and the Python permit
+    contract: ``0 < expires_at - issued_at <= 24h`` and current-unexpired,
+    with revocation as an auditable ``revoked_at`` tombstone.  Invalid or
+    expired records never admit (fail closed).
+    """
+
+    policy_path = _runtime_manifest_policy_path()
+    if not policy_path.exists():
+        return False
+    try:
+        payload = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    permits = payload.get("permits") if isinstance(payload, dict) else None
+    if not isinstance(permits, list):
+        return False
+    now = datetime.now(timezone.utc)
+
+    def _parse_utc(value: Any) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    for record in reversed(permits):
+        if not isinstance(record, dict):
+            continue
+        if record.get("kind") != "allow_manifestless":
+            continue
+        if record.get("revoked_at"):
+            continue
+        if not isinstance(record.get("id"), str) or not record["id"]:
+            continue
+        issued = _parse_utc(record.get("issued_at"))
+        expires = _parse_utc(record.get("expires_at"))
+        if issued is None or expires is None:
+            continue
+        lifetime = expires - issued
+        if not (timedelta(0) < lifetime <= timedelta(hours=24)):
+            continue
+        if now >= expires:
+            continue
+        return True
+    return False
 
 
 def _bootstrap_runtime_manifest() -> Any | None:
@@ -193,9 +260,9 @@ def _bootstrap_runtime_manifest() -> Any | None:
     schema-mismatched, or unreadable manifest raises :class:`ManifestError`
     (the caller exits non-zero with a typed ``manifest_invalid`` error BEFORE
     any dispatch).  Only when the manifest is genuinely ABSENT (no env, no
-    file at the bootstrap path) does this return ``None``, keeping the legacy
-    env -> with_name fallback — today's box state, documented as
-    bootstrap-only backward compat.
+    file at the bootstrap path) does this return ``None``; admission then
+    requires a valid ``allow_manifestless`` permit (P1 admission kernel, see
+    :func:`_enforce_manifest_authority`).
     """
 
     env_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
@@ -224,16 +291,27 @@ def _enforce_manifest_authority() -> None:
 
     A manifest present at ``ARNOLD_RUNTIME_MANIFEST`` or the default bootstrap
     path is THE resolver: when it cannot load and validate, exit non-zero with
-    a typed ``manifest_invalid`` error before any dispatch or fallback.  Only
-    a genuinely absent manifest keeps the env -> with_name fallback chain.
+    a typed ``manifest_invalid`` error before any dispatch or fallback.  A
+    genuinely absent manifest is admitted ONLY by a valid, unexpired
+    ``allow_manifestless`` permit in the ``.runtime_policy.json`` sidecar;
+    without one the trigger fails closed (P1 admission kernel — absence is
+    never an allow).
     """
 
     try:
-        _bootstrap_runtime_manifest()
+        manifest = _bootstrap_runtime_manifest()
     except Exception as exc:
         reason = str(exc) or type(exc).__name__
         print(f"manifest_invalid: {reason}", file=sys.stderr)
         raise SystemExit(78) from exc
+    if manifest is not None:
+        return
+    if not _has_valid_allow_manifestless_permit():
+        print(
+            "runtime manifest absent without a valid allow_manifestless permit; failing closed",
+            file=sys.stderr,
+        )
+        raise SystemExit(78)
 
 def _manifest_epic() -> dict | None:
     """Return the bootstrapped manifest's ``epic`` section, or None when absent."""
@@ -267,20 +345,25 @@ def _manifest_runtime_root() -> str | None:
 
 
 def _default_repair_bin() -> str:
-    """Resolve the repair loop: runtime manifest, env override, then with_name."""
+    """Resolve the repair loop from the runtime manifest only.
+
+    The manifest's ``epic.repair_bin`` is the sole declarative source; the
+    env override is an explicit operator/test pin.  No with_name sibling
+    fallback — an unresolved default fails closed at dispatch.
+    """
 
     manifest_bin = _manifest_repair_bin()
     if manifest_bin:
         return manifest_bin
-    env_bin = os.getenv("ARNOLD_REPAIR_TRIGGER_REPAIR_BIN")
-    if env_bin:
-        return env_bin
-    print(WITH_NAME_REPAIR_BIN_DEPRECATION, file=sys.stderr)
-    return str(Path(__file__).resolve().with_name("arnold-repair-loop"))
+    return os.getenv("ARNOLD_REPAIR_TRIGGER_REPAIR_BIN") or ""
 
 
 def _default_meta_repair_bin() -> str:
-    """Resolve the meta repair loop: runtime_root, env override, then with_name."""
+    """Resolve the meta repair loop from the runtime manifest only.
+
+    Derived from the manifest's ``epic.runtime_root``; the env override is an
+    explicit operator/test pin.  No with_name sibling fallback.
+    """
 
     runtime_root = _manifest_runtime_root()
     if runtime_root:
@@ -289,11 +372,7 @@ def _default_meta_repair_bin() -> str:
             / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
         )
         return derived
-    env_bin = os.getenv("ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN")
-    if env_bin:
-        return env_bin
-    print(WITH_NAME_REPAIR_BIN_DEPRECATION, file=sys.stderr)
-    return str(Path(__file__).resolve().with_name("arnold-meta-repair-loop"))
+    return os.getenv("ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN") or ""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -618,6 +697,15 @@ def _dispatch(
     meta_repair_bin: Path,
     request: Mapping[str, Any],
 ) -> int:
+    # Fail closed BEFORE any claim/subprocess effect: with the with_name
+    # fallback removed, an empty default means nothing resolved (manifest has
+    # no epic.repair_bin and no env pin) — dispatch cannot proceed.
+    if not str(repair_bin) or str(repair_bin) == ".":
+        print(
+            "arnold-repair-trigger: no repair loop resolved (runtime manifest declares no epic.repair_bin and no ARNOLD_REPAIR_TRIGGER_REPAIR_BIN); failing closed",
+            file=sys.stderr,
+        )
+        return 78
     target = request.get("_resolved_target") if isinstance(request.get("_resolved_target"), Mapping) else {}
     request_id = str(request.get("request_id") or "")
     session = str(target.get("target_session") or request.get("session") or "")

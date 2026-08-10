@@ -35,8 +35,8 @@ import json
 import os
 import sys
 import tempfile
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -46,6 +46,18 @@ MANIFEST_SCHEMA_VERSION = "1"
 
 # Canonical manifest filename inside a bootstrap *directory*.
 MANIFEST_FILENAME = "runtime-manifest.json"
+
+# Marker for a NON-AUTHORITATIVE active pointer (G2 correction 1 + second
+# re-run): a manifest pointer file at the bootstrap path whose JSON carries
+# ``"compatibility_only": true`` is compatibility telemetry ONLY — every
+# resolver treats it as ABSENT for admission (permit check applies; block
+# without a valid permit). It can never select a runtime. The marker is an
+# EXPLICIT preserved manifest field (schema stays "1", optional, default
+# False) so no read/write transition can strip it (G2 second re-run);
+# resolvers still check it explicitly (:func:`is_compatibility_only_pointer`)
+# because it is per-pointer telemetry, not part of a per-slug authoritative
+# manifest.
+COMPATIBILITY_ONLY_KEY = "compatibility_only"
 
 _VALID_STATES = frozenset({"active", "closed"})
 
@@ -110,6 +122,22 @@ class RuntimeManifest:
     ``timestamps``) are plain ``dict[str, Any]`` — read them with key access,
     e.g. ``manifest.epic["repair_bin"]``. Required keys are validated in
     ``__post_init__`` (raises :class:`ManifestError`).
+
+    ``deviations`` is an OPTIONAL list of expiring exception records (typed
+    deviation/fallback events, e.g. an ``allow_manifestless`` permit). It is
+    preserved verbatim by every read/write transition and serialized on disk;
+    old manifests (schema ``"1"`` without the key) load with ``[]``. Expired
+    records STAY loadable — expiry is enforced at admission/addition
+    (:func:`validate_deviation`, :func:`has_valid_allow_manifestless_permit`),
+    never at load time.
+
+    ``compatibility_only`` is an OPTIONAL boolean demotion marker for
+    NON-AUTHORITATIVE pointers (G2 correction 1 + second re-run): a manifest
+    with it ``True`` is compatibility telemetry ONLY and can never select a
+    runtime — every resolver treats it as ABSENT for admission. Per-slug
+    authoritative manifests leave it ``False``. It is preserved verbatim by
+    every read/write transition (:func:`_reconstruct`) and serialized on
+    disk; old manifests (schema ``"1"`` without the key) load with ``False``.
     """
 
     runtime_id: str
@@ -126,6 +154,8 @@ class RuntimeManifest:
     timestamps: dict[str, Any]
     gc_policy: str
     commands: list[dict[str, Any]]
+    deviations: list[dict[str, Any]] = field(default_factory=list)
+    compatibility_only: bool = False
 
     def __post_init__(self) -> None:
         if self.schema != MANIFEST_SCHEMA_VERSION:
@@ -154,6 +184,12 @@ class RuntimeManifest:
         )
         if not isinstance(self.promotions, list) or not isinstance(self.commands, list):
             raise ManifestError("promotions and commands must be lists")
+        if not isinstance(self.deviations, list) or not all(
+            isinstance(record, dict) for record in self.deviations
+        ):
+            raise ManifestError("deviations must be a list of objects")
+        if not isinstance(self.compatibility_only, bool):
+            raise ManifestError("compatibility_only must be a boolean")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "RuntimeManifest":
@@ -169,7 +205,16 @@ class RuntimeManifest:
             raise ManifestError(
                 f"manifest missing required fields: {', '.join(missing)}"
             )
-        return cls(**{key: data[key] for key in _TOP_LEVEL_REQUIRED})
+        values: dict[str, Any] = {key: data[key] for key in _TOP_LEVEL_REQUIRED}
+        # deviations is OPTIONAL: old manifests (schema "1") load with [].
+        values["deviations"] = data.get("deviations", [])
+        # compatibility_only is OPTIONAL: old manifests (schema "1") load
+        # with False (authoritative); only a pointer explicitly marked True is
+        # non-authoritative telemetry. As a real field it is preserved by
+        # to_dict/_reconstruct — no transition can strip the marker (G2
+        # second re-run).
+        values[COMPATIBILITY_ONLY_KEY] = data.get(COMPATIBILITY_ONLY_KEY, False)
+        return cls(**values)
 
     def to_dict(self) -> dict[str, Any]:
         """Plain JSON-serializable dict (deep copy via :func:`dataclasses.asdict`)."""
@@ -206,12 +251,47 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
         raise
 
 
+def _write_payload(
+    manifest: RuntimeManifest, target: Path, *, pointer_write: bool = False
+) -> dict[str, Any]:
+    """Serialized payload for writing *manifest* to *target*, enforcing the
+    demotion invariant (G2 second re-run): a demoted (``compatibility_only``)
+    pointer can never be re-admitted authoritative by ANY writer. This is the
+    ONE preservation point — both :func:`write_manifest` (the lowest-level
+    writer) and :func:`write_active_pointer` route their payloads through it:
+
+    - Generic write (``pointer_write=False``): only the ACTIVE-generation
+      pointer path (:func:`active_manifest_path`) is protected — when *target*
+      IS that path and the file already there is a ``compatibility_only``
+      pointer, the marker is forced ON even for an authoritative manifest.
+    - Pointer write (``pointer_write=True``): every target is a pointer, so
+      any path that already holds a ``compatibility_only`` pointer stays
+      demoted.
+
+    Any other target (per-slug manifests, retention copies) is written exactly
+    as *manifest* declares.
+    """
+    payload = manifest.to_dict()
+    pointer_target = pointer_write or (
+        target == active_manifest_path().expanduser().resolve(strict=False)
+    )
+    if pointer_target and is_compatibility_only_pointer(target):
+        payload[COMPATIBILITY_ONLY_KEY] = True
+    return payload
+
+
 def write_manifest(manifest: RuntimeManifest, path: Path) -> None:
     """Serialize *manifest* to *path* atomically under an exclusive flock.
 
     A sibling ``<name>.lock`` file is created (and kept) next to *path*;
     writers take ``flock(LOCK_EX)`` around the tmp+rename so concurrent
     writers serialize and readers never observe a partial file.
+
+    Demotion invariant (G2 second re-run): when *path* IS the active-
+    generation pointer path and the existing file there is a
+    ``compatibility_only`` pointer, the written payload is forced to keep the
+    marker (see :func:`_write_payload`) — a generic authoritative write can
+    never re-admit a demoted pointer.
     """
     target = Path(path).expanduser().resolve(strict=False)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -219,7 +299,7 @@ def write_manifest(manifest: RuntimeManifest, path: Path) -> None:
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        _atomic_write(target, manifest.to_dict())
+        _atomic_write(target, _write_payload(manifest, target))
     finally:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -243,6 +323,47 @@ def load_manifest(path: Path) -> RuntimeManifest:
     except json.JSONDecodeError as exc:
         raise ManifestError(f"corrupt manifest JSON at {target}: {exc}") from exc
     return RuntimeManifest.from_dict(data)
+
+
+def is_compatibility_only_pointer(path: Path) -> bool:
+    """True iff *path* is a NON-AUTHORITATIVE ``compatibility_only`` pointer.
+
+    A pointer file at the bootstrap path whose JSON carries
+    ``"compatibility_only": true`` at the top level is compatibility telemetry
+    (legacy launchers may still read it) and can NEVER select a runtime: every
+    resolver treats it as ABSENT for admission (G2 correction 1). The marker
+    must be checked explicitly because :func:`load_manifest` ignores unknown
+    keys by design. Absent, unreadable, or non-JSON files return False — they
+    fail on their own as absent/invalid rather than being compatibility
+    telemetry.
+    """
+    target = Path(path).expanduser()
+    if not target.is_file():
+        return False
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get(COMPATIBILITY_ONLY_KEY) is True
+
+
+def manifest_present(path: Path) -> bool:
+    """True iff *path* resolves to a present, valid, AUTHORITATIVE manifest.
+
+    Admission probe: a ``compatibility_only`` pointer is treated as ABSENT
+    (never authoritative), and a missing, corrupt, or schema-invalid file is
+    absent too. Returns False on every non-admissible state — callers that
+    need to distinguish "absent-for-admission" from "present-but-invalid" can
+    combine it with :func:`is_compatibility_only_pointer` and
+    :func:`load_manifest`.
+    """
+    if is_compatibility_only_pointer(path):
+        return False
+    try:
+        load_manifest(path)
+    except ManifestError:
+        return False
+    return True
 
 
 # ── index ───────────────────────────────────────────────────────────────────
@@ -299,6 +420,23 @@ def _read_pointer(pointer_path: Path) -> str:
     raise ManifestError(f"bootstrap pointer {pointer_path} contains no manifest path")
 
 
+def _load_authoritative(path: Path) -> RuntimeManifest:
+    """Load *path* as the runtime manifest, REFUSING a ``compatibility_only``
+    pointer.
+
+    A ``compatibility_only`` pointer is non-authoritative telemetry (G2
+    correction 1): the resolver treats it as ABSENT/not-found (raises
+    :class:`ManifestError`) so it can never select a runtime — admission falls
+    through to the permit check and blocks without a valid permit.
+    """
+    if is_compatibility_only_pointer(path):
+        raise ManifestError(
+            f"bootstrap target {path} is a compatibility_only pointer; "
+            "non-authoritative — refusing to select a runtime from it"
+        )
+    return load_manifest(path)
+
+
 def bootstrap_manifest(bootstrap_path: Path) -> RuntimeManifest:
     """Resolve the active runtime manifest from ONE stable bootstrap path.
 
@@ -311,6 +449,10 @@ def bootstrap_manifest(bootstrap_path: Path) -> RuntimeManifest:
        line names the manifest (relative to the pointer file's parent). If
        that target is a directory, ``<target>/runtime-manifest.json`` is used.
 
+    A ``compatibility_only`` pointer at any resolution step is NON-AUTHORITATIVE
+    telemetry (G2 correction 1): it is treated as ABSENT — :class:`ManifestError`
+    is raised, so it can never select a runtime.
+
     This is the single stable entry point every launcher uses post-bootstrap;
     nothing else may locate the runtime manifest.
     """
@@ -318,9 +460,9 @@ def bootstrap_manifest(bootstrap_path: Path) -> RuntimeManifest:
     if not bootstrap.exists():
         raise ManifestError(f"bootstrap path does not exist: {bootstrap}")
     if bootstrap.is_dir():
-        return load_manifest(bootstrap / MANIFEST_FILENAME)
+        return _load_authoritative(bootstrap / MANIFEST_FILENAME)
     if bootstrap.name.endswith(".json"):
-        return load_manifest(bootstrap)
+        return _load_authoritative(bootstrap)
     target = Path(_read_pointer(bootstrap))
     if not target.is_absolute():
         target = bootstrap.parent / target
@@ -328,7 +470,7 @@ def bootstrap_manifest(bootstrap_path: Path) -> RuntimeManifest:
         target = target / MANIFEST_FILENAME
     if not target.exists():
         raise ManifestError(f"bootstrap pointer target does not exist: {target}")
-    return load_manifest(target)
+    return _load_authoritative(target)
 
 
 # ── active-generation pointer ───────────────────────────────────────────────
@@ -385,6 +527,16 @@ def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) ->
     generation (when the pointer already holds an earlier one) is retained at
     ``<path>.previous-<N>.json`` for rollback, then *manifest* is written to
     *path* via atomic tmp+rename. Returns the pointer path.
+
+    The pointer's ``compatibility_only`` demotion is DURABLE (G2 second
+    re-run): once the pointer holds a ``compatibility_only`` manifest (as
+    ``arnold-runtime-create`` always writes it), EVERY subsequent pointer
+    write keeps the marker, so ``advance_generation`` (arnold-promote) and
+    pointer ``set_state`` (arnold-close) can never re-admit the global
+    pointer as authoritative. Preservation lives in the single shared
+    payload builder :func:`_write_payload` — the same one the generic
+    :func:`write_manifest` uses, so a demoted pointer can never be re-admitted
+    authoritative by ANY writer (G2 final fix).
     """
     pointer = Path(path) if path is not None else active_manifest_path()
     pointer = pointer.expanduser().resolve(strict=False)
@@ -394,7 +546,7 @@ def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) ->
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         _retain_previous_generation(pointer, manifest)
-        _atomic_write(pointer, manifest.to_dict())
+        _atomic_write(pointer, _write_payload(manifest, pointer, pointer_write=True))
     finally:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -460,6 +612,8 @@ def _reconstruct(
         "timestamps": manifest.timestamps,
         "gc_policy": manifest.gc_policy,
         "commands": manifest.commands,
+        "deviations": manifest.deviations,
+        "compatibility_only": manifest.compatibility_only,
     }
     values.update(overrides)
     return RuntimeManifest(**values)
@@ -524,10 +678,119 @@ def append_promotion(
     return _reconstruct(manifest, promotions=list(manifest.promotions) + [record])
 
 
+# ── deviations (expiring exception records) ─────────────────────────────────
 
 
-def _parse_promotion_record(arg: str) -> dict[str, Any]:
-    """Parse the ``append_promotion`` CLI *record* argument.
+_DEVIATION_REQUIRED = (
+    "kind",
+    "id",
+    "issued_at",
+    "expires_at",
+    "actor",
+    "reason",
+    "evidence",
+    "chain_digest",
+)
+_DEVIATION_MAX_LIFETIME = timedelta(hours=24)
+_ALLOW_MANIFESTLESS_KIND = "allow_manifestless"
+
+
+def _parse_utc_iso(value: Any, label: str) -> datetime:
+    """Parse *value* as a UTC ISO8601 timestamp; raise :class:`ManifestError`
+    on anything else (non-string, unparsable, naive, or non-UTC offset)."""
+    if not isinstance(value, str) or not value:
+        raise ManifestError(f"deviation {label} must be a non-empty ISO8601 string")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ManifestError(f"deviation {label} is not ISO8601: {value!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise ManifestError(f"deviation {label} must be UTC: {value!r}")
+    return parsed
+
+
+def validate_deviation(record: Any, *, now: str | None = None) -> dict[str, Any]:
+    """Validate a deviation/permit record for ADDITION or ADMISSION.
+
+    Rejects (raises :class:`ManifestError`): non-object records; missing or
+    empty ``kind``/``id``/``issued_at``/``expires_at``/``actor``/``reason``/
+    ``evidence``/``chain_digest``; non-UTC ``issued_at``/``expires_at``;
+    lifetimes outside ``0 < expires_at - issued_at <= 24h``; and records
+    already expired at *now* (default: UTC now). ``evidence`` must be a list
+    of strings. Unknown keys (e.g. a ``revoked_at`` tombstone) are tolerated
+    and preserved — the record is returned unchanged on success.
+
+    Expiry is enforced at call time only: an expired record is REFUSED here
+    but stays loadable inside a manifest (:func:`load_manifest` never checks
+    the clock; admission uses :func:`has_valid_allow_manifestless_permit`).
+    """
+    if not isinstance(record, dict):
+        raise ManifestError("deviation record must be an object")
+    missing = [key for key in _DEVIATION_REQUIRED if key not in record]
+    if missing:
+        raise ManifestError(
+            f"deviation missing required fields: {', '.join(missing)}"
+        )
+    for field_name in ("kind", "id", "actor", "reason", "chain_digest"):
+        if not isinstance(record[field_name], str) or not record[field_name]:
+            raise ManifestError(
+                f"deviation {field_name} must be a non-empty string"
+            )
+    issued = _parse_utc_iso(record["issued_at"], "issued_at")
+    expires = _parse_utc_iso(record["expires_at"], "expires_at")
+    evidence = record["evidence"]
+    if not isinstance(evidence, list) or not all(
+        isinstance(item, str) for item in evidence
+    ):
+        raise ManifestError("deviation evidence must be a list of strings")
+    lifetime = expires - issued
+    if lifetime <= timedelta(0) or lifetime > _DEVIATION_MAX_LIFETIME:
+        raise ManifestError(
+            f"deviation lifetime must be within (0, 24h], got {lifetime}"
+        )
+    now_dt = _parse_utc_iso(now, "now") if now is not None else datetime.now(timezone.utc)
+    if expires <= now_dt:
+        raise ManifestError(f"deviation expired at {record['expires_at']}")
+    return record
+
+
+def has_valid_allow_manifestless_permit(manifest: RuntimeManifest) -> bool:
+    """True iff *manifest* carries a currently-valid ``allow_manifestless`` permit.
+
+    Admission-time check for manifest-less operation: the manifest must hold a
+    deviation with ``kind == "allow_manifestless"`` that is structurally valid
+    AND unexpired right now. A revoked permit (a ``revoked_at`` tombstone) or
+    an expired one NEVER admits; invalid records are skipped, so one bad record
+    cannot admit anything (fail-closed).
+    """
+    for record in manifest.deviations:
+        if record.get("kind") != _ALLOW_MANIFESTLESS_KIND:
+            continue
+        if record.get("revoked_at"):
+            continue
+        try:
+            validate_deviation(record)
+        except ManifestError:
+            continue
+        return True
+    return False
+
+
+def add_deviation(
+    manifest: RuntimeManifest, record: dict[str, Any]
+) -> RuntimeManifest:
+    """Return a NEW manifest with validated *record* appended to ``deviations``.
+
+    The record is validated (structure, lifetime, current-unexpired) BEFORE
+    the append — an invalid record raises :class:`ManifestError` and leaves
+    *manifest* untouched. Immutable: the original manifest is never modified.
+    """
+    validate_deviation(record)
+    return _reconstruct(manifest, deviations=list(manifest.deviations) + [record])
+
+
+def _parse_json_record(arg: str) -> dict[str, Any]:
+    """Parse the ``append_promotion`` / ``add_deviation`` CLI *record* argument.
 
     Accepted forms: inline JSON (``{"from_sha": …}``), ``@FILE`` (read the
     record from FILE), or a bare path to an existing JSON file. Returns the
@@ -602,6 +865,15 @@ def main(argv: list[str] | None = None) -> int:
         "record",
         help="promotion record as inline JSON, or @FILE to read it from FILE",
     )
+    dev_p = sub.add_parser(
+        "add_deviation",
+        help="validate + append a deviation record to the manifest at <path> and write it atomically",
+    )
+    dev_p.add_argument("path", type=Path)
+    dev_p.add_argument(
+        "record",
+        help="deviation record as inline JSON, or @FILE to read it from FILE",
+    )
     adv_p = sub.add_parser(
         "advance_generation",
         help="advance the generation at <path> AND atomically switch the active-generation pointer",
@@ -637,8 +909,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(updated.to_dict(), sort_keys=True))
         elif args.action == "append_promotion":
             manifest = load_manifest(args.path)
-            record = _parse_promotion_record(args.record)
+            record = _parse_json_record(args.record)
             updated = append_promotion(manifest, record)
+            write_manifest(updated, args.path)
+            print(json.dumps(updated.to_dict(), sort_keys=True))
+        elif args.action == "add_deviation":
+            manifest = load_manifest(args.path)
+            record = _parse_json_record(args.record)
+            updated = add_deviation(manifest, record)
             write_manifest(updated, args.path)
             print(json.dumps(updated.to_dict(), sort_keys=True))
         elif args.action == "advance_generation":

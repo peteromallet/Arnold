@@ -179,14 +179,16 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
         "module_digest",
         "mount_id",
     }
-    # ACTIVE POINTER written + verified: the file AT the stable path IS the
-    # active generation and bootstraps to this epic (design rule 3)
+    # ACTIVE POINTER written as compatibility telemetry ONLY (G1
+    # no-global-pointer fallback): it reflects this epic but is demoted and
+    # never bootstraps — the per-slug manifest is authoritative
     pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
     assert pointer.exists()
     p = json.loads(pointer.read_text())
     assert p["epic_id"] == "epic-a"
     assert p["state"] == "active"
     assert p["generation"] == 1
+    assert p["compatibility_only"] is True
     # guard: same slug refuses with exit 2
     again = sandbox["run"](CREATE, "epic-a", "base/editable-install")
     assert again.returncode == 2
@@ -205,6 +207,174 @@ def test_runtime_create_fails_loudly_on_push_failure(sandbox: dict[str, object])
     assert "push" in proc.stderr.lower()
     # manifest must NOT be written: push precedes the manifest write
     assert not manifest_path(sandbox, "epic-push-fail").exists()
+
+
+# ── P1 admission kernel: deviations + compatibility-only pointer ─────────────
+
+
+def _valid_permit(**overrides: str) -> dict:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    permit = {
+        "kind": "allow_manifestless",
+        "id": "permit-abc123",
+        "issued_at": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "actor": "operator@example.invalid",
+        "reason": "manifestless admission permit for lifecycle tests",
+        "evidence": ["chain override --allow-manifestless --reason lifecycle-test"],
+        "chain_digest": "deadbeefdeadbeef",
+    }
+    permit.update(overrides)
+    return permit
+
+
+def _write_policy_sidecar(sandbox: dict[str, object], permit: dict) -> Path:
+    policy_path = Path(sandbox["tmp_path"]) / "runtime-policy.json"
+    policy_path.write_text(json.dumps({"allow_manifestless": permit}, sort_keys=True) + "\n")
+    return policy_path
+
+
+def test_runtime_create_deviations_empty_and_pointer_compatibility_only(
+    sandbox: dict[str, object],
+) -> None:
+    sandbox["create"]("epic-plain")
+    # deviations defaults to [] when no ARNOLD_RUNTIME_POLICY sidecar is set
+    m = read_manifest(sandbox, "epic-plain")
+    assert m["deviations"] == []
+    # the global active pointer is demoted to compatibility-only (G1
+    # no-global-pointer fallback): it is written ONCE with the marker in the
+    # same payload (G2 second re-run) and NEVER bootstraps — every resolver
+    # treats it as ABSENT for admission
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    assert pointer.exists()
+    p = json.loads(pointer.read_text())
+    assert p["epic_id"] == "epic-plain"
+    assert p["compatibility_only"] is True
+
+
+def test_pointer_compatibility_only_survives_promote_and_close(
+    sandbox: dict[str, object],
+) -> None:
+    """G2 second re-run: the global pointer's compatibility_only demotion is
+    DURABLE — the marker survives create -> promote (advance_generation) ->
+    close (set_state), so no resolver can ever admit the pointer."""
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        bootstrap_manifest,
+        is_compatibility_only_pointer,
+        manifest_present,
+    )
+
+    worktree = sandbox["create"]("epic-durable")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "durable fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+
+    # create: pointer carries the marker from the FIRST (only) pointer write
+    assert json.loads(pointer.read_text())["compatibility_only"] is True
+    assert is_compatibility_only_pointer(pointer) is True
+
+    # promote: advance_generation rewrites the pointer — the marker survives
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-durable",
+        str(manifest_path(sandbox, "epic-durable")),
+        extra_env={"ARNOLD_PROMOTE_SKIP_CANARY": "1"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    p = json.loads(pointer.read_text())
+    assert p["compatibility_only"] is True
+    assert p["generation"] == 2
+    assert p["epic"]["expected_head"] == head
+
+    # close: pointer set_state keeps the marker AND the closed state
+    close = sandbox["run"](
+        CLOSE, "epic-durable", str(manifest_path(sandbox, "epic-durable"))
+    )
+    assert close.returncode == 0, close.stderr
+    p = json.loads(pointer.read_text())
+    assert p["compatibility_only"] is True
+    assert p["state"] == "closed"
+
+    # no resolver admits the pointer: the lib gate treats it as ABSENT
+    assert manifest_present(pointer) is False
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(pointer)
+
+
+def test_runtime_create_stamps_allow_manifestless_permit_into_deviations(
+    sandbox: dict[str, object],
+) -> None:
+    permit = _valid_permit()
+    policy_path = _write_policy_sidecar(sandbox, permit)
+    proc = sandbox["run"](
+        CREATE,
+        "epic-permitted",
+        "base/editable-install",
+        extra_env={"ARNOLD_RUNTIME_POLICY": str(policy_path)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    m = read_manifest(sandbox, "epic-permitted")
+    assert len(m["deviations"]) == 1
+    stamped = m["deviations"][0]
+    assert stamped["kind"] == "allow_manifestless"
+    assert stamped["id"] == permit["id"]
+    assert stamped["actor"] == permit["actor"]
+    assert stamped["reason"] == permit["reason"]
+    assert stamped["chain_digest"] == permit["chain_digest"]
+    assert stamped["issued_at"] == permit["issued_at"]
+    assert stamped["expires_at"] == permit["expires_at"]
+    assert stamped["evidence"] == permit["evidence"]
+
+
+def test_runtime_create_fails_loudly_on_expired_permit(sandbox: dict[str, object]) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    expired = _valid_permit(
+        id="permit-expired",
+        issued_at=(now - timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=(now - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    policy_path = _write_policy_sidecar(sandbox, expired)
+    proc = sandbox["run"](
+        CREATE,
+        "epic-expired",
+        "base/editable-install",
+        extra_env={"ARNOLD_RUNTIME_POLICY": str(policy_path)},
+    )
+    assert proc.returncode != 0
+    assert "permit" in proc.stderr.lower()
+    # deny-by-default: creation must not proceed without recording the
+    # declared deviation — the manifest is never written
+    assert not manifest_path(sandbox, "epic-expired").exists()
+
+
+def test_runtime_create_fails_loudly_on_invalid_permit_duration(
+    sandbox: dict[str, object],
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    too_long = _valid_permit(
+        id="permit-too-long",
+        issued_at=(now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=(now + timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    policy_path = _write_policy_sidecar(sandbox, too_long)
+    proc = sandbox["run"](
+        CREATE,
+        "epic-duration",
+        "base/editable-install",
+        extra_env={"ARNOLD_RUNTIME_POLICY": str(policy_path)},
+    )
+    assert proc.returncode != 0
+    assert "permit" in proc.stderr.lower()
+    assert not manifest_path(sandbox, "epic-duration").exists()
 
 
 # ── arnold-close ─────────────────────────────────────────────────────────────
@@ -244,10 +414,13 @@ def test_close_closes_clean_pushed_epic(sandbox: dict[str, object]) -> None:
         None, "ls-remote", str(sandbox["origin"]), "refs/tags/box-snapshot/epic-clean-*"
     ).stdout.strip()
     assert remote_tags
-    # the active pointer (held by this epic at creation) is closed too —
-    # bootstrappers observe state=closed at the stable path
+    # the active pointer (compatibility-only telemetry held by this epic at
+    # creation) is closed too AND stays demoted — pointer set_state must not
+    # strip the marker (G2 second re-run)
     pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
-    assert json.loads(pointer.read_text())["state"] == "closed"
+    p = json.loads(pointer.read_text())
+    assert p["state"] == "closed"
+    assert p["compatibility_only"] is True
 
 
 def test_close_phase1_fails_on_live_pidfile(sandbox: dict[str, object]) -> None:
@@ -528,6 +701,9 @@ def test_promote_with_canary_flag_advances_pointer(sandbox: dict[str, object]) -
     pointer = json.loads(Path(pointer_path).read_text())
     assert pointer["generation"] == 2
     assert pointer["epic"]["expected_head"] == head
+    # advance_generation rewrote the pointer — the compatibility_only demotion
+    # survives (G2 second re-run: the marker is a preserved manifest field)
+    assert pointer["compatibility_only"] is True
     # previous generation retained for rollback
     retention = Path(pointer_path + ".previous-1.json")
     assert retention.exists()

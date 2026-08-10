@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -26,6 +27,61 @@ from tests.cloud.repair_identity_fixtures import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRIGGER = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-repair-trigger"
+
+
+def _write_allow_manifestless_policy(
+    policy_path: Path,
+    *,
+    permits: list[dict[str, object]] | None = None,
+    issued_at: str | None = None,
+    expires_at: str | None = None,
+) -> Path:
+    """Write a ``.runtime_policy.json`` sidecar with ONE valid permit by default.
+
+    The P1 admission contract: a genuinely ABSENT runtime manifest is admitted
+    only by a valid, unexpired ``allow_manifestless`` permit in the sidecar
+    (``dirname(ARNOLD_RUNTIME_MANIFEST)/.runtime_policy.json`` or the
+    ``ARNOLD_RUNTIME_POLICY`` override).  The default permit is issued "now"
+    and expires in one hour; ``permits`` overrides the whole list for
+    expired/revoked/multi-record cases.
+    """
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    if permits is not None:
+        payload = {"permits": permits}
+    else:
+        now = datetime.now(timezone.utc)
+        payload = {
+            "permits": [
+                {
+                    "kind": "allow_manifestless",
+                    "id": "permit-trigger-harness-1",
+                    "issued_at": issued_at or now.isoformat(),
+                    "expires_at": expires_at or (now + timedelta(hours=1)).isoformat(),
+                    "actor": "repair-trigger-wrapper-test",
+                    "reason": "test harness manifestless admission",
+                    "evidence": ["wrapper test injects a valid permit"],
+                    "chain_digest": hashlib.sha256(b"trigger-test-chain").hexdigest(),
+                }
+            ]
+        }
+    policy_path.write_text(json.dumps(payload), encoding="utf-8")
+    return policy_path
+
+
+@pytest.fixture(autouse=True)
+def _manifestless_admission_permit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admit the manifestless trigger harness with a valid sidecar permit.
+
+    The wave-1 P1 admission kernel blocks a genuinely absent runtime manifest
+    with exit 78 UNLESS a valid unexpired ``allow_manifestless`` permit exists
+    in the ``.runtime_policy.json`` sidecar.  These wrapper tests exercise the
+    dispatch/observation logic, not admission, so every subprocess invocation
+    pins ``ARNOLD_RUNTIME_POLICY`` to a freshly-written valid sidecar.  Tests
+    that must assert fail-closed admission delete the env var themselves.
+    """
+    policy_path = _write_allow_manifestless_policy(tmp_path / ".runtime_policy.json")
+    monkeypatch.setenv("ARNOLD_RUNTIME_POLICY", str(policy_path))
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
 
 
 def _queue_root(workspace: Path) -> Path:

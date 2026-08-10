@@ -19,32 +19,37 @@ REMOTE_SPEC="$3"
 
 ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"
+# Runtime-order invariant: the supervisor runtime lib must be sourced and
+# arnold_supervisor_runtime_init must run BEFORE any python3 invocation —
+# including the manifest read below.  Discovery follows the established
+# pattern: BASH_SOURCE origin dir -> ARNOLD_SRC -> /usr/local/bin.
+SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_runtime_init kimi-goal-operator "$ARNOLD_SRC" || exit $?
+# P1 admission authority (G2 correction 3): the shared lib gate is the SOLE
+# manifest resolver for wrapper entry — a present-but-invalid manifest exits
+# 78, and an absent manifest (including the compatibility_only global
+# pointer, which is treated as ABSENT) is admitted only by a valid unexpired
+# allow_manifestless permit.  Direct invocation therefore fails closed, not
+# via the expected parent.  Runs BEFORE any manifest field read or ARNOLD_SRC
+# use below.
+arnold_runtime_manifest_authority kimi-goal-operator
 # Fixer-unification: prefer the per-epic runtime manifest's declared epic
 # branch so prompt targets and the agent's push destination match the runtime
 # it was born into; the legacy env/default chain applies to manifest-less
 # runtimes only.
-_MANIFEST_EPIC_BRANCH="$(PYTHONPATH="${ARNOLD_SRC:-/workspace/arnold}:${PYTHONPATH:-}" python3 - "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}" <<'PY' 2>/dev/null || true
-import json, pathlib, sys
-try:
-    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-    epic = payload.get("epic") if isinstance(payload, dict) else {}
-    value = epic.get("branch") if isinstance(epic, dict) else None
-    if isinstance(value, str) and value:
-        print(value)
-except Exception:
-    pass
-PY
-)"
+_MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
 if [[ -n "$_MANIFEST_EPIC_BRANCH" ]]; then
   SYNC_BRANCH="$_MANIFEST_EPIC_BRANCH"
 else
   SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"
-fi
-# Fail-closed manifest authority (codex review fix #3): a present manifest
-# without an epic branch must not silently fall back to the shared branch.
-if [[ -f "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}" && -z "$_MANIFEST_EPIC_BRANCH" ]]; then
-  echo "arnold-kimi-goal-operator: runtime manifest present without epic.branch; failing closed" >&2
-  exit 78
 fi
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"

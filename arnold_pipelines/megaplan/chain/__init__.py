@@ -238,6 +238,7 @@ effective_chain_policy = chain_spec.effective_chain_policy
 load_chain_state = chain_spec.load_chain_state
 load_runtime_policy = chain_spec.load_runtime_policy
 load_spec = chain_spec.load_spec
+require_runtime_manifest_permit = chain_spec.require_runtime_manifest_permit
 save_chain_state = chain_spec.save_chain_state
 save_runtime_policy = chain_spec.save_runtime_policy
 validate_paths = chain_spec.validate_paths
@@ -6340,6 +6341,10 @@ def run_chain(
         writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     _preflight_agent_backends(spec, writer=writer)
+    # P1 admission gate: fires BEFORE any chain state load or execution
+    # identity binding. Manifest present+valid passes; a manifestless session
+    # passes only with a valid unexpired allow_manifestless permit; else block.
+    chain_spec.require_runtime_manifest_permit(spec_path)
     state = chain_spec.load_chain_state(spec_path)
     from arnold_pipelines.megaplan.chain.execution_binding import (
         bind_execution_identity,
@@ -8773,6 +8778,45 @@ def build_chain_parser(subparsers: Any) -> None:
         default=None,
         help="Set review clean_milestone_pr policy at runtime (e.g. auto, manual)",
     )
+    override_parser.add_argument(
+        "--allow-manifestless",
+        action="store_true",
+        default=False,
+        help="Grant an expiring allow_manifestless permit (admission exception "
+        "for manifest-less chain execution) recorded in the runtime policy sidecar.",
+    )
+    override_parser.add_argument(
+        "--reason",
+        default=None,
+        help="Required with --allow-manifestless: why the deviation is granted.",
+    )
+    override_parser.add_argument(
+        "--expires-at",
+        default=None,
+        metavar="ISO8601",
+        help="Required with --allow-manifestless: UTC expiry timestamp. Must be "
+        "within 24 hours of issuance.",
+    )
+    override_parser.add_argument(
+        "--actor",
+        default=None,
+        help="Required with --allow-manifestless: attribution for the permit "
+        "(caller-supplied, not authentication).",
+    )
+    override_parser.add_argument(
+        "--evidence",
+        action="append",
+        default=None,
+        metavar="TEXT",
+        help="Repeatable evidence string attached to the permit record.",
+    )
+    override_parser.add_argument(
+        "--revoke",
+        action="store_true",
+        default=False,
+        help="Revoke the active allow_manifestless permit by stamping an auditable "
+        "revoked_at tombstone (the record is never deleted).",
+    )
 
 
 def _add_chain_worktree_args(parser: Any) -> None:
@@ -9163,13 +9207,22 @@ def run_chain_cli(
         set_prereq = getattr(args, "set_prerequisite_policy", None)
         set_valid = getattr(args, "set_validation_policy", None)
         set_clean = getattr(args, "set_review_clean_milestone_pr", None)
-        if set_prereq is None and set_valid is None and set_clean is None:
+        allow_manifestless = bool(getattr(args, "allow_manifestless", False))
+        revoke_permit = bool(getattr(args, "revoke", False))
+        if (
+            set_prereq is None
+            and set_valid is None
+            and set_clean is None
+            and not allow_manifestless
+            and not revoke_permit
+        ):
             return _emit_error(
                 CliError(
                     "invalid_spec",
-                    "At least one --set-* flag is required for chain override. "
-                    "Use --set-prerequisite-policy, --set-validation-policy, "
-                    "or --set-review-clean-milestone-pr.",
+                    "At least one --set-* flag, --allow-manifestless, or --revoke "
+                    "is required for chain override. Use --set-prerequisite-policy, "
+                    "--set-validation-policy, --set-review-clean-milestone-pr, "
+                    "--allow-manifestless, or --revoke.",
                 )
             )
         try:
@@ -9186,13 +9239,65 @@ def run_chain_cli(
             review_from_overrides["clean_milestone_pr"] = set_clean
             overrides["review_policy"] = review_from_overrides
         chain_spec.save_runtime_policy(spec_path, overrides)
+        revoked: dict[str, Any] | None = None
+        if revoke_permit:
+            try:
+                revoked = chain_spec.revoke_allow_manifestless_permit(spec_path)
+            except CliError as exc:
+                return _emit_error(exc)
+            if revoked is None:
+                return _emit_error(
+                    CliError(
+                        "no_active_permit",
+                        "chain override --revoke: no active allow_manifestless "
+                        "permit is on record for this chain.",
+                    )
+                )
+        permit: dict[str, Any] | None = None
+        if allow_manifestless:
+            reason = getattr(args, "reason", None)
+            expires_at = getattr(args, "expires_at", None)
+            actor = getattr(args, "actor", None)
+            evidence = list(getattr(args, "evidence", None) or [])
+            missing = [
+                name
+                for name, value in (
+                    ("--reason", reason),
+                    ("--expires-at", expires_at),
+                    ("--actor", actor),
+                )
+                if not value
+            ]
+            if missing:
+                return _emit_error(
+                    CliError(
+                        "invalid_permit",
+                        "chain override --allow-manifestless requires "
+                        + ", ".join(missing)
+                        + ".",
+                    )
+                )
+            try:
+                permit = chain_spec.issue_allow_manifestless_permit(
+                    spec_path,
+                    reason=reason,
+                    expires_at=expires_at,
+                    actor=actor,
+                    evidence=evidence,
+                )
+            except CliError as exc:
+                return _emit_error(exc)
         effective = chain_spec.effective_chain_policy(spec, overrides)
-        payload = {
+        payload: dict[str, Any] = {
             "success": True,
             "spec": str(spec_path),
             "effective_policy": effective,
             "runtime_overrides": overrides,
         }
+        if revoked is not None:
+            payload["revoked_permit"] = revoked
+        if permit is not None:
+            payload["permit"] = permit
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
