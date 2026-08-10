@@ -6,15 +6,166 @@ if [[ $# -lt 2 ]]; then
 fi
 SESSION="$1"
 shift
+
+# Resolve the shared supervisor runtime lib so the P1 admission gate and the
+# P2/G3 runtime-transition emitter are the SAME fail-closed authority every
+# leaf wrapper uses.  Installed layout first, then the checkout.
+ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}"
+SUPERVISOR_RUNTIME_LIB="$(dirname "$0")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  echo "arnold-run: supervisor runtime lib not found; failing closed" >&2
+  exit 78
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+# P1 leaf-wrapper admission gate (G2 correction 3): the shared lib authority
+# is the SOLE manifest resolver for wrapper entry.  A present-but-invalid
+# manifest exits 78; an absent manifest (including the compatibility_only
+# global pointer, treated as ABSENT) is admitted only by a valid unexpired
+# allow_manifestless permit.  Direct invocation therefore fails closed, not
+# via the expected parent.
+arnold_runtime_manifest_authority arnold-run
+
+LOG="/workspace/${SESSION}.log"
+# Emitter diagnostics go to their own sink (never the launched command's
+# log); default to /dev/null so a missing /workspace never wedges the launch.
+EMITTER_LOG="${ARNOLD_RUN_LOG:-/dev/null}"
+WORKSPACE_DIR="${WORKSPACE_PATH:-/workspace/app}"
+# Chain-spec binding for the runtime-transition ledger: an explicit
+# ARNOLD_RUN_SPEC wins; otherwise the managed session marker (the layout the
+# watchdog writes) is the canonical per-session spec source.  An unbound
+# launch FAILS CLOSED in the emitter below (no event = no launch).
+REMOTE_SPEC="${ARNOLD_RUN_SPEC:-}"
+if [[ -z "$REMOTE_SPEC" ]]; then
+  MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+  if [[ -f "$MARKER_DIR/$SESSION.json" ]]; then
+    REMOTE_SPEC="$(python3 - "$MARKER_DIR/$SESSION.json" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(payload.get("remote_spec") or "").strip())
+PY
+)"
+  fi
+fi
+
+# ── P2/G3 typed runtime transitions (mirror of the watchdog emitter) ────────
+# The ledger append is synchronous and never swallowed: a non-zero CLI exit
+# (policy rejection or journal write failure) returns 1 and the caller MUST
+# block the launch (no event = no side effect).  Missing inputs (no
+# workspace, no spec, unreadable spec) FAIL CLOSED — never succeed eventless.
+emit_runtime_transition_event() {
+  local event_name="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local failure_class="${5:-}"
+  local error_text="${6:-}"
+  local candidate_to="${7:-}"
+  local candidate_from="${8:-}"
+  local attempt_num="${9:-}"
+  local summary_text="${10:-}"
+  local chain_digest ledger_rc
+  local -a ledger_args
+  if [[ -z "$workspace" || -z "$remote_spec" || ! -f "$remote_spec" ]]; then
+    printf '[arnold-run %s] runtime transition ledger input missing (workspace/spec) for %s; blocking launch session=%s\n' \
+      "$(date -Iseconds)" "$event_name" "$session" >>"${EMITTER_LOG}" 2>&1 || true
+    return 1
+  fi
+  chain_digest="$(PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$remote_spec" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.chain.spec import chain_spec_sha256
+
+print(chain_spec_sha256(pathlib.Path(sys.argv[1])))
+PY
+)"
+  if [[ -z "$chain_digest" ]]; then
+    return 1
+  fi
+  ledger_args=(
+    "$event_name"
+    --root "$workspace"
+    --scope "chain:$session"
+    --session-id "$session"
+    --actor "arnold-run"
+    --failure-class "$failure_class"
+    --error "$error_text"
+    --candidate-to "$candidate_to"
+    --candidate-from "$candidate_from"
+    --attempt "$attempt_num"
+    --chain-spec-sha256 "$chain_digest"
+  )
+  if [[ -n "$summary_text" ]]; then
+    ledger_args+=(--summary "$summary_text")
+  fi
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 -W ignore::RuntimeWarning \
+    -m arnold_pipelines.megaplan.incident.ledger "${ledger_args[@]}" \
+    >> "${EMITTER_LOG}" 2>&1
+  ledger_rc=$?
+  if [[ "$ledger_rc" != "0" ]]; then
+    printf '[arnold-run %s] runtime transition ledger write failed (%s) rc=%s; blocking launch session=%s\n' \
+      "$(date -Iseconds)" "$event_name" "$ledger_rc" "$session" >>"${EMITTER_LOG}" 2>&1 || true
+    return 1
+  fi
+  return 0
+}
+
+# ── P2/G3 in-tmux (TMUX direct-exec) branch ────────────────────────────────
+# The in-tmux branch must journal the SAME typed fallback transitions BEFORE
+# the direct exec (no event = no side effect).  A ledger write failure blocks
+# the exec; an unbound launch fails closed in the emitter above (missing
+# workspace/spec) and never reaches the exec.
 if [[ -n "${TMUX:-}" ]]; then
+  if ! emit_runtime_transition_event fallback_considered \
+    "$SESSION" "$WORKSPACE_DIR" "$REMOTE_SPEC" \
+    "availability" "" "" "$ARNOLD_SRC" "" \
+    "arnold-run considered in-tmux direct-exec fallback session=$SESSION"; then
+    echo "arnold-run: runtime fallback_considered ledger write failed; blocking in-tmux launch session=$SESSION" >&2
+    exit 1
+  fi
+  if ! emit_runtime_transition_event fallback_taken \
+    "$SESSION" "$WORKSPACE_DIR" "$REMOTE_SPEC" \
+    "availability" "" "$*" "$ARNOLD_SRC" "" \
+    "arnold-run took in-tmux direct-exec fallback session=$SESSION"; then
+    echo "arnold-run: runtime fallback_taken ledger write failed; blocking in-tmux launch session=$SESSION" >&2
+    exit 1
+  fi
   exec "$@"
 fi
+
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "arnold-run: tmux session '$SESSION' already exists. Attach inside the cloud container with: tmux attach -t $SESSION" >&2
   exit 65
 fi
-LOG="/workspace/${SESSION}.log"
-WORKSPACE_DIR="${WORKSPACE_PATH:-/workspace/app}"
+
+# P2/G3: journal fallback_considered + fallback_taken BEFORE the detached
+# tmux launch side effect (no event = no side effect).  A ledger write
+# failure blocks the launch.
+if ! emit_runtime_transition_event fallback_considered \
+  "$SESSION" "$WORKSPACE_DIR" "$REMOTE_SPEC" \
+  "availability" "" "" "$ARNOLD_SRC" "" \
+  "arnold-run considered detached tmux launch fallback session=$SESSION"; then
+  echo "arnold-run: runtime fallback_considered ledger write failed; blocking launch session=$SESSION" >&2
+  exit 1
+fi
+if ! emit_runtime_transition_event fallback_taken \
+  "$SESSION" "$WORKSPACE_DIR" "$REMOTE_SPEC" \
+  "availability" "" "$*" "$ARNOLD_SRC" "" \
+  "arnold-run took detached tmux launch fallback session=$SESSION"; then
+  echo "arnold-run: runtime fallback_taken ledger write failed; blocking launch session=$SESSION" >&2
+  exit 1
+fi
+
 QUOTED=$(printf '%q ' "$@")
 tmux new-session -d -s "$SESSION" -c "$WORKSPACE_DIR" "bash -lc '${QUOTED} 2>&1 | tee -a ${LOG}'"
 echo "arnold-run: launched '$SESSION' in detached tmux. Attach inside the cloud container with: tmux attach -t $SESSION  |  Log: $LOG"

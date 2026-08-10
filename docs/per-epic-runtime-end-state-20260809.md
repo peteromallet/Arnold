@@ -380,3 +380,64 @@ field (schema stays 1, optional, carried by every read/write transition incl.
 `_reconstruct`), write the pointer ONCE with the marker set (atomic), and add
 lifecycle tests proving the pointer remains non-authoritative across
 create → promote → close.
+
+### G3 gate (2026-08-10): NO-GO → corrections before P3
+
+1. `dispatch_meta_repair` (arnold-watchdog ~:5966) launches
+   `automatic_meta_repair` via setsid (:6143) with NO runtime-transition
+   write — add `deviation_declared` + `fallback_considered` BEFORE the launch
+   (write failure blocks) and `fallback_taken` before/at launch.
+2. `emit_runtime_transition_event` (~:5007) returns success WITHOUT writing
+   when workspace/spec is absent (:5020-5022) — must FAIL CLOSED (missing
+   inputs block dispatch), never succeed eventless.
+3. `runtime.manifest_selected` has NO production emitter — wire it where
+   manifest selection actually happens (watchdog / repair-trigger resolution
+   before dispatch).
+4. Watchdog writes `fallback_taken` only AFTER launch with log-only failure —
+   move BEFORE the launch and make write failure BLOCK.
+5. `progress_auditor_controller.py` (~:661) calls
+   `enqueue_audit_repair_request` without a transition writer (emission
+   optional) — make emission MANDATORY for that path (writer required; missing
+   writer or write failure blocks the enqueue).
+
+### G3 second re-run (2026-08-10): NO-GO → one remaining bypass
+
+`manual_review_dispatch_status_env` (arnold-watchdog ~:1362) has two
+unjournaled side-effect paths: with `MEGAPLAN_SUPERFIXER_ONLY=1` it executes
+`resident schedule add` (~:1566), and the normal branch calls
+`enqueue_occurrence_bound_repair_request` (~:1570, also reached from ~:8528 and
+~:9164) — neither writes a `runtime.*` event first. Fix: journal
+`deviation_declared` + `fallback_considered` BEFORE both (fail closed on
+missing inputs/write failure), and add regression tests proving no
+schedule/request is created when the ledger write fails.
+
+### G3 third re-run (2026-08-10): NO-GO → one remaining bypass
+
+`launch_chain_tick` (arnold-watchdog ~:9483) can execute a DIRECT mechanical
+relaunch (`tmux new-session`) with no `runtime.*` event first — when a stopped
+session has no meta-repair trigger and no prior mechanical-relaunch / failed-
+Kimi-dispatch record. Fix: journal the relaunch decision (`fallback_considered`
++ `fallback_taken`) BEFORE the marker/launch effects; ledger write failure
+blocks both.
+
+### G3 fourth re-run (2026-08-10): NO-GO → two independent launch primitives
+
+- `arnold-repair-loop` `mechanical_launch_step` (~:7128/:7290) performs its
+  OWN fallback decision + `tmux new-session` side effect — the watchdog's
+  event covers dispatch of the child, not the child's later mechanical
+  relaunch; P1 supports independently gated direct invocation. Needs its own
+  fail-closed transition writer (fallback_considered + fallback_taken before
+  the tmux launch, ledger failure blocks).
+- `arnold-run` (:19) is a standalone installed launch primitive executing
+  `tmux new-session` without manifest admission or journaling. Must be
+  journaled + fail closed, or explicitly retired/restricted outside production
+  scope.
+
+### G3 fifth re-run (2026-08-10): NO-GO → one remaining branch
+
+`arnold-run` has an in-tmux (`TMUX` direct-exec) branch that launches without
+journaling — the detached branch is journaled, the in-tmux branch is not.
+Fix: journal `fallback_considered` + `fallback_taken` before the TMUX
+direct-exec (ledger failure blocks), or explicitly prohibit that branch, with
+ordering + ledger-failure tests. (Gate also noted: deployed production-box
+copies not verified — P7's box refresh covers that.)

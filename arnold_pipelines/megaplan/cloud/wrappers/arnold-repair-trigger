@@ -70,6 +70,8 @@ if __name__ == "__main__":
 try:
     import yaml  # noqa: F401
     from arnold_pipelines.megaplan.cloud import feature_flags, repair_requests
+    from arnold_pipelines.megaplan.chain.spec import chain_spec_sha256
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
     from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
     from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
     from arnold_pipelines.megaplan.cloud.redact import redact_payload
@@ -823,6 +825,72 @@ def _dispatch(
         )
         return 0
 
+    # ── P2 typed runtime transitions: declare + consider BEFORE any claim ──
+    # One typed deviation/fallback event path.  The incident-ledger append is
+    # synchronous and never swallowed: a policy rejection (ValueError) or
+    # journal write failure (OSError) aborts dispatch — no event means no
+    # claim and no child process.  Emitting never dispatches repair and never
+    # triggers a scan.
+    transition_writer: RuntimeTransitionWriter | None = None
+    try:
+        chain_digest = chain_spec_sha256(Path(remote_spec))
+    except (OSError, TypeError, ValueError):
+        chain_digest = ""
+    if not chain_digest:
+        print(
+            "arnold-repair-trigger: runtime transition ledger requires a readable chain spec; failing closed",
+            file=sys.stderr,
+        )
+        return 78
+    try:
+        transition_writer = RuntimeTransitionWriter(Path(workspace))
+        # P2: the runtime manifest selection was resolved at entry
+        # (_enforce_manifest_authority / _default_repair_bin).  Record it
+        # FIRST, before the deviation declaration, so every dispatch is
+        # preceded by a durable runtime.* event sequence.
+        _record_runtime_transition(
+            transition_writer,
+            "manifest_selected",
+            session=session,
+            remote_spec=remote_spec,
+            chain_spec_sha256=chain_digest,
+            repair_bin=str(repair_bin),
+            request_id=request_id,
+            failure_class="",
+            error="",
+        )
+        _record_runtime_transition(
+            transition_writer,
+            "deviation_declared",
+            session=session,
+            remote_spec=remote_spec,
+            chain_spec_sha256=chain_digest,
+            repair_bin=str(repair_bin),
+            request_id=request_id,
+            failure_class="availability",
+            error=(
+                dispatch_intent
+                or "repair request enqueued for a blocked runtime session"
+            ),
+            attempt=request_id,
+        )
+        _record_runtime_transition(
+            transition_writer,
+            "fallback_considered",
+            session=session,
+            remote_spec=remote_spec,
+            chain_spec_sha256=chain_digest,
+            repair_bin=str(repair_bin),
+            request_id=request_id,
+            failure_class="availability",
+        )
+    except (ValueError, OSError) as exc:
+        print(
+            f"arnold-repair-trigger: runtime transition ledger write failed; blocking dispatch: {exc}",
+            file=sys.stderr,
+        )
+        return 78
+
     repair_layer = "l3" if deep_dispatch else "l2" if l2_dispatch else "l1"
     child_command = (
         f"{selected_bin} {session} l3_progress_auditor"
@@ -1104,6 +1172,41 @@ def _dispatch(
         )
         return 0
     if meta_dispatch:
+        # P2: record the taken fallback BEFORE the child launch side effect.
+        # A write failure releases the claim and aborts — no event = no child.
+        try:
+            _record_runtime_transition(
+                transition_writer,
+                "fallback_taken",
+                session=session,
+                remote_spec=remote_spec,
+                chain_spec_sha256=chain_digest,
+                repair_bin=str(repair_bin),
+                request_id=request_id,
+                failure_class="availability",
+            )
+        except (ValueError, OSError) as exc:
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                owner=claim.owner,
+                expected_pid=os.getpid(),
+            )
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="runtime transition ledger write failed before launch: " + str(exc),
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "ledger_failed",
+                    "request_id": request_id,
+                    "repair_layer": repair_layer,
+                    "custody_retry": retry,
+                }
+            )
+            return 78
         try:
             legacy_child_args = (
                 [str(selected_bin), session, "l3_progress_auditor"]
@@ -1334,6 +1437,42 @@ def _dispatch(
             }
         )
         return 0
+
+    # P2: record the taken fallback BEFORE the simple_fixer delegation side
+    # effect.  A write failure releases the claim and aborts dispatch.
+    try:
+        _record_runtime_transition(
+            transition_writer,
+            "fallback_taken",
+            session=session,
+            remote_spec=remote_spec,
+            chain_spec_sha256=chain_digest,
+            repair_bin=str(repair_bin),
+            request_id=request_id,
+            failure_class="availability",
+        )
+    except (ValueError, OSError) as exc:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="runtime transition ledger write failed before delegation: " + str(exc),
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "ledger_failed",
+                "request_id": request_id,
+                "repair_layer": repair_layer,
+                "custody_retry": retry,
+            }
+        )
+        return 78
 
     try:
         occurrence = repair_identity.get("occurrence")
@@ -1819,6 +1958,65 @@ def _has_command(name: str) -> bool:
 
 def _emit(payload: Mapping[str, Any]) -> None:
     print(json.dumps(redact_payload(dict(payload)), sort_keys=True))
+
+
+def _record_runtime_transition(
+    transition_writer: RuntimeTransitionWriter,
+    event_type: str,
+    *,
+    session: str,
+    remote_spec: str,
+    chain_spec_sha256: str,
+    repair_bin: str,
+    request_id: str,
+    failure_class: str = "",
+    error: str = "",
+    attempt: str = "",
+) -> None:
+    """Append one typed runtime transition BEFORE a dispatch side effect.
+
+    P2: the incident-ledger append is synchronous and never swallowed — a
+    policy rejection (ValueError) or journal write failure (OSError)
+    propagates to the caller, which MUST treat it as "do not dispatch".
+    Emitting is a pure append-only ledger write: it never dispatches repair
+    and never triggers a scan.
+
+    ``manifest_selected`` records the runtime manifest selection resolved at
+    entry (the manifest is THE post-bootstrap resolver; without one a valid
+    ``allow_manifestless`` permit admits the env-pinned repair bin — the
+    selection this event records).  It carries no failure class.
+    """
+    if event_type == "manifest_selected":
+        transition_writer.emit_manifest_selected(
+            scope=f"chain:{session}",
+            candidate_to=repair_bin or None,
+            candidate_from=remote_spec or None,
+            error=error,
+            attempt=attempt or request_id,
+            chain_spec_sha256=chain_spec_sha256,
+            evidence=[],
+            actor="arnold-repair-trigger",
+            session_id=session,
+        )
+        return
+    emit = {
+        "deviation_declared": transition_writer.emit_deviation_declared,
+        "fallback_considered": transition_writer.emit_fallback_considered,
+        "fallback_taken": transition_writer.emit_fallback_taken,
+        "fallback_rejected": transition_writer.emit_fallback_rejected,
+    }[event_type]
+    emit(
+        scope=f"chain:{session}",
+        failure_class=failure_class,
+        chain_spec_sha256=chain_spec_sha256,
+        candidate_from=remote_spec or None,
+        candidate_to=repair_bin or None,
+        error=error,
+        attempt=attempt or request_id,
+        evidence=[],
+        actor="arnold-repair-trigger",
+        session_id=session,
+    )
 
 
 # CLI repair-bin/meta-repair-bin overrides are retired.  Repair-bin resolution

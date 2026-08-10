@@ -57,6 +57,9 @@ def test_explicit_horizon_a_charge_reaches_managed_worker(monkeypatch, tmp_path)
     occurrence = repair_requests.repair_identity_key(identity)
     charge = _charge(occurrence)
     charge["engine_runtime_root"] = str(tw.REPO_ROOT)
+    from arnold_pipelines.megaplan.chain.spec import chain_spec_sha256
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
     queued = enqueue_audit_repair_request(
         {
             "plan": "m3",
@@ -80,6 +83,8 @@ def test_explicit_horizon_a_charge_reaches_managed_worker(monkeypatch, tmp_path)
             },
         },
         queue_root=tw._queue_root(workspace),
+        transition_writer=RuntimeTransitionWriter(workspace),
+        chain_spec_sha256=chain_spec_sha256(spec),
     )
     assert queued and queued["status"] == "queued"
     # Exercise the production _dispatch path in-process while stubbing only

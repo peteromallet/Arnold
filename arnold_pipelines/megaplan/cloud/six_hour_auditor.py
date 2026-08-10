@@ -32,6 +32,11 @@ from arnold_pipelines.megaplan.cloud.repair_requests import (
     normalize_repair_identity,
     repair_identity_key,
 )
+from arnold_pipelines.megaplan.cloud.watchdog import (
+    iter_incident_runtime_events,
+    runtime_transition_absences,
+)
+from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
 from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
     materialize_engine_runtime_repair_admission,
 )
@@ -259,11 +264,24 @@ def enqueue_audit_repair_request(
     audit_item: dict[str, Any],
     *,
     queue_root: Path | str,
+    transition_writer: RuntimeTransitionWriter | None = None,
+    chain_spec_sha256: str = "",
 ) -> dict[str, Any] | None:
     """Route an unhealthy audit finding through the central repair authority.
 
     This is deliberately the auditor's only operational handoff.  It creates
     no claims, edits no source or run state, and performs no commit or push.
+
+    G3 (mandatory emission): every enqueue that would create a repair request
+    must FIRST append the declared deviation and the considered repair
+    fallback to the incident ledger.  A ``RuntimeTransitionWriter`` is
+    therefore required whenever the item is an actionable true stall, and the
+    ``chain_spec_sha256`` contract digest must accompany it.  Missing inputs
+    FAIL CLOSED — the enqueue is blocked before any request is created.  The
+    append is synchronous and never swallowed: a policy rejection (ValueError)
+    or journal write failure (OSError) aborts the enqueue — no event means no
+    repair request.  Ordinary report-only findings (no repair authority)
+    return ``None`` without requiring a writer because they create no request.
     """
     incident_audit = (
         audit_item.get("incident_audit")
@@ -402,6 +420,60 @@ def enqueue_audit_repair_request(
             ensure_ascii=False,
         ).encode("utf-8")
     ).hexdigest()
+    if transition_writer is None:
+        raise ValueError(
+            "six-hour audit repair request not enqueued: a runtime transition "
+            "writer is mandatory (no durable runtime.* event may precede the "
+            "repair handoff)"
+        )
+    if not chain_spec_sha256:
+        raise ValueError(
+            "six-hour audit repair request not enqueued: chain_spec_sha256 is "
+            "required for the runtime transition journal"
+        )
+    try:
+        transition_writer.emit_deviation_declared(
+            scope=f"chain:{session}",
+            failure_class="availability",
+            error=f"{layer}:{code}",
+            chain_spec_sha256=chain_spec_sha256,
+            candidate_from=str(workspace) or None,
+            candidate_to=recommendation or None,
+            attempt=str(retry_ordinal),
+            evidence=[
+                {
+                    "kind": "six_hour_audit_finding",
+                    "session": session,
+                    "plan": plan,
+                    "escalation_id": escalation_id,
+                    "code": code,
+                }
+            ],
+            actor="arnold-six-hour-auditor",
+            session_id=session,
+        )
+        transition_writer.emit_fallback_considered(
+            scope=f"chain:{session}",
+            failure_class="availability",
+            chain_spec_sha256=chain_spec_sha256,
+            candidate_from=str(workspace) or None,
+            candidate_to=recommendation or None,
+            attempt=str(retry_ordinal),
+            evidence=[
+                {
+                    "kind": "six_hour_audit_finding",
+                    "session": session,
+                    "escalation_id": escalation_id,
+                }
+            ],
+            actor="arnold-six-hour-auditor",
+            session_id=session,
+        )
+    except (ValueError, OSError) as exc:
+        raise ValueError(
+            "six-hour audit repair request not enqueued: runtime transition "
+            f"not durably recorded: {exc}"
+        ) from exc
     return enqueue_occurrence_bound_repair_request(
         queue_root=queue_root,
         session=session,
@@ -437,6 +509,53 @@ def enqueue_audit_repair_request(
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
         occurrence_identity=occurrence_identity,
     )
+
+
+def runtime_transition_absence_findings(
+    *,
+    ledger_root: Path | str,
+    session_id: str = "",
+    spec_path: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    """Map incident-ledger runtime-transition absences to auditor findings.
+
+    Read-only: wraps :func:`cloud.watchdog.runtime_transition_absences` into
+    the auditor's finding shape (code/layer/status/severity/recommendation).
+    Covers missing ``runtime.*`` events, invalid failure classes, chain-spec
+    digest drift, and expired ``allow_manifestless`` permits.  The auditor
+    never acts on these findings — they feed escalation only.
+    """
+    absences = runtime_transition_absences(
+        ledger_root=ledger_root,
+        session_id=session_id,
+        spec_path=spec_path,
+    )
+    findings: list[dict[str, Any]] = []
+    for absence in absences:
+        kind = str(absence.get("kind") or "runtime_transition_absence")
+        severity = str(absence.get("severity") or "warn")
+        status = "error" if severity == "error" else "warn"
+        details = {
+            key: value
+            for key, value in absence.items()
+            if key not in {"kind", "severity", "detail"}
+        }
+        findings.append(
+            _finding(
+                f"runtime_{kind}",
+                layer="runtime_transitions",
+                status=status,
+                severity=severity,
+                message=str(absence.get("detail") or kind),
+                recommendation=(
+                    "auditor_escalate_to_human"
+                    if severity == "error"
+                    else "watchdog.dispatch"
+                ),
+                **details,
+            )
+        )
+    return findings
 
 
 def build_audit_input(
@@ -2577,6 +2696,8 @@ __all__ = [
     "audit_projection_input",
     "build_audit_input",
     "build_auditor_completion_evidence",
+    "enqueue_audit_repair_request",
+    "runtime_transition_absence_findings",
     "save_auditor_completion_evidence",
     # Step 15C additions
     "AuditSeverity",
