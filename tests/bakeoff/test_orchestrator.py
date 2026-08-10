@@ -201,7 +201,7 @@ def test_run_bakeoff_persists_doc_mode_and_output_in_state(
         fake_create_subprocess_exec,
     )
 
-    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path):
+    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path, publish_branch: str | None = None):
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text("ok\n", encoding="utf-8")
         outcome_path.parent.mkdir(parents=True, exist_ok=True)

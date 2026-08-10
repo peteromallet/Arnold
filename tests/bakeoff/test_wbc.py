@@ -69,7 +69,7 @@ def _install_fake_spawn(
 ) -> None:
     nonterminal_profiles = nonterminal_profiles or set()
 
-    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path) -> tuple[FakeProcess, None]:
+    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path, publish_branch: str | None = None) -> tuple[FakeProcess, None]:
         profile = worktree.name
         plan_dir = worktree / ".megaplan" / "plans" / plan_id
         state_path = plan_dir / "state.json"

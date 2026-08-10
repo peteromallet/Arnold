@@ -84,7 +84,7 @@ def _install_fake_spawn(
     nonterminal_profiles = nonterminal_profiles or set()
     write_untracked_for = write_untracked_for or set()
 
-    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path) -> tuple[FakeProcess, None]:
+    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path, publish_branch: str | None = None) -> tuple[FakeProcess, None]:
         profile = worktree.name
         calls.append(profile)
         if profile in crash_profiles:
@@ -269,7 +269,7 @@ def test_bakeoff_detach_returns_without_awaiting_profile_outcomes(
     root = _prepare_repo(tmp_path, monkeypatch)
     never_completes = asyncio.Event()
 
-    async def blocking_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path) -> tuple[FakeProcess, None]:
+    async def blocking_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path, publish_branch: str | None = None) -> tuple[FakeProcess, None]:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text("spawned\n", encoding="utf-8")
 
