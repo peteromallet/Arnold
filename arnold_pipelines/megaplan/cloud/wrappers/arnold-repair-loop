@@ -7125,6 +7125,104 @@ print(json.dumps({
 RLSTATE_PY
 }
 
+# ── P2/G3 typed runtime transitions (repair-loop emitter) ───────────────────
+# Mirror of emit_runtime_transition_event (arnold-watchdog): one typed
+# deviation/fallback event path.  Every runtime deviation and fallback
+# decision is appended to the incident ledger BEFORE the caller performs a
+# dispatch side effect.  The append is synchronous and never swallowed: a
+# non-zero CLI exit (policy rejection or journal write failure) returns 1 and
+# the caller MUST block dispatch (no event = no side effect).  Emitting is a
+# pure append-only ledger write — it never dispatches repair and never
+# triggers a scan.  Missing inputs (no workspace, no spec, unreadable spec)
+# FAIL CLOSED: the event cannot be durably recorded without a contract
+# digest, so the caller MUST treat a non-zero return as "do not dispatch" —
+# never succeed eventless.
+repair_loop_emit_runtime_transition_event() {
+  local event_name="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local failure_class="${5:-}"
+  local error_text="${6:-}"
+  local candidate_to="${7:-}"
+  local candidate_from="${8:-}"
+  local attempt_num="${9:-}"
+  local summary_text="${10:-}"
+  local chain_digest ledger_rc
+  local -a ledger_args
+  if [[ -z "$workspace" || -z "$remote_spec" || ! -f "$remote_spec" ]]; then
+    printf '[repair-loop %s] runtime transition ledger input missing (workspace/spec) for %s; blocking dispatch session=%s\n' \
+      "$(date -Iseconds)" "$event_name" "$session" >>"${LOG:-/dev/null}" 2>&1 || true
+    return 1
+  fi
+  chain_digest="$(PYTHONPATH="$WRAPPER_REPO_ROOT:${ARNOLD_SRC:-}:${PYTHONPATH:-}" python3 - "$remote_spec" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.chain.spec import chain_spec_sha256
+
+print(chain_spec_sha256(pathlib.Path(sys.argv[1])))
+PY
+)"
+  if [[ -z "$chain_digest" ]]; then
+    return 1
+  fi
+  ledger_args=(
+    "$event_name"
+    --root "$workspace"
+    --scope "chain:$session"
+    --session-id "$session"
+    --actor "arnold-repair-loop"
+    --failure-class "$failure_class"
+    --error "$error_text"
+    --candidate-to "$candidate_to"
+    --candidate-from "$candidate_from"
+    --attempt "$attempt_num"
+    --chain-spec-sha256 "$chain_digest"
+  )
+  if [[ -n "$summary_text" ]]; then
+    ledger_args+=(--summary "$summary_text")
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${ARNOLD_SRC:-}:${PYTHONPATH:-}" python3 -W ignore::RuntimeWarning \
+    -m arnold_pipelines.megaplan.incident.ledger "${ledger_args[@]}" \
+    >> "${LOG:-/dev/null}" 2>&1
+  ledger_rc=$?
+  if [[ "$ledger_rc" != "0" ]]; then
+    printf '[repair-loop %s] runtime transition ledger write failed (%s) rc=%s; blocking dispatch session=%s\n' \
+      "$(date -Iseconds)" "$event_name" "$ledger_rc" "$session" >>"${LOG:-/dev/null}" 2>&1 || true
+    return 1
+  fi
+  return 0
+}
+
+# Journal the mechanical-launch fallback decision BEFORE the mechanical tmux
+# launch side effect (G3 fourth run): fallback_considered + fallback_taken,
+# actor=arnold-repair-loop, failure_class=availability, scope=chain:<session>.
+# A write failure (or missing workspace/spec/digest) returns 1 and the caller
+# MUST NOT launch (no event = no side effect).
+repair_loop_emit_mechanical_launch_fallback_events() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local relaunch_command="$4"
+  local iteration="$5"
+  if ! repair_loop_emit_runtime_transition_event fallback_considered \
+    "$session" "$workspace" "$remote_spec" \
+    "availability" "" \
+    "$relaunch_command" "$ARNOLD_SRC" "$iteration" \
+    "repair-loop considered mechanical relaunch session=$session iteration=$iteration"; then
+    return 1
+  fi
+  if ! repair_loop_emit_runtime_transition_event fallback_taken \
+    "$session" "$workspace" "$remote_spec" \
+    "availability" "" \
+    "$relaunch_command" "$ARNOLD_SRC" "$iteration" \
+    "repair-loop took mechanical relaunch fallback session=$session iteration=$iteration"; then
+    return 1
+  fi
+  return 0
+}
+
 mechanical_launch_step() {
   require_investigation_before_mutation "mechanical-launch"
   require_repair_lock_held
@@ -7220,6 +7318,16 @@ mechanical_launch_step() {
     log "mechanical relaunch fenced: existing canonical runner must be preserved session=$session iteration=$iteration" >&2
     echo "preserved:existing_runner"
     return 0
+  fi
+  # P2/G3 (fourth run): journal the typed runtime transitions BEFORE the
+  # mechanical tmux launch side effect — no event = no side effect.  The
+  # ledger append is synchronous and never swallowed: a missing workspace/
+  # spec/digest or a write failure returns 1 and BLOCKS the launch.
+  if ! repair_loop_emit_mechanical_launch_fallback_events \
+    "$session" "$workspace" "$remote_spec" "$quoted_command" "$iteration"; then
+    log "mechanical relaunch blocked: runtime transition ledger write failed session=$session iteration=$iteration" >&2
+    echo "failed:mechanical_launch_ledger_write_failed"
+    return 1
   fi
   safe="$(safe_name "$session")"
   launch_script="$(mktemp)"

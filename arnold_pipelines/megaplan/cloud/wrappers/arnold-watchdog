@@ -1368,6 +1368,7 @@ manual_review_dispatch_status_env() {
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
 import hashlib
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -1397,6 +1398,48 @@ needs_human_path = repair_data_dir / f"{session}.needs-human.json"
 
 def emit(name: str, value: str) -> None:
     print(f"{name}={shlex.quote(value)}")
+
+
+def emit_runtime_transition(event_name: str, *, error: str = "", summary: str = "") -> None:
+    """Append one typed runtime transition BEFORE a dispatch side effect.
+
+    Mirror of emit_runtime_transition_event (arnold-watchdog): the ledger
+    append is synchronous and never swallowed.  Fail closed — missing
+    workspace/spec (no contract digest) or a ledger write failure raises
+    SystemExit(1) so the caller MUST NOT perform the schedule/enqueue side
+    effect (no event = no side effect).
+    """
+    from arnold_pipelines.megaplan.chain.spec import chain_spec_sha256
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    if not workspace or not remote_spec_raw:
+        raise SystemExit(1)
+    spec = Path(remote_spec_raw)
+    if not spec.is_absolute():
+        spec = workspace / spec
+    if not spec.is_file():
+        raise SystemExit(1)
+    try:
+        digest = chain_spec_sha256(spec)
+    except Exception:
+        raise SystemExit(1)
+    try:
+        writer = RuntimeTransitionWriter(workspace)
+        emit_fn = {
+            "deviation_declared": writer.emit_deviation_declared,
+            "fallback_considered": writer.emit_fallback_considered,
+        }[event_name]
+        emit_fn(
+            scope=f"chain:{session}",
+            failure_class="availability",
+            chain_spec_sha256=digest,
+            error=error,
+            actor="arnold-watchdog",
+            session_id=session,
+            summary=summary,
+        )
+    except Exception:
+        raise SystemExit(1)
 
 
 def load_json_dict(path: Path | None) -> dict[str, object]:
@@ -1534,6 +1577,19 @@ if not projection.get("active_request_ids"):
         # Status-based trigger: launch the EXACT SAME superfixer agent as the
         # hourly schedule (deepseek-v4-flash + render_goal /goal) for this
         # blocked/failed/errored chain. Never route to the layered repair stack.
+        # P2: journal the typed runtime transitions BEFORE the schedule-add
+        # side effect (no event = no side effect).  The ledger append is
+        # synchronous and never swallowed: a missing spec/workspace or a
+        # write failure raises SystemExit(1) and blocks the schedule-add.
+        emit_runtime_transition(
+            "deviation_declared",
+            error="watchdog observed unhealthy session; status-trigger superfixer dispatch requested",
+            summary=f"watchdog declared runtime deviation session={session}",
+        )
+        emit_runtime_transition(
+            "fallback_considered",
+            summary=f"watchdog considered status-trigger superfixer fallback session={session}",
+        )
         try:
             import subprocess, tempfile, runpy
             from pathlib import Path as _Path
@@ -1565,8 +1621,21 @@ if not projection.get("active_request_ids"):
             ]
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         except Exception as _sfx:
-            log "status-trigger superfixer failed session=$session err=$_sfx" 2>&1 || true
+            print(f"status-trigger superfixer failed session={session} err={_sfx}", file=sys.stderr)
         raise SystemExit(0)
+    # P2: journal the typed runtime transitions BEFORE the enqueue side
+    # effect (no event = no side effect).  The ledger append is synchronous
+    # and never swallowed: a missing spec/workspace or a write failure raises
+    # SystemExit(1) and blocks the enqueue (no repair request is created).
+    emit_runtime_transition(
+        "deviation_declared",
+        error="watchdog observed unhealthy session; manual-review repair dispatch requested",
+        summary=f"watchdog declared runtime deviation session={session}",
+    )
+    emit_runtime_transition(
+        "fallback_considered",
+        summary=f"watchdog considered manual-review repair fallback session={session}",
+    )
     enqueue_occurrence_bound_repair_request(
         queue_root=repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
@@ -4994,6 +5063,76 @@ append_watchdog_dispatch(
 PY
 }
 
+# ── P2 typed runtime transitions ──────────────────────────────────────────
+# One typed deviation/fallback event path.  Every runtime deviation and
+# fallback decision is appended to the incident ledger BEFORE the caller
+# performs a dispatch side effect.  The append is synchronous and never
+# swallowed: a non-zero CLI exit (policy rejection or journal write failure)
+# returns 1 and the caller MUST block dispatch (no event = no side effect).
+# Emitting is a pure append-only ledger write — it never dispatches repair
+# and never triggers a scan (mirror of emit_watchdog_incident_bridge_event).
+# Missing inputs (no workspace, no spec, unreadable spec) FAIL CLOSED: the
+# event cannot be durably recorded without a contract digest, so the caller
+# MUST treat a non-zero return as "do not dispatch" — never succeed
+# eventless.
+emit_runtime_transition_event() {
+  local event_name="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local failure_class="${5:-}"
+  local error_text="${6:-}"
+  local candidate_to="${7:-}"
+  local candidate_from="${8:-}"
+  local attempt_num="${9:-}"
+  local summary_text="${10:-}"
+  local chain_digest ledger_rc
+  local -a ledger_args
+  if [[ -z "$workspace" || -z "$remote_spec" || ! -f "$remote_spec" ]]; then
+    printf '[watchdog %s] runtime transition ledger input missing (workspace/spec) for %s; blocking dispatch session=%s\n' \
+      "$(date -Iseconds)" "$event_name" "$session" >>"${LOG:-/dev/null}" 2>&1 || true
+    return 1
+  fi
+  chain_digest="$(PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$remote_spec" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.chain.spec import chain_spec_sha256
+
+print(chain_spec_sha256(pathlib.Path(sys.argv[1])))
+PY
+)"
+  if [[ -z "$chain_digest" ]]; then
+    return 1
+  fi
+  ledger_args=(
+    "$event_name"
+    --root "$workspace"
+    --scope "chain:$session"
+    --session-id "$session"
+    --actor "arnold-watchdog"
+    --failure-class "$failure_class"
+    --error "$error_text"
+    --candidate-to "$candidate_to"
+    --candidate-from "$candidate_from"
+    --attempt "$attempt_num"
+    --chain-spec-sha256 "$chain_digest"
+  )
+  if [[ -n "$summary_text" ]]; then
+    ledger_args+=(--summary "$summary_text")
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -W ignore::RuntimeWarning \
+    -m arnold_pipelines.megaplan.incident.ledger "${ledger_args[@]}" \
+    >> "${LOG:-/dev/null}" 2>&1
+  ledger_rc=$?
+  if [[ "$ledger_rc" != "0" ]]; then
+    printf '[watchdog %s] runtime transition ledger write failed (%s) rc=%s; blocking dispatch session=%s\n' \
+      "$(date -Iseconds)" "$event_name" "$ledger_rc" "$session" >>"${LOG:-/dev/null}" 2>&1 || true
+    return 1
+  fi
+  return 0
+}
+
 # Background-dispatch the bounded repair loop so it never blocks the tick. The
 # loop owns dev-fix -> mechanical-launch -> Kimi-launch escalation and returns
 # immediately so the watchdog can scan the next session and write its report.
@@ -5020,6 +5159,37 @@ dispatch_kimi_repair() {
   if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+  fi
+  # P2: record the runtime manifest selection BEFORE any claim/dispatch side
+  # effect.  The watchdog resolved the manifest at startup (MANIFEST_REPAIR_BIN
+  # / MANIFEST_RUNTIME_ROOT / REPAIR_DISPATCH_RUNTIME_SRC); this event records
+  # that selection at the dispatch boundary.  The ledger append is synchronous
+  # and never swallowed: a write failure blocks dispatch (no event = no side
+  # effect).
+  if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+    if ! emit_runtime_transition_event manifest_selected \
+      "$session" "$workspace" "$remote_spec" \
+      "" "" \
+      "${PRIMARY_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog selected runtime manifest session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime manifest_selected ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
+  fi
+  # P2: record the declared runtime deviation BEFORE any claim/dispatch side
+  # effect (acceptance-gate writes, claims, child launches).  The ledger
+  # append is synchronous and never swallowed: a write failure blocks dispatch.
+  if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+    if ! emit_runtime_transition_event deviation_declared \
+      "$session" "$workspace" "$remote_spec" \
+      "availability" "watchdog observed unhealthy session; repair dispatch requested" \
+      "${PRIMARY_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog declared runtime deviation session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime deviation ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
   fi
   inherited_goal_id="${ARNOLD_REPAIR_RETRY_GOAL_ID:-}"
   inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"
@@ -5120,6 +5290,14 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
           report_item "$REPORT_PATH" "$session" "watchdog" "blocked" "acceptance gate closed: $reason" "$workspace" "$remote_spec"
           log "[watchdog] blocker event persisted: $blocker_file"
         fi
+        if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+          emit_runtime_transition_event fallback_rejected \
+            "$session" "$workspace" "$remote_spec" \
+            "availability" "acceptance gate closed: $reason" \
+            "${PRIMARY_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "" \
+            "watchdog rejected repair-loop fallback session=$session" \
+            || log "runtime fallback_rejected ledger write failed session=$session"
+        fi
         REPAIR_DISPATCH_RESULT="blocked"
         emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "acceptance gate closed: $reason" "blocked" "immediate_repair"
         return 1
@@ -5127,6 +5305,14 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
   fi
 
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
+    if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+      emit_runtime_transition_event fallback_rejected \
+        "$session" "$workspace" "$remote_spec" \
+        "availability" "repair loop binary unavailable" \
+        "$PRIMARY_REPAIR_BIN" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "" \
+        "watchdog rejected repair-loop fallback: binary unavailable session=$session" \
+        || log "runtime fallback_rejected ledger write failed session=$session"
+    fi
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
     return 1
   fi
@@ -5217,6 +5403,32 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     authority_fail_closed "T55-CHILD-AGENT-FANOUT-01"
     report_item "ERROR" "repair-loop child launch rejected by child-agent authority gate: $_child_gate_json"
     return 1
+  fi
+  # P2: record the considered repair-loop fallback BEFORE the child launch
+  # side effect.  A write failure blocks the launch (no event = no side effect).
+  if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+    if ! emit_runtime_transition_event fallback_considered \
+      "$session" "$workspace" "$remote_spec" \
+      "availability" "" \
+      "$PRIMARY_REPAIR_BIN" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog considered repair-loop fallback session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime fallback_considered ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
+  fi
+  # P2: record the taken repair-loop fallback BEFORE the child launch side
+  # effect.  A write failure blocks the launch (no event = no side effect).
+  if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+    if ! emit_runtime_transition_event fallback_taken \
+      "$session" "$workspace" "$remote_spec" \
+      "availability" "" \
+      "$PRIMARY_REPAIR_BIN" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog took repair-loop fallback session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime fallback_taken ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
   fi
   if command -v setsid >/dev/null 2>&1; then
     PYTHONSAFEPATH=1 \
@@ -6008,6 +6220,51 @@ PY
     authority_fail_closed "T56-META-CHILD-AGENT-FANOUT-01"
     report_item "ERROR" "meta-repair child launch rejected by child-agent authority gate: $_child_gate_json"
     return 1
+  fi
+
+  # P2: record the typed runtime transitions BEFORE the meta-repair child
+  # launch side effect.  The ledger appends are synchronous and never
+  # swallowed: a write failure blocks dispatch (no event = no side effect).
+  # The manifest selection happened at watchdog startup (MANIFEST_REPAIR_BIN /
+  # MANIFEST_RUNTIME_ROOT); these events record the selection + declared
+  # deviation + fallback decision at the dispatch boundary.
+  if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+    if ! emit_runtime_transition_event manifest_selected \
+      "$session" "$workspace" "$remote_spec" \
+      "" "" \
+      "${META_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog selected runtime manifest session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime manifest_selected ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
+    if ! emit_runtime_transition_event deviation_declared \
+      "$session" "$workspace" "$remote_spec" \
+      "availability" "watchdog observed unhealthy session; meta-repair dispatch requested" \
+      "${META_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog declared runtime deviation session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime deviation ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
+    if ! emit_runtime_transition_event fallback_considered \
+      "$session" "$workspace" "$remote_spec" \
+      "availability" "" \
+      "${META_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog considered meta-repair fallback session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime fallback_considered ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
+    if ! emit_runtime_transition_event fallback_taken \
+      "$session" "$workspace" "$remote_spec" \
+      "availability" "" \
+      "${META_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+      "watchdog took meta-repair fallback session=$session"; then
+      REPAIR_DISPATCH_RESULT="ledger_failed"
+      log "runtime fallback_taken ledger write failed; blocking dispatch session=$session"
+      return 1
+    fi
   fi
 
   # Background-dispatch meta-repair so it never blocks the watchdog tick
@@ -9114,6 +9371,33 @@ PY
     return 0
   fi
 
+  # P2/G3: the direct mechanical relaunch is a typed fallback.  Journal
+  # fallback_considered + fallback_taken BEFORE the marker write and the tmux
+  # launch; a ledger write failure blocks the marker write AND the launch
+  # (no event = no side effect).  Missing workspace/spec/digest already fail
+  # closed inside the emitter (returns 1).
+  emit_mechanical_relaunch_fallback_events() {
+    if declare -F emit_runtime_transition_event >/dev/null 2>&1; then
+      if ! emit_runtime_transition_event fallback_considered \
+        "$session" "$workspace" "$remote_spec" \
+        "availability" "" \
+        "${PRIMARY_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+        "watchdog considered direct mechanical relaunch session=$session"; then
+        log "runtime fallback_considered ledger write failed; blocking direct mechanical relaunch session=$session"
+        return 1
+      fi
+      if ! emit_runtime_transition_event fallback_taken \
+        "$session" "$workspace" "$remote_spec" \
+        "availability" "" \
+        "${PRIMARY_REPAIR_BIN:-}" "${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" "${request_id:-}" \
+        "watchdog took direct mechanical relaunch fallback session=$session"; then
+        log "runtime fallback_taken ledger write failed; blocking direct mechanical relaunch session=$session"
+        return 1
+      fi
+    fi
+    return 0
+  }
+
   # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
   # it never blocks the tick (it can run up to its 60-min timeout and relaunches
   # the run itself on success). The watchdog's direct tmux relaunch runs only as
@@ -9139,6 +9423,10 @@ PY
       else
         log "session unhealthy after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
       fi
+    fi
+    if ! emit_mechanical_relaunch_fallback_events; then
+      report_item "$report_items" "$session" "restart" "restart_blocked" "direct mechanical relaunch blocked: runtime transition ledger write failed" "$workspace" "$remote_spec"
+      return 0
     fi
   else
     local meta_repair_trigger meta_dispatch_result
@@ -9167,11 +9455,23 @@ PY
         return 0
       fi
       log "session stopped after mechanical relaunch; repair loop missing -> direct relaunch session=$session"
+      if ! emit_mechanical_relaunch_fallback_events; then
+        report_item "$report_items" "$session" "restart" "restart_blocked" "direct mechanical relaunch blocked: runtime transition ledger write failed" "$workspace" "$remote_spec"
+        return 0
+      fi
     elif kimi_dispatch_failed_previously "$session"; then
       log "session stopped; repair loop tried and exited without recovery -> direct relaunch session=$session"
+      if ! emit_mechanical_relaunch_fallback_events; then
+        report_item "$report_items" "$session" "restart" "restart_blocked" "direct mechanical relaunch blocked: runtime transition ledger write failed" "$workspace" "$remote_spec"
+        return 0
+      fi
       kimi_dispatch_marker_clear "$session"
     else
       log "session stopped; mechanical relaunch first session=$session"
+      if ! emit_mechanical_relaunch_fallback_events; then
+        report_item "$report_items" "$session" "restart" "restart_blocked" "direct mechanical relaunch blocked: runtime transition ledger write failed" "$workspace" "$remote_spec"
+        return 0
+      fi
       kimi_dispatch_marker_set "$session"
     fi
   fi

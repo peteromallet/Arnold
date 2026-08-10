@@ -36,6 +36,10 @@ from arnold_pipelines.megaplan.cloud.repair_contract import append_escalation_re
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     enqueue_audit_repair_request,
 )
+from arnold_pipelines.megaplan.chain.spec import (
+    chain_spec_sha256 as _chain_spec_sha256,
+)
+from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
 from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
     emit_zero_authority_rejection,
 )
@@ -70,6 +74,19 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _finding_spec_path(finding: Mapping[str, Any]) -> str:
+    """Return the chain spec path referenced by a finding, or ``""``.
+
+    The chain-spec contract digest for the mandatory runtime-transition
+    journal is derived from the finding's authoritative spec reference
+    (``session_header.remote_spec``, falling back to the current target's
+    ``remote_spec``).  A missing reference fails closed at the enqueue point.
+    """
+    header = _mapping(finding.get("session_header"))
+    target_refs = _mapping(_mapping(finding.get("current_target")).get("current_refs"))
+    return str(header.get("remote_spec") or target_refs.get("remote_spec") or "").strip()
 
 
 def _settled_managed_launch(
@@ -464,8 +481,18 @@ def run_escalation_controller(
     trigger_runner: TriggerRunner | None = None,
     now: datetime | None = None,
     policy: EscalationPolicy | None = None,
+    transition_writer: RuntimeTransitionWriter | None = None,
+    chain_spec_sha256: str = "",
 ) -> dict[str, Any]:
     """Evaluate findings and, if authorized, invoke canonical repair custody.
+
+    G3: every enqueue that creates a repair request must FIRST journal the
+    declared deviation and the considered fallback to the incident ledger.
+    When no ``transition_writer`` is supplied it is constructed from the
+    finding's workspace, and when no ``chain_spec_sha256`` is supplied it is
+    derived from the finding's chain spec reference.  Missing inputs (no
+    workspace, no spec reference, unreadable spec) FAIL CLOSED: the enqueue —
+    and therefore the dispatch — is blocked before any request is created.
 
     Arbitrary ``trigger_argv`` execution has been retired (Step 43).  When no
     ``trigger_runner`` is supplied (the production path), the controller no
@@ -658,6 +685,37 @@ def run_escalation_controller(
             attempts = [
                 item for item in state.get("attempts") or [] if isinstance(item, Mapping)
             ]
+            # G3: mandatory emission — the enqueue is the auditor's only
+            # operational handoff and must be journaled FIRST.  A missing
+            # writer (no workspace), a missing spec reference, or an
+            # unreadable spec FAILS CLOSED before any request is created.
+            writer = transition_writer
+            if writer is None:
+                workspace_root = str(finding.get("workspace") or "").strip()
+                if not workspace_root:
+                    raise ValueError(
+                        "l3 escalation enqueue blocked: finding carries no "
+                        "workspace to construct the runtime transition writer "
+                        "(missing input fails closed)"
+                    )
+                writer = RuntimeTransitionWriter(Path(workspace_root))
+            spec_path = _finding_spec_path(finding)
+            if not spec_path:
+                raise ValueError(
+                    "l3 escalation enqueue blocked: finding carries no chain "
+                    "spec reference to compute chain_spec_sha256 (missing "
+                    "input fails closed)"
+                )
+            if not chain_spec_sha256:
+                try:
+                    chain_digest = _chain_spec_sha256(Path(spec_path))
+                except (OSError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "l3 escalation enqueue blocked: chain_spec_sha256 "
+                        f"could not be computed from {spec_path}: {exc}"
+                    ) from exc
+            else:
+                chain_digest = chain_spec_sha256
             queued = enqueue_audit_repair_request(
                 {
                     **finding,
@@ -670,6 +728,8 @@ def run_escalation_controller(
                     else "",
                 },
                 queue_root=queue_root,
+                transition_writer=writer,
+                chain_spec_sha256=chain_digest,
             )
             if not queued:
                 record.update(
@@ -863,6 +923,8 @@ def run_file_controller(
     queue_root: Path,
     authorized: bool,
     trigger_argv: Sequence[str] | None,
+    transition_writer: RuntimeTransitionWriter | None = None,
+    chain_spec_sha256: str = "",
 ) -> dict[str, Any]:
     payload = _load_json(findings_path)
     result = run_escalation_controller(
@@ -871,6 +933,8 @@ def run_file_controller(
         queue_root=queue_root,
         authorized=authorized,
         trigger_argv=trigger_argv,
+        transition_writer=transition_writer,
+        chain_spec_sha256=chain_spec_sha256,
     )
     _atomic_json(findings_path, result)
     return result

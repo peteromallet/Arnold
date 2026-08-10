@@ -8085,6 +8085,188 @@ tmux() {
     assert mechanical_marker[3:] == ["", ""]
 
 
+def _build_direct_relaunch_tick_script(
+    paths: dict[str, Path],
+    *,
+    emit_fails: bool,
+) -> str:
+    """Build a shell script driving launch_chain_tick down the stopped-session
+    direct mechanical relaunch (no prior mechanical-relaunch / failed-Kimi
+    record), with a recording emit_runtime_transition_event stub.  The stub
+    appends event names to CALL_LOG; the tmux stub appends the launch to the
+    same log so the test can prove the events precede the launch."""
+    if emit_fails:
+        emit_stub = (
+            "emit_runtime_transition_event() {\n"
+            "  printf 'event:%s\\n' \"$1\" >> \"$CALL_LOG\"\n"
+            "  return 1\n"
+            "}\n"
+        )
+    else:
+        emit_stub = (
+            "emit_runtime_transition_event() {\n"
+            "  printf 'event:%s\\n' \"$1\" >> \"$CALL_LOG\"\n"
+            "  return 0\n"
+            "}\n"
+        )
+    return "\n\n".join(
+        [
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("launch_chain_tick"),
+            emit_stub,
+            f"MARKER_DIR={str(paths['marker_dir'])!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"LOG={str(paths['log_path'])!r}",
+            f"CALL_LOG={str(paths['call_log'])!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+plan_attention_status_env() { return 0; }
+plan_terminal_status() { return 1; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+kimi_operator_running() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  if [[ "$1" == "new-session" ]]; then
+    printf 'launch:%s\n' "$*" >> "$CALL_LOG"
+    echo TMUX_NEW >&2
+    return 0
+  fi
+  echo "TMUX_$1" >&2
+  return 0
+}
+""".strip(),
+            (
+                f"launch_chain_tick demo-session {str(paths['workspace'])!r} "
+                f"{str(paths['spec_path'])!r} {str(paths['report_path'])!r} chain '' ''"
+            ),
+        ]
+    )
+
+
+def test_watchdog_direct_relaunch_emits_fallback_events_before_launch(tmp_path: Path) -> None:
+    """G3 third-run bypass: the stopped-session direct mechanical relaunch must
+    journal fallback_considered + fallback_taken BEFORE the kimi-dispatch
+    marker write and the tmux launch, and succeed (no relaunch when the ledger
+    write fails).  This half proves the events are emitted and ordered before
+    the launch side effects."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_live_session_marker(
+        marker_dir,
+        "demo-session",
+        workspace,
+        str(spec_path),
+        run_kind="chain",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    call_log = tmp_path / "call.log"
+
+    paths = {
+        "marker_dir": marker_dir,
+        "workspace": workspace,
+        "spec_path": spec_path,
+        "report_path": report_path,
+        "log_path": log_path,
+        "call_log": call_log,
+    }
+    script = _build_direct_relaunch_tick_script(paths, emit_fails=False)
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "TMUX_NEW" in result.stderr
+
+    lines = call_log.read_text(encoding="utf-8").splitlines()
+    event_lines = [line for line in lines if line.startswith("event:")]
+    assert event_lines == [
+        "event:fallback_considered",
+        "event:fallback_taken",
+    ], lines
+    launch_lines = [line for line in lines if line.startswith("launch:")]
+    assert len(launch_lines) == 1, lines
+    assert lines.index("event:fallback_taken") < lines.index(launch_lines[0]), lines
+    # The dispatch marker is still written (relaunch proceeds) — but only
+    # AFTER the events.
+    marker_path = marker_dir / "demo-session.kimi-dispatch"
+    assert marker_path.exists()
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trestart\trestarted\tstopped session relaunched\t" in report
+
+
+def test_watchdog_direct_relaunch_ledger_failure_blocks_marker_and_launch(tmp_path: Path) -> None:
+    """G3 third-run bypass, fail-closed half: when the runtime transition
+    ledger write fails, the direct mechanical relaunch must NOT write the
+    kimi-dispatch marker and must NOT execute the relaunch command or tmux
+    launch (no event = no side effect)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_live_session_marker(
+        marker_dir,
+        "demo-session",
+        workspace,
+        str(spec_path),
+        run_kind="chain",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    call_log = tmp_path / "call.log"
+
+    paths = {
+        "marker_dir": marker_dir,
+        "workspace": workspace,
+        "spec_path": spec_path,
+        "report_path": report_path,
+        "log_path": log_path,
+        "call_log": call_log,
+    }
+    script = _build_direct_relaunch_tick_script(paths, emit_fails=True)
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "TMUX_NEW" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+
+    lines = call_log.read_text(encoding="utf-8").splitlines()
+    # The first event write fails, so fallback_taken is never attempted.
+    assert lines == ["event:fallback_considered"], lines
+    assert not (marker_dir / "demo-session.kimi-dispatch").exists()
+    assert (
+        "runtime fallback_considered ledger write failed; blocking direct mechanical relaunch"
+        in log_path.read_text(encoding="utf-8")
+    )
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trestart\trestart_blocked\t" in report
+
+
 def test_watchdog_fences_mechanical_relaunch_for_phase_contract_failure(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
@@ -8285,6 +8467,372 @@ def test_phase_contract_failure_projects_request_identity_and_can_be_claimed(
     assert owner["request_id"] == request_id
     assert owner["blocker_id"] == blocker_id
     assert owner["actor"] == "arnold-watchdog"
+
+
+def test_watchdog_manual_review_superfixer_journals_runtime_transitions(tmp_path: Path) -> None:
+    """MEGAPLAN_SUPERFIXER_ONLY=1 schedule-add path in
+    manual_review_dispatch_status_env journals deviation_declared +
+    fallback_considered BEFORE the schedule-add side effect (G3 second
+    re-run remaining bypass)."""
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    plan_name = "cl2-wbc-backed-ledger"
+    spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    session = "critique-r5"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 2,
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "message": "critique contract failed three times",
+            },
+        },
+        events_body="{}\n",
+    )
+    (marker_dir / f"{session}.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("manual_review_dispatch_status_env"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "export MEGAPLAN_SUPERFIXER_ONLY=1",
+            (
+                "manual_review_dispatch_status_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} plan {shlex.quote(plan_name)}"
+            ),
+            'echo "RC=$?"',
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "RC=0" in result.stdout, result.stdout
+
+    payloads = _read_incident_event_payloads(workspace)
+    runtime_events = [
+        payload
+        for payload in payloads
+        if str(payload.get("type") or "").startswith("runtime.")
+    ]
+    assert [payload["type"] for payload in runtime_events] == [
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+    ], runtime_events
+    expected_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    for payload in runtime_events:
+        assert payload["actor"] == "arnold-watchdog"
+        assert payload["failure_class"] == "availability"
+        assert payload["scope"] == f"chain:{session}"
+        assert payload["session_id"] == session
+        assert payload["chain_spec_sha256"] == f"sha256:{expected_digest}"
+    assert runtime_events[0]["error"] == (
+        "watchdog observed unhealthy session; status-trigger superfixer dispatch requested"
+    )
+    assert runtime_events[0]["summary"] == (
+        f"watchdog declared runtime deviation session={session}"
+    )
+    assert runtime_events[1]["summary"] == (
+        f"watchdog considered status-trigger superfixer fallback session={session}"
+    )
+    # The enqueue branch must NOT have been taken: no repair request created.
+    assert repair_requests.iter_repair_requests(
+        repair_requests.repair_queue_dir(marker_dir)
+    ) == []
+
+
+def test_watchdog_manual_review_schedule_add_ledger_failure_blocks(tmp_path: Path) -> None:
+    """A runtime transition ledger write failure aborts the superfixer
+    schedule-add path of manual_review_dispatch_status_env BEFORE the
+    schedule-add side effect — no schedule/repair request is created (no
+    event = no side effect)."""
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    plan_name = "cl2-wbc-backed-ledger"
+    spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    session = "critique-r5"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 2,
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "message": "critique contract failed three times",
+            },
+        },
+        events_body="{}\n",
+    )
+    (marker_dir / f"{session}.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Sabotage the ledger: the incident-ledger directory cannot be created.
+    (workspace / ".megaplan").mkdir(exist_ok=True)
+    (workspace / ".megaplan" / "incident-ledger").write_text(
+        "not a directory", encoding="utf-8"
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("manual_review_dispatch_status_env"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "export MEGAPLAN_SUPERFIXER_ONLY=1",
+            (
+                "manual_review_dispatch_status_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} plan {shlex.quote(plan_name)}"
+            ),
+            'echo "RC=$?"',
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "RC=1" in result.stdout, result.stdout
+    assert repair_requests.iter_repair_requests(
+        repair_requests.repair_queue_dir(marker_dir)
+    ) == []
+    assert _read_incident_event_payloads(workspace) == []
+
+
+def test_watchdog_manual_review_enqueue_journals_runtime_transitions(tmp_path: Path) -> None:
+    """The normal-branch enqueue path of manual_review_dispatch_status_env
+    journals deviation_declared + fallback_considered BEFORE the
+    enqueue_occurrence_bound_repair_request side effect; the request is
+    created only after the events are durable (G3 second re-run)."""
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    plan_name = "cl2-wbc-backed-ledger"
+    spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    session = "critique-r5"
+    phase_identity = repair_identity(
+        session=session,
+        plan=plan_name,
+        failure_kind="deterministic_phase_failure",
+        phase="critique",
+        task="phase:critique",
+        chain=str(spec_path),
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 2,
+            "current_state": "blocked",
+            "repair_identity": phase_identity,
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "message": "critique contract failed three times",
+            },
+        },
+        events_body="{}\n",
+    )
+    (marker_dir / f"{session}.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("manual_review_dispatch_status_env"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "manual_review_dispatch_status_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} plan {shlex.quote(plan_name)}"
+            ),
+            'echo "RC=$?"',
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "RC=0" in result.stdout, result.stdout
+
+    payloads = _read_incident_event_payloads(workspace)
+    runtime_events = [
+        payload
+        for payload in payloads
+        if str(payload.get("type") or "").startswith("runtime.")
+    ]
+    assert [payload["type"] for payload in runtime_events] == [
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+    ], runtime_events
+    expected_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    for payload in runtime_events:
+        assert payload["actor"] == "arnold-watchdog"
+        assert payload["failure_class"] == "availability"
+        assert payload["scope"] == f"chain:{session}"
+        assert payload["session_id"] == session
+        assert payload["chain_spec_sha256"] == f"sha256:{expected_digest}"
+    assert runtime_events[0]["error"] == (
+        "watchdog observed unhealthy session; manual-review repair dispatch requested"
+    )
+    assert runtime_events[0]["summary"] == (
+        f"watchdog declared runtime deviation session={session}"
+    )
+    assert runtime_events[1]["summary"] == (
+        f"watchdog considered manual-review repair fallback session={session}"
+    )
+    # The enqueue side effect ran AFTER the events: exactly one repair request.
+    requests = repair_requests.iter_repair_requests(
+        repair_requests.repair_queue_dir(marker_dir)
+    )
+    assert len(requests) == 1, requests
+    assert requests[0]["session"] == session
+
+
+def test_watchdog_manual_review_enqueue_ledger_failure_blocks(tmp_path: Path) -> None:
+    """A runtime transition ledger write failure aborts the normal-branch
+    enqueue path of manual_review_dispatch_status_env BEFORE
+    enqueue_occurrence_bound_repair_request — no repair request is created
+    (no event = no side effect)."""
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    plan_name = "cl2-wbc-backed-ledger"
+    spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    session = "critique-r5"
+    phase_identity = repair_identity(
+        session=session,
+        plan=plan_name,
+        failure_kind="deterministic_phase_failure",
+        phase="critique",
+        task="phase:critique",
+        chain=str(spec_path),
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 2,
+            "current_state": "blocked",
+            "repair_identity": phase_identity,
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "message": "critique contract failed three times",
+            },
+        },
+        events_body="{}\n",
+    )
+    (marker_dir / f"{session}.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Sabotage the ledger: the incident-ledger directory cannot be created.
+    (workspace / ".megaplan").mkdir(exist_ok=True)
+    (workspace / ".megaplan" / "incident-ledger").write_text(
+        "not a directory", encoding="utf-8"
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("manual_review_dispatch_status_env"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "manual_review_dispatch_status_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} plan {shlex.quote(plan_name)}"
+            ),
+            'echo "RC=$?"',
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "RC=1" in result.stdout, result.stdout
+    assert repair_requests.iter_repair_requests(
+        repair_requests.repair_queue_dir(marker_dir)
+    ) == []
+    assert _read_incident_event_payloads(workspace) == []
 
 
 def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_path: Path) -> None:
@@ -17533,8 +18081,15 @@ def _build_meta_dispatch_script(
     extra_lines: list[str] | None = None,
     log_path: str | None = None,
     override_kimi_operator: str | None = None,
+    include_runtime_transition: bool = False,
 ) -> str:
-    """Build a shell script exercising dispatch_meta_repair with stubbed dependencies."""
+    """Build a shell script exercising dispatch_meta_repair with stubbed dependencies.
+
+    ``include_runtime_transition`` pulls in the production
+    ``emit_runtime_transition_event`` (P2 ledger emitter) so the meta-repair
+    dispatch path records its typed runtime events; the real ledger CLI runs
+    against the workspace/spec passed in the dispatch call.
+    """
     source_dir = marker_dir.parent / "managed-source"
     source_dir.mkdir(parents=True, exist_ok=True)
     lines: list[str] = [
@@ -17557,6 +18112,11 @@ def _build_meta_dispatch_script(
         _extract_wrapper_function("safe_name"),
         "repair_loop_busy_state() { echo none; }",
     ]
+    if include_runtime_transition:
+        lines.insert(
+            lines.index(_extract_wrapper_function("confirm_managed_agent_dispatch")) + 1,
+            _extract_wrapper_function("emit_runtime_transition_event"),
+        )
     if override_kimi_operator is not None:
         lines.append(override_kimi_operator)
     else:
@@ -19139,3 +19699,970 @@ def test_repair_loop_retry_loops_delegate_or_reject() -> None:
     out_d = json.loads(res_d.stdout)
     assert out_d["outcome"] == "no_authority_claim", out_d
     assert out_d["repair_state_mutation"] is False, out_d
+
+
+# ── P2 typed runtime transitions: events before dispatch side effects ─────
+
+
+def _watchdog_dispatch_stub_script(
+    marker_dir: Path,
+    workspace: Path,
+    repair_bin: Path,
+    log_path: Path,
+) -> str:
+    """Shared stub preamble for extracted dispatch_kimi_repair execution."""
+    return "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("confirm_managed_agent_dispatch"),
+            _extract_wrapper_function("emit_runtime_transition_event"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"REPAIR_DISPATCH_RUNTIME_SRC={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
+            """
+log() { printf '%s\\n' "$*" >> "$LOG"; }
+watchdog_repair_state_authority_or_reject() { printf '{"outcome":"ok"}\\n'; }
+child_agent_launch_authority_or_reject() { printf '{"outcome":"ok"}\\n'; }
+""".strip(),
+        ]
+    )
+
+
+def test_watchdog_dispatch_emits_typed_runtime_transitions_before_side_effects(
+    tmp_path: Path,
+) -> None:
+    """dispatch_kimi_repair records manifest_selected + deviation_declared +
+    fallback_considered BEFORE the child launch and fallback_taken before the
+    launch, with the exact failure class, session, and chain contract digest."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    repair_dir = marker_dir / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"incident_id": "inc-600"}),
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "watchdog.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _watchdog_dispatch_stub_script(marker_dir, workspace, repair_bin, log_path),
+            f"""
+repair_loop_busy_state() {{
+  if [[ -f "$(kimi_dispatch_marker_path "$1")" ]]; then echo same_session; else echo none; fi
+}}
+# The managed-agent supervisor needs bwrap (Linux-only); on the macOS dev box
+# the real launch cannot confirm.  This test exercises the typed-transition
+# ledger path, so confirm the launch deterministically.
+confirm_managed_agent_dispatch() {{ printf 'run-1\\tmanifest-1\\n'; }}
+dispatch_kimi_repair demo-session {shlex.quote(str(workspace))} {shlex.quote(str(spec_path))}
+echo "first:${{REPAIR_DISPATCH_RESULT:-unset}}"
+if [[ -f "$(kimi_pgid_path demo-session)" ]]; then
+  demo_pgid="$(cat "$(kimi_pgid_path demo-session)")"
+  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
+fi
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "first:dispatched"
+
+    payloads = _read_incident_event_payloads(workspace)
+    runtime_events = [
+        payload
+        for payload in payloads
+        if str(payload.get("type") or "").startswith("runtime.")
+    ]
+    assert [payload["type"] for payload in runtime_events] == [
+        "runtime.manifest_selected",
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+    ], runtime_events
+    expected_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    for payload in runtime_events:
+        assert payload["session_id"] == "demo-session"
+        assert payload["chain_spec_sha256"] == f"sha256:{expected_digest}"
+        assert payload["actor"] == "arnold-watchdog"
+        assert payload["scope"] == "chain:demo-session"
+    # manifest_selected carries no failure class; deviation/fallback events do.
+    for payload in runtime_events[1:]:
+        assert payload["failure_class"] == "availability"
+    assert runtime_events[1]["error"] == (
+        "watchdog observed unhealthy session; repair dispatch requested"
+    )
+    assert runtime_events[0]["candidate_to"] == str(repair_bin)
+    assert runtime_events[0]["candidate_from"] == str(REPO_ROOT)
+
+
+def test_watchdog_ledger_write_failure_blocks_dispatch(tmp_path: Path) -> None:
+    """A runtime transition ledger write failure must abort dispatch BEFORE
+    any claim or child-launch side effect (no event = no side effect)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    repair_dir = marker_dir / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"incident_id": "inc-600"}),
+        encoding="utf-8",
+    )
+    # Sabotage the ledger: the incident-ledger directory cannot be created.
+    (workspace / ".megaplan").mkdir()
+    (workspace / ".megaplan" / "incident-ledger").write_text("not a directory", encoding="utf-8")
+    log_path = tmp_path / "watchdog.log"
+    launch_log = tmp_path / "repair-launches.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _watchdog_dispatch_stub_script(marker_dir, workspace, repair_bin, log_path),
+            """
+dispatch_kimi_repair demo-session __WORKSPACE__ __SPEC__
+echo "result:${REPAIR_DISPATCH_RESULT:-unset}"
+""".replace("__WORKSPACE__", shlex.quote(str(workspace)))
+            .replace("__SPEC__", shlex.quote(str(spec_path)))
+            .strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "result:ledger_failed"
+    assert not launch_log.exists()
+    assert not (marker_dir / "demo-session.kimi-dispatch").exists()
+    assert (
+        "runtime transition ledger write failed (manifest_selected)"
+        in log_path.read_text(encoding="utf-8")
+    )
+
+
+def test_watchdog_rejects_repair_fallback_when_repair_bin_unavailable(
+    tmp_path: Path,
+) -> None:
+    """A missing/unexecutable repair loop is a fallback rejection, recorded as
+    a typed runtime.fallback_rejected event (never a silent skip)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    repair_dir = marker_dir / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"incident_id": "inc-600"}),
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "watchdog.log"
+    repair_bin = tmp_path / "not-executable-repair-loop"
+    repair_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    # Intentionally NOT chmod +x: the binary must be refused as unavailable.
+
+    script = "\n\n".join(
+        [
+            _watchdog_dispatch_stub_script(marker_dir, workspace, repair_bin, log_path),
+            f"""
+repair_loop_busy_state() {{ echo none; }}
+dispatch_kimi_repair demo-session {shlex.quote(str(workspace))} {shlex.quote(str(spec_path))}
+echo "result:${{REPAIR_DISPATCH_RESULT:-unset}}"
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "result:unavailable"
+
+    payloads = _read_incident_event_payloads(workspace)
+    runtime_events = [
+        payload
+        for payload in payloads
+        if str(payload.get("type") or "").startswith("runtime.")
+    ]
+    assert [payload["type"] for payload in runtime_events] == [
+        "runtime.manifest_selected",
+        "runtime.deviation_declared",
+        "runtime.fallback_rejected",
+    ], runtime_events
+    rejected = runtime_events[2]
+    assert rejected["failure_class"] == "availability"
+    assert rejected["session_id"] == "demo-session"
+    assert rejected["error"] == "repair loop binary unavailable"
+    assert rejected["candidate_to"] == str(repair_bin)
+
+
+def test_watchdog_runtime_transition_missing_spec_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """emit_runtime_transition_event must FAIL CLOSED (non-zero) when the
+    workspace/spec inputs are absent — never succeed eventless (G3 #2)."""
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("emit_runtime_transition_event"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+emit_runtime_transition_event deviation_declared demo-session "" /nonexistent/spec.yaml
+echo "RC=$?"
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "RC=1" in result.stdout, result.stdout
+    assert (
+        "runtime transition ledger input missing (workspace/spec) for deviation_declared; "
+        "blocking dispatch session=demo-session"
+    ) in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_fallback_taken_write_failure_blocks_launch(
+    tmp_path: Path,
+) -> None:
+    """fallback_taken is written BEFORE the launch; a write failure for it
+    blocks the child launch (no event = no side effect)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    repair_dir = marker_dir / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"incident_id": "inc-600"}),
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "watchdog.log"
+    launch_log = tmp_path / "repair-launches.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("confirm_managed_agent_dispatch"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"REPAIR_DISPATCH_RUNTIME_SRC={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
+            """
+log() { printf '%s\\n' "$*" >> "$LOG"; }
+watchdog_repair_state_authority_or_reject() { printf '{"outcome":"ok"}\\n'; }
+child_agent_launch_authority_or_reject() { printf '{"outcome":"ok"}\\n'; }
+repair_loop_busy_state() { echo none; }
+emit_runtime_transition_event() {
+  if [[ "$1" == "fallback_taken" ]]; then
+    log "runtime fallback_taken ledger write failed; blocking dispatch session=$2"
+    return 1
+  fi
+  return 0
+}
+""".strip(),
+            f"""
+dispatch_kimi_repair demo-session {shlex.quote(str(workspace))} {shlex.quote(str(spec_path))}
+echo "result:${{REPAIR_DISPATCH_RESULT:-unset}}"
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "result:ledger_failed"
+    assert not launch_log.exists()
+    assert not (marker_dir / "demo-session.kimi-dispatch").exists()
+    assert (
+        "runtime fallback_taken ledger write failed; blocking dispatch"
+        in log_path.read_text(encoding="utf-8")
+    )
+
+
+def test_watchdog_meta_repair_dispatch_emits_typed_runtime_transitions(
+    tmp_path: Path,
+) -> None:
+    """dispatch_meta_repair records manifest_selected + deviation_declared +
+    fallback_considered + fallback_taken BEFORE the setsid launch, with the
+    exact failure class, session, and chain contract digest (G3 #1, #3)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    report_path = tmp_path / "report.jsonl"
+    log_path = tmp_path / "watchdog.log"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text(
+        "#!/usr/bin/env bash\nsleep 30\n",
+        encoding="utf-8",
+    )
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        log_path=str(log_path),
+        include_runtime_transition=True,
+        extra_lines=[
+            # The managed-agent supervisor needs bwrap (Linux-only); on the
+            # macOS dev box the real launch cannot confirm.  The ledger events
+            # are written BEFORE the launch, so confirm deterministically.
+            "confirm_managed_agent_dispatch() { printf 'run-1\\tmanifest-1\\n'; }",
+            f"dispatch_meta_repair demo-session {shlex.quote(str(workspace))} {shlex.quote(str(spec_path))} {str(report_path)!r} test_trigger",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+            """if [[ -f "$(meta_pgid_path demo-session)" ]]; then
+  demo_pgid="$(cat "$(meta_pgid_path demo-session)")"
+  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
+fi""",
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=dispatched" in result.stdout, f"stdout: {result.stdout}"
+
+    payloads = _read_incident_event_payloads(workspace)
+    runtime_events = [
+        payload
+        for payload in payloads
+        if str(payload.get("type") or "").startswith("runtime.")
+    ]
+    assert [payload["type"] for payload in runtime_events] == [
+        "runtime.manifest_selected",
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+    ], runtime_events
+    expected_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    for payload in runtime_events:
+        assert payload["session_id"] == "demo-session"
+        assert payload["chain_spec_sha256"] == f"sha256:{expected_digest}"
+        assert payload["actor"] == "arnold-watchdog"
+        assert payload["scope"] == "chain:demo-session"
+    for payload in runtime_events[1:]:
+        assert payload["failure_class"] == "availability"
+    assert runtime_events[1]["error"] == (
+        "watchdog observed unhealthy session; meta-repair dispatch requested"
+    )
+    assert runtime_events[0]["candidate_to"] == str(fake_bin)
+
+
+def test_watchdog_meta_repair_ledger_failure_blocks_launch(
+    tmp_path: Path,
+) -> None:
+    """A runtime transition ledger write failure aborts dispatch_meta_repair
+    BEFORE the setsid launch (no event = no child side effect)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    report_path = tmp_path / "report.jsonl"
+    log_path = tmp_path / "watchdog.log"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    # Sabotage the ledger: the incident-ledger directory cannot be created.
+    (workspace / ".megaplan").mkdir()
+    (workspace / ".megaplan" / "incident-ledger").write_text(
+        "not a directory", encoding="utf-8"
+    )
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        log_path=str(log_path),
+        include_runtime_transition=True,
+        extra_lines=[
+            f"dispatch_meta_repair demo-session {shlex.quote(str(workspace))} {shlex.quote(str(spec_path))} {str(report_path)!r} test_trigger",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=ledger_failed" in result.stdout, f"stdout: {result.stdout}"
+    assert not (marker_dir / "demo-session.meta-pgid").exists()
+    assert not (marker_dir / "demo-session.meta-dispatch").exists()
+    assert (
+        "runtime manifest_selected ledger write failed; blocking dispatch"
+        in log_path.read_text(encoding="utf-8")
+    )
+
+
+# ── G3 fourth re-run: arnold-repair-loop mechanical_launch_step ────────────
+# The repair-loop performs its OWN fallback decision + tmux new-session side
+# effect; the watchdog's event covers dispatch of the child, not the child's
+# later mechanical relaunch.  mechanical_launch_step must journal
+# runtime.fallback_considered + runtime.fallback_taken BEFORE the tmux launch
+# (actor=arnold-repair-loop, failure_class=availability, scope=chain:<session>)
+# and a ledger write failure must BLOCK the launch (no event = no side effect).
+
+
+def _extract_repair_mechanical_launch_step() -> str:
+    # mechanical_launch_step embeds a column-0 ``}`` inside its launch-script
+    # receipt heredoc, so the generic ``_extract_repair_function`` (first
+    # ``\n}\n``) would truncate it.  Extract to the next function boundary.
+    text = _repair_wrapper()
+    start = text.index("mechanical_launch_step() {")
+    end = text.index("\nrepair_recurrence_prepare_attempt() {", start)
+    return text[start:end]
+
+
+def _build_repair_loop_mechanical_launch_script(
+    paths: dict[str, Path],
+    *,
+    ledger_sabotaged: bool,
+) -> str:
+    """Drive mechanical_launch_step down its full fallback path with the REAL
+    repair-loop ledger emitter.  The tmux stub records the launch and refuses
+    to proceed unless BOTH typed events are already durably recorded, proving
+    the events precede the launch side effect."""
+    return "\n\n".join(
+        [
+            _extract_repair_mechanical_launch_step(),
+            _extract_repair_function("repair_loop_emit_runtime_transition_event"),
+            _extract_repair_function(
+                "repair_loop_emit_mechanical_launch_fallback_events"
+            ),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"RUN_DIR={str(paths['run_dir'])!r}",
+            f"MARKER_DIR={str(paths['marker_dir'])!r}",
+            f"WORKSPACE={str(paths['workspace'])!r}",
+            f"CALL_LOG={str(paths['call_log'])!r}",
+            f"LOG={str(paths['log_path'])!r}",
+            "MECHANICAL_VERIFY_INITIAL_SECS=1",
+            "MECHANICAL_VERIFY_HOLD_SECS=1",
+            """
+require_investigation_before_mutation() { :; }
+require_repair_lock_held() { :; }
+ensure_repair_budget_available() { :; }
+repair_loop_worker_launch_authority_or_reject() { printf '%s\\n' '{"outcome":"no_authority_claim"}'; }
+authority_fail_closed() { echo "AUTHORITY_FAILED:$*" >&2; exit 78; }
+repair_goal_control_snapshot() {
+  printf '%s\\n' '{"status":"stopped","evaluation":{"control_action":"investigate","blocker_cleared":false},"observation":{"current_target_liveness":{"schema":"arnold.megaplan.current_target_liveness.v1","state":"live","live":true,"dead":false,"known":true,"source":"test","reason":"test","identity":{},"lease":{},"diagnostics":[],"control_permitted":true,"mutation_permitted":true,"escalation_permitted":true,"retrigger_permitted":true}}}'
+}
+log() { printf 'LOG:%s\\n' "$*" >&2; }
+chain_process_is_alive() { return 1; }
+plan_process_is_alive() { return 1; }
+resolve_relaunch_command() { printf '%s\\n' 'python3 -m arnold_pipelines.megaplan chain start --spec chain.yaml --project-dir demo'; }
+select_mechanical_relaunch_command() { printf '%s\\n' "$1"; }
+relaunch_materializer_authority_gate() { printf '%s\\n' '{"is_non_authoritative_family": true}'; }
+authority_gap_continue() { echo "AUTHORITY_GAP:$*" >&2; exit 76; }
+safe_name() { printf '%s\\n' "$1"; }
+verify_started_and_holding() { printf 'running\\n'; return 0; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  if [[ "$1" == "new-session" ]]; then
+    # Ordering proof: at tmux-launch time BOTH typed transitions must already
+    # be durably recorded in the incident ledger.
+    EVENTS_FILE="$WORKSPACE/.megaplan/incident-ledger/events.jsonl"
+    if ! grep -q 'runtime.fallback_considered' "$EVENTS_FILE" 2>/dev/null \
+      || ! grep -q 'runtime.fallback_taken' "$EVENTS_FILE" 2>/dev/null; then
+      echo "EVENTS_NOT_PRECEDING_LAUNCH" >&2
+      return 9
+    fi
+    printf 'launch:%s\\n' "$*" >> "$CALL_LOG"
+    return 0
+  fi
+  echo "TMUX_$1" >&2
+  return 0
+}
+""".strip(),
+            (
+                "result=\"$(mechanical_launch_step 1 demo-session "
+                + f"{shlex.quote(str(paths['workspace']))} "
+                + f"{shlex.quote(str(paths['spec_path']))} "
+                + "chain demo-plan 'relaunch-cmd')\"\n"
+                + 'printf "STATUS=%s\\n" "$result"'
+            ),
+        ]
+    )
+
+
+def _repair_loop_mechanical_launch_fixture(tmp_path: Path) -> dict[str, Path]:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    return {
+        "workspace": workspace,
+        "spec_path": spec_path,
+        "run_dir": tmp_path / "run",
+        "marker_dir": tmp_path / "markers",
+        "call_log": tmp_path / "call.log",
+        "log_path": tmp_path / "repair-loop.log",
+    }
+
+
+def test_repair_loop_mechanical_launch_emits_fallback_events_before_launch(
+    tmp_path: Path,
+) -> None:
+    """G3 fourth run: mechanical_launch_step journals fallback_considered +
+    fallback_taken BEFORE the tmux launch, with the exact actor, failure
+    class, session scope, and chain contract digest."""
+    paths = _repair_loop_mechanical_launch_fixture(tmp_path)
+    script = _build_repair_loop_mechanical_launch_script(
+        paths, ledger_sabotaged=False
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "STATUS=running", result.stdout
+
+    payloads = _read_incident_event_payloads(paths["workspace"])
+    assert [p["type"] for p in payloads] == [
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+    ], payloads
+    expected_digest = "sha256:" + hashlib.sha256(
+        paths["spec_path"].read_bytes()
+    ).hexdigest()
+    for payload in payloads:
+        assert payload["actor"] == "arnold-repair-loop"
+        assert payload["failure_class"] == "availability"
+        assert payload["scope"] == "chain:demo-session"
+        assert payload["session_id"] == "demo-session"
+        assert payload["chain_spec_sha256"] == expected_digest
+        assert payload["candidate_from"] == str(REPO_ROOT)
+        assert payload["candidate_to"] == (
+            "python3 -m arnold_pipelines.megaplan chain start "
+            "--spec chain.yaml --project-dir demo"
+        )
+    # The tmux stub itself proved the events precede the launch; the launch
+    # line is the only tmux call recorded.
+    call_lines = paths["call_log"].read_text(encoding="utf-8").splitlines()
+    assert len(call_lines) == 1, call_lines
+    assert call_lines[0].startswith("launch:new-session -d -s demo-session"), call_lines
+
+
+def test_repair_loop_mechanical_launch_ledger_failure_blocks_launch(
+    tmp_path: Path,
+) -> None:
+    """G3 fourth run, fail-closed half: when the runtime transition ledger
+    write fails, mechanical_launch_step must NOT execute the tmux launch (no
+    event = no side effect)."""
+    paths = _repair_loop_mechanical_launch_fixture(tmp_path)
+    (paths["workspace"] / ".megaplan").mkdir()
+    (paths["workspace"] / ".megaplan" / "incident-ledger").write_text(
+        "not a directory", encoding="utf-8"
+    )
+    script = _build_repair_loop_mechanical_launch_script(
+        paths, ledger_sabotaged=True
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert (
+        result.stdout.strip()
+        == "STATUS=failed:mechanical_launch_ledger_write_failed"
+    ), result.stdout
+    assert not paths["call_log"].exists(), paths["call_log"].read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "runtime transition ledger write failed (fallback_considered)"
+        in paths["log_path"].read_text(encoding="utf-8")
+    )
+
+
+# ── G3 fourth re-run: arnold-run standalone launch primitive ────────────────
+# arnold-run is a standalone installed launch primitive executing
+# tmux new-session.  It must be admission-gated (absent manifest + no valid
+# allow_manifestless permit => fail closed) and journal fallback_considered +
+# fallback_taken BEFORE the tmux launch; a ledger write failure blocks.
+
+
+def _make_authoritative_manifest(*, epic_id: str = "demo-epic") -> dict[str, object]:
+    """A schema-valid authoritative runtime manifest (bootstrap_manifest loads
+    it: schema "1", required keys, generation/state invariants)."""
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    return {
+        "runtime_id": "demo-runtime",
+        "schema": "1",
+        "generation": 1,
+        "epic_id": epic_id,
+        "state": "active",
+        "owner": "test",
+        "base": {
+            "ref": "main",
+            "commit": "0" * 40,
+            "editable_install_path": "/workspace/.megaplan/editable",
+            "venv_path": "/workspace/.megaplan/venv",
+        },
+        "epic": {
+            "branch": "fixer/demo-epic-20260811",
+            "worktree_path": "/workspace/demo-epic-worktree",
+            "venv_path": "/workspace/.megaplan/venv",
+            "runtime_root": "/workspace/demo-epic-worktree",
+            "expected_head": "0" * 40,
+            "repair_bin": "/usr/local/bin/arnold-repair-loop",
+            "deps_lockfile": "requirements.lock",
+        },
+        "indirection": {
+            "host_path": "/tmp/demo",
+            "container_path": "/workspace/demo",
+            "mount_table": [],
+            "execution_namespace": "demo",
+            "verified_head": "0" * 40,
+            "last_verified_at": now,
+            "attestation": {
+                "module_file": "arnold_pipelines/megaplan/__init__.py",
+                "module_digest": "0" * 64,
+                "mount_id": "demo-mount",
+            },
+        },
+        "policy": {
+            "policy_sha": "0" * 64,
+            "model_policy_sha": "0" * 64,
+            "sync_policy": "manifest-only",
+        },
+        "promotions": [],
+        "timestamps": {"created": now, "updated": now, "closed": None},
+        "gc_policy": "keep",
+        "commands": [],
+    }
+
+
+def _run_arnold_run(
+    tmp_path: Path,
+    *,
+    env_overrides: dict[str, str],
+    args: list[str],
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run the real arnold-run script with a recording fake tmux in PATH.  The
+    fake tmux refuses to launch unless both typed transitions are already in
+    the incident ledger (ordering proof)."""
+    fake_bin_dir = tmp_path / "fake-bin"
+    fake_bin_dir.mkdir(exist_ok=True)
+    tmux_calls = tmp_path / "tmux-calls.txt"
+    tmux_stub = fake_bin_dir / "tmux"
+    tmux_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf 'tmux:%s\\n' \"$*\" >> {shlex.quote(str(tmux_calls))}\n"
+        "if [[ \"$1\" == \"has-session\" ]]; then\n"
+        "  exit 1\n"
+        "fi\n"
+        "if [[ \"$1\" == \"new-session\" ]]; then\n"
+        f"  EVENTS_FILE={shlex.quote(str(tmp_path / 'workspace' / '.megaplan' / 'incident-ledger' / 'events.jsonl'))}\n"
+        "  if ! grep -q 'runtime.fallback_considered' \"$EVENTS_FILE\" 2>/dev/null \\\n"
+        "    || ! grep -q 'runtime.fallback_taken' \"$EVENTS_FILE\" 2>/dev/null; then\n"
+        "    echo 'EVENTS_NOT_PRECEDING_LAUNCH' >&2\n"
+        "    exit 9\n"
+        "  fi\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    tmux_stub.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin_dir}:{env.get('PATH', '')}"
+    env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env.update(env_overrides)
+    result = subprocess.run(
+        [str(WRAPPER_DIR / "arnold-run"), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    return result, tmux_calls
+
+
+def test_arnold_run_admission_blocks_without_manifest_or_permit(
+    tmp_path: Path,
+) -> None:
+    """arnold-run is an independently gated leaf wrapper: an absent manifest
+    with no valid allow_manifestless permit fails closed (exit 78) BEFORE any
+    tmux launch side effect."""
+    absent_manifest = tmp_path / "absent-manifest.json"
+    result, tmux_calls = _run_arnold_run(
+        tmp_path,
+        env_overrides={"ARNOLD_RUNTIME_MANIFEST": str(absent_manifest)},
+        args=["demo-session", "echo", "hi"],
+    )
+    assert result.returncode == 78, result.stderr
+    assert (
+        "runtime manifest absent without a valid allow_manifestless permit"
+        in result.stderr
+    )
+    assert not tmux_calls.exists() or "new-session" not in tmux_calls.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_arnold_run_journals_fallback_events_before_launch(tmp_path: Path) -> None:
+    """With an authoritative manifest + explicit spec binding, arnold-run
+    journals fallback_considered + fallback_taken BEFORE the tmux launch with
+    the exact actor, failure class, session scope, and chain contract digest."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(
+        json.dumps(_make_authoritative_manifest()), encoding="utf-8"
+    )
+    result, tmux_calls = _run_arnold_run(
+        tmp_path,
+        env_overrides={
+            "ARNOLD_RUNTIME_MANIFEST": str(manifest_path),
+            "ARNOLD_RUN_SPEC": str(spec_path),
+            "WORKSPACE_PATH": str(workspace),
+        },
+        args=["demo-session", "echo", "hi"],
+    )
+    assert result.returncode == 0, result.stderr
+    assert "launched 'demo-session'" in result.stdout
+
+    payloads = _read_incident_event_payloads(workspace)
+    assert [p["type"] for p in payloads] == [
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+    ], payloads
+    expected_digest = "sha256:" + hashlib.sha256(
+        spec_path.read_bytes()
+    ).hexdigest()
+    for payload in payloads:
+        assert payload["actor"] == "arnold-run"
+        assert payload["failure_class"] == "availability"
+        assert payload["scope"] == "chain:demo-session"
+        assert payload["session_id"] == "demo-session"
+        assert payload["chain_spec_sha256"] == expected_digest
+        assert payload["candidate_from"] == str(REPO_ROOT)
+    assert payloads[1]["candidate_to"] == "echo hi"
+    # The fake tmux proved the events precede the launch; only the launch is
+    # recorded on the tmux side.
+    calls = tmux_calls.read_text(encoding="utf-8").splitlines()
+    assert any(line.startswith("tmux:new-session") for line in calls), calls
+
+
+def test_arnold_run_ledger_failure_blocks_launch(tmp_path: Path) -> None:
+    """A runtime transition ledger write failure aborts arnold-run BEFORE the
+    tmux launch (no event = no side effect)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    (workspace / ".megaplan" / "incident-ledger").write_text(
+        "not a directory", encoding="utf-8"
+    )
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(
+        json.dumps(_make_authoritative_manifest()), encoding="utf-8"
+    )
+    result, tmux_calls = _run_arnold_run(
+        tmp_path,
+        env_overrides={
+            "ARNOLD_RUNTIME_MANIFEST": str(manifest_path),
+            "ARNOLD_RUN_SPEC": str(spec_path),
+            "WORKSPACE_PATH": str(workspace),
+        },
+        args=["demo-session", "echo", "hi"],
+    )
+    assert result.returncode == 1, result.stderr
+    assert (
+        "runtime fallback_considered ledger write failed; blocking launch"
+        in result.stderr
+    )
+    assert not tmux_calls.exists() or "new-session" not in tmux_calls.read_text(
+        encoding="utf-8"
+    )
+
+
+def _write_in_tmux_command(tmp_path: Path, events_file: Path) -> tuple[Path, Path]:
+    """A TMUX-branch payload command that refuses to run unless both typed
+    transitions are already in the incident ledger (ordering proof), then
+    records its execution."""
+    exec_log = tmp_path / "exec-calls.txt"
+    in_tmux_cmd = tmp_path / "in-tmux-cmd.sh"
+    in_tmux_cmd.write_text(
+        "#!/usr/bin/env bash\n"
+        f"EVENTS_FILE={shlex.quote(str(events_file))}\n"
+        "if ! grep -q 'runtime.fallback_considered' \"$EVENTS_FILE\" 2>/dev/null \\\n"
+        "  || ! grep -q 'runtime.fallback_taken' \"$EVENTS_FILE\" 2>/dev/null; then\n"
+        "  echo 'EVENTS_NOT_PRECEDING_EXEC' >&2\n"
+        "  exit 9\n"
+        "fi\n"
+        f"printf 'exec:%s\\n' \"$*\" >> {shlex.quote(str(exec_log))}\n",
+        encoding="utf-8",
+    )
+    in_tmux_cmd.chmod(0o755)
+    return in_tmux_cmd, exec_log
+
+
+def test_arnold_run_in_tmux_journals_fallback_events_before_exec(
+    tmp_path: Path,
+) -> None:
+    """G3 fifth run: the in-tmux (TMUX direct-exec) branch journals
+    fallback_considered + fallback_taken BEFORE the direct exec, with the
+    exact actor, failure class, session scope, and chain contract digest."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(
+        json.dumps(_make_authoritative_manifest()), encoding="utf-8"
+    )
+    events_file = (
+        workspace / ".megaplan" / "incident-ledger" / "events.jsonl"
+    )
+    in_tmux_cmd, exec_log = _write_in_tmux_command(tmp_path, events_file)
+    result, tmux_calls = _run_arnold_run(
+        tmp_path,
+        env_overrides={
+            "TMUX": "/tmp/arnold-demo-session,0,0",
+            "ARNOLD_RUNTIME_MANIFEST": str(manifest_path),
+            "ARNOLD_RUN_SPEC": str(spec_path),
+            "WORKSPACE_PATH": str(workspace),
+        },
+        args=["demo-session", str(in_tmux_cmd), "via-tmux"],
+    )
+    assert result.returncode == 0, result.stderr
+    # The in-tmux branch executes the command directly; no detached
+    # tmux new-session is ever issued.
+    assert not tmux_calls.exists() or "new-session" not in tmux_calls.read_text(
+        encoding="utf-8"
+    )
+    # The exec'd command itself verified the events already preceded it.
+    assert exec_log.read_text(encoding="utf-8").splitlines() == [
+        "exec:via-tmux"
+    ], exec_log.read_text(encoding="utf-8")
+
+    payloads = _read_incident_event_payloads(workspace)
+    assert [p["type"] for p in payloads] == [
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+    ], payloads
+    expected_digest = "sha256:" + hashlib.sha256(
+        spec_path.read_bytes()
+    ).hexdigest()
+    for payload in payloads:
+        assert payload["actor"] == "arnold-run"
+        assert payload["failure_class"] == "availability"
+        assert payload["scope"] == "chain:demo-session"
+        assert payload["session_id"] == "demo-session"
+        assert payload["chain_spec_sha256"] == expected_digest
+        assert payload["candidate_from"] == str(REPO_ROOT)
+    assert payloads[1]["candidate_to"] == f"{in_tmux_cmd} via-tmux"
+
+
+def test_arnold_run_in_tmux_ledger_failure_blocks_exec(tmp_path: Path) -> None:
+    """A runtime transition ledger write failure aborts the in-tmux
+    (TMUX direct-exec) branch BEFORE the exec (no event = no side effect)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    (workspace / ".megaplan" / "incident-ledger").write_text(
+        "not a directory", encoding="utf-8"
+    )
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(
+        json.dumps(_make_authoritative_manifest()), encoding="utf-8"
+    )
+    events_file = (
+        workspace / ".megaplan" / "incident-ledger" / "events.jsonl"
+    )
+    in_tmux_cmd, exec_log = _write_in_tmux_command(tmp_path, events_file)
+    result, tmux_calls = _run_arnold_run(
+        tmp_path,
+        env_overrides={
+            "TMUX": "/tmp/arnold-demo-session,0,0",
+            "ARNOLD_RUNTIME_MANIFEST": str(manifest_path),
+            "ARNOLD_RUN_SPEC": str(spec_path),
+            "WORKSPACE_PATH": str(workspace),
+        },
+        args=["demo-session", str(in_tmux_cmd)],
+    )
+    assert result.returncode == 1, result.stderr
+    assert (
+        "runtime fallback_considered ledger write failed; blocking in-tmux launch"
+        in result.stderr
+    )
+    # The direct exec never happened.
+    assert not exec_log.exists()
+    assert not tmux_calls.exists() or "new-session" not in tmux_calls.read_text(
+        encoding="utf-8"
+    )

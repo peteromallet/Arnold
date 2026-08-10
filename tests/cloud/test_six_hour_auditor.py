@@ -16,6 +16,7 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     validate_audit_model_inputs,
 )
 from arnold_pipelines.megaplan.cloud.incident_bridge import IncidentStoreWriter
+from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.simple_fixer import FORBIDDEN_AUTHORITY_SOURCES
@@ -379,6 +380,8 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
             "l3_repair_context_digest": "c" * 64,
         },
         queue_root=queue_root,
+        transition_writer=RuntimeTransitionWriter(tmp_path / "cycle-ledger"),
+        chain_spec_sha256=_auditor_spec_and_digest(tmp_path)[1],
     )
 
     assert result is not None
@@ -478,7 +481,16 @@ def test_auditor_enqueue_uses_canonical_occurrence_identity(
     assert identity is not None
     complete_item["repair_identity"] = identity
 
-    result = enqueue_audit_repair_request(complete_item, queue_root=queue_root)
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    _, digest = _auditor_spec_and_digest(tmp_path)
+    writer = RuntimeTransitionWriter(tmp_path / "occurrence-ledger")
+    result = enqueue_audit_repair_request(
+        complete_item,
+        queue_root=queue_root,
+        transition_writer=writer,
+        chain_spec_sha256=digest,
+    )
     assert result is not None
     assert result["status"] == "queued"
     request = result["request"]
@@ -503,7 +515,12 @@ def test_auditor_enqueue_uses_canonical_occurrence_identity(
         # No current_target or repair_custody_summary → partial F01 tuple.
     }
 
-    result2 = enqueue_audit_repair_request(partial_item, queue_root=queue_root2)
+    result2 = enqueue_audit_repair_request(
+        partial_item,
+        queue_root=queue_root2,
+        transition_writer=writer,
+        chain_spec_sha256=digest,
+    )
     assert result2 is not None
     assert result2["status"] == "zero_authority_rejected"
     assert not list((queue_root2 / "requests").glob("*.json"))
@@ -1688,3 +1705,270 @@ def test_six_hour_names_are_compatibility_only() -> None:
     # schedule constant (SC33).
     forbidden = {str(s) for s in FORBIDDEN_AUTHORITY_SOURCES}
     assert mod.AUDITOR_RECONCILIATION_INTERVAL not in forbidden
+
+
+# ── P2 typed runtime transitions: absence findings + enqueue emission ──────
+
+
+def _auditor_spec_and_digest(tmp_path: Path) -> tuple[Path, str]:
+    import hashlib
+
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    return spec_path, "sha256:" + hashlib.sha256(spec_path.read_bytes()).hexdigest()
+
+
+def test_runtime_transition_absence_findings_map_to_auditor_shape(
+    tmp_path: Path,
+) -> None:
+    """The auditor maps incident-ledger runtime absences (missing events,
+    invalid failure classes, digest drift, expired permits) into its finding
+    shape — read-only, escalation-only."""
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        runtime_transition_absence_findings,
+    )
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    ledger_root = tmp_path / "ledger-root"
+    spec_path, digest = _auditor_spec_and_digest(tmp_path)
+
+    # An empty ledger for a session reports every runtime.* event type.
+    findings = runtime_transition_absence_findings(
+        ledger_root=ledger_root,
+        session_id="audit-session",
+        spec_path=spec_path,
+    )
+    codes = {finding["code"] for finding in findings}
+    assert "runtime_missing_runtime_event" in codes
+    assert "runtime_allow_manifestless_permit_missing" in codes
+    for finding in findings:
+        assert finding["layer"] == "runtime_transitions"
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+    missing = next(
+        finding
+        for finding in findings
+        if finding["code"] == "runtime_missing_runtime_event"
+    )
+    assert missing["event_type"] == "runtime.manifest_selected"
+
+    # A fully-typed session removes the missing-event findings.
+    writer = RuntimeTransitionWriter(ledger_root)
+    writer.emit_manifest_selected(
+        scope="chain:audit-session",
+        candidate_to="manifest-a",
+        chain_spec_sha256=digest,
+        actor="test",
+        session_id="audit-session",
+    )
+    writer.emit_deviation_declared(
+        scope="chain:audit-session",
+        failure_class="availability",
+        error="probe",
+        chain_spec_sha256=digest,
+        candidate_to="repair-loop",
+        actor="test",
+        session_id="audit-session",
+    )
+    writer.emit_fallback_considered(
+        scope="chain:audit-session",
+        failure_class="availability",
+        chain_spec_sha256=digest,
+        candidate_to="repair-loop",
+        actor="test",
+        session_id="audit-session",
+    )
+    writer.emit_fallback_taken(
+        scope="chain:audit-session",
+        failure_class="availability",
+        chain_spec_sha256=digest,
+        candidate_to="repair-loop",
+        actor="test",
+        session_id="audit-session",
+    )
+    writer.emit_fallback_rejected(
+        scope="chain:audit-session",
+        failure_class="semantic",
+        error="permanent",
+        chain_spec_sha256=digest,
+        candidate_to="repair-loop",
+        actor="test",
+        session_id="audit-session",
+    )
+    findings_after = runtime_transition_absence_findings(
+        ledger_root=ledger_root,
+        session_id="audit-session",
+        spec_path=spec_path,
+    )
+    assert all(
+        finding["code"] != "runtime_missing_runtime_event"
+        for finding in findings_after
+    )
+
+
+def test_auditor_enqueue_emits_runtime_transitions_before_request_creation(
+    tmp_path: Path,
+) -> None:
+    """The auditor's only operational handoff (enqueue_audit_repair_request)
+    mandatorily records deviation_declared + fallback_considered BEFORE the
+    request is created; the ledger events are durable before the repair
+    request exists."""
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        enqueue_audit_repair_request,
+    )
+    from arnold_pipelines.megaplan.cloud.watchdog import (
+        iter_incident_runtime_events,
+    )
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    ledger_root = workspace
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    _, digest = _auditor_spec_and_digest(tmp_path)
+    base_evidence = {
+        "actionable": True,
+        "accepted_unclaimed_count": 1,
+        "accepted_unclaimed_request_ids": ["abc123"],
+        "claim_count": 0,
+        "attempt_count": 0,
+        "repair_outcome": "repair_exhausted",
+        "repair_age_min": 180,
+        "runner_dead": True,
+        "chain_incomplete": True,
+        "absent_or_stale_l2": True,
+        "retry_budget": {"claim_retries_used": 2, "claim_alerted": False},
+    }
+    base_gate = {
+        "eligible": True,
+        "decision": "true_stall",
+        "escalation_id": "l3-escalation:audit-transitions-test",
+        "evidence_digest": "e" * 64,
+        "route": {"requested_difficulty": 9},
+    }
+    item = {
+        "plan": "demo-plan",
+        "session": "demo-session",
+        "workspace": str(workspace),
+        "session_header": {"kind": "chain"},
+        "deterministic_superfixer_evidence": base_evidence,
+        "l3_escalation_gate": base_gate,
+    }
+    writer = RuntimeTransitionWriter(ledger_root)
+
+    result = enqueue_audit_repair_request(
+        item,
+        queue_root=queue_root,
+        transition_writer=writer,
+        chain_spec_sha256=digest,
+    )
+
+    assert result is not None  # the handoff itself was attempted
+    events = iter_incident_runtime_events(ledger_root)
+    assert [event["type"] for event in events] == [
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+    ], events
+    for event in events:
+        assert event["session_id"] == "demo-session"
+        assert event["failure_class"] == "availability"
+        assert event["chain_spec_sha256"] == digest
+        assert event["actor"] == "arnold-six-hour-auditor"
+    assert "stale_l1_l2_cycle" in events[0]["error"]
+
+
+def test_auditor_enqueue_blocks_when_runtime_transition_write_fails(
+    tmp_path: Path,
+) -> None:
+    """A runtime transition write failure aborts the auditor's handoff: no
+    durable event means no repair request is created."""
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        enqueue_audit_repair_request,
+    )
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    _, digest = _auditor_spec_and_digest(tmp_path)
+    base_evidence = {
+        "actionable": True,
+        "accepted_unclaimed_count": 1,
+        "accepted_unclaimed_request_ids": ["abc123"],
+        "claim_count": 0,
+        "attempt_count": 0,
+        "repair_outcome": "repair_exhausted",
+        "repair_age_min": 180,
+        "runner_dead": True,
+        "chain_incomplete": True,
+        "absent_or_stale_l2": True,
+        "retry_budget": {"claim_retries_used": 2, "claim_alerted": False},
+    }
+    base_gate = {
+        "eligible": True,
+        "decision": "true_stall",
+        "escalation_id": "l3-escalation:audit-blocked-test",
+        "evidence_digest": "e" * 64,
+        "route": {"requested_difficulty": 9},
+    }
+    item = {
+        "plan": "demo-plan",
+        "session": "demo-session",
+        "workspace": str(workspace),
+        "session_header": {"kind": "chain"},
+        "deterministic_superfixer_evidence": base_evidence,
+        "l3_escalation_gate": base_gate,
+    }
+    writer = RuntimeTransitionWriter(workspace)
+    # Sabotage the ledger AFTER construction: the journal dir becomes a file.
+    ledger_dir = workspace / ".megaplan" / "incident-ledger"
+    import shutil as _shutil
+
+    if ledger_dir.exists():
+        _shutil.rmtree(ledger_dir)
+    ledger_dir.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="runtime transition not durably recorded"):
+        enqueue_audit_repair_request(
+            item,
+            queue_root=queue_root,
+            transition_writer=writer,
+            chain_spec_sha256=digest,
+        )
+    assert not list(queue_root.glob("requests/*.json")) if queue_root.exists() else True
+    # G3: an actionable handoff without a writer FAILS CLOSED — no durable
+    # runtime.* event may precede the repair request, so the enqueue blocks
+    # before any request is created.
+    with pytest.raises(ValueError, match="runtime transition writer is mandatory"):
+        enqueue_audit_repair_request(item, queue_root=queue_root)
+    assert not list(queue_root.glob("requests/*.json")) if queue_root.exists() else True
+
+
+def test_auditor_enqueue_report_only_finding_needs_no_writer(tmp_path: Path) -> None:
+    """Ordinary report-only findings create no repair request and therefore
+    require no transition writer: no side effect means no event requirement."""
+    workspace = tmp_path / "report-only-workspace"
+    queue_root = workspace / ".megaplan" / "repair-queue"
+    item = {
+        "plan": "demo-plan",
+        "session": "demo-session",
+        "workspace": str(workspace),
+        "session_header": {"kind": "chain"},
+        "incident_projection": {"state": "blocked"},
+        "incident_audit": {
+            "incident_id": "inc-report-only",
+            "problem_id": "problem-report-only",
+            "diagnosis": {"summary": "watchdog evidence is stale"},
+            "findings": [
+                {
+                    "status": "error",
+                    "layer": "watchdog",
+                    "code": "watchdog_report_stale",
+                    "recommendation": "watchdog.dispatch",
+                }
+            ],
+        },
+    }
+    result = enqueue_audit_repair_request(item, queue_root=queue_root)
+    assert result is None
+    assert not queue_root.exists()

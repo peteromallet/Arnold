@@ -20,6 +20,7 @@ from arnold_pipelines.megaplan.cloud.current_target import resolve_current_targe
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import enqueue_audit_repair_request
+from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
 from tests.cloud.repair_identity_fixtures import (
     identity_for_signature,
     repair_identity,
@@ -727,6 +728,11 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
             },
         },
         queue_root=_queue_root(workspace),
+        # G3: the auditor enqueue requires a runtime transition writer so the
+        # deviation/fallback events precede the repair request creation.
+        transition_writer=RuntimeTransitionWriter(workspace),
+        chain_spec_sha256="sha256:"
+        + hashlib.sha256(spec.read_bytes()).hexdigest(),
     )
     assert queued is not None and queued["status"] == "queued"
     request = queued["request"]
@@ -811,6 +817,11 @@ def test_typed_l3_request_is_not_downgraded_when_target_also_looks_l1_repairable
             },
         },
         queue_root=_queue_root(workspace),
+        # G3: the auditor enqueue requires a runtime transition writer so the
+        # deviation/fallback events precede the repair request creation.
+        transition_writer=RuntimeTransitionWriter(workspace),
+        chain_spec_sha256="sha256:"
+        + hashlib.sha256(spec.read_bytes()).hexdigest(),
     )
     assert queued is not None and queued["status"] == "queued"
     request = queued["request"]
@@ -1653,3 +1664,157 @@ def test_repair_trigger_wrapper_rejects_legacy_repair_bins(tmp_path: Path) -> No
     ]
     assert rejection_eq, f"expected legacy override rejection for =-joined form, got: {events_eq}"
     assert any("--repair-bin=" in str(f) for f in (rejection_eq[0].get("forbidden_flags") or []))
+
+
+# ── P2 typed runtime transitions: events before dispatch side effects ─────
+
+
+def _incident_runtime_events(workspace: Path) -> list[dict[str, Any]]:
+    """Read the typed runtime.* events the trigger appended to the workspace
+    incident ledger, ordered by journal seq."""
+    events_path = workspace / ".megaplan" / "incident-ledger" / "events.jsonl"
+    if not events_path.exists():
+        return []
+    ordered: list[tuple[int, dict[str, Any]]] = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        envelope = json.loads(stripped)
+        payload = envelope.get("payload")
+        if isinstance(payload, dict) and str(payload.get("type") or "").startswith("runtime."):
+            ordered.append((int(envelope.get("seq") or 0), payload))
+    return [payload for _, payload in sorted(ordered, key=lambda item: item[0])]
+
+
+def test_trigger_emits_typed_runtime_transitions_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    """The repair trigger records manifest_selected + deviation_declared +
+    fallback_considered before its claim side effect and fallback_taken before
+    the delegation, with the exact failure class, session, and chain contract
+    digest."""
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    _enqueue(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    repair_bin = _repair_stub(tmp_path)
+
+    result = _run_trigger(marker_dir, repair_bin, enabled=True)
+
+    assert result.returncode == 0, result.stderr
+    events = _incident_runtime_events(workspace)
+    assert [event["type"] for event in events] == [
+        "runtime.manifest_selected",
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+    ], events
+    expected_digest = f"sha256:{hashlib.sha256(spec.read_bytes()).hexdigest()}"
+    for event in events:
+        assert event["session_id"] == "demo"
+        assert event["scope"] == "chain:demo"
+        assert event["chain_spec_sha256"] == expected_digest
+        assert event["actor"] == "arnold-repair-trigger"
+        assert event["candidate_to"] == str(repair_bin)
+    # manifest_selected carries no failure class; deviation/fallback events do.
+    for event in events[1:]:
+        assert event["failure_class"] == "availability"
+    assert events[1]["error"] == "dispatch_l1"  # dispatch_intent from the request
+    # The claim side effect is created only after the events were durably
+    # recorded: the claim record exists and the events precede it in the
+    # repair-queue ordering (decision timestamps are later).
+    decisions = _decisions(marker_dir)
+    assert any(item["decision"] == "accepted" for item in decisions)
+
+
+def test_trigger_ledger_write_failure_blocks_dispatch(tmp_path: Path) -> None:
+    """A runtime transition ledger write failure must abort dispatch BEFORE
+    any claim or subprocess side effect (no event = no claim = no child)."""
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    _enqueue(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    # Sabotage the incident ledger: the journal directory cannot be created.
+    (workspace / ".megaplan").mkdir(exist_ok=True)
+    (workspace / ".megaplan" / "incident-ledger").write_text(
+        "not a directory", encoding="utf-8"
+    )
+    repair_bin = _repair_stub(tmp_path)
+
+    result = _run_trigger(marker_dir, repair_bin, enabled=True)
+
+    assert result.returncode == 78, result.stderr
+    assert "runtime transition ledger write failed; blocking dispatch" in result.stderr
+    assert not (tmp_path / "repair-args.json").exists()
+    assert not (marker_dir.parent / "repair-queue").exists() or not list(
+        repair_requests.iter_repair_attempts(_queue_root(workspace))
+    )
+    assert [
+        item for item in _decisions(marker_dir) if item["decision"] == "dispatched"
+    ] == []
+
+
+def test_trigger_does_not_emit_runtime_transitions_without_dispatch(
+    tmp_path: Path,
+) -> None:
+    """No dispatch side effect -> no typed runtime events.  The trigger never
+    fabricates deviation/fallback events for observation-only runs."""
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    repair_bin = _repair_stub(tmp_path)
+    projection = _project_request_custody(marker_dir, queued)
+    blocker_id = projection["blocker_id"]
+    assert blocker_id
+    claim = repair_requests.claim_active_repair_request(
+        _queue_root(workspace),
+        blocker_id=blocker_id,
+        request_id=queued["request"]["request_id"],
+        actor="other-trigger",
+        session="demo",
+        pid=os.getpid(),
+        repair_identity=queued["request"]["repair_identity"],
+    )
+    assert claim.claimed
+
+    result = _run_trigger(marker_dir, repair_bin, enabled=True)
+
+    assert result.returncode == 0, result.stderr
+    assert _incident_runtime_events(workspace) == []
+
+
+def test_trigger_missing_spec_fails_closed(tmp_path: Path) -> None:
+    """An unreadable chain spec fails the dispatch CLOSED: exit 78 with NO
+    runtime events and NO claim/child side effect (eventless dispatch is
+    impossible)."""
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    _enqueue(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    # The spec file exists (so target resolution sees no spec_missing
+    # staleness) but is unreadable: the dispatch-time contract digest cannot
+    # be computed and the trigger fails closed before any claim/child effect.
+    spec.chmod(0o000)
+    try:
+        repair_bin = _repair_stub(tmp_path)
+
+        result = _run_trigger(marker_dir, repair_bin, enabled=True)
+
+        assert result.returncode == 78, result.stderr
+        assert (
+            "runtime transition ledger requires a readable chain spec; failing closed"
+            in result.stderr
+        )
+        assert _incident_runtime_events(workspace) == []
+        assert not (tmp_path / "repair-args.json").exists()
+        assert [
+            item for item in _decisions(marker_dir) if item["decision"] == "dispatched"
+        ] == []
+    finally:
+        spec.chmod(0o644)

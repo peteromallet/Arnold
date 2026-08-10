@@ -1660,7 +1660,7 @@ def audit_projection_input(audit_input, *, live_process_snapshot, now):
     return AUDIT_RESULT
 
 
-def enqueue_audit_repair_request(item, *, queue_root):
+def enqueue_audit_repair_request(item, *, queue_root, transition_writer=None, chain_spec_sha256=""):
     return None
 """,
         "arnold_pipelines/megaplan/incident/summaries.py": """
@@ -1807,6 +1807,48 @@ def test_progress_auditor_wrapper_repair_handoff_uses_shim() -> None:
     # heredoc that must not reference the shim at all.
     assert "github_sync" in text or "GitHubSync" in text, (
         "GitHub sync must remain present (non-authoritative)"
+    )
+
+
+def test_wrapper_boundary_stub_enqueue_accepts_mandatory_emission_kwargs(
+    tmp_path: Path,
+) -> None:
+    """G3: the wrapper-boundary stub for ``enqueue_audit_repair_request`` must
+    accept the controller's mandatory-emission kwargs so the L3 escalation
+    controller can pass the transition writer and chain-spec digest through
+    the stub boundary without a TypeError."""
+    import inspect
+    import sys
+    import types
+
+    stub_root, _call_log, _audit_capture = _build_wrapper_boundary_stub_overlay(tmp_path)
+    stub_module = (
+        stub_root / "arnold_pipelines" / "megaplan" / "cloud" / "six_hour_auditor.py"
+    )
+    # The real package tree is already imported in this process, so run the
+    # stub source in an isolated namespace with the capture helper injected.
+    capture = types.ModuleType("arnold_pipelines.megaplan.cloud._stub_capture")
+    capture.write_capture = lambda *args, **kwargs: None
+    capture.append_call = lambda *args, **kwargs: None
+    sys.modules["arnold_pipelines.megaplan.cloud._stub_capture"] = capture
+    try:
+        namespace: dict[str, object] = {"__name__": "stub_six_hour_auditor_g3"}
+        exec(
+            compile(stub_module.read_text(encoding="utf-8"), str(stub_module), "exec"),
+            namespace,
+        )
+    finally:
+        del sys.modules["arnold_pipelines.megaplan.cloud._stub_capture"]
+    enqueue = namespace["enqueue_audit_repair_request"]
+    assert callable(enqueue)
+    parameters = inspect.signature(enqueue).parameters
+    assert "transition_writer" in parameters, (
+        "wrapper-boundary stub must accept transition_writer= (controller now "
+        "passes it on every enqueue)"
+    )
+    assert "chain_spec_sha256" in parameters, (
+        "wrapper-boundary stub must accept chain_spec_sha256= (controller now "
+        "passes it on every enqueue)"
     )
 
 
@@ -7864,3 +7906,318 @@ class TestReasonFixturesAcrossAuditorSurfaces:
             assert "evidence_id" in f
             assert f["evidence_id"].startswith("finding:sha256:")
             assert f["_non_authoritative"] is True
+
+
+# ── P2 typed runtime transitions: absence reporting + observation emission ──
+
+
+def _audit_chain_digest(spec_path: Path) -> str:
+    return "sha256:" + _hashlib.sha256(spec_path.read_bytes()).hexdigest()
+
+
+def _write_runtime_event(
+    ledger_root: Path,
+    *,
+    event_type: str,
+    session_id: str,
+    failure_class: str | None,
+    chain_spec_sha256: str,
+) -> dict[str, object]:
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    writer = RuntimeTransitionWriter(ledger_root)
+    emit = {
+        "runtime.manifest_selected": writer.emit_manifest_selected,
+        "runtime.deviation_declared": writer.emit_deviation_declared,
+        "runtime.fallback_considered": writer.emit_fallback_considered,
+        "runtime.fallback_taken": writer.emit_fallback_taken,
+        "runtime.fallback_rejected": writer.emit_fallback_rejected,
+    }[event_type]
+    kwargs = {
+        "scope": f"chain:{session_id}",
+        "failure_class": failure_class,
+        "chain_spec_sha256": chain_spec_sha256,
+        "error": "test deviation",
+        "candidate_from": "manifest-a",
+        "candidate_to": "repair-loop",
+        "evidence": [{"kind": "test_fixture"}],
+        "actor": "test",
+        "session_id": session_id,
+    }
+    if event_type == "runtime.manifest_selected":
+        kwargs.pop("failure_class")
+    return emit(**kwargs)
+
+
+def test_runtime_absence_helpers_report_missing_and_invalid_events(
+    tmp_path: Path,
+) -> None:
+    """missing_runtime_events + invalid_failure_class_events are read-only
+    watcher-verifies-absence primitives over the incident ledger."""
+    from arnold_pipelines.megaplan.cloud.watchdog import (
+        invalid_failure_class_events,
+        missing_runtime_events,
+    )
+
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    ledger_root = tmp_path / "ledger-root"
+    digest = _audit_chain_digest(spec_path)
+
+    # No events at all: every runtime.* event type is reported absent.
+    assert missing_runtime_events(ledger_root=ledger_root, session_id="s1") == [
+        "runtime.manifest_selected",
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+        "runtime.fallback_rejected",
+    ]
+
+    _write_runtime_event(
+        ledger_root,
+        event_type="runtime.deviation_declared",
+        session_id="s1",
+        failure_class="availability",
+        chain_spec_sha256=digest,
+    )
+    _write_runtime_event(
+        ledger_root,
+        event_type="runtime.fallback_taken",
+        session_id="s1",
+        failure_class="availability",
+        chain_spec_sha256=digest,
+    )
+    assert missing_runtime_events(ledger_root=ledger_root, session_id="s1") == [
+        "runtime.manifest_selected",
+        "runtime.fallback_considered",
+        "runtime.fallback_rejected",
+    ]
+    # A different session never satisfies the absence check.
+    assert missing_runtime_events(ledger_root=ledger_root, session_id="other") == [
+        "runtime.manifest_selected",
+        "runtime.deviation_declared",
+        "runtime.fallback_considered",
+        "runtime.fallback_taken",
+        "runtime.fallback_rejected",
+    ]
+
+    # Inject a typed event with an unknown failure class directly into the
+    # journal (the writer correctly refuses it, so the raw append is the only
+    # way such a violation can exist) and verify the absence helper flags it.
+    events_path = ledger_root / ".megaplan" / "incident-ledger" / "events.jsonl"
+    with events_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "seq": 999,
+                    "schema_version": 1,
+                    "ts_utc": "2026-08-10T00:00:00Z",
+                    "kind": "incident.runtime.deviation_declared",
+                    "payload": {
+                        "schema_version": 1,
+                        "event_id": "runtime-deviation-declared-bogus",
+                        "ts": "2026-08-10T00:00:00Z",
+                        "type": "runtime.deviation_declared",
+                        "actor": "test",
+                        "scope": "chain:s1",
+                        "outcome": "declared",
+                        "summary": "bogus failure class",
+                        "evidence": [],
+                        "parent_event_ids": [],
+                        "next_expected_event": None,
+                        "deadline_ts": None,
+                        "trigger_event_id": None,
+                        "session_id": "s1",
+                        "failure_class": "not_a_real_class",
+                        "chain_spec_sha256": digest,
+                        "error": "test",
+                        "attempt": "",
+                        "candidate_from": None,
+                        "candidate_to": None,
+                    },
+                }
+            )
+            + "\n"
+        )
+    invalid = invalid_failure_class_events(ledger_root=ledger_root)
+    assert [item["failure_class"] for item in invalid] == ["not_a_real_class"]
+    assert invalid[0]["session_id"] == "s1"
+    assert invalid[0]["severity"] == "error"
+
+
+def test_runtime_absence_helpers_report_chain_digest_drift_and_expired_permit(
+    tmp_path: Path,
+) -> None:
+    """manifest_digest_drift + expired_manifestless_permit surface stale
+    admissions and expired permits (deny-by-default, never silent absence)."""
+    from arnold_pipelines.megaplan.cloud.watchdog import (
+        expired_manifestless_permit,
+        manifest_digest_drift,
+    )
+
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    ledger_root = tmp_path / "ledger-root"
+
+    # A spec with no permit sidecar is reported (deny-by-default).
+    missing_permit = expired_manifestless_permit(spec_path=spec_path)
+    assert [item["kind"] for item in missing_permit] == [
+        "allow_manifestless_permit_missing"
+    ]
+
+    # An expired permit is reported; a valid one is not.  The sidecar must
+    # be written at the canonical per-spec resolution path.
+    from arnold_pipelines.megaplan.chain.spec import runtime_policy_sidecar_path
+    from datetime import datetime, timedelta, timezone
+
+    sidecar = runtime_policy_sidecar_path(spec_path)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    sidecar.write_text(
+        json.dumps(
+            {
+                "permits": [
+                    {
+                        "kind": "allow_manifestless",
+                        "id": "expired-permit",
+                        "issued_at": (now - timedelta(hours=2)).isoformat(),
+                        "expires_at": (now - timedelta(hours=1)).isoformat(),
+                        "actor": "test",
+                        "reason": "expired fixture",
+                        "evidence": [],
+                        "chain_digest": _audit_chain_digest(spec_path),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    expired = expired_manifestless_permit(spec_path=spec_path)
+    assert [item["kind"] for item in expired] == [
+        "allow_manifestless_permit_expired"
+    ]
+
+    valid = _audit_chain_digest(spec_path)
+    _write_runtime_event(
+        ledger_root,
+        event_type="runtime.deviation_declared",
+        session_id="s1",
+        failure_class="availability",
+        chain_spec_sha256=valid,
+    )
+    # No drift: the recorded digest matches the current chain spec.
+    assert (
+        manifest_digest_drift(
+            spec_path=spec_path, ledger_root=ledger_root, session_id="s1"
+        )
+        == []
+    )
+    # Drift: the chain spec content changes after the events were recorded.
+    spec_path.write_text("milestones: []\n# changed\n", encoding="utf-8")
+    drift = manifest_digest_drift(
+        spec_path=spec_path, ledger_root=ledger_root, session_id="s1"
+    )
+    assert drift[0]["kind"] == "manifest_digest_drift"
+    assert drift[0]["severity"] == "warn"
+    assert valid in drift[0]["detail"]
+    assert _audit_chain_digest(spec_path) in drift[0]["detail"]
+
+
+def test_run_watchdog_check_records_observed_deviation_via_writer(
+    tmp_path: Path,
+) -> None:
+    """A failing watchdog-wrapped check records a typed deviation_declared
+    event through the seam writer; the escalation verdict is unchanged."""
+    from arnold_pipelines.megaplan.cloud.watchdog import (
+        EscalationLevel,
+        iter_incident_runtime_events,
+        run_watchdog_check,
+    )
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    ledger_root = tmp_path / "ledger-root"
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    writer = RuntimeTransitionWriter(ledger_root)
+    digest = _audit_chain_digest(spec_path)
+
+    def boom() -> dict[str, object]:
+        raise RuntimeError("primary check exploded")
+
+    result = run_watchdog_check(
+        check_name="health-probe",
+        check_fn=boom,
+        transition_writer=writer,
+        session_id="s9",
+        chain_spec_sha256=digest,
+        failure_class="availability",
+        actor="test-seam",
+    )
+
+    assert result.requires_escalation
+    assert result.escalation == EscalationLevel.BLOCKING
+    assert result.evidence["runtime_transition_recorded"] is True
+    events = iter_incident_runtime_events(ledger_root)
+    assert [event["type"] for event in events] == ["runtime.deviation_declared"]
+    declared = events[0]
+    assert declared["session_id"] == "s9"
+    assert declared["failure_class"] == "availability"
+    assert declared["chain_spec_sha256"] == digest
+    assert declared["actor"] == "test-seam"
+    assert "primary check exploded" in declared["error"]
+
+
+def test_run_watchdog_check_records_fallback_rejection_and_tolerates_write_failure(
+    tmp_path: Path,
+) -> None:
+    """A contradicting fallback is recorded as fallback_rejected; a ledger
+    write failure never changes the read-only seam's escalation verdict."""
+    from arnold_pipelines.megaplan.cloud.watchdog import (
+        EscalationLevel,
+        iter_incident_runtime_events,
+        run_watchdog_check,
+    )
+    from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
+
+    ledger_root = tmp_path / "ledger-root"
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    writer = RuntimeTransitionWriter(ledger_root)
+    digest = _audit_chain_digest(spec_path)
+
+    result = run_watchdog_check(
+        check_name="fallback-probe",
+        check_fn=lambda: {"primary": "ok"},
+        expected_keys=("primary",),
+        fallback_fn=lambda: {"different": "shape"},
+        transition_writer=writer,
+        session_id="s10",
+        chain_spec_sha256=digest,
+    )
+
+    assert result.requires_escalation
+    assert result.escalation == EscalationLevel.BLOCKING
+    assert result.evidence["runtime_transition_recorded"] is True
+    assert result.evidence["runtime_fallback_rejection_recorded"] is True
+    events = iter_incident_runtime_events(ledger_root)
+    assert [event["type"] for event in events] == [
+        "runtime.deviation_declared",
+        "runtime.fallback_rejected",
+    ]
+
+    # A writer that cannot record (missing digest) must not change the verdict.
+    second_root = tmp_path / "second-ledger-root"
+    writer2 = RuntimeTransitionWriter(second_root)
+    result2 = run_watchdog_check(
+        check_name="fallback-probe",
+        check_fn=lambda: {"primary": "ok"},
+        expected_keys=("primary",),
+        fallback_fn=lambda: {"different": "shape"},
+        transition_writer=writer2,
+        session_id="s10",
+        chain_spec_sha256="",  # deviation_declared requires a digest
+    )
+    assert result2.requires_escalation
+    assert result2.evidence["runtime_transition_recorded"] is False
+    assert result2.evidence["runtime_fallback_rejection_recorded"] is False
+    assert iter_incident_runtime_events(second_root) == []

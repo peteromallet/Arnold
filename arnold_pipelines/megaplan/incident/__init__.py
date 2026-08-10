@@ -9,7 +9,7 @@ This package provides the M1 incident-ledger core:
 
 from __future__ import annotations
 
-from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+from arnold_pipelines.megaplan.incident.ledger import IncidentLedger, RuntimeTransitionWriter
 from arnold_pipelines.megaplan.incident.projection import (
     build_brief,
     list_incidents,
@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.incident.schema import validate_incident_event
 
 __all__ = [
     "IncidentLedger",
+    "RuntimeTransitionWriter",
     "build_brief",
     "list_incidents",
     "rebuild_projections",
