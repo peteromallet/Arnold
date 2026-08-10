@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan.prompts.critique import _revise_retry_feedback
+from arnold_pipelines.megaplan.prompts.review import _review_retry_feedback
 from arnold_pipelines.megaplan.receipts.extractors import load_and_extract
 from arnold_pipelines.megaplan.receipts.schema import upstream_artifact_hashes
 
@@ -91,5 +92,42 @@ def test_revise_retry_feedback_ignores_unrelated_history() -> None:
     }
 
     feedback = _revise_retry_feedback(state)  # type: ignore[arg-type]
+
+    assert feedback == ""
+
+
+def test_review_retry_feedback_surfaces_structural_failure() -> None:
+    state = {
+        "history": [
+            {
+                "step": "review",
+                "result": "error",
+                "message": (
+                    "worker_structural_audit_failed: model output structural audit "
+                    "failed: missing_required at /pre_check_flags/0/evidence_file"
+                ),
+            }
+        ]
+    }
+
+    feedback = _review_retry_feedback(state)  # type: ignore[arg-type]
+
+    assert "PRIOR REVIEW ATTEMPT FAILED STRUCTURAL AUDIT" in feedback
+    assert "evidence_file" in feedback
+    assert "deterministic_check" in feedback
+
+
+def test_review_retry_feedback_ignores_unrelated_history() -> None:
+    state = {
+        "history": [
+            {
+                "step": "execute",
+                "result": "error",
+                "message": "task failed",
+            }
+        ]
+    }
+
+    feedback = _review_retry_feedback(state)  # type: ignore[arg-type]
 
     assert feedback == ""

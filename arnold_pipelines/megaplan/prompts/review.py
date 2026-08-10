@@ -1208,6 +1208,46 @@ def _write_review_template(plan_dir: Path, state: PlanState) -> Path:
     return output_path
 
 
+def _review_retry_feedback(state: PlanState) -> str:
+    """Return actionable feedback for the most recent failed review attempt.
+
+    The review prompt is long and the schema is strict; models repeat the
+    same structural omissions (missing required fields) across retries when
+    nothing tells them what failed.  Surface the exact last failure so the
+    retry fixes it instead of re-emitting the same malformed payload.
+    """
+    history = state.get("history")
+    if not isinstance(history, list):
+        return ""
+    for entry in reversed(history):
+        if not isinstance(entry, dict) or entry.get("step") != "review":
+            continue
+        if entry.get("result") != "error":
+            return ""
+        message = entry.get("message")
+        if not isinstance(message, str):
+            return ""
+        if "structural" in message or "audit" in message:
+            return textwrap.dedent(
+                f"""
+                PRIOR REVIEW ATTEMPT FAILED STRUCTURAL AUDIT:
+                {message}
+
+                Correct that exact failure in this retry.  Every field named in
+                the failure message is REQUIRED by the review schema — do not
+                omit it.  In particular:
+                - every `pre_check_flags[]` entry needs `evidence_file`;
+                - every `rework_items[].target` needs its full typed route
+                  (`kind` plus `id`/`task_id`/`task_ids` as documented);
+                - every `rework_items[].deterministic_check` needs `command`,
+                  `baseline_status`, and `post_status`;
+                - `criteria[]`, `task_verdicts[]`, and `sense_check_verdicts[]`
+                  entries must match the documented JSON shape exactly.
+                """
+            ).strip()
+    return ""
+
+
 def _review_prompt(
     state: PlanState,
     plan_dir: Path,
@@ -1327,6 +1367,8 @@ def _review_prompt(
 
         Git diff summary:
         {diff_summary}
+
+        {_review_retry_feedback(state)}
 
         Requirements:
         - {criteria_guidance}
