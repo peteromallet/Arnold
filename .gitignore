@@ -28,6 +28,9 @@ __pycache__/
 .megaplan/m2-auto.log
 .megaplan/m6-test.log
 .megaplan/system_logs/
+.megaplan/bakeoffs/
+.megaplan-worktrees/
+.megaplan/bakeoffs/**
 .megaplan/resident/
 .megaplan/debt.json
 .megaplan/epics/
