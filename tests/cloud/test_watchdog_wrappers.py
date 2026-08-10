@@ -354,6 +354,12 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
     else:
         assert f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT' in text
     assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' not in text
+    # Cleanup identity guard (port 9f9982c855): the snapshot path is resolved
+    # to a real path and pinned readonly, and the wrapper refuses to unlink
+    # anything that is not a $TMPDIR snapshot (e.g. the installed origin).
+    assert f"readonly {prefix}_SNAPSHOT_PATH" in text
+    assert "refusing unsafe immutable snapshot cleanup path" in text
+    assert "readlink -f" in text[text.index(f'export {prefix}_SNAPSHOT_ACTIVE=1') :]
 
 
 @pytest.mark.parametrize(
@@ -385,6 +391,148 @@ def test_wrapper_snapshot_is_removed_after_fail_closed_usage_exit(
 
 
 @pytest.mark.parametrize(
+    ("wrapper_name", "prefix", "snapshot_prefix", "guard_entry", "cleanup_unset", "prologue", "exit_trap"),
+    [
+        (
+            "arnold-watchdog",
+            "ARNOLD_WATCHDOG",
+            "arnold-watchdog",
+            'ARNOLD_WATCHDOG_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"',
+            "unset watchdog_snapshot_real watchdog_origin_real watchdog_origin_root watchdog_snapshot_root",
+            "",
+            "",
+        ),
+        (
+            "arnold-repair-loop",
+            "ARNOLD_REPAIR_LOOP",
+            "arnold-repair-loop",
+            'ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"',
+            "unset repair_loop_snapshot_real repair_loop_origin_real repair_loop_origin_root repair_loop_snapshot_root\nfi",
+            "",
+            "cleanup_repair_loop_snapshot() { rm -f -- \"$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH\"; }\n"
+            "trap 'cleanup_repair_loop_snapshot' EXIT",
+        ),
+        (
+            "arnold-meta-repair-loop",
+            "ARNOLD_META_REPAIR_LOOP",
+            "arnold-meta-repair-loop",
+            'ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"',
+            "unset meta_repair_loop_snapshot_real meta_repair_loop_origin_real meta_repair_loop_origin_root meta_repair_loop_snapshot_root",
+            "",
+            "",
+        ),
+        (
+            "arnold-progress-auditor",
+            "ARNOLD_PROGRESS_AUDITOR",
+            "arnold-progress-auditor",
+            'ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="$progress_auditor_current"',
+            "unset progress_auditor_snapshot_real progress_auditor_origin_real progress_auditor_origin_root progress_auditor_snapshot_root",
+            'progress_auditor_current="${BASH_SOURCE[0]:-$0}"',
+            "cleanup_progress_auditor() { rm -rf -- \"$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH\"; }\n"
+            "trap 'cleanup_progress_auditor' EXIT",
+        ),
+    ],
+)
+def test_snapshot_cleanup_guard_accepts_tmpdir_and_refuses_origin(
+    tmp_path: Path,
+    wrapper_name: str,
+    prefix: str,
+    snapshot_prefix: str,
+    guard_entry: str,
+    cleanup_unset: str,
+    prologue: str,
+    exit_trap: str,
+) -> None:
+    """The cleanup identity guard accepts real $TMPDIR snapshots and refuses
+    the installed/origin wrapper (exit 78).
+
+    Bash evaluates ``BASH_SOURCE`` against the active source stack when an
+    EXIT trap runs, so a dynamic trap could unlink the sourced supervisor
+    library instead of the temporary wrapper.  Exercise each real wrapper's
+    guard: an EXIT raised from a sourced function must unlink only the
+    captured $TMPDIR snapshot and never the sourced library or the origin.
+    """
+    text = _wrapper(wrapper_name)
+    source_wrapper_sha = hashlib.sha256((WRAPPER_DIR / wrapper_name).read_bytes()).hexdigest()
+    guard_start = text.index(guard_entry)
+    guard_end = text.index(cleanup_unset, guard_start) + len(cleanup_unset)
+    guard = text[guard_start:guard_end]
+
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    sourced_lib = tmp_path / "exit-from-sourced-library"
+    sourced_lib.write_text("exit_from_sourced_library() { exit 0; }\n", encoding="utf-8")
+
+    snapshot = snapshot_dir / f"{snapshot_prefix}.regression"
+    snapshot.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env bash",
+                "set -uo pipefail",
+                prologue,
+                f"export {prefix}_ORIGIN={shlex.quote(str(WRAPPER_DIR / wrapper_name))}",
+                guard,
+                exit_trap,
+                f'. {shlex.quote(str(sourced_lib))}',
+                "exit_from_sourced_library",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    accepted = subprocess.run(
+        ["bash", str(snapshot)],
+        env={**os.environ, "TMPDIR": str(snapshot_dir)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    assert not snapshot.exists()
+    assert sourced_lib.exists()
+    assert hashlib.sha256((WRAPPER_DIR / wrapper_name).read_bytes()).hexdigest() == source_wrapper_sha
+
+    # The same guard run from the installed/origin path must refuse (exit 78)
+    # and leave the origin intact.
+    origin_install = (
+        tmp_path
+        / "origin"
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / wrapper_name
+    )
+    origin_install.parent.mkdir(parents=True)
+    origin_install.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env bash",
+                "set -uo pipefail",
+                prologue,
+                f"export {prefix}_ORIGIN={shlex.quote(str(origin_install))}",
+                guard,
+                'echo "guard-failed: accepted origin install"',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    refused = subprocess.run(
+        ["bash", str(origin_install)],
+        env={**os.environ, "TMPDIR": str(snapshot_dir)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert refused.returncode == 78, refused.stdout
+    assert "refusing unsafe immutable snapshot cleanup path" in refused.stderr
+    assert origin_install.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
+    assert hashlib.sha256((WRAPPER_DIR / wrapper_name).read_bytes()).hexdigest() == source_wrapper_sha
+
+
+@pytest.mark.parametrize(
     ("wrapper_name", "prefix"),
     [
         ("arnold-repair-loop", "ARNOLD_REPAIR_LOOP"),
@@ -394,7 +542,16 @@ def test_wrapper_snapshot_is_removed_after_fail_closed_usage_exit(
 def test_inherited_snapshot_flag_cannot_delete_a_new_wrapper_invocation(
     tmp_path: Path, wrapper_name: str, prefix: str
 ) -> None:
-    origin = tmp_path / wrapper_name
+    origin = (
+        tmp_path
+        / "source"
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / wrapper_name
+    )
+    origin.parent.mkdir(parents=True)
     origin.write_bytes((WRAPPER_DIR / wrapper_name).read_bytes())
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
@@ -427,7 +584,16 @@ def test_repair_wrapper_snapshot_survives_origin_replacement_while_waiting(
 ) -> None:
     wrapper = _repair_wrapper()
     bootstrap = wrapper[: wrapper.index("\n\nif [[ $# -lt 3 ]]")]
-    origin = tmp_path / "repair-wrapper"
+    origin = (
+        tmp_path
+        / "source"
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    )
+    origin.parent.mkdir(parents=True)
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
     origin.write_text(
