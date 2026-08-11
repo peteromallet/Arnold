@@ -34,6 +34,7 @@ existing ratchet cross-references, and closure argument when applicable.
 | 14 | `arnold_pipelines/megaplan/handlers/finalize.py:455` | `_validate_finalize_payload` | Finalize worker payload | Finalize handler tests | Canonical C4 chokepoint | `_FINALIZE_INPUT_SCHEMA` |
 | 15 | `arnold_pipelines/megaplan/model_seam.py:356` | `_audit_capture_payload` | Step payload | Model-seam structural audit tests | Canonical structural audit gate | invocation schema |
 | 16 | `arnold_pipelines/megaplan/pipeline_contracts.py:471` | `consume_payload_result` | Typed-port payload | Pipeline contract tests | Canonical typed-port consumer gate | registered schema |
+| 17 | `arnold_pipelines/megaplan/workers/omp.py:1046` | `_reject_unknown_schema_fields` | Step payload (Mapping) | Omp worker tests | Omp worker structural audit gate | step payload |
 
 ### Test Call Sites
 
@@ -103,8 +104,6 @@ Delegates to `_audit_capture_payload` → `validate_payload_against_schema`.
 |---|-----------|---------------------|-------------|----------------|-----------------|-------------|
 | 1 | `arnold/pipelines/megaplan/model_seam.py:891` | `capture_step_output` | Repaired output (Mapping or str) | Self-recursion for repair retry | Retry loop with repair_attempt guard | `repaired_invocation`, `repaired_output` |
 | 2 | `arnold/pipelines/megaplan/workers/shannon.py:2417` | `_parse_and_validate` | Model output (str \| Mapping) | Tested via shannon worker integration tests | Shannon worker capture chokepoint | `invocation`, `model_output` |
-| 3 | `arnold/pipelines/megaplan/workers/hermes.py:1477` | `_run_attempt` | Model output (str \| Mapping) | Tested via hermes worker integration tests | Hermes worker capture chokepoint | `invocation`, `model_output` |
-| 4 | `arnold/pipelines/megaplan/workers/hermes.py:1499` | `_run_attempt` | Model output (str \| Mapping) | Same as above | Codex path capture | `invocation`, `model_output` |
 | 5 | `arnold/pipelines/megaplan/execute/timeout.py:149` | `_capture_execute_checkpoint_payload` | Model output (str \| Mapping) | Tested via timeout handler tests | Timeout-recovery capture | `invocation`, `model_output` |
 | 6 | `arnold/pipelines/megaplan/execute/batch.py:484` | `_capture_execute_payload` | Model output (str \| Mapping) | Tested via batch executor tests | Batch-step capture chokepoint | `invocation`, `model_output` |
 | 7 | `arnold/pipelines/megaplan/workers/_impl.py:2234` | `run_codex_step` | Model output (str \| Mapping) | Tested via worker integration tests | Generic worker capture | `invocation`, `model_output` |
@@ -119,10 +118,9 @@ Delegates to `_audit_capture_payload` → `validate_payload_against_schema`.
 | 16 | `arnold_pipelines/megaplan/workers/_impl.py:3507` | `_run_codex_step_uncapped` | Codex output | Worker integration tests | Canonical worker capture | invocation/output |
 | 17 | `arnold_pipelines/megaplan/workers/_impl.py:3703` | `_run_codex_step_uncapped` | Codex fallback output | Worker integration tests | Canonical worker fallback capture | invocation/output |
 | 18 | `arnold_pipelines/megaplan/workers/_impl.py:4005` | `run_codex_prep_step` | Codex prep output | Worker prep tests | Canonical prep capture | invocation/output |
-| 19 | `arnold_pipelines/megaplan/workers/hermes.py:2403` | `_run_attempt` | Hermes output | Hermes worker tests | Canonical Hermes capture | invocation/output |
-| 20 | `arnold_pipelines/megaplan/workers/hermes.py:2428` | `_run_attempt` | Hermes Codex-path output | Hermes worker tests | Canonical Hermes fallback capture | invocation/output |
 | 21 | `arnold_pipelines/megaplan/workers/shannon.py:2931` | `_parse_and_validate` | Shannon output | Shannon worker tests | Canonical Shannon capture | invocation/output |
 | 22 | `arnold_pipelines/megaplan/workers/shannon.py:2937` | `_parse_and_validate` | Shannon fallback output | Shannon worker tests | Canonical Shannon fallback capture | invocation/output |
+| 23 | `arnold_pipelines/megaplan/workers/omp.py:1395` | `run_omp_step` | Omp output | Omp worker tests | Canonical omp capture | invocation/output |
 
 ### Test Call Sites
 

@@ -1151,6 +1151,11 @@ def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) ->
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # B4 credential fallback: without anthropic/openai keys the premium
+    # placeholder falls back to deepseek (present on this box); delete the
+    # fallback keys too so the claude-vendor path is the one exercised.
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
     monkeypatch.setattr(
         profiles_module,
         "effective_premium_vendor",

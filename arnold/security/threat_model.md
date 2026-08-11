@@ -12,7 +12,7 @@ or full non-LLM credential brokering, which are deferred to later milestones (M4
 |-------|-------------|----------------|
 | Git PAT / push credentials | **Critical** | Environment variables, MCP subprocess env, agent tool invocations, logs |
 | LLM API keys (OpenAI, Anthropic, DeepSeek, etc.) | **Critical** | `env_loader.py`, `KeyPool.acquire()`, `auxiliary_client.py`, provider client init |
-| OAuth refresh tokens (Nous Portal, Codex, Anthropic OAuth) | **Critical** | `~/.hermes/auth.json`, token storage on disk |
+| OAuth refresh tokens (Nous Portal, Codex, Anthropic OAuth) | **Critical** | `~/.omp/agent/` auth storage, token storage on disk |
 | GitHub read-only tokens (skills hub) | **High** | `skills_hub.py` `GitHubAuth`, env vars (`GITHUB_TOKEN`, `GH_TOKEN`), `gh` CLI |
 | MCP server credentials (PATs, API keys in config) | **High** | `config.yaml` `mcp_servers.*.env`, subprocess environment |
 | Non-LLM tool credentials (ElevenLabs, FAL.ai, Firecrawl, Groq) | **Medium** | Environment variables, tool module init |
@@ -31,8 +31,8 @@ or full non-LLM credential brokering, which are deferred to later milestones (M4
 ## Attack Vectors
 
 ### AV1: Agent-initiated credential exfiltration via terminal
-- **Description**: An agent prompt instructs the terminal tool to run `env`, `cat ~/.hermes/.env`,
-  `gh auth token`, or `cat ~/.hermes/auth.json`.
+- **Description**: An agent prompt instructs the terminal tool to run `env`, `cat ~/.omp/.env`,
+  `gh auth token`, or `cat ~/.omp/agent/auth.json`.
 - **M2 Coverage**: **Uncovered (deferred)**. Terminal/SSH/`gh` bypasses are documented as
   residual risk. Mitigation requires fleet-level sandboxing (M5–M6) that restricts agent
   subprocess access to credential-bearing files and environment variables.
@@ -80,7 +80,7 @@ or full non-LLM credential brokering, which are deferred to later milestones (M4
   but token theft could enable private repo enumeration.
 
 ### AV6: MCP server credential injection
-- **Description**: MCP server configs in `~/.hermes/config.yaml` include `GITHUB_PERSONAL_ACCESS_TOKEN`
+- **Description**: MCP server configs in the omp/megaplan config include `GITHUB_PERSONAL_ACCESS_TOKEN`
   or `Authorization: Bearer sk-...` headers. These are passed to subprocess environments.
 - **M2 Coverage**: **Uncovered (deferred)**. MCP subprocess credentials are not brokered.
   The agent process reads config.yaml and passes env to MCP subprocesses directly.

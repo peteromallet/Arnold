@@ -292,7 +292,7 @@ def test_per_worker_sessiondb_distinct_paths(tmp_path: Path) -> None:
 
     # Simulate per-worker path derivation
     def _worker_db_path(plan_dir: Path, worker_id: str) -> Path:
-        return plan_dir / ".hermes_state" / worker_id / "sessions.db"
+        return plan_dir / ".omp_state" / worker_id / "sessions.db"
 
     # Two distinct workers
     w0 = _worker_db_path(plan_dir, "worker-execute-task-0")
@@ -332,7 +332,7 @@ def test_sessiondb_worker_path_includes_task_identity(tmp_path: Path) -> None:
 
     # Path derivation must include worker-scoped identity
     def _derived(plan_dir: Path, session_key: str) -> Path:
-        return plan_dir / ".hermes_state" / session_key.replace(":", "_") / "state.db"
+        return plan_dir / ".omp_state" / session_key.replace(":", "_") / "state.db"
 
     sk_a = "execute:hermes:plan-worker-1"
     sk_b = "critique:hermes:plan-worker-1"

@@ -822,7 +822,7 @@ def test_runtime_producer_binding_captures_available_hermes_attempt_identity(
 
     assert binding["attempt_id"] == "inv-1:1"
     assert binding["selected_spec"] == "omp:zai/glm-5.2"
-    assert binding["provider"] == "zhipu"
+    assert binding["provider"] == "zai"
     assert binding["model_actual"] == "glm-5.2"
     assert binding["scratch_sha256"] == critique_custody.sha256_file(
         tmp_path / "critique_output.json"

@@ -2,32 +2,25 @@
   "checks": [
     {
       "check": "current_head",
-      "head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
+      "head": "0cc5ffb6a6b5d39c1aa7645df653ff501080e818",
       "status": "PASS"
     },
     {
-      "bound_artifacts_count": 13,
+      "bound_artifacts_count": 10,
       "check": "m5_final_attestation",
-      "detail": "3 bound artifact(s) missing or mismatched",
-      "missing_bound_artifacts": [
-        ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
-        ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
-        ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json"
-      ],
       "path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json",
-      "repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+      "repository_subject_head": "0cc5ffb6a6b5d39c1aa7645df653ff501080e818",
       "retirement_status": "completed",
       "schema": "m5.final-attestation.v2",
-      "status": "INCOHERENT"
+      "status": "PASS"
     },
     {
       "check": "m5_bound_head_vs_current_head",
-      "current_head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
-      "detail": "M5 bound head does not match current HEAD, but is an ancestor. HEAD has advanced past the M5 attestation point. Downstream M6 handoff must not be marked complete.",
-      "exact_match": false,
-      "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
-      "m5_is_ancestor_of_head": true,
-      "status": "INCOHERENT"
+      "current_head": "0cc5ffb6a6b5d39c1aa7645df653ff501080e818",
+      "detail": "M5 bound head equals current HEAD",
+      "exact_match": true,
+      "m5_bound_head": "0cc5ffb6a6b5d39c1aa7645df653ff501080e818",
+      "status": "PASS"
     },
     {
       "check": "m5_milestone_attestation",
@@ -50,41 +43,30 @@
       "unparseable": []
     },
     {
-      "actual_parents": [
-        "7644f55dd9be75632670f990268e045d3ee1c2f7",
-        "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
-      ],
+      "actual_parents": [],
       "check": "wbc_merge_evidence",
-      "first_parent": "7644f55dd9be75632670f990268e045d3ee1c2f7",
-      "integration_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
-      "is_merge_commit": true,
+      "detail": "WBC integration commit is the migration baseline ROOT (no parents \u2014 re-cut on 2026-08-10)",
+      "first_parent": null,
+      "integration_commit": "401c8f8112ba0547b428d84cf6996912fdda8e45",
+      "is_merge_commit": false,
+      "migration_root_recut": true,
       "path": ".megaplan/initiatives/workflow-boundary-contracts/handoff/consolidation-20260714/wbc-merge-evidence.md",
-      "second_parent": "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70",
+      "second_parent": null,
       "status": "PASS"
     },
     {
       "check": "wbc_ancestry",
-      "current_head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
-      "first_parent_is_ancestor": true,
+      "detail": "WBC ancestry anchor is the migration baseline ROOT (no parents \u2014 re-cut on 2026-08-10)",
       "parents_from_evidence": {
-        "first_parent": "7644f55dd9be75632670f990268e045d3ee1c2f7",
-        "second_parent": "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
+        "first_parent": null,
+        "second_parent": null
       },
-      "second_parent_is_ancestor": true,
       "status": "PASS"
     },
     {
       "check": "wbc_package_metadata",
-      "detail": "Package metadata recorded; activation receipt evidence is evaluated separately. Editable install alone is not proof of WBC activation.",
-      "editable_matches_repo_root": false,
-      "editable_project_location": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
-      "import_resolves_to": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold/__init__.py",
-      "install_location": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
-      "is_editable": true,
-      "package_name": "arnold",
-      "repo_root": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
-      "status": "UNKNOWN",
-      "version": "0.23.0"
+      "detail": "pip show arnold failed (rc=1): WARNING: Package(s) not found: arnold",
+      "status": "UNKNOWN"
     },
     {
       "boundary_category": {
@@ -128,8 +110,8 @@
         }
       },
       "check": "wbc_file_hashes",
-      "detail": "All 13 WBC files match between current tree and WBC merge commit 7cf0cab2",
-      "integration_commit": "7cf0cab28c59d40614b9548fa4348ed7f062f52c",
+      "detail": "All 13 WBC files match between current tree and WBC merge commit 9d374c6e",
+      "integration_commit": "9d374c6e02ed7838279fe09528c384bf94a23687",
       "runtime_category": {
         "files": [
           {
@@ -173,9 +155,9 @@
             "status": "match"
           },
           {
-            "current_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+            "current_sha256": "b94d611c52640ddd1c0285c678103506e5b76d16f2ad9326da15a2a435c90171",
             "merge_missing": false,
-            "merge_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+            "merge_sha256": "b94d611c52640ddd1c0285c678103506e5b76d16f2ad9326da15a2a435c90171",
             "path": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
             "status": "match"
           },
@@ -207,9 +189,9 @@
       "support_category": {
         "files": [
           {
-            "current_sha256": "cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7",
+            "current_sha256": "5c28849094dba65416cafa83150b85ae2ef3fb8d005271cb622759110d4dcc9e",
             "merge_missing": false,
-            "merge_sha256": "cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7",
+            "merge_sha256": "5c28849094dba65416cafa83150b85ae2ef3fb8d005271cb622759110d4dcc9e",
             "path": "arnold_pipelines/megaplan/workflows/boundary_contracts.py",
             "status": "match"
           },
@@ -253,18 +235,18 @@
       "status": "UNKNOWN"
     }
   ],
-  "generated_at": "2026-08-08T17:42:26.279093+00:00",
+  "generated_at": "2026-08-11T11:39:40.991979+00:00",
   "notes": [
     "M6 is observe-only: this verifier reads git/files but writes only to the evidence artifact.",
     "INCOHERENT or BLOCKED overall status means downstream M6 handoff artifacts must not be marked complete.",
     "Re-run this tool whenever the working tree changes to get a fresh evaluation."
   ],
-  "overall_status": "INCOHERENT",
+  "overall_status": "UNKNOWN",
   "schema": "m6.prerequisite-verification.v1",
   "summary": {
     "blocked": 0,
-    "incoherent": 2,
-    "pass": 6,
+    "incoherent": 0,
+    "pass": 8,
     "total": 10,
     "unknown": 2
   }

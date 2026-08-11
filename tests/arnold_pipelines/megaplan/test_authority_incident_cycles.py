@@ -31,6 +31,15 @@ def _write_finalize(plan_dir: Path, fixture: dict[str, Any]) -> None:
 
 
 def _write_dispatch(plan_dir: Path, dispatch: dict[str, Any]) -> Path:
+    from arnold_pipelines.megaplan.execute.batch import (
+        _stamp_dispatch_metadata,
+        _stamp_result_envelopes,
+    )
+    from arnold_pipelines.megaplan.execute.wbc import (
+        EXECUTE_DISPATCH_WBC_KEY,
+        dispatch_wbc_summary,
+    )
+
     scope = BatchScope.create(
         batch_number=dispatch["batch_number"],
         task_ids=dispatch["task_ids"],
@@ -38,6 +47,30 @@ def _write_dispatch(plan_dir: Path, dispatch: dict[str, Any]) -> Path:
     )
     payload = copy.deepcopy(dispatch["payload"])
     payload[BATCH_SCOPE_KEY] = scope.to_dict()
+    # B8: durable artifacts carry the dispatch identity (dispatch key +
+    # capability grants), the dispatch WBC proof, and result envelopes; stamp
+    # all three exactly as the production dispatcher does.
+    identity = _stamp_dispatch_metadata(
+        payload,
+        plan_dir=plan_dir,
+        state=None,
+        scope=scope,
+        finalize_data=None,
+    )
+    wbc_summary = dispatch_wbc_summary(
+        auth_metadata={
+            "wbc_dispatch": {
+                "attempt_id": f"batch-{dispatch['batch_number']}",
+                "writer_id": "fixture-writer",
+                "surface_name": "execute.batch",
+                "start_event_sequence": 1,
+                "terminal_event_sequence": 2,
+            }
+        },
+        dispatch_identity=identity,
+        batch_number=dispatch["batch_number"],
+    )
+    payload[EXECUTE_DISPATCH_WBC_KEY] = wbc_summary
     path = execute_batch_artifact_path(
         plan_dir,
         dispatch["batch_number"],
@@ -45,6 +78,13 @@ def _write_dispatch(plan_dir: Path, dispatch: dict[str, Any]) -> Path:
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+    stamped = json.loads(path.read_text(encoding="utf-8"))
+    _stamp_result_envelopes(
+        stamped,
+        identity=identity,
+        artifact_path=path,
+    )
+    path.write_text(json.dumps(stamped), encoding="utf-8")
     return path
 
 

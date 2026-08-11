@@ -13,7 +13,7 @@ PHASE_DIRS = (
 )
 
 ALLOWED_RAW_FANOUT_MODULES = {
-    Path("arnold/pipelines/megaplan/_core/hermes_fanout.py"),
+    Path("arnold/pipelines/megaplan/_core/parallel_fanout.py"),
     Path("arnold/pipelines/megaplan/_core/process_fanout.py"),
     Path("arnold/pipelines/megaplan/_core/worker_fanout.py"),
     Path("arnold/pipelines/megaplan/orchestration/parallel_critique.py"),

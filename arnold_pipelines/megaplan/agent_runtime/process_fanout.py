@@ -1,7 +1,7 @@
 """Process fan-out alias module for the vendorable agent runtime surface.
 
 Re-exports the generic (non-review) process fan-out primitives from
-``megaplan._core.hermes_fanout`` so consumer packages can depend on the stable
+``megaplan._core.parallel_fanout`` so consumer packages can depend on the stable
 ``megaplan.agent_runtime`` namespace.
 
 This is *process fan-out* — each unit runs in a separate process via
@@ -13,10 +13,10 @@ drives CLI backends (Claude/Shannon, Codex, Hermes) through
 This module deliberately excludes critique/review-specific names such as
 ``ScatterResult`` and ``scatter_gather_checks``. Callers that need the
 review-oriented variants should continue to import directly from
-``megaplan._core.hermes_fanout``.
+``megaplan._core.parallel_fanout``.
 """
 
-from arnold_pipelines.megaplan._core.hermes_fanout import (
+from arnold_pipelines.megaplan._core.parallel_fanout import (
     GenericScatterResult,
     scatter_gather,
     scatter_gather_processes,

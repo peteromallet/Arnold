@@ -234,32 +234,25 @@ find "$PWD" -maxdepth 3 -type f \
 
 ### Agent-history storage side effect
 
-Loose-branch and worktree cleanup often involves many Hermes/Codex sessions and
-wide tool output. If the machine is under disk pressure, check Hermes session
-state before starting a long cleanup:
+Loose-branch and worktree cleanup often involves many omp/Codex sessions and
+wide tool output. If the machine is under disk pressure, check the omp agent
+session state before starting a long cleanup (the omp migration removed the
+legacy Hermes SDK session store; omp sessions live under
+`~/.omp/agent/`):
 
 ```bash
-du -sh "$HOME/.hermes/state.db" "$HOME/.hermes/state.db-shm" "$HOME/.hermes/state.db-wal" 2>/dev/null
-sqlite3 -readonly "$HOME/.hermes/state.db" \
-  "SELECT name, ROUND(SUM(pgsize)/1024.0/1024.0,1) AS mib FROM dbstat GROUP BY name ORDER BY SUM(pgsize) DESC LIMIT 20;" 2>/dev/null
+du -sh "$HOME/.omp/agent/sessions" 2>/dev/null
 ```
 
-On this machine, `~/.hermes/state.db` grew to **7.9G** from CLI/tool history plus
-FTS5 indexes (`messages_fts` and especially `messages_fts_trigram`). If the user
-does not care about Hermes resume/search/insights history, the clean purge is to
-stop Hermes, then remove the SQLite trio:
+If the user does not care about omp resume/search history, the clean purge is
+to stop omp, then remove the session store:
 
 ```bash
-lsof +D "$HOME/.hermes" 2>/dev/null
-rm -f "$HOME/.hermes/state.db" "$HOME/.hermes/state.db-shm" "$HOME/.hermes/state.db-wal"
+rm -rf "$HOME/.omp/agent/sessions"
 ```
 
-To prevent it from coming back after the local Hermes patch that supports it, set:
-
-```yaml
-sessions:
-  enabled: false
-```
+The megaplan resident keeps its own durable store under `.megaplan/resident/`
+in the project root; leave that intact unless the resident is also being reset.
 
 This is not branch cleanup and should not be mixed into destructive branch actions;
 it is a disk-pressure guardrail to run only with explicit user approval.

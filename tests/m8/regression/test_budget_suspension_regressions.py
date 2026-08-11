@@ -113,10 +113,11 @@ def test_render_step_message_budgets_named_model() -> None:
 
 
 def test_render_step_message_overflow_is_advisory_not_blocking() -> None:
-    """A declared input budget overflow is ADVISORY, not blocking: the size gate
-    is demoted so the provider API is the authority on context limits. The render
-    succeeds and the overflow is surfaced as BudgetStatus.EXCEEDED telemetry.
-    (Replaces the prior hard-block assertion after the gate demotion.)"""
+    """A caller-supplied input budget overflow is a HARD contract: the size
+    gate is enforced pre-dispatch because the explicit cap is an execution
+    contract (the provider API is the authority only for family-default
+    estimates).  This regression pins the hard-block so a silent demotion
+    cannot slip the gate back to advisory."""
     invocation = StepInvocation(
         kind="model",
         metadata={
@@ -129,9 +130,10 @@ def test_render_step_message_overflow_is_advisory_not_blocking() -> None:
         },
     )
 
-    rendered = render_step_message(invocation)  # must NOT raise
-    assert rendered.budget is not None
-    assert rendered.budget.budget_result is BudgetStatus.EXCEEDED
+    with pytest.raises(ModelBudgetError):
+        render_step_message(invocation)  # explicit cap overflow is hard
+
+
 
 
 # ---------------------------------------------------------------------------

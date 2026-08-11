@@ -689,7 +689,7 @@ def check_never_port_artifacts(
         reason: str | None = None
         if rel.startswith(".megaplan/_archived-plans/"):
             reason = ".megaplan archived plan"
-        elif rel == ".hermes_state":
+        elif rel == ".omp_state":
             reason = "Hermes runtime state"
         elif rel.endswith((".db-wal", ".db-shm")):
             reason = "database sidecar"

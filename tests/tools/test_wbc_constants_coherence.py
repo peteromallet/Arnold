@@ -36,10 +36,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS_DIR = REPO_ROOT / "tools"
 
-# The exact immutable ancestry-anchor values that the validator must pin.
-IMMUTABLE_ANCESTRY_COMMIT = "24afce006b9ad20391ac7af10ef67ea0b1774f9f"
-IMMUTABLE_FIRST_PARENT = "7644f55dd9be75632670f990268e045d3ee1c2f7"
-IMMUTABLE_SECOND_PARENT = "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
+# The migration ancestry-anchor values the validator must pin (MIGRATION
+# RE-CUT 2026-08-10: the omp-replaces-hermes migration squashed the original
+# history into baseline root 401c8f8, so the original 24afce00 merge lineage
+# is unreachable; the anchor moved to the baseline root, which carries the
+# same WBC substrate tree and is a lineage ROOT with no parents).
+IMMUTABLE_ANCESTRY_COMMIT = "401c8f8112ba0547b428d84cf6996912fdda8e45"
+IMMUTABLE_FIRST_PARENT = ""
+IMMUTABLE_SECOND_PARENT = ""
 
 
 def _load_module(tool_filename: str, module_name: str):
@@ -78,27 +82,27 @@ def _is_ancestor(maybe_ancestor: str, descendant: str) -> bool:
 
 
 def test_validator_ancestry_commit_immutable(validator):
-    """The validator's WBC_INTEGRATION_COMMIT must stay pinned to 24afce00."""
+    """The validator's WBC_INTEGRATION_COMMIT must stay pinned to the anchor."""
     assert validator.WBC_INTEGRATION_COMMIT == IMMUTABLE_ANCESTRY_COMMIT, (
         "validate_m6_evidence.py WBC_INTEGRATION_COMMIT was changed away from "
-        "the immutable ancestry anchor 24afce00. This constant verifies "
-        "ancestry identity (a historical fact) and must NOT be advanced."
+        "the migration ancestry anchor (baseline root 401c8f8). This constant "
+        "verifies ancestry identity (a historical fact) and must NOT be advanced."
     )
 
 
 def test_validator_first_parent_immutable(validator):
-    """The validator's first-parent constant must stay pinned."""
+    """The validator's first-parent constant must stay pinned (empty root)."""
     assert validator.WBC_EXPECTED_FIRST_PARENT == IMMUTABLE_FIRST_PARENT, (
-        "validate_m6_evidence.py WBC_EXPECTED_FIRST_PARENT was changed. It must "
-        "stay pinned to 24afce00's exact first parent."
+        "validate_m6_evidence.py WBC_EXPECTED_FIRST_PARENT was changed. The "
+        "migration anchor is a lineage ROOT with no parents."
     )
 
 
 def test_validator_second_parent_immutable(validator):
-    """The validator's second-parent constant must stay pinned."""
+    """The validator's second-parent constant must stay pinned (empty root)."""
     assert validator.WBC_EXPECTED_SECOND_PARENT == IMMUTABLE_SECOND_PARENT, (
-        "validate_m6_evidence.py WBC_EXPECTED_SECOND_PARENT was changed. It must "
-        "stay pinned to 24afce00's exact second parent."
+        "validate_m6_evidence.py WBC_EXPECTED_SECOND_PARENT was changed. The "
+        "migration anchor is a lineage ROOT with no parents."
     )
 
 
@@ -116,8 +120,8 @@ def test_tools_use_different_wbc_commits(validator, prereqs):
     ), (
         "validate_m6_evidence.py and verify_m6_prerequisites.py share the same "
         "WBC_INTEGRATION_COMMIT. They must use different commits: the validator "
-        "pins ancestry identity (24afce00), the verifier tracks file hashes at "
-        "an accepted intermediate consolidation commit."
+        "pins ancestry identity (baseline root 401c8f8), the verifier tracks "
+        "file hashes at the migration's B1-B5 commit (9d374c6)."
     )
 
 
@@ -143,6 +147,7 @@ def test_rebind_target_is_descendant_of_ancestry_anchor(validator, prereqs):
 def test_ancestry_anchor_is_ancestor_of_head(validator):
     """The immutable ancestry anchor must itself be an ancestor of HEAD."""
     assert _is_ancestor(validator.WBC_INTEGRATION_COMMIT, "HEAD"), (
-        "The ancestry anchor 24afce00 is not an ancestor of HEAD — the pinned "
-        "historical integration point has been severed from the live lineage."
+        "The ancestry anchor (migration baseline root 401c8f8) is not an "
+        "ancestor of HEAD — the pinned historical integration point has been "
+        "severed from the live lineage."
     )

@@ -61,7 +61,7 @@ def _review_worker_db_path(plan_dir: Path, identifier: str) -> Path:
     sanitized = re.sub(r"_+", "_", sanitized).strip("_")
     if len(sanitized) > 100:
         sanitized = sanitized[:100]
-    return plan_dir / ".hermes_state" / f"state_{sanitized or 'default'}.db"
+    return plan_dir / ".omp_state" / f"state_{sanitized or 'default'}.db"
 
 
 def _review_reasoning_config(resolved_model: str | None) -> dict[str, bool] | None:

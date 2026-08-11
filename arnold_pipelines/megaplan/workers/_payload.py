@@ -33,7 +33,7 @@ def _sanitize_db_name(identifier: str) -> str:
 def _worker_db_path(plan_dir: Path, identifier: str) -> Path:
     """Derive a per-worker SessionDB path from a plan directory and stable identifier."""
     sanitized = _sanitize_db_name(identifier)
-    return plan_dir / '.hermes_state' / f'state_{sanitized}.db'
+    return plan_dir / '.omp_state' / f'state_{sanitized}.db'
 
 
 # ---------------------------------------------------------------------------

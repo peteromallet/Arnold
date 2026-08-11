@@ -936,6 +936,19 @@ def test_execute_repairs_missing_user_action_gate_for_stale_finalize(
         ],
     }
 
+    # The execute publisher requires a CAS read token; production loads
+    # finalize.json through load_finalize_for_update before mutating.
+    import json as _json
+
+    (plan_dir / "finalize.json").write_text(
+        _json.dumps(finalize_data), encoding="utf-8"
+    )
+    from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+        load_finalize_for_update,
+    )
+
+    finalize_data = load_finalize_for_update(plan_dir)
+
     repaired = _repair_missing_user_action_gate(finalize_data, plan_dir, state)
 
     assert repaired is True
@@ -973,8 +986,8 @@ def test_structured_plan_payload_normalizes_to_canonical_schema() -> None:
     )
 
     assert "# Ship Fix" in normalized["plan"]
-    assert "### Step 1: Patch" in normalized["plan"]
-    assert "- Edit file" in normalized["plan"]
+    assert "## Step 1: Patch" in normalized["plan"]
+    assert "1. Edit file" in normalized["plan"]
     assert PLAN_STRUCTURE_REQUIRED_STEP_ISSUE not in validate_plan_structure(
         normalized["plan"]
     )

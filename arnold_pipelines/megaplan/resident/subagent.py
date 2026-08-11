@@ -3437,10 +3437,10 @@ def launch_managed_subagent_detached(
         # Post-migration (B11): hermes agent specs route through the omp
         # adapter; the hermes launcher was deleted.  Durable launches carry
         # backend="omp" with the canonical omp model spec.
-        from arnold_pipelines.megaplan.workers.omp import omp_route_from_legacy
+        from arnold_pipelines.megaplan.workers.omp import OMP_AGENT, omp_route_from_legacy
 
         translated = omp_route_from_legacy(f"hermes:{model}")
-        if not translated.startswith("omp:"):
+        if not translated.startswith(OMP_AGENT + ":"):
             raise ValueError(
                 f"hermes backend '{model}' has no canonical omp translation; "
                 "launch with backend='omp' and an explicit omp:<provider>/<model> spec"

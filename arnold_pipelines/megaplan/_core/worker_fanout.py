@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .hermes_fanout import GenericScatterResult, scatter_gather_processes
+from .parallel_fanout import GenericScatterResult, scatter_gather_processes
 from arnold_pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
 from arnold_pipelines.megaplan.fallback_chains import (
     ExecuteFallbackUnsafe,
@@ -748,7 +748,7 @@ def scatter_worker_units(
     parse_result:
         Optional post-processing hook ``(index, worker_unit_result, unit) -> parsed``.
         When supplied, each result in the returned
-        :class:`~megaplan._core.hermes_fanout.GenericScatterResult` is the
+        :class:`~megaplan._core.parallel_fanout.GenericScatterResult` is the
         return value of this hook.
     parse_side_result:
         Optional side-result hook with the same signature as ``parse_result``.

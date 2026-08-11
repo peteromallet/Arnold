@@ -182,7 +182,13 @@ def test_drift_related_bypass_sites_keep_drift_visible_as_typed_evidence() -> No
             if "T29-BYPASS-" not in line:
                 continue
             context = "\n".join(lines[max(0, index - 3) : index + 4]).lower()
-            if "drift" in context or "suppress" in context:
+            # B9 rework: authority-risk bypasses are reworded as typed
+            # evidence gaps (drift stays visible) rather than suppressed.
+            if (
+                "drift" in context
+                or "suppress" in context
+                or "typed evidence gap" in context
+            ):
                 drift_sites.append((path, index + 1, line))
 
     assert drift_sites

@@ -2358,6 +2358,7 @@ def test_published_pr_diff_fetches_missing_remote_commit_before_blocking(
     local.mkdir()
     remote.mkdir()
     _git(remote, "init", "--bare")
+    _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
     base = _init_repo(local)
     _git(local, "branch", "-M", "main")
     _git(local, "remote", "add", "origin", str(remote))

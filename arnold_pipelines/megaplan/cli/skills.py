@@ -216,15 +216,12 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/babysit", "data": "_codex_skills/babysit", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
-    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
-    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
-    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
 ]
 

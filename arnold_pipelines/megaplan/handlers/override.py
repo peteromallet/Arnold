@@ -575,6 +575,20 @@ def _handle_routed_override(
         )
         reconcile_canonical_source_for_replan(plan_dir, state, reason=reason)
         save_state_merge_meta(plan_dir, state)
+        _routed_replan_artifact_invalidation = None
+        try:
+            from arnold_pipelines.megaplan.replan_state import (
+                invalidate_replan_derived_artifacts,
+            )
+
+            _routed_replan_artifact_invalidation = invalidate_replan_derived_artifacts(
+                plan_dir,
+                timestamp=now_utc(),
+                include_critique_epoch=True,
+                include_gate_epoch=True,
+            )
+        except Exception:
+            _routed_replan_artifact_invalidation = None
     if args.override_action == "cutover":
         # CL5 Step 8c: the cutover reaches the SAME deferred cutover logic as
         # the default-path _override_cutover handler (Step 8b). Combined
@@ -654,6 +668,8 @@ def _handle_routed_override(
         args=args,
         artifacts=dict(result.artifacts),
     )
+    if args.override_action == "replan" and _routed_replan_artifact_invalidation is not None:
+        response["artifact_invalidation"] = _routed_replan_artifact_invalidation
     if archived_phase_result is not None:
         response["archived_phase_result"] = archived_phase_result
     return response

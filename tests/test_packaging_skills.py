@@ -31,7 +31,6 @@ def test_subagent_launcher_is_synced_to_agent_skill_dirs() -> None:
     } == {
         ("claude", ".claude/skills/subagent-launcher", "symlink"),
         ("codex", ".codex/skills/subagent-launcher", "symlink"),
-        ("hermes", ".hermes/skills/subagent-launcher", "symlink"),
         ("agents", ".agents/skills/subagent-launcher", "symlink"),
     }
 
@@ -64,7 +63,6 @@ def test_fix_the_fixer_is_synced_to_agent_skill_dirs() -> None:
     } == {
         ("claude", ".claude/skills/fix-the-fixer", "symlink"),
         ("codex", ".codex/skills/fix-the-fixer", "symlink"),
-        ("hermes", ".hermes/skills/fix-the-fixer", "symlink"),
         ("agents", ".agents/skills/fix-the-fixer", "symlink"),
     }
 

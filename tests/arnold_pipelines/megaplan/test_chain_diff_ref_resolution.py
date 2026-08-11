@@ -117,6 +117,9 @@ def _init_bare_repo(path: Path) -> Path:
     """Create a bare repo to act as 'origin'."""
     path.mkdir()
     _git(path, "init", "--bare")
+    # Pin HEAD so clones check out `main` regardless of the machine's
+    # init.defaultBranch (git 2.34 defaults bare HEAD to master).
+    _git(path, "symbolic-ref", "HEAD", "refs/heads/main")
     return path
 
 

@@ -71,8 +71,7 @@ def test_finalize_prompt_forbids_routing_only_dependencies_and_model_full_suite(
     assert "at most 3 changed-behavior selectors" in prompt
     # M8A: splitter and validation compiler guidance
     assert "auto-split by the harness into implementation + proof subtasks" in prompt
-    assert "no-file deterministic checks" in prompt
-    assert "placeholder commands, and file-producing jobs" in prompt
+    assert "deterministic no-file validation jobs" in prompt
 
 
 def test_finalize_prompt_user_action_fields_match_canonical_schema(

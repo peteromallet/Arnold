@@ -170,6 +170,12 @@ def _normalized_response(response: Mapping[str, Any] | None, plan_dir: Path) -> 
             normalized["plan_file"] = "{{plan_dir}}/" + str(Path(plan_file).relative_to(plan_dir))
         except ValueError:
             normalized["plan_file"] = plan_file
+    # artifact_invalidation embeds run-unique custody receipts (per-run
+    # produced_at + attempt_id inside the archived critique custody/parallel
+    # manifests), so the epoch digest differs across otherwise identical
+    # runs.  Route parity is verified for the response contract; the
+    # invalidation's determinism is covered by the replan_state tests.
+    normalized.pop("artifact_invalidation", None)
     return normalized
 
 

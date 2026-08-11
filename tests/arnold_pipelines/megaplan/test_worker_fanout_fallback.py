@@ -14,7 +14,7 @@ from arnold_pipelines.megaplan._core.worker_fanout import (
     scatter_worker_units,
 )
 from arnold_pipelines.megaplan.custody.phase_wbc import activate_phase_wbc
-from arnold_pipelines.megaplan._core.hermes_fanout import GenericScatterResult
+from arnold_pipelines.megaplan._core.parallel_fanout import GenericScatterResult
 from arnold_pipelines.megaplan.fallback_chains import ExecuteFallbackUnsafe
 from arnold_pipelines.megaplan.types import AgentMode, CliError
 from arnold_pipelines.megaplan.workers import WorkerResult

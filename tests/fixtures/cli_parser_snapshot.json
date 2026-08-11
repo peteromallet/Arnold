@@ -713,7 +713,7 @@
               "const": null,
               "default": null,
               "dest": "phase_model",
-              "help": "Live phase routing override forwarded to phase subprocesses, for example --phase-model execute=hermes:deepseek:deepseek-v4-pro.",
+              "help": "Live phase routing override forwarded to phase subprocesses, for example --phase-model execute=omp:deepseek/deepseek-v4-pro.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -1764,6 +1764,96 @@
                   "nargs": null,
                   "option_strings": [
                     "--set-review-clean-milestone-pr"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "allow_manifestless",
+                  "help": "Grant an expiring allow_manifestless permit (admission exception for manifest-less chain execution) recorded in the runtime policy sidecar.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--allow-manifestless"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "reason",
+                  "help": "Required with --allow-manifestless: why the deviation is granted.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--reason"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expires_at",
+                  "help": "Required with --allow-manifestless: UTC expiry timestamp. Must be within 24 hours of issuance.",
+                  "metavar": "ISO8601",
+                  "nargs": null,
+                  "option_strings": [
+                    "--expires-at"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "actor",
+                  "help": "Required with --allow-manifestless: attribution for the permit (caller-supplied, not authentication).",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--actor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_AppendAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "evidence",
+                  "help": "Repeatable evidence string attached to the permit record.",
+                  "metavar": "TEXT",
+                  "nargs": null,
+                  "option_strings": [
+                    "--evidence"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "revoke",
+                  "help": "Revoke the active allow_manifestless permit by stamping an auditable revoked_at tombstone (the record is never deleted).",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--revoke"
                   ],
                   "required": false,
                   "type": null
@@ -4099,6 +4189,21 @@
               "type": null
             },
             {
+              "action": "_StoreFalseAction",
+              "choices": null,
+              "const": false,
+              "default": true,
+              "dest": "adaptive_critique",
+              "help": null,
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--no-adaptive-critique"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
               "action": "_StoreTrueAction",
               "choices": null,
               "const": true,
@@ -4135,6 +4240,7 @@
                 "extreme",
                 "full",
                 "light",
+                "medium",
                 "robust",
                 "standard",
                 "superrobust",
@@ -5165,6 +5271,51 @@
               "choices": null,
               "const": null,
               "default": null,
+              "dest": "plan_version",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--plan-version"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "replacement_sha256",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--replacement-sha256"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "repair_ref",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repair-ref"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
               "dest": "plan",
               "help": null,
               "metavar": null,
@@ -5251,6 +5402,24 @@
               "type": null
             },
             {
+              "action": "_StoreAction",
+              "choices": [
+                "engine_runtime",
+                "target_workspace"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "repair_scope",
+              "help": "Code surface whose validated HEAD contains the repair.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repair-scope"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
               "action": "_StoreTrueAction",
               "choices": null,
               "const": true,
@@ -5272,6 +5441,7 @@
                 "extreme",
                 "full",
                 "light",
+                "medium",
                 "robust",
                 "standard",
                 "superrobust",
@@ -5301,6 +5471,40 @@
               "nargs": null,
               "option_strings": [
                 "--profile"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "built-in",
+                "project",
+                "user"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "expected_profile_source",
+              "help": "Fail closed unless set-profile resolves from this registry layer.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--expected-profile-source"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "expected_profile_sha256",
+              "help": "Fail closed unless the resolved profile content has this SHA-256 digest.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--expected-profile-sha256"
               ],
               "required": false,
               "type": null
@@ -5420,6 +5624,7 @@
                 "adopt-execution",
                 "force-proceed",
                 "recover-blocked",
+                "reconcile-plan-ledger",
                 "replan",
                 "resume-clarify",
                 "set-model",
@@ -6457,6 +6662,36 @@
               "nargs": "0",
               "option_strings": [
                 "--pending-human"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "cloud_session",
+              "help": "==SUPPRESS==",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--cloud-session"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "cloud_marker_dir",
+              "help": "==SUPPRESS==",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--cloud-marker-dir"
               ],
               "required": false,
               "type": null
@@ -8377,6 +8612,7 @@
                 "claude",
                 "codex",
                 "hermes",
+                "omp",
                 "shannon"
               ],
               "const": null,
@@ -8412,7 +8648,7 @@
               "const": null,
               "default": [],
               "dest": "phase_model",
-              "help": "Per-step model override, e.g. --phase-model tiebreaker_researcher=hermes:openai/gpt-5",
+              "help": "Per-step model override, e.g. --phase-model tiebreaker_researcher=omp:deepseek/deepseek-v4-pro",
               "metavar": null,
               "nargs": null,
               "option_strings": [

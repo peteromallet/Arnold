@@ -924,7 +924,7 @@ def run_research_fanout(
     seam_tier = ModelTier.ENFORCED if model.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
     units = []
     for index, area in enumerate(areas):
-        output_path = plan_dir / ".hermes_state" / f"prep_research_{index}.json"
+        output_path = plan_dir / ".omp_state" / f"prep_research_{index}.json"
         units.append(
             WorkerUnit(
                 step="prep-research",

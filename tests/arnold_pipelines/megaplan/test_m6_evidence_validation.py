@@ -337,18 +337,27 @@ class TestWbcAncestryResult:
         )
 
     def test_wbc_ancestry_has_merge_parents(self) -> None:
-        """WBC ancestry must record merge parents."""
+        """WBC ancestry must record merge parents (empty for the migration
+        baseline ROOT re-cut — a lineage root has no parents)."""
         data = _load_proof_index()
         wbc = data.get("wbc_ancestry_result", {})
         parents = wbc.get("merge_parents", [])
-        assert len(parents) >= 2, (
-            f"WBC ancestry must have at least 2 merge parents, got {len(parents)}"
-        )
+        if wbc.get("status") == "PASS" and wbc.get("migration_root_recut"):
+            assert parents == [], (
+                f"Migration-root ancestry must have no parents, got {len(parents)}"
+            )
+        else:
+            assert len(parents) >= 2, (
+                f"WBC ancestry must have at least 2 merge parents, got {len(parents)}"
+            )
 
     def test_wbc_ancestry_checks_ancestor_status(self) -> None:
-        """WBC ancestry must check if both parents are ancestors of HEAD."""
+        """WBC ancestry must check both parents are ancestors of HEAD (skipped
+        for the migration baseline ROOT re-cut, which has no parents)."""
         data = _load_proof_index()
         wbc = data.get("wbc_ancestry_result", {})
+        if wbc.get("status") == "PASS" and wbc.get("migration_root_recut"):
+            return
         assert "first_parent_is_ancestor" in wbc, (
             "Missing first_parent_is_ancestor"
         )

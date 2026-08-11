@@ -348,7 +348,7 @@ def _critique_producer_binding(
     elif selected_spec:
         parts = selected_spec.split(":")
         if len(parts) >= 2 and parts[1]:
-            provider = parts[1]
+            provider = parts[1].split("/", 1)[0]
     transport = (
         "parallel_reduce"
         if parallel_reduced

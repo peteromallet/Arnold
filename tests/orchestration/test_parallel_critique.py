@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from arnold_pipelines.megaplan._core.hermes_fanout import GenericScatterResult
+from arnold_pipelines.megaplan._core.parallel_fanout import GenericScatterResult
 from arnold_pipelines.megaplan.orchestration import parallel_critique
 from arnold_pipelines.megaplan.types import AgentMode, CliError
 

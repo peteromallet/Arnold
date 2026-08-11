@@ -198,8 +198,15 @@ def _publish_execute_finalize(
     *,
     operation: str,
     state: Mapping[str, Any] | None = None,
+    owner: str = "execute",
 ) -> None:
-    """Publish execution-owned fields through the sole Finalize writer."""
+    """Publish execution-owned fields through the sole Finalize writer.
+
+    ``owner`` defaults to ``execute`` (CAS-scoped field writes).  The
+    missing-user-action-gate repair re-architects the admitted task list
+    (synthetic pre-gate task insertion reorders task identity), which only
+    the ``finalize`` owner may mutate; it passes ``owner="finalize"``.
+    """
 
     active_step = state.get("active_step") if isinstance(state, Mapping) else None
     run_id = (
@@ -211,7 +218,7 @@ def _publish_execute_finalize(
         plan_dir,
         finalize_data,
         context=FinalizeMutationContext(
-            owner="execute",
+            owner=owner,
             operation=operation,
             attempt_id=f"execute:{operation}:{run_id or 'unbound'}",
             run_id=run_id,
@@ -290,6 +297,7 @@ def _repair_missing_user_action_gate(
         finalize_data,
         operation="repair-missing-user-action-gate",
         state=state,
+        owner="finalize",
     )
     atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(finalize_data))
     atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="execute"))

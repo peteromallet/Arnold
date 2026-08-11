@@ -31,6 +31,19 @@ from arnold_pipelines.megaplan.managed_agent import (
 from arnold_pipelines.megaplan.resident.subagent import list_managed_resident_agents
 
 
+@pytest.fixture(autouse=True)
+def _trusted_container_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the managed-agent worker under the sanctioned trusted-container
+    boundary (this box cannot create bwrap namespaces).  The managed-agent
+    dispatch skips the bwrap wrap when MEGAPLAN_TRUSTED_CONTAINER=1; the other
+    two variables are the documented execution-mode overrides for this box."""
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_TEST_EXECUTION", "1")
+    monkeypatch.setenv(
+        "MEGAPLAN_ENGINE_ISOLATION_PROVIDER", "self_hosted_editable"
+    )
+
+
 def spec(
     root: Path,
     *,
@@ -246,30 +259,77 @@ def test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt(
 ) -> None:
     marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
     queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    # B9 contract: a claim is only issued against an enqueued request with a
+    # normalized repair identity; legacy/partial records are read-only.
+    enqueued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="session-claim",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "execute_failed",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "m3",
+            "gate_recommendation": "",
+            "blocked_task_id": "blocker-claim",
+        },
+        root_cause_hint="claim fixture",
+        repair_identity=repair_requests.build_normalized_repair_identity(
+            target=repair_requests.build_custody_target_key(
+                environment=str(tmp_path),
+                session="session-claim",
+                chain="initiative/chain.yaml",
+                plan_revision="sha256:plan-1",
+                phase="dev_fix",
+                task="T1",
+                attempt="1",
+                normalized_failure_kind="execute_failed",
+                blocker_or_phase_result_hash="blocker:v1:claim",
+                fence="fence-claim",
+                chain_identity="chain-incarnation-claim",
+            ),
+            run_id="run-claim",
+            run_revision="sha256:plan-1",
+            run_incarnation_id="run-incarnation-claim",
+            coordinator_attempt_id="coordinator:1",
+            fence_token=1,
+            wbc_attempt_reference="wbc:1",
+            run_authority_grant_id="grant-claim",
+            lease_id="lease-claim",
+            custody_epoch=1,
+        ),
+    )
+    assert enqueued["status"] == "queued"
+    request_record = enqueued["request"]
     claim = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker-claim",
-        request_id="request-claim",
+        blocker_id=str(request_record["blocker_id"]),
+        request_id=str(request_record["request_id"]),
         actor="watchdog",
         session="session-claim",
         pid=os.getpid(),
         command="arnold-repair-loop session-claim /tmp /tmp/spec",
         cwd=str(tmp_path),
         is_pid_live=lambda pid: pid == os.getpid(),
+        repair_identity=request_record["repair_identity"],
     )
     assert claim.claimed
     monkeypatch.setenv("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", str(os.getpid()))
-    monkeypatch.setenv("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", "request-claim")
+    monkeypatch.setenv("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", str(request_record["request_id"]))
     item = spec(
         tmp_path,
         identity="request-claim",
         run_kind="automatic_repair",
         links={
             "repair_queue_dir": str(queue_dir),
-            "repair_request_id": "request-claim",
-            "blocker_id": "blocker-claim",
+            "repair_request_id": str(request_record["request_id"]),
+            "blocker_id": str(request_record["blocker_id"]),
             "incident_id": "inc-session-claim",
             "cloud_session": "session-claim",
+            "repair_identity_key": str(request_record["repair_identity_key"]),
+            "repair_identity_json": json.dumps(
+                request_record["repair_identity"], sort_keys=True
+            ),
         },
     )
 
@@ -280,8 +340,8 @@ def test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt(
     assert owner["managed_agent_run_id"] == payload["run_id"]
     assert owner["managed_manifest_path"] == str(manifest_path(tmp_path, item).resolve())
     assert payload["repair_claim"]["fenced_managed_run_id"] == payload["run_id"]
-    assert payload["repair_claim"]["request_id"] == "request-claim"
-    assert payload["repair_claim"]["blocker_id"] == "blocker-claim"
+    assert payload["repair_claim"]["request_id"] == str(request_record["request_id"])
+    assert payload["repair_claim"]["blocker_id"] == str(request_record["blocker_id"])
     projections = rebuild_projections(tmp_path)
     incident = projections["incidents"]["incidents"][0]
     assert [claim["status"] for claim in incident["claims"]] == ["acquired"]

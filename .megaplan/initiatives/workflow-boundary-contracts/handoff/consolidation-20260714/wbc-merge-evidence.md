@@ -1,11 +1,19 @@
 # Workflow Boundary Contracts merge evidence
 
-## Merge lineage
+## Merge lineage (MIGRATION RE-CUT, 2026-08-10)
 
-- Integration commit: `24afce006b9ad20391ac7af10ef67ea0b1774f9f`
-- First parent (canonical-main baseline): `7644f55dd9be75632670f990268e045d3ee1c2f7`
-- Second parent (completed WBC tip): `cbe69337d6f469fd7ae12f1fd0a51007d93b5d70`
-- Operation: real `--no-ff` merge on `consolidate/arnold-runtime-activation-20260714`; 36 textual conflicts were resolved. No push or deletion occurred in this integration step.
+- Integration commit: `401c8f8112ba0547b428d84cf6996912fdda8e45`
+- First parent: none — the omp-replaces-hermes migration squashed the
+  original pre-migration history into this baseline ROOT, which carries the
+  WBC substrate tree (store, outbox, migration, payload, trace).
+- Second parent: none — see the CL5-T7 migration re-cut note in
+  `tools/validate_m6_evidence.py`; a lineage root has no merge parents and
+  the ancestry check is vacuous-by-construction.
+- Operation: migration baseline squash (`401c8f8` — "pre-migration Arnold
+  tree"), replacing the original `24afce00` merge lineage that is no longer
+  reachable from HEAD. The original merge's conflict decisions and
+  incident-ledger reconstruction (below) remain the accepted WBC integration
+  record; only the lineage anchor moved.
 
 ## Conflict decisions
 

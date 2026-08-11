@@ -250,7 +250,7 @@ def test_public_workflow_layering_fails_on_public_stage_export(tmp_path: Path) -
 
 def test_never_port_artifacts_fails_on_runtime_artifact_files(tmp_path: Path) -> None:
     _write(tmp_path, ".megaplan/_archived-plans/old/state.json", "{}")
-    _write(tmp_path, ".hermes_state", "{}")
+    _write(tmp_path, ".omp_state", "{}")
     _write(tmp_path, "data/run.db-wal", "")
     _write(tmp_path, "logs/driver-001.log", "")
     _write(tmp_path, "runs/prompt_dump.txt", "")
@@ -261,7 +261,7 @@ def test_never_port_artifacts_fails_on_runtime_artifact_files(tmp_path: Path) ->
 
     assert result.passed is False
     assert set(result.details["unexpected"]) == {
-        ".hermes_state",
+        ".omp_state",
         ".megaplan/_archived-plans/old/state.json",
         "data/run.db-wal",
         "logs/driver-001.log",

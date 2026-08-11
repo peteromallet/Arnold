@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import subprocess
 from pathlib import Path
 
+from arnold_pipelines.megaplan._core.phase_runtime import _pid_namespace_id
 from arnold_pipelines.megaplan._core.state import touch_active_step, write_plan_state
 
 
@@ -18,6 +21,34 @@ def _base_state(current_state: str) -> dict:
     }
 
 
+def _dead_local_execute_active(run_id: str = "execute-run") -> dict:
+    """Build an execute active_step whose local worker is provably dead.
+
+    The phase-handoff reconciler only pops active_step when the worker is
+    observed dead in its own incarnation domain (host + PID namespace), so the
+    fixture spawns a real process, lets it exit, and binds that PID.
+    """
+    proc = subprocess.run(
+        ["/bin/true"],
+        capture_output=True,
+        check=True,
+    )
+    child = subprocess.Popen(["/bin/true"])
+    dead_pid = child.pid
+    child.wait()
+    return {
+        "phase": "execute",
+        "run_id": run_id,
+        "worker_pid": dead_pid,
+        "runner_incarnation": {
+            "schema": "arnold.megaplan.runner_incarnation.v1",
+            "host_id": socket.gethostname(),
+            "pid_namespace_id": _pid_namespace_id(),
+            "worker_pid": dead_pid,
+        },
+    }
+
+
 def test_execute_success_atomically_arms_recoverable_review_handoff(
     tmp_path: Path,
 ) -> None:
@@ -25,7 +56,7 @@ def test_execute_success_atomically_arms_recoverable_review_handoff(
     plan_dir.mkdir(parents=True)
     (plan_dir / "execution.json").write_text('{"output":"done"}', encoding="utf-8")
     state = _base_state("executed")
-    state["active_step"] = {"phase": "execute", "worker_pid": 999_999}
+    state["active_step"] = _dead_local_execute_active()
     state["history"].append({"step": "execute", "result": "success"})
 
     persisted = write_plan_state(plan_dir, mode="replace", state=state)
@@ -165,11 +196,7 @@ def test_authoritative_execute_complete_transition_still_arms_recovery(
     plan_dir.mkdir(parents=True)
     (plan_dir / "execution.json").write_text('{"output":"done"}', encoding="utf-8")
     state = _base_state("executing")
-    state["active_step"] = {
-        "phase": "execute",
-        "run_id": "execute-run",
-        "worker_pid": 999_999,
-    }
+    state["active_step"] = _dead_local_execute_active()
     (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
     persisted = write_plan_state(
@@ -182,5 +209,5 @@ def test_authoritative_execute_complete_transition_still_arms_recovery(
     assert persisted["pending_phase_handoff"]["status"] == "recovery_required"
     assert (
         persisted["pending_phase_handoff"]["recovery_reason"]
-        == "execute_complete_with_stale_execute_custody"
+        == "execute_complete_with_proven_dead_execute_custody"
     )

@@ -164,8 +164,8 @@ from .registries import (
     unresolved_significant_flags,
 )
 
-# -- hermes_fanout.py: shared parallel fan-out primitives --------------------
-from .hermes_fanout import (
+# -- parallel_fanout.py: shared parallel fan-out primitives --------------------
+from .parallel_fanout import (
     GenericScatterResult,
     ScatterResult,
     _merge_unique,
@@ -375,7 +375,7 @@ __all__ = [
     "STATE_EXECUTED",
     "STATE_REVIEWED",
     "STATE_DONE",
-    # hermes_fanout
+    # parallel_fanout
     "GenericScatterResult",
     "ScatterResult",
     "_merge_unique",
