@@ -1,6 +1,6 @@
 {
   "schema": "m6.proof-index.v2",
-  "generated_at": "2026-08-11T11:44:18.300393+00:00",
+  "generated_at": "2026-08-11T11:46:03.503032+00:00",
   "generator": "tools/validate_m6_evidence.py",
   "north_star_guard": "M6 is observe-only. This proof index is the aggregate validation result: every content hash is recomputed from disk, stale hashes are rejected, unexplained rows are flagged, WBC ancestry is re-verified, and incomplete prerequisites are recorded as blockers. Unavailable denominators and blocked prerequisites are recorded as UNKNOWN, never as success evidence or zero.",
   "validation_passed": true,
@@ -104,8 +104,8 @@
       "path": "/workspace/omp-replaces-hermes/Arnold/evidence/m6-prerequisite-verification.json",
       "expected_schema": "m6.prerequisite-verification.v1",
       "actual_schema": "m6.prerequisite-verification.v1",
-      "content_hash_fresh": "61ea56148935b6d8e5614f06a1688b437985cc8e84d9ce22c62cc4f558ad4b73",
-      "content_hash_stored": "61ea56148935b6d8e5614f06a1688b437985cc8e84d9ce22c62cc4f558ad4b73",
+      "content_hash_fresh": "2ea7b61f883290c391223114dbf0f7aae9a7031a5129db4b52c02e4c5260ac02",
+      "content_hash_stored": "2ea7b61f883290c391223114dbf0f7aae9a7031a5129db4b52c02e4c5260ac02",
       "row_count": 0,
       "present": true,
       "generator": "tools/verify_m6_prerequisites.py",
@@ -226,12 +226,12 @@
       "has_unexplained_rows": false
     }
   ],
-  "repository_head": "4c3e526085857ea20b121fb866dda5680671da74",
+  "repository_head": "cf09f6c308e672d417efa4f27ead653ac52e7ef0",
   "wbc_ancestry_result": {
     "check": "wbc_ancestry_reverified",
     "status": "PASS",
     "integration_commit": "401c8f8112ba0547b428d84cf6996912fdda8e45",
-    "current_head": "4c3e526085857ea20b121fb866dda5680671da74",
+    "current_head": "cf09f6c308e672d417efa4f27ead653ac52e7ef0",
     "merge_parents": [],
     "migration_root_recut": true,
     "detail": "WBC ancestry anchor is the migration baseline ROOT (no parents — re-cut on 2026-08-10)"
@@ -255,7 +255,7 @@
   },
   "global_unknowns": {
     "prerequisite_overall_status": "UNKNOWN",
-    "prerequisite_m5_bound_head_coherent": "PASS",
+    "prerequisite_m5_bound_head_coherent": "INCOHERENT",
     "pc_scope_blocker_count": 0,
     "pc_scope_human_approval_required": false,
     "ownership_blocker_count": 4,
@@ -275,7 +275,7 @@
     "productive_replay_ledger_rationale": "Productive-versus-replayed token/cost baselines are UNKNOWN until joined per-task/attempt/repair receipts exist. Source: F14 finding, work-ledger-vocabulary.",
     "wbc_ancestry_coherent": "UNKNOWN",
     "wbc_ancestry_rationale": "WBC ancestry is re-verified during aggregate validation. Any deviation from expected merge parents or ancestor relationships will be recorded as INCOHERENT.",
-    "repository_head": "4c3e526085857ea20b121fb866dda5680671da74",
+    "repository_head": "cf09f6c308e672d417efa4f27ead653ac52e7ef0",
     "repository_head_valid": true,
     "wbc_ancestry_parent_match": "UNKNOWN",
     "wbc_first_parent_is_ancestor": "UNKNOWN",

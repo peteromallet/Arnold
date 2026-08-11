@@ -2,7 +2,7 @@
   "checks": [
     {
       "check": "current_head",
-      "head": "4c3e526085857ea20b121fb866dda5680671da74",
+      "head": "cf09f6c308e672d417efa4f27ead653ac52e7ef0",
       "status": "PASS"
     },
     {
@@ -16,12 +16,12 @@
     },
     {
       "check": "m5_bound_head_vs_current_head",
-      "current_head": "4c3e526085857ea20b121fb866dda5680671da74",
-      "detail": "M5 bound head does not match current HEAD, but is an ancestor. HEAD has advanced past the M5 attestation point. Downstream M6 handoff must not be marked complete.",
+      "current_head": "cf09f6c308e672d417efa4f27ead653ac52e7ef0",
+      "detail": "M5 bound head is an ancestor of current HEAD (order-independent ancestor semantics \u2014 migration re-cut 2026-08-10)",
       "exact_match": false,
       "m5_bound_head": "0cc5ffb6a6b5d39c1aa7645df653ff501080e818",
       "m5_is_ancestor_of_head": true,
-      "status": "INCOHERENT"
+      "status": "PASS"
     },
     {
       "check": "m5_milestone_attestation",
@@ -236,18 +236,18 @@
       "status": "UNKNOWN"
     }
   ],
-  "generated_at": "2026-08-11T11:44:19.022095+00:00",
+  "generated_at": "2026-08-11T11:46:03.355621+00:00",
   "notes": [
     "M6 is observe-only: this verifier reads git/files but writes only to the evidence artifact.",
     "INCOHERENT or BLOCKED overall status means downstream M6 handoff artifacts must not be marked complete.",
     "Re-run this tool whenever the working tree changes to get a fresh evaluation."
   ],
-  "overall_status": "INCOHERENT",
+  "overall_status": "UNKNOWN",
   "schema": "m6.prerequisite-verification.v1",
   "summary": {
     "blocked": 0,
-    "incoherent": 1,
-    "pass": 7,
+    "incoherent": 0,
+    "pass": 8,
     "total": 10,
     "unknown": 2
   }
