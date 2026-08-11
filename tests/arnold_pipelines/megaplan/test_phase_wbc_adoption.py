@@ -21,6 +21,7 @@ from arnold_pipelines.megaplan._core import set_active_step
 from arnold_pipelines.megaplan.custody.controlled_writer_registry import _clear_registry
 from arnold_pipelines.megaplan.custody.phase_wbc import (
     PHASE_WBC_LEDGER_FILENAME,
+    _phase_facade,
     activate_phase_wbc,
     cancel_active_phase_wbc_attempt,
     complete_phase_wbc,
@@ -611,3 +612,35 @@ def test_finalize_revise_fallback_records_phase_wbc_and_receipt(tmp_path: Path) 
     events = _events(plan_dir, str(metadata["attempt_id"]))
     assert [event.event_type for event in events] == [AttemptEventType.STARTED, AttemptEventType.COMPLETED]
     assert events[1].payload["boundary_receipt_id"] == "finalize_fallback"
+
+
+# ── P7A: phase facade is ENFORCED by default ──────────────────────────────
+
+
+def test_phase_facade_is_enforced_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (P7A): the phase WBC facade must be ENFORCED under default
+    env, matching the canonical production_enforcement_enabled() gate."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    facade = _phase_facade(plan_dir)
+    assert facade._enforcement_enabled is True
+
+
+def test_phase_facade_is_shadow_only_when_explicitly_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    monkeypatch.setenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", "0")
+    facade = _phase_facade(plan_dir)
+    assert facade._enforcement_enabled is False
+
+
+def test_phase_facade_follows_explicit_enable_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    monkeypatch.setenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", "1")
+    facade = _phase_facade(plan_dir)
+    assert facade._enforcement_enabled is True

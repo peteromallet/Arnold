@@ -24,6 +24,7 @@ from arnold.workflow.execution_attempt_ledger import (
     RuntimeAdapter,
     VersionSet,
 )
+from arnold_pipelines.megaplan.cloud.feature_flags import production_enforcement_enabled
 from arnold_pipelines.megaplan.types import PlanState
 
 from .controlled_writer_registry import Cohort, ControlledWriter, register_writer
@@ -932,7 +933,7 @@ def _phase_facade(plan_dir: Path) -> WbcRuntimeProducerFacade:
             metadata={"lookup_key": key},
         ),
         promotion_mode=PromotionMode.ACTION_OFF,
-        enforcement_enabled=False,
+        enforcement_enabled=production_enforcement_enabled(),
     )
 
 
