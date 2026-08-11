@@ -97,8 +97,13 @@ def _make_final_attestation_dict(
 class TestStaleM5BoundHead:
     """M5 bound head exists but is not current HEAD (SD1: mismatch → INCOHERENT)."""
 
-    def test_mismatch_but_ancestor_yields_incoherent(self, tmp_path: Path) -> None:
-        """When bound head != HEAD but bound head is ancestor → INCOHERENT."""
+    def test_mismatch_but_ancestor_yields_pass(self, tmp_path: Path) -> None:
+        """When bound head != HEAD but bound head is ancestor → PASS.
+
+        Migration re-cut (2026-08-10): the M5 attestation binds the
+        generation-time head; in a continuing lineage the bound head is always
+        an ancestor of the live HEAD (a committed artifact cannot reference
+        its own commit).  Ancestor semantics are order-independent and pass."""
         attestation = _make_final_attestation_dict(
             bound_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         )
@@ -117,7 +122,7 @@ class TestStaleM5BoundHead:
             return_value=True,
         ):
             result = check_m5_bound_head_vs_current_head()
-            assert result["status"] == "INCOHERENT"
+            assert result["status"] == "PASS"
             assert result["m5_is_ancestor_of_head"] is True
             assert result["exact_match"] is False
 
@@ -517,16 +522,15 @@ class TestRunAllChecks:
             assert overall == "BLOCKED"
 
     def test_one_incoherent_yields_incoherent_when_no_blocked(self, tmp_path: Path) -> None:
-        """When INCOHERENT exists but no BLOCKED → overall INCOHERENT."""
-        attestation = _make_final_attestation_dict(
-            bound_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        )
+        """When INCOHERENT exists but no BLOCKED → overall INCOHERENT.
 
+        The M5 mismatch-but-ancestor case is now PASS (migration re-cut
+        ancestor semantics), so this test seeds INCOHERENT from the WBC
+        file-hash check instead.
+        """
         evidence_content = (
             "# WBC merge evidence\n\n"
             "- Integration commit: `1111111111111111111111111111111111111111`\n"
-            "- First parent: `2222222222222222222222222222222222222222`\n"
-            "- Second parent: `3333333333333333333333333333333333333333`\n"
         )
         evidence_file = self._make_evidence_file(tmp_path, evidence_content)
 
@@ -538,7 +542,7 @@ class TestRunAllChecks:
             return_value=True,
         ), mock.patch(
             "tools.verify_m6_prerequisites.is_ancestor",
-            return_value=True,  # ancestor but mismatch → INCOHERENT
+            return_value=True,
         ), mock.patch(
             "tools.verify_m6_prerequisites.merge_parents",
             return_value=[
@@ -546,16 +550,23 @@ class TestRunAllChecks:
                 "3333333333333333333333333333333333333333",
             ],
         ), mock.patch(
-            "tools.verify_m6_prerequisites._read_json",
-            return_value=attestation,
-        ), mock.patch(
             "tools.verify_m6_prerequisites.WBC_MERGE_EVIDENCE", evidence_file
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.check_m5_final_attestation",
+            return_value={"check": "m5_final_attestation", "status": "PASS"},
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.check_m5_bound_head_vs_current_head",
+            return_value={"check": "m5_bound_head_vs_current_head", "status": "PASS"},
         ), mock.patch(
             "tools.verify_m6_prerequisites.check_wbc_package_metadata",
             return_value={"check": "wbc_package_metadata", "status": "PASS"},
         ), mock.patch(
             "tools.verify_m6_prerequisites.check_wbc_file_hashes",
-            return_value={"check": "wbc_file_hashes", "status": "PASS"},
+            return_value={
+                "check": "wbc_file_hashes",
+                "status": "INCOHERENT",
+                "detail": "seeded incoherent for aggregate test",
+            },
         ), mock.patch(
             "tools.verify_m6_prerequisites.check_activation_receipt_evidence",
             return_value={"check": "activation_receipt_evidence", "status": "PASS"},

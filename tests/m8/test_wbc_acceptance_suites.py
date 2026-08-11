@@ -739,18 +739,37 @@ def _repair_target(*, state: str = "gated", cursor: int = 20, pid: str = "200") 
 
 
 def _repair_identity(*, attempt_number: int = 1, fence_token: str = "fence-1") -> dict[str, object]:
-    return {
-        "environment_id": "/workspace/demo",
-        "session_id": "demo",
-        "chain_id": "/workspace/demo/chain.yaml",
-        "plan_revision": "sha256:plan-rev-1",
-        "phase": "finalize",
-        "task_id": "T32",
-        "attempt_number": attempt_number,
-        "failure_kind": "quality_gate_blocked",
-        "blocker_digest": "blocker:v1:demo",
-        "coordinator_fence_token": fence_token,
-    }
+    """Return a B9-normalized repair identity (canonical target key + grants)."""
+    from arnold_pipelines.megaplan.cloud import repair_requests
+
+    target = repair_requests.build_custody_target_key(
+        environment="/workspace/demo",
+        session="demo",
+        chain="/workspace/demo/chain.yaml",
+        plan_revision="sha256:plan-rev-1",
+        phase="finalize",
+        task="T32",
+        attempt=str(attempt_number),
+        normalized_failure_kind="quality_gate_blocked",
+        blocker_or_phase_result_hash="blocker:v1:demo",
+        fence=fence_token,
+        chain_identity="chain-incarnation-1",
+    )
+    assert target is not None
+    identity = repair_requests.build_normalized_repair_identity(
+        target=target,
+        run_id="demo",
+        run_revision="sha256:plan-rev-1",
+        run_incarnation_id="run-incarnation-1",
+        coordinator_attempt_id=f"coordinator:{attempt_number}",
+        fence_token=attempt_number,
+        wbc_attempt_reference=f"wbc:{attempt_number}",
+        run_authority_grant_id="grant-1",
+        lease_id="lease-1",
+        custody_epoch=attempt_number,
+    )
+    assert identity is not None
+    return identity
 
 
 def test_runtime_acceptance_suite_proves_core_wbc_invariants(tmp_path: Path) -> None:
