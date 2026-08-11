@@ -1,3 +1,5 @@
+> **Authority status (T44):** Zero-authority — the commands below are illustrative operator guidance; all live authority runs through canonical delegation (megaplan CLI / managed-agent seam). This document is not an authoritative execution surface.
+
 # Letting another user run a Codex agent on your Megaplan Cloud box
 
 Scenario: **a teammate is accessing your existing box** (`root@159.69.51.216`,

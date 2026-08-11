@@ -1,3 +1,5 @@
+> **Authority status (T44):** Zero-authority historical planning artifact — for reference only; not live operational authority. Canonical delegation is via the megaplan CLI and the migrated wrappers.
+
 # Replacing Hermes with oh-my-pi (omp) — plan v3 (post SOL round 2)
 
 **Status:** Draft v3.1 — SOL round 2 complete (72/100); model-reference migration gap identified and closed below. Ready to execute P0.

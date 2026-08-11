@@ -1,3 +1,5 @@
+> **Authority status (T44):** Zero-authority historical planning artifact — for reference only; not live operational authority. Canonical delegation is via the megaplan CLI and the migrated wrappers.
+
 # SOL verdict
 
 The plan is directionally right, but its central claim—“Hermes is only a backend behind one thin interface”—is false in the current checkout. Production phase dispatch bypasses `ArnoldDispatcher` when `MEGAPLAN_USE_AGENT_DISPATCHER` is off (`workers/_impl.py:7519`), and several direct Hermes paths remain.

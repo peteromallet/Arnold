@@ -68,14 +68,15 @@ def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
 
     assert 'if ! has_recordable_verdict "$RESP_PATH"; then' in text
     assert (
-        'run_direct_hermes_fallback || authority_gap_continue "T29-BYPASS-040"'
+        'run_direct_omp_fallback || authority_gap_continue "T29-BYPASS-040"'
         in text
     )
-    assert '--query-file "$FALLBACK_BRIEF_PATH"' in text
-    assert '--project-dir /workspace' in text
+    assert '"$FALLBACK_BRIEF_PATH"' in text
+    assert 'cwd="/workspace"' in text
+    assert 'provider="deepseek"' in text
     assert 'cd /workspace || exit 1' in text
-    assert 'sys.modules["megaplan.agent"] = agent_probe' in text
-    assert 'runpy.run_path(launcher, run_name="__main__")' in text
+    assert 'model="deepseek-v4-pro"' in text
+    assert 'client.prompt_and_wait(query, timeout=300)' in text
 
 
 def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
@@ -120,7 +121,7 @@ def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
 def test_recordable_verdict_check_rejects_arbitrary_output(tmp_path: Path) -> None:
     text = _meta_repair_wrapper()
     start = text.index("has_recordable_verdict() {")
-    end = text.index("\n\nrun_direct_hermes_fallback()", start)
+    end = text.index("\n\nrun_direct_omp_fallback()", start)
     function = text[start:end]
     response_path = tmp_path / "response.txt"
 
@@ -147,7 +148,7 @@ def test_direct_hermes_requires_a_recordable_verdict() -> None:
     text = _meta_repair_wrapper()
 
     assert 'if ! has_recordable_verdict "$FALLBACK_RESP_PATH"; then' in text
-    assert 'log "direct Hermes fallback produced no recordable verdict"' in text
+    assert 'log "direct omp fallback produced no recordable verdict"' in text
     assert 'cp "$FALLBACK_RESP_PATH" "$RESP_PATH"' in text
 
 
@@ -156,7 +157,7 @@ def test_failed_launch_persists_retryable_negative_evidence() -> None:
 
     assert "persist_unrecordable_launch_failure()" in text
     assert 'outcome="model_tool_launch_failure"' in text
-    assert "Codex meta-repair orchestrator returned no output and direct Hermes" in text
+    assert "Codex meta-repair orchestrator returned no output and direct omp" in text
     assert "recursion guard remains unpoisoned" in text
 
 
@@ -360,6 +361,10 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
 
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    # The wrapper exports the trusted-container boundary (B5) for its managed
+    # child launches; the extracted helper runs standalone here, so mirror
+    # that deployment env.
+    env["MEGAPLAN_TRUSTED_CONTAINER"] = "1"
     result = subprocess.run(
         [
             sys.executable,

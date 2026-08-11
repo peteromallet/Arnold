@@ -119,10 +119,41 @@ def _recovery_fixture(tmp_path: Path) -> tuple[Path, dict, Path, Path]:
     return goal_path, goal, state_path, events_path
 
 
+def _known_liveness(state: str) -> dict[str, object]:
+    """A structurally valid canonical liveness record.
+
+    The evaluation fences meta_repair/replan on UNKNOWN liveness (deliberate
+    safety: mutation/escalation need a canonical record).  These tests
+    exercise the recovery gate, not the liveness observer — supply a known
+    record so the gate's own classification is what is asserted.
+    """
+    live = state == "live"
+    return {
+        "schema": "arnold.megaplan.current_target_liveness.v1",
+        "state": state,
+        "live": live,
+        "dead": not live,
+        "known": True,
+        "source": "test_fixture",
+        "identity": {},
+        "lease": {},
+        "diagnostics": [],
+        "control_permitted": True,
+        "mutation_permitted": True,
+        "escalation_permitted": True,
+        "retrigger_permitted": True,
+    }
+
+
 def test_false_success_without_live_canonical_runner_escalates_with_transcript_refs(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     goal_path, _, _, _ = _recovery_fixture(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.repair_goal.observe_current_target_liveness",
+        lambda *args, **kwargs: _known_liveness("dead"),
+    )
 
     result = evaluate_repair_goal(goal_path, action="fixer-terminalization")
 
@@ -183,6 +214,10 @@ def test_bounded_followup_without_continued_progress_fails_closed(
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.repair_goal._canonical_runner_live",
         lambda _observation: True,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.repair_goal.observe_current_target_liveness",
+        lambda *args, **kwargs: _known_liveness("live"),
     )
     goal_path, _, _, _ = _recovery_fixture(tmp_path)
 

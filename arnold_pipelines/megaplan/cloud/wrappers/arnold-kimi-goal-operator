@@ -166,8 +166,8 @@ capture "watchdog report" bash -lc "cat /workspace/watchdog-report.json 2>/dev/n
 capture "watchdog log" bash -lc "tail -160 /workspace/watchdog.log 2>/dev/null || true"
 capture "arnold source git" bash -lc "cd '$ARNOLD_SRC' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
 capture "workspace git" bash -lc "cd '$WORKSPACE' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
-capture "subagent launcher skill" bash -lc "for p in /root/.codex/skills/subagent-launcher/SKILL.md /root/.hermes/skills/subagent-launcher/SKILL.md /root/.agents/skills/subagent-launcher/SKILL.md /root/.claude/skills/subagent-launcher/SKILL.md /workspace/arnold/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md; do echo --- \$p; test -f \"\$p\" && sed -n '1,180p' \"\$p\" || echo missing; done"
-capture "subagent launcher commands" bash -lc "command -v codex || true; ls -la /root/.codex/skills/subagent-launcher /root/.hermes/skills/subagent-launcher /workspace/arnold/arnold_pipelines/megaplan/skills/subagent-launcher 2>/dev/null || true"
+capture "subagent launcher skill" bash -lc "for p in /root/.codex/skills/subagent-launcher/SKILL.md /root/.agents/skills/subagent-launcher/SKILL.md /root/.claude/skills/subagent-launcher/SKILL.md /workspace/arnold/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md; do echo --- \$p; test -f \"\$p\" && sed -n '1,180p' \"\$p\" || echo missing; done"
+capture "subagent launcher commands" bash -lc "command -v codex omp || true; ls -la /root/.codex/skills/subagent-launcher /workspace/arnold/arnold_pipelines/megaplan/skills/subagent-launcher 2>/dev/null || true"
 
 if [[ -f "$PRINCIPLES_PATH" ]]; then
   PRINCIPLES_TEXT="$(cat "$PRINCIPLES_PATH")"
@@ -336,14 +336,41 @@ fi
     --link "chain=$REMOTE_SPEC" \
     --link phase=legacy_kimi_operator \
     -- env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
-      timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \
-      --query_file=@managed-stdin@ \
-      --model="$MODEL" \
-      --api_key="$KIMI_API_KEY" \
-      --base_url="$BASE_URL" \
-      --max_turns="$MAX_TURNS" \
-      --enabled_toolsets='"terminal,file,code_execution,todo"' \
-      --save_sample=True
+      timeout "$TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c '
+import pathlib
+import sys
+
+from omp_rpc import RpcClient
+
+# Frozen B1 table: Moonshot Kimi via omp, fresh stateless RPC session.
+# Credentials come from MOONSHOT_API_KEY / KIMI_API_KEY in the environment.
+query_path = pathlib.Path(sys.argv[1])
+query = query_path.read_text(encoding="utf-8", errors="replace")
+client = RpcClient(
+    provider="moonshot",
+    model="kimi-k2.7-code",
+    cwd=sys.argv[2] if len(sys.argv) > 2 else None,
+    no_session=True,
+    no_skills=True,
+    no_rules=True,
+    no_title=True,
+    startup_timeout=60,
+    request_timeout=300,
+)
+client.start()
+try:
+    client.set_model("moonshot", "kimi-k2.7-code")
+except Exception:
+    pass
+try:
+    turn = client.prompt_and_wait(query, timeout=300)
+    print(turn.require_assistant_text())
+finally:
+    try:
+        client.stop()
+    except Exception:
+        pass
+' "@managed-stdin@" "$RUN_CWD"
 ) >> "$LOG" 2>&1 &
 AGENT_PID=$!
 CHILD_PIDS+=("$AGENT_PID")

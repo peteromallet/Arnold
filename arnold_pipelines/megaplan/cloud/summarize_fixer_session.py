@@ -7,8 +7,8 @@ from __future__ import annotations
 import argparse, json, os, re, subprocess, sys
 from pathlib import Path
 
-LAUNCHER = "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
-MODEL = "deepseek:deepseek-v4-flash"
+# Frozen B1 provider table: DeepSeek Flash via omp, fresh stateless RPC.
+MODEL = "omp:deepseek/deepseek-v4-flash"
 
 def _final_message(run_dir: Path) -> str:
     for f in ("result.md", "recovery-evidence.json"):
@@ -48,26 +48,41 @@ Final message excerpt: {final[:800]}"""
     provenance = "flash_generated"
     summary = ""
     try:
-        env = dict(os.environ)
-        result = subprocess.run(
-            ["python3", LAUNCHER, "--model", MODEL, "--toolsets", "file,web",
-             "--query-file", str(brief_path), "--project-dir", str(run_dir),
-             "--max-tokens", "4096"],
-            capture_output=True, text=True, timeout=300,
-            env=env,
+        from omp_rpc import RpcClient
+
+        client = RpcClient(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            thinking="minimal",
+            cwd=run_dir,
+            no_session=True,
+            no_skills=True,
+            no_rules=True,
+            no_title=True,
+            startup_timeout=60,
+            request_timeout=300,
         )
-        out = (result.stdout or "") + "\n" + (result.stderr or "")
-        # The agent's final reply is the non-launcher noise; drop tool/log lines.
-        lines = []
-        for ln in out.splitlines():
-            s = ln.strip()
-            if not s:
-                continue
-            if s.startswith(("[launch_hermes_agent]", "[tool]", "[done]", "──", "⚡", "📖", "🔎", "💻", "✿", "¬", "processing")):
-                continue
-            lines.append(s)
-        summary = " ".join(lines)[-800:]
-    except Exception as exc:
+        client.start()
+        try:
+            client.set_model("deepseek", "deepseek-v4-flash")
+        except Exception:
+            pass
+        try:
+            client.set_thinking_level("minimal")
+        except Exception:
+            pass
+        turn = client.prompt_and_wait(brief, timeout=300)
+        try:
+            summary = turn.require_assistant_text()
+        except Exception:
+            summary = ""
+        finally:
+            try:
+                client.stop()
+            except Exception:
+                pass
+        summary = " ".join(summary.split())[-800:]
+    except Exception:
         summary = ""
     if not summary or len(summary) < 20:
         provenance = "fallback_unverified_extract"

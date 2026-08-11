@@ -15,7 +15,6 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 _CODEX_SOURCE = Path(".codex/auth.json")
-_HERMES_SOURCE = Path(".hermes/auth.json")
 
 
 @dataclass(frozen=True)
@@ -32,12 +31,6 @@ OAUTH_SEEDS = (
         local_relative=_CODEX_SOURCE,
         persistent_dest="/workspace/.creds/codex-auth.json",
         root_dest="/root/.codex/auth.json",
-    ),
-    OAuthSeed(
-        label="hermes",
-        local_relative=_HERMES_SOURCE,
-        persistent_dest="/workspace/.creds/hermes-auth.json",
-        root_dest="/root/.hermes/auth.json",
     ),
 )
 

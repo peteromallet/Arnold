@@ -264,26 +264,17 @@ tmux() {
     )
 
     assert result.returncode == 0, result.stderr
-    assert advanced_flag.read_text(encoding="utf-8").strip() == "advanced"
-    updated = json.loads(chain_path.read_text(encoding="utf-8"))
-    assert updated["last_state"] == "done"
-    assert updated["pr_state"] == "merged"
-    assert updated["advanced_by"] == "watchdog-test"
-    assert not needs_human.exists()
     calls = call_log.read_text(encoding="utf-8")
+    # The merge is DETECTED (the reconcile verifies it via gh), but with no
+    # canonical identity-bound liveness record the watchdog fences the
+    # relaunch: mutation/retrigger/relaunch are admitted only on a canonical
+    # record; legacy process evidence is diagnostic-only.  The needs-human
+    # marker is preserved until canonical custody takes over.
     assert "session awaiting PR merge reconciled merged; falling through to relaunch" in calls
-    assert "tmux new-session -d -s demo-session" in calls
-    cat_file = subprocess.run(
-        ["git", "cat-file", "-e", f"{merge_sha}^{{commit}}"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    assert cat_file.returncode == 0
-    report = report_path.read_text(encoding="utf-8")
-    assert "\trestart\trestarted\tstopped session relaunched\t" in report
+    assert "tmux new-session -d -s demo-session" not in calls
+    assert needs_human.exists()
+    updated = json.loads(chain_path.read_text(encoding="utf-8"))
+    assert updated["pr_state"] == "merged"
 
 
 def test_watchdog_pr_reconciliation_open_pr_queues_repair_evidence_without_relaunch(
@@ -346,15 +337,14 @@ tmux() { printf 'tmux %s\n' "$*" >> "$CALL_LOG"; return 0; }
 
     assert result.returncode == 0, result.stderr
     calls = call_log.read_text(encoding="utf-8")
-    assert "session awaiting PR merge: demo-session detail=PR #43 state=open evidence=queued" in calls
+    # PR wait state is expected wait, not a repair occurrence: the reconcile
+    # surfaces the persisted chain state and records read-only evidence — it
+    # never mints a repair request or relaunches.
+    assert "session awaiting PR merge: demo-session detail=PR #43 state=open evidence=read_only" in calls
     assert "tmux new-session" not in calls
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #43 state=open evidence=queued\t" in report
-    queued = list((tmp_path / ".megaplan" / "repair-queue" / "requests").glob("*.json"))
-    assert len(queued) == 1
-    payload = json.loads(queued[0].read_text(encoding="utf-8"))
-    assert payload["source"] == "watchdog_pr_merge_reconciliation"
-    assert payload["target"]["pr_number"] == 43
+    assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #43 state=open evidence=read_only\t" in report
+    assert not list((tmp_path / ".megaplan" / "repair-queue" / "requests").glob("*.json"))
 
 
 def test_watchdog_pr_reconciliation_preserves_existing_repair_evidence_when_still_waiting(
@@ -421,10 +411,10 @@ tmux() { printf 'tmux %s\n' "$*" >> "$CALL_LOG"; return 0; }
     assert needs_human.exists()
     assert json.loads(needs_human.read_text(encoding="utf-8"))["summary"] == "existing blocked repair evidence"
     calls = call_log.read_text(encoding="utf-8")
-    assert "session awaiting PR merge: demo-session detail=PR #44 state=open evidence=queue_disabled" in calls
+    assert "session awaiting PR merge: demo-session detail=PR #44 state=open evidence=read_only" in calls
     assert "tmux new-session" not in calls
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #44 state=open evidence=queue_disabled\t" in report
+    assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #44 state=open evidence=read_only\t" in report
     assert not list((tmp_path / "repair-queue" / "requests").glob("*.json"))
 
 

@@ -3876,9 +3876,10 @@ def test_watchdog_reap_decision_helper_reaps_only_stale_cloud_repairs(tmp_path: 
             "pgid": 5000,
             "etimes": 3901,
             "args": (
-                "python3 -m arnold.agent.run_agent "
-                "--query='The user's invariant is: workflows on this Hetzner worker should never pause unexpectedly. "
-                "Current Incident: Session: orphan-session Workspace: /tmp/ws'"
+                "bun /workspace/oh-my-pi/packages/coding-agent/src/cli.ts "
+                "--mode rpc --provider deepseek --model deepseek-v4-flash "
+                "--session-dir /tmp/omp-sessions/orphan-session --no-session "
+                "--no-skills --no-rules --no-title"
             ),
         },
         7200,
@@ -4241,7 +4242,7 @@ kill() {{
 }}
 ps() {{
   cat <<'EOF'
- 4242 python3 -m arnold.agent.run_agent --goal repair
+ 4242 bun /workspace/oh-my-pi/packages/coding-agent/src/cli.ts --mode rpc --provider deepseek --model deepseek-v4-flash --no-session
 EOF
 }}
 if kimi_operator_running {session!r}; then
@@ -10844,7 +10845,7 @@ def test_watchdog_syncs_extra_skills_to_agent_skill_dirs() -> None:
     assert '"$HOME/.claude/skills"' in text
     assert '"$HOME/.codex/skills"' in text
     assert '"$HOME/.agents/skills"' in text
-    assert '"$HOME/.hermes/skills"' in text
+    assert '"$HOME/.hermes/skills"' not in text
 
 
 def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
@@ -10855,16 +10856,18 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"' in text
     assert 'MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"' in text
     assert 'CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-7200}"' in text
-    assert '--max_turns="$MAX_TURNS"' in text
     assert 'CODEX_PROMPT="$RUN_DIR/codex-repair-prompt.md"' in text
     assert 'CODEX_LOG="$RUN_DIR/codex-repair.log"' in text
     assert 'capture "subagent launcher skill"' in text
     assert 'RUN_CWD="$ARNOLD_SRC"' in text
     assert 'cd "$RUN_CWD"' in text
     assert 'PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"' in text
-    assert 'timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
+    # Kimi route migrated to omp RPC (B9): fresh stateless moonshot session.
+    assert 'provider="moonshot"' in text
+    assert 'model="kimi-k2.7-code"' in text
+    assert "from omp_rpc import RpcClient" in text
     assert '--stdin-file "$PROMPT"' in text
-    assert '--query_file=@managed-stdin@' in text
+    assert '@managed-stdin@' in text
     assert '--query="$(cat "$PROMPT")"' not in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
     assert "Your Codex brief should contain the core issue, evidence, constraints, and plausible hypotheses only" in text
@@ -10977,11 +10980,11 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert '"plan_runtime_state"' in text
     assert '"last_gate"' in text
     assert "for iteration in 1 2 3; do" in text
-    assert 'DEV_REQUESTED_MODEL="glm-5.2"' in text
+    assert 'DEV_REQUESTED_MODEL="omp:zai/glm-5.2"' in text
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.4"' in text
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
     assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0' in text
-    assert 'GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
+    assert 'GLM_FALLBACK="zai/glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
     assert 'repair_data_set_outcome "progressed" "$status"' in text
     assert 'repair_data_set_outcome "true_human_blocker" "$status"' in text
     assert 'repair_data_set_outcome "recovery_not_verified"' in text
@@ -11042,15 +11045,17 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "run_kimi_launch_turn()" in text
     assert 'timeout "$dev_timeout"' in text
     assert '--stdin-file "$prompt_path"' in text
-    assert 'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent' in text
-    assert "--query_file=@managed-stdin@" in text
+    # Kimi route migrated to omp RPC (B9): fresh stateless moonshot session.
+    assert 'provider="moonshot"' in text
+    assert 'model="kimi-k2.7-code"' in text
+    assert "from omp_rpc import RpcClient" in text
     assert '--query="$(cat "$prompt_path")"' not in text
     assert "prepare_repair_agent_exec_env()" in text
     assert "set +a" in text
     assert "export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command" in text
     assert text.index("prepare_repair_agent_exec_env") < text.index('timeout "$dev_timeout"')
     assert text.index("prepare_repair_agent_exec_env", text.index("run_kimi_launch_turn()")) < text.index(
-        'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent'
+        'model="kimi-k2.7-code"'
     )
     assert 'tmux new-session -d -s "$session"' in text
     assert 'launch_receipt="$RUN_DIR/mechanical-launch-$iteration-receipt.json"' in text
@@ -14605,7 +14610,7 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert 'REPAIR_DATA_DIR="${MEGAPLAN_AUDIT_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"' in text
     assert 'DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"' in text
     assert 'AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"' in text
-    assert 'DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"' in text
+    assert 'DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek/deepseek-v4-pro}"' in text
     assert 'AUDIT_CODEX_MODEL="gpt-5.6-sol"' in text
     assert 'python3 -m arnold_pipelines.megaplan.managed_agent run \\' in text
     assert 'timeout "$CODEX_TIMEOUT" codex exec' in text
@@ -14614,8 +14619,8 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert 'CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE=1' in text
     assert '"recovery_sweep": recovery_sweep' in text
     assert 'SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"' in text
-    assert "launch_hermes_agent.py" in text
-    assert '--model="$DEEPSEEK_MODEL"' in text
+    assert "launch_hermes_agent.py" not in text
+    assert 'deepseek_model=$DEEPSEEK_MODEL' in text
     # Report paths.
     assert 'REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"' in text
     assert 'REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"' in text
@@ -17247,17 +17252,18 @@ def test_two_stage_repair_fails_closed_before_mutating_fixer_and_is_described() 
     assert repair.index('run_dev_fix_turn "$iteration"', mutating_loop) > investigator_call
 
 
-def test_meta_repair_wrapper_has_deepseek_hermes_subagent_instructions() -> None:
-    """Wrapper must instruct Codex to delegate to DeepSeek/Hermes subagents."""
+def test_meta_repair_wrapper_has_deepseek_omp_subagent_instructions() -> None:
+    """Wrapper must instruct Codex to delegate to DeepSeek/omp subagents."""
     text = _meta_repair_wrapper()
 
-    assert 'DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"' in text
+    assert 'DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek/deepseek-v4-pro}"' in text
     assert 'SUBAGENT_PROFILE="${MEGAPLAN_META_SUBAGENT_PROFILE:-partnered-5}"' in text
-    assert 'launch_hermes_agent.py' in text
-    assert 'SUBAGENT_SKILL' in text
-    assert 'deepseek:deepseek-v4-pro' in text
+    assert "DeepSeek/omp research" in text
+    assert "from omp_rpc import RpcClient" in text
+    assert 'SUBAGENT_SKILL' not in text
+    assert 'deepseek/deepseek-v4-pro' in text
     assert 'partnered-5' in text
-    assert 'DeepSeek/Hermes' in text
+    assert 'DeepSeek/Hermes' not in text
 
 
 def test_meta_repair_wrapper_has_default_commit_policy() -> None:

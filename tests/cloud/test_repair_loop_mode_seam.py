@@ -57,6 +57,22 @@ def _policy_env(tmp_path: Path) -> dict[str, str]:
     env = {**os.environ, "TMPDIR": str(tmp_path)}
     env["ARNOLD_RUNTIME_POLICY"] = str(_write_allow_manifestless_policy(tmp_path))
     env.pop("ARNOLD_RUNTIME_MANIFEST", None)
+    # These tests exercise the mode/dry-run seam, not runtime selection.  The
+    # box launch env injects runtime-source overrides (MEGAPLAN_RUNTIME_SRC /
+    # CLOUD_WATCHDOG_ARNOLD_SRC / ARNOLD_REPAIR_RUNTIME_SRC) that point at a
+    # deployed runtime candidate; pin them to the checked-out source so the
+    # model-policy module resolves from this tree.
+    for name in (
+        "MEGAPLAN_RUNTIME_SRC",
+        "MEGAPLAN_META_ARNOLD_SRC",
+        "MEGAPLAN_AUDIT_ARNOLD_SRC",
+        "MEGAPLAN_LAUNCH_RUNTIME_SRC",
+        "CLOUD_WATCHDOG_ARNOLD_SRC",
+        "ARNOLD_REPAIR_RUNTIME_SRC",
+    ):
+        env.pop(name, None)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
     return env
 
 
@@ -190,7 +206,7 @@ def test_select_mode_models_maps_proactive_to_flash(tmp_path: Path) -> None:
     reactive = _run_dry_run(tmp_path, "--mode=reactive")
     assert reactive.returncode == 0, f"stderr: {reactive.stderr}"
     assert "investigator_model=gpt-5.6-sol" in reactive.stdout
-    assert "brokered_investigator_model=deepseek:deepseek-v4-pro" in reactive.stdout
+    assert "brokered_investigator_model=deepseek/deepseek-v4-pro" in reactive.stdout
     assert "owner_model=gpt-5.6-sol" in reactive.stdout
     assert "model policy gated" in reactive.stderr
 

@@ -115,7 +115,7 @@ chain:
 #                 writes preferred_auth_method/forced_login_method=chatgpt so
 #                 codex uses ChatGPT subscription OAuth even when OPENAI_API_KEY
 #                 is present. During `cloud deploy` and `cloud chain`, megaplan
-#                 best-effort seeds local ~/.codex/auth.json and ~/.hermes/auth.json
+#                 best-effort seeds local ~/.codex/auth.json
 #                 into /workspace/.creds/* on the persistent volume and /root
 #                 for the running container. On restart, entrypoint copies the
 #                 volume seed back into /root. Set `apikey` only when you

@@ -1,3 +1,5 @@
+> **Authority status (T44):** Zero-authority — the commands below are illustrative operator guidance; all live authority runs through canonical delegation (megaplan CLI / managed-agent seam). This document is not an authoritative execution surface.
+
 # Connecting a new machine to the Megaplan Cloud box
 
 How to get a second computer (using your ChatGPT/Codex account) onto the

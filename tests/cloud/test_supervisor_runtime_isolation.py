@@ -324,11 +324,23 @@ def test_supervisor_queue_binds_current_plan_not_chain_spec(
         json.dumps({"name": "current-quality-plan", "current_state": "blocked"}),
         encoding="utf-8",
     )
+    from tests.cloud.repair_identity_fixtures import repair_identity
+
+    identity = repair_identity(
+        session="demo",
+        plan="current-quality-plan",
+        failure_kind="review_quality_blocked_unknown",
+        phase="review",
+        task="review",
+    )
     monkeypatch.setattr(
         current_target,
         "resolve_current_target",
         lambda *args, **kwargs: {
-            "current_refs": {"current_plan_name": "current-quality-plan"}
+            "current_refs": {
+                "current_plan_name": "current-quality-plan",
+                "repair_identity": identity,
+            }
         },
     )
 
@@ -458,7 +470,9 @@ def test_supervisor_wrappers_do_not_launch_python_before_runtime_init() -> None:
 def test_timeout_bypasses_use_absolute_safe_supervisor_interpreter() -> None:
     repair = _text("arnold-repair-loop")
     meta = _text("arnold-meta-repair-loop")
-    assert 'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent' in repair
+    # Kimi route migrated to omp RPC (B9): absolute supervisor interpreter
+    # still owns the child launch.
+    assert 'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c ' in repair
     assert 'PYTHONSAFEPATH=1 timeout "$SUBAGENT_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c ' in meta
 
 

@@ -1,3 +1,5 @@
+> **Authority status (T44):** Zero-authority historical planning artifact — for reference only; not live operational authority. Canonical delegation is via the megaplan CLI and the migrated wrappers.
+
 # Unknown exploration results (U1-U13) — evidence for the SOL solidify pass
 
 ## U1 — omp provider/model/credential contract (RESOLVED)

@@ -1,3 +1,5 @@
+> **Authority status (T44):** Zero-authority historical planning artifact — for reference only; not live operational authority. Canonical delegation is via the megaplan CLI and the migrated wrappers.
+
 # Deliverable A — Executable to-do list
 
 Execution rule: all tasks are strictly serial. No task is `PARALLEL-SAFE`; runtime fanout may retain its intended concurrency, but batches never overlap. Every Oracle Gate is mandatory. Failure loops to the first failed task in that batch, then reruns the gate; no downstream batch starts with an unresolved must-failure.

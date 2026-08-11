@@ -1821,7 +1821,7 @@ def test_repair_loop_uses_bounded_context_pointer_from_sandbox_root() -> None:
     assert 'prompt_bytes > 65536' in wrapper
     assert 'bwrap --ro-bind / / true' in wrapper
     assert 'investigator_mode="brokered_no_tools"' in wrapper
-    assert '--toolsets ""' in wrapper
+    assert "from omp_rpc import RpcClient" in wrapper
     assert "repair_investigation observe" in wrapper
     assert '--context "$INVESTIGATION_CONTEXT_PATH"' in wrapper
     assert '"${context_build_cmd[@]}" >/dev/null 2>"$INVESTIGATION_BUILD_ERROR_PATH"' in wrapper

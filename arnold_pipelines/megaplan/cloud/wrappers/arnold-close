@@ -115,10 +115,12 @@ if [[ "$LOCAL_HEAD" != "$ORIGIN_HEAD" ]]; then
 fi
 
 # 1c. No open lock files under the marker dir. Manifest-writer locks
-#     (<name>.json.lock) are excluded: they are writer-serialization locks that
-#     persist after a write, not runtime liveness indicators.
+#     (<name>.json.lock) and the runtime-creation serialization lock
+#     (.runtime-create.lock) are excluded: they are writer/creation
+#     serialization locks that persist after their operation, not runtime
+#     liveness indicators.
 if [[ -d "$MARKERS" ]]; then
-  OPEN_LOCKS="$(find "$MARKERS" -name '*.lock' ! -name '*.json.lock' 2>/dev/null || true)"
+  OPEN_LOCKS="$(find "$MARKERS" -name '*.lock' ! -name '*.json.lock' ! -name '.runtime-create.lock' 2>/dev/null || true)"
   if [[ -n "$OPEN_LOCKS" ]]; then
     echo "arnold-close: phase-1 FAILED — open lock files under '$MARKERS':" >&2
     echo "$OPEN_LOCKS" >&2

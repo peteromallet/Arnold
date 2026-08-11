@@ -2138,7 +2138,6 @@ sync_extra_cloud_skills() {
     "$HOME/.claude/skills"
     "$HOME/.codex/skills"
     "$HOME/.agents/skills"
-    "$HOME/.hermes/skills"
   )
   local skill_dir name target_dir dest created skipped updated
   created=0
@@ -2867,7 +2866,7 @@ PY
   fi
   ps -eo pgid=,args= 2>/dev/null \
     | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
-    | grep -Eq 'arnold-repair-loop|arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec|launch_hermes_agent\.py'
+    | grep -Eq 'arnold-repair-loop|arnold-kimi-goal-operator|codex exec|--mode rpc|bun .*src/cli\.ts'
 }
 
 repair_loop_busy_state() {
@@ -6301,6 +6300,7 @@ SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
 REPAIR_LOOP_RE = re.compile(r"(^|[\s/])arnold-repair-loop\s+([^\s]+)")
 KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
 CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
+OMP_SESSION_DIR_RE = re.compile(r"--session-dir[=\s]+([^\s]+)")
 RUN_AGENT_HINTS = (
     "workflows on this Hetzner worker should never pause unexpectedly",
     "cloud watchdog",
@@ -6323,7 +6323,7 @@ RULE_PRIORITY = {
 KIND_PRIORITY = {
     "arnold-repair-loop": 0,
     "arnold-kimi-goal-operator": 1,
-    "arnold.agent.run_agent": 2,
+    "omp-rpc": 2,
     "codex exec": 3,
 }
 
@@ -6351,6 +6351,11 @@ def extract_session(kind: str, args: str) -> str:
     if kind == "arnold-kimi-goal-operator":
         match = KIMI_RE.search(args)
         return match.group(2) if match else ""
+    if kind == "omp-rpc":
+        match = OMP_SESSION_DIR_RE.search(args)
+        if match:
+            return re.sub(r"[^A-Za-z0-9_.-]", "-", str(match.group(1)).rstrip("/").rsplit("/", 1)[-1])
+        return ""
     match = SESSION_RE.search(args)
     return match.group(1) if match else ""
 
@@ -6364,10 +6369,9 @@ def classify_kind(args: str) -> str:
     kimi_match = KIMI_RE.search(args)
     if kimi_match:
         return "arnold-kimi-goal-operator"
-    if "arnold.agent.run_agent" in args:
-        session = extract_session("arnold.agent.run_agent", args)
-        if session and any(hint in args for hint in RUN_AGENT_HINTS):
-            return "arnold.agent.run_agent"
+    if "--mode rpc" in args:
+        # omp RPC child (bun .../cli.ts --mode rpc --provider ... --model ...)
+        return "omp-rpc"
     if CODEX_RE.search(args):
         session = extract_session("codex exec", args)
         if session and any(hint in args for hint in CODEX_HINTS):
@@ -6393,7 +6397,7 @@ def decide_reap(row: dict[str, object], age_secs: int, orphan_age_secs: int) -> 
     if not kind:
         return decision
     if (
-        kind in {"arnold.agent.run_agent", "codex exec"}
+        kind in {"omp-rpc", "codex exec"}
         and decision["ppid"] == 1
         and decision["etimes"] > orphan_age_secs
     ):
@@ -6490,6 +6494,7 @@ SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
 REPAIR_LOOP_RE = re.compile(r"(^|[\s/])arnold-repair-loop\s+([^\s]+)")
 KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
 CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
+OMP_SESSION_DIR_RE = re.compile(r"--session-dir[=\s]+([^\s]+)")
 RUN_AGENT_HINTS = (
     "workflows on this Hetzner worker should never pause unexpectedly",
     "cloud watchdog",
@@ -6508,7 +6513,7 @@ PROTECTED_HINTS = (
 KIND_PRIORITY = {
     "arnold-repair-loop": 0,
     "arnold-kimi-goal-operator": 1,
-    "arnold.agent.run_agent": 2,
+    "omp-rpc": 2,
     "codex exec": 3,
 }
 RECENT_WINDOW_SECS = max(reap_age_secs, stall_grace_secs + stall_idle_secs, 1800)
@@ -6538,6 +6543,11 @@ def extract_session(kind: str, args: str) -> str:
     if kind == "arnold-kimi-goal-operator":
         match = KIMI_RE.search(args)
         return match.group(2) if match else ""
+    if kind == "omp-rpc":
+        match = OMP_SESSION_DIR_RE.search(args)
+        if match:
+            return re.sub(r"[^A-Za-z0-9_.-]", "-", str(match.group(1)).rstrip("/").rsplit("/", 1)[-1])
+        return ""
     match = SESSION_RE.search(args)
     return match.group(1) if match else ""
 
@@ -6551,10 +6561,9 @@ def classify_kind(args: str) -> str:
     kimi_match = KIMI_RE.search(args)
     if kimi_match:
         return "arnold-kimi-goal-operator"
-    if "arnold.agent.run_agent" in args:
-        session = extract_session("arnold.agent.run_agent", args)
-        if session and any(hint in args for hint in RUN_AGENT_HINTS):
-            return "arnold.agent.run_agent"
+    if "--mode rpc" in args:
+        # omp RPC child (bun .../cli.ts --mode rpc --provider ... --model ...)
+        return "omp-rpc"
     if CODEX_RE.search(args):
         session = extract_session("codex exec", args)
         if session and any(hint in args for hint in CODEX_HINTS):
@@ -7390,7 +7399,11 @@ for path in chain_state_paths():
         emit("merged", f"PR #{pr_number_int} merged; fetched origin for chain relaunch")
         raise SystemExit(0)
     evidence_status = enqueue_wait_evidence(path, pr_number_int, pr_state)
-    emit("waiting", f"PR #{pr_number_int} state={pr_state or 'unknown'} evidence={evidence_status}")
+    # When the gh probe is unavailable/unauthenticated, the persisted chain
+    # state is the authoritative PR state (it is what made the run enter
+    # awaiting_pr_merge); surface it instead of a misleading "unknown".
+    observed_state = str(payload.get("pr_state") or "").strip() or pr_state or "unknown"
+    emit("waiting", f"PR #{pr_number_int} state={observed_state} evidence={evidence_status}")
     raise SystemExit(0)
 
 emit("none", "no awaiting auto-policy PR merge state")

@@ -11,7 +11,7 @@
 #      META_REPAIR_ENABLED is explicitly off or recursion is detected.
 #   4. Dispatches Codex as the top-level orchestrator with
 #      --sandbox danger-full-access.  Codex is instructed to read the
-#      subagent-launcher skill and delegate DeepSeek/Hermes research
+#      subagent-launcher skill and delegate DeepSeek/omp research
 #      subagents (provider=deepseek, model=deepseek:deepseek-v4-pro,
 #      profile=partnered-5) for broad mapping, log/history review,
 #      independent root-cause probes, and bounded fix investigations.
@@ -106,10 +106,11 @@ arnold_supervisor_runtime_init meta-repair-loop "$ARNOLD_SRC" || exit $?
 # via the expected parent.  Runs BEFORE any manifest field read or ARNOLD_SRC
 # use below.
 arnold_runtime_manifest_authority meta-repair-loop
-LAUNCHER="${MEGAPLAN_META_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
-SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
-export LAUNCHER SUBAGENT_SKILL
-DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"
+# B5 boundary: managed child launches run inside the container with
+# in-process validators — never bwrap (unprivileged user namespaces are
+# disabled on the agentbox).  Mirrors the watchdog/repair-loop launch env.
+export MEGAPLAN_TRUSTED_CONTAINER=1
+DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek/deepseek-v4-pro}"
 SUBAGENT_PROFILE="${MEGAPLAN_META_SUBAGENT_PROFILE:-partnered-5}"
 SUBAGENT_TIMEOUT="${MEGAPLAN_META_SUBAGENT_TIMEOUT_SECS:-900}"
 CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"
@@ -670,8 +671,8 @@ EOF
   if [[ "$investigator_mode" == "codex_read_only" ]] && ! command -v codex >/dev/null 2>&1; then
     investigator_mode="brokered_no_tools"
   fi
-  if [[ "$investigator_mode" == "brokered_no_tools" ]] && [[ ! -f "$LAUNCHER" ]]; then
-    log "L2 brokered investigation unavailable: Hermes launcher missing; refusing mutation"
+  if [[ "$investigator_mode" == "brokered_no_tools" ]] && ! command -v omp >/dev/null 2>&1; then
+    log "L2 brokered investigation unavailable: omp CLI missing; refusing mutation"
     return 1
   fi
   if [[ "$investigator_mode" == "brokered_no_tools" ]]; then
@@ -699,11 +700,51 @@ EOF
   if [[ "$investigator_mode" == "codex_read_only" ]]; then
     managed_cmd+=(-- timeout "$SUBAGENT_TIMEOUT" codex exec --skip-git-repo-check --sandbox read-only -c model="$META_CODEX_MODEL" -c model_reasoning_effort=high --output-last-message "$META_INVESTIGATION_RECEIPT_PATH" -)
   else
-    # This launcher is already the sealed worker of the managed investigator
-    # above.  Suppress only the launcher's automatic *second* managed wrapper
-    # so stdout remains the typed JSON receipt channel; diagnostics stay on
-    # stderr in the outer managed run log.
-    managed_cmd+=(-- bash -c 'ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec "$1" -P "$2" --model "$3" --toolsets "" --query_file "$4" --project_dir "$5" --max_tokens 16384 > "$6"' _ "$MEGAPLAN_SUPERVISOR_PYTHON" "$LAUNCHER" "$DEEPSEEK_MODEL" "$META_INVESTIGATION_PROMPT_PATH" "$ARNOLD_SRC" "$META_INVESTIGATION_RECEIPT_PATH")
+    # Brokered investigation runs through omp RPC (B9): a fresh stateless
+    # session over the frozen provider table, writing the typed receipt.
+    managed_cmd+=(-- bash -c '
+set -e
+exec "$1" -P -c '\''
+import pathlib
+import sys
+
+from omp_rpc import RpcClient
+
+query_path = pathlib.Path(sys.argv[1])
+receipt_path = pathlib.Path(sys.argv[2])
+model_id = sys.argv[3]
+provider, _, model = model_id.partition("/")
+if not _:
+    provider, model = "deepseek", model_id
+query = query_path.read_text(encoding="utf-8", errors="replace")
+client = RpcClient(
+    provider=provider,
+    model=model,
+    cwd=sys.argv[4] if len(sys.argv) > 4 else None,
+    no_session=True,
+    no_skills=True,
+    no_rules=True,
+    no_title=True,
+    startup_timeout=60,
+    request_timeout=300,
+)
+client.start()
+try:
+    client.set_model(provider, model)
+except Exception:
+    pass
+try:
+    turn = client.prompt_and_wait(query, timeout=300)
+    text = turn.require_assistant_text()
+finally:
+    try:
+        client.stop()
+    except Exception:
+        pass
+receipt_path.write_text(text + "\n", encoding="utf-8")
+'\'' "$META_INVESTIGATION_PROMPT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" "$DEEPSEEK_MODEL" "$ARNOLD_SRC"
+'
+    )
   fi
   (cd "$ARNOLD_SRC" && "${managed_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
   META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
@@ -1111,13 +1152,13 @@ ordinary repair can succeed.
 - You may inspect the repair data, watchdog reports, chain state, session
   markers, and audit reports as evidence.
 - You MUST delegate broad mapping, log/history review, independent
-  root-cause probes, and bounded fix investigations to DeepSeek/Hermes
+  root-cause probes, and bounded fix investigations to DeepSeek/omp
   research subagents wherever practical.
 
 ### Subagent dispatch
-- Read the subagent-launcher skill at the path stored in
-  `SUBAGENT_SKILL` for the exact dispatch contract.
-- Use provider=deepseek, model=deepseek:deepseek-v4-pro,
+- Delegate through the managed-agent subagent seam (fresh stateless omp RPC
+  sessions; see the frozen provider table).
+- Use provider=deepseek, model=deepseek/deepseek-v4-pro,
   profile=partnered-5, max-tokens=92192.
 - Each subagent gets a focused query, project directory, and a bounded
   scope.
@@ -1168,7 +1209,7 @@ Start with a verdict on its own line: FIXED, ESCALATE, or NO_FIX.
 Then cite specific evidence, the root cause, the change(s) made
 (if any), and the retrigger verification result.  Keep under 400 words.
 PROMPT_POLICY
-  echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
+  echo "- Managed child launches self-register as child managed-agent runs; do not use an ad-hoc launcher path."
   append_l3_repair_contract
 } > "$BRIEF_PATH"; then
   log "meta-repair brief assembly failed custody validation; refusing dispatch"
@@ -1228,13 +1269,13 @@ ordinary repair can succeed.
 - You may inspect the repair data, watchdog reports, chain state, session
   markers, and audit reports as evidence.
 - You MUST delegate broad mapping, log/history review, independent
-  root-cause probes, and bounded fix investigations to DeepSeek/Hermes
+  root-cause probes, and bounded fix investigations to DeepSeek/omp
   research subagents wherever practical.
 
 ### Subagent dispatch
-- Read the subagent-launcher skill at the path stored in
-  `SUBAGENT_SKILL` for the exact dispatch contract.
-- Use provider=deepseek, model=deepseek:deepseek-v4-pro,
+- Delegate through the managed-agent subagent seam (fresh stateless omp RPC
+  sessions; see the frozen provider table).
+- Use provider=deepseek, model=deepseek/deepseek-v4-pro,
   profile=partnered-5, max-tokens=92192.
 - Each subagent gets a focused query, project directory, and a bounded
   scope.
@@ -1285,7 +1326,7 @@ Start with a verdict on its own line: FIXED, ESCALATE, or NO_FIX.
 Then cite specific evidence, the root cause, the change(s) made
 (if any), and the retrigger verification result.  Keep under 400 words.
 PROMPT_POLICY
-    echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
+    echo "- Managed child launches self-register as child managed-agent runs; do not use an ad-hoc launcher path."
     append_l3_repair_contract
   } > "$BRIEF_PATH"; then
     log "emergency brief assembly failed custody validation; refusing dispatch"
@@ -1329,8 +1370,8 @@ WORKER_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-managed-run-id"
 META_WORKER_RUN_ID=""
 META_WORKER_MANIFEST=""
 
-FALLBACK_BRIEF_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-direct-hermes-brief.md"
-FALLBACK_RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-direct-hermes-resp.txt"
+FALLBACK_BRIEF_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-direct-omp-brief.md"
+FALLBACK_RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-direct-omp-resp.txt"
 
 has_recordable_verdict() {
   local response_path="${1:-}"
@@ -1341,28 +1382,28 @@ has_recordable_verdict() {
   [[ "$first_line" == FIXED* || "$first_line" == ESCALATE* || "$first_line" == NO_FIX* ]]
 }
 
-run_direct_hermes_fallback() {
-  if [[ ! -f "$LAUNCHER" ]]; then
-    log "direct Hermes fallback unavailable launcher=$LAUNCHER"
+run_direct_omp_fallback() {
+  if ! command -v omp >/dev/null 2>&1; then
+    log "direct omp fallback unavailable (omp CLI missing)"
     return 1
   fi
 
   {
     cat <<EOF
-# Direct Hermes Meta-Repair Fallback
+# Direct omp Meta-Repair Fallback
 
 The Codex orchestration path failed before producing a recordable verdict.
 You are the direct repair agent now. Work on the Arnold source checkout at
 \`$ARNOLD_SRC\`; do not modify the audited project workspace. Perform the
 bounded investigation and repair yourself without launching another Codex
-or Hermes agent. Preserve the output contract in the brief below.
+agent. Preserve the output contract in the brief below.
 
 EOF
     cat "$BRIEF_PATH"
   } > "$FALLBACK_BRIEF_PATH"
   redact_file_in_place "$FALLBACK_BRIEF_PATH"
 
-  log "dispatching direct Hermes fallback session=$SESSION model=$DEEPSEEK_MODEL"
+  log "dispatching direct omp fallback session=$SESSION model=$DEEPSEEK_MODEL"
   (
     if [[ -f /workspace/.cloud-hot-env ]]; then
       set -a
@@ -1374,49 +1415,51 @@ EOF
     export ARNOLD_PATH="$ARNOLD_SRC"
     export ARNOLD_SRC="$ARNOLD_SRC"
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
-    # Import the launcher from a neutral directory.  A source checkout may
-    # contain a product-local `megaplan` package that shadows Hermes runtime
-    # discovery before the agent starts.
     cd /workspace || exit 1
     PYTHONSAFEPATH=1 timeout "$SUBAGENT_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c '
-import runpy
+import pathlib
 import sys
-import types
 
-# Some source checkouts contain a product-local ``megaplan`` namespace but
-# not the legacy ``megaplan.agent`` package.  Older installed launchers treat
-# that partial namespace as a fatal import instead of falling through to the
-# current Arnold runtime.  Preload only the missing probe module so the
-# launcher reaches its supported Arnold fallback without patching the
-# separately installed skill in place.
+from omp_rpc import RpcClient
+
+# Frozen B1 table: DeepSeek Pro via omp, fresh stateless RPC session.
+query_path = pathlib.Path(sys.argv[1])
+query = query_path.read_text(encoding="utf-8", errors="replace")
+client = RpcClient(
+    provider="deepseek",
+    model="deepseek-v4-pro",
+    cwd="/workspace",
+    no_session=True,
+    no_skills=True,
+    no_rules=True,
+    no_title=True,
+    startup_timeout=60,
+    request_timeout=300,
+)
+client.start()
 try:
-    import megaplan
-except ModuleNotFoundError:
-    megaplan = types.ModuleType("megaplan")
-    megaplan.__path__ = []
-    sys.modules["megaplan"] = megaplan
-agent_probe = types.ModuleType("megaplan.agent")
-sys.modules["megaplan.agent"] = agent_probe
-setattr(megaplan, "agent", agent_probe)
-
-launcher = sys.argv[1]
-sys.argv = [launcher, *sys.argv[2:]]
-runpy.run_path(launcher, run_name="__main__")
-' "$LAUNCHER" \
-      --model "$DEEPSEEK_MODEL" \
-      --toolsets "file,web,terminal" \
-      --query-file "$FALLBACK_BRIEF_PATH" \
-      --project-dir /workspace
+    client.set_model("deepseek", "deepseek-v4-pro")
+except Exception:
+    pass
+try:
+    turn = client.prompt_and_wait(query, timeout=300)
+    print(turn.require_assistant_text())
+finally:
+    try:
+        client.stop()
+    except Exception:
+        pass
+' "$FALLBACK_BRIEF_PATH"
   ) > "$FALLBACK_RESP_PATH" 2>> "$ERR_PATH" || authority_gap_continue "T29-BYPASS-033" "authority-risk bypass converted to typed evidence gap"
   redact_file_in_place "$FALLBACK_RESP_PATH"
   redact_file_in_place "$ERR_PATH"
 
   if ! has_recordable_verdict "$FALLBACK_RESP_PATH"; then
-    log "direct Hermes fallback produced no recordable verdict"
+    log "direct omp fallback produced no recordable verdict"
     return 1
   fi
   cp "$FALLBACK_RESP_PATH" "$RESP_PATH"
-  log "direct Hermes fallback produced a recordable verdict"
+  log "direct omp fallback produced a recordable verdict"
 }
 
 persist_unrecordable_launch_failure() {
@@ -1443,7 +1486,7 @@ except ValueError:
 response = Path(response_path).read_text(encoding="utf-8") if Path(response_path).exists() else ""
 error = Path(error_path).read_text(encoding="utf-8") if Path(error_path).exists() else ""
 diagnosis = (
-    "Codex meta-repair orchestrator returned no output and direct Hermes "
+    "Codex meta-repair orchestrator returned no output and direct omp "
     "fallback produced no recordable verdict."
 )
 record = MetaRepairRecord(
@@ -1618,16 +1661,16 @@ elif command -v codex >/dev/null 2>&1; then
     if grep -qE 'Input exceeds the maximum length|input_too_large' "$ERR_PATH" 2>/dev/null; then
       echo "Codex meta-repair prompt exceeded input limit; see meta-repair log." > "$RESP_PATH"
     else
-      echo "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log." > "$RESP_PATH"
+      echo "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/omp subagents); see meta-repair log." > "$RESP_PATH"
     fi
   fi
 else
-  log "codex CLI missing; trying direct Hermes fallback"
+  log "codex CLI missing; trying direct omp fallback"
   echo "codex CLI missing; no automated meta-repair." > "$RESP_PATH"
 fi
 
 if ! has_recordable_verdict "$RESP_PATH"; then
-  run_direct_hermes_fallback || authority_gap_continue "T29-BYPASS-040" "authority-risk bypass converted to typed evidence gap"
+  run_direct_omp_fallback || authority_gap_continue "T29-BYPASS-040" "authority-risk bypass converted to typed evidence gap"
 fi
 if ! has_recordable_verdict "$RESP_PATH"; then
   FAILURE_RECORD_INFO="$(persist_unrecordable_launch_failure 2>&1)" || {

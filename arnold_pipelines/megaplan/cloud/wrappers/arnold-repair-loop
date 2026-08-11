@@ -125,7 +125,7 @@ MARKER_PATH="$MARKER_DIR/$SESSION.json"
 # *_MODEL overrides are ignored (credentials-only hot-env, design line 147) —
 # so these declarations document the default values, not an override channel.
 REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
-REPAIR_BROKERED_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-deepseek:deepseek-v4-pro}"
+REPAIR_BROKERED_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-deepseek/deepseek-v4-pro}"
 REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
 
 # --- Phase 3A mode policy (design section 3) --------------------------------
@@ -146,7 +146,7 @@ FIXER_REPLAY_EVIDENCE_PATH="${FIXER_REPLAY_EVIDENCE_PATH:-/workspace/.megaplan/r
 # gated Flash row has no replay approval (the box runs reactive repair today
 # and must not break while Flash is still earning the default).
 REACTIVE_LEGACY_INVESTIGATOR_MODEL="gpt-5.6-sol"
-REACTIVE_LEGACY_BROKERED_INVESTIGATOR_MODEL="deepseek:deepseek-v4-pro"
+REACTIVE_LEGACY_BROKERED_INVESTIGATOR_MODEL="deepseek/deepseek-v4-pro"
 REACTIVE_LEGACY_OWNER_MODEL="gpt-5.6-sol"
 
 EARLY_SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
@@ -461,7 +461,6 @@ else
   SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 fi
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
-HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
@@ -8255,7 +8254,7 @@ run_repair_investigator_turn() {
   if [[ "$investigator_mode" == "auto" ]]; then
     # Merge: prefer the gpt-5.6-sol (codex) fixer whenever codex is usable,
     # including trusted containers where bwrap is unavailable. Only fall back
-    # to the brokered (hermes) path when codex genuinely cannot run.
+    # to the brokered (omp) path when codex genuinely cannot run.
     if command -v codex >/dev/null 2>&1 && \
        { command -v bwrap >/dev/null 2>&1 && bwrap --ro-bind / / true >/dev/null 2>&1 \
          || [[ "${MEGAPLAN_TRUSTED_CONTAINER:-}" == "1" ]]; }; then
@@ -8267,8 +8266,8 @@ run_repair_investigator_turn() {
   if [[ "$investigator_mode" == "codex_read_only" ]] && ! command -v codex >/dev/null 2>&1; then
     investigator_mode="brokered_no_tools"
   fi
-  if [[ "$investigator_mode" == "brokered_no_tools" ]] && [[ ! -f "$HERMES_LAUNCHER" ]]; then
-    log "L1 brokered investigation unavailable: Hermes launcher missing; refusing mutation"
+  if [[ "$investigator_mode" == "brokered_no_tools" ]] && ! command -v omp >/dev/null 2>&1; then
+    log "L1 brokered investigation unavailable: omp CLI missing; refusing mutation"
     return 1
   fi
   if [[ "$investigator_mode" == "brokered_no_tools" ]]; then
@@ -8359,11 +8358,53 @@ EOF
         --output-last-message "$INVESTIGATOR_RECEIPT_PATH" -
     )
   else
+    # Brokered (no-tools) investigation runs through omp RPC (B9): a fresh
+    # stateless session over the frozen provider table, writing the reply to
+    # the receipt path.
     managed_cmd+=(
-      -- bash -c 'ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec "$1" -P "$2" --model "$3" --toolsets "" --query_file "$4" --project_dir "$5" --max_tokens 16384 > "$6"' \
-        _ "$MEGAPLAN_SUPERVISOR_PYTHON" "$HERMES_LAUNCHER" \
-        "$REPAIR_BROKERED_INVESTIGATOR_MODEL" "$INVESTIGATOR_PROMPT_PATH" \
-        "$RUN_DIR" "$INVESTIGATOR_RECEIPT_PATH"
+      -- bash -c '
+set -e
+exec "$1" -P -c '\''
+import pathlib
+import sys
+
+from omp_rpc import RpcClient
+
+query_path = pathlib.Path(sys.argv[1])
+receipt_path = pathlib.Path(sys.argv[2])
+model_id = sys.argv[3]
+provider, _, model = model_id.partition("/")
+if not _:
+    provider, model = "deepseek", model_id
+query = query_path.read_text(encoding="utf-8", errors="replace")
+client = RpcClient(
+    provider=provider,
+    model=model,
+    cwd=sys.argv[4] if len(sys.argv) > 4 else None,
+    no_session=True,
+    no_skills=True,
+    no_rules=True,
+    no_title=True,
+    startup_timeout=60,
+    request_timeout=300,
+)
+client.start()
+try:
+    client.set_model(provider, model)
+except Exception:
+    pass
+try:
+    turn = client.prompt_and_wait(query, timeout=300)
+    text = turn.require_assistant_text()
+finally:
+    try:
+        client.stop()
+    except Exception:
+        pass
+receipt_path.write_text(text + "
+", encoding="utf-8")
+'\'' "$INVESTIGATOR_PROMPT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$REPAIR_BROKERED_INVESTIGATOR_MODEL" "$RUN_DIR"
+'
     )
   fi
   (cd "$RUN_DIR" && "${managed_cmd[@]}") >>"$LOG" 2>&1
@@ -8641,8 +8682,47 @@ run_dev_fix_turn() {
   prepare_repair_agent_exec_env
   prepare_repair_delivery_authority
   run_id_file="$RUN_DIR/iter${iteration}-dev-fix-managed-run-id"
-  if [[ "$dispatch_kind" == "hermes" ]]; then
-    worker_cmd=(timeout "$dev_timeout" env PATH="$ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH:$PATH" PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file=@managed-stdin@ --project_dir="$repair_workdir")
+  if [[ "$dispatch_kind" == "omp" ]]; then
+    # omp route (frozen B1 table): fresh stateless RPC session; the model id
+    # is the exact catalog model (provider/modelId) carried in
+    # $dispatch_model; credentials come from the provider env vars.
+    worker_cmd=(timeout "$dev_timeout" env PATH="$ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH:$PATH" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c '
+import pathlib
+import sys
+
+from omp_rpc import RpcClient
+
+query_path = pathlib.Path(sys.argv[1])
+query = query_path.read_text(encoding="utf-8", errors="replace")
+model_id = sys.argv[2]
+provider, _, model = model_id.partition("/")
+if not _:
+    provider, model = "deepseek", model_id
+client = RpcClient(
+    provider=provider,
+    model=model,
+    cwd=sys.argv[3] if len(sys.argv) > 3 else None,
+    no_session=True,
+    no_skills=True,
+    no_rules=True,
+    no_title=True,
+    startup_timeout=60,
+    request_timeout=300,
+)
+client.start()
+try:
+    client.set_model(provider, model)
+except Exception:
+    pass
+try:
+    turn = client.prompt_and_wait(query, timeout=300)
+    print(turn.require_assistant_text())
+finally:
+    try:
+        client.stop()
+    except Exception:
+        pass
+' "@managed-stdin@" "$dispatch_model" "$repair_workdir")
   else
     worker_cmd=(timeout "$dev_timeout" env PATH="$ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH:$PATH" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec --sandbox danger-full-access -c model="$dispatch_model" -c model_reasoning_effort="$reasoning_effort" -)
   fi
@@ -8773,16 +8853,43 @@ run_kimi_launch_turn() {
     capture_remote_head_snapshot "$remote_before"
   fi
   run_id_file="$RUN_DIR/iter${iteration}-kimi-managed-run-id"
+  # Kimi recovery migrated to omp RPC (B9): fresh stateless moonshot
+  # session, credentials from MOONSHOT_API_KEY / KIMI_API_KEY env.
   worker_cmd=(
     env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"
-    PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent
-    --query_file=@managed-stdin@
-    --model="$KIMI_MODEL"
-    --api_key="${KIMI_API_KEY:-}"
-    --base_url="$KIMI_BASE_URL"
-    --max_turns="$KIMI_MAX_TURNS"
-    --enabled_toolsets='"terminal,file,code_execution,todo"'
-    --save_sample=True
+    PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c '
+import pathlib
+import sys
+
+from omp_rpc import RpcClient
+
+query_path = pathlib.Path(sys.argv[1])
+query = query_path.read_text(encoding="utf-8", errors="replace")
+client = RpcClient(
+    provider="moonshot",
+    model="kimi-k2.7-code",
+    cwd=sys.argv[2] if len(sys.argv) > 2 else None,
+    no_session=True,
+    no_skills=True,
+    no_rules=True,
+    no_title=True,
+    startup_timeout=60,
+    request_timeout=300,
+)
+client.start()
+try:
+    client.set_model("moonshot", "kimi-k2.7-code")
+except Exception:
+    pass
+try:
+    turn = client.prompt_and_wait(query, timeout=300)
+    print(turn.require_assistant_text())
+finally:
+    try:
+        client.stop()
+    except Exception:
+        pass
+' "@managed-stdin@" "$ARNOLD_SRC"
   )
   managed_cmd=(
     python3 -m arnold_pipelines.megaplan.managed_agent run
@@ -8852,10 +8959,10 @@ glm_dispatch_model() {
   python3 - <<'PY'
 from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
 try:
-    resolve_model("zhipu:glm-5.2")
+    resolve_model("omp:zai/glm-5.2")
 except Exception:
     raise SystemExit(1)
-print("zhipu:glm-5.2")
+print("zai/glm-5.2")
 PY
 }
 
@@ -8914,6 +9021,30 @@ fi
 IFS=$'\t' read -r ENTRY_COMPLETE _entry_scope _entry_reason _entry_chain _entry_plan _entry_state <<< "$(repair_target_completion_status "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME")"
 if [[ "${ENTRY_COMPLETE:-0}" == "1" && "${_entry_scope:-}" != "stale_marker" ]]; then
   log "chain already complete; no repair needed; request was stale at entry session=$SESSION scope=${_entry_scope:-unknown} reason=${_entry_reason:-complete}"
+  # Persist the terminal outcome for audit even on the read-only path: the
+  # outcome record is evidence, not mutation.  Write via save_repair_data
+  # directly (no lock required), best-effort like the env-gone guard.
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY' 2>>"$LOG" || true
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    COMPLETE,
+    load_json,
+    save_repair_data,
+)
+
+data_path_raw, session, workspace, remote_spec = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+payload = load_json(data_path, default={})
+if not isinstance(payload, dict):
+    payload = {}
+payload.setdefault("session", session)
+payload.setdefault("workspace", workspace)
+payload["workspace"] = workspace
+payload["outcome"] = COMPLETE
+save_repair_data(data_path, payload)
+PY
   exit 0
 fi
 
@@ -9530,13 +9661,13 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_target" ]]; then
 fi
 
 GLM_MODEL=""
-GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"
+GLM_FALLBACK="zai/glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"
 if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" == "1" ]]; then
   if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
     GLM_FALLBACK=""
   else
     GLM_MODEL="gpt-5.4"
-    GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
+    GLM_FALLBACK="zai/glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
   fi
 else
   GLM_MODEL="gpt-5.4"
@@ -9551,13 +9682,13 @@ for iteration in 1 2 3; do
   exit_if_repair_target_recovered "iteration-$iteration-start"
   case "$iteration" in
     1)
-      DEV_REQUESTED_MODEL="glm-5.2"
+      DEV_REQUESTED_MODEL="omp:zai/glm-5.2"
       if [[ "$GLM_MODEL" == "gpt-5.4" ]]; then
         DEV_DISPATCH_MODEL="gpt-5.4"
         DEV_DISPATCH_KIND="codex"
       else
         DEV_DISPATCH_MODEL="$GLM_MODEL"
-        DEV_DISPATCH_KIND="hermes"
+        DEV_DISPATCH_KIND="omp"
       fi
       DEV_FALLBACK_REASON="$GLM_FALLBACK"
       ;;

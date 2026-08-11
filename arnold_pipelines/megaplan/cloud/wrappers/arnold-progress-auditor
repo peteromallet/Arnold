@@ -162,7 +162,6 @@ if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
 fi
 arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
-LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
 AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"
 AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"
@@ -184,7 +183,7 @@ fi
 SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
 SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
 SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
-DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"
+DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek/deepseek-v4-pro}"
 AUDIT_CODEX_MODEL="gpt-5.6-sol"
 CODEX_TIMEOUT="${MEGAPLAN_AUDIT_CODEX_TIMEOUT_SECS:-1800}"
 AUDIT_REVIEW_BRIEF_MAX_BYTES=131072
@@ -202,15 +201,6 @@ WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megapl
 # repair-delegation shim (see the L3 escalation controller below); the
 # arnold-repair-trigger binary is no longer plumbed by this wrapper.
 ESCALATION_STATE_ROOT="${MEGAPLAN_AUDIT_ESCALATION_STATE_ROOT:-/workspace/.megaplan/progress-auditor-escalations}"
-
-# Legacy direct DeepSeek launcher contract retained here for watchdog contract
-# tests and operator reference:
-# timeout "$SUBAGENT_TIMEOUT" python3 "$LAUNCHER" \
-#   --toolsets="file,web" \
-#   --model="$DEEPSEEK_MODEL" \
-#   --max-tokens="$SUBAGENT_MAX_TOKENS" \
-#   --query-file="$brief" \
-#   --project-dir="$workspace"
 
 mkdir -p "$REPORT_DIR" "$(dirname "$REPORT_LOG")"
 JSON_OUT="$REPORT_DIR/${TS}-audit.json"

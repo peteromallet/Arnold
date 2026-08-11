@@ -1,3 +1,5 @@
+> **Authority status (T44):** Zero-authority historical planning artifact — for reference only; not live operational authority. Canonical delegation is via the megaplan CLI and the migrated wrappers.
+
 # omp replaces Hermes — Executable To-Do List (execution contract)
 
 **Status:** FINAL. Sol (gpt-5.6, max reasoning) solidified pass: HOLISTIC / COMPLETE, 94/100, zero remaining unknowns.

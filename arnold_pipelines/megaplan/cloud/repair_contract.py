@@ -5197,28 +5197,6 @@ def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
     return total > 0 and completed < total and _has_current_target_evidence(target)
 
 
-def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
-    """Return true for states that must reopen custody despite a success label."""
-    target = _as_mapping(current_target)
-    active_step = _as_mapping(target.get("active_step_heartbeat"))
-    if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
-        return _has_current_target_evidence(target)
-    stale_kinds = {
-        _as_text(_as_mapping(item).get("kind"))
-        for item in _as_list(target.get("stale_evidence"))
-        if isinstance(item, Mapping)
-    }
-    if "stale_active_step_dead_pid" in stale_kinds:
-        return _has_current_target_evidence(target)
-    chain = _as_mapping(target.get("chain_state"))
-    try:
-        total = int(chain.get("milestone_total"))
-        completed = int(chain.get("completed_count") or 0)
-    except (TypeError, ValueError):
-        return False
-    return total > 0 and completed < total and _has_current_target_evidence(target)
-
-
 def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
     target_payload = _as_mapping(current_target)
     current_refs = _as_mapping(target_payload.get("current_refs"))

@@ -197,8 +197,11 @@ def test_trigger_absent_manifest_without_permit_fails_closed(tmp_path: Path) -> 
     allow.  The launcher must exit 78 with the typed failing-closed message.
     """
     env = _base_env()
+    # Leave ARNOLD_RUNTIME_MANIFEST at its absent default (a set-but-missing
+    # path reads as invalid, not absent); isolate the permit sidecar so the
+    # box deployment permit cannot admit the run.
     env.pop("ARNOLD_RUNTIME_MANIFEST", None)
-    env.pop("ARNOLD_RUNTIME_POLICY", None)
+    env["ARNOLD_RUNTIME_POLICY"] = str(tmp_path / "absent.runtime_policy.json")
     proc = _run_trigger(env)
     assert proc.returncode == 78
     assert "runtime manifest absent without a valid allow_manifestless permit" in proc.stderr
@@ -533,8 +536,11 @@ def test_leaf_wrapper_direct_invocation_blocks_without_manifest_or_permit(
     # Pin the source root so arnold_supervisor_runtime_init (which runs before
     # the entry gate) validates against the repo tree.
     env[src_env] = str(REPO_ROOT)
-    env.pop("ARNOLD_RUNTIME_MANIFEST", None)
-    env.pop("ARNOLD_RUNTIME_POLICY", None)
+    # Isolate admission from the box deployment state: point the manifest at
+    # a path whose directory carries no .runtime_policy.json permit sidecar,
+    # so the direct-invocation gate genuinely sees absent-manifest + no permit.
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(tmp_path / "runtime-manifest.json")
+    env["ARNOLD_RUNTIME_POLICY"] = str(tmp_path / "absent.runtime_policy.json")
 
     proc = subprocess.run(
         ["bash", str(wrapper), *extra_args],
