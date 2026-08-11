@@ -6,7 +6,7 @@ Date: 2026-08-10/11 — Final acceptance record for B1–B13 + full-suite + push
 
 | Artifact | Hash |
 | --- | --- |
-| Arnold migration HEAD | `b56e78b67173eff32af810e6073f2df904f3d610` (B13: re-cut post-M11 evidence) |
+| Arnold migration HEAD | `5a21d2f166f00dc314d96afb5574f241cb12e393` (B13: full suite green) |
 | Migration baseline root | `401c8f8112ba0547b428d84cf6996912fdda8e45` (pre-migration Arnold tree) |
 | omp fork HEAD (oh-my-pi) | `6cce5a5adc89574fa4de96fb66c74b376ca79288` (docs/agents.md generator section) |
 | Fork baseline (upstream head proxy) | `8c8644c47` |
@@ -112,8 +112,10 @@ artifact):
 
 ## Test results (final)
 
-Full suite (`python -P -m pytest`): see the final run in
-`/tmp/full-suite2.log` — target: 0 failed.
+Full suite (`python -P -m pytest`): **19594 passed, 31 skipped, 0 failed**
+(2 subtests passed) — 2026-08-11. Zero-trace scan: 33 allowlisted hits (all
+sanctioned legacy-input seams or contract-test/fixture references). Cold start
+with `python -P`: OK. `git diff --check`: clean.
 
 ## Historical-hit allowlist
 
