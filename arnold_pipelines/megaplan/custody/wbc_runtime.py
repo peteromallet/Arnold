@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol
@@ -18,11 +19,27 @@ from arnold.workflow.attempt_ledger_store import (
 )
 from arnold.workflow.execution_attempt_ledger import ExecutionAttemptLedger, LedgerEvent
 
-from .action_validator import ActionBoundaryContext, ActionBoundaryResult, validate_action_boundary
+from .action_validator import (
+    ActionBoundaryContext,
+    ActionBoundaryResult,
+    GateResult,
+    validate_action_boundary,
+)
 from .compatibility import RollbackValidation
 from .controlled_writer_registry import WriteGuardResult, writer_guard
-from .lease_store import CustodyLeaseStore
+from .lease_store import CustodyLeaseStore, LeaseStoreError
 from .outbox import CustodyOutbox
+
+
+# ── Lease keep-alive policy ────────────────────────────────────────────────
+#
+# Dispatch custody leases are acquired with a 1h TTL.  A worker that outlives
+# that TTL must not be denied at the completion/repair boundary after having
+# executed, so ``_preflight`` renews a self-owned lease that is expired or
+# inside the grace window immediately before the boundary re-read.
+
+_LEASE_TTL_HOURS = 1
+_LEASE_RENEW_GRACE_SECONDS = 300
 
 
 class PromotionMode(StrEnum):
@@ -700,6 +717,10 @@ class WbcRuntimeProducerFacade:
         )
         boundary = None
         if action_context is not None:
+            # Keep-alive before the boundary re-read: a self-owned lease that
+            # expired (or is about to) while the worker executed is renewed so
+            # the completion/repair boundary is not denied post-execution.
+            self._renew_owned_lease_before_boundary(action_context)
             boundary = validate_action_boundary(
                 action_context,
                 lease_store=self._lease_store,
@@ -707,11 +728,93 @@ class WbcRuntimeProducerFacade:
                 enforcement_enabled=self._enforcement_enabled,
             )
             if not boundary.authorized:
-                raise ActionBoundaryDeniedError(
-                    f"{action_context.action_type} not authorized: {boundary.gate_result.value}"
-                )
+                if (
+                    self._enforcement_enabled is False
+                    and boundary.gate_result == GateResult.SHADOW_PASS
+                ):
+                    # Functional shadow mode (ARNOLD_M7_ACTION_VALIDATOR_
+                    # ENFORCEMENT=0): the validator executed every check but
+                    # reported SHADOW_PASS, which is never authoritative.  The
+                    # facade accepts the boundary so the dispatch proceeds and
+                    # its evidence is recorded.  Enforcement ON denies
+                    # SHADOW_PASS (deny-by-default).
+                    pass
+                else:
+                    raise ActionBoundaryDeniedError(
+                        f"{action_context.action_type} not authorized: {boundary.gate_result.value}"
+                    )
         rollback_validation = self._rollback_validator() if self._rollback_validator is not None else None
         return guard, source_record, boundary, rollback_validation
+
+    def _renew_owned_lease_before_boundary(
+        self, context: ActionBoundaryContext
+    ) -> None:
+        """Best-effort keep-alive for a self-owned custody lease before a
+        boundary re-read.
+
+        A worker that outlives the original lease TTL must not be denied at
+        the completion/repair boundary: renewal extends the lease when it is
+        owned by this runtime and expired (or within the grace window).
+        Renewal is strictly additive — the authoritative gate is
+        ``validate_action_boundary`` — so a lease we do not own, that is
+        already terminal, or whose store does not support renewal is left for
+        the gate to adjudicate precisely.
+        """
+        if self._lease_store is None:
+            return
+        renew = getattr(self._lease_store, "renew", None)
+        if renew is None:
+            # Stores without renewal support (e.g. read-only test fakes) are
+            # left alone; the gate below still validates expiry/ownership.
+            return
+        lease_id = (
+            context.expected_lease_id.strip()
+            or f"custody-lease-{context.target.target_digest[:16]}"
+        )
+        try:
+            current = self._lease_store.current_lease(lease_id)
+        except Exception:
+            return
+        if current is None:
+            return
+        same_owner = (
+            current.owner_host == context.owner_host
+            and current.owner_pid == context.owner_pid
+            and (
+                not context.owner_boot_id
+                or not current.owner_boot_id
+                or current.owner_boot_id == context.owner_boot_id
+            )
+        )
+        if not same_owner:
+            return
+        if not current.is_expired:
+            try:
+                expires_dt = datetime.fromisoformat(
+                    current.expires_at.replace("Z", "+00:00")
+                )
+            except (ValueError, TypeError):
+                expires_dt = None
+            if expires_dt is not None and (
+                expires_dt - datetime.now(timezone.utc)
+            ).total_seconds() > _LEASE_RENEW_GRACE_SECONDS:
+                return
+        try:
+            # Renewal must carry a strictly greater epoch (the store enforces
+            # monotonic epoch, Step 11C).
+            renew(
+                lease_id=lease_id,
+                owner_host=current.owner_host,
+                owner_pid=current.owner_pid,
+                owner_boot_id=current.owner_boot_id,
+                custody_epoch=current.custody_epoch + 1,
+                expires_at=(
+                    datetime.now(timezone.utc) + timedelta(hours=_LEASE_TTL_HOURS)
+                ).isoformat(),
+            )
+        except LeaseStoreError:
+            # Terminal or racing renewal — the gate below decides precisely.
+            return
 
     def _lookup_exact_source(self, *, lookup_key: str, expected_source_version: str) -> ExactSourceRecord:
         record = self._source_lookup(lookup_key)

@@ -18,7 +18,7 @@ from arnold.workflow.execution_attempt_ledger import (
     RuntimeAdapter,
     VersionSet,
 )
-from arnold_pipelines.megaplan.custody.action_validator import ActionBoundaryContext
+from arnold_pipelines.megaplan.custody.action_validator import ActionBoundaryContext, GateResult
 from arnold_pipelines.megaplan.custody.compatibility import validate_rollback_safety
 from arnold_pipelines.megaplan.custody.controlled_writer_registry import Cohort, ControlledWriter, _clear_registry, register_writer
 from arnold_pipelines.megaplan.custody.contracts import CustodyLease, CustodyTargetKey
@@ -747,12 +747,14 @@ def test_runtime_facade_denies_shadow_pass_writer_from_explicit_disable_env(
         )
 
 
-def test_runtime_facade_denies_shadow_pass_boundary(
+def test_runtime_facade_accepts_shadow_pass_boundary_when_enforcement_disabled(
     tmp_path: Path,
 ) -> None:
-    """P3 follow-up: a SHADOW_PASS action boundary (explicit enforcement
-    disable at the facade) must NOT permit a write — only AUTHORIZED
-    boundaries pass and no event is appended.
+    """Option-A contract: with enforcement explicitly disabled at the facade, a
+    SHADOW_PASS action boundary is ACCEPTED — the dispatch proceeds and the
+    event is appended (shadow evidence recorded).  Enforcement ON remains
+    deny-by-default and is covered by the P7A enforcement tests; SHADOW_PASS
+    is never authoritative authorization.
     """
     _register_writer()
     attempt_id = "55555555-5555-4555-8555-555555555555"
@@ -771,21 +773,26 @@ def test_runtime_facade_denies_shadow_pass_boundary(
         enforcement_enabled=False,
     )
 
-    with pytest.raises(ActionBoundaryDeniedError, match="not authorized: shadow_pass"):
-        facade.start_attempt(
+    result = facade.start_attempt(
+        attempt_id=attempt_id,
+        event=_event(
             attempt_id=attempt_id,
-            event=_event(
-                attempt_id=attempt_id,
-                sequence=1,
-                event_type=AttemptEventType.STARTED,
-                idempotency_key="idem-start",
-            ),
-            writer_id="runtime.writer",
-            surface_name="runtime.producer",
-            source_lookup_key="dispatch:start",
-            expected_source_version="source.v1",
-            action_context=_context("dispatch"),
-            artifacts=_artifacts(attempt_id),
-        )
+            sequence=1,
+            event_type=AttemptEventType.STARTED,
+            idempotency_key="idem-start",
+        ),
+        writer_id="runtime.writer",
+        surface_name="runtime.producer",
+        source_lookup_key="dispatch:start",
+        expected_source_version="source.v1",
+        action_context=_context("dispatch"),
+        artifacts=_artifacts(attempt_id),
+    )
 
-    assert store.read_events(attempt_id) == []
+    assert result.action_boundary is not None
+    assert result.action_boundary.gate_result == GateResult.SHADOW_PASS
+    assert result.action_boundary.enforcement_enabled is False
+    assert result.action_boundary.is_shadow is True
+    assert [event.event_type for event in store.read_events(attempt_id)] == [
+        AttemptEventType.STARTED,
+    ]
