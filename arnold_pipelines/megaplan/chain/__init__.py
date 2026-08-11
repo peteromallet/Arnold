@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -74,6 +75,7 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
 from arnold_pipelines.megaplan._core import (
     list_batch_artifacts,
     atomic_write_json,
+    atomic_write_text,
     resolve_plan_dir,
     save_state_merge_meta,
 )
@@ -251,6 +253,23 @@ NOOP_COMPLETION_SCHEMA = "megaplan.noop_completion"
 NOOP_COMPLETION_SCOPES = frozenset(
     {"docs_only", "already_satisfied_by_base", "planning_only", "infra_only"}
 )
+# P6 end-of-epic reconciliation. A ``kind: reconcile`` milestone selects
+# engine-source commits for a reviewed PR onto its ``target_branch``; the
+# controller-side skip detection writes ``reconcile-verification.json`` (this
+# schema) into the plan dir when the engine change set is empty or already
+# promoted, and the completion guard accepts it exactly like the no-op waiver.
+RECONCILE_VERIFICATION_SCHEMA = "reconcile-verification/1"
+# Durable skip record for the generated ``kind: reconcile`` milestone: when a
+# legacy chain's terminal milestone declares a ``final_conformance_gate``, the
+# reconcile milestone is RECORDED as skipped in an atomic sidecar next to the
+# spec (this schema) instead of being a log-only event. The sidecar is read on
+# restart so the skip survives crashes and is never silently re-run.
+RECONCILE_SKIP_FILENAME = "reconcile-skip.json"
+RECONCILE_SKIP_SCHEMA = "reconcile-skip/1"
+# Engine-source allowlist: paths whose changes are the reconcile milestone's
+# subject. Everything else in the epic's commit range is chain/bookkeeping
+# work that promotion already covers or that never reaches the shared base.
+ENGINE_SOURCE_ROOTS = ("arnold_pipelines/", "arnold/")
 GH_TRANSIENT_ERROR_PATTERNS = (
     " 500",
     " 502",
@@ -445,10 +464,13 @@ from .git_ops import (
     _command_env,
     _commit_and_push_phase,
     _commit_phase,
+    _cherry_pick_reconcile_selection,
+    _delete_reconcile_pr_branch,
     _dirty_nested_repos_from_claimed_paths,
     _dirty_worktree_paths,
     _enable_auto_merge,
     _ensure_milestone_pr,
+    _ensure_reconcile_pr,
     _fetch_base_branch,
     _is_transient_gh_error,
     _is_worktree_dirty,
@@ -2491,6 +2513,108 @@ def _read_typed_noop_completion_waiver(
     return False, "no typed no-op completion waiver found"
 
 
+def _read_reconcile_verification_waiver(
+    plan_dir: Path,
+    *,
+    expected_base_sha: str | None = None,
+    expected_plan: str | None = None,
+    expected_milestone: str | None = None,
+) -> tuple[bool, str]:
+    """Return whether the reconcile no-op verification waiver is valid.
+
+    The waiver is the controller-side skip evidence: the engine-source change
+    set in the reconcile range was empty (or fully covered by promotion
+    evidence), so the reconcile milestone is a verified no-op.  The guard
+    accepts it exactly like ``completion_noop.json`` — same shape contract,
+    own schema so the two waivers cannot be confused.
+    """
+
+    candidate = plan_dir / "reconcile-verification.json"
+    if not candidate.exists():
+        return False, "no reconcile verification waiver found"
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return False, f"{candidate.name} could not be read: {error}"
+    if not isinstance(payload, dict):
+        return False, f"{candidate.name} payload is not an object"
+    if payload.get("schema") != RECONCILE_VERIFICATION_SCHEMA:
+        return (
+            False,
+            f"{candidate.name} schema must be {RECONCILE_VERIFICATION_SCHEMA!r}",
+        )
+    plan = payload.get("plan")
+    if expected_plan and plan != expected_plan:
+        return (
+            False,
+            f"{candidate.name} plan {plan!r} does not match {expected_plan!r}",
+        )
+    milestone = payload.get("milestone_label")
+    if expected_milestone and milestone != expected_milestone:
+        return (
+            False,
+            f"{candidate.name} milestone_label {milestone!r} does not match "
+            f"{expected_milestone!r}",
+        )
+    scope = payload.get("scope")
+    if scope not in {"no_engine_changes", "already_promoted"}:
+        return False, f"{candidate.name} scope must be no_engine_changes or already_promoted"
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return False, f"{candidate.name} requires a non-empty reason"
+    base_sha = payload.get("base_sha")
+    if not isinstance(base_sha, str) or not base_sha.strip():
+        return False, f"{candidate.name} requires a non-empty base_sha"
+    if expected_base_sha and base_sha != expected_base_sha:
+        return (
+            False,
+            f"{candidate.name} base_sha {base_sha!r} does not match "
+            f"milestone_base_sha {expected_base_sha!r}",
+        )
+    if not isinstance(payload.get("engine_changes"), list):
+        return False, f"{candidate.name} requires an engine_changes list"
+    if not isinstance(payload.get("promotion_evidence"), list):
+        return False, f"{candidate.name} requires a promotion_evidence list"
+    return True, f"{candidate.name} scope={scope} reason={reason.strip()}"
+
+
+def _write_reconcile_verification_waiver(
+    plan_dir: Path,
+    *,
+    plan: str,
+    milestone_label: str,
+    base_sha: str,
+    scope: str,
+    engine_changes: list[dict[str, Any]],
+    promotion_evidence: list[dict[str, Any]],
+    reason: str,
+) -> Path:
+    """Atomically write the reconcile no-op verification waiver into a plan dir.
+
+    The payload carries the engine change set and the promotion evidence that
+    justified the no-op, so the completion guard's acceptance is evidence-
+    backed rather than a bare marker.
+    """
+
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    target = plan_dir / "reconcile-verification.json"
+    payload = {
+        "schema": RECONCILE_VERIFICATION_SCHEMA,
+        "plan": plan,
+        "milestone_label": milestone_label,
+        "base_sha": base_sha,
+        "scope": scope,
+        "engine_changes": engine_changes,
+        "promotion_evidence": promotion_evidence,
+        "reason": reason,
+        "verified_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    tmp = plan_dir / ".reconcile-verification.json.tmp"
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(target)
+    return target
+
+
 def _finalize_payload_has_empty_tasks(plan_dir: Path) -> tuple[bool, str]:
     candidates = (
         ("finalize.json", plan_dir / "finalize.json"),
@@ -2756,11 +2880,99 @@ def _completion_record_is_merged_pr(record: dict[str, Any]) -> bool:
     return bool(pr_state and pr_state.lower() == "merged")
 
 
+def _record_is_reconcile(record: dict[str, Any]) -> bool:
+    """True when a completion record belongs to a ``kind: reconcile`` milestone.
+
+    The generated reconcile milestone stamps ``kind`` on its completion
+    record; the boolean marker is accepted for hand-authored records.
+    """
+
+    if record.get("reconcile") is True:
+        return True
+    return record.get("kind") == "reconcile"
+
+
+def _record_is_intentionally_rejected(record: dict[str, Any]) -> bool:
+    """True when a reconcile completion record carries an intentional rejection.
+
+    Slice B's ``_ensure_reconcile_pr`` records an intentionally rejected PR as
+    ``pr_state: closed`` plus a ``rejection_reason``.  This is a terminal,
+    close-worthy outcome per the P6 terminal-state rules — never the
+    ``_stop_for_closed_pr`` accidental-close path.
+    """
+
+    if not _record_is_reconcile(record):
+        return False
+    pr_state = _string_value(record.get("pr_state"))
+    if not pr_state or pr_state.lower() != "closed":
+        return False
+    reason = record.get("rejection_reason")
+    return isinstance(reason, str) and bool(reason.strip())
+
+
+def _resolve_recorded_target_ref(root: Path, target_branch: str) -> str | None:
+    """Resolve a recorded milestone ``target_branch`` to a local SHA.
+
+    The reconcile PR's base is the recorded target (main by default), which
+    may differ from ``spec.base_branch``.  ``origin/<branch>`` is preferred
+    because the reconcile target is a shared branch; the local ref is the
+    fallback for offline fixtures.
+    """
+
+    for ref in (f"origin/{target_branch}", target_branch):
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--verify", ref],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        if proc.returncode == 0:
+            sha = proc.stdout.strip()
+            if sha:
+                return sha
+    return None
+
+
 def _published_target_is_in_chain_target(
     root: Path,
     target: str,
     chain_state: ChainState | None,
+    *,
+    target_branch: str | None = None,
 ) -> tuple[bool | None, str]:
+    if target_branch:
+        # P6: the reconcile milestone's PR targets its RECORDED target branch
+        # (main by default), not the chain's launch-time base.  Validate the
+        # published merge target against that recorded target's lineage.
+        target_ref = _resolve_recorded_target_ref(root, target_branch)
+        if not target_ref:
+            return None, f"recorded reconcile target branch {target_branch!r} unresolvable"
+        # Either direction proves the merge landed on the recorded target's
+        # lineage: the recorded target was the PR base (ancestor of the merge
+        # target) or the merge target has since been advanced past (the merge
+        # commit is an ancestor of the recorded target's current head).
+        if _git_is_ancestor(root, target_ref, target):
+            return (
+                True,
+                f"recorded target {target_branch} {target_ref[:12]} is contained "
+                f"in published PR target {target[:12]}",
+            )
+        if _git_is_ancestor(root, target, target_ref):
+            return (
+                True,
+                f"published PR target {target[:12]} is contained in recorded "
+                f"target {target_branch} {target_ref[:12]}",
+            )
+        return (
+            False,
+            f"published PR target {target[:12]} is not contained in recorded "
+            f"target {target_branch} {target_ref}",
+        )
     if chain_state is None:
         return None, "chain target unavailable"
     target_ref = _string_value(chain_state.target_base_ref)
@@ -2795,13 +3007,20 @@ def _published_pr_semantic_diff_nonempty_from_base(
         target, source = _published_pr_target_from_record(record, chain_state)
     if target is None:
         return None, f"published PR target unavailable: {source}"
+    target_branch = _string_value(record.get("target_branch"))
     landed_ok, landed_reason = _published_target_is_in_chain_target(
         root,
         target,
         chain_state,
+        target_branch=target_branch,
     )
     if landed_ok is False:
         return False, landed_reason
+    if landed_ok is None and target_branch:
+        # The recorded reconcile target could not be resolved — the merged PR
+        # cannot be validated against it, so the outcome is UNKNOWN (the
+        # guard fails closed for reconcile records instead of accepting).
+        return None, landed_reason
     return _semantic_diff_nonempty_between_refs(
         root,
         base_sha,
@@ -2831,6 +3050,16 @@ def _chain_completion_guard(
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
+    is_reconcile = _record_is_reconcile(record)
+    # P6 terminal-state rules: an INTENTIONALLY rejected reconcile PR is a
+    # terminal, close-worthy outcome (history preserves everything; no ticket
+    # ceremony) — never the accidental-close path.  Unknown PR state, missing
+    # gh auth, and cherry-pick conflicts must fail closed instead.
+    if is_reconcile and _record_is_intentionally_rejected(record):
+        return (
+            True,
+            "intentionally rejected reconcile PR accepted; terminal for close/sweep",
+        )
     merged_pr_internal_state_bypass = is_merged_pr and current_state in {
         STATE_BLOCKED,
         STATE_EXECUTED,
@@ -2841,6 +3070,7 @@ def _chain_completion_guard(
         implementation_milestone
         and current_state != STATE_DONE
         and not merged_pr_internal_state_bypass
+        and not is_reconcile
     ):
         return (
             False,
@@ -2869,6 +3099,24 @@ def _chain_completion_guard(
             record.get("label") if isinstance(record.get("label"), str) else None
         ),
     )
+    # P6: the reconcile milestone's skip evidence.  The no-op path never runs
+    # the agent, so the plan may sit at ``prepped`` — the waiver is the
+    # terminal evidence and is accepted before any plan-state requirement.
+    reconcile_waiver_ok = False
+    reconcile_waiver_reason = "no reconcile verification waiver found"
+    if is_reconcile:
+        reconcile_waiver_ok, reconcile_waiver_reason = (
+            _read_reconcile_verification_waiver(
+                plan_dir,
+                expected_base_sha=milestone_base_sha,
+                expected_plan=plan_name,
+                expected_milestone=(
+                    record.get("label") if isinstance(record.get("label"), str) else None
+                ),
+            )
+        )
+    if is_reconcile and reconcile_waiver_ok:
+        return True, f"reconcile verification waiver accepted: {reconcile_waiver_reason}"
 
     if is_merged_pr:
         published_diff_ok, published_diff_reason = (
@@ -2888,6 +3136,15 @@ def _chain_completion_guard(
         local_diff_reason = ""
         local_raw_diff_ok: bool | None = None
         local_raw_diff_reason = ""
+        if is_reconcile and published_diff_ok is not True:
+            # A merged reconcile PR MUST validate against its recorded target
+            # (main by default).  Unknown or unresolvable target state fails
+            # closed — never fall back to local-diff acceptance for reconcile.
+            return False, (
+                f"reconcile merged PR not validated against recorded target "
+                f"{record.get('target_branch') or 'chain base'}: "
+                f"{published_diff_reason}"
+            )
         if published_diff_ok is not True:
             local_diff_ok, local_diff_reason = _semantic_diff_nonempty_from_base(
                 root, milestone_base_sha
@@ -2958,9 +3215,10 @@ def _chain_completion_guard(
         completion_record=record,
     )
     if not authoritative and not waiver_ok:
+        detail_reason = reconcile_waiver_reason if is_reconcile else waiver_reason
         return (
             False,
-            f"execution evidence blocked completion: {reason}; {waiver_reason}",
+            f"execution evidence blocked completion: {reason}; {detail_reason}",
         )
 
     empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(plan_dir)
@@ -6311,6 +6569,392 @@ def _maybe_file_ladder_ticket(
         )
 
 
+def _soft_git(root: Path, *args: str) -> str | None:
+    """Run git and return stdout, or ``None`` on ANY failure.
+
+    Used by controller-side skip detection where a hard failure must degrade
+    to ``uncertain`` (PR required) instead of raising — a silent no-op is
+    never emitted from incomplete information.
+    """
+
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def _changed_paths_for_commit(root: Path, sha: str) -> list[str]:
+    """Return the paths a commit touched (name-only, no renames resolved)."""
+
+    out = _soft_git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
+    if not out:
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _promoted_refs(
+    manifest: Mapping[str, Any] | None,
+    *,
+    manifest_path: Path | None = None,
+) -> list[str] | None:
+    """Collect promotion evidence SHAs: ``manifest.promotions`` plus the
+    ``promotion-journal.jsonl`` sibling of the bound manifest.
+
+    Returns ``None`` when the promotion journal exists but cannot be read
+    (uncertain => PR required).  An empty list means "no promotion evidence"
+    — the caller treats engine changes without promotion as PR-required.
+    """
+
+    refs: list[str] = []
+    if isinstance(manifest, Mapping):
+        indirection = manifest.get("indirection")
+        if isinstance(indirection, Mapping):
+            verified_head = indirection.get("verified_head")
+            if isinstance(verified_head, str) and verified_head.strip():
+                refs.append(verified_head.strip())
+        promotions = manifest.get("promotions")
+        if isinstance(promotions, list):
+            for entry in promotions:
+                if not isinstance(entry, Mapping):
+                    continue
+                for key in ("previous_commit", "from_sha", "to_sha"):
+                    value = entry.get(key)
+                    if isinstance(value, str) and value.strip():
+                        refs.append(value.strip())
+    journal: Path | None = None
+    if manifest_path is not None:
+        candidate = Path(manifest_path).parent / "promotion-journal.jsonl"
+        if candidate.exists():
+            journal = candidate
+    if journal is not None:
+        try:
+            lines = journal.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            for key in ("from_sha", "to_sha", "previous_commit"):
+                value = record.get(key)
+                if isinstance(value, str) and value.strip():
+                    refs.append(value.strip())
+    return refs
+
+
+def compute_reconcile_scope(
+    spec: ChainSpec,
+    manifest: Mapping[str, Any] | None,
+    *,
+    root: Path,
+    chain_base_sha: str | None = None,
+    manifest_path: Path | None = None,
+    plan_dir: Path | None = None,
+    plan_name: str | None = None,
+    milestone_label: str | None = None,
+) -> dict[str, Any]:
+    """Controller-side skip detection for the ``kind: reconcile`` milestone.
+
+    Engine-source changes (commits in the reconcile range touching
+    ``arnold_pipelines/`` or ``arnold/``) minus promotion evidence
+    (``manifest.promotions`` / ``promotion-journal.jsonl``).  Returns::
+
+        {"decision": "noop" | "pr_required" | "uncertain",
+         "engine_changes": [{"sha", "subject", "paths"}],
+         "promotion_evidence": [...],
+         "waiver_path": str | None,
+         "reason": str}
+
+    ``noop`` writes ``reconcile-verification.json`` into ``plan_dir`` when
+    ``plan_name`` / ``milestone_label`` are provided (the completion guard
+    accepts it).  Any uncertainty degrades to ``pr_required`` — never a
+    silent no-op.
+    """
+
+    def _engine_change_commits() -> list[dict[str, Any]] | None:
+        base = chain_base_sha or spec.base_branch
+        if not base:
+            return None
+        raw_log = _soft_git(
+            root,
+            "log",
+            "--first-parent",
+            "--format=%H%x09%s",
+            f"{base}..HEAD",
+        )
+        if raw_log is None:
+            return None
+        changes: list[dict[str, Any]] = []
+        for line in raw_log.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            sha, _, subject = line.partition("\t")
+            sha = sha.strip()
+            if not sha:
+                continue
+            touched = [
+                path
+                for path in _changed_paths_for_commit(root, sha)
+                if path.startswith(ENGINE_SOURCE_ROOTS)
+            ]
+            if touched:
+                changes.append(
+                    {"sha": sha, "subject": subject.strip(), "paths": touched}
+                )
+        return changes
+
+    engine_changes = _engine_change_commits()
+    if engine_changes is None:
+        decision = "uncertain"
+        reason = "engine change set could not be computed (git log failed)"
+    elif not engine_changes:
+        decision = "noop"
+        reason = "no engine-source changes in reconcile range"
+    else:
+        promoted_refs = _promoted_refs(manifest, manifest_path=manifest_path)
+        if promoted_refs is None:
+            decision = "uncertain"
+            reason = "engine changes present but promotion journal unreadable"
+        else:
+            unpromoted = [
+                change
+                for change in engine_changes
+                if not any(
+                    _git_is_ancestor(root, change["sha"], ref)
+                    for ref in promoted_refs
+                )
+            ]
+            if unpromoted:
+                decision = "pr_required"
+                reason = (
+                    f"{len(unpromoted)} engine-source change(s) not covered by "
+                    "promotion evidence"
+                )
+            else:
+                decision = "noop"
+                reason = "all engine-source changes already promoted"
+
+    promotion_evidence = _promoted_refs(manifest, manifest_path=manifest_path) or []
+    waiver_path: str | None = None
+    if (
+        decision == "noop"
+        and plan_dir is not None
+        and plan_name
+        and milestone_label
+    ):
+        base_sha = (
+            _current_head_sha(root)
+            or chain_base_sha
+            or ""
+        )
+        if base_sha:
+            path = _write_reconcile_verification_waiver(
+                plan_dir,
+                plan=plan_name,
+                milestone_label=milestone_label,
+                base_sha=base_sha,
+                scope=(
+                    "no_engine_changes"
+                    if not engine_changes
+                    else "already_promoted"
+                ),
+                engine_changes=engine_changes or [],
+                promotion_evidence=promotion_evidence,
+                reason=reason,
+            )
+            waiver_path = str(path)
+    return {
+        "decision": decision,
+        "engine_changes": engine_changes or [],
+        "promotion_evidence": promotion_evidence,
+        "waiver_path": waiver_path,
+        "reason": reason,
+    }
+
+
+def _declares_final_conformance_gate(milestone: "MilestoneSpec") -> bool:
+    """True when *milestone* explicitly declares a ``final_conformance_gate``.
+
+    The reconcile-skip trigger is the DECLARED gate kind, not the mere
+    presence of any terminal ``validate`` block: a terminal validate of
+    another kind must not silently suppress reconciliation.
+    """
+    return any(
+        getattr(validation, "kind", None) == "final_conformance_gate"
+        for validation in milestone.validate
+    )
+
+
+def ensure_reconcile_milestone(
+    spec_path: Path,
+    *,
+    root: Path | None = None,
+    writer: Callable[[str], Any] | None = None,
+    now: datetime | None = None,
+) -> ChainSpec:
+    """Idempotently materialize the generated ``kind: reconcile`` milestone.
+
+    For legacy chains (no ``kind: reconcile`` milestone yet): appends the
+    generated reconcile milestone — label ``reconcile``, idea
+    ``briefs/reconcile.md``, branch ``reconcile/<slug>-<date>``,
+    ``target_branch: main``, ``merge_policy: review``, ``phase_model:
+    [execute=codex]``, ``depends_on`` the previous terminal milestone — and
+    writes the ``briefs/reconcile.md`` rubric brief.  The date/branch are
+    persisted on FIRST run and never recomputed: a chain that already carries
+    the milestone (or has ``reconciliation.enabled: false``) is returned
+    untouched.  Returns the (possibly reloaded) spec.
+    """
+
+    write = writer or (lambda _msg: None)
+    spec = chain_spec.load_spec(spec_path)
+    if not spec.reconciliation.get("enabled", True):
+        return spec
+    if any(milestone.kind == "reconcile" for milestone in spec.milestones):
+        return spec
+    spec_path = spec_path.expanduser().resolve()
+    if spec.milestones and _declares_final_conformance_gate(spec.milestones[-1]):
+        # A final_conformance_gate must stay the FINAL milestone (serial
+        # order is asserted loudly).  Appending the generated reconcile
+        # milestone would violate that contract, so reconciliation is
+        # RECORDED as skipped for this chain rather than breaking the gate.
+        # The record is DURABLE: an atomic ``reconcile-skip.json`` sidecar
+        # next to the spec, read on restart, so a crash after the record
+        # write (or after materialization) never re-inserts a duplicate
+        # milestone or re-runs the skip silently.
+        skip_path = spec_path.parent / RECONCILE_SKIP_FILENAME
+        if not skip_path.exists():
+            atomic_write_json(
+                skip_path,
+                {
+                    "schema": RECONCILE_SKIP_SCHEMA,
+                    "epic": spec_path.parent.name,
+                    "terminal_milestone": spec.milestones[-1].label,
+                    "gate": "final_conformance_gate",
+                    "reason": (
+                        "terminal milestone declares a final_conformance_gate; "
+                        "the generated reconcile milestone would violate the "
+                        "final-milestone invariant"
+                    ),
+                    "recorded_at": (now or datetime.now(timezone.utc)).isoformat(),
+                },
+            )
+        write(
+            f"[chain] reconciliation skipped for {spec_path}: previous terminal "
+            f"milestone {spec.milestones[-1].label!r} declares a final "
+            "conformance gate; the generated reconcile milestone would violate "
+            "the final-milestone invariant (durable record "
+            f"{RECONCILE_SKIP_FILENAME})\n"
+        )
+        return spec
+    if root is None:
+        root = spec_path.parent.parent.parent
+    root = Path(root).expanduser().resolve()
+    from arnold_pipelines.megaplan.briefs import (
+        write_markdown_artifact as _write_brief_artifact,
+    )
+
+    directory = spec_path.parent
+    date = (now or datetime.now(timezone.utc)).strftime("%Y%m%d")
+    reconcile_brief = directory / "briefs" / "reconcile.md"
+    reconcile_brief.parent.mkdir(parents=True, exist_ok=True)
+    _write_brief_artifact(
+        reconcile_brief,
+        "\n".join(
+            [
+                "# Reconcile",
+                "",
+                "## Outcome",
+                "",
+                "Select and publish the epic's engine-source commits that were",
+                "not already promoted, as a reviewed PR onto `main`.",
+                "",
+                "## Rubric",
+                "",
+                "This milestone is governed by the per-epic runtime end-state",
+                "and megaplan reference architecture docs:",
+                "",
+                "- `docs/megaplan-reference-architecture-20260807.md`",
+                "- `docs/per-epic-runtime-end-state-20260809.md`",
+                "",
+                "## Scope",
+                "",
+                "Engine-source changes (`arnold_pipelines/`, `arnold/`) not",
+                "covered by promotion evidence.",
+                "",
+                "## Constraints",
+                "",
+                "- Selection is evidence, not narrative: output the chosen",
+                "  commit SHAs plus verification evidence.",
+                "- A verified no-op still records `reconcile-verification.json`.",
+                "",
+                "## Done Criteria",
+                "",
+                "- Selected commits are cherry-picked onto",
+                "  `reconcile/<slug>-<date>` from `main`.",
+                "- PR merged, intentionally rejected, or verified no-op.",
+                "",
+            ]
+        ),
+        metadata={
+            "type": "brief",
+            "slug": "reconcile",
+            "title": "Reconcile",
+            "epic": directory.name,
+            "created_at": datetime.now(timezone.utc),
+        },
+    )
+    try:
+        import yaml
+
+        raw = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+        milestones = list(raw.get("milestones") or [])
+        previous_terminal = milestones[-1].get("label") if milestones else None
+        reconcile_milestone: dict[str, Any] = {
+            "label": "reconcile",
+            "kind": "reconcile",
+            "idea": str(reconcile_brief.relative_to(root)),
+            "branch": f"reconcile/{directory.name}-{date}",
+            "target_branch": "main",
+            "merge_policy": "review",
+            "phase_model": ["execute=codex"],
+        }
+        if previous_terminal:
+            reconcile_milestone["depends_on"] = [previous_terminal]
+        milestones.append(reconcile_milestone)
+        raw["milestones"] = milestones
+        # Atomic tmp+rename (same dir, fsync, os.replace): a crash mid-persist
+        # leaves either the old valid spec or the new valid spec on disk —
+        # never a truncated/corrupt spec.  A re-run heals.
+        atomic_write_text(spec_path, yaml.safe_dump(raw, sort_keys=False))
+    except Exception as exc:
+        raise CliError(
+            "reconcile_milestone_persist_failed",
+            f"could not persist generated reconcile milestone for {spec_path}: {exc}",
+        ) from exc
+    write(
+        f"[chain] appended generated kind=reconcile milestone "
+        f"reconcile/{directory.name}-{date} to {spec_path}\n"
+    )
+    return chain_spec.load_spec(spec_path)
+
+
 def run_chain(
     spec_path: Path,
     root: Path,
@@ -6345,6 +6989,12 @@ def run_chain(
     # identity binding. Manifest present+valid passes; a manifestless session
     # passes only with a valid unexpired allow_manifestless permit; else block.
     chain_spec.require_runtime_manifest_permit(spec_path)
+    # P6: materialize the generated ``kind: reconcile`` terminal milestone for
+    # legacy chains BEFORE any state load or execution identity binding, so
+    # the loaded state and the bound identity both see the final milestone.
+    # Idempotent: the date/branch are persisted on first run, never recomputed.
+    spec = ensure_reconcile_milestone(spec_path, root=root, writer=writer)
+    chain_spec.validate_paths(spec, root, spec_path=spec_path)
     state = chain_spec.load_chain_state(spec_path)
     from arnold_pipelines.megaplan.chain.execution_binding import (
         bind_execution_identity,
@@ -6718,7 +7368,11 @@ def run_chain(
 
         if state.current_milestone_index == idx and state.pr_number is not None and use_pr:
             pr_state = _pr_state(root, state.pr_number, writer=writer)
-            if pr_state == "closed" and state.last_state == "blocked":
+            if (
+                pr_state == "closed"
+                and state.last_state == "blocked"
+                and not _is_reconcile_milestone(milestone)
+            ):
                 log(
                     f"clearing stale closed PR context for {milestone.label} while "
                     "resuming blocked plan"
@@ -6782,6 +7436,14 @@ def run_chain(
                         writer=writer,
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
+                if _is_reconcile_milestone(milestone):
+                    _delete_reconcile_pr_branch_for(milestone, root, writer=writer)
+                    _record_reconcile_outcome(
+                        state,
+                        outcome="merged",
+                        reason=f"reconcile PR #{state.pr_number} merged into "
+                        f"{_reconcile_target_branch(milestone, spec)}",
+                    )
                 validation_reason = _run_milestone_validations_blocking(
                     root=root,
                     spec_path=spec_path,
@@ -6809,6 +7471,7 @@ def run_chain(
                         "status": "done",
                         "pr_number": state.pr_number,
                         "pr_state": "merged",
+                        **_reconcile_record_fields(milestone, spec),
                     },
                     implementation_milestone=True,
                     writer=writer,
@@ -6908,6 +7571,44 @@ def run_chain(
                 state.pr_state = None
                 chain_spec.save_chain_state(spec_path, state)
             else:
+                if _is_reconcile_milestone(milestone):
+                    # Reconcile PR lifecycle: merged and intentionally-closed
+                    # are BOTH terminal, close-worthy outcomes (per the P6
+                    # terminal-state rules).  Unknown/open states keep the
+                    # chain parked awaiting human review — never close.
+                    pr_state = _pr_state(root, state.pr_number, writer=writer)
+                    if pr_state == "closed":
+                        blocked = _advance_reconcile_rejected(
+                            root,
+                            spec_path,
+                            spec,
+                            state,
+                            milestone,
+                            events,
+                            pr_number=state.pr_number,
+                            writer=writer,
+                            log=log,
+                        )
+                        if blocked is not None:
+                            return blocked
+                        continue
+                    if pr_state != "merged":
+                        state.pr_state = pr_state
+                        chain_spec.save_chain_state(spec_path, state)
+                        log(
+                            f"reconcile PR #{state.pr_number} state={pr_state}; "
+                            "awaiting human review/merge"
+                        )
+                        return _result(
+                            STATE_AWAITING_PR_MERGE,
+                            state,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"reconcile milestone {milestone.label} PR "
+                                f"#{state.pr_number} is {pr_state}"
+                            ),
+                        )
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
                 if pr_state == "closed":
                     log(f"PR #{state.pr_number} closed while awaiting merge; stopping chain")
@@ -7078,6 +7779,14 @@ def run_chain(
                         writer=writer,
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
+                if _is_reconcile_milestone(milestone):
+                    _delete_reconcile_pr_branch_for(milestone, root, writer=writer)
+                    _record_reconcile_outcome(
+                        state,
+                        outcome="merged",
+                        reason=f"reconcile PR #{state.pr_number} merged into "
+                        f"{_reconcile_target_branch(milestone, spec)}",
+                    )
             validation_reason = _run_milestone_validations_blocking(
                 root=root,
                 spec_path=spec_path,
@@ -7102,6 +7811,7 @@ def run_chain(
                 "status": "done",
                 "pr_number": state.pr_number,
                 "pr_state": "merged" if state.pr_number is not None else None,
+                **_reconcile_record_fields(milestone, spec),
             }
             if local_publication_sha is not None:
                 completion_record["local_commit_sha"] = local_publication_sha
@@ -7277,7 +7987,7 @@ def run_chain(
                         base_ref = _checkout_milestone_branch(
                             root,
                             milestone.branch or "",
-                            base_branch=spec.base_branch,
+                            base_branch=_reconcile_target_branch(milestone, spec),
                             writer=writer,
                             from_origin=push_enabled and not no_git_refresh,
                             expected_base_ref=state.target_base_ref,
@@ -7290,10 +8000,11 @@ def run_chain(
                     )
                     if state.pr_number is None:
                         state = chain_spec.load_chain_state(spec_path)
-                        state.pr_number = _ensure_milestone_pr(
+                        state.pr_number = _ensure_pr_for_milestone(
                             root,
+                            spec,
+                            state,
                             milestone,
-                            base_branch=spec.base_branch,
                             writer=writer,
                         )
                         state.pr_state = "open" if state.pr_number is not None else None
@@ -7301,7 +8012,7 @@ def run_chain(
             else:
                 base_ref = _refresh_base_branch(
                     root,
-                    spec.base_branch,
+                    _reconcile_target_branch(milestone, spec),
                     writer=writer,
                     no_git_refresh=no_git_refresh,
                     expected_sha=state.target_base_ref,
@@ -7316,11 +8027,156 @@ def run_chain(
                         no_push=not push_enabled,
                         writer=writer,
                     )
+                eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
+                eff_robustness = (
+                    state.robustness_bumps.get(milestone.label)
+                    or milestone.robustness
+                    or spec.robustness
+                )
+                eff_depth = state.depth_bumps.get(milestone.label) or milestone.depth
+                if milestone.kind == "reconcile":
+                    # P6 controller-side skip detection.  A verified no-op
+                    # (empty engine-source change set, or every change already
+                    # covered by promotion evidence) writes the
+                    # reconcile-verification.json waiver and advances WITHOUT
+                    # running the agent; any uncertainty degrades to
+                    # ``pr_required`` (never a silent no-op).
+                    manifest_path = chain_spec.session_runtime_manifest_path()
+                    manifest: Mapping[str, Any] | None = None
+                    if manifest_path is not None and manifest_path.exists():
+                        try:
+                            from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+                                load_manifest,
+                            )
+
+                            manifest = load_manifest(manifest_path).to_dict()
+                        except Exception:
+                            manifest = None
+                    scope = compute_reconcile_scope(
+                        spec,
+                        manifest,
+                        root=root,
+                        chain_base_sha=state.target_base_ref,
+                        manifest_path=manifest_path,
+                    )
+                    log(
+                        f"milestone {milestone.label} reconcile scope: "
+                        f"{scope['decision']} ({scope['reason']})"
+                    )
+                    if scope["decision"] == "noop":
+                        plan_name = _init_plan(
+                            root,
+                            milestone.idea,
+                            robustness=eff_robustness,
+                            auto_approve=spec.auto_approve,
+                            profile=eff_profile,
+                            vendor=milestone.vendor,
+                            depth=eff_depth,
+                            critic=milestone.critic,
+                            deepseek_provider=milestone.deepseek_provider,
+                            with_prep=milestone.with_prep,
+                            with_feedback=milestone.with_feedback,
+                            prep_clarify=milestone.prep_clarify,
+                            prep_direction=milestone.prep_direction,
+                            phase_model=milestone.phase_model,
+                            writer=writer,
+                        )
+                        _write_chain_policy_into_plan_meta(
+                            root, plan_name, spec, spec_path, milestone.label
+                        )
+                        _attach_chain_anchors_to_plan(
+                            root, spec_path, plan_name, spec, milestone
+                        )
+                        plan_dir = resolve_plan_dir(root, plan_name)
+                        compute_reconcile_scope(
+                            spec,
+                            manifest,
+                            root=root,
+                            chain_base_sha=state.target_base_ref,
+                            manifest_path=manifest_path,
+                            plan_dir=plan_dir,
+                            plan_name=plan_name,
+                            milestone_label=milestone.label,
+                        )
+                        # Deliberately NOT persisted as the active plan before
+                        # the completion append: a crash in this window must
+                        # re-run the fresh-path skip (idempotent re-init +
+                        # re-write of the waiver) instead of resuming the plan
+                        # and driving the agent for a verified no-op.
+                        _emit_milestone_start_evidence(
+                            state,
+                            milestone_label=milestone.label,
+                            milestone_index=idx,
+                            plan_name=plan_name,
+                        )
+                        completed_record = {
+                            "label": milestone.label,
+                            "plan": plan_name,
+                            "status": STATE_DONE,
+                            "pr_number": None,
+                            "pr_state": None,
+                            "kind": "reconcile",
+                            "target_branch": milestone.target_branch,
+                            "reconcile_verification": scope["decision"],
+                        }
+                        appended, reason = _append_completed_with_guard(
+                            root,
+                            state,
+                            completed_record,
+                            implementation_milestone=True,
+                            writer=writer,
+                        )
+                        if not appended:
+                            return _handle_completion_guard_failure(
+                                root=root,
+                                spec_path=spec_path,
+                                spec=spec,
+                                state=state,
+                                milestone=milestone,
+                                plan_name=plan_name,
+                                outcome_status="reconcile_noop",
+                                reason=reason,
+                                events=events,
+                                writer=writer,
+                            )
+                        _mark_plan_completed_by_chain(
+                            root,
+                            plan_name,
+                            milestone_label=milestone.label,
+                            completion_reason=reason,
+                            writer=writer,
+                            state=state,
+                        )
+                        idx += 1
+                        _mark_chain_after_milestone_advance(
+                            spec, state, next_index=idx
+                        )
+                        chain_spec.save_chain_state(spec_path, state)
+                        _emit_milestone_completion_evidence(
+                            state,
+                            milestone_label=milestone.label,
+                            milestone_index=idx - 1,
+                            plan_name=plan_name,
+                        )
+                        if idx >= len(spec.milestones):
+                            _emit_chain_complete_evidence(state, spec=spec)
+                        chain_spec.save_chain_state(spec_path, state)
+                        if one:
+                            return _result(
+                                "paused",
+                                state,
+                                events,
+                                spec=spec,
+                                reason=(
+                                    f"completed one milestone: {milestone.label}"
+                                ),
+                            )
+                        continue
                 if use_pr:
                     base_ref = _checkout_milestone_branch(
                         root,
                         milestone.branch or "",
-                        base_branch=spec.base_branch,
+                        base_branch=_reconcile_target_branch(milestone, spec),
                         writer=writer,
                         from_origin=push_enabled and not no_git_refresh,
                         expected_base_ref=state.target_base_ref,
@@ -7332,13 +8188,6 @@ def run_chain(
                         root, spec_path, branch=milestone.branch, pr_number=None
                     )
                     state = chain_spec.load_chain_state(spec_path)
-                eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
-                eff_robustness = (
-                    state.robustness_bumps.get(milestone.label)
-                    or milestone.robustness
-                    or spec.robustness
-                )
-                eff_depth = state.depth_bumps.get(milestone.label) or milestone.depth
                 if (
                     eff_profile != milestone.profile
                     or eff_robustness != (milestone.robustness or spec.robustness)
@@ -7371,6 +8220,18 @@ def run_chain(
                     root, plan_name, spec, spec_path, milestone.label
                 )
                 _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
+                # P6 reconcile executor inputs: a kind:reconcile milestone's
+                # execute step is a SELECTION task — write the rubric docs +
+                # git log --first-parent + candidate commits marker so the
+                # execute path renders the reconcile prompt.
+                _write_reconcile_plan_inputs(
+                    root,
+                    plan_name,
+                    spec,
+                    milestone,
+                    state=state,
+                    writer=writer,
+                )
                 state.current_milestone_index = idx
                 state.current_plan_name = plan_name
                 # The chain cursor and lifecycle projection must move together.
@@ -7443,10 +8304,11 @@ def run_chain(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                     )
                     state = chain_spec.load_chain_state(spec_path)
-                    state.pr_number = _ensure_milestone_pr(
+                    state.pr_number = _ensure_pr_for_milestone(
                         root,
+                        spec,
+                        state,
                         milestone,
-                        base_branch=spec.base_branch,
                         writer=writer,
                     )
                     state.pr_state = "open"
@@ -7486,6 +8348,16 @@ def run_chain(
         )
         if fresh_admission is not None:
             chain_spec.save_chain_state(spec_path, state)
+        # P6 reconcile executor inputs (idempotent re-write covers both the
+        # fresh-init and the crash-resume path; harmless for other kinds).
+        _write_reconcile_plan_inputs(
+            root,
+            plan_name,
+            spec,
+            milestone,
+            state=state,
+            writer=writer,
+        )
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
@@ -7719,6 +8591,39 @@ def run_chain(
                     "commit_sha": local_commit_sha,
                 },
             )
+        if (
+            decision == "advance"
+            and use_pr
+            and _is_reconcile_milestone(milestone)
+        ):
+            # P6: a reconcile milestone's PR must carry the cherry-picked
+            # engine commits, so the controller publishes the executor's
+            # selection AFTER the plan completes and BEFORE the PR-ready /
+            # await-merge flow.  Fail-closed: no selection evidence, an
+            # unreachable SHA, a cherry-pick conflict, or a missing gh
+            # executable blocks the milestone (never a silent no-op).
+            state = chain_spec.load_chain_state(spec_path)
+            publish_reason = _publish_reconcile_selection(
+                root,
+                spec_path,
+                spec,
+                state,
+                milestone,
+                plan_dir=resolve_plan_dir(root, plan_name),
+                writer=writer,
+                log=log,
+            )
+            if publish_reason is not None:
+                state.last_state = STATE_BLOCKED
+                chain_spec.save_chain_state(spec_path, state)
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=publish_reason,
+                )
+            state = chain_spec.load_chain_state(spec_path)
         if decision == "advance" and use_pr and state.pr_number is not None:
             _git_start = time.monotonic()
             _commit_and_push_phase(
@@ -7822,7 +8727,30 @@ def run_chain(
             if current_pr_state == "merged":
                 state.pr_state = "merged"
                 chain_spec.save_chain_state(spec_path, state)
+                if _is_reconcile_milestone(milestone):
+                    _delete_reconcile_pr_branch_for(milestone, root, writer=writer)
+                    _record_reconcile_outcome(
+                        state,
+                        outcome="merged",
+                        reason=f"reconcile PR #{state.pr_number} merged into "
+                        f"{_reconcile_target_branch(milestone, spec)}",
+                    )
             elif current_pr_state == "closed":
+                if _is_reconcile_milestone(milestone):
+                    blocked = _advance_reconcile_rejected(
+                        root,
+                        spec_path,
+                        spec,
+                        state,
+                        milestone,
+                        events,
+                        pr_number=state.pr_number,
+                        writer=writer,
+                        log=log,
+                    )
+                    if blocked is not None:
+                        return blocked
+                    continue
                 log(f"PR #{state.pr_number} closed during milestone completion; stopping chain")
                 return _stop_for_closed_pr(
                     spec_path=spec_path,
@@ -8045,6 +8973,7 @@ def run_chain(
             "status": outcome.status,
             "pr_number": state.pr_number,
             "pr_state": state.pr_state,
+            **_reconcile_record_fields(milestone, spec),
         }
         if local_commit_sha is not None:
             completed_record["local_commit_sha"] = local_commit_sha
@@ -8136,6 +9065,25 @@ def run_chain(
             )
 
     log("all milestones complete")
+    # ── P6 terminal finalizer ─────────────────────────────────────────
+    # Close + sweep the epic runtime ONLY after the reconcile milestone
+    # reached a terminal outcome (merged / intentionally rejected / verified
+    # no-op) with no PR awaiting — never after unknown PR state, missing gh
+    # auth, or interrupted publication (P6 terminal-state rules, correction
+    # #6).  Runs arnold-close then arnold-gc-sweep --restore-proven
+    # --fixer-branch; idempotent across crashes (manifest state=closed +
+    # worktree gone ⇒ already finalized).
+    finalizer_block = _run_reconcile_terminal_finalizer(
+        root=root,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        events=events,
+        writer=writer,
+        log=log,
+    )
+    if finalizer_block is not None:
+        return finalizer_block
     # ── Successor gate check ──────────────────────────────────────────
     # In fail-closed (atomic/enforce) mode a completed chain must carry a
     # validated acceptance receipt for its final milestone before any
@@ -8148,6 +9096,333 @@ def run_chain(
     if successor_block is not None:
         return successor_block
     return _result("done", state, events, spec=spec)
+
+
+RECONCILE_INPUTS_FILENAME = "reconcile_inputs.json"
+
+
+def _write_reconcile_plan_inputs(
+    root: Path,
+    plan_name: str,
+    spec: ChainSpec,
+    milestone: MilestoneSpec,
+    *,
+    state: ChainState,
+    writer,
+) -> None:
+    """Write ``reconcile_inputs.json`` into a reconcile milestone's plan dir.
+
+    The execute worker for a ``kind: reconcile`` milestone is a SELECTION task
+    (JSON of chosen commit SHAs + verification evidence), not a generic
+    implementation batch: the generic execute prompt cannot carry the rubric
+    docs, ``git log --first-parent``, and the candidate commit list.  This
+    marker file lets the execute path (``execute/batch.py``) switch to
+    ``render_reconcile_prompt`` for this plan.  Best-effort: any failure
+    leaves the plan on the generic prompt rather than blocking the chain.
+    """
+    if not _is_reconcile_milestone(milestone):
+        return
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        return
+    rubric_paths = [
+        root / "docs" / "megaplan-reference-architecture-20260807.md",
+        root / "docs" / "per-epic-runtime-end-state-20260809.md",
+    ]
+    rubric_docs: list[str] = []
+    for path in rubric_paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if text.strip():
+            rubric_docs.append(text)
+    first_parent_log = ""
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "log",
+            "--first-parent",
+            "--format=%H %s",
+            "-n",
+            "200",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        first_parent_log = (proc.stdout or "").strip()
+    # Candidate commits: the controller-side engine-source change set (same
+    # allowlist the skip detector uses); empty on any compute failure.
+    candidate_commits: list[dict[str, Any]] = []
+    try:
+        scope = compute_reconcile_scope(
+            spec,
+            None,
+            root=root,
+            chain_base_sha=state.target_base_ref,
+        )
+        engine_changes = scope.get("engine_changes")
+        if isinstance(engine_changes, list):
+            candidate_commits = [
+                change
+                for change in engine_changes
+                if isinstance(change, dict)
+                and isinstance(change.get("sha"), str)
+                and change["sha"].strip()
+            ]
+    except Exception:  # noqa: BLE001 - best-effort marker
+        candidate_commits = []
+    payload = {
+        "rubric_docs": rubric_docs,
+        "first_parent_log": first_parent_log,
+        "candidate_commits": candidate_commits,
+        "target_branch": (
+            milestone.target_branch
+            if isinstance(milestone.target_branch, str) and milestone.target_branch.strip()
+            else spec.base_branch
+        ),
+    }
+    try:
+        from arnold_pipelines.megaplan._core.io import atomic_write_json
+
+        atomic_write_json(plan_dir / RECONCILE_INPUTS_FILENAME, payload)
+    except Exception as exc:  # noqa: BLE001 - best-effort marker
+        writer(
+            f"[chain] warning: could not write {RECONCILE_INPUTS_FILENAME} "
+            f"for {milestone.label}: {exc}\n"
+        )
+
+
+def _run_reconcile_terminal_finalizer(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    events: list[dict[str, Any]],
+    writer,
+    log: Callable[[str], None],
+) -> dict[str, Any] | None:
+    """Idempotent terminal close+sweep once a ``kind: reconcile`` milestone is done.
+
+    P6 terminal-state rules (correction #6): close+sweep run ONLY after the
+    reconcile milestone reached a terminal outcome — PR **merged**,
+    intentionally **rejected**, or **verified no-op** — with no PR awaiting.
+    Never after unknown PR state, missing gh auth, or interrupted
+    publication: any record that is not one of those three terminal outcomes
+    (or an absent manifest binding) leaves the runtime untouched and returns
+    ``None`` (the chain result is unaffected).
+
+    On a terminal outcome it runs, in order:
+      1. ``arnold-close <slug> <manifest>`` — verifies the fixer branch is
+         pushed, creates + pushes the backstop tag, sets manifest
+         state=closed (fail-loud: an epic is never closed without an
+         origin-resolvable backstop snapshot).
+      2. ``arnold-gc-sweep --restore-proven --fixer-branch <branch>
+         <manifest-dir>`` — removes the worktree/venv and deletes the
+         manifest-declared fixer branch local + remote (refuses while a pull
+         ref still points at the branch head).
+
+    Idempotent: a crash between close and sweep is healed on the next
+    ``run_chain`` — close on a closed manifest is a no-op re-verify and the
+    sweep SKIPs already-gone worktrees.  Returns a ``blocked`` result dict
+    when close or sweep fails (the runtime must not be left half-torn), or
+    ``None`` when there is nothing to finalize.
+    """
+    reconcile_milestones = [
+        milestone for milestone in spec.milestones if _is_reconcile_milestone(milestone)
+    ]
+    if not reconcile_milestones:
+        return None
+    # The generated reconcile milestone is terminal; use the LAST one (a
+    # hand-authored chain could only ever have one, but stay deterministic).
+    milestone = reconcile_milestones[-1]
+    record = None
+    for candidate in state.completed:
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("label") == milestone.label
+            and _record_is_reconcile(candidate)
+        ):
+            record = candidate
+            break
+    if record is None:
+        log(
+            f"[chain] reconcile milestone {milestone.label} has no terminal "
+            "completion record; skipping close/sweep (nothing to finalize)"
+        )
+        return None
+
+    merged = _completion_record_is_merged_pr(record)
+    rejected = _record_is_intentionally_rejected(record)
+    noop = record.get("reconcile_verification") == "noop"
+    if not (merged or rejected or noop):
+        log(
+            f"[chain] reconcile milestone {milestone.label} record is not terminal "
+            f"(pr_state={record.get('pr_state')!r}, status={record.get('status')!r}, "
+            "reconcile_verification="
+            f"{record.get('reconcile_verification')!r}); refusing close/sweep "
+            "(P6 terminal-state rules: never close on unknown PR state)"
+        )
+        return None
+
+    # No PR may be awaiting: a reconcile PR that is still open/unknown must
+    # keep the chain parked, never trigger cleanup.
+    if state.pr_number is not None or state.last_state == STATE_AWAITING_PR_MERGE:
+        log(
+            f"[chain] reconcile milestone {milestone.label} still has PR context "
+            f"(pr_number={state.pr_number!r}, last_state={state.last_state!r}); "
+            "deferring close/sweep"
+        )
+        return None
+
+    manifest_path = chain_spec.session_runtime_manifest_path()
+    if manifest_path is None:
+        log(
+            f"[chain] no session runtime manifest bound; skipping terminal "
+            "close/sweep for reconcile milestone "
+            f"{milestone.label} (local/dev run has no runtime to close)"
+        )
+        return None
+    manifest_path = Path(manifest_path)
+    if not manifest_path.is_file():
+        log(
+            f"[chain] runtime manifest {manifest_path} already gone — close/sweep "
+            "already finalized (idempotent skip)"
+        )
+        return None
+
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
+
+        manifest = load_manifest(manifest_path).to_dict()
+    except Exception as exc:  # noqa: BLE001 - fail closed on unreadable manifest
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                f"reconcile terminal finalizer blocked: runtime manifest "
+                f"{manifest_path} unreadable: {exc}"
+            ),
+        )
+    slug = str(manifest.get("epic_id") or "").strip()
+    fixer_branch = str((manifest.get("epic") or {}).get("branch") or "").strip()
+    worktree = str((manifest.get("epic") or {}).get("worktree_path") or "").strip()
+    manifest_state = str(manifest.get("state") or "").strip()
+    if not slug or not fixer_branch:
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                f"reconcile terminal finalizer blocked: runtime manifest "
+                f"{manifest_path} missing epic_id/epic.branch"
+            ),
+        )
+
+    outcome = "merged" if merged else ("rejected" if rejected else "noop")
+    log(
+        f"[chain] reconcile milestone {milestone.label} terminal ({outcome}); "
+        f"running close+sweep for runtime {slug} (fixer branch {fixer_branch})"
+    )
+
+    def _wrapper_binary(name: str) -> str | None:
+        found = shutil.which(name)
+        if found:
+            return found
+        candidate = Path(__file__).resolve().parents[1] / "cloud" / "wrappers" / name
+        return str(candidate) if candidate.is_file() else None
+
+    close_bin = _wrapper_binary("arnold-close")
+    sweep_bin = _wrapper_binary("arnold-gc-sweep")
+    if close_bin is None or sweep_bin is None:
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                "reconcile terminal finalizer blocked: lifecycle wrappers "
+                f"arnold-close={'missing' if close_bin is None else 'ok'}, "
+                f"arnold-gc-sweep={'missing' if sweep_bin is None else 'ok'} not "
+                "found on PATH or in the package wrapper dir"
+            ),
+        )
+
+    # ── 1. arnold-close ───────────────────────────────────────────────
+    # Skip only when the manifest is ALREADY closed and the worktree is gone
+    # (fully swept).  A closed manifest with a surviving worktree still needs
+    # the sweep, so re-run close harmlessly (it re-verifies and no-ops).
+    if manifest_state != "closed" or (worktree and Path(worktree).is_dir()):
+        close = subprocess.run(
+            [close_bin, slug, str(manifest_path)],
+            capture_output=True,
+            text=True,
+        )
+        if close.returncode != 0:
+            return _result(
+                "blocked",
+                state,
+                events,
+                spec=spec,
+                reason=(
+                    f"reconcile terminal finalizer blocked: arnold-close failed "
+                    f"(exit {close.returncode}): "
+                    f"{(close.stderr or close.stdout or '').strip()[:2000]}"
+                ),
+            )
+        log(f"[chain] arnold-close completed for runtime {slug}")
+    else:
+        log(
+            f"[chain] arnold-close already complete for runtime {slug} "
+            "(manifest closed, worktree gone)"
+        )
+
+    # ── 2. arnold-gc-sweep --restore-proven --fixer-branch ───────────
+    sweep = subprocess.run(
+        [
+            sweep_bin,
+            "--restore-proven",
+            "--fixer-branch",
+            fixer_branch,
+            str(manifest_path.parent),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if sweep.returncode != 0:
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                f"reconcile terminal finalizer blocked: arnold-gc-sweep failed "
+                f"(exit {sweep.returncode}): "
+                f"{(sweep.stderr or sweep.stdout or '').strip()[:2000]}"
+            ),
+        )
+    log(f"[chain] arnold-gc-sweep completed for runtime {slug}")
+
+    state.metadata["reconcile_terminal_finalizer"] = {
+        "milestone": milestone.label,
+        "outcome": outcome,
+        "slug": slug,
+        "fixer_branch": fixer_branch,
+        "manifest_path": str(manifest_path),
+        "closed": True,
+        "swept": True,
+        "finalized_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    chain_spec.save_chain_state(spec_path, state)
+    return None
 
 
 def _check_successor_gate_at_chain_completion(
@@ -8281,6 +9556,396 @@ def _clear_stale_closed_pr_state(
     state.pr_state = None
     chain_spec.save_chain_state(spec_path, state)
     return state
+
+
+# ── kind: reconcile milestone PR lifecycle ───────────────────────────────
+
+def _is_reconcile_milestone(milestone: MilestoneSpec) -> bool:
+    """Whether a milestone is the generated end-of-epic reconcile milestone."""
+    return getattr(milestone, "kind", "product") == "reconcile"
+
+
+def _reconcile_target_branch(milestone: MilestoneSpec, spec: ChainSpec) -> str:
+    """The PR base for a reconcile milestone (recorded target, default chain base)."""
+    target = getattr(milestone, "target_branch", None)
+    if isinstance(target, str) and target.strip():
+        return target.strip()
+    return spec.base_branch
+
+
+def _reconcile_record_fields(milestone: MilestoneSpec, spec: ChainSpec) -> dict[str, Any]:
+    """Fields stamped onto completed records for reconcile milestones."""
+    if not _is_reconcile_milestone(milestone):
+        return {}
+    return {
+        "kind": "reconcile",
+        "target_branch": _reconcile_target_branch(milestone, spec),
+    }
+
+
+def _record_reconcile_target_metadata(
+    state: ChainState,
+    milestone: MilestoneSpec,
+    spec: ChainSpec,
+    *,
+    base_ref: str | None = None,
+) -> None:
+    """Record the reconcile PR's target branch as durable evidence.
+
+    Completion validation reads the recorded ``target_branch`` off the
+    completed record (see ``_published_target_is_in_chain_target``); this
+    metadata entry keeps the publication-time fork point available to
+    operators and watchers.
+    """
+    state.metadata["reconcile_target"] = {
+        "branch": _reconcile_target_branch(milestone, spec),
+        "base_ref": base_ref or "",
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def _reconcile_pr_url(root: Path, pr_number: int) -> str:
+    """Best-effort ``https://github.com/<owner>/<repo>/pull/<n>`` from origin."""
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    url = (proc.stdout or "").strip()
+    if not url:
+        return ""
+    if url.startswith("git@github.com:"):
+        slug = url[len("git@github.com:") :].removesuffix(".git")
+    elif "github.com/" in url:
+        slug = url.split("github.com/", 1)[1].removesuffix(".git")
+    else:
+        return ""
+    return f"https://github.com/{slug}/pull/{pr_number}"
+
+
+def _record_reconcile_pr_ready_dm_best_effort(
+    root: Path,
+    milestone: MilestoneSpec,
+    *,
+    pr_number: int,
+    writer,
+) -> None:
+    """Notify operators that a reconcile PR is ready for human review.
+
+    Best-effort and never blocking: the AgentBox adapter is only present on
+    controller hosts and requires an operation context (workspace root +
+    operation id via env).  When unavailable the PR readiness remains durably
+    recorded in chain state metadata and the chain continues.
+    """
+    if not _is_reconcile_milestone(milestone):
+        return
+    workspace = os.environ.get("MEGAPLAN_AGENTBOX_WORKSPACE") or ""
+    operation_id = os.environ.get("MEGAPLAN_AGENTBOX_OPERATION_ID") or ""
+    if not workspace or not operation_id:
+        writer(
+            "[chain] reconcile PR ready DM skipped: no agentbox operation context "
+            "in environment\n"
+        )
+        return
+    try:
+        from arnold_pipelines.megaplan.agentbox_adapter import (
+            record_reconcile_pr_ready_dm,
+        )
+        from agentbox.config import AgentBoxConfig
+
+        record_reconcile_pr_ready_dm(
+            AgentBoxConfig(workspace_root=Path(workspace)),
+            operation_id,
+            chain_label=milestone.label,
+            pr_number=pr_number,
+            pr_url=_reconcile_pr_url(root, pr_number),
+            branch=milestone.branch or "",
+        )
+    except Exception as exc:  # never block the chain on a notification
+        writer(f"[chain] reconcile PR ready DM failed (non-blocking): {exc}\n")
+
+
+def _ensure_pr_for_milestone(
+    root: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    *,
+    writer,
+) -> int | None:
+    """Create or reuse the milestone's review PR.
+
+    Reconcile milestones target their RECORDED branch (``target_branch``,
+    default ``main``) with fail-closed PR creation, record the target as
+    durable evidence, and notify operators via a best-effort DM.  Product
+    milestones keep the historical ``_ensure_milestone_pr`` behavior.
+    """
+    if _is_reconcile_milestone(milestone):
+        pr_number = _ensure_reconcile_pr(
+            root,
+            milestone,
+            base_branch=_reconcile_target_branch(milestone, spec),
+            writer=writer,
+        )
+        if pr_number is not None:
+            _record_reconcile_target_metadata(state, milestone, spec)
+            _record_reconcile_pr_ready_dm_best_effort(
+                root, milestone, pr_number=pr_number, writer=writer
+            )
+        return pr_number
+    return _ensure_milestone_pr(
+        root, milestone, base_branch=spec.base_branch, writer=writer
+    )
+
+
+def _read_reconcile_selection(plan_dir: Path) -> dict[str, Any] | None:
+    """Read the executor's JSON selection from plan execution evidence.
+
+    The ``automatic_reconcile`` executor returns ``selected_shas`` (a list of
+    commit SHAs) plus ``verification_evidence``; that payload flows into the
+    plan's execution batch artifacts (Slice C capture seam).  This scans every
+    batch artifact — the payload itself, or any task ``output``/``result``
+    mapping — and returns the first non-empty selection.
+    """
+    from arnold_pipelines.megaplan._core import list_batch_artifacts
+
+    def _candidates(payload: Any):
+        if isinstance(payload, dict):
+            yield payload
+            tasks = payload.get("tasks") or payload.get("task_updates") or []
+            if isinstance(tasks, list):
+                for task in tasks:
+                    if not isinstance(task, dict):
+                        continue
+                    for key in ("output", "result", "payload"):
+                        value = task.get(key)
+                        if isinstance(value, dict):
+                            yield value
+
+    for artifact in reversed(list_batch_artifacts(plan_dir)):
+        try:
+            payload = json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            continue
+        for candidate in _candidates(payload):
+            selected = candidate.get("selected_shas")
+            if not isinstance(selected, list):
+                continue
+            shas = [
+                str(sha).strip()
+                for sha in selected
+                if isinstance(sha, str) and sha.strip()
+            ]
+            if not shas:
+                continue
+            verification = candidate.get("verification_evidence")
+            return {
+                "selected_shas": shas,
+                "verification_evidence": (
+                    dict(verification) if isinstance(verification, dict) else None
+                ),
+                "source": str(artifact),
+            }
+    return None
+
+
+def _publish_reconcile_selection(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    *,
+    plan_dir: Path,
+    writer,
+    log: Callable[[str], None],
+) -> str | None:
+    """Cherry-pick the reconcile selection and ensure the review PR exists.
+
+    Controller-side step between the reconcile executor and PR review:
+    reads ``selected_shas`` from the plan's execution evidence, validates
+    reachability / excludes chain-control commits via
+    :func:`_cherry_pick_reconcile_selection`, pushes the reconcile branch,
+    and ensures the review PR (base = the recorded target branch) exists,
+    recording the target metadata and notifying operators via a best-effort
+    DM.  Returns ``None`` on success or a fail-closed reason string.
+    """
+    if state.pr_number is not None:
+        # PR already published; a re-run must not re-cherry-pick (idempotent
+        # per-SHA skip in the cherry-pick helper makes this safe anyway).
+        return None
+    target = _reconcile_target_branch(milestone, spec)
+    selection = _read_reconcile_selection(plan_dir)
+    if selection is None:
+        return (
+            f"reconcile milestone {milestone.label}: no selected_shas found in "
+            "plan execution evidence; cannot publish the reconcile PR"
+        )
+    log(
+        f"reconcile milestone {milestone.label}: {len(selection['selected_shas'])} "
+        f"selected commit(s) from {selection['source']}"
+    )
+    try:
+        head = _cherry_pick_reconcile_selection(
+            root,
+            milestone,
+            base_branch=target,
+            selected_shas=selection["selected_shas"],
+            writer=writer,
+        )
+    except CliError as exc:
+        return (
+            f"reconcile milestone {milestone.label} cherry-pick failed "
+            f"fail-closed: {exc.message}"
+        )
+    _run_git_push_command(
+        root,
+        ["git", "push", "origin", milestone.branch or ""],
+        writer=writer,
+        error_code="git_push_reconcile_branch_failed",
+    )
+    writer(
+        f"[chain] pushed reconcile branch {milestone.branch} at {head[:12]}\n"
+    )
+    state.pr_number = _ensure_reconcile_pr(
+        root,
+        milestone,
+        base_branch=target,
+        writer=writer,
+    )
+    if state.pr_number is None:
+        return (
+            f"reconcile milestone {milestone.label}: review PR could not be "
+            "created after cherry-pick"
+        )
+    state.pr_state = "open"
+    _record_reconcile_target_metadata(state, milestone, spec)
+    _record_reconcile_pr_ready_dm_best_effort(
+        root, milestone, pr_number=state.pr_number, writer=writer
+    )
+    chain_spec.save_chain_state(spec_path, state)
+    log(
+        f"reconcile PR #{state.pr_number} opened for {milestone.branch} "
+        f"(base {target})"
+    )
+    return None
+
+
+def _record_reconcile_outcome(
+    state: ChainState, *, outcome: str, reason: str
+) -> None:
+    state.metadata["reconcile_outcome"] = {
+        "outcome": outcome,
+        "reason": reason,
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def _reconcile_rejection_reason(pr_number: int, spec: ChainSpec) -> str:
+    return (
+        f"reconcile PR #{pr_number} was closed without merging; the chain records "
+        f"the intentional rejection per on_failure={spec.on_failure}"
+    )
+
+
+def _delete_reconcile_pr_branch_for(
+    milestone: MilestoneSpec, root: Path, *, writer
+) -> None:
+    """Delete a reconcile PR head branch (best-effort only for non-reconcile)."""
+    if not _is_reconcile_milestone(milestone) or not milestone.branch:
+        return
+    _delete_reconcile_pr_branch(root, milestone.branch, writer=writer)
+
+
+def _advance_reconcile_rejected(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    events: list[dict[str, Any]],
+    *,
+    pr_number: int,
+    writer,
+    log: Callable[[str], None],
+) -> dict[str, Any]:
+    """Record an intentionally rejected reconcile PR and advance to close.
+
+    A closed reconcile PR is a deliberate human rejection, not an accident:
+    the per-phase commit history is preserved in the repository, so the chain
+    records the rejection (per the chain's ``on_failure`` policy) and proceeds
+    to terminal cleanup instead of stopping at the closed PR.
+
+    Returns a ``blocked`` result dict when the rejection record cannot be
+    appended, or ``None`` after the milestone advanced (callers ``continue``
+    the milestone loop).
+    """
+    rejection_reason = _reconcile_rejection_reason(pr_number, spec)
+    log(
+        f"reconcile PR #{pr_number} rejected (closed without merge); "
+        f"recording rejection and proceeding to close"
+    )
+    _delete_reconcile_pr_branch_for(milestone, root, writer=writer)
+    record = {
+        "label": milestone.label,
+        "plan": state.current_plan_name,
+        "status": "rejected",
+        "pr_number": pr_number,
+        "pr_state": "closed",
+        "rejection_reason": rejection_reason,
+        **_reconcile_record_fields(milestone, spec),
+    }
+    appended, reason = _append_completed_with_guard(
+        root,
+        state,
+        record,
+        implementation_milestone=False,
+        writer=writer,
+    )
+    if not appended:
+        chain_spec.save_chain_state(spec_path, state)
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                f"reconcile milestone {milestone.label} rejection record "
+                f"blocked append: {reason}"
+            ),
+        )
+    _record_reconcile_outcome(
+        state, outcome="rejected", reason=rejection_reason
+    )
+    if state.current_plan_name:
+        _mark_plan_completed_by_chain(
+            root,
+            state.current_plan_name,
+            milestone_label=milestone.label,
+            completion_reason=rejection_reason,
+            writer=writer,
+            state=state,
+        )
+    _emit_milestone_completion_evidence(
+        state,
+        milestone_label=milestone.label,
+        milestone_index=state.current_milestone_index,
+        plan_name=state.current_plan_name or "",
+    )
+    idx = state.current_milestone_index + 1
+    _mark_chain_after_milestone_advance(spec, state, next_index=idx)
+    if idx >= len(spec.milestones):
+        _emit_chain_complete_evidence(state, spec=spec)
+    chain_spec.save_chain_state(spec_path, state)
+    # ``None`` means "advanced"; the caller continues the milestone loop.  The
+    # reconcile milestone is generated last, so this normally ends the chain.
+    return None
 
 
 def format_chain_status(

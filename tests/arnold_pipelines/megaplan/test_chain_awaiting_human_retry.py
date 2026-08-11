@@ -30,6 +30,8 @@ def _write_chain_spec(tmp_path: Path, *, merge_policy: str = "review") -> Path:
             [
                 "base_branch: main",
                 f"merge_policy: {merge_policy}",
+                "reconciliation:",
+                "  enabled: false",
                 "milestones:",
                 "  - label: m7",
                 "    idea: idea.md",

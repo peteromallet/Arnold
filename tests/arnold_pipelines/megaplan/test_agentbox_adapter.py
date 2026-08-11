@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.agentbox_adapter import (
     MegaplanChainLaunchError,
     _record_completion_dm,
     _send_completion_dm,
+    record_reconcile_pr_ready_dm,
 )
 from arnold_pipelines.megaplan.custody.process_adapter_wbc import process_adapter_wbc_dir
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, save_chain_state
@@ -1446,6 +1447,93 @@ def test_agentbox_completion_without_effect_owner_fails_closed(
 
     with pytest.raises(RuntimeError, match="no durable DeliveryEffects owner"):
         _send_completion_dm(run, fallback_text="done")
+
+
+def test_record_reconcile_pr_ready_dm_emits_event_and_sends_dm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-1",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-1", state=OperationState.RUNNING)
+
+    payloads: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        lambda payload, **_kwargs: payloads.append(dict(payload))
+        or {"ok": True, "message_count": 1},
+    )
+
+    result = record_reconcile_pr_ready_dm(
+        config,
+        "chain-1",
+        chain_label="reconcile",
+        pr_number=88,
+        pr_url="https://github.com/example/repo/pull/88",
+        branch="reconcile/test-epic-20260811",
+    )
+
+    updated = load_agentbox_operation(config, "chain-1")
+    events = _events(run_dir_paths(config, "chain-1").events_path)
+
+    assert result["ok"] is True
+    assert "Reconcile PR #88" in updated.metadata["reconcile_pr_ready_dm"]
+    assert "reconcile/test-epic-20260811" in updated.metadata["reconcile_pr_ready_dm"]
+    assert any(
+        event["event_type"] == "megaplan_chain.reconcile_pr_ready"
+        for event in events
+    )
+    assert events[-1]["event_type"] == "megaplan_chain.reconcile_pr_ready_delivery"
+    assert events[-1]["payload"]["ok"] is True
+    assert payloads[0]["idempotency_key"] == "reconcile-pr:reconcile:88"
+    assert payloads[0]["title"] == "Reconcile PR ready - reconcile"
+    assert payloads[0]["links"] == [
+        {"label": "Review PR", "url": "https://github.com/example/repo/pull/88"}
+    ]
+    field_labels = {field["label"]: field["value"] for field in payloads[0]["fields"]}
+    assert field_labels["Branch"] == "reconcile/test-epic-20260811"
+    assert field_labels["PR"] == "88"
+    assert field_labels["Chain"] == "reconcile"
+
+
+def test_record_reconcile_pr_ready_dm_never_raises_when_discord_send_crashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-1",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-1", state=OperationState.RUNNING)
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        lambda payload, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = record_reconcile_pr_ready_dm(
+        config,
+        "chain-1",
+        chain_label="reconcile",
+        pr_number=88,
+        pr_url="https://github.com/example/repo/pull/88",
+        branch="reconcile/test-epic-20260811",
+    )
+
+    events = _events(run_dir_paths(config, "chain-1").events_path)
+    assert result["ok"] is False
+    assert events[-1]["event_type"] == "megaplan_chain.reconcile_pr_ready_delivery"
+    assert events[-1]["payload"]["outcome_kind"] == "INDETERMINATE"
 
 
 def _config_with_repo(tmp_path: Path, repo_name: str) -> AgentBoxConfig:

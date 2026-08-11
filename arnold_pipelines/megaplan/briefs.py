@@ -111,9 +111,18 @@ def scaffold_epic(
     robustness: str = "full",
     depth: str = "high",
     with_prep: bool = True,
+    reconciliation: bool = True,
     force: bool = False,
 ) -> tuple[Path, list[Path]]:
-    """Create ``.megaplan/initiatives/<epic>/chain.yaml`` and milestone stubs."""
+    """Create ``.megaplan/initiatives/<epic>/chain.yaml`` and milestone stubs.
+
+    With ``reconciliation`` enabled (default) a generated ``kind: reconcile``
+    terminal milestone is appended: label ``reconcile``, idea
+    ``briefs/reconcile.md``, branch ``reconcile/<slug>-<date>``,
+    ``target_branch: main``, ``merge_policy: review`` (forced even when the
+    chain is auto), ``phase_model: [execute=codex]`` and
+    ``depends_on`` the previous terminal milestone.
+    """
     if not milestones:
         raise ValueError("at least one --milestone is required")
     directory = epic_dir(repo_root, slug)
@@ -181,6 +190,72 @@ def scaffold_epic(
             milestone["with_prep"] = True
         chain_milestones.append(milestone)
 
+    if reconciliation:
+        date = datetime.now(timezone.utc).strftime("%Y%m%d")
+        reconcile_brief = directory / "briefs" / "reconcile.md"
+        if reconcile_brief.exists() and not force:
+            raise FileExistsError(reconcile_brief)
+        write_markdown_artifact(
+            reconcile_brief,
+            "\n".join(
+                [
+                    "# Reconcile",
+                    "",
+                    "## Outcome",
+                    "",
+                    "Select and publish the epic's engine-source commits that were",
+                    "not already promoted, as a reviewed PR onto `main`.",
+                    "",
+                    "## Rubric",
+                    "",
+                    "This milestone is governed by the per-epic runtime end-state",
+                    "and megaplan reference architecture docs:",
+                    "",
+                    "- `docs/megaplan-reference-architecture-20260807.md`",
+                    "- `docs/per-epic-runtime-end-state-20260809.md`",
+                    "",
+                    "## Scope",
+                    "",
+                    "Engine-source changes (`arnold_pipelines/`, `arnold/`) not",
+                    "covered by promotion evidence.",
+                    "",
+                    "## Constraints",
+                    "",
+                    "- Selection is evidence, not narrative: output the chosen",
+                    "  commit SHAs plus verification evidence.",
+                    "- A verified no-op still records `reconcile-verification.json`.",
+                    "",
+                    "## Done Criteria",
+                    "",
+                    "- Selected commits are cherry-picked onto",
+                    "  `reconcile/<slug>-<date>` from `main`.",
+                    "- PR merged, intentionally rejected, or verified no-op.",
+                    "",
+                ]
+            ),
+            metadata={
+                "type": "brief",
+                "slug": "reconcile",
+                "title": "Reconcile",
+                "epic": directory.name,
+                "created_at": datetime.now(timezone.utc),
+            },
+        )
+        written.append(reconcile_brief)
+        previous_terminal = chain_milestones[-1]["label"] if chain_milestones else None
+        reconcile_milestone: dict[str, Any] = {
+            "label": "reconcile",
+            "kind": "reconcile",
+            "idea": str(reconcile_brief.relative_to(repo_root)),
+            "branch": f"reconcile/{directory.name}-{date}",
+            "target_branch": "main",
+            "merge_policy": "review",
+            "phase_model": ["execute=codex"],
+        }
+        if previous_terminal is not None:
+            reconcile_milestone["depends_on"] = [previous_terminal]
+        chain_milestones.append(reconcile_milestone)
+
     chain_path = directory / "chain.yaml"
     if chain_path.exists() and not force:
         raise FileExistsError(chain_path)
@@ -190,6 +265,7 @@ def scaffold_epic(
                 "base_branch": base_branch,
                 "anchors": {"north_star": "NORTHSTAR.md"},
                 "milestones": chain_milestones,
+                "reconciliation": {"enabled": reconciliation},
                 "on_failure": {"abort": "stop_chain"},
                 "on_escalate": {"abort": "stop_chain"},
                 "merge_policy": merge_policy,

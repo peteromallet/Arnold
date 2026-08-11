@@ -741,6 +741,22 @@ def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, A
                 else deepcopy(schema)
             )
             capture_schema.setdefault("additionalProperties", False)
+            if step == "execute":
+                # P6 end-of-epic reconciliation: the reconcile executor's
+                # authoritative output is the JSON selection (top-level
+                # ``selected_shas`` + ``verification_evidence``) — a
+                # documented execute-envelope extension carried into the batch
+                # artifact that the controller reads to cherry-pick.  Optional
+                # so ordinary execute batches are unaffected.
+                properties = capture_schema.setdefault("properties", {})
+                properties.setdefault(
+                    "selected_shas",
+                    {"type": "array", "items": {"type": "string"}},
+                )
+                properties.setdefault(
+                    "verification_evidence",
+                    {"type": "object", "additionalProperties": True},
+                )
             return capture_schema
     return None
 
