@@ -36,9 +36,9 @@ from arnold.workflow.execution_attempt_ledger import (
     VersionSet,
 )
 
-from arnold_pipelines.megaplan.custody.action_gate import (
-    ActionFamily,
-    ActionGateVerdict,
+from arnold_pipelines.megaplan.custody.action_validator import (
+    ActionBoundaryType,
+    GateResult,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ class DeliveryEffects:
         protocol: EffectProtocol,
         *,
         action_gate_check: Optional[
-            Callable[[ActionFamily, str], ActionGateVerdict]
+            Callable[[ActionBoundaryType, str], GateResult]
         ] = None,
         production_enabled: bool = False,
     ) -> None:
@@ -153,10 +153,10 @@ class DeliveryEffects:
 
     # ── gate ────────────────────────────────────────────────────────────
 
-    def _gate(self, target: DeliveryTarget) -> ActionGateVerdict:
+    def _gate(self, target: DeliveryTarget) -> GateResult:
         if self._action_gate_check is None:
-            return ActionGateVerdict.SHADOW_AUTHORIZED
-        return self._action_gate_check(ActionFamily.EFFECT, target.target_key)
+            return GateResult.SHADOW_PASS
+        return self._action_gate_check("delivery", target.target_key)
 
     # ── GLEK ─────────────────────────────────────────────────────────────
 
@@ -219,8 +219,8 @@ class DeliveryEffects:
 
         verdict = self._gate(target)
         if verdict not in (
-            ActionGateVerdict.AUTHORIZED,
-            ActionGateVerdict.SHADOW_AUTHORIZED,
+            GateResult.AUTHORIZED,
+            GateResult.SHADOW_PASS,
         ):
             return DeliveryOutcome(
                 ok=False,
@@ -368,8 +368,8 @@ class DeliveryEffects:
         """
         verdict = self._gate(target)
         if verdict not in (
-            ActionGateVerdict.AUTHORIZED,
-            ActionGateVerdict.SHADOW_AUTHORIZED,
+            GateResult.AUTHORIZED,
+            GateResult.SHADOW_PASS,
         ):
             return DeliveryOutcome(
                 ok=False,

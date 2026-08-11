@@ -729,55 +729,6 @@ class TestStep21DPublicationDeliveryMigrationRollback:
         last = events[-1]
         assert last.causal_predecessor_sequence >= predecessor_seq - 1
 
-    def test_projection_negative_replay_synthetic_wbc_blocked(
-        self, store_and_outbox
-    ):
-        """Projection-negative replay: the action gate must NOT authorize a
-        replay when the WBC evidence is synthetic (wbc-ref-*).  The gate
-        blocks synthetic evidence and does not turn it into authority."""
-        from arnold_pipelines.megaplan.custody.action_gate import (
-            ActionFamily,
-            ActionGate,
-            ActionGateConfig,
-            ActionGateVerdict,
-        )
-        # Enforce the GIT family so the gate blocks rather than shadows.
-        gate = ActionGate(
-            config=ActionGateConfig(enforced_families={ActionFamily.GIT}),
-        )
-        decision = gate.evaluate(
-            action_family=ActionFamily.GIT,
-            action_target="git-push",
-            wbc_attempt_reference="wbc-ref-synthetic",
-            custody_attempt_id="c-1",
-        )
-        assert decision.result.verdict == ActionGateVerdict.BLOCKED_WBC_SYNTHETIC
-
-    def test_projection_negative_replay_missing_wbc_blocked(
-        self, store_and_outbox
-    ):
-        """Projection-negative replay: a missing WBC reference cannot
-        authorize a replay either."""
-        from arnold_pipelines.megaplan.custody.action_gate import (
-            ActionFamily,
-            ActionGate,
-            ActionGateConfig,
-            ActionGateVerdict,
-        )
-        gate = ActionGate(
-            config=ActionGateConfig(
-                enforced_families={ActionFamily.GIT},
-                require_wbc_store_evidence=True,
-            ),
-        )
-        decision = gate.evaluate(
-            action_family=ActionFamily.GIT,
-            action_target="git-push",
-            wbc_attempt_reference="",  # missing
-            custody_attempt_id="c-1",
-        )
-        assert decision.result.verdict == ActionGateVerdict.BLOCKED_WBC_MISSING
-
     def test_b_to_a_rollback_terminal_fenced_by_cas(
         self, protocol, provider
     ):

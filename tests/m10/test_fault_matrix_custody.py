@@ -1,10 +1,9 @@
 """T39 — Steps 20A-20C: custody fault-matrix scenario tests.
 
 These tests bind the custody-related fault-matrix rows (F07, F08, F13,
-F14) to installed-runtime behavior at the ``CustodyLeaseStore`` and
-``ActionGate`` seams.  Every production effect remains action-off (SD3);
-only the durable lease store and the double-fenced action gate are
-exercised.
+F14) to installed-runtime behavior at the ``CustodyLeaseStore`` seam.
+Every production effect remains action-off (SD3); only the durable
+lease store is exercised.
 
 Step 20A — custody acquisition and renewal lifecycle:
   * acquire creates an active lease with correct identity;
@@ -16,10 +15,14 @@ Step 20B — transfer and reclaim reconciliation:
   * reclaim after a terminal event requires a strictly-greater epoch;
   * old-epoch reclaim is rejected (StaleEpochError).
 
-Step 20C — stale-owner action rejection:
-  * the action gate blocks dispatch when custody is stale (F13);
-  * the action gate blocks dispatch when the RA fence is unsatisfied (F14);
-  * the action gate blocks dispatch when WBC evidence is missing (F15).
+Step 20C — stale-owner rejection scenarios:
+  * F07 lease-expiry and F08 TTL-ceiling rows are in the fault matrix;
+  * F13 epoch-staleness row is in the fault matrix;
+  * acquire/renew enforce the TTL ceiling; fencing is terminal.
+
+Action-gate verdict behavior (shadow, stale-custody, WBC) is covered by
+the live action validator in
+``tests/arnold_pipelines/megaplan/test_custody_action_validator.py``.
 """
 
 from __future__ import annotations
@@ -44,12 +47,6 @@ from arnold_pipelines.megaplan.custody.lease_store import (
     StaleEpochError,
     TerminalLeaseError,
     open_lease_store,
-)
-from arnold_pipelines.megaplan.custody.action_gate import (
-    ActionFamily,
-    ActionGate,
-    ActionGateConfig,
-    ActionGateVerdict,
 )
 
 from arnold.workflow.effect_fault_matrix import (
@@ -358,69 +355,7 @@ class TestStep20BTransferReclaim:
 
 
 class TestStep20CStaleOwnerAction:
-    """Step 20C — stale-owner action gate rejection (F13/F14/F15)."""
-
-    def test_action_gate_blocks_stale_custody_enforced(
-        self, lease_store: CustodyLeaseStore
-    ) -> None:
-        """F13: the action gate blocks when custody is stale in enforced mode."""
-        gate = ActionGate(
-            config=ActionGateConfig(
-                enforced_families=frozenset({ActionFamily.CUSTODY}),
-            ),
-            ra_view_provider=lambda: None,
-            custody_lease_provider=lambda attempt_id: None,  # no active lease
-            wbc_store_provider=lambda ref: None,
-        )
-        decision = gate.evaluate(
-            action_family=ActionFamily.CUSTODY,
-            action_target="dispatch",
-            custody_attempt_id="att-stale",
-        )
-        assert not decision.authorized
-        assert decision.result.verdict == ActionGateVerdict.BLOCKED_CUSTODY
-
-    def test_action_gate_shadow_mode_does_not_block(
-        self, lease_store: CustodyLeaseStore
-    ) -> None:
-        """In shadow mode (default), the gate records but does not block."""
-        gate = ActionGate(
-            config=ActionGateConfig(),  # empty enforced = shadow
-            custody_lease_provider=lambda attempt_id: None,
-        )
-        decision = gate.evaluate(
-            action_family=ActionFamily.CUSTODY,
-            action_target="dispatch",
-            custody_attempt_id="att-stale",
-        )
-        # Shadow mode: family not enforced so verdict is SHADOW_AUTHORIZED.
-        assert decision.result.verdict == ActionGateVerdict.SHADOW_AUTHORIZED
-
-    def test_action_gate_allows_when_custody_active_enforced(
-        self, lease_store: CustodyLeaseStore
-    ) -> None:
-        """The enforced gate authorizes when custody is active."""
-        # Acquire an active lease.
-        kw = _acquire_kwargs(epoch=1)
-        lease_store.acquire(**kw)
-        lease = lease_store.replay_history(kw["lease_id"])
-
-        gate = ActionGate(
-            config=ActionGateConfig(
-                enforced_families=frozenset({ActionFamily.CUSTODY}),
-            ),
-            custody_lease_provider=lambda attempt_id: lease,
-        )
-        decision = gate.evaluate(
-            action_family=ActionFamily.CUSTODY,
-            action_target="dispatch",
-            custody_attempt_id="att-active",
-        )
-        # With an active lease and no RA/WBC providers, custody passes.
-        # But WBC evidence is MISSING (no provider), so it blocks on WBC.
-        # This confirms the conjunctive gate: custody alone is not sufficient.
-        assert not decision.authorized
-        assert decision.result.verdict == ActionGateVerdict.BLOCKED_WBC_MISSING
+    """Step 20C — stale-owner rejection scenarios (F07/F08/F13)."""
 
     def _load_scenario(self, scenario_id: str) -> dict:
         """Load a single scenario from the fault matrix JSON."""

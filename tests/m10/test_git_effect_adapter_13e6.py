@@ -42,9 +42,9 @@ from arnold_pipelines.megaplan.chain.git_effect_adapter import (
     GitOutcome,
     GitEffectAdapter,
 )
-from arnold_pipelines.megaplan.custody.action_gate import (
-    ActionGateVerdict,
-    ActionFamily,
+from arnold_pipelines.megaplan.custody.action_validator import (
+    ActionBoundaryType,
+    GateResult,
 )
 
 
@@ -337,8 +337,8 @@ def test_route_pr_stale_fence_negative(adapter, pr_ready_target, fake_gh_success
 
 def test_route_pr_action_gate_blocked(adapter, pr_ready_target, fake_gh_success):
     """Action gate blocks when checker returns non-authorized verdict."""
-    def blocker(family: ActionFamily, target_key: str) -> ActionGateVerdict:
-        return ActionGateVerdict.BLOCKED_RA_UNSATISFIED
+    def blocker(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.BLOCKED_RA_UNSATISFIED
 
     gated = GitEffectAdapter(
         adapter._protocol,
@@ -354,13 +354,13 @@ def test_route_pr_action_gate_blocked(adapter, pr_ready_target, fake_gh_success)
     assert outcome.ok is False
     assert outcome.outcome_kind == OUTCOME_FAILED
     assert "Action gate blocked" in outcome.error
-    assert "BLOCKED_RA_UNSATISFIED" in outcome.error
+    assert "blocked_ra_unsatisfied" in outcome.error
 
 
 def test_route_pr_action_gate_authorized(adapter, pr_ready_target, fake_gh_success, reconciliation_not_applied):
     """Action gate allows when checker returns AUTHORIZED."""
-    def authorizer(family: ActionFamily, target_key: str) -> ActionGateVerdict:
-        return ActionGateVerdict.AUTHORIZED
+    def authorizer(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.AUTHORIZED
 
     gated = GitEffectAdapter(
         adapter._protocol,

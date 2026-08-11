@@ -47,12 +47,12 @@ def mock_delivery_effects():
 @pytest.fixture
 def mock_blocking_delivery_effects():
     """Create a DeliveryEffects that blocks all deliveries."""
-    from arnold_pipelines.megaplan.custody.action_gate import ActionGateVerdict
+    from arnold_pipelines.megaplan.custody.action_validator import GateResult
 
     protocol = MagicMock()
 
     def block_gate(family, key):
-        return ActionGateVerdict.BLOCKED_RA_UNSATISFIED
+        return GateResult.BLOCKED_RA_UNSATISFIED
 
     effects = DeliveryEffects(protocol, action_gate_check=block_gate, production_enabled=False)
     return effects

@@ -28,9 +28,6 @@ from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
     SshOutcome,
     SshEffectAdapter,
 )
-from arnold_pipelines.megaplan.custody.action_gate import (
-    ActionGateVerdict,
-)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
