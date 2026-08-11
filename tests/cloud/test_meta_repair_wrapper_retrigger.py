@@ -41,7 +41,6 @@ def test_repair_loop_bin_falls_back_when_override_missing() -> None:
         [
             "set -eu",
             "SESSION=demo-session",
-            f"MEGAPLAN_META_ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             "MEGAPLAN_META_SELF_PATH=/usr/local/bin/arnold-meta-repair-loop",
             f"ARNOLD_META_REPAIR_LOOP_ORIGIN={shlex.quote(str(WRAPPER_PATH))}",
             "MEGAPLAN_META_REPAIR_LOOP_BIN=/tmp/missing-repair-loop",

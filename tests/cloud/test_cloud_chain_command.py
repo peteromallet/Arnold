@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tarfile
 from dataclasses import replace
 from pathlib import Path
@@ -35,7 +36,6 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
     _materialize_canonical_epic_input,
-    _megaplan_refresh_command,
     _normalized_chain_upload_spec,
     _phase_model_by_label_from_preflight,
     _filter_cloud_sessions_since,
@@ -197,18 +197,28 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     )
 
     pin_at = command.index(
-        'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"'
+        'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"'
     )
     hot_env_at = command.index(
         "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;"
     )
     assert pin_at < hot_env_at
-    assert 'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
+    assert (
+        'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
+        'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; fi;'
+    ) in command
+    assert (
+        'ENGINE_DIR="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c '
+        '\'import json,sys; print(json.load(open(sys.argv[1])).get("epic",{}).get("runtime_root",""))\' '
+        '"$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)"'
+    ) in command
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
     assert (
         'cd /workspace/project && env -u PYTHONHOME PYTHONSAFEPATH=1 '
         'PYTHONPATH="$ENGINE_DIR"' in command
     )
+    assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
+    assert "MEGAPLAN_RUNTIME_SRC" not in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
 
 
@@ -285,17 +295,7 @@ def test_tmux_chain_launch_command_is_valid_shell() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
-    command = _megaplan_refresh_command(_cloud_spec())
-
-    assert '[ ! -e "$SRC/.git" ]' in command
-    assert '[ -e "$SRC/.git" ]' in command
-    assert '[ -d "$SRC/.git" ]' not in command
-    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"' in command
-    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"' in command
-
-
-def test_tmux_chain_launch_without_editable_sync_never_refreshes_remote_git() -> None:
+def test_tmux_chain_launch_never_refreshes_remote_git() -> None:
     spec = replace(
         _cloud_spec(),
         megaplan=MegaplanSpec(
@@ -308,16 +308,20 @@ def test_tmux_chain_launch_without_editable_sync_never_refreshes_remote_git() ->
         "/workspace/project",
         "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
         spec=spec,
-        refresh_editable_install=False,
     )
 
+    # The editable-install refresh machinery is deleted (P4): no git mutation
+    # and no refresh-verified runtime receipt in the launch path.
     assert "git push" not in command
     assert "git fetch" not in command
     assert "git pull" not in command
-    assert 'BRANCH="$(git -C "$SRC" branch --show-current)"' in command
-    assert "runtime_provenance --expected-root" in command
-    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"' in command
-    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"' in command
+    assert 'BRANCH="$(git -C "$SRC" branch --show-current)"' not in command
+    assert "megaplan-refresh" not in command
+    assert "pip install -e" not in command
+    assert "runtime_provenance --expected-root" not in command
+    assert 'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"' in command
+    assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
+    assert "MEGAPLAN_RUNTIME_SRC" not in command
 
 
 def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
@@ -325,22 +329,41 @@ def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
     shim.parent.mkdir(parents=True)
     shim.write_text(
         "#!/bin/sh\n"
-        "printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$MEGAPLAN_RUNTIME_SRC\" "
-        "\"$MEGAPLAN_LAUNCH_RUNTIME_SRC\" \"$MEGAPLAN_LAUNCH_RUNTIME_REVISION\" "
-        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
-        "if [ \"$HOT_ENV_SOURCED\" = 1 ] && [ -z \"$ZHIPU_API_KEY\" ]; then exit 3; fi\n"
         "case \"$*\" in\n"
-        "  *arnold_pipelines.megaplan.cloud.runtime_provenance*) "
-        f"exit {provenance_exit} ;;\n"
-        "  *) exit 0 ;;\n"
-        "esac\n",
+        "  *arnold_pipelines.megaplan.cloud.runtime_provenance*)\n"
+        "    printf '%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$ARNOLD_RUNTIME_MANIFEST\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "    if [ \"$HOT_ENV_SOURCED\" = 1 ] && [ -z \"$ZHIPU_API_KEY\" ]; then exit 3; fi\n"
+        f"    exit {provenance_exit} ;;\n"
+        "  *\"arnold_pipelines.megaplan chain start\"*)\n"
+        "    printf '%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$ARNOLD_RUNTIME_MANIFEST\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "    if [ \"$HOT_ENV_SOURCED\" = 1 ] && [ -z \"$ZHIPU_API_KEY\" ]; then exit 3; fi\n"
+        "    exit 0 ;;\n"
+        "esac\n"
+        "exec \"$REAL_PYTHON\" \"$@\"\n",
         encoding="utf-8",
     )
     shim.chmod(0o755)
     return shim
 
 
-def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
+def _write_runtime_manifest(path: Path, *, runtime_root: Path, revision: str) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "epic": {
+                    "runtime_root": str(runtime_root),
+                    "expected_head": revision,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_isolated_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -350,13 +373,16 @@ def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
     stale = tmp_path / "stale-runtime"
     accepted.mkdir()
     stale.mkdir()
+    revision = "a" * 40
+    accepted_manifest = _write_runtime_manifest(
+        tmp_path / "accepted-manifest.json", runtime_root=accepted, revision=revision
+    )
+    stale_manifest = tmp_path / "stale-manifest.json"
     hot_env = tmp_path / "cloud-hot-env"
     hot_env.write_text(
         "\n".join(
             [
-                f"export MEGAPLAN_RUNTIME_SRC={stale}",
-                f"export MEGAPLAN_LAUNCH_RUNTIME_SRC={stale}",
-                "export MEGAPLAN_LAUNCH_RUNTIME_REVISION=stale-revision",
+                f"export ARNOLD_RUNTIME_MANIFEST={stale_manifest}",
                 f"export PYTHONPATH={stale}",
                 f"export PYTHONHOME={stale}",
                 "export HOT_ENV_SOURCED=1",
@@ -369,7 +395,6 @@ def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
     monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
     shim = _runtime_probe_shim(tmp_path)
     capture = tmp_path / "capture.txt"
-    revision = "a" * 40
     command = cloud_cli._chain_start_command(
         str(tmp_path / "chain.yaml"),
         project_dir=str(tmp_path),
@@ -387,8 +412,8 @@ def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
             **os.environ,
             "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
             "RUNTIME_CAPTURE": str(capture),
-            "MEGAPLAN_LAUNCH_RUNTIME_SRC": str(accepted),
-            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": revision,
+            "REAL_PYTHON": sys.executable,
+            "ARNOLD_RUNTIME_MANIFEST": str(accepted_manifest),
         },
     )
 
@@ -398,17 +423,13 @@ def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
     for observation in observations:
         (
             pythonpath,
-            runtime_src,
-            launch_src,
-            launch_revision,
+            manifest,
             hot_env_sourced,
             pythonhome,
             _args,
-        ) = observation.split("|", 6)
+        ) = observation.split("|", 4)
         assert pythonpath == str(accepted)
-        assert runtime_src == str(accepted)
-        assert launch_src == str(accepted)
-        assert launch_revision == revision
+        assert manifest == str(accepted_manifest)
         assert hot_env_sourced == "1"
         assert pythonhome == "unset"
     assert "runtime_provenance" in observations[0]
@@ -423,12 +444,19 @@ def test_isolated_chain_launch_fails_closed_before_chain_on_runtime_drift(
     from arnold_pipelines.megaplan.cloud import cli as cloud_cli
 
     hot_env = tmp_path / "cloud-hot-env"
-    hot_env.write_text("export MEGAPLAN_RUNTIME_SRC=/stale/runtime\n", encoding="utf-8")
+    hot_env.write_text(
+        "export ARNOLD_RUNTIME_MANIFEST=/stale/manifest.json\n", encoding="utf-8"
+    )
     monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
     shim = _runtime_probe_shim(tmp_path, provenance_exit=2)
     capture = tmp_path / "capture.txt"
     accepted = tmp_path / "accepted-runtime"
     accepted.mkdir()
+    accepted_manifest = _write_runtime_manifest(
+        tmp_path / "accepted-manifest.json",
+        runtime_root=accepted,
+        revision="a" * 40,
+    )
     command = cloud_cli._chain_start_command(
         str(tmp_path / "chain.yaml"),
         project_dir=str(tmp_path),
@@ -446,8 +474,8 @@ def test_isolated_chain_launch_fails_closed_before_chain_on_runtime_drift(
             **os.environ,
             "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
             "RUNTIME_CAPTURE": str(capture),
-            "MEGAPLAN_LAUNCH_RUNTIME_SRC": str(accepted),
-            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": "a" * 40,
+            "REAL_PYTHON": sys.executable,
+            "ARNOLD_RUNTIME_MANIFEST": str(accepted_manifest),
         },
     )
 
@@ -472,7 +500,6 @@ def test_isolated_chain_spec_enables_post_hot_env_runtime_gate() -> None:
         "/workspace/project",
         "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
         spec=spec,
-        refresh_editable_install=False,
     )
 
     assert "isolated_chain_runtime_binding_drift" in command
@@ -588,12 +615,12 @@ def test_chain_runtime_policy_upload_skips_without_sidecar(tmp_path: Path) -> No
 
 def test_manifest_runtime_activate_command_exports_binding_env() -> None:
     command = _manifest_runtime_activate_command(_runtime_binding())
-    # the launch env is bound to the created runtime's path (G1: no
-    # global-pointer fallback)
-    assert 'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"' in command
-    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$RUNTIME_SRC"' in command
-    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"' in command
+    # the launch env is bound to the created runtime's manifest path only
+    # (G1: no global-pointer fallback; G4: no SRC selector transport)
     assert 'export ARNOLD_RUNTIME_MANIFEST="$MANIFEST"' in command
+    assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
+    assert "MEGAPLAN_LAUNCH_RUNTIME_REVISION" not in command
+    assert "MEGAPLAN_RUNTIME_SRC" not in command
     assert "/workspace/runtime-candidates/demo-abc123" in command
     # fail closed when the bound runtime disappeared
     assert "exit 23" in command
@@ -908,7 +935,6 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     (brief_dir / "NORTHSTAR.md").write_text("North star\n", encoding="utf-8")
     (brief_dir / "m1.md").write_text("M1\n", encoding="utf-8")
 
-    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._sync_launch_head_to_editable_install_branch", lambda *_a, **_k: {"status": "skipped"})
     monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._ensure_repo_checkout", lambda *_a, **_k: None)
     monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._run_remote_dependency_check", lambda *_a, **_k: [])
     monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.seed_codex_oauth", lambda *_a, **_k: {"status": "skipped"})
@@ -924,7 +950,6 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
             slug=None,
             fresh=True,
             no_git_refresh=True,
-            no_editable_install_sync=True,
             cloud_yaml=str(app / "cloud.yaml"),
         ),
         _cloud_spec(),
@@ -1186,21 +1211,6 @@ def test_cloud_chain_spec_location_requires_durable_initiatives_tree(tmp_path: P
         _validate_chain_spec_location(loose, project)
 
     assert excinfo.value.code == "chain_spec_layout_violation"
-
-
-def test_chain_launch_verification_classifies_editable_refresh_dirty() -> None:
-    command = _chain_launch_verification_command(
-        workspace="/workspace/demo/app",
-        session_name="megaplan-chain-demo",
-        state_path="/workspace/demo/app/.megaplan/plans/.chains/chain-state.json",
-        log_path="/workspace/demo/app/.megaplan/cloud-chain-megaplan-chain-demo.log",
-        attempts=1,
-        sleep_seconds=0,
-    )
-
-    assert "editable_install_refresh_dirty" in command
-    assert "[megaplan-refresh] refusing editable install refresh" in command
-    assert '"log_tail"' in command
 
 
 def test_durable_megaplan_uploads_exclude_runtime_state(tmp_path: Path) -> None:
@@ -1605,8 +1615,6 @@ def test_cloud_chain_persists_failed_launch_outcome_when_engine_ref_is_not_adver
                 idea_dir=None,
                 fresh=False,
                 no_git_refresh=False,
-                no_editable_install_sync=True,
-                force_clean_editable_install=False,
                 allow_loose_chain_spec=False,
                 allow_template_placeholders=False,
                 allow_human_gates=False,
@@ -1703,7 +1711,6 @@ def test_cloud_epic_chain_persists_failed_launch_outcome_when_engine_ref_is_not_
             argparse.Namespace(
                 spec=str(epic_spec),
                 fresh=False,
-                no_editable_install_sync=True,
                 one=False,
                 cloud_yaml=str(project / "cloud.yaml"),
             ),

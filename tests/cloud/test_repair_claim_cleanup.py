@@ -182,7 +182,7 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
-    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
     # Pin the interpreter whose installed dependencies are under test.  An
     # ambient ``python3`` earlier on PATH may be a dependency-empty Homebrew
     # interpreter and is not evidence about wrapper readiness.

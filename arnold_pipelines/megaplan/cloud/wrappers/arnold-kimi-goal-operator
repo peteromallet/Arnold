@@ -41,16 +41,13 @@ arnold_supervisor_runtime_init kimi-goal-operator "$ARNOLD_SRC" || exit $?
 # via the expected parent.  Runs BEFORE any manifest field read or ARNOLD_SRC
 # use below.
 arnold_runtime_manifest_authority kimi-goal-operator
-# Fixer-unification: prefer the per-epic runtime manifest's declared epic
-# branch so prompt targets and the agent's push destination match the runtime
-# it was born into; the legacy env/default chain applies to manifest-less
-# runtimes only.
+# Fixer-unification: the per-epic runtime manifest's declared epic branch is
+# the only sync-branch source (P4 config cleanup) so prompt targets and the
+# agent's push destination match the runtime it was born into.  There is no
+# env-selector fallback; manifest-less (permit-admitted) runs get an empty
+# branch and fail closed at the push gate.
 _MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
-if [[ -n "$_MANIFEST_EPIC_BRANCH" ]]; then
-  SYNC_BRANCH="$_MANIFEST_EPIC_BRANCH"
-else
-  SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"
-fi
+SYNC_BRANCH="${_MANIFEST_EPIC_BRANCH:-}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"

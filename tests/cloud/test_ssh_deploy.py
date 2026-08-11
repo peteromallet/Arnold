@@ -160,27 +160,24 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
         "/workspace/.megaplan/resident-runtime.env"
     )
     assert "tmux new-session -d -s megaplan-resident-discord -c /workspace" in entrypoint
-    assert (
-        r"runtime_src=\${MEGAPLAN_RUNTIME_SRC:-"
-        r"\${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
-    ) in entrypoint
+    assert "runtime_src=/workspace/arnold" in entrypoint
+    assert "export MEGAPLAN_RUNTIME_SRC=/workspace/arnold" in entrypoint
     assert r'cd \"\$runtime_src\"' in entrypoint
 
 
-def test_entrypoint_boot_supervisors_use_one_runtime_selector_with_safe_fallback() -> None:
+def test_entrypoint_boot_supervisors_use_fixed_workspace_runtime() -> None:
     from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 
     entrypoint = render_entrypoint(_minimal_cloud_spec())
-    selector = (
-        r"runtime_src=\${MEGAPLAN_RUNTIME_SRC:-"
-        r"\${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
-    )
 
-    # Heartbeat, watchdog, and resident all resolve the same precedence after
-    # loading the persistent runtime selection.  The legacy checkout is only a
-    # final fallback, never a hard-coded wrapper source or tmux cwd.
-    assert entrypoint.count(selector) == 3
+    # Heartbeat, watchdog, and resident all execute from the fixed
+    # /workspace/arnold checkout (P4 config cleanup): hot env is
+    # credentials-only and the legacy runtime selectors are retired, so
+    # runtime_src is a literal, never an env-expanded selector chain.
+    assert entrypoint.count("runtime_src=/workspace/arnold") == 3
     assert entrypoint.count(r'cd \"\$runtime_src\"') == 3
+    assert r"MEGAPLAN_RUNTIME_SRC:-\${CLOUD_WATCHDOG_ARNOLD_SRC" not in entrypoint
+    assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in entrypoint
     assert (
         r'exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/'
         r'arnold-heartbeat\"'

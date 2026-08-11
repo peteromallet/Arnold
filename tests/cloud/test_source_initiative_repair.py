@@ -154,7 +154,7 @@ def test_repair_loop_accepts_bounded_source_restore_and_exits_complete(
     env = dict(os.environ)
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
-    env["MEGAPLAN_RUNTIME_SRC"] = str(source_root)
+    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(source_root)
     env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(tmp_path / "repair-root")
 

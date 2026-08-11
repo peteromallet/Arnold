@@ -454,3 +454,20 @@ Two bypasses + one correction:
    `MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=0` (must not authorize).
 3. Correction: the plan's G4 gate sits at **P4→P5** (not P3→P4). P4 begins
    after this P3 follow-up; G4 is re-run at P4→P5.
+
+### G4 (P4→P5, 2026-08-10): NO-GO → stale selector tests
+
+Authorization architecture ready (no path where missing attestation / SHADOW /
+generic env authorizes). P4 incomplete: committed tests still POSITIVELY
+assert the deleted selector fallbacks (test_watchdog_wrappers.py:187/:938 +
+grep hits above) — contradicting the P4-committed wrappers and correction #3
+(legacy selector assertions deleted alongside P4). Fix: update/delete the
+stale selector-positive tests, add negative assertions proving no selector
+reads remain, run the wrapper test slice.
+
+### G4 third re-run (2026-08-10): NO-GO → no transport exemption
+
+The plan removes ALL six selectors — no "transport" exemption. Remaining:
+- arnold-supervise reads MEGAPLAN_SUPERVISOR_SOURCE (test_supervisor_runtime_isolation.py:356 asserts it) — drop the selector; SUPERVISE_SOURCE = manifest runtime root / /workspace/arnold.
+- cloud/cli.py launch transport reads MEGAPLAN_LAUNCH_RUNTIME_SRC / MEGAPLAN_RUNTIME_SRC (test_editable_install_sync.py:90-91, test_cloud_chain_command.py:205/311) — the chain-start identity comes from ARNOLD_RUNTIME_MANIFEST alone (already exported by _manifest_runtime_activate_command); drop the launch SRC/REVISION transport exports. The launch PIN (snapshot before hot-env) survives, expressed via the manifest env.
+- Fixed-literal exports (e.g. entrypoint `export MEGAPLAN_RUNTIME_SRC=/workspace/arnold` for the pane-environ health check) are NOT selector reads and stay.

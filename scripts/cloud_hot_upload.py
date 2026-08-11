@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -49,6 +50,37 @@ FORBIDDEN_LEGACY_BIN_PREFIXES: tuple[str, ...] = (
     "/usr/local/bin/arnold-",
     "/usr/local/bin/mp-",
 )
+
+# .cloud-hot-env is credentials-only (P4 config cleanup).  These legacy
+# runtime selectors are retired: runtime identity resolves from the per-epic
+# runtime manifest (epic.runtime_root / epic.branch) with a fixed
+# /workspace/arnold fallback, so hot env can never re-point a supervisor.
+HOT_ENV_RUNTIME_SELECTOR_NAMES: tuple[str, ...] = (
+    "MEGAPLAN_RUNTIME_SRC",
+    "MEGAPLAN_LAUNCH_RUNTIME_SRC",
+    "MEGAPLAN_SUPERVISOR_SOURCE",
+    "CLOUD_WATCHDOG_ARNOLD_SRC",
+    "MEGAPLAN_META_ARNOLD_SRC",
+    "MEGAPLAN_AUDIT_ARNOLD_SRC",
+    "CLOUD_WATCHDOG_SYNC_BRANCH",
+    "KIMI_GOAL_SYNC_BRANCH",
+    "MEGAPLAN_META_SYNC_BRANCH",
+)
+
+# Nonsecret tuning that must never ride in the credentials-only hot env:
+# feature gates, model pins (any *MODEL* name), and sync switches (any
+# *SYNC* name).
+HOT_ENV_FORBIDDEN_NONSECRET_NAMES: tuple[str, ...] = (
+    "ARNOLD_META_REPAIR_ENABLED",
+    "ARNOLD_META_REPAIR_COMMIT_ENABLED",
+    "ARNOLD_AUDIT_AUTOFIX_ENABLED",
+    "ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED",
+)
+
+# A hot-env name is acceptable ONLY when it looks like a credential.  The
+# fragment set mirrors the census redaction policy minus MODEL (model pins are
+# configuration, not credentials, and are rejected above as nonsecret tuning).
+HOT_ENV_CREDENTIAL_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|API)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -308,6 +340,26 @@ def upload_env_names(remote: Remote, names: list[str]) -> None:
     for name in dict.fromkeys(names):
         if not name.replace("_", "").isalnum() or ((not name[0].isalpha()) and name[0] != "_"):
             raise HotUploadError(f"invalid environment variable name: {name!r}")
+        if name in HOT_ENV_RUNTIME_SELECTOR_NAMES:
+            raise HotUploadError(
+                f"refusing to hot-upload retired runtime selector {name!r}: "
+                "runtime identity resolves from the per-epic runtime manifest, "
+                "not .cloud-hot-env"
+            )
+        if (
+            name in HOT_ENV_FORBIDDEN_NONSECRET_NAMES
+            or "MODEL" in name.upper()
+            or "SYNC" in name.upper()
+        ):
+            raise HotUploadError(
+                f"refusing to hot-upload nonsecret tuning {name!r}: "
+                ".cloud-hot-env is credentials-only"
+            )
+        if not HOT_ENV_CREDENTIAL_RE.search(name):
+            raise HotUploadError(
+                f"refusing to hot-upload non-credential env {name!r}: "
+                ".cloud-hot-env is credentials-only (API_KEY/TOKEN/SECRET/PASSWORD names)"
+            )
         if name not in os.environ:
             raise HotUploadError(f"environment variable is not set locally: {name}")
         lines.append(f"export {name}={shlex.quote(os.environ[name])}")

@@ -184,12 +184,28 @@ def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
     assert 'ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR"' in watchdog
 
 
-def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
-    assert 'SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _wrapper("arnold-watchdog")
-    assert 'ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _repair_wrapper()
-    assert 'ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"' in _wrapper("arnold-meta-repair-loop")
+def test_superfixer_wrappers_prefer_manifest_runtime_root() -> None:
+    """P4: runtime sources resolve from the manifest epic.runtime_root with a
+    fixed /workspace/arnold fallback — no env-selector fallback chains remain.
+    """
+    watchdog = _wrapper("arnold-watchdog")
+    repair_loop = _repair_wrapper()
+    meta_repair = _wrapper("arnold-meta-repair-loop")
     auditor = _wrapper("arnold-progress-auditor")
-    assert "${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-" in auditor
+
+    assert 'SRC_DIR="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"' in watchdog
+    assert 'ARNOLD_SRC="/workspace/arnold"' in repair_loop
+    assert 'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"' in repair_loop
+    assert 'ARNOLD_SRC="/workspace/arnold"' in meta_repair
+    assert 'AUDITOR_SOURCE_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root 2>/dev/null || true)"' in auditor
+    assert 'AUDITOR_SOURCE_ROOT="${AUDITOR_SOURCE_ROOT:-/workspace/arnold}"' in auditor
+    # G4 correction 3: legacy selector reads were deleted with P4 — prove
+    # none of the deleted fallback names appear in any fixer wrapper.
+    for text in (watchdog, repair_loop, meta_repair, auditor):
+        assert "MEGAPLAN_RUNTIME_SRC" not in text
+        assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
+        assert "MEGAPLAN_META_ARNOLD_SRC" not in text
+        assert "MEGAPLAN_AUDIT_ARNOLD_SRC" not in text
 
 
 def test_fixer_wrappers_prefer_manifest_epic_branch_push_target() -> None:
@@ -201,11 +217,16 @@ def test_fixer_wrappers_prefer_manifest_epic_branch_push_target() -> None:
     """
     repair_loop = _repair_wrapper()
     assert 'MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"' in repair_loop
-    assert 'SYNC_BRANCH="$MANIFEST_EPIC_BRANCH"' in repair_loop
-    assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"' in repair_loop
+    assert 'SYNC_BRANCH="${MANIFEST_EPIC_BRANCH:-}"' in repair_loop
+    assert "CLOUD_WATCHDOG_SYNC_BRANCH" not in repair_loop
+    assert "KIMI_GOAL_SYNC_BRANCH" not in repair_loop
+    assert "MEGAPLAN_META_SYNC_BRANCH" not in repair_loop
     for wrapper_name in ("arnold-kimi-goal-operator", "arnold-meta-repair-loop"):
         text = _wrapper(wrapper_name)
-        assert 'SYNC_BRANCH="$_MANIFEST_EPIC_BRANCH"' in text
+        assert 'SYNC_BRANCH="${_MANIFEST_EPIC_BRANCH:-}"' in text
+        assert "CLOUD_WATCHDOG_SYNC_BRANCH" not in text
+        assert "KIMI_GOAL_SYNC_BRANCH" not in text
+        assert "MEGAPLAN_META_SYNC_BRANCH" not in text
         # G2 correction 3: the entry authority gate runs before the field read.
         component = {
             "arnold-kimi-goal-operator": "kimi-goal-operator",
@@ -936,17 +957,17 @@ def _run_discover(
     )
 
 
-def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
+def test_watchdog_defaults_runtime_and_sync_branch_to_manifest() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert (
-        'SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
-        in text
-    )
-    assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"' in text
+    assert 'SRC_DIR="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"' in text
+    assert 'SYNC_BRANCH="${MANIFEST_EPIC_BRANCH:-}"' in text
     assert 'REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"' in text
     assert 'REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"' not in text
-    assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-${MEGAPLAN_REF' not in text
+    # G4 correction 3: no env-selector fallbacks remain in the watchdog.
+    assert "MEGAPLAN_RUNTIME_SRC" not in text
+    assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
+    assert "CLOUD_WATCHDOG_SYNC_BRANCH" not in text
     assert "workflow-manifest-runtime" not in text
 
 
@@ -977,14 +998,14 @@ def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_livenes
 
     assert "tmux new-session -d -s watchdog -c /workspace" in text
     assert ". /workspace/.cloud-hot-env" in text
-    assert (
-        'runtime_src="${MEGAPLAN_RUNTIME_SRC:-'
-        '${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
-    ) in text
+    assert "runtime_src=/workspace/arnold" in text
     assert (
         'exec "$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/'
         'arnold-watchdog"'
     ) in text
+    # G4: the ensure script no longer resolves runtime_src via env selectors.
+    assert "MEGAPLAN_RUNTIME_SRC" not in text
+    assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
     assert (
         "exec /workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/"
         "arnold-watchdog"
@@ -998,8 +1019,13 @@ def test_host_resident_ensure_starts_from_pinned_runtime_source() -> None:
     text = _systemd_file("ensure-megaplan-resident")
 
     assert "tmux new-session -d -s megaplan-resident-discord -c /workspace" in text
-    assert r"runtime_src=\${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}" in text
+    assert "runtime_src=/workspace/arnold" in text
+    assert "export MEGAPLAN_RUNTIME_SRC=/workspace/arnold" in text
     assert r'cd \"\$runtime_src\"' in text
+    # G4: the resident ensure script pins runtime_src to the fixed checkout;
+    # no env-selector fallback chain remains.
+    assert r"\${MEGAPLAN_RUNTIME_SRC:-" not in text
+    assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
     assert (
         "tmux new-session -d -s megaplan-resident-discord "
         "-c /workspace/arnold"
@@ -3402,7 +3428,7 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
-    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
     result = subprocess.run(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), str(spec_path)],
         capture_output=True,
@@ -4983,7 +5009,7 @@ def test_repair_loop_missing_goal_custody_cleans_pidfile_on_term(
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
-    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
 
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -5070,7 +5096,7 @@ def test_repair_loop_preserves_unbound_pidfile_and_uses_durable_lock(tmp_path: P
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
-    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
 
     proc = subprocess.Popen(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"],
@@ -5162,7 +5188,7 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
-    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
 
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     pidfile = marker_dir / "demo-session.repair-loop.pid"
@@ -5248,7 +5274,7 @@ def test_repair_loop_busy_directory_lock_exits_without_mutating_repair_data(tmp_
         assert acquired.acquired
 
         env = dict(os.environ)
-        env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
+        env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
         env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
         env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
         env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
@@ -6158,7 +6184,10 @@ def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) 
     env.update(
         {
             "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
-            "MEGAPLAN_SUPERVISOR_SOURCE": str(REPO_ROOT),
+            # G4: no MEGAPLAN_SUPERVISOR_SOURCE transport — the wrapper never
+            # reads it.  Attestation explicitly opted out so this retry-logic
+            # test does not need a full launch seed.
+            "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
             "ARNOLD_AUTONOMY": "1",
             "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
             "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
@@ -6212,6 +6241,9 @@ def test_supervise_durable_review_quality_block_does_not_retry(tmp_path: Path) -
     env.update(
         {
             "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            # G4: attestation explicitly opted out so this retry-logic test
+            # does not need a full launch seed.
+            "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
             "ARNOLD_AUTONOMY": "1",
             "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
             "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
@@ -6240,11 +6272,12 @@ def test_supervise_durable_review_quality_block_does_not_retry(tmp_path: Path) -
 def test_repair_loop_accepts_explicit_scoped_attested_runtime() -> None:
     text = _wrapper("arnold-repair-loop")
 
-    assert (
-        'ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-'
-        '${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
-    ) in text
+    assert 'ARNOLD_SRC="/workspace/arnold"' in text
     assert 'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"' in text
+    assert 'if [[ -n "$MANIFEST_RUNTIME_ROOT" ]]; then\n  ARNOLD_SRC="$MANIFEST_RUNTIME_ROOT"' in text
+    # G4 correction 3: the generic env-selector fallback was deleted with P4.
+    assert "MEGAPLAN_RUNTIME_SRC" not in text
+    assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
 
 
 def test_watchdog_reports_markerless_bootstrap_tmux_without_adopting_it(tmp_path: Path) -> None:
@@ -6436,11 +6469,16 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert "source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror" in result.stdout
-    assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
-    assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
+    # P4: the editable-install refresh machinery is deleted; a stale refresh-era
+    # marker regenerates the manifest-runtime chain start (no source checkout
+    # mutation, no env-selector re-resolution).
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "chain start --spec" in result.stdout
+    assert "PYTHONPATH=/workspace/arnold" in result.stdout
+    assert "MEGAPLAN_RUNTIME_SRC" not in result.stdout
+    assert "editable-engine" not in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
+    assert "source checkout dirty" not in result.stdout
 
 
 def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
@@ -6537,11 +6575,16 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert "source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror" in result.stdout
-    assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
-    assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
+    # P4: the editable-install refresh machinery is deleted; a stale refresh-era
+    # marker regenerates the manifest-runtime chain start (no source checkout
+    # mutation, no env-selector re-resolution).
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "chain start --spec" in result.stdout
+    assert "PYTHONPATH=/workspace/arnold" in result.stdout
+    assert "MEGAPLAN_RUNTIME_SRC" not in result.stdout
+    assert "editable-engine" not in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
+    assert "source checkout dirty" not in result.stdout
 
 
 @pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
@@ -6579,8 +6622,13 @@ def test_persisted_push_capable_marker_command_is_always_regenerated(
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
+    # P4: a push-capable (refresh-era) marker is regenerated as the
+    # manifest-runtime chain start; the stale selector/refresh machinery is
+    # gone from the emitted command.
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
-    assert "using current source checkout at $SRC" in result.stdout
+    assert "chain start --spec" in result.stdout
+    assert "MEGAPLAN_RUNTIME_SRC" not in result.stdout
+    assert "source checkout dirty" not in result.stdout
     assert "attempting push" not in result.stdout
     assert 'git -C "$SRC" push origin' not in result.stdout
 
@@ -11385,7 +11433,12 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     text = _wrapper("arnold-kimi-goal-operator")
 
     assert 'ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"' in text
-    assert 'SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"' in text
+    assert 'SYNC_BRANCH="${_MANIFEST_EPIC_BRANCH:-}"' in text
+    # G4 correction: P4 removed the env-selector fallback chain — SYNC_BRANCH
+    # is manifest-only now, so prove the deleted selector reads are gone.
+    assert "KIMI_GOAL_SYNC_BRANCH" not in text
+    assert "CLOUD_WATCHDOG_SYNC_BRANCH" not in text
+    assert "MEGAPLAN_META_SYNC_BRANCH" not in text
     assert 'PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"' in text
     assert 'MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"' in text
     assert 'CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-7200}"' in text
@@ -20435,7 +20488,7 @@ def _run_arnold_run(
     env = dict(os.environ)
     env["PATH"] = f"{fake_bin_dir}:{env.get('PATH', '')}"
     env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{env.get('PYTHONPATH', '')}"
-    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
     env.update(env_overrides)
     result = subprocess.run(
         [str(WRAPPER_DIR / "arnold-run"), *args],
@@ -20507,7 +20560,11 @@ def test_arnold_run_journals_fallback_events_before_launch(tmp_path: Path) -> No
         assert payload["scope"] == "chain:demo-session"
         assert payload["session_id"] == "demo-session"
         assert payload["chain_spec_sha256"] == expected_digest
-        assert payload["candidate_from"] == str(REPO_ROOT)
+        # G4: candidate_from is the manifest-declared runtime root (ARNOLD_SRC
+        # resolves manifest-first), not the local checkout.
+        assert payload["candidate_from"] == _make_authoritative_manifest()["epic"][
+            "runtime_root"
+        ]
     assert payloads[1]["candidate_to"] == "echo hi"
     # The fake tmux proved the events precede the launch; only the launch is
     # recorded on the tmux side.
@@ -20623,7 +20680,11 @@ def test_arnold_run_in_tmux_journals_fallback_events_before_exec(
         assert payload["scope"] == "chain:demo-session"
         assert payload["session_id"] == "demo-session"
         assert payload["chain_spec_sha256"] == expected_digest
-        assert payload["candidate_from"] == str(REPO_ROOT)
+        # G4: candidate_from is the manifest-declared runtime root (ARNOLD_SRC
+        # resolves manifest-first), not the local checkout.
+        assert payload["candidate_from"] == _make_authoritative_manifest()["epic"][
+            "runtime_root"
+        ]
     assert payloads[1]["candidate_to"] == f"{in_tmux_cmd} via-tmux"
 
 
