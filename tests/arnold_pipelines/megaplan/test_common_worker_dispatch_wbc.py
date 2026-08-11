@@ -1012,3 +1012,354 @@ def test_worker_dispatch_spec_is_shadow_only_when_explicitly_disabled(
     )
     assert spec is not None
     assert spec.facade._enforcement_enabled is False
+
+
+def test_worker_dispatch_spec_shadow_mode_proceeds_end_to_end_with_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Option-A contract, proven by execution: ARNOLD_M7_ACTION_VALIDATOR_
+    ENFORCEMENT=0 is a FUNCTIONAL shadow mode.  The real production builder
+    acquires custody, the facade ACCEPTS the SHADOW_PASS boundaries, and
+    reserve/start/complete ALL SUCCEED with shadow evidence (active lease +
+    outbox record per boundary digest) recorded — no denial."""
+    monkeypatch.setenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", "0")
+    state = {
+        "name": "plan-p7a-shadow-e2e",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-p7a-shadow-e2e"},
+        "active_step": {"run_id": "run-p7a-shadow-e2e"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    spec = build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step="review",
+        agent="claude",
+        selected_spec="claude:claude-sonnet-4-6:high",
+        route_kind="direct",
+    )
+    assert spec is not None
+    assert spec.facade._enforcement_enabled is False
+
+    result = spec.run(lambda _start: _worker())
+
+    # Every boundary was validated in shadow mode and ACCEPTED — no denial.
+    for phase_result in (result.reserve, result.start, result.terminal):
+        assert phase_result.action_boundary is not None
+        assert phase_result.action_boundary.gate_result == GateResult.SHADOW_PASS
+        assert phase_result.action_boundary.enforcement_enabled is False
+        assert phase_result.action_boundary.is_shadow is True
+    # Shadow evidence is recorded: every boundary lease is active and owned by
+    # this runtime, and the outbox carries one record per boundary digest.
+    for ctx in (
+        spec.start_action_context,
+        spec.success_action_context,
+        spec.failure_action_context,
+    ):
+        lease = spec.facade._lease_store.current_lease(
+            f"custody-lease-{ctx.target.target_digest[:16]}"
+        )
+        assert lease is not None
+        assert lease.is_expired is False
+        assert lease.owner_host == ctx.owner_host
+        assert lease.owner_pid == ctx.owner_pid
+    records = spec.facade._outbox.list_records()
+    assert len([r for r in records if r.wbc_attempt_reference == spec.attempt_id]) == 3
+    # The WBC attempt stream completed end to end.
+    assert [event.event_type for event in spec.facade._ledger_store.read_events(spec.attempt_id)] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.COMPLETED,
+    ]
+
+
+# ── Codex-gate blockers: crash-atomicity + epoch/expiry recovery ───────────
+
+
+def _expired_seed_lease(
+    tmp_path: Path,
+    target: CustodyTargetKey,
+    *,
+    owner_host: str,
+    owner_pid: str,
+    owner_boot_id: str,
+    idempotency_key: str,
+) -> str:
+    """Seed an ACTIVE (non-terminal) lease whose TTL expired long ago."""
+    from arnold_pipelines.megaplan.custody.lease_store import open_lease_store
+
+    digest = target.target_digest
+    lease_id = f"custody-lease-{digest[:16]}"
+    open_lease_store(tmp_path / "custody" / "leases").acquire(
+        lease_id=lease_id,
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
+        run_authority_grant_id="seed-grant",
+        coordinator_fence_token=0,
+        wbc_attempt_reference="seed-attempt",
+        occurrence_digest=digest,
+        custody_epoch=1,
+        occurred_at="2020-01-01T00:00:00Z",
+        expires_at="2020-01-02T00:00:00Z",
+        idempotency_key=idempotency_key,
+    )
+    return lease_id
+
+
+def test_worker_dispatch_spec_repairs_missing_outbox_record_after_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blocker 1 (crash-atomicity): a crash between the lease append and the
+    outbox write leaves an owned lease with no outbox record; the idempotent
+    retry must REPAIR it so the WBC attempt reference is never
+    BLOCKED_WBC_MISSING."""
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    state = {
+        "name": "plan-blocker-1",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-blocker-1"},
+        "active_step": {"run_id": "run-blocker-1"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    kwargs = {
+        "plan_dir": tmp_path,
+        "state": state,
+        "step": "review",
+        "agent": "claude",
+        "selected_spec": "claude:claude-sonnet-4-6:high",
+        "route_kind": "direct",
+    }
+    first = build_worker_dispatch_spec(**kwargs)
+    assert first is not None
+    # Simulate the crash window: leases are durable, outbox records are lost.
+    for record in first.facade._outbox.list_records():
+        if record.wbc_attempt_reference == first.attempt_id:
+            (tmp_path / "custody" / "outbox" / f"{record.outbox_id}.record.json").unlink()
+    # Retry in the same runtime: the lease is ours and active, so the
+    # idempotent keep path must repair the missing outbox record.
+    second = build_worker_dispatch_spec(**kwargs)
+    assert second is not None
+    assert second.attempt_id == first.attempt_id
+    records = second.facade._outbox.list_records()
+    matching = [r for r in records if r.wbc_attempt_reference == second.attempt_id]
+    assert len(matching) == 3
+    # The repaired dispatch runs end to end under enforcement.
+    result = second.run(lambda _start: _worker())
+    assert result.reserve.action_boundary.gate_result == GateResult.AUTHORIZED
+    assert [event.event_type for event in second.facade._ledger_store.read_events(second.attempt_id)] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.COMPLETED,
+    ]
+
+
+def test_worker_dispatch_spec_renews_expired_self_lease_with_strictly_greater_epoch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blocker 2a (epoch correctness): an expired lease owned by THIS runtime
+    is renewed with a STRICTLY GREATER epoch (the store enforces monotonic
+    epoch) instead of re-passing the current epoch, and the rebuilt dispatch
+    stays authorized."""
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import _runtime_owner
+
+    host, pid, boot_id = _runtime_owner()
+    start_target = CustodyTargetKey(
+        "phase_worker_dispatch",
+        "review",
+        "dispatch",
+        "direct",
+        "review",
+        "claude:claude-sonnet-4-6:high",
+    )
+    lease_id = _expired_seed_lease(
+        tmp_path,
+        start_target,
+        owner_host=host,
+        owner_pid=pid,
+        owner_boot_id=boot_id,
+        idempotency_key="expired-self-seed",
+    )
+    state = {
+        "name": "plan-blocker-2a",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-blocker-2a"},
+        "active_step": {"run_id": "run-blocker-2a"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    spec = build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step="review",
+        agent="claude",
+        selected_spec="claude:claude-sonnet-4-6:high",
+        route_kind="direct",
+    )
+    assert spec is not None
+    lease = spec.facade._lease_store.current_lease(lease_id)
+    assert lease is not None
+    # Strictly greater epoch (seeded epoch 1 -> renewed epoch 2), no longer
+    # expired, still owned by this runtime.
+    assert lease.custody_epoch == 2
+    assert lease.is_expired is False
+    assert (lease.owner_host, lease.owner_pid, lease.owner_boot_id) == (host, pid, boot_id)
+    result = spec.run(lambda _start: _worker())
+    assert result.reserve.action_boundary.gate_result == GateResult.AUTHORIZED
+
+
+def test_worker_dispatch_spec_reclaims_expired_foreign_lease_with_greater_epoch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blocker 2b (expiry recovery): an EXPIRED lease held by a foreign
+    runtime is reclaimed (expire-then-reclaim) with a strictly greater epoch —
+    the target is never left wedged — and the dispatch builds + runs under
+    enforcement."""
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    start_target = CustodyTargetKey(
+        "phase_worker_dispatch",
+        "review",
+        "dispatch",
+        "direct",
+        "review",
+        "claude:claude-sonnet-4-6:high",
+    )
+    lease_id = _expired_seed_lease(
+        tmp_path,
+        start_target,
+        owner_host="foreign-host",
+        owner_pid="999999",
+        owner_boot_id="foreign-boot",
+        idempotency_key="foreign-expired-seed",
+    )
+    state = {
+        "name": "plan-blocker-2b",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-blocker-2b"},
+        "active_step": {"run_id": "run-blocker-2b"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    spec = build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step="review",
+        agent="claude",
+        selected_spec="claude:claude-sonnet-4-6:high",
+        route_kind="direct",
+    )
+    assert spec is not None
+    lease = spec.facade._lease_store.current_lease(lease_id)
+    assert lease is not None
+    # Ownership moved to this runtime at a strictly greater epoch; the lease
+    # now references this attempt.
+    assert lease.custody_epoch == 2
+    assert lease.is_expired is False
+    assert (lease.owner_host, lease.owner_pid, lease.owner_boot_id) == (
+        spec.start_action_context.owner_host,
+        spec.start_action_context.owner_pid,
+        spec.start_action_context.owner_boot_id,
+    )
+    assert lease.wbc_attempt_reference == spec.attempt_id
+    # Crash-atomicity: the reclaim path also wrote the outbox records.
+    records = spec.facade._outbox.list_records()
+    assert len([r for r in records if r.wbc_attempt_reference == spec.attempt_id]) == 3
+    result = spec.run(lambda _start: _worker())
+    assert result.terminal.action_boundary.gate_result == GateResult.AUTHORIZED
+
+
+def test_worker_dispatch_spec_renews_lease_before_completion_boundary_after_ttl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blocker 2c (TTL coverage): a worker that outlived the 1h lease TTL is
+    not denied at the completion boundary — the facade renews the self-owned
+    lease immediately before the boundary re-read, so reserve/start/complete
+    all see an active lease and the run completes end to end."""
+    import json
+
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    state = {
+        "name": "plan-blocker-2c",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-blocker-2c"},
+        "active_step": {"run_id": "run-blocker-2c"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    spec = build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step="review",
+        agent="claude",
+        selected_spec="claude:claude-sonnet-4-6:high",
+        route_kind="direct",
+    )
+    assert spec is not None
+    store = spec.facade._lease_store
+    leases_dir = tmp_path / "custody" / "leases"
+    # Model the worker running past the 1h TTL: advance every boundary
+    # lease's cached expiry into the past.  The durable history is untouched,
+    # so the store's owner/epoch invariants still hold for renewal.
+    for ctx in (
+        spec.start_action_context,
+        spec.success_action_context,
+        spec.failure_action_context,
+    ):
+        lease_id = f"custody-lease-{ctx.target.target_digest[:16]}"
+        state_path = leases_dir / f"{lease_id}.state.json"
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+        # Both timestamps move into the past together (the contract requires
+        # expires_at > acquired_at); the lease is valid but long expired.
+        data["acquired_at"] = "2020-01-01T00:00:00+00:00"
+        data["expires_at"] = "2020-01-02T00:00:00+00:00"
+        state_path.write_text(json.dumps(data), encoding="utf-8")
+        current = store.current_lease(lease_id)
+        assert current is not None
+        assert current.is_expired is True
+
+    result = spec.run(lambda _start: _worker())
+
+    # The reserve boundary renewed the start lease; the completion boundary
+    # renewed the success lease — both stayed active across the run.
+    for ctx in (spec.start_action_context, spec.success_action_context):
+        lease = store.current_lease(f"custody-lease-{ctx.target.target_digest[:16]}")
+        assert lease is not None
+        assert lease.is_expired is False
+        assert lease.custody_epoch == 2  # 1 (build) -> 2 (boundary renew)
+    assert result.reserve.action_boundary.gate_result == GateResult.AUTHORIZED
+    assert result.terminal.action_boundary.gate_result == GateResult.AUTHORIZED
+    assert [event.event_type for event in spec.facade._ledger_store.read_events(spec.attempt_id)] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.COMPLETED,
+    ]

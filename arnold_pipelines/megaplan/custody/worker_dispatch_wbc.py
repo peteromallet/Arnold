@@ -30,7 +30,12 @@ from .action_validator import ActionBoundaryContext
 from .common_worker_dispatch import CommonWorkerDispatchSpec
 from .controlled_writer_registry import Cohort, ControlledWriter, register_writer
 from .contracts import CustodyTargetKey, process_birth_identity
-from .lease_store import CustodyLeaseStore, open_lease_store
+from .lease_store import (
+    CustodyLeaseStore,
+    LeaseStoreError,
+    TerminalLeaseError,
+    open_lease_store,
+)
 from .outbox import CustodyOutbox, OutboxRecord, OutboxRecordStatus, OutboxRecordType, open_outbox
 from .phase_wbc import phase_wbc_state
 from .wbc_runtime import (
@@ -584,11 +589,22 @@ def _ensure_dispatch_leases(
 
     The lease id is derived exactly as the action validator derives it
     (``custody-lease-{target_digest[:16]}`` over the boundary target key), so
-    the reread at validation time hits the same lease.  Leases are owned by
-    the current runtime process; an existing active lease owned by this
-    runtime is left in place (idempotent retry), an expired lease owned by
-    this runtime is renewed, and a lease owned by another runtime raises a
-    clear denial — the lease is never stolen.
+    the reread at validation time hits the same lease.
+
+    Race-safety (no check-then-acquire TOCTOU): acquisition goes through the
+    store's ``acquire``, which serializes the append under the lease's flock.
+    When a lease is already visible the outcome is adjudicated by ownership:
+    self-owned -> keep (or renew with a STRICTLY GREATER epoch when expired);
+    expired/terminal foreign -> expire-then-reclaim (never leave a wedged
+    target); active foreign -> raise a clear denial — the lease is never
+    stolen.  A concurrent winner surfaced by a failed acquire is re-read and
+    adjudicated the same way.
+
+    Crash-atomicity: the outbox record for the (attempt, digest) pair is
+    (re)written idempotently on EVERY path — fresh acquire, idempotent keep,
+    self renewal, and foreign reclaim.  A crash between the lease append and
+    the outbox write therefore heals on the next attempt instead of leaving a
+    BLOCKED_WBC_MISSING wedge.
 
     Runs before the ledger-write path: when acquisition fails, no STARTED
     event has been appended yet (the dispatch raises during spec build).
@@ -596,12 +612,36 @@ def _ensure_dispatch_leases(
     owner_host, owner_pid, owner_boot_id = _runtime_owner()
     lease_store = open_lease_store(plan_dir / "custody" / "leases")
     outbox = open_outbox(plan_dir / "custody" / "outbox")
-    now = datetime.now(timezone.utc)
-    expires_at = (now + timedelta(hours=1)).isoformat()
-    for index, ctx in enumerate(action_contexts):
+    for ctx in action_contexts:
         digest = ctx.target.target_digest
         lease_id = f"custody-lease-{digest[:16]}"
+        now = datetime.now(timezone.utc)
+        expires_at = (now + timedelta(hours=1)).isoformat()
+
         current = lease_store.current_lease(lease_id)
+        if current is None:
+            # No visible lease — race-safe acquisition: the store serializes
+            # the append under the lease flock, so a concurrent winner
+            # surfaces as a store error here and is re-adjudicated below
+            # instead of being raced in user space.
+            try:
+                lease_store.acquire(
+                    lease_id=lease_id,
+                    owner_host=owner_host,
+                    owner_pid=owner_pid,
+                    owner_boot_id=owner_boot_id,
+                    run_authority_grant_id=attempt_id,
+                    coordinator_fence_token=0,
+                    wbc_attempt_reference=attempt_id,
+                    occurrence_digest=digest,
+                    custody_epoch=1,
+                    expires_at=expires_at,
+                )
+            except LeaseStoreError:
+                current = lease_store.current_lease(lease_id)
+                if current is None:
+                    raise
+
         if current is not None:
             same_owner = (
                 current.owner_host == owner_host
@@ -613,51 +653,111 @@ def _ensure_dispatch_leases(
                 )
             )
             if same_owner:
-                if not current.is_expired:
-                    # Idempotent retry of the same dispatch — lease is ours.
-                    continue
-                lease_store.renew(
+                if current.is_expired:
+                    try:
+                        # Renewal must carry a strictly greater epoch (the
+                        # store enforces monotonic epoch, Step 11C).
+                        lease_store.renew(
+                            lease_id=lease_id,
+                            owner_host=owner_host,
+                            owner_pid=owner_pid,
+                            owner_boot_id=owner_boot_id,
+                            custody_epoch=current.custody_epoch + 1,
+                            expires_at=expires_at,
+                        )
+                    except TerminalLeaseError:
+                        # Self-owned lease already terminal (released/expired/
+                        # fenced): reclaim it with a strictly greater epoch.
+                        lease_store.reclaim(
+                            lease_id=lease_id,
+                            owner_host=owner_host,
+                            owner_pid=owner_pid,
+                            owner_boot_id=owner_boot_id,
+                            run_authority_grant_id=attempt_id,
+                            coordinator_fence_token=0,
+                            wbc_attempt_reference=attempt_id,
+                            occurrence_digest=digest,
+                            custody_epoch=current.custody_epoch + 1,
+                            expires_at=expires_at,
+                        )
+                # else: idempotent retry of the same dispatch — lease is ours.
+            elif current.is_expired:
+                # Expired or terminal foreign lease: never leave a wedged
+                # target.  ``expire`` is the system-driven sweep path (no
+                # owner enforcement); ``reclaim`` then enforces old-epoch
+                # fencing via the strictly greater epoch.
+                try:
+                    lease_store.expire(lease_id=lease_id)
+                except TerminalLeaseError:
+                    pass  # already terminal — reclaim below is still valid
+                lease_store.reclaim(
                     lease_id=lease_id,
                     owner_host=owner_host,
                     owner_pid=owner_pid,
                     owner_boot_id=owner_boot_id,
-                    custody_epoch=current.custody_epoch,
+                    run_authority_grant_id=attempt_id,
+                    coordinator_fence_token=0,
+                    wbc_attempt_reference=attempt_id,
+                    occurrence_digest=digest,
+                    custody_epoch=current.custody_epoch + 1,
                     expires_at=expires_at,
                 )
-                continue
-            raise ActionBoundaryDeniedError(
-                f"dispatch not authorized: custody lease {lease_id!r} is held by "
-                f"({current.owner_host!r}, {current.owner_pid!r}, {current.owner_boot_id!r}), "
-                f"not this runtime ({owner_host!r}, {owner_pid!r}, {owner_boot_id!r})"
-            )
-        lease_store.acquire(
-            lease_id=lease_id,
-            owner_host=owner_host,
-            owner_pid=owner_pid,
-            owner_boot_id=owner_boot_id,
-            run_authority_grant_id=attempt_id,
-            coordinator_fence_token=0,
-            wbc_attempt_reference=attempt_id,
-            occurrence_digest=digest,
-            custody_epoch=1,
-            expires_at=expires_at,
+            else:
+                # Terminal-but-not-yet-expired foreign lease (clock skew) is
+                # still reclaimable; only an ACTIVE foreign lease denies.
+                try:
+                    lease_store.reclaim(
+                        lease_id=lease_id,
+                        owner_host=owner_host,
+                        owner_pid=owner_pid,
+                        owner_boot_id=owner_boot_id,
+                        run_authority_grant_id=attempt_id,
+                        coordinator_fence_token=0,
+                        wbc_attempt_reference=attempt_id,
+                        occurrence_digest=digest,
+                        custody_epoch=current.custody_epoch + 1,
+                        expires_at=expires_at,
+                    )
+                except LeaseStoreError:
+                    raise ActionBoundaryDeniedError(
+                        f"dispatch not authorized: custody lease {lease_id!r} is held by "
+                        f"({current.owner_host!r}, {current.owner_pid!r}, "
+                        f"{current.owner_boot_id!r}), not this runtime "
+                        f"({owner_host!r}, {owner_pid!r}, {owner_boot_id!r})"
+                    ) from None
+
+        # Crash-atomicity repair: the outbox record for this (attempt, digest)
+        # must exist on every path.  A record already present for the pair is
+        # left untouched (idempotent retry / shared-digest boundary contexts
+        # like execute's dispatch/completion/repair all reference the same
+        # digest); when absent it is written idempotently, healing a crash
+        # between the lease append and the outbox write.
+        existing_records = outbox.list_records()
+        has_record = any(
+            record.wbc_attempt_reference == attempt_id
+            and record.occurrence_digest == digest
+            for record in existing_records
         )
-        outbox.write_record(
-            OutboxRecord(
-                outbox_id=f"dispatch-{attempt_id}-{index}",
-                lease_id=lease_id,
-                record_type=OutboxRecordType.LEASE_ACQUIRE,
-                status=OutboxRecordStatus.PENDING,
-                occurred_at=now.isoformat(),
-                idempotency_key=f"dispatch-{attempt_id}-{index}",
-                wbc_attempt_reference=attempt_id,
-                run_authority_grant_id=attempt_id,
-                coordinator_fence_token=0,
-                occurrence_digest=digest,
-                custody_epoch=1,
-                payload={"target_digest": digest, "action_type": str(ctx.action_type)},
+        if not has_record:
+            outbox.write_record(
+                OutboxRecord(
+                    outbox_id=f"dispatch-{attempt_id}-{digest[:16]}",
+                    lease_id=lease_id,
+                    record_type=OutboxRecordType.LEASE_ACQUIRE,
+                    status=OutboxRecordStatus.PENDING,
+                    occurred_at=now.isoformat(),
+                    idempotency_key=f"dispatch-{attempt_id}-{digest[:16]}",
+                    wbc_attempt_reference=attempt_id,
+                    run_authority_grant_id=attempt_id,
+                    coordinator_fence_token=0,
+                    occurrence_digest=digest,
+                    custody_epoch=1,
+                    payload={
+                        "target_digest": digest,
+                        "action_type": str(ctx.action_type),
+                    },
+                )
             )
-        )
     return lease_store, outbox
 
 
