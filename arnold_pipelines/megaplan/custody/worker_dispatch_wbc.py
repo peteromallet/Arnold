@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
+import socket
 import uuid
 from typing import Any, Iterable, Mapping
 
@@ -27,9 +29,17 @@ from arnold_pipelines.megaplan.types import PlanState
 from .action_validator import ActionBoundaryContext
 from .common_worker_dispatch import CommonWorkerDispatchSpec
 from .controlled_writer_registry import Cohort, ControlledWriter, register_writer
-from .contracts import CustodyTargetKey
+from .contracts import CustodyTargetKey, process_birth_identity
+from .lease_store import CustodyLeaseStore, open_lease_store
+from .outbox import CustodyOutbox, OutboxRecord, OutboxRecordStatus, OutboxRecordType, open_outbox
 from .phase_wbc import phase_wbc_state
-from .wbc_runtime import ExactSourceRecord, ImmutableAttemptArtifacts, PromotionMode, WbcRuntimeProducerFacade
+from .wbc_runtime import (
+    ActionBoundaryDeniedError,
+    ExactSourceRecord,
+    ImmutableAttemptArtifacts,
+    PromotionMode,
+    WbcRuntimeProducerFacade,
+)
 
 WORKER_DISPATCH_WBC_LEDGER_FILENAME = ".worker_dispatch_wbc_attempts.sqlite3"
 
@@ -203,6 +213,52 @@ def build_worker_dispatch_spec(
     }
     if normalized_dispatch_key is not None:
         metadata["dispatch_key"] = normalized_dispatch_key
+    owner_host, owner_pid, owner_boot_id = _runtime_owner()
+    start_action_context = _shadow_action_context(
+        phase_step=phase_name,
+        worker_step=step,
+        route_kind=route_kind,
+        selected_spec=selected_spec,
+        expected_source_version=expected_source_version,
+        attempt_id=attempt_id,
+        action_type="dispatch",
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
+    )
+    success_action_context = _shadow_action_context(
+        phase_step=phase_name,
+        worker_step=step,
+        route_kind=route_kind,
+        selected_spec=selected_spec,
+        expected_source_version=expected_source_version,
+        attempt_id=attempt_id,
+        action_type="completion",
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
+    )
+    failure_action_context = _shadow_action_context(
+        phase_step=phase_name,
+        worker_step=step,
+        route_kind=route_kind,
+        selected_spec=selected_spec,
+        expected_source_version=expected_source_version,
+        attempt_id=attempt_id,
+        action_type="repair",
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
+    )
+    lease_store, outbox = _ensure_dispatch_leases(
+        plan_dir=plan_dir,
+        action_contexts=(
+            start_action_context,
+            success_action_context,
+            failure_action_context,
+        ),
+        attempt_id=attempt_id,
+    )
     facade = WbcRuntimeProducerFacade(
         SqliteAttemptLedgerStore(plan_dir / WORKER_DISPATCH_WBC_LEDGER_FILENAME),
         source_lookup=lambda key: _exact_source_record(
@@ -215,6 +271,8 @@ def build_worker_dispatch_spec(
             dispatch_key=normalized_dispatch_key,
             lookup_key=key,
         ),
+        lease_store=lease_store,
+        outbox=outbox,
         promotion_mode=PromotionMode.ACTION_OFF,
         enforcement_enabled=production_enforcement_enabled(),
     )
@@ -284,33 +342,9 @@ def build_worker_dispatch_spec(
                 "error": str(exc),
             },
         ),
-        start_action_context=_shadow_action_context(
-            phase_step=phase_name,
-            worker_step=step,
-            route_kind=route_kind,
-            selected_spec=selected_spec,
-            expected_source_version=expected_source_version,
-            attempt_id=attempt_id,
-            action_type="dispatch",
-        ),
-        success_action_context=_shadow_action_context(
-            phase_step=phase_name,
-            worker_step=step,
-            route_kind=route_kind,
-            selected_spec=selected_spec,
-            expected_source_version=expected_source_version,
-            attempt_id=attempt_id,
-            action_type="completion",
-        ),
-        failure_action_context=_shadow_action_context(
-            phase_step=phase_name,
-            worker_step=step,
-            route_kind=route_kind,
-            selected_spec=selected_spec,
-            expected_source_version=expected_source_version,
-            attempt_id=attempt_id,
-            action_type="repair",
-        ),
+        start_action_context=start_action_context,
+        success_action_context=success_action_context,
+        failure_action_context=failure_action_context,
         artifacts=artifacts,
         writer_id=writer_spec.writer_id,
         surface_name=writer_spec.surface_name,
@@ -487,6 +521,9 @@ def _shadow_action_context(
     expected_source_version: str,
     attempt_id: str,
     action_type: str,
+    owner_host: str,
+    owner_pid: str,
+    owner_boot_id: str,
 ) -> ActionBoundaryContext:
     return ActionBoundaryContext(
         action_type=action_type,  # type: ignore[arg-type]
@@ -501,9 +538,127 @@ def _shadow_action_context(
         run_authority_grant_id=attempt_id,
         coordinator_fence_token=0,
         wbc_attempt_reference=attempt_id,
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
         required_capability=route_kind,
         required_wbc_evidence_version=expected_source_version,
     )
+
+
+def _runtime_owner() -> tuple[str, str, str]:
+    """Return the (host, pid, boot_id) identity of the current runtime.
+
+    ``boot_id`` is read from ``/proc`` on Linux (the production box); on
+    platforms without ``/proc`` (e.g. macOS local runs) it falls back to
+    the canonical ``process_birth_identity`` approximation (hostname + PID-1
+    process start time) so the lease owner is still a stable per-machine
+    identity without /proc support.
+    """
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = ""
+    pid = str(os.getpid())
+    try:
+        boot_id = (
+            Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        )
+    except Exception:
+        try:
+            birth = process_birth_identity()
+            boot_id = str(birth.get("boot_id") or "")
+        except Exception:
+            boot_id = ""
+    return host, pid, boot_id
+
+
+def _ensure_dispatch_leases(
+    *,
+    plan_dir: Path,
+    action_contexts: Iterable[ActionBoundaryContext],
+    attempt_id: str,
+) -> tuple[CustodyLeaseStore, CustodyOutbox]:
+    """Acquire idempotent custody leases + outbox records for every dispatch
+    action boundary (start/success/failure) before the facade is built.
+
+    The lease id is derived exactly as the action validator derives it
+    (``custody-lease-{target_digest[:16]}`` over the boundary target key), so
+    the reread at validation time hits the same lease.  Leases are owned by
+    the current runtime process; an existing active lease owned by this
+    runtime is left in place (idempotent retry), an expired lease owned by
+    this runtime is renewed, and a lease owned by another runtime raises a
+    clear denial — the lease is never stolen.
+
+    Runs before the ledger-write path: when acquisition fails, no STARTED
+    event has been appended yet (the dispatch raises during spec build).
+    """
+    owner_host, owner_pid, owner_boot_id = _runtime_owner()
+    lease_store = open_lease_store(plan_dir / "custody" / "leases")
+    outbox = open_outbox(plan_dir / "custody" / "outbox")
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(hours=1)).isoformat()
+    for index, ctx in enumerate(action_contexts):
+        digest = ctx.target.target_digest
+        lease_id = f"custody-lease-{digest[:16]}"
+        current = lease_store.current_lease(lease_id)
+        if current is not None:
+            same_owner = (
+                current.owner_host == owner_host
+                and current.owner_pid == owner_pid
+                and (
+                    not owner_boot_id
+                    or not current.owner_boot_id
+                    or current.owner_boot_id == owner_boot_id
+                )
+            )
+            if same_owner:
+                if not current.is_expired:
+                    # Idempotent retry of the same dispatch — lease is ours.
+                    continue
+                lease_store.renew(
+                    lease_id=lease_id,
+                    owner_host=owner_host,
+                    owner_pid=owner_pid,
+                    owner_boot_id=owner_boot_id,
+                    custody_epoch=current.custody_epoch,
+                    expires_at=expires_at,
+                )
+                continue
+            raise ActionBoundaryDeniedError(
+                f"dispatch not authorized: custody lease {lease_id!r} is held by "
+                f"({current.owner_host!r}, {current.owner_pid!r}, {current.owner_boot_id!r}), "
+                f"not this runtime ({owner_host!r}, {owner_pid!r}, {owner_boot_id!r})"
+            )
+        lease_store.acquire(
+            lease_id=lease_id,
+            owner_host=owner_host,
+            owner_pid=owner_pid,
+            owner_boot_id=owner_boot_id,
+            run_authority_grant_id=attempt_id,
+            coordinator_fence_token=0,
+            wbc_attempt_reference=attempt_id,
+            occurrence_digest=digest,
+            custody_epoch=1,
+            expires_at=expires_at,
+        )
+        outbox.write_record(
+            OutboxRecord(
+                outbox_id=f"dispatch-{attempt_id}-{index}",
+                lease_id=lease_id,
+                record_type=OutboxRecordType.LEASE_ACQUIRE,
+                status=OutboxRecordStatus.PENDING,
+                occurred_at=now.isoformat(),
+                idempotency_key=f"dispatch-{attempt_id}-{index}",
+                wbc_attempt_reference=attempt_id,
+                run_authority_grant_id=attempt_id,
+                coordinator_fence_token=0,
+                occurrence_digest=digest,
+                custody_epoch=1,
+                payload={"target_digest": digest, "action_type": str(ctx.action_type)},
+            )
+        )
+    return lease_store, outbox
 
 
 def _worker_result_summary(result: Any) -> dict[str, Any]:

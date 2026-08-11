@@ -619,12 +619,15 @@ def test_finalize_revise_fallback_records_phase_wbc_and_receipt(tmp_path: Path) 
 
 def test_phase_facade_is_enforced_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression (P7A): the phase WBC facade must be ENFORCED under default
-    env, matching the canonical production_enforcement_enabled() gate."""
+    env, matching the canonical production_enforcement_enabled() gate, and
+    carry real lease/outbox stores (never the None-wired stubs)."""
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
     facade = _phase_facade(plan_dir)
     assert facade._enforcement_enabled is True
+    assert facade._lease_store is not None
+    assert facade._outbox is not None
 
 
 def test_phase_facade_is_shadow_only_when_explicitly_disabled(

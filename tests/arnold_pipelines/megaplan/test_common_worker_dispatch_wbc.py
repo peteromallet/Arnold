@@ -283,7 +283,11 @@ def _wire_dispatch_custody(spec: CommonWorkerDispatchSpec) -> CommonWorkerDispat
             CustodyLease(
                 lease_id=lease_id,
                 target_key=ctx.target,
-                owner=("runtime-host", "4321", "boot-1"),
+                owner=(
+                    ctx.owner_host or "runtime-host",
+                    ctx.owner_pid or "4321",
+                    ctx.owner_boot_id or "boot-1",
+                ),
                 epoch=5,
                 acquired_at="2026-07-20T00:00:00+00:00",
                 expires_at="2999-01-01T00:00:00+00:00",
@@ -842,19 +846,20 @@ def test_worker_dispatch_spec_is_enforced_by_default(tmp_path: Path, monkeypatch
     ]
 
 
-def test_worker_dispatch_spec_denies_when_custody_is_invalid(
+def test_worker_dispatch_spec_real_builder_acquires_custody_and_is_authorized(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Under default enforcement, a dispatch without valid custody is denied —
-    the boundary must not fall through to shadow_pass."""
+    """P7A regression: the REAL production builder path (no hand-wired fake
+    stores) must acquire custody leases + outbox records for every boundary
+    action type and yield an AUTHORIZED boundary under default enforcement."""
     monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
     state = {
-        "name": "plan-p7a-denied",
+        "name": "plan-p7a-real",
         "iteration": 1,
         "config": {"project_dir": str(tmp_path)},
-        "meta": {"current_invocation_id": "inv-p7a-denied"},
-        "active_step": {"run_id": "run-p7a-denied"},
+        "meta": {"current_invocation_id": "inv-p7a-real"},
+        "active_step": {"run_id": "run-p7a-real"},
     }
     activate_phase_wbc(
         state=state,  # type: ignore[arg-type]
@@ -872,8 +877,109 @@ def test_worker_dispatch_spec_denies_when_custody_is_invalid(
     )
     assert spec is not None
 
+    # The production facade carries real stores, not the None-wired stubs.
+    assert spec.facade._lease_store is not None
+    assert spec.facade._outbox is not None
+    # Every boundary action type has an active lease owned by this runtime.
+    for ctx in (
+        spec.start_action_context,
+        spec.success_action_context,
+        spec.failure_action_context,
+    ):
+        lease = spec.facade._lease_store.current_lease(
+            f"custody-lease-{ctx.target.target_digest[:16]}"
+        )
+        assert lease is not None
+        assert lease.is_expired is False
+        assert lease.owner_host == ctx.owner_host
+        assert lease.owner_pid == ctx.owner_pid
+        assert lease.owner_boot_id == ctx.owner_boot_id
+
+    result = spec.run(lambda _start: _worker())
+
+    assert result.reserve.action_boundary is not None
+    assert result.reserve.action_boundary.gate_result == GateResult.AUTHORIZED
+    assert result.reserve.action_boundary.enforcement_enabled is True
+    assert result.reserve.action_boundary.is_shadow is False
+    assert [event.event_type for event in spec.facade._ledger_store.read_events(spec.attempt_id)] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.COMPLETED,
+    ]
+    # The outbox carries one record per boundary action type for this attempt.
+    records = spec.facade._outbox.list_records()
+    assert len([r for r in records if r.wbc_attempt_reference == spec.attempt_id]) == 3
+
+
+def test_worker_dispatch_spec_denies_when_custody_is_contended(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under default enforcement, a dispatch whose custody lease is held by
+    another runtime is denied at spec build — the lease is never stolen, and
+    no STARTED event is appended."""
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    state = {
+        "name": "plan-p7a-denied",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-p7a-denied"},
+        "active_step": {"run_id": "run-p7a-denied"},
+    }
+    phase = activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    assert phase is not None
+    # Pre-seed a lease for the start boundary target owned by a DIFFERENT
+    # runtime, so the production builder's idempotent acquisition must deny.
+    # The digest is derived exactly as the builder/validator derive it: the
+    # legacy six-field CustodyTargetKey over the dispatch action context.
+    from datetime import datetime, timedelta, timezone
+
+    from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
+    from arnold_pipelines.megaplan.custody.lease_store import open_lease_store
+
+    start_target = CustodyTargetKey(
+        "phase_worker_dispatch",
+        "review",
+        "dispatch",
+        "direct",
+        "review",
+        "claude:claude-sonnet-4-6:high",
+    )
+    foreign_digest = start_target.target_digest
+    foreign_lease_id = f"custody-lease-{foreign_digest[:16]}"
+    open_lease_store(tmp_path / "custody" / "leases").acquire(
+        lease_id=foreign_lease_id,
+        owner_host="foreign-host",
+        owner_pid="999999",
+        owner_boot_id="foreign-boot",
+        run_authority_grant_id="foreign-grant",
+        coordinator_fence_token=0,
+        wbc_attempt_reference="foreign-attempt",
+        occurrence_digest=foreign_digest,
+        custody_epoch=1,
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        idempotency_key="foreign-seed",
+    )
     with pytest.raises(ActionBoundaryDeniedError, match="not authorized"):
-        spec.run(lambda _start: _worker())
+        build_worker_dispatch_spec(
+            plan_dir=tmp_path,
+            state=state,  # type: ignore[arg-type]
+            step="review",
+            agent="claude",
+            selected_spec="claude:claude-sonnet-4-6:high",
+            route_kind="direct",
+        )
+    # No event may have been appended by the denied build.
+    store = SqliteAttemptLedgerStore(tmp_path / ".worker_dispatch_wbc_attempts.sqlite3")
+    try:
+        (count,) = store.conn.execute("SELECT COUNT(1) FROM attempt_events").fetchone()
+        assert count == 0
+    finally:
+        store.close()
 
 
 def test_worker_dispatch_spec_is_shadow_only_when_explicitly_disabled(
