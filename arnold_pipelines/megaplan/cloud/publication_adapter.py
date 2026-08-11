@@ -1,4 +1,4 @@
-"""Steps 13B1-13B2: Publication/delivery adapter over action_gate + effect_protocol.
+"""Steps 13B1-13B2: Publication/delivery adapter over action_validator + effect_protocol.
 
 Routes GitHub issue creation and comment calls in :mod:`github_sync`
 through the action gate and WBC effect protocol with stable
@@ -34,10 +34,9 @@ from arnold.workflow.execution_attempt_ledger import (
     VersionSet,
 )
 
-from arnold_pipelines.megaplan.custody.action_gate import (
-    ActionFamily,
-    ActionGateVerdict,
-    WbcEvidenceKind,
+from arnold_pipelines.megaplan.custody.action_validator import (
+    ActionBoundaryType,
+    GateResult,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -94,7 +93,7 @@ class PublicationOutcome:
 
 
 class PublicationAdapter:
-    """Routes GitHub issue publication through action_gate + effect_protocol.
+    """Routes GitHub issue publication through action_validator + effect_protocol.
 
     Step 13B1: publication/delivery handoffs are gated at action time.
     Step 13B2: github_sync issue creation/comment are explicitly gated.
@@ -114,7 +113,7 @@ class PublicationAdapter:
         protocol: EffectProtocol,
         *,
         action_gate_check: Optional[
-            Callable[[ActionFamily, str], ActionGateVerdict]
+            Callable[[ActionBoundaryType, str], GateResult]
         ] = None,
         production_enabled: bool = False,
     ) -> None:
@@ -124,11 +123,11 @@ class PublicationAdapter:
 
     # ── gate ────────────────────────────────────────────────────────────
 
-    def _gate(self, target: PublicationTarget) -> ActionGateVerdict:
-        """Check the action gate.  Returns SHADOW_AUTHORIZED if no gate is set."""
+    def _gate(self, target: PublicationTarget) -> GateResult:
+        """Check the action gate.  Returns SHADOW_PASS if no gate is set."""
         if self._action_gate_check is None:
-            return ActionGateVerdict.SHADOW_AUTHORIZED
-        return self._action_gate_check(ActionFamily.CLOUD, target.target_key)
+            return GateResult.SHADOW_PASS
+        return self._action_gate_check("publication", target.target_key)
 
     # ── GLEK construction ────────────────────────────────────────────────
 
@@ -203,8 +202,8 @@ class PublicationAdapter:
         # 1. Action gate check
         verdict = self._gate(target)
         if verdict not in (
-            ActionGateVerdict.AUTHORIZED,
-            ActionGateVerdict.SHADOW_AUTHORIZED,
+            GateResult.AUTHORIZED,
+            GateResult.SHADOW_PASS,
         ):
             return PublicationOutcome(
                 ok=False,

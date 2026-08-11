@@ -28,9 +28,6 @@ from arnold_pipelines.megaplan.chain.git_effect_adapter import (
     GitOutcome,
     GitEffectAdapter,
 )
-from arnold_pipelines.megaplan.custody.action_gate import (
-    ActionGateVerdict,
-)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

@@ -103,15 +103,14 @@ class TestPublicationAdapter:
             PublicationAdapter,
             PublicationTarget,
         )
-        from arnold_pipelines.megaplan.custody.action_gate import (
-            ActionFamily,
-            ActionGateVerdict,
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            GateResult,
         )
 
         protocol = _make_protocol(tmp_path)
 
         def blocking_gate(family, target_key):
-            return ActionGateVerdict.BLOCKED_CUSTODY
+            return GateResult.BLOCKED_NO_LEASE
 
         adapter = PublicationAdapter(protocol, action_gate_check=blocking_gate)
 
@@ -282,14 +281,14 @@ class TestExecuteEffectGate:
             ExecuteEffectFamily,
             ExecuteTarget,
         )
-        from arnold_pipelines.megaplan.custody.action_gate import (
-            ActionGateVerdict,
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            GateResult,
         )
 
         protocol = _make_protocol(tmp_path)
         gate = ExecuteEffectGate(
             protocol,
-            action_gate_check=lambda f, t: ActionGateVerdict.BLOCKED_RA_UNSATISFIED,
+            action_gate_check=lambda f, t: GateResult.BLOCKED_RA_UNSATISFIED,
         )
 
         target = ExecuteTarget(
@@ -306,7 +305,7 @@ class TestExecuteEffectGate:
         )
 
         assert outcome.ok is False
-        assert "BLOCKED" in (outcome.error or "")
+        assert "blocked_ra_unsatisfied" in (outcome.error or "")
 
     def test_target_key_stability(self):
         from arnold_pipelines.megaplan.execute.effect_gate import (
@@ -621,12 +620,12 @@ class TestDeliveryEffects:
             DeliveryChannel,
             DeliveryTarget,
         )
-        from arnold_pipelines.megaplan.custody.action_gate import ActionGateVerdict
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
 
         protocol = _make_protocol(tmp_path)
         effects = DeliveryEffects(
             protocol,
-            action_gate_check=lambda f, t: ActionGateVerdict.BLOCKED_CUSTODY,
+            action_gate_check=lambda f, t: GateResult.BLOCKED_NO_LEASE,
         )
 
         target = DeliveryTarget(
@@ -642,7 +641,7 @@ class TestDeliveryEffects:
         )
 
         assert outcome.ok is False
-        assert "BLOCKED" in (outcome.error or "")
+        assert "blocked_no_lease" in (outcome.error or "")
 
     def test_stale_run_authority_or_custody_rejects_before_provider(self, tmp_path):
         from arnold.workflow.effect_protocol import EffectProtocol, EffectProtocolConfig

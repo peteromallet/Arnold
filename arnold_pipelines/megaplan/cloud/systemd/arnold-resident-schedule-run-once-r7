@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# arnold-resident-schedule-run-once-r7 — corrected schedule runner (Phase 0)
+# arnold-resident-schedule-run-once-r7 — manifest-only schedule runner
 #
 # Provenance: replaces the box's broken /usr/local/bin/arnold-resident-
 # schedule-run-once-r6 (2026-08-07). r6 hardcoded expected_head=234ac3524... in
@@ -9,46 +9,79 @@
 # stale and the one-minute systemd timer failed every minute with exit 1 while
 # the REAL scheduling ran out-of-band (an ad-hoc 120s bash loop).
 #
-# Why the pin is operator-controlled (design Phase 0 interim,
-# docs/runtime-and-fixer-unification-design-20260807.md): a SHA baked into the
-# script body cannot track a live tree. This runner reads expected_head from
-# ${ARNOLD_SCHEDULE_EXPECTED_HEAD} first, then from an explicit pin file
-# (${ARNOLD_SCHEDULE_PIN_FILE:-/workspace/.megaplan/schedule-pin}), and FAILS
-# LOUDLY (exit 2) if neither is configured. It never silently proceeds unpinned
-# and never falls back to the tree's own HEAD — that would disable the drift
-# guard, which is the point of the check.
+# This runner resolves BOTH runtime_root and expected_head from the per-runtime
+# manifest ONLY (fixer-unification design rule 3 — the manifest is the ONLY
+# post-bootstrap runtime resolver; Phase-2 target landed in P5). There is
+# deliberately NO hardcoded pin, NO env override and NO pin file: a SHA baked
+# into the script body (r6) or an operator pin file (r7's interim form) cannot
+# track a live tree, which is exactly the failure this runner replaces. The
+# manifest's epic.runtime_root + epic.expected_head are the pin; missing or
+# invalid manifest => exit 2 (fail loudly). It never silently proceeds
+# unpinned and never falls back to the tree's own HEAD — that would disable
+# the drift guard, which is the point of the check.
 #
-# Phase-2 target: read expected_head from the per-runtime manifest
-# (runtime_manifest.json via runtime_manifest.py) instead of the interim pin.
-#
-# Census finding (2026-08-07, noted but NOT fixed here): the box references
-# CLOUD_WATCHDOG_META_REPAIR_BIN=/usr/local/bin/arnold-meta-repair-loop, but
-# that binary is MISSING on the box.
+# Manifest path: ${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}
+# (one stable bootstrap path, matching runtime_manifest.active_manifest_path()
+# and the supervisor-lib helper). A compatibility_only pointer is
+# NON-AUTHORITATIVE telemetry (G2) and is refused — it can never select a
+# runtime.
 #
 # Test-only escape hatch: ARNOLD_SCHEDULE_SKIP_DOCKER_CHECK=1 skips the docker
 # container-liveness check (used by tests/cloud/test_schedule_runner_pin.py).
 # ============================================================================
 set -euo pipefail
 
-runtime_root="${ARNOLD_SCHEDULE_RUNTIME_ROOT:-/workspace/runtime-candidates/arnold-r7-fresh-child-20260805}"
+manifest_file="${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}"
 container="${MEGAPLAN_RESIDENT_CONTAINER:-megaplan-cloud-agent-resident-only}"
-pin_file="${ARNOLD_SCHEDULE_PIN_FILE:-/workspace/.megaplan/schedule-pin}"
 dependency_root="/workspace/.megaplan/resident-deps"
 
-# --- expected_head resolution: env override -> pin file -> loud failure -------
-# NOTE: resolved BEFORE .cloud-hot-env sourcing (below) so the pin always comes
-# from the unit's environment (systemd Environment= / drop-in) or the pin file,
-# never from hot-env, which the design moves to credentials-only.
-expected_head="${ARNOLD_SCHEDULE_EXPECTED_HEAD:-}"
-if [[ -z "$expected_head" ]] && [[ -f "$pin_file" ]]; then
-    expected_head="$(sed -n '1p' "$pin_file" | tr -d '[:space:]')"
-    if ! printf '%s\n' "$expected_head" | grep -Eq '^[0-9a-f]{40}$'; then
-        echo "schedule-run-once: pin file $pin_file has invalid expected_head content (first line: '$(sed -n '1p' "$pin_file" | tr -d '[:space:]')'); expected a 40-hex git SHA" >&2
-        exit 2
-    fi
+# --- runtime identity resolution: the runtime manifest ONLY -------------------
+# NOTE: resolved BEFORE .cloud-hot-env sourcing (below) so runtime_root +
+# expected_head always come from the unit's manifest binding (systemd
+# Environment= / drop-in), never from hot-env, which the design moves to
+# credentials-only.
+if [[ ! -f "$manifest_file" ]]; then
+    echo "schedule-run-once: runtime manifest '$manifest_file' missing — set ARNOLD_RUNTIME_MANIFEST or deploy the manifest at the bootstrap path" >&2
+    exit 2
 fi
-if [[ -z "$expected_head" ]]; then
-    echo "schedule-run-once: no expected_head pin configured — set ARNOLD_SCHEDULE_EXPECTED_HEAD or write $pin_file" >&2
+if ! manifest_values="$(python3 - "$manifest_file" <<'PY' 2>/dev/null
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+if not isinstance(payload, dict):
+    sys.exit(1)
+# A compatibility_only pointer is NON-AUTHORITATIVE telemetry (G2): every
+# resolver treats it as ABSENT for admission — refuse to select from it.
+if payload.get("compatibility_only") is True:
+    sys.exit(1)
+epic = payload.get("epic")
+if not isinstance(epic, dict):
+    sys.exit(1)
+root = str(epic.get("runtime_root") or "").strip()
+head = str(epic.get("expected_head") or "").strip()
+if not root or not head:
+    sys.exit(1)
+print(root)
+print(head)
+PY
+)"; then
+    echo "schedule-run-once: runtime manifest '$manifest_file' invalid, non-authoritative (compatibility_only), or missing epic.runtime_root/epic.expected_head" >&2
+    exit 2
+fi
+runtime_root="$(printf '%s\n' "$manifest_values" | sed -n '1p')"
+expected_head="$(printf '%s\n' "$manifest_values" | sed -n '2p')"
+if ! printf '%s\n' "$expected_head" | grep -Eq '^[0-9a-f]{40}$'; then
+    echo "schedule-run-once: manifest '$manifest_file' epic.expected_head is not a 40-hex git SHA: '$expected_head'" >&2
+    exit 2
+fi
+if [[ "$runtime_root" != /* ]]; then
+    echo "schedule-run-once: manifest '$manifest_file' epic.runtime_root is not an absolute path: '$runtime_root'" >&2
     exit 2
 fi
 
