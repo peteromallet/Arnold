@@ -396,7 +396,6 @@ def test_internal_contributor_followup_preserves_single_delivery_owner(
 @pytest.mark.parametrize(
     ("backend", "model", "session_id"),
     [
-        ("hermes", "zhipu:glm-5.2", "resident_0123456789abcdef0123456789abcdef"),
         ("claude", "opus", "019f5d2e-d5da-75f3-a617-4712a1c57cc5"),
     ],
 )
@@ -430,6 +429,26 @@ def test_non_codex_followup_preserves_provider_session_and_controls(
     assert child["model_session"]["session_id"] == session_id
 
 
+def test_hermes_followup_fails_closed_after_omp_migration(
+    tmp_path: Path, caller_provenance: dict
+) -> None:
+    """B11: hermes sessions are stateless omp turns; continuation is refused."""
+    _write_run(
+        tmp_path,
+        backend="hermes",
+        model="zhipu:glm-5.2",
+        session_id="resident_0123456789abcdef0123456789abcdef",
+    )
+
+    with pytest.raises(subagent.SubagentFollowupError, match="omp migration"):
+        subagent.follow_up_managed_subagent(
+            run_id=TARGET_RUN_ID,
+            message="Continue the exact hermes session.",
+            project_dir=tmp_path,
+            workspace_root=None,
+        )
+
+
 def test_terminal_followup_rejects_unconfirmed_provider_persistence(
     tmp_path: Path, caller_provenance: dict
 ) -> None:
@@ -459,12 +478,6 @@ def test_terminal_followup_rejects_unconfirmed_provider_persistence(
 @pytest.mark.parametrize(
     ("backend", "model", "session_id", "resume_flag"),
     [
-        (
-            "hermes",
-            "zhipu:glm-5.2",
-            "resident_0123456789abcdef0123456789abcdef",
-            "--resume-session",
-        ),
         (
             "claude",
             "opus",
@@ -508,52 +521,35 @@ def test_non_codex_continuation_worker_resumes_exact_session(
             return 0
 
     def fake_provider(argv, **kwargs):
-        # The provider launcher may itself spawn an omp RPC child (the
-        # migrated hermes launcher runs omp under the hood); keep the FIRST
-        # argv — the manifest-bound continuation invocation under test.
         if "argv" not in captured:
             captured["argv"] = list(argv)
             captured["env"] = kwargs["env"]
         output = kwargs["stdout"]
-        if backend == "hermes":
-            output.write(b"CONTINUED\n")
-            Path(argv[argv.index("--metadata-file") + 1]).write_text(
+        output.write(
+            (
                 json.dumps(
                     {
+                        "type": "system",
+                        "subtype": "init",
                         "session_id": session_id,
-                        "resolved_model": model,
-                        "toolsets": ["file", "web", "terminal"],
-                        "usage": {"output_tokens": 2},
-                        "events": [],
+                        "model": model,
+                        "tools": ["Read", "Bash"],
                     }
                 )
-            )
-        else:
-            output.write(
-                (
-                    json.dumps(
-                        {
-                            "type": "system",
-                            "subtype": "init",
-                            "session_id": session_id,
-                            "model": model,
-                            "tools": ["Read", "Bash"],
-                        }
-                    )
-                    + "\n"
-                    + json.dumps(
-                        {
-                            "type": "result",
-                            "subtype": "success",
-                            "session_id": session_id,
-                            "is_error": False,
-                            "result": "CONTINUED",
-                            "usage": {"output_tokens": 2},
-                        }
-                    )
-                    + "\n"
-                ).encode()
-            )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "session_id": session_id,
+                        "is_error": False,
+                        "result": "CONTINUED",
+                        "usage": {"output_tokens": 2},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
         output.flush()
         return _Provider()
 

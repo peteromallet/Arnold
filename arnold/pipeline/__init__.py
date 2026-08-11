@@ -248,6 +248,14 @@ from arnold.execution.step_invocation import (
 )
 from arnold.pipeline.driver import StepwiseDriver
 
+# Module-level re-exports for the Astrid Arnold host contract. These names are
+# intentionally NOT listed in __all__ (the graph-era construction surface is
+# retired from the public export list), but the Astrid gateway's compat probe
+# requires them as resolvable attributes of arnold.pipeline.
+from arnold.execution.hooks import ExecutorHooks
+from arnold.pipeline.types import Edge, ParallelStage, Stage
+from arnold.workflow.builder import PipelineBuilder
+
 __all__ = [
     "AcceptedVersionRange",
     "AdvanceOutcome",

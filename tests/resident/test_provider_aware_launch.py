@@ -23,7 +23,8 @@ def _isolate_resident_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(
     ("model_spec", "backend", "runtime_model"),
     [
-        ("hermes:glm-5.2", "hermes", "zhipu:glm-5.2"),
+        # B11: hermes routes through the omp adapter (stateless, canonical spec).
+        ("hermes:glm-5.2", "omp", "zai/glm-5.2"),
         ("codex:gpt-5.6-terra", "codex", "gpt-5.6-terra"),
         ("claude:opus", "claude", "opus"),
     ],
@@ -57,15 +58,20 @@ def test_auto_route_creates_one_durable_provider_manifest(
     assert manifest["backend"] == backend
     assert manifest["model"] == runtime_model
     assert manifest["model_spec"] == (
-        "omp:zai/glm-5.2" if backend == "hermes" else model_spec
+        "omp:zai/glm-5.2" if backend == "omp" else model_spec
     )
     assert manifest["provider_route"] == {
         "backend": backend,
         "runtime_model": runtime_model,
         "model_spec": manifest["model_spec"],
     }
-    assert manifest["provider_contract"]["capabilities"]["persistent_session"] is True
-    assert manifest["provider_contract"]["capabilities"]["exact_session_resume"] is True
+    # omp backends are stateless: no persistent session, no exact resume.
+    assert manifest["provider_contract"]["capabilities"]["persistent_session"] is (
+        backend != "omp"
+    )
+    assert manifest["provider_contract"]["capabilities"]["exact_session_resume"] is (
+        backend != "omp"
+    )
     for field in (
         "prompt_path",
         "result_path",
@@ -76,7 +82,7 @@ def test_auto_route_creates_one_durable_provider_manifest(
     ):
         assert Path(manifest[field]).exists()
     assert manifest["telemetry"]["raw_streams_are_provider_specific"] is True
-    if backend in {"hermes", "claude"}:
+    if backend == "claude":
         assert manifest["model_session"]["provider"] == backend
         assert manifest["model_session"]["state"] == "reserved"
     assert launches and "--run-managed" in launches[0]
@@ -163,7 +169,10 @@ def test_hermes_auto_route_preserves_discord_custody_and_delivery(
     )
 
     manifest = json.loads(Path(result.manifest_path or "").read_text(encoding="utf-8"))
-    assert manifest["backend"] == "hermes"
+    # B11: hermes routes through the omp adapter — the durable launch carries
+    # backend="omp" with the canonical spec.
+    assert manifest["backend"] == "omp"
+    assert manifest["model"] == "zai/glm-5.2"
     assert manifest["launch_provenance"]["source_record_id"] == "msg_providerroute1"
     assert manifest["completion_delivery"]["transport"] == "discord"
     assert manifest["completion_delivery"]["status"] == "pending"
@@ -451,7 +460,7 @@ def test_managed_non_codex_worker_rejects_empty_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest_path = _worker_manifest(
-        tmp_path, backend="hermes", model="zhipu:glm-5.2"
+        tmp_path, backend="claude", model="opus"
     )
 
     class _Worker:
@@ -494,7 +503,7 @@ def test_markerless_legacy_timeout_is_not_a_supervisor_deadline() -> None:
 def test_provider_timeout_is_enforced_and_captured_durably(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manifest_path = _worker_manifest(tmp_path, backend="hermes", model="zhipu:glm-5.2")
+    manifest_path = _worker_manifest(tmp_path, backend="claude", model="opus")
 
     class _TimedOutWorker:
         pid = 223

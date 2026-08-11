@@ -1,0 +1,19 @@
+# astrid resident — session identity, persistence, recovery, concurrency
+# Generated deterministically by arnold_pipelines.megaplan.resident.generator.
+contract: resident-session
+domain: astrid
+identity:
+    agent_id: agent:astrid-resident
+    attaches: projects/<slug>/
+    operates: runs/<slug>/
+persistence:
+    store: megaplan resident store (FileStore/DBStore)
+    artifacts: run-relative artifact root
+    cursor: resume_cursor.json under the run root
+recovery:
+    reorient: `astrid status --engine arnold` after restart or uncertainty
+    resume: read the persisted resume cursor and re-enter the gateway loop
+concurrency:
+    writer_epoch: obey lease writer-epoch rules on conflict
+    takeover: only through the supported session takeover protocol
+    never: run two operators against the same run

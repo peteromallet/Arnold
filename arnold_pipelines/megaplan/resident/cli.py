@@ -233,8 +233,31 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     run_once = schedule_sub.add_parser("run-once", help="Materialize and process due occurrences")
     run_once.add_argument("--worker-id", default="resident-schedule-cli")
 
+    generate_parser = sub.add_parser(
+        "generate",
+        help="Generate the four resident contracts for a domain",
+    )
+    generate_parser.add_argument(
+        "domain",
+        choices=["astrid"],
+        help="Domain to generate (astrid)",
+    )
+    generate_parser.add_argument(
+        "--output-dir",
+        help="Directory for the domain prompt + policy/session/evidence contracts",
+    )
+    generate_parser.add_argument(
+        "--install-scope",
+        choices=["project", "user", "none"],
+        default="none",
+        help="Install the generated agent prompt into an omp agents dir "
+        "(project = .omp/agents, user = ~/.omp/agent/agents); 'none' only writes files",
+    )
+
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    if getattr(args, "resident_action", None) == "generate":
+        return _resident_generate(root, args)
     config = _resident_config(args)
     store = _resident_store(root, args)
     try:
@@ -291,6 +314,48 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         if callable(close):
             close()
     raise CliError("invalid_args", f"Unknown resident action: {getattr(args, 'resident_action', None)!r}")
+
+
+def _resident_generate(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    """Generate the four resident contracts for the requested domain."""
+    from .astrid_domain import build_astrid_domain
+    from .generator import (
+        contracts_digest,
+        generate_domain_contracts,
+        install_contracts,
+    )
+
+    if args.domain == "astrid":
+        domain = build_astrid_domain()
+    else:  # pragma: no cover — argparse restricts choices
+        raise CliError("invalid_args", f"Unknown domain: {args.domain!r}")
+
+    contracts = generate_domain_contracts(domain)
+
+    output_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else None
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for name, text in sorted(contracts.items()):
+            (output_dir / name).write_text(text, encoding="utf-8")
+
+    written: list[str] = []
+    if args.install_scope != "none":
+        project_root = root
+        for target in install_contracts(
+            contracts,
+            project_root=project_root,
+            scope=args.install_scope,
+        ):
+            written.append(str(target))
+
+    return {
+        "domain": domain.slug,
+        "agent": domain.agent_name,
+        "contracts": sorted(contracts),
+        "digest": contracts_digest(contracts),
+        "output_dir": str(output_dir) if output_dir else None,
+        "installed": written,
+    }
 
 
 def _resident_supersede_todo(

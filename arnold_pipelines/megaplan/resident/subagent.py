@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agentbox.redaction import redact_text
-from arnold.runtime.agent_contracts import AgentSpec, format_agent_spec
+from arnold.runtime.agent_contracts import AgentSpec, format_agent_spec, parse_agent_spec
 from arnold.runtime.agent_routing import ManagedAgentRoute, resolve_managed_agent_route
 from arnold_pipelines.megaplan.managed_agent import (
     ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
@@ -3129,8 +3129,19 @@ def follow_up_managed_subagent(
                 f"{('active' if parent_live else 'terminal')} target has no uniquely "
                 "recoverable persistent model session"
             )
+        provider = str(tip.get("backend") or target.get("backend") or "codex")
+        if provider == "hermes":
+            # Post-migration (B11): hermes agent specs route through the omp
+            # adapter, whose resident turns are stateless — an exact-session
+            # continuation is impossible.  Fail closed instead of launching a
+            # continuation that could never resume the target's session.
+            raise SubagentFollowupError(
+                "hermes managed-agent sessions cannot be continued after the "
+                "omp migration (B11): the hermes launcher was deleted and "
+                "hermes turns are stateless; relaunch the delegated agent with "
+                "backend='omp' instead of following up on the hermes run"
+            )
         if model_session_id is not None:
-            provider = str(tip.get("backend") or target.get("backend") or "codex")
             owner = _session_owner_lineage(provider, model_session_id, roots=roots)
             if owner is not None and owner != lineage_root_run_id:
                 raise SubagentFollowupError("model session is owned by another managed-run lineage")
@@ -7741,8 +7752,25 @@ async def launch_subagent_task(
     )
     client.start()
     try:
-        turn = client.prompt_and_wait(delivery_prompt, timeout=timeout_s or 600.0)
-        final_text = turn.require_assistant_text().strip()
+        try:
+            turn = client.prompt_and_wait(delivery_prompt, timeout=timeout_s or 600.0)
+            final_text = turn.require_assistant_text().strip()
+        except asyncio.TimeoutError:
+            return SubagentResult(
+                ok=False,
+                final_text="",
+                stderr="",
+                returncode=124,
+                error=f"omp subagent timed out after {timeout_s or 600.0}s",
+            )
+        except Exception as exc:
+            return SubagentResult(
+                ok=False,
+                final_text="",
+                stderr="",
+                returncode=1,
+                error=f"omp subagent failed: {exc}",
+            )
     finally:
         try:
             client.stop()

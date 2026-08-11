@@ -1,0 +1,30 @@
+# astrid resident — tool/permission, credential, and cwd policy
+# Generated deterministically by arnold_pipelines.megaplan.resident.generator.
+contract: resident-policy
+domain: astrid
+tools:
+    - astrid-gateway
+    - bash
+    - glob
+    - read
+    - write
+permissions:
+    - gateway actions returned by `astrid next --engine arnold` are the ONLY
+      legal actions; never freelance outside the returned command
+    - file tools constrained to the run directory (projects/<slug>/runs/<run-id>)
+credentials:
+    - ANTHROPIC_API_KEY  # Anthropic Claude provider key
+    - FAL_KEY  # FAL.ai media generation key
+    - HF_TOKEN  # Hugging Face token
+    - OPENAI_API_KEY  # OpenAI provider key
+    - REIGH_PAT  # Reigh personal access token
+    - REIGH_SUPABASE_JWKS_URL  # Reigh Supabase JWKS verification URL
+    - REIGH_SUPABASE_SERVICE_ROLE_KEY  # Reigh Supabase service-role key
+    - REIGH_SUPABASE_URL  # Reigh Supabase project URL
+    - REPLICATE_API_TOKEN  # Replicate media generation token
+    - RUNPOD_API_KEY  # RunPod GPU pod key
+    - SUPABASE_URL  # Astrid Supabase project URL
+cwd:
+    artifact_root: run-relative artifact root
+    forbidden: outside the run directory
+    run_root_template: projects/<slug>/runs/<run-id>

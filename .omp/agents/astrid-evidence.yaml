@@ -1,0 +1,22 @@
+# astrid resident — evidence/output normalization, typed media, supervision
+# Generated deterministically by arnold_pipelines.megaplan.resident.generator.
+contract: resident-evidence
+domain: astrid
+output_normalization:
+    gateway_action: execute exactly the one legal action returned by
+        `astrid next --engine arnold` (bootstrap, run: ..., or ack ...)
+    artifact: emit one normalized evidence record per produced artifact
+typed_media:
+    - video/mp4
+    - audio/wav
+    - x-astrid-timeline
+media_usage:
+    unit: video_second | audio_second | image | token | timeline_document
+    emit: MediaUsage record with the producing tool call and cost entries
+supervision:
+    ledger: append evidence to the resident ledger
+    heartbeat: every turn touches the heartbeat after evidence emission
+    watchdog: evidence records are visible to the watchdog custody sweep
+delivery:
+    manifest: evidence is serialized into the resident manifest
+    restart_recovery: evidence survives restart via the resident store
