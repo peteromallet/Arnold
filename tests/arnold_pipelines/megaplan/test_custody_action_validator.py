@@ -4,11 +4,37 @@ Focus: the gate computation must block on **any** non-SATISFIED Run Authority
 outcome, not just MISSING grant or FENCED fence.  Stale, conflicted, or
 superseded RA outcomes must return BLOCKED_RA_UNSATISFIED instead of
 falling through to AUTHORIZED.
+
+Also covers the P3 deny-by-default flip: production enforcement defaults ON
+and the env var is an explicit-disable switch.
 """
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
+
 import pytest
+
+
+@contextmanager
+def _env_patch(**kwargs: str | None):
+    """Temporarily set/clear environment variables."""
+    originals: dict[str, str | None] = {}
+    for key, value in kwargs.items():
+        originals[key] = os.environ.get(key)
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    try:
+        yield
+    finally:
+        for key, original in originals.items():
+            if original is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -40,6 +66,62 @@ def _all_satisfied_checks():
         _make_check("custody_lease", "satisfied"),
         _make_check("wbc_attempt", "satisfied"),
     )
+
+
+# ── Default enforcement (P3 deny-by-default) ─────────────────────────────────
+
+
+class TestDefaultEnforcement:
+    """Enforcement defaults ON; the env var is an explicit-disable switch."""
+
+    def test_production_enforcement_enabled_defaults_true(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            production_enforcement_enabled,
+        )
+        with _env_patch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=None):
+            assert production_enforcement_enabled() is True
+
+    def test_production_enforcement_enabled_explicit_disable(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            production_enforcement_enabled,
+        )
+        for disable in ("0", "false", "no", "off"):
+            with _env_patch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=disable):
+                assert production_enforcement_enabled() is False, disable
+
+    def test_production_enforcement_enabled_explicit_enable(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            production_enforcement_enabled,
+        )
+        for enable in ("1", "true", "yes"):
+            with _env_patch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=enable):
+                assert production_enforcement_enabled() is True, enable
+
+    def test_validate_default_uses_enforcement_on(self):
+        """validate_action_boundary without override enforces by default."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            GateResult,
+            validate_action_boundary_simple,
+        )
+        with _env_patch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=None):
+            # Invalid target -> ERROR only when enforcement is on (default).
+            result = validate_action_boundary_simple(
+                action_type="repair",
+                target={"bad": "target"},
+                run_authority_grant_id="g",
+                coordinator_fence_token=0,
+            )
+            assert result.gate_result == GateResult.ERROR
+            assert result.enforcement_enabled is True
+        with _env_patch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="0"):
+            result = validate_action_boundary_simple(
+                action_type="repair",
+                target={"bad": "target"},
+                run_authority_grant_id="g",
+                coordinator_fence_token=0,
+            )
+            assert result.gate_result == GateResult.SHADOW_PASS
+            assert result.enforcement_enabled is False
 
 
 # ── Shadow mode ─────────────────────────────────────────────────────────────

@@ -287,10 +287,13 @@ for line in env_raw.decode("utf-8").splitlines():
 hazardous = {"BASH_ENV", "ENV", "SHELLOPTS", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT", "LD_PRELOAD", "LD_LIBRARY_PATH"}
 allowed_injected = {
     "PYTHONPATH": cfg["expected_runtime_path"],
-    "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
     "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE": "production",
 }
-if any(key in env_map for key in hazardous) or any(env_map.get(key) != value for key, value in file_env.items()) or any(env_map.get(key) != value for key, value in allowed_injected.items()) or set(env_map) != set(file_env) | set(allowed_injected):
+# Deny-by-default: the resident must run with runtime attestation REQUIRED
+# (absent => default ON).  A live container that explicitly disabled
+# attestation (``=0``) must never be adopted.
+attestation_required = env_map.get("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED")
+if any(key in env_map for key in hazardous) or any(env_map.get(key) != value for key, value in file_env.items()) or any(env_map.get(key) != value for key, value in allowed_injected.items()) or attestation_required not in (None, "1") or set(env_map) - set(file_env) - set(allowed_injected) - {"MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"}:
     raise RuntimeError("resident_environment_compare_and_swap_failed")
 
 workspace_stat = os.stat(cfg["workspace"], follow_symlinks=False)

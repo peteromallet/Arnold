@@ -5,6 +5,7 @@ Authority, Custody lease, and WBC attempt checks into a single conjunctive
 gate that blocks projection promotion unless all four sources verify.
 
 Covers:
+- Default enforcement is ON (deny-by-default); explicit disable returns SHADOW_PASS
 - Shadow mode (enforcement disabled) returns SHADOW_PASS
 - Enforcement mode blocks on missing source provenance
 - Enforcement mode blocks on missing lease (no lease store)
@@ -401,10 +402,25 @@ class PromotionGateShadowModeTests(TestCase):
             dict(result.diagnostics).get("projection_id"), "proj-1"
         )
 
-    def test_shadow_mode_enforcement_env_var_defaults_off(self) -> None:
+    def test_enforcement_env_var_defaults_on(self) -> None:
+        """With no env var, enforcement is ON — the gate blocks (deny-by-default)."""
         ctx = _make_context()
         result = validate_promotion_gate(ctx)
+        self.assertTrue(result.enforcement_enabled)
+        self.assertFalse(result.is_shadow)
+        # source_path points at a nonexistent path -> provenance unverified
+        self.assertEqual(
+            result.gate_result, PromotionGateDecision.BLOCKED_SOURCE_PROVENANCE
+        )
+
+    def test_explicit_disable_env_var_returns_shadow_pass(self) -> None:
+        """ARNOLD_M7_CANARY_ENFORCEMENT=0 explicitly returns to shadow mode."""
+        with _EnvPatch(ARNOLD_M7_CANARY_ENFORCEMENT="0"):
+            ctx = _make_context()
+            result = validate_promotion_gate(ctx)
         self.assertEqual(result.gate_result, PromotionGateDecision.SHADOW_PASS)
+        self.assertTrue(result.is_shadow)
+        self.assertFalse(result.enforcement_enabled)
 
 
 # ── Promotion gate: enforcement mode ─────────────────────────────────────
@@ -566,7 +582,8 @@ class PromotionGateResultTests(TestCase):
 class ValidatePromotionGateSimpleTests(TestCase):
     """validate_promotion_gate_simple convenience wrapper."""
 
-    def test_returns_result_in_shadow_mode(self) -> None:
+    def test_returns_blocked_by_default(self) -> None:
+        """Default enforcement is ON — a nonexistent source path blocks."""
         target = _make_target()
         result = validate_promotion_gate_simple(
             projection_id="proj-simple",
@@ -577,9 +594,13 @@ class ValidatePromotionGateSimpleTests(TestCase):
             wbc_attempt_reference="wbc-1",
         )
         self.assertIsNotNone(result)
-        self.assertEqual(result.gate_result, PromotionGateDecision.SHADOW_PASS)
+        self.assertTrue(result.enforcement_enabled)
+        self.assertEqual(
+            result.gate_result, PromotionGateDecision.BLOCKED_SOURCE_PROVENANCE
+        )
 
-    def test_accepts_dict_target(self) -> None:
+    def test_accepts_dict_target_but_blocks_by_default(self) -> None:
+        """A valid dict target still blocks under default enforcement (no lease)."""
         result = validate_promotion_gate_simple(
             projection_id="proj-dict",
             target={
@@ -597,16 +618,21 @@ class ValidatePromotionGateSimpleTests(TestCase):
             run_authority_grant_id="g",
             coordinator_fence_token=0,
         )
-        self.assertEqual(result.gate_result, PromotionGateDecision.SHADOW_PASS)
+        # Empty source_path -> provenance unverified; enforcement is on by default.
+        self.assertEqual(
+            result.gate_result, PromotionGateDecision.BLOCKED_SOURCE_PROVENANCE
+        )
 
-    def test_invalid_dict_target_returns_shadow_pass(self) -> None:
+    def test_invalid_dict_target_returns_error_by_default(self) -> None:
+        """An invalid dict target yields ERROR under default enforcement."""
         result = validate_promotion_gate_simple(
             projection_id="proj-bad",
             target={"bad": "target"},
             run_authority_grant_id="g",
             coordinator_fence_token=0,
         )
-        self.assertEqual(result.gate_result, PromotionGateDecision.SHADOW_PASS)
+        self.assertEqual(result.gate_result, PromotionGateDecision.ERROR)
+        self.assertTrue(result.enforcement_enabled)
 
     def test_rejects_non_dict_non_target(self) -> None:
         with self.assertRaises(TypeError):
@@ -624,9 +650,10 @@ class ValidatePromotionGateSimpleTests(TestCase):
 class CanaryEnforcementFlagTests(TestCase):
     """canary_enforcement_enabled() behavior."""
 
-    def test_defaults_to_false(self) -> None:
+    def test_defaults_to_true(self) -> None:
+        """Enforcement defaults to ON (deny-by-default)."""
         with _EnvPatch(ARNOLD_M7_CANARY_ENFORCEMENT=None):
-            self.assertFalse(canary_enforcement_enabled())
+            self.assertTrue(canary_enforcement_enabled())
 
     def test_zero_is_false(self) -> None:
         with _EnvPatch(ARNOLD_M7_CANARY_ENFORCEMENT="0"):

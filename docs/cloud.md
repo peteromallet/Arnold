@@ -477,7 +477,7 @@ default; the resolver and redaction are on.
 | Variable | M1 Default | Behaviour |
 |---|---|---|
 | `ARNOLD_RESOLVER_OBSERVE` | `1` | Capture resolver evidence (additive, non-authoritative). |
-| `ARNOLD_RESOLVER_ENFORCEMENT` | `0` | Make resolver authoritative for target selection. |
+| `ARNOLD_RESOLVER_ENFORCEMENT` | `1` | Make resolver authoritative for target selection. |
 | `ARNOLD_ESCALATION_LEDGER` | `0` | Enable append-only escalation ledger. |
 | `ARNOLD_AUTONOMY` | `0` | Enable autonomous trigger/meta/auditor actions. |
 | `ARNOLD_REDACTION_ENABLED` | `1` | Redact secrets in persisted and outbound artifacts. |

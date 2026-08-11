@@ -1,4 +1,4 @@
-"""Idle pinned-runtime canary — projection promotion gate (M7 shadow-only).
+"""Idle pinned-runtime canary — projection promotion gate (M7 default-deny).
 
 Composes existing source-record checks from :mod:`action_validator` and
 :mod:`projections` into a single projection promotion gate.  Before a
@@ -22,9 +22,11 @@ Principles
   Does not duplicate or bypass existing gate logic.
 * **Test doubles** — Source provenance and cross-owner reads use test
   doubles in M7; real enforcement is deferred to M6/M6A acceptance.
-* **Shadow-only** — Production enforcement is disabled; the canary runs
-  in diagnostic/shadow mode only.  A ``shadow_pass`` result is NOT
-  authorization to promote — callers must check ``result.authorized``.
+* **Deny-by-default** — Production enforcement is ON; the canary blocks
+  promotion unless all four source checks satisfy.  Shadow mode must be
+  explicitly opted into via ``ARNOLD_M7_CANARY_ENFORCEMENT=0``.  A
+  ``shadow_pass`` result is never authorization to promote — callers
+  must check ``result.authorized``.
 * **Promotion gate** — Projection promotion is gated on all four source
   checks passing.  A false pass (promotion under stale provenance) is
   the primary failure mode this module prevents.
@@ -34,7 +36,7 @@ North Star alignment
 * **Single-owner** — Custody does not own Run Authority or WBC state;
   cross-owner references are read-only.
 * **Conjunctive** — All sources must verify before promotion is allowed.
-* **Shadow-first** — Enforcement remains off until M6/M6A acceptance.
+* **Deny-by-default** — Enforcement remains on unless explicitly disabled.
 * **No stale-source acceptance** — Every canary check rereads current
   sources immediately.
 """
@@ -90,15 +92,17 @@ _DISABLE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
 
 def _canary_enforcement_enabled() -> bool:
-    """Return ``True`` only when the M7 canary enforcement flag is on.
+    """Return ``True`` when the M7 canary enforcement flag is on.
 
-    Controlled by ``ARNOLD_M7_CANARY_ENFORCEMENT`` — defaults to OFF.
-    When disabled (the default), the canary performs every check but
-    the gate result is ``shadow_pass``.
+    Controlled by ``ARNOLD_M7_CANARY_ENFORCEMENT`` — defaults to ON
+    (deny-by-default); the env var is an explicit-disable switch (a
+    disable value such as ``"0"`` or ``"false"`` returns to shadow mode).
+    When disabled, the canary performs every check but the gate result
+    is ``shadow_pass``.
     """
     raw = os.getenv(_ENV_ENFORCEMENT, "").strip().lower()
     if not raw:
-        return False
+        return True
     if raw in _DISABLE_VALUES:
         return False
     return True
@@ -676,7 +680,8 @@ def validate_promotion_gate(
         Expected SHA-256 digest of the installed source.  Empty = best-effort.
     enforcement_enabled:
         Override the production enforcement flag.  If ``None``, reads
-        ``ARNOLD_M7_CANARY_ENFORCEMENT`` from the environment.
+        ``ARNOLD_M7_CANARY_ENFORCEMENT`` from the environment (defaults
+        to ``True`` — deny-by-default).
 
     Returns
     -------
@@ -950,7 +955,9 @@ def validate_promotion_gate_simple(
 def canary_enforcement_enabled() -> bool:
     """Return ``True`` when M7 canary enforcement is active.
 
-    Controlled by ``ARNOLD_M7_CANARY_ENFORCEMENT`` — defaults to OFF.
+    Controlled by ``ARNOLD_M7_CANARY_ENFORCEMENT`` — defaults to ON
+    (deny-by-default); a disable value (``"0"``, ``"false"``, ``"no"``,
+    ``"off"``) explicitly disables enforcement.
     """
     return _canary_enforcement_enabled()
 

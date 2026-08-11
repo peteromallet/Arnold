@@ -648,3 +648,35 @@ def test_long_lived_entrypoints_validate_attestation_before_work() -> None:
     assert "arnold_runtime_attestation_check supervisor" in supervise
     assert 'require_configured_runtime_launch("resident", create=True)' in resident_cli
     assert 'require_configured_runtime_launch("resident")' in resident_runtime
+
+
+def test_configured_runtime_attestation_required_defaults_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P3 deny-by-default: attestation is required unless explicitly disabled."""
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED", raising=False)
+    assert attestation.configured_runtime_attestation_required() is True
+
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED", "1")
+    assert attestation.configured_runtime_attestation_required() is True
+
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED", "")
+    assert attestation.configured_runtime_attestation_required() is True
+
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED", "0")
+    assert attestation.configured_runtime_attestation_required() is False
+
+
+def test_attestation_disable_without_seed_does_not_authorize_production_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P3 follow-up: explicit attestation-disable (MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=0)
+    without a launch seed must NOT authorize a production launch — the gate
+    still fails closed because the launch seed is mandatory.
+    """
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", raising=False)
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION", raising=False)
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED", "0")
+
+    with pytest.raises(CliError, match="required but missing"):
+        attestation.require_configured_runtime_launch("resident")

@@ -290,14 +290,16 @@ substrate without expanding into later autonomous repair layers (M2+).
 
 ### Flag Disablement
 
-All behaviour-changing flags are **off by default**.  The observe-only resolver
-and redaction are **on by default** because they are additive diagnostics and
-security boundaries.
+All behaviour-changing flags are **off by default** — except resolver
+enforcement, which is **on by default** per the P3 deny-by-default posture
+(set `ARNOLD_RESOLVER_ENFORCEMENT=0` to return to observe-only).  The
+observe-only resolver and redaction are **on by default** because they are
+additive diagnostics and security boundaries.
 
 | Flag | Env Var | M1 Default | Purpose |
 |---|---|---|---|
 | resolver-observe | `ARNOLD_RESOLVER_OBSERVE` | `1` (on) | Capture resolver evidence alongside legacy decisions. |
-| resolver-enforcement | `ARNOLD_RESOLVER_ENFORCEMENT` | `0` (off) | Make resolver output authoritative for target selection / state clearing. |
+| resolver-enforcement | `ARNOLD_RESOLVER_ENFORCEMENT` | `1` (on) | Make resolver output authoritative for target selection / state clearing. |
 | escalation-ledger | `ARNOLD_ESCALATION_LEDGER` | `0` (off) | Enable append-only escalation ledger writes. |
 | autonomy | `ARNOLD_AUTONOMY` | `0` (off) | Enable autonomous trigger / meta / auditor actions. |
 | redaction | `ARNOLD_REDACTION_ENABLED` | `1` (on) | Redact secrets from persisted and outbound artifacts. |

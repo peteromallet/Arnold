@@ -992,7 +992,18 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 def configured_runtime_attestation_required() -> bool:
-    return os.environ.get("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED") == "1"
+    """Return ``True`` unless runtime attestation is explicitly disabled.
+
+    Deny-by-default: runtime attestation is REQUIRED when
+    ``MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED`` is absent or any value other
+    than ``"0"``.  Only an explicit ``"0"`` opts out.
+
+    Note: the flag cannot waive the launch-seed requirement — a production
+    launch always needs ``MEGAPLAN_RUNTIME_LAUNCH_SEED`` (see
+    :func:`require_configured_runtime_launch`, which fails closed on a
+    missing seed regardless of this flag).
+    """
+    return os.environ.get("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED") != "0"
 
 
 def configured_seed_path() -> Path | None:
@@ -1015,15 +1026,13 @@ def require_configured_runtime_launch(
     *,
     target_pid: int | None = None,
     create: bool = False,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     seed_path = configured_seed_path()
     if seed_path is None:
-        if configured_runtime_attestation_required():
-            raise CliError(
-                RUNTIME_ATTESTATION_ERROR,
-                "canonical runtime launch seed is required but missing",
-            )
-        return None
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "canonical runtime launch seed is required but missing",
+        )
     seed = _json_file(seed_path, label="runtime launch seed")
     pid = target_pid or os.getpid()
     attestation_path = configured_process_attestation_path(component)

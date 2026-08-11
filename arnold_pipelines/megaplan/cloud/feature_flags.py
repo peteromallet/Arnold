@@ -15,7 +15,7 @@ Flag                  Env Var                       Default    Purpose
 resolver-observe      ARNOLD_RESOLVER_OBSERVE       1 (on)     Capture resolver
                                                                 evidence alongside
                                                                 legacy decisions.
-resolver-enforcement  ARNOLD_RESOLVER_ENFORCEMENT   0 (off)    Make resolver output
+resolver-enforcement  ARNOLD_RESOLVER_ENFORCEMENT   1 (on)     Make resolver output
                                                                 authoritative for
                                                                 target selection /
                                                                 state clearing.
@@ -132,14 +132,30 @@ def repair_request_queue_enabled() -> bool:
 def resolver_enforcement_enabled() -> bool:
     """Return ``True`` when resolver output should be authoritative.
 
-    Controlled by ``ARNOLD_RESOLVER_ENFORCEMENT`` — defaults to OFF (``"0"``).
+    Controlled by ``ARNOLD_RESOLVER_ENFORCEMENT`` — defaults to ON (``"1"``).
+    Set the variable to a disable value (``"0"``, ``"false"``, ``"no"``,
+    ``"off"``) to return to observe-only resolver behaviour.
 
     When enabled, the resolver's target selection, staleness determination,
     and state-clearing recommendations become authoritative over the legacy
-    watchdog helpers.  This is a North Star gating requirement: enforcement
-    stays off until safety checks pass.
+    watchdog helpers.  This is the deny-by-default posture: enforcement is
+    active unless an operator explicitly disables it.
     """
-    return _is_enabled("ARNOLD_RESOLVER_ENFORCEMENT", False)
+    return _is_enabled("ARNOLD_RESOLVER_ENFORCEMENT", True)
+
+
+def production_enforcement_enabled() -> bool:
+    """Return ``True`` when M7 custody production enforcement is active.
+
+    Controlled by ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` — defaults to
+    ON.  Set the variable to a disable value (``"0"``, ``"false"``, ``"no"``,
+    ``"off"``) to return to shadow-only enforcement.
+
+    This is the single consolidated custody enforcement gate.  Custody
+    modules import it here rather than re-implementing their own env parsing
+    (see ``custody.action_validator.production_enforcement_enabled``).
+    """
+    return _is_enabled("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", True)
 
 
 def escalation_ledger_enabled() -> bool:
@@ -285,6 +301,11 @@ def resolver_enforcement_on() -> bool:
     return resolver_enforcement_enabled()
 
 
+def production_enforcement_on() -> bool:
+    """Alias for :func:`production_enforcement_enabled`."""
+    return production_enforcement_enabled()
+
+
 def escalation_ledger_on() -> bool:
     """Alias for :func:`escalation_ledger_enabled`."""
     return escalation_ledger_enabled()
@@ -356,6 +377,8 @@ __all__ = [
     "MUTATION_PATH_L2",
     "MUTATION_PATH_L3",
     "mutation_authorized",
+    "production_enforcement_enabled",
+    "production_enforcement_on",
     "redaction_enabled",
     "redaction_on",
     "repair_request_queue_enabled",

@@ -18,9 +18,9 @@ from arnold.workflow.attempt_ledger_store import (
 )
 from arnold.workflow.execution_attempt_ledger import ExecutionAttemptLedger, LedgerEvent
 
-from .action_validator import ActionBoundaryContext, ActionBoundaryResult, GateResult, validate_action_boundary
+from .action_validator import ActionBoundaryContext, ActionBoundaryResult, validate_action_boundary
 from .compatibility import RollbackValidation
-from .controlled_writer_registry import WriteGuardDecision, WriteGuardResult, writer_guard
+from .controlled_writer_registry import WriteGuardResult, writer_guard
 from .lease_store import CustodyLeaseStore
 from .outbox import CustodyOutbox
 
@@ -689,7 +689,7 @@ class WbcRuntimeProducerFacade:
         action_context: ActionBoundaryContext | None,
     ) -> tuple[WriteGuardResult, ExactSourceRecord, ActionBoundaryResult | None, RollbackValidation | None]:
         guard = self._writer_guard_fn(writer_id=writer_id, surface_name=surface_name)
-        if guard.decision in {WriteGuardDecision.DENIED, WriteGuardDecision.UNREGISTERED}:
+        if not guard.allowed:
             raise WriterGuardError(
                 f"writer {writer_id!r} on {surface_name!r} is not authorized: {guard.decision.value}"
             )
@@ -706,9 +706,9 @@ class WbcRuntimeProducerFacade:
                 outbox=self._outbox,
                 enforcement_enabled=self._enforcement_enabled,
             )
-            if boundary.gate_result not in {GateResult.AUTHORIZED, GateResult.SHADOW_PASS}:
+            if not boundary.authorized:
                 raise ActionBoundaryDeniedError(
-                    f"{action_context.action_type} blocked by {boundary.gate_result.value}"
+                    f"{action_context.action_type} not authorized: {boundary.gate_result.value}"
                 )
         rollback_validation = self._rollback_validator() if self._rollback_validator is not None else None
         return guard, source_record, boundary, rollback_validation

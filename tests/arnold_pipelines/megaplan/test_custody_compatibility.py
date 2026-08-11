@@ -172,10 +172,18 @@ class PerReaderCompatibilityExpiryTests(TestCase):
 class ModeGatedBehaviorTests(TestCase):
     """Tests that compatibility behavior adapts to the current mode."""
 
-    def test_default_mode_is_shadow(self) -> None:
-        """Default mode is SHADOW — M7 enforcement is off."""
+    def test_default_mode_is_active(self) -> None:
+        """Default mode is ACTIVE — M7 enforcement is on (deny-by-default)."""
         with _EnvPatch(
             ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=None,
+            ARNOLD_M7_ROLLBACK=None,
+        ):
+            self.assertEqual(get_mode(), CompatibilityMode.ACTIVE)
+
+    def test_disable_flag_switches_to_shadow(self) -> None:
+        """Setting ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=0 deactivates mode."""
+        with _EnvPatch(
+            ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="0",
             ARNOLD_M7_ROLLBACK=None,
         ):
             self.assertEqual(get_mode(), CompatibilityMode.SHADOW)
@@ -226,13 +234,18 @@ class ModeGatedBehaviorTests(TestCase):
                 f"Unknown reader must be UNKNOWN in {mode} mode",
             )
 
-    def test_is_production_enforcement_enabled_defaults_false(self) -> None:
-        """Production enforcement is disabled by default."""
+    def test_is_production_enforcement_enabled_defaults_true(self) -> None:
+        """Production enforcement is enabled by default (deny-by-default)."""
         with _EnvPatch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=None):
+            self.assertTrue(is_production_enforcement_enabled())
+
+    def test_is_production_enforcement_enabled_explicit_disable(self) -> None:
+        """Setting ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=0 disables enforcement."""
+        with _EnvPatch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="0"):
             self.assertFalse(is_production_enforcement_enabled())
 
     def test_is_production_enforcement_enabled_with_flag(self) -> None:
-        """Production enforcement is enabled when flag is set."""
+        """Explicit enable value keeps enforcement on."""
         with _EnvPatch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="1"):
             self.assertTrue(is_production_enforcement_enabled())
 
@@ -358,9 +371,15 @@ class SnapshotTests(TestCase):
         self.assertEqual(reader_ids, expected_ids)
 
     def test_snapshot_mode_matches_environment(self) -> None:
-        """Snapshot mode reflects the environment."""
+        """Snapshot mode reflects the environment — ACTIVE by default."""
         with _EnvPatch(
             ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=None,
+            ARNOLD_M7_ROLLBACK=None,
+        ):
+            snap = snapshot()
+            self.assertEqual(snap.mode, CompatibilityMode.ACTIVE)
+        with _EnvPatch(
+            ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="0",
             ARNOLD_M7_ROLLBACK=None,
         ):
             snap = snapshot()
@@ -372,9 +391,12 @@ class SnapshotTests(TestCase):
         self.assertIsInstance(snap.rollback_validation, RollbackValidation)
         self.assertTrue(snap.rollback_validation.safe)
 
-    def test_snapshot_enforcement_enabled_is_false_by_default(self) -> None:
-        """Snapshot reports enforcement as disabled by default."""
+    def test_snapshot_enforcement_enabled_is_true_by_default(self) -> None:
+        """Snapshot reports enforcement as enabled by default."""
         with _EnvPatch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=None):
+            snap = snapshot()
+            self.assertTrue(snap.enforcement_enabled)
+        with _EnvPatch(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="0"):
             snap = snapshot()
             self.assertFalse(snap.enforcement_enabled)
 
@@ -385,10 +407,10 @@ class SnapshotTests(TestCase):
         self.assertIn("T", snap.generated_at)
 
     def test_snapshot_to_dict(self) -> None:
-        """Snapshot serializes to a complete dict."""
+        """Snapshot serializes to a complete dict — active by default."""
         snap = snapshot()
         d = snap.to_dict()
-        self.assertEqual(d["mode"], "shadow")
+        self.assertEqual(d["mode"], "active")
         self.assertIsInstance(d["readers"], list)
         self.assertIsInstance(d["rollback_validation"], dict)
         self.assertIn("generated_at", d)

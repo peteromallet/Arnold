@@ -1,4 +1,4 @@
-"""Old-reader/new-writer compatibility bridge (M7 shadow-only).
+"""Old-reader/new-writer compatibility bridge (M7 default-deny).
 
 Defines per-reader compatibility expiry, mode-gated behavior, and rollback
 safety guards.  Every old reader that existed before the M7 projection
@@ -33,8 +33,11 @@ Principles
 * **Not authority** — This module is advisory.  It does not authorize,
   block, or mutate any production state.
 
-All production gates and mutating effects remain disabled in M7;
-this module runs in shadow/report-only mode.
+Enforcement is **on by default** (deny-by-default): the compatibility mode
+defaults to ``ACTIVE`` and flips to ``SHADOW`` only when
+``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` is explicitly set to a disable
+value.  The enforcement decision is consolidated onto the single source
+:func:`arnold_pipelines.megaplan.custody.action_validator.production_enforcement_enabled`.
 """
 
 from __future__ import annotations
@@ -44,6 +47,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, FrozenSet, Mapping, Optional, Sequence
+
+from arnold_pipelines.megaplan.custody.action_validator import (
+    production_enforcement_enabled,
+)
 
 
 # ── Schema version constant ────────────────────────────────────────────────
@@ -396,18 +403,18 @@ def _compatibility_mode() -> CompatibilityMode:
 
     Priority:
     1. ``ARNOLD_M7_ROLLBACK`` → ``ROLLBACK`` mode
-    2. ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` → ``ACTIVE`` mode
-    3. Default → ``SHADOW`` mode
+    2. Enforcement default → ``ACTIVE`` mode (deny-by-default)
+    3. ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` disable value → ``SHADOW``
+
+    The enforcement decision is delegated to the single source
+    :func:`arnold_pipelines.megaplan.custody.action_validator.production_enforcement_enabled`.
     """
     # Rollback flag takes absolute priority
     if os.environ.get("ARNOLD_M7_ROLLBACK", "").strip() in ("1", "true", "yes"):
         return CompatibilityMode.ROLLBACK
 
-    # Enforcement flag gates active mode
-    enforcement = os.environ.get(
-        "ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", "0"
-    ).strip()
-    if enforcement in ("1", "true", "yes"):
+    # Enforcement defaults to ACTIVE; the env var only disables.
+    if production_enforcement_enabled():
         return CompatibilityMode.ACTIVE
 
     return CompatibilityMode.SHADOW
@@ -464,11 +471,13 @@ def get_mode() -> CompatibilityMode:
 def is_production_enforcement_enabled() -> bool:
     """Return ``True`` when M7 production enforcement is enabled.
 
-    This is the same gate as
-    :func:`arnold_pipelines.megaplan.custody.action_validator._production_enforcement_enabled`.
+    Delegates to the single source
+    :func:`arnold_pipelines.megaplan.custody.action_validator.production_enforcement_enabled`
+    (which in turn delegates to the canonical
+    :func:`megaplan.cloud.feature_flags.production_enforcement_enabled`).
+    Defaults to ``True`` — deny-by-default.
     """
-    raw = os.environ.get("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", "0").strip()
-    return raw in ("1", "true", "yes")
+    return production_enforcement_enabled()
 
 
 # ── Rollback safety ────────────────────────────────────────────────────────
