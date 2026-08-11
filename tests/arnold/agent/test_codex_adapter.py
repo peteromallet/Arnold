@@ -349,8 +349,11 @@ def test_run_codex_step_normalizes_prompt_file_path_before_dispatch(
     )
 
     expected = prompt_path.read_text(encoding="utf-8")
-    assert captured["stdin_text"] == expected
-    assert result.rendered_prompt == expected
+    # The prompt file path is normalized to its resolved text; the local-strict
+    # response-enforcement block (B2) is appended to the dispatch stdin and the
+    # rendered prompt, so containment is the contract, not byte equality.
+    assert expected in captured["stdin_text"]
+    assert expected in result.rendered_prompt
 
 
 def test_run_codex_step_read_only_trusted_container_bypasses_inner_sandbox(
@@ -505,10 +508,6 @@ def test_run_codex_step_execute_wires_progress_probe(
     plan_dir = root / ".megaplan" / "plans" / "oneshot"
     plan_dir.mkdir(parents=True, exist_ok=True)
     output_path = plan_dir / "out.json"
-    output_path.write_text(
-        '{"output":"","files_changed":[],"commands_run":[],"deviations":[],"task_updates":[],"sense_check_acknowledgments":[]}',
-        encoding="utf-8",
-    )
     state = {
         "name": "execute-liveness",
         "idea": "x",
@@ -529,6 +528,11 @@ def test_run_codex_step_execute_wires_progress_probe(
         captured["progress_liveness_factory"] = kwargs.get("progress_liveness_factory")
         captured["progress_liveness_grace_timeout"] = kwargs.get(
             "progress_liveness_grace_timeout"
+        )
+        # The worker response is written after the no-overwrite guard runs.
+        output_path.write_text(
+            '{"output":"","files_changed":[],"commands_run":[],"deviations":[],"task_updates":[],"sense_check_acknowledgments":[]}',
+            encoding="utf-8",
         )
         return _impl.CommandResult(
             command=list(command),
