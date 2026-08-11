@@ -3926,7 +3926,7 @@ def _manifest_runtime_activate_command(binding: Mapping[str, Any]) -> str:
             f"RUNTIME_SRC={shlex.quote(runtime_src)}",
             f"RUNTIME_REVISION={shlex.quote(runtime_revision)}",
             f"MANIFEST={shlex.quote(manifest_path)}",
-            'if [ ! -d "$RUNTIME_SRC/.git" ]; then',
+            'if [ ! -e "$RUNTIME_SRC/.git" ]; then',
             '  echo "[megaplan-runtime] manifest-bound runtime worktree missing at $RUNTIME_SRC"',
             "  exit 23",
             "fi",
