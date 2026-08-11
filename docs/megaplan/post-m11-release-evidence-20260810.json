@@ -1,0 +1,717 @@
+{
+  "schema": "arnold.post_m11_release_evidence.v1",
+  "record_id": "post-m11-consolidation-20260810",
+  "record_status": "in_progress",
+  "recorded_at_utc": "2026-08-10T00:00:00Z",
+  "authority": {
+    "plan_path": "docs/omp-replaces-hermes-todo.md",
+    "plan_publication_commit": "401c8f8112ba0547b428d84cf6996912fdda8e45",
+    "plan_blob": "6b0e8d70b025ab8853ec4d1ca6415d0390dcc3e9",
+    "origin_base_commit": "401c8f8112ba0547b428d84cf6996912fdda8e45",
+    "evidence_cut_commit": "f890582b28233b49c14c52323381f04a2bbc9a92",
+    "evidence_cut_tree": "247c7fffa4bcea37c23aed1675eb3e00e1b1dee9",
+    "release_branch": "main",
+    "promotion_policy_path": "docs/megaplan/post-m11-direct-promotion-policy-override-20260731.md"
+  },
+  "checkpoints": [
+    {
+      "id": "local-main-dirty-encrypted",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$LOCAL_CHECKPOINT_ROOT/20260731T0218Z-local-main/local-main-dirty-payload.tar.enc",
+      "sha256": "12febab26e425b88a45c272014427f226c6e1b3d64fb49a694d93f3192a5caad",
+      "restore_check": "verified",
+      "notes": "Decryption material is held outside Git in the approved local secret store."
+    },
+    {
+      "id": "local-main-dirty-encrypted-cloud-copy",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$CLOUD_WORKSPACE/.megaplan/checkpoints/post-m11-20260731T0218Z/local-main-dirty-payload.tar.enc",
+      "sha256": "12febab26e425b88a45c272014427f226c6e1b3d64fb49a694d93f3192a5caad",
+      "restore_check": "hash_verified_copy"
+    },
+    {
+      "id": "preservation-stash-bundle-local",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$LOCAL_CHECKPOINT_ROOT/20260731T0218Z-local-main/preservation-stash.bundle",
+      "sha256": "2c8c34ad0c85531873473683d18413e79601d26549a1994618e5d10bab7b575b",
+      "restore_check": "git_bundle_verify_passed",
+      "notes": "Bundle contains refs/stash at 591a7aba8f and depends on existing Git objects."
+    },
+    {
+      "id": "preservation-stash-bundle-cloud-copy",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$CLOUD_WORKSPACE/.megaplan/checkpoints/post-m11-20260731T0218Z/preservation-stash.bundle",
+      "sha256": "2c8c34ad0c85531873473683d18413e79601d26549a1994618e5d10bab7b575b",
+      "restore_check": "hash_verified_copy"
+    }
+  ],
+  "source_refs": [
+    {
+      "ref": "checkpoint/migration-baseline-20260810",
+      "sha": "401c8f8112ba0547b428d84cf6996912fdda8e45",
+      "classification": "KEEP_CHECKPOINT",
+      "disposition": "Preserves the pre-migration Arnold tree (omp migration squash baseline)"
+    },
+    {
+      "ref": "migration/9efd9c2aa7a7",
+      "sha": "9efd9c2aa7a7998c230180d172a67153dadc3254",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/9d374c6e02ed",
+      "sha": "9d374c6e02ed7838279fe09528c384bf94a23687",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/f70988b05365",
+      "sha": "f70988b05365637266bf0f5df445ffec7d31165e",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/7db690dfc279",
+      "sha": "7db690dfc2792dc19456a443cdf0254ec44d5758",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/66ffaf12b9bb",
+      "sha": "66ffaf12b9bb04d0870e80b06dbf8f43a5e44ab5",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/a59dc95133ce",
+      "sha": "a59dc95133ceb618eaa0283f7e0776157a2ef8f3",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/6354331dc184",
+      "sha": "6354331dc184f87be5213c10dee7980318dd72fd",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/4fd0f69e8aa9",
+      "sha": "4fd0f69e8aa9f6b4c2104d9508219ee3c8c473e5",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/d0f9191f79a0",
+      "sha": "d0f9191f79a0a7a4ead021cd154219c9a0c505d3",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/bcfe453719eb",
+      "sha": "bcfe453719ebafa4a855aeda9a3298950349fac1",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/6836a443375c",
+      "sha": "6836a443375c2b6d810e02392a9d632c9812b0f4",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/2acbf91ebaad",
+      "sha": "2acbf91ebaad771f09eeb622e7120ef2218d2677",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/43295c4cae1a",
+      "sha": "43295c4cae1ad01abff79bb0869d1b861ac0512b",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/071791d0f764",
+      "sha": "071791d0f7647c2db1343f3a99a240ea126e0252",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/409e1c16bdfe",
+      "sha": "409e1c16bdfe1e43b98d771727216288596935ef",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/05aa271c688a",
+      "sha": "05aa271c688a48044e67235e63a916b60772bb29",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/345c1f284444",
+      "sha": "345c1f2844449fee5d22f302e916bbbeefa1893b",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/997e7be4fab5",
+      "sha": "997e7be4fab51f457edf9b2e73d6aa4b00e3457d",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/06f47eff10fe",
+      "sha": "06f47eff10fe3e946a32543c1b15f63f1a4615cb",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/6e5b61ada903",
+      "sha": "6e5b61ada9038d8c6ebc4d39735c21a3758d0e8d",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/5c8e99358c91",
+      "sha": "5c8e99358c9109aed00664220bd061b5f85960ac",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/0cc5ffb6a6b5",
+      "sha": "0cc5ffb6a6b5d39c1aa7645df653ff501080e818",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/4c3e52608585",
+      "sha": "4c3e526085857ea20b121fb866dda5680671da74",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/cf09f6c308e6",
+      "sha": "cf09f6c308e672d417efa4f27ead653ac52e7ef0",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    },
+    {
+      "ref": "migration/f890582b2823",
+      "sha": "f890582b28233b49c14c52323381f04a2bbc9a92",
+      "classification": "LAND",
+      "disposition": "omp-replaces-hermes migration batch commit"
+    }
+  ],
+  "integration_lineage": [
+    {
+      "sha": "401c8f8112ba0547b428d84cf6996912fdda8e45",
+      "subject": "baseline: pre-migration Arnold tree (B1 records authoritative state)"
+    },
+    {
+      "sha": "9efd9c2aa7a7998c230180d172a67153dadc3254",
+      "subject": "docs: SOL reviews + unknown exploration results"
+    },
+    {
+      "sha": "9d374c6e02ed7838279fe09528c384bf94a23687",
+      "subject": "B1-B5: omp worker, dispatch threading, model/credential migration, sandbox decision, fork-clean release"
+    },
+    {
+      "sha": "f70988b05365637266bf0f5df445ffec7d31165e",
+      "subject": "B6: omp worker structured-output hardening"
+    },
+    {
+      "sha": "7db690dfc2792dc19456a443cdf0254ec44d5758",
+      "subject": "chore: ignore bakeoff runtime state (.megaplan/bakeoffs, worktrees)"
+    },
+    {
+      "sha": "66ffaf12b9bb04d0870e80b06dbf8f43a5e44ab5",
+      "subject": "B6: fix light-robustness cursor reconciliation + omp severity normalization"
+    },
+    {
+      "sha": "a59dc95133ceb618eaa0283f7e0776157a2ef8f3",
+      "subject": "B6: tolerate no-flag identical revise + retry feedback + selector clarification"
+    },
+    {
+      "sha": "6354331dc184f87be5213c10dee7980318dd72fd",
+      "subject": "B6: per-profile auto-publish branches for bakeoff"
+    },
+    {
+      "sha": "4fd0f69e8aa9f6b4c2104d9508219ee3c8c473e5",
+      "subject": "B6: drop redundant --publish-branch arg (already defined in build_auto_parser)"
+    },
+    {
+      "sha": "d0f9191f79a0a7a4ead021cd154219c9a0c505d3",
+      "subject": "B6: drop review_completion_status before omp strict audit"
+    },
+    {
+      "sha": "bcfe453719ebafa4a855aeda9a3298950349fac1",
+      "subject": "B6: prune stale bakeoff publish branches at run start"
+    },
+    {
+      "sha": "6836a443375c2b6d810e02392a9d632c9812b0f4",
+      "subject": "B6: update bakeoff test fakes for publish_branch kwarg"
+    },
+    {
+      "sha": "2acbf91ebaad771f09eeb622e7120ef2218d2677",
+      "subject": "B6: review retry feedback surfaces structural audit failures"
+    },
+    {
+      "sha": "43295c4cae1ad01abff79bb0869d1b861ac0512b",
+      "subject": "B7: omp resident backend \u2014 stateless RPC turns + synthetic identity"
+    },
+    {
+      "sha": "071791d0f7647c2db1343f3a99a240ea126e0252",
+      "subject": "B8: fanout WBC source identity includes dispatch key"
+    },
+    {
+      "sha": "409e1c16bdfe1e43b98d771727216288596935ef",
+      "subject": "B9: fix pre-existing cloud wrapper failures + B5 boundary enforcement"
+    },
+    {
+      "sha": "05aa271c688a48044e67235e63a916b60772bb29",
+      "subject": "B9: migrate cloud wrappers to omp; fix deployment admission and stale tests"
+    },
+    {
+      "sha": "345c1f2844449fee5d22f302e916bbbeefa1893b",
+      "subject": "B9: drop /root/.hermes env seeding from resident schedule script"
+    },
+    {
+      "sha": "997e7be4fab51f457edf9b2e73d6aa4b00e3457d",
+      "subject": "B10: fix pre-existing resident test failures for the omp migration"
+    },
+    {
+      "sha": "06f47eff10fe3e946a32543c1b15f63f1a4615cb",
+      "subject": "B10: fix codex adapter tests for local-strict enforcement + no-overwrite guard"
+    },
+    {
+      "sha": "6e5b61ada9038d8c6ebc4d39735c21a3758d0e8d",
+      "subject": "B10: record environment evidence (agentbox/Discord staging blocked on this box)"
+    },
+    {
+      "sha": "5c8e99358c9109aed00664220bd061b5f85960ac",
+      "subject": "B11: delete Hermes SDK, vendor sandbox/key_pool into megaplan runtime"
+    },
+    {
+      "sha": "0cc5ffb6a6b5d39c1aa7645df653ff501080e818",
+      "subject": "B12: resident contract generator, Astrid resident contract, typed-media evidence"
+    },
+    {
+      "sha": "4c3e526085857ea20b121fb866dda5680671da74",
+      "subject": "B13: re-cut WBC/M5 evidence to the migration lineage root"
+    },
+    {
+      "sha": "cf09f6c308e672d417efa4f27ead653ac52e7ef0",
+      "subject": "B13: refresh committed M6 evidence heads after re-cut commit"
+    },
+    {
+      "sha": "f890582b28233b49c14c52323381f04a2bbc9a92",
+      "subject": "B13: M5 head check uses order-independent ancestor semantics"
+    }
+  ],
+  "validation_observations": [
+    {
+      "id": "custody-merge-focused",
+      "scope": "pre-integration Custody conflict-resolution focused suite",
+      "status": "historical_pass",
+      "result": {
+        "passed": 283,
+        "failed": 0
+      },
+      "acceptance_effect": "informational_only"
+    },
+    {
+      "id": "custody-merge-broad-first-run",
+      "scope": "pre-integration broader conflict-resolution matrix",
+      "status": "historical_failure",
+      "result": {
+        "passed": 275,
+        "failed": 7
+      },
+      "acceptance_effect": "superseded_by_followup_fixes",
+      "notes": "Three overlay failures omitted repair_escalation; four exposed the L1 versus typed L2/L3 dispatch policy mismatch."
+    },
+    {
+      "id": "immediate-stability-branch",
+      "scope": "ticket parser, neutral executor routing, dead-PID liveness, and stale hook focused matrix",
+      "status": "historical_pass",
+      "result": {
+        "passed": 289,
+        "skipped": 1,
+        "failed": 0
+      },
+      "acceptance_effect": "branch_level_only"
+    },
+    {
+      "id": "bounded-supervision-branch",
+      "scope": "bounded event replay and atomic execute-to-review handoff compatibility validation",
+      "status": "historical_pass",
+      "result": {
+        "passed": 488,
+        "failed": 0
+      },
+      "acceptance_effect": "branch_level_only",
+      "source": ".megaplan/tickets/01KYT4ZMFNK458MA5AFNR1ZM9R-bound-event-journal-replay-and-watchdog-supervision.md"
+    },
+    {
+      "id": "stale-cloud-tests-five-file-matrix",
+      "scope": "tests/cloud/test_meta_repair.py, tests/cloud/test_post_fixer_recovery_gate.py, tests/cloud/test_runtime_provenance.py, tests/cloud/test_superfixer_custody_systemic.py, and tests/cloud/test_watchdog_wrappers.py at the stale-test integration cut",
+      "status": "historical_pass",
+      "result": {
+        "passed": 650,
+        "failed": 0
+      },
+      "acceptance_effect": "integration_cut_only",
+      "bound_commit": "7db690dfc2792dc19456a443cdf0254ec44d5758",
+      "bound_tree": "3e171387c8f58f2c4c0733053b2b3148f328353a"
+    },
+    {
+      "id": "pinned-runtime-431",
+      "scope": "Pinned-runtime validation subset",
+      "status": "historical_pass",
+      "result": {
+        "passed": 431,
+        "collected": 431,
+        "failed": 0
+      },
+      "acceptance_effect": "pinned_runtime_subset_only",
+      "bound_commit": "66ffaf12b9bb04d0870e80b06dbf8f43a5e44ab5",
+      "bound_tree": "5f2ca9a5b447453dbb737765cab98f5ac0a42490",
+      "runtime_identity": {
+        "command_sha256": "8fa2720c324e15fbc45757614ad7d4a282e4e447fa304a2945cbc66e8f48c37c",
+        "pip_freeze_sha256": "6534d0b1a1ba2cf26b1a7d3a13d5401eec59fbdb52d5e4110d140e0291df55e8",
+        "composite_runtime_sha256": "5a8011b507240a1b7eebd90c66ffe3fec42ae9e0a33918f3846d6d57b9ad3bd6"
+      },
+      "log": {
+        "location": "$LOCAL_TEMP/arnold-pinned-validation-5642cdd1ac-pytest.log",
+        "sha256": "9e475291172a15c6af08deee3575570d2ca1b089437a8c8a8716ce99ad0c0e89"
+      }
+    },
+    {
+      "id": "nodeid-accounting-focused",
+      "scope": "Opaque pytest node-ID parsing, duplicate rejection, and no-debt receipt suites",
+      "status": "historical_pass",
+      "result": {
+        "passed": 74,
+        "failed": 0,
+        "recovered_nodeids": 208,
+        "collected_before_fix": 17605,
+        "retained_before_fix": 17397
+      },
+      "acceptance_effect": "defect_level_only",
+      "bound_commit": "a59dc95133ceb618eaa0283f7e0776157a2ef8f3",
+      "source": ".megaplan/tickets/01KYV57FAPY2H0ZRQMM8MJ29EM-preserve-opaque-pytest-node-ids-in-m11-validation-accounting.md",
+      "bound_tree": "ef92b6763f4dae926d29b5b39cb91cb9861fcfbd"
+    },
+    {
+      "id": "packaging-focused-framework312",
+      "scope": "Packaging, installed-wheel, skill-bundle, and package-metadata focused matrix under the framework-managed Python 3.12 runtime",
+      "status": "historical_failure",
+      "result": {
+        "passed": 132,
+        "failed": 3
+      },
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "6354331dc184f87be5213c10dee7980318dd72fd",
+      "bound_tree": "260cc8c84a15c04e2bd6992e1823a2246898bcc5",
+      "log_sha256": "be4944760ba91dd365f21ddf6a7d91913089790687601b4eb40bc57ac79163c7",
+      "blockers": [
+        "tests/installed_wheel/test_import_workflow_kernel.py::test_editable_install_deleted_inventory_modules_fail",
+        "tests/test_packaging_skills.py::test_superfixer_debug_codex_bundle_matches_canonical_skill",
+        "tests/characterization/test_package_metadata.py::test_megaplan_package_declares_pep561_typing_marker"
+      ]
+    },
+    {
+      "id": "cloud-template-framework312",
+      "scope": "Cloud-template validation under the framework-managed Python 3.12 runtime",
+      "status": "historical_pass",
+      "result": {
+        "passed": 47,
+        "failed": 0
+      },
+      "acceptance_effect": "packaging_component_only",
+      "bound_commit": "4fd0f69e8aa9f6b4c2104d9508219ee3c8c473e5",
+      "bound_tree": "f393231e4d8ce4d877914c12b98011737bcacf02",
+      "log_sha256": "1bcd7943a619132fbcd0d91b871fb7bbda89ff8473ed20c724e02bdf982581f2"
+    },
+    {
+      "id": "docker-build-attempt",
+      "scope": "Rendered cloud image build",
+      "status": "historical_blocked",
+      "result": {
+        "render": "passed",
+        "lint": "passed",
+        "placeholder_check": "passed",
+        "docker_build": "blocked"
+      },
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "d0f9191f79a0a7a4ead021cd154219c9a0c505d3",
+      "bound_tree": "0caf4c8ac08aa5ac1c52867c301b7f9658e98253",
+      "blocker": "Docker daemon was unavailable at the configured local socket.",
+      "log_sha256": "de94f6b6a0faeca076aa8d6d22d2f9d46dbc2a318bf89ad70573b45c937cbdcd"
+    },
+    {
+      "id": "packaging-blocker-regressions",
+      "scope": "Focused regressions for the three packaging code blockers",
+      "status": "historical_pass",
+      "result": {
+        "passed": 17,
+        "failed": 0
+      },
+      "acceptance_effect": "packaging_code_gate",
+      "bound_commit": "bcfe453719ebafa4a855aeda9a3298950349fac1",
+      "bound_tree": "0e5e3605a8751fbf4b358bfca91883f4be2513b3"
+    },
+    {
+      "id": "packaging-expanded-regressions",
+      "scope": "Expanded packaging release-contract matrix",
+      "status": "historical_pass",
+      "result": {
+        "passed": 110,
+        "failed": 0
+      },
+      "acceptance_effect": "packaging_code_gate",
+      "bound_commit": "6836a443375c2b6d810e02392a9d632c9812b0f4",
+      "bound_tree": "b1f7236d3aa75adada7c8d626945a2f9d80bbb24"
+    },
+    {
+      "id": "fresh-noneditable-packaging-smoke",
+      "scope": "Fresh non-editable wheel installation and packaged command/skill smoke checks",
+      "status": "historical_pass",
+      "result": {
+        "passed": 4,
+        "failed": 0,
+        "wheel_built": true,
+        "sdist_built": true,
+        "fresh_noneditable_install": "passed"
+      },
+      "acceptance_effect": "packaging_code_gate",
+      "bound_commit": "2acbf91ebaad771f09eeb622e7120ef2218d2677",
+      "setup_smoke_log_sha256": "384cb2f6325a2bde92a625db9cace86117f89be76e05a53011788e55ed9bfdc5",
+      "bound_tree": "c0ae9e5702f19df81cd4319defd3921b267cc3b6"
+    },
+    {
+      "id": "initiative-conformance-regressions",
+      "scope": "Canonical initiative artifact layout and adjacent conformance regression matrix",
+      "status": "historical_pass",
+      "result": {
+        "passed": 275,
+        "failed": 0
+      },
+      "acceptance_effect": "conformance_fix_level_only",
+      "bound_commit": "43295c4cae1ad01abff79bb0869d1b861ac0512b",
+      "bound_tree": "5c5ea9d2f88c851b5ca107311ebbd987771cf6d3"
+    },
+    {
+      "id": "initiative-conformance-focused",
+      "scope": "Focused current-tree conformance gates after canonical artifact moves",
+      "status": "historical_pass",
+      "result": {
+        "passed": 55,
+        "failed": 0
+      },
+      "acceptance_effect": "conformance_fix_level_only",
+      "bound_commit": "071791d0f7647c2db1343f3a99a240ea126e0252",
+      "bound_tree": "05c6046f16d4cce77a88ea31128f69ca4f09d408"
+    }
+  ],
+  "historical_superseded_attempts": [
+    {
+      "id": "full-no-debt-5642-preflight-defect",
+      "status": "superseded_defect_receipt",
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "9efd9c2aa7a7998c230180d172a67153dadc3254",
+      "receipt": {
+        "location": "$LOCAL_VALIDATION_CHECKPOINT_ROOT/5642cdd1ac-full-no-debt-20260731/preflight-defect.json",
+        "sha256": "079311bfe32c84a7cf440a15939db33fcae53d8e755f659792dacb7c3f974556"
+      },
+      "notes": "The 5642 attempt exposed the opaque pytest node-ID accounting defect. It is retained as failure evidence and cannot satisfy final no-debt acceptance."
+    },
+    {
+      "id": "full-no-debt-bf-seeded-abort",
+      "status": "superseded_seeded_abort_receipt",
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "9d374c6e02ed7838279fe09528c384bf94a23687",
+      "receipt": {
+        "location": "$LOCAL_VALIDATION_CHECKPOINT_ROOT/bf5449ae0e-full-no-debt-seeded-20260731/aborted-superseded.json",
+        "sha256": "e7536c92ec32a4ccd3128d80557dc5bd3bac4f62dc220e03dbc5b5bd99162d2b"
+      },
+      "notes": "The seeded run was deliberately aborted and superseded. It is evidence of the attempt, not acceptance."
+    },
+    {
+      "id": "full-no-debt-cd7-shard-002-failure",
+      "status": "superseded_failed_shard_receipt",
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "f70988b05365637266bf0f5df445ffec7d31165e",
+      "receipt": {
+        "location": "$LOCAL_VALIDATION_CHECKPOINT_ROOT/cd7c6ac0ee-full-no-debt-20260731/receipts/full-suite-002.json",
+        "sha256": "3204f23d829ca0cf8acb5b312133d0e85d8b3464207f593f8e86ba20dcf360f9",
+        "content_sha256": "824ce37484b10ac83e1a4ed5b0a535fb3ec3ef6b3c17e7cfbf103ec81a9c4d9f",
+        "custody_file_sha256": "2f028f0d2dfe36da035518ef276e2e96946213b6c27fef53ab58df54db24ed2c",
+        "terminal_file_sha256": "de1801ba22d3ac5a98f4031ba1bc3ee9b683ef9f72cd4688c37119ede68b7d12",
+        "failure_list_sha256": "4807ad8f6d2d61925e4ca39d5865146fbac91b09323434e649bd2b09f76c7408"
+      },
+      "notes": "Shard 002 failed nine conformance tests because four normative artifacts were outside canonical semantic subdirectories and one obsolete legacy-reference exception remained. Commit 3ca68e0e3b resolves that defect. The failed shard remains historical evidence and cannot satisfy final no-debt acceptance."
+    }
+  ],
+  "canonical_artifact_moves": [
+    {
+      "from": ".megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md",
+      "to": ".megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md"
+    },
+    {
+      "from": ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/docs/research.md",
+      "to": ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/research/research.md"
+    },
+    {
+      "from": ".megaplan/initiatives/native-workflow-platformization/PLATFORM_CONTRACT.md",
+      "to": ".megaplan/initiatives/native-workflow-platformization/decisions/PLATFORM_CONTRACT.md"
+    },
+    {
+      "from": ".megaplan/initiatives/standardized-completion-specifications/SUPERSESSION_CROSSWALK.yaml",
+      "to": ".megaplan/initiatives/standardized-completion-specifications/evidence/SUPERSESSION_CROSSWALK.yaml"
+    }
+  ],
+  "packaging_artifacts": [
+    {
+      "kind": "wheel",
+      "filename": "arnold-0.23.0-py3-none-any.whl",
+      "sha256": "d50f5704f205224e3dd2d898f99a9b9de14dc5b91a356cf28ceee3b44c3ed0a5",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "acceptance_effect": "superseded_candidate_artifact"
+    },
+    {
+      "kind": "sdist",
+      "filename": "arnold-0.23.0.tar.gz",
+      "sha256": "bb59fc0b1a2334aecfe81fb1ddd96e08699c2b5bcdcbe4b7c96ca1bf2b1742fc",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "acceptance_effect": "superseded_candidate_artifact"
+    },
+    {
+      "kind": "wheel",
+      "filename": "arnold-0.23.0-py3-none-any.whl",
+      "sha256": "bffbd6429092869710e9707f61b2272b4c8a920a610864de2c165ef893910940",
+      "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717",
+      "acceptance_effect": "packaging_code_gate_artifact"
+    },
+    {
+      "kind": "sdist",
+      "filename": "arnold-0.23.0.tar.gz",
+      "sha256": "62a8310ef4b2b0a299da543ef5c67def6082808ed028db870c481f88476b0d40",
+      "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717",
+      "acceptance_effect": "packaging_code_gate_artifact"
+    }
+  ],
+  "cloud_protected_resources": [
+    {
+      "resource": "$CLOUD_WORKSPACE/custody-control-plane-20260714/Arnold",
+      "classification": "PROTECTED",
+      "observed_head": "b3ad38ab26ff0fe0477bb264a1370b5d33e84d1f",
+      "notes": "Completed Custody source checkout; do not delete before final acceptance."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/runtime-candidates/arnold-5bf11d5a5600",
+      "classification": "PROTECTED",
+      "observed_head": "b3ad38ab26ff0fe0477bb264a1370b5d33e84d1f",
+      "notes": "Existing runtime candidate; not the pending final-main runtime."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/critique-ledger-accountability-v2-20260728/Arnold",
+      "classification": "PROTECTED",
+      "observed_head": "a290e57cb7b9ba1bec72c631cb6e0a6a07f0c451",
+      "notes": "Authoritative Critique initiative checkout; must remain unlaunched until rebound to the released runtime."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/.paused-epics/critique-ledger-m9-glm-20260723/Arnold",
+      "classification": "PROTECTED_AUDIT_ONLY",
+      "notes": "Dirty predecessor archive; preserve and never resume."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/arnold",
+      "classification": "PROTECTED_UNTIL_CLASSIFIED",
+      "notes": "Divergent dirty checkout; no deletion authorized."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/arnold-consolidation-20260714",
+      "classification": "PROTECTED_UNTIL_CLASSIFIED",
+      "notes": "Divergent dirty checkout; no deletion authorized."
+    }
+  ],
+  "residuals": [
+    {
+      "id": "final-integrated-validation",
+      "status": "pending",
+      "required_evidence": "Frozen command inventory, focused integration suites, practical broad suite or explicit shard union, compile checks, and clean diff checks at the final release candidate SHA."
+    },
+    {
+      "id": "final-no-debt-validation",
+      "status": "pending",
+      "required_evidence": "A fresh non-seeded no-debt run bound to the final release candidate, with exact collection/execution equality and no superseded receipt treated as acceptance."
+    },
+    {
+      "id": "packaging-code-gate",
+      "status": "complete",
+      "required_evidence": "Historical packaging implementation defects are fixed and guarded by focused packaging regressions.",
+      "completion_evidence": "Historical code-gate evidence only: 81a44fd930e60070cae39b11e7416ad2eb43b717 and the later source-distribution exclusion 501ce344c933e88f3e29a0aa319a86ba59f5ef86. No artifact listed in packaging_artifacts is final-release acceptance."
+    },
+    {
+      "id": "final-packaging-artifacts",
+      "status": "pending",
+      "required_evidence": "Build wheel and sdist from the exact final acceptance commit in a fresh isolated environment; verify artifact and RECORD hashes, candidate-source provenance, forbidden-content absence, non-editable installation, installed entrypoints and workflow/Megaplan smokes, repository-owned wheel tests, and clean source. Historical packaging_artifacts cannot satisfy this gate."
+    },
+    {
+      "id": "cloud-image-build",
+      "status": "pending",
+      "required_evidence": "Build the rendered cloud image against an available Docker daemon at the final release candidate and record its content-addressed image identity."
+    },
+    {
+      "id": "direct-main-promotion",
+      "status": "pending",
+      "required_evidence": "Execute the explicitly authorized ordinary non-force fast-forward compare-and-swap push of the exact validated candidate to GitHub main with pre-push origin/main equality and ancestry checks, post-push fetch plus ls-remote equality, and exact-head CI success. No PR, rebase, force, or force-with-lease is authorized."
+    },
+    {
+      "id": "source-tag",
+      "status": "pending",
+      "required_evidence": "Create and verify the source tag on the exact promoted main commit. The source tag proves source identity only and is not acceptance."
+    },
+    {
+      "id": "content-addressed-runtime",
+      "status": "pending",
+      "required_evidence": "Build and stage an immutable runtime and image from the exact final main SHA, independently verify provenance, preserve an immutable rollback image tag, and pass the isolated read-only canary without mutating production selectors."
+    },
+    {
+      "id": "cutover-preflight",
+      "status": "pending",
+      "required_evidence": "Review a release-specific cloud configuration selecting final main; derive a candidate-ready external evidence snapshot from this canonical ledger outside immutable RUNTIME_SRC; identify that snapshot as the canonical frozen seed document; require its validator green predicate; resolve the exact authoritative marker, chain spec/state, old/new runtime digests, rollback vector, and guarded terminal-chain plus marker rebind commands before selector mutation."
+    },
+    {
+      "id": "runtime-selector-promotion",
+      "status": "pending",
+      "required_evidence": "Under the cutover lock, checkpoint then guard-rebind the exact terminal chain and marker to the independently receipted runtime, build and validate the launch seed from the canonical external snapshot, atomically update every selector/drop-in, deploy through the supported provider, and prove rollback restores the full prior vector."
+    },
+    {
+      "id": "production-canary",
+      "status": "pending",
+      "required_evidence": "Resident, watchdog, three-hour fixer, /whats-cooking, ten-minute canary, and recurring-cycle observations on the promoted runtime."
+    },
+    {
+      "id": "critique-runtime-rebind",
+      "status": "pending",
+      "required_evidence": "Critique cloud.yaml rebound from its M10 runtime to the released runtime without changing the authoritative initiative payload."
+    },
+    {
+      "id": "critique-launch",
+      "status": "pending",
+      "required_evidence": "Supported cloud-chain launch and durable status progression for the exact 2026-07-28 initiative."
+    },
+    {
+      "id": "acceptance-tag",
+      "status": "pending",
+      "required_evidence": "Only after deployment, rollback, health, and deployed-workflow-canary receipts pass, create the annotated acceptance tag on the same exact main commit and bind its annotation to the durable final acceptance receipt."
+    }
+  ],
+  "migration_recut": {
+    "note": "Post-m11 evidence record re-cut for the omp-replaces-hermes migration: source refs, lineage, observation/superseded bindings, and authority commits rebound to the migration lineage (baseline root 401c8f8 + B1-B13 commits). Plan path points at the migration todo.",
+    "date": "2026-08-10"
+  }
+}

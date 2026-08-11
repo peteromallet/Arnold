@@ -10,7 +10,7 @@ from scripts.validate_post_m11_release_evidence import validate
 
 
 REPO = Path(__file__).resolve().parents[1]
-RECORD = REPO / "docs/megaplan/post-m11-release-evidence-20260731.json"
+RECORD = REPO / "docs/megaplan/post-m11-release-evidence-20260810.json"
 RUNBOOK = REPO / "docs/megaplan/final-cloud-runtime-promotion-runbook-2026-07-31.md"
 HASH = "a" * 64
 OTHER_HASH = "b" * 64
