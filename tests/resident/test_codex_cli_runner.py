@@ -150,7 +150,7 @@ def test_codex_cli_runner_recovers_same_invocation_after_initial_timeout(
         "  shift || true\n"
         "done\n"
         "cat >/dev/null\n"
-        "sleep 0.12\n"
+        "sleep 0.2\n"
         "printf 'recovered resident reply\\n' > \"$output\"\n",
         encoding="utf-8",
     )

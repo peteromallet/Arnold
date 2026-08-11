@@ -53,6 +53,11 @@ _HERMES_MODEL_ALIASES = {
     "glm-5p2": "fireworks:accounts/fireworks/models/glm-5p2",
 }
 
+# Frozen B1 table: canonical GLM-5.2 spec per legacy hermes runtime model.
+_HERMES_CANONICAL_OMP_MODELS = {
+    "zhipu:glm-5.2": "omp:zai/glm-5.2",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ManagedAgentRoute:
@@ -237,6 +242,12 @@ def resolve_managed_agent_route(
     model_spec = format_agent_spec(
         AgentSpec(agent=resolved_backend, model=runtime_model, effort=effort)
     )
+    # Frozen B1 table: the canonical GLM-5.2 route is ``omp:zai/glm-5.2``.
+    # Legacy hermes spellings (``hermes:glm-5.2`` / ``hermes:zhipu:glm-5.2``)
+    # surface the canonical omp spec in model_spec so downstream manifests
+    # carry the migrated route identity.
+    if resolved_backend == "hermes" and runtime_model in _HERMES_CANONICAL_OMP_MODELS:
+        model_spec = _HERMES_CANONICAL_OMP_MODELS[runtime_model]
     return ManagedAgentRoute(
         backend=resolved_backend,
         model=runtime_model,

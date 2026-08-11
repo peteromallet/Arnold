@@ -256,8 +256,12 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
             return 0
 
     def fake_popen(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs.get("env")
+        # The provider launcher may itself spawn an omp RPC child (the
+        # migrated hermes launcher runs omp under the hood); keep the FIRST
+        # argv — the manifest-bound launcher invocation under test.
+        if "argv" not in captured:
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs.get("env")
         output = kwargs.get("stdout")
         assert output is not None
         if backend == "claude":

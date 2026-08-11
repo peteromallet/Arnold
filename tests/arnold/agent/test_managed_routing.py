@@ -28,12 +28,13 @@ def test_infers_backend_from_agent_specs_and_model_families(
 
 
 def test_hermes_glm_52_uses_legacy_zhipu_alias() -> None:
-    # Pre-migration hermes spelling keeps working through the alias map.
+    # Pre-migration hermes spelling keeps working through the alias map, and
+    # the model_spec surfaces the frozen B1 canonical omp route.
     route = resolve_managed_agent_route(model="hermes:glm-5.2")
 
     assert route.backend == "hermes"
     assert route.model == "zhipu:glm-5.2"
-    assert route.model_spec == "hermes:zhipu:glm-5.2"
+    assert route.model_spec == "omp:zai/glm-5.2"
     assert route.backend_source == "model_spec"
 
 
@@ -102,7 +103,7 @@ def test_backend_default_can_be_overridden_without_a_model() -> None:
         default_models={"hermes": "zhipu:glm-5.2"},
     )
 
-    assert route.model_spec == "hermes:zhipu:glm-5.2"
+    assert route.model_spec == "omp:zai/glm-5.2"
 
 
 def test_omp_backend_defaults_to_frozen_flash_model() -> None:

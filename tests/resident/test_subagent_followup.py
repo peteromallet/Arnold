@@ -508,8 +508,12 @@ def test_non_codex_continuation_worker_resumes_exact_session(
             return 0
 
     def fake_provider(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs["env"]
+        # The provider launcher may itself spawn an omp RPC child (the
+        # migrated hermes launcher runs omp under the hood); keep the FIRST
+        # argv — the manifest-bound continuation invocation under test.
+        if "argv" not in captured:
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs["env"]
         output = kwargs["stdout"]
         if backend == "hermes":
             output.write(b"CONTINUED\n")
@@ -737,8 +741,11 @@ def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance
             return 0
 
     def fake_codex(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs["env"]
+        # The post-session summarizer also spawns an omp RPC child; keep the
+        # FIRST argv — the manifest-bound codex resume under test.
+        if "argv" not in captured:
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs["env"]
         return _Codex()
 
     monkeypatch.setattr(subagent.subprocess, "Popen", fake_codex)
