@@ -72,7 +72,7 @@ async def run_judge(
     judge_model: str,
 ) -> JudgeVerdict:
     prompt = build_judge_prompt(bakeoff_state, metrics_by_profile)
-    response = await _run_agent_prompt(judge_model, prompt)
+    response = await _run_judge_prompt(judge_model, prompt)
     return _parse_judge_response(response, judge_model, metrics_by_profile)
 
 
@@ -127,28 +127,49 @@ def build_judge_prompt(
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
-async def _run_agent_prompt(judge_model: str, prompt: str) -> str:
-    agent_dir = Path(__file__).resolve().parents[1] / "agent"
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        str(agent_dir / "run_agent.py"),
-        "--query",
-        prompt,
-        "--model",
-        judge_model,
-        "--max_turns",
-        "3",
-        "--disabled_toolsets",
-        "terminal",
-        cwd=agent_dir,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+async def _run_judge_prompt(judge_model: str, prompt: str) -> str:
+    """Run one stateless judge turn through the omp RPC worker.
+
+    Judge models are agent specs; legacy hermes-era specs are translated to
+    their canonical omp form (``workers.omp.omp_route_from_legacy``).  Non-omp
+    judge models (bare claude/codex) are rejected loudly: there is no silent
+    fallback transport anymore (B11).
+    """
+    import os as _os
+
+    from arnold_pipelines.megaplan.workers.omp import (
+        _build_client,
+        omp_route_from_legacy,
     )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        detail = stderr.decode(errors="replace").strip() or stdout.decode(errors="replace").strip()
-        raise CliError("bakeoff_judge_failed", f"Judge failed: {detail}")
-    return stdout.decode(errors="replace")
+
+    spec = omp_route_from_legacy(judge_model)
+    parsed = parse_agent_spec(spec)
+    if parsed.agent != "omp" or not parsed.model or "/" not in parsed.model:
+        raise CliError(
+            "bakeoff_judge_failed",
+            f"judge model {judge_model!r} is not an omp route; pass an explicit "
+            "omp judge, e.g. --judge 'omp:deepseek/deepseek-v4-pro'",
+        )
+    provider, model_id = parsed.model.split("/", 1)
+    client = _build_client(
+        provider=provider,
+        model_id=model_id,
+        cwd=Path.cwd(),
+        thinking=None,
+        tools=None,
+        custom_tools=[],
+        env=dict(_os.environ),
+        timeout=600.0,
+    )
+    client.start()
+    try:
+        turn = await asyncio.to_thread(client.prompt_and_wait, prompt, 600.0)
+        return turn.require_assistant_text()
+    finally:
+        try:
+            client.stop()
+        except Exception:
+            pass
 
 
 def _parse_judge_response(

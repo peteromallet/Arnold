@@ -17,7 +17,7 @@
   "inventory_only_files": [
     "arnold/pipelines/megaplan/agent_runtime/contracts.py",
     "arnold/pipelines/megaplan/resident/agent_loop.py",
-    "arnold/agent/run_agent.py"
+    "arnold/runtime/agent_dispatcher.py"
   ],
   "inventory": [
     {
@@ -226,7 +226,7 @@
       "classification": "owned_dispatch"
     },
     {
-      "path": "arnold/agent/run_agent.py",
+      "path": "arnold/runtime/agent_contracts.py",
       "anchor": "def run_conversation(",
       "classification": "owned_dispatch"
     },

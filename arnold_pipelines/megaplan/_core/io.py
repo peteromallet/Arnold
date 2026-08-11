@@ -1450,10 +1450,11 @@ def detect_available_agents() -> list[str]:
     import arnold_pipelines.megaplan._core as _core_pkg
     _shutil_ref = _core_pkg.shutil
     available = [a for a in KNOWN_AGENTS if a not in ("hermes", "shannon", "omp") and _shutil_ref.which(a)]
-    if (Path(__file__).resolve().parents[1] / "agent" / "run_agent.py").is_file():
-        available.append("hermes")
     if _shutil_ref.which("omp") or _omp_rpc_available():
         available.append("omp")
+        # Post-migration (B11): hermes agent specs route through the omp
+        # adapter, so hermes availability tracks omp availability.
+        available.append("hermes")
     if is_shannon_available(shutil_ref=_shutil_ref):
         available.append("shannon")
     return available

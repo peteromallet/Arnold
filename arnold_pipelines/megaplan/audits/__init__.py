@@ -115,17 +115,6 @@ _MODULE_EXPORTS = {
         "union_verifies",
         "validate_capabilities",
     },
-    "arnold_pipelines.megaplan.audits.hermes_vendoring": {
-        "CONDITIONAL_RETENTION_DIRS",
-        "DEAD_WEIGHT_PATTERNS",
-        "JOB_B_SCOPE_FENCE_ENTRIES",
-        "RUNTIME_REQUIRED_ENTRIES",
-        "VendoredAgentHistoryAudit",
-        "VendoredAgentTreeAudit",
-        "audit_vendored_agent_history",
-        "audit_vendored_agent_tree",
-        "find_retention_import_sites",
-    },
 }
 
 

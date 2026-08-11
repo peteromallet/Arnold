@@ -564,64 +564,6 @@ def test_automatic_v2_without_canonical_contract_is_visible_but_not_live_evidenc
     assert row["live"] is False
 
 
-@pytest.mark.parametrize("split_options", [False, True])
-def test_nested_hermes_launch_reenters_shared_manager(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, split_options: bool
-) -> None:
-    parent = spec(tmp_path, identity="nested-parent")
-    assert run_managed_command(parent) == 0
-    parent_manifest = manifest_path(tmp_path, parent)
-    parent_payload = json.loads(parent_manifest.read_text(encoding="utf-8"))
-    prompt = tmp_path / "nested-prompt.md"
-    prompt.write_text("research this", encoding="utf-8")
-    launcher_path = (
-        Path(__file__).resolve().parents[1]
-        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
-    )
-    module_spec = importlib.util.spec_from_file_location("test_hermes_launcher", launcher_path)
-    assert module_spec and module_spec.loader
-    module = importlib.util.module_from_spec(module_spec)
-    module_spec.loader.exec_module(module)
-    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_RUN_ID", parent_payload["run_id"])
-    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_MANIFEST", str(parent_manifest))
-    monkeypatch.setenv(
-        "ARNOLD_MANAGED_AGENT_ORIGIN",
-        json.dumps(parent_payload["launch_provenance"]),
-    )
-    launcher_args = (
-        [
-            str(launcher_path),
-            "--model",
-            "deepseek:deepseek-v4-pro",
-            "--project_dir",
-            str(tmp_path),
-            "--query_file",
-            str(prompt),
-        ]
-        if split_options
-        else [
-            str(launcher_path),
-            "--model=deepseek:deepseek-v4-pro",
-            f"--project_dir={tmp_path}",
-            f"--query_file={prompt}",
-        ]
-    )
-    monkeypatch.setattr(sys, "argv", launcher_args)
-    launched: list[str] = []
-
-    def fake_run(command, **_kwargs):
-        launched.extend(command)
-        return subprocess.CompletedProcess(command, 0)
-
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
-
-    assert module._automatic_managed_reexec() == 0
-    assert "automatic_research_subagent" in launched
-    assert str(parent_payload["run_id"]) in launched
-    assert "@managed-stdin@" in "\n".join(launched)
-    assert str(tmp_path.resolve()) in launched
-
-
 def test_root_authority_ceiling_is_durable_and_inherited_by_child(
     tmp_path: Path,
 ) -> None:
@@ -684,9 +626,6 @@ def test_real_dispatch_seams_use_shared_supervisor() -> None:
     trigger = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger").read_text()
     auditor = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor").read_text()
     legacy = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-kimi-goal-operator").read_text()
-    hermes = (
-        root / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
-    ).read_text()
 
     assert "--run-kind automatic_repair" in watchdog
     assert "--run-kind automatic_meta_repair" in watchdog
@@ -698,9 +637,6 @@ def test_real_dispatch_seams_use_shared_supervisor() -> None:
     assert "subprocess.Popen(cmd" not in trigger
     assert "--run-kind automatic_progress_audit_agent" in auditor
     assert "--run-kind automatic_legacy_fixer" in legacy
-    assert "automatic_research_subagent" in hermes
-    assert "_automatic_managed_reexec" in hermes
-
     # Actual worker commands may remain as argv passed to the manager.  Every
     # shipped automatic wrapper containing one must also contain the canonical
     # seam; this catches a future direct subprocess regression deterministically.

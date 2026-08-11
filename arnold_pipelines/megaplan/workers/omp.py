@@ -1,6 +1,6 @@
 """omp RPC worker for megaplan — runs phases through the omp coding agent.
 
-The omp worker replaces the Hermes ``AIAgent`` in-process path with the pinned
+The omp worker replaces the legacy in-process agent path with the pinned
 ``omp_rpc.RpcClient``.  Every phase runs in a fresh, stateless RPC session (one
 ``bun ... --mode rpc`` child per attempt); omp continuation/session-resume is
 never used because Python owns the hot context.
@@ -1223,7 +1223,7 @@ def run_omp_step(
             if not output_path.exists() or not output_path.read_text(
                 encoding="utf-8", errors="replace"
             ).strip():
-                from arnold_pipelines.megaplan.workers.hermes import (
+                from arnold_pipelines.megaplan.workers._payload import (
                     _build_output_template,
                 )
 
@@ -1375,7 +1375,7 @@ def run_omp_step(
             # enum mapping, execute bookkeeping-field strip, plan criterion
             # flattening) BEFORE the strict audit so known flexible fields
             # normalize instead of failing the enum/unknown-field gates.
-            from arnold_pipelines.megaplan.workers.hermes import (
+            from arnold_pipelines.megaplan.workers._payload import (
                 clean_parsed_payload,
             )
 

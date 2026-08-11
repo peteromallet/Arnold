@@ -544,11 +544,8 @@ def test_megaplan_policy_stays_outside_generic_reducer() -> None:
 
 def test_retired_execute_authority_paths_are_not_executable() -> None:
     from arnold_pipelines.megaplan.orchestration import execution_evidence
-    from arnold_pipelines.megaplan.workers import hermes
 
     merge_source = inspect.getsource(merge_module)
-    hermes_source = inspect.getsource(hermes)
     evidence_source = inspect.getsource(execution_evidence)
     assert "legacy_no_authority_metadata" not in merge_source
-    assert "execute_batch_*_output.json" not in hermes_source
     assert "apply_authoritative_execute_overrides" not in evidence_source

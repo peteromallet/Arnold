@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from arnold.agent import AgentRequest, ArnoldDispatcher
+from arnold.runtime.agent_contracts import AgentRequest
+from arnold.runtime.agent_dispatcher import ArnoldDispatcher
 from arnold_pipelines.megaplan.agent_adapters.codex import CodexAdapter
 
 

@@ -2,7 +2,7 @@
 
 This module bridges the kernel's replay/suspension cursors with the
 execution runner. It stays product-neutral: it only imports
-``arnold.kernel``, ``arnold.manifest``, and the ``arnold.agent`` wire
+``arnold.kernel``, ``arnold.manifest``, and the ``arnold.runtime.agent_contracts`` wire
 contracts used by the adapter bridge.
 """
 

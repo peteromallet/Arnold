@@ -922,7 +922,7 @@ class TestMediaPricingAdvisoryPass:
 
         pipeline = self._make_pipeline("video/mp4")
         with patch(
-            "arnold.agent.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
+            "arnold.runtime.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
         ):
             report = run_c4_static_checks(pipeline)
         assert report.ok  # warnings only
@@ -938,7 +938,7 @@ class TestMediaPricingAdvisoryPass:
 
         pipeline = self._make_pipeline("audio/wav")
         with patch(
-            "arnold.agent.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
+            "arnold.runtime.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
         ):
             report = run_c4_static_checks(pipeline)
         assert report.ok
@@ -957,7 +957,7 @@ class TestMediaPricingAdvisoryPass:
 
         pipeline = self._make_pipeline("video/mp4", "audio/wav")
         with patch(
-            "arnold.agent.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
+            "arnold.runtime.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
         ):
             report = run_c4_static_checks(pipeline)
         assert report.ok
@@ -972,7 +972,7 @@ class TestMediaPricingAdvisoryPass:
 
         pipeline = self._make_pipeline("image/png")
         with patch(
-            "arnold.agent.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
+            "arnold.runtime.costing.media_cost.DEFAULT_MEDIA_PRICING", ()
         ):
             report = run_c4_static_checks(pipeline)
         assert report.ok

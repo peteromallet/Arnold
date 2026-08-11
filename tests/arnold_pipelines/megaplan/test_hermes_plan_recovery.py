@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from arnold_pipelines.megaplan.workers.hermes import _recover_plan_payload_from_raw_markdown
+from arnold_pipelines.megaplan.workers._payload import _recover_plan_payload_from_raw_markdown
 
 
 def test_plan_payload_recovers_from_valid_raw_markdown() -> None:
@@ -14,7 +14,7 @@ def test_plan_payload_recovers_from_valid_raw_markdown() -> None:
             "",
             "## Main Phase",
             "",
-            "### Step 1: Patch worker (`arnold_pipelines/megaplan/workers/hermes.py`)",
+            "### Step 1: Patch worker (`arnold_pipelines/megaplan/workers/_impl.py`)",
             "",
             "1. Promote valid raw markdown into the plan payload.",
             "",

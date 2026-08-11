@@ -291,7 +291,6 @@ AGENT_RUNTIME_EXCLUSIONS = [
     "CommandRunner",
     "CommandResult",
     "resolved_default_model_for_agent",
-    "_run_agent_runtime_process_unit",
     "_review_process_worker",
     "_run_review_process_unit",
 ]

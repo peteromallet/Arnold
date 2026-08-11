@@ -18,7 +18,7 @@ import os
 import sys
 from typing import Any
 
-from arnold.agent.providers.pool import provider_credential_env_vars
+from arnold_pipelines.megaplan.runtime.key_pool import provider_credential_env_vars
 
 # ── Agent → provider → required env var mappings ──────────────────────
 # Reuses and extends the mappings from arnold_pipelines.megaplan.cloud.preflight.

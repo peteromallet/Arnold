@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agentbox.redaction import redact_text
-from arnold.agent.contracts import AgentSpec, format_agent_spec
-from arnold.agent.routing import ManagedAgentRoute, resolve_managed_agent_route
+from arnold.runtime.agent_contracts import AgentSpec, format_agent_spec
+from arnold.runtime.agent_routing import ManagedAgentRoute, resolve_managed_agent_route
 from arnold_pipelines.megaplan.managed_agent import (
     ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
     TERMINAL_STATUSES as SHARED_TERMINAL_STATUSES,
@@ -201,9 +201,6 @@ DELEGATION_DELIVERY_INSTRUCTION_HEADER = (
 )
 
 # resident/ -> megaplan/ -> skills/subagent-launcher/
-LAUNCHER_PATH = (
-    Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_hermes_agent.py"
-)
 CLAUDE_LAUNCHER_PATH = (
     Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_claude_agent.py"
 )
@@ -3423,8 +3420,23 @@ def launch_managed_subagent_detached(
     The supervisor process owns the manifest transitions and durable output, so
     the Discord resident can return immediately without losing lifecycle state.
     """
-    if backend not in {"hermes", "codex", "claude"}:
+    if backend not in {"hermes", "omp", "codex", "claude"}:
         raise ValueError(f"unsupported durable managed-agent backend: {backend}")
+    if backend == "hermes":
+        # Post-migration (B11): hermes agent specs route through the omp
+        # adapter; the hermes launcher was deleted.  Durable launches carry
+        # backend="omp" with the canonical omp model spec.
+        from arnold_pipelines.megaplan.workers.omp import omp_route_from_legacy
+
+        translated = omp_route_from_legacy(f"hermes:{model}")
+        if not translated.startswith("omp:"):
+            raise ValueError(
+                f"hermes backend '{model}' has no canonical omp translation; "
+                "launch with backend='omp' and an explicit omp:<provider>/<model> spec"
+            )
+        parsed = parse_agent_spec(translated)
+        backend = "omp"
+        model = parsed.model or model
     provider_contract = provider_execution_contract(
         backend=backend,
         toolsets=toolsets,
@@ -4666,28 +4678,15 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 prompt,
             ]
         elif backend == "hermes":
-            if not LAUNCHER_PATH.exists():
-                raise FileNotFoundError(f"hermes launcher not found: {LAUNCHER_PATH}")
-            argv = [
-                sys.executable,
-                str(LAUNCHER_PATH),
-                "--model",
-                str(manifest["model"]),
-                "--toolsets",
-                str(provider_options.get("toolsets") or "file,web,terminal"),
-                "--max-tokens",
-                str(int(provider_options.get("max_tokens") or 65_536)),
-                "--project-dir",
-                str(manifest["project_dir"]),
-                "--query-file",
-                str(manifest["prompt_path"]),
-                "--session-id",
-                str(session_id),
-                "--metadata-file",
-                str(metadata_path),
-            ]
-            if manifest.get("run_mode") == "session_continuation":
-                argv.append("--resume-session")
+            # Post-migration (B11): the hermes launcher was deleted and hermes
+            # agent specs route through the omp adapter.  Legacy hermes
+            # manifests are fail-closed: relaunch with backend='omp' and an
+            # explicit omp:<provider>/<modelId> model.
+            raise CliError(
+                "hermes_backend_removed",
+                "hermes managed-agent manifests are legacy (B11); relaunch the "
+                "delegated agent with backend='omp' and an explicit omp model spec",
+            )
         elif backend == "claude":
             if not CLAUDE_LAUNCHER_PATH.exists():
                 raise FileNotFoundError(f"Claude launcher not found: {CLAUDE_LAUNCHER_PATH}")
@@ -4735,37 +4734,6 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             worker_env = environment_with_provenance(worker_provenance)
         if worker_env is None:
             worker_env = os.environ.copy()
-        if backend == "hermes":
-            # The launcher is executed from the resident package, but its
-            # process cwd is the target project.  Without an explicit runtime
-            # root, launch_hermes_agent's fallback discovery selects the
-            # target checkout (or a stale global PYTHONPATH), so an editable
-            # runtime patch is not actually the code the fixer imports.
-            # Bind the provider process to the same approved runtime source
-            # recorded in launch custody and make that identity observable to
-            # every terminal command it delegates.
-            context_directory = manifest.get("context_directory")
-            runtime_root = (
-                context_directory.get("resident_runtime_source")
-                if isinstance(context_directory, Mapping)
-                else None
-            )
-            if not runtime_root:
-                launch_custody = manifest.get("git_custody")
-                runtime_root = (
-                    launch_custody.get("runtime_root")
-                    if isinstance(launch_custody, Mapping)
-                    else None
-                )
-            if runtime_root:
-                runtime_root = str(Path(str(runtime_root)).expanduser().resolve())
-                worker_env["ARNOLD_PATH"] = runtime_root
-                prior_pythonpath = worker_env.get("PYTHONPATH", "")
-                worker_env["PYTHONPATH"] = os.pathsep.join(
-                    part for part in (runtime_root, prior_pythonpath) if part
-                )
-        if backend == "hermes" and timeout_s is None:
-            worker_env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
         if backend == "claude":
             worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
                 int(provider_options.get("max_tokens") or 65_536)
@@ -7733,52 +7701,61 @@ async def launch_subagent_task(
         raise ValueError(
             "Hermes compatibility launches are synchronous and cannot satisfy durable Discord custody"
         )
-    if not LAUNCHER_PATH.exists():
-        raise FileNotFoundError(f"hermes launcher not found: {LAUNCHER_PATH}")
+    # Post-migration (B11): the hermes launcher was deleted and hermes agent
+    # specs route through the omp adapter.  Run one stateless omp turn
+    # in-process with the canonical omp route.
+    from arnold_pipelines.megaplan.workers.omp import (
+        _build_client,
+        omp_route_from_legacy,
+    )
 
-    argv: list[str] = [
-        sys.executable,
-        str(LAUNCHER_PATH),
-        "--model",
-        provider_route.model,
-        "--toolsets",
-        toolsets or config.special_requests_subagent_toolsets,
-        "--max-tokens",
-        str(config.special_requests_subagent_max_tokens),
-    ]
-    if project_dir:
-        argv += ["--project-dir", str(project_dir)]
-
-    # Multi-line prompts are brittle on argv — write to a query file instead.
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".md", delete=False, encoding="utf-8"
-    ) as handle:
-        handle.write(
-            _delivery_prompt(
-                task,
-                str(compatibility_provenance.get("timezone_name") or "UTC"),
-                task_kind=task_kind,
-                work_intent=work_intent,
-                mutation_claim=mutation_claim,
-                context_directory=_delegated_context_directory(
-                    project_root=Path(project_dir or Path.cwd()).resolve(),
-                    provenance=compatibility_provenance,
-                ),
-            )
+    spec = omp_route_from_legacy(f"hermes:{provider_route.model}")
+    parsed = parse_agent_spec(spec)
+    if parsed.agent != "omp" or not parsed.model or "/" not in parsed.model:
+        raise ValueError(
+            f"hermes model {provider_route.model!r} has no canonical omp "
+            "translation; pass an explicit omp:<provider>/<model> spec"
         )
-        query_path = handle.name
-    argv += ["--query-file", query_path]
-
+    provider, model_id = parsed.model.split("/", 1)
     timeout_s = config.special_requests_subagent_timeout_s
+    delivery_prompt = _delivery_prompt(
+        task,
+        str(compatibility_provenance.get("timezone_name") or "UTC"),
+        task_kind=task_kind,
+        work_intent=work_intent,
+        mutation_claim=mutation_claim,
+        context_directory=_delegated_context_directory(
+            project_root=Path(project_dir or Path.cwd()).resolve(),
+            provenance=compatibility_provenance,
+        ),
+    )
+    client = _build_client(
+        provider=provider,
+        model_id=model_id,
+        cwd=Path(project_dir or Path.cwd()).resolve(),
+        thinking=None,
+        tools=None,
+        custom_tools=[],
+        env=dict(os.environ),
+        timeout=timeout_s or 600.0,
+    )
+    client.start()
     try:
-        completed = await asyncio.to_thread(_run_subprocess, argv, timeout_s)
+        turn = client.prompt_and_wait(delivery_prompt, timeout=timeout_s or 600.0)
+        final_text = turn.require_assistant_text().strip()
     finally:
         try:
-            Path(query_path).unlink(missing_ok=True)
-        except OSError:
-            LOGGER.debug("could not remove subagent query file %s", query_path, exc_info=True)
-
-    return completed
+            client.stop()
+        except Exception:
+            pass
+    ok = bool(final_text)
+    return SubagentResult(
+        ok=ok,
+        final_text=final_text,
+        stderr="",
+        returncode=0 if ok else 1,
+        error=None if ok else "omp subagent returned no final text",
+    )
 
 
 def _build_local_seam_parser() -> argparse.ArgumentParser:

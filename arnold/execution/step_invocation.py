@@ -88,7 +88,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol, runtime_checkable
 
-from arnold.agent.costing.media_cost import MediaUsage
+from arnold.runtime.costing.media_cost import MediaUsage
 
 
 class ModelAdapterNotImplementedError(NotImplementedError):
@@ -179,7 +179,7 @@ class StepInvocationResult:
         The step's output payload — identical to what a plain return
         would have produced.
     media_usage:
-        Zero or more :class:`~arnold.agent.costing.media_cost.MediaUsage`
+        Zero or more :class:`~arnold.runtime.costing.media_cost.MediaUsage`
         records for media generated or consumed by this invocation.
         Defaults to an empty tuple (no media usage reported).
     """

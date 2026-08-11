@@ -223,7 +223,6 @@ def _worker_manifest(tmp_path: Path, *, backend: str, model: str) -> Path:
 @pytest.mark.parametrize(
     ("backend", "model", "launcher_name", "effective_uid", "permission_flag"),
     [
-        ("hermes", "zhipu:glm-5.2", "launch_hermes_agent.py", 0, None),
         ("claude", "opus", "launch_claude_agent.py", 0, "--permission-mode"),
         (
             "claude",
@@ -337,7 +336,7 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
 
 @pytest.mark.parametrize(
     ("backend", "model"),
-    [("hermes", "zhipu:glm-5.2"), ("claude", "opus")],
+    [("claude", "opus")],
 )
 def test_managed_worker_completion_emits_git_custody_event_without_unbound_local(
     tmp_path: Path,

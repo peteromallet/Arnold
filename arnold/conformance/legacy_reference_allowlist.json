@@ -19,54 +19,6 @@
       "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
     },
     {
-      "path": "arnold/agent/__init__.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
-      "path": "arnold/agent/adapters/__init__.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
-      "path": "arnold/agent/adapters/_oneshot.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Historical comment describing the relationship between the one-shot adapter shim and the now-deleted legacy workers module."
-    },
-    {
-      "path": "arnold/agent/adapters/_pricing.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
-      "path": "arnold/agent/adapters/deepseek.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
-      "path": "arnold/agent/contracts.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
-      "path": "arnold/agent/dispatcher.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
-      "path": "arnold/agent/providers/pool.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
       "path": "arnold/conformance/authoring_terms.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
@@ -161,12 +113,6 @@
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Discovery inventory retains legacy source paths as migration/deletion scanner data."
-    },
-    {
-      "path": "arnold_pipelines/megaplan/audits/hermes_vendoring.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Git-history inspection commands that reference the old deleted path for audit trail purposes."
     },
     {
       "path": "arnold_pipelines/megaplan/cloud/cli.py",
@@ -601,12 +547,6 @@
       "reason": "Package disposition renderer preserves the historical migration target path required by the generated disposition document."
     },
     {
-      "path": "tests/arnold/agent/test_import_boundaries.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Neutral agent import-boundary test intentionally names the deleted legacy package root as a negative assertion."
-    },
-    {
       "path": "tests/arnold/conformance/test_conformance_gates.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
@@ -797,6 +737,30 @@
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
+    },
+    {
+      "path": "arnold/runtime/agent_contracts.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
+    },
+    {
+      "path": "arnold/runtime/agent_dispatcher.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
+    },
+    {
+      "path": "docs/b1-census-full.txt",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "B1 census evidence artifact quoting the deleted legacy package name."
+    },
+    {
+      "path": "docs/b1-census-full.txt",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "B1 census evidence artifact quoting the deleted legacy package name."
     }
   ]
 }

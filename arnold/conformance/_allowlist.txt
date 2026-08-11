@@ -11,22 +11,6 @@
 # 5. import-coupling arnold.supervisor.outcomes
 #    Same rationale as (4).  Owner: Platform  Expiry: 2026-12-31
 #
-# 6. package-name-staleness arnold.agent.adapters._oneshot
-#    Adapter modules retain historical package-name strings for backwards
-#    compatibility with vendored agent runtimes.
-#    Owner: Platform  Expiry: 2026-12-31
-#
-# 7. semantic-coupling arnold.agent.adapters._oneshot /
-#    arnold.agent.agent.anthropic_adapter / arnold.agent.agent.auxiliary_client /
-#    arnold.agent.agent.context_compressor / arnold.agent.agent.copilot_acp_client /
-#    arnold.agent.agent.display / arnold.agent.agent.model_metadata /
-#    arnold.agent.agent.prompt_builder / arnold.agent.agent.prompt_caching /
-#    arnold.agent.agent.redact / arnold.agent.agent.trajectory /
-#    arnold.agent.run_agent
-#    Agent runtime modules are intentionally coupled to product model/agent
-#    semantics.  They are not part of the neutral workflow/execution/kernel
-#    surfaces.  Owner: Platform  Expiry: 2026-12-31
-#
 # 8. semantic-coupling arnold.conformance.checks
 #    Conformance checks reference product vocabulary while the extraction is
 #    incomplete.  Owner: Platform  Expiry: 2026-12-31
@@ -43,22 +27,10 @@
 #     Workflow validation module enumerates forbidden product imports as part of
 #     its validation surface.  Owner: Platform  Expiry: 2026-12-31
 #
-# 11a. semantic-coupling arnold.agent.tools.terminal_tool /
 #      arnold.conformance.deleted_surfaces
 #      Runtime tooling and deletion inventory still enumerate .megaplan data
 #      paths as validation/control data.
 #      Owner: Platform  Expiry: 2026-12-31
-#
-# 12. package-name-staleness arnold.agent.adapters._oneshot /
-#     arnold.agent.agent.anthropic_adapter / arnold.agent.agent.auxiliary_client /
-#     arnold.agent.agent.context_compressor / arnold.agent.agent.copilot_acp_client /
-#     arnold.agent.agent.display / arnold.agent.agent.model_metadata /
-#     arnold.agent.agent.prompt_builder / arnold.agent.agent.prompt_caching /
-#     arnold.agent.agent.redact / arnold.agent.agent.trajectory /
-#     arnold.agent.hermes_cli.auth /
-#     arnold.agent.hermes_cli.models / arnold.agent.run_agent
-#     Historical package-name strings retained for agent runtime compatibility.
-#     Owner: Platform  Expiry: 2026-12-31
 #
 # 13. package-name-staleness arnold.conformance.checks
 #     Conformance checks reference historical package names while extraction is
@@ -73,7 +45,6 @@
 #     Workflow validation module enumerates forbidden product imports as part of
 #     its validation surface.  Owner: Platform  Expiry: 2026-12-31
 #
-# 15a. package-name-staleness arnold.agent.tools.terminal_tool /
 #      arnold.conformance.deleted_surfaces / arnold.workflow.registry
 #      Current extraction/runtime validation surfaces still enumerate Megaplan
 #      package literals as data.  Owner: Platform  Expiry: 2026-12-31
@@ -104,30 +75,12 @@
 #
 # --- End M4 Allowlist Rationales ---
 
-import-coupling arnold.agent.adapters._oneshot
-import-coupling arnold.agent.adapters.codex
-import-coupling arnold.agent.adapters.shannon
 import-coupling arnold.critique_ledger.cutover.retire
 import-coupling arnold.critique_ledger.legacy_import
 import-coupling arnold.supervisor.model
 import-coupling arnold.supervisor.outcomes
 
-package-name-staleness arnold.agent.adapters._oneshot
 package-name-staleness arnold.critique_ledger.cutover.retire
-package-name-staleness arnold.agent.agent.anthropic_adapter
-package-name-staleness arnold.agent.agent.auxiliary_client
-package-name-staleness arnold.agent.agent.context_compressor
-package-name-staleness arnold.agent.agent.copilot_acp_client
-package-name-staleness arnold.agent.agent.display
-package-name-staleness arnold.agent.agent.model_metadata
-package-name-staleness arnold.agent.agent.prompt_builder
-package-name-staleness arnold.agent.agent.prompt_caching
-package-name-staleness arnold.agent.agent.redact
-package-name-staleness arnold.agent.agent.trajectory
-package-name-staleness arnold.agent.hermes_cli.auth
-package-name-staleness arnold.agent.hermes_cli.models
-package-name-staleness arnold.agent.run_agent
-package-name-staleness arnold.agent.tools.terminal_tool
 package-name-staleness arnold.conformance.checks
 package-name-staleness arnold.security.coverage_matrix
 package-name-staleness arnold.conformance.suite
@@ -142,20 +95,7 @@ package-name-staleness arnold.workflow.registry
 package-name-staleness arnold.workflow.source_compiler
 package-name-staleness arnold.workflow.validation
 
-semantic-coupling arnold.agent.adapters._oneshot
 semantic-coupling arnold.critique_ledger.cutover.retire
-semantic-coupling arnold.agent.tools.terminal_tool
-semantic-coupling arnold.agent.agent.anthropic_adapter
-semantic-coupling arnold.agent.agent.auxiliary_client
-semantic-coupling arnold.agent.agent.context_compressor
-semantic-coupling arnold.agent.agent.copilot_acp_client
-semantic-coupling arnold.agent.agent.display
-semantic-coupling arnold.agent.agent.model_metadata
-semantic-coupling arnold.agent.agent.prompt_builder
-semantic-coupling arnold.agent.agent.prompt_caching
-semantic-coupling arnold.agent.agent.redact
-semantic-coupling arnold.agent.agent.trajectory
-semantic-coupling arnold.agent.tools.terminal_tool
 semantic-coupling arnold.conformance.authoring_terms
 semantic-coupling arnold.conformance.checks
 semantic-coupling arnold.conformance.deleted_surfaces

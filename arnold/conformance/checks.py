@@ -100,17 +100,6 @@ _SECURITY_NATIVE_REPRESENTATION_ROWS = (
     },
 )
 _SECURITY_DISCOVERY_MODULE_HINTS = (
-    "arnold.agent.agent.auxiliary_client",
-    "arnold.agent.providers.env_loader",
-    "arnold.agent.providers.pool",
-    "arnold.agent.tools.image_generation_tool",
-    "arnold.agent.tools.mcp_oauth",
-    "arnold.agent.tools.mcp_tool",
-    "arnold.agent.tools.skills_hub",
-    "arnold.agent.tools.terminal_tool",
-    "arnold.agent.tools.transcription_tools",
-    "arnold.agent.tools.tts_tool",
-    "arnold.agent.tools.web_tools",
     "arnold.security.policy",
 )
 _SECURITY_DISCOVERY_TEXT_PATTERNS = {
@@ -136,34 +125,14 @@ _COVERED_SECURITY_ISOLATION_REQUIREMENTS = (
         "failure": "git push-class broker evaluation is not wired through BrokerClient",
     },
     {
-        "surface_contains": "arnold.security.policy.SecurityPolicy.evaluate",
-        "path": "arnold/agent/tools/mcp_tool.py",
-        "required_snippets": (
-            "authorize_mcp_git_action(server_name, tool_name, args)",
-            "_should_strip_github_mcp_credentials",
-            "_sanitize_mcp_server_config",
-        ),
-        "failure": "covered MCP git paths are not isolated from raw GitHub credentials",
-    },
-    {
-        "surface_contains": "arnold.agent.providers.pool.KeyPool.acquire",
-        "path": "arnold/agent/providers/pool.py",
+        "surface_contains": "arnold_pipelines.megaplan.runtime.key_pool.KeyPool.acquire",
+        "path": "arnold_pipelines/megaplan/runtime/key_pool.py",
         "required_snippets": (
             "broker_production_mode_requested()",
             "resolve_brokered_llm_proxy(",
-            "return self._acquire_brokered_key_unlocked(provider)",
+            "_acquire_brokered_key_unlocked(",
         ),
         "failure": "covered provider-pool paths no longer fail closed to broker-scoped credentials",
-    },
-    {
-        "surface_contains": "arnold.agent.agent.auxiliary_client.resolve_provider_client",
-        "path": "arnold/agent/agent/auxiliary_client.py",
-        "required_snippets": (
-            "resolve_brokered_llm_proxy(",
-            "warn_deferred_oauth_provider(",
-            "broker_production_mode_requested()",
-        ),
-        "failure": "covered auxiliary provider routing is not broker-isolated in production mode",
     },
 )
 

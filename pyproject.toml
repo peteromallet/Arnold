@@ -28,29 +28,11 @@ dependencies = [
     # supported `python -m pytest` workflow.  They run in the same editable
     # Arnold interpreter, so the base install must include its test runner.
     "pytest>=8.0",
-    # --- Hermes/agent backend (core) ---------------------------------------
-    # The hermes/agent runtime backs prep research, critique, fanout, and the
-    # agentic phases. It is NOT optional: the canonical prep models route to
-    # `hermes:deepseek:...` for every run, so a chain that does prep WILL import
-    # this backend. Historically these lived in the `[agent]` optional extra
-    # plus a `[tool.uv] default-extras = ["agent"]` hint, but some uv versions
-    # silently ignore `default-extras`, producing a fresh install that imports
-    # fine until prep iteration N fails with a confusing `agent_deps_missing`.
-    # Moving them into core makes `pip install -e .` / `uv pip install -e .`
-    # ALWAYS ship a working backend. (The `[agent]` extra below is kept as a
-    # back-compat alias for callers that still reference it.)
-    "openai",
-    "anthropic>=0.39.0",
+    # Resident/cloud workers and the CLI use these runtime libraries directly.
     "python-dotenv",
-    "fire",
     "httpx",
     "rich",
     "requests",
-    "prompt_toolkit",
-    "firecrawl-py",
-    "fal-client",
-    "edge-tts",
-    "faster-whisper>=1.0.0",
     "PyJWT[crypto]",
     "discord.py>=2.6,<3",
 ]
@@ -63,16 +45,13 @@ agentbox = "agentbox.cli:main"
 db = [
     "psycopg[binary]>=3.1",
 ]
-# Back-compat alias: the agent backend's packages are now core dependencies
-# (see [project].dependencies). This extra is retained so existing install
-# commands / docs that say `pip install '.[agent]'` keep working as a no-op.
+# Back-compat alias retained so existing install commands / docs that say
+# `pip install '.[agent]'` keep working as a no-op.
 agent = []
 
 [tool.uv]
-# The hermes/agent backend's packages are now core [project].dependencies, so a
-# plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
-# longer rely on `default-extras` (some uv versions silently ignore it, which is
-# what produced the confusing mid-prep `agent_deps_missing` failures).
+# The runtime libraries are core [project].dependencies; a plain
+# `uv pip install -e .` / `uv sync` always ships a working install.
 
 [tool.hatch.build]
 exclude = [
@@ -109,7 +88,6 @@ exclude = [
     "**/*.pyc",
     "arnold/pipelines/**",
     "arnold_pipelines/megaplan/cloud/_reference/**",
-    "arnold_pipelines/megaplan/agent/pyproject.toml",
     "docs/archive/**",
     "tests/archive/**",
     ".megaplan/**",

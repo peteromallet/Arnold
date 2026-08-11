@@ -4,9 +4,6 @@
 # One-shot agent adapters intentionally reuse Megaplan worker/runtime helpers.
 arnold.supervisor.model
 arnold.supervisor.outcomes
-arnold.agent.adapters._oneshot
-arnold.agent.adapters.codex
-arnold.agent.adapters.shannon
 # Critique-ledger (CL4/CL5) cutover + legacy-import integration.
 arnold.critique_ledger.cutover.retire
 arnold.critique_ledger.legacy_import

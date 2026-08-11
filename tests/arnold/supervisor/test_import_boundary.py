@@ -103,7 +103,9 @@ _DOCUMENTED_PUBLIC = frozenset(
 # The supervisor must not own or initialise workflow routing, loop exits,
 # model routing, suspension, or execute/review decisions.
 _FORBIDDEN_PREFIXES: tuple[str, ...] = (
-    "arnold.agent",  # agent loop internals
+    "arnold.runtime.agent_contracts",  # agent loop internals (relocated)
+    "arnold.runtime.agent_dispatcher",
+    "arnold.runtime.agent_routing",
     "arnold.execution",  # execute/review decisions
 )
 

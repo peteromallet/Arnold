@@ -5,7 +5,7 @@ Covers:
 
 * trusted-container mode evidence (``MEGAPLAN_TRUSTED_CONTAINER``);
 * relocated in-process path validators (``runtime.sandbox`` — not
-  ``arnold.agent``): terminal-command cwd, write-path, v4a-patch, symlink
+  (not the deleted agent SDK): terminal-command cwd, write-path, v4a-patch, symlink
   escapes, and ``SandboxViolation`` inheritance;
 * empty-cache agent discovery (fresh processes);
 * exact fork cleanup (no bundled resident agent, no ``src/`` delta, allowed
@@ -67,7 +67,7 @@ class TestTrustedContainerEvidence:
 class TestRelocatedValidators:
     def test_validators_come_from_megaplan_runtime_not_agent(self):
         # The megaplan runtime must own the primitives (B11 vendoring edge);
-        # importing them here must not pull in arnold.agent.
+        # importing them here must not pull in the deleted agent SDK.
         import arnold_pipelines.megaplan.runtime.sandbox as runtime_sandbox
 
         for name in (
@@ -198,7 +198,7 @@ class TestEmptyCacheDiscovery:
         env["OMP_BIN"] = str(fake_omp)
         return tmp_path, home, env
 
-    def _run_agent(self, env, *args, cwd):
+    def _run_omp_agent(self, env, *args, cwd):
         proc = subprocess.run(
             ["bash", str(AGENT_SCRIPT), *args],
             env=env,
@@ -219,7 +219,7 @@ class TestEmptyCacheDiscovery:
             "---\nname: pagent\ndescription: Project agent\n---\n\nYou are pagent.\n",
             encoding="utf-8",
         )
-        proc = self._run_agent(env, "run", "pagent", "hi", cwd=project)
+        proc = self._run_omp_agent(env, "run", "pagent", "hi", cwd=project)
         assert proc.returncode == 0, proc.stderr
         captured = (tmp_path / "captured.txt").read_text(encoding="utf-8")
         assert "--system-prompt" in captured
@@ -239,7 +239,7 @@ class TestEmptyCacheDiscovery:
             "---\nname: pagent\ndescription: v1\n---\n\nYou are v1.\n",
             encoding="utf-8",
         )
-        self._run_agent(env, "run", "pagent", "hi", cwd=project)
+        self._run_omp_agent(env, "run", "pagent", "hi", cwd=project)
         prompts = home / ".omp" / "agent" / ".prompts"
         first = list(prompts.glob("pagent.*.md"))
         assert len(first) == 1
@@ -248,7 +248,7 @@ class TestEmptyCacheDiscovery:
             "---\nname: pagent\ndescription: v2\n---\n\nYou are v2.\n",
             encoding="utf-8",
         )
-        self._run_agent(env, "run", "pagent", "hi", cwd=project)
+        self._run_omp_agent(env, "run", "pagent", "hi", cwd=project)
         second = list(prompts.glob("pagent.*.md"))
         assert len(second) == 1
         assert second[0].name != first[0].name
@@ -270,7 +270,7 @@ class TestEmptyCacheDiscovery:
             "---\nname: pagent\ndescription: user copy\n---\n\nYou are USER.\n",
             encoding="utf-8",
         )
-        self._run_agent(env, "run", "pagent", "hi", cwd=project)
+        self._run_omp_agent(env, "run", "pagent", "hi", cwd=project)
         prompts = home / ".omp" / "agent" / ".prompts"
         cached = list(prompts.glob("pagent.*.md"))[0]
         assert "You are PROJECT." in cached.read_text(encoding="utf-8")

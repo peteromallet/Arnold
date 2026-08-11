@@ -1,8 +1,8 @@
-"""Re-exports of canonical agent contracts from arnold.agent.contracts."""
+"""Re-exports of canonical agent contracts from arnold.runtime.agent_contracts."""
 
 from __future__ import annotations
 
-from arnold.agent.contracts import (
+from arnold.runtime.agent_contracts import (
     AgentMode,
     AgentRequest,
     AgentResult,

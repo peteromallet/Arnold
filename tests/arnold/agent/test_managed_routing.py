@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.agent.routing import (
+from arnold.runtime.agent_routing import (
     infer_managed_agent_backend,
     resolve_managed_agent_route,
 )

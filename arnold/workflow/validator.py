@@ -34,7 +34,7 @@ from typing import Any, Mapping
 
 from arnold.pipeline.contracts import BindResult, RepairGradient, bind
 from arnold.pipeline.declaration_lowering import lower_stage_declarations
-from arnold.agent.costing.model_resource_capabilities import prove_stage_required_capabilities
+from arnold.pipeline.costing.model_resource_capabilities import prove_stage_required_capabilities
 from arnold.pipeline.types import Port, PortRef, ReadRef, WriteRef
 from arnold.workflow.invocation_validation import (
     DefaultInvocationRegistryView,

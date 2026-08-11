@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from arnold.agent.contracts import AgentDispatcher
+from arnold.runtime.agent_contracts import AgentDispatcher
 from arnold_pipelines.megaplan.agent_runtime.contracts import AgentRequest, AgentResult
 
 

@@ -4116,7 +4116,7 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     """Extract plausible JSON payload objects from raw agent output."""
     # Some models (DeepSeek/Kimi) answer with write-style tool markup containing
     # the JSON payload. Recover that first so downstream extraction sees JSON.
-    from arnold_pipelines.megaplan.workers.hermes import (
+    from arnold_pipelines.megaplan.workers._payload import (
         _deescape_double_encoded_json,
         _extract_json_from_mutating_tool_markup,
     )
@@ -4132,7 +4132,7 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     # (backslash-escaped interior quotes). De-escape one layer so the strategies
     # below can see the real object.
     try:
-        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+        from arnold_pipelines.megaplan.workers._payload import _deescape_double_encoded_json
 
         deescaped = _deescape_double_encoded_json(raw)
         if deescaped is not None:
@@ -4278,7 +4278,7 @@ def _extract_plan_capture_input(raw_text: str) -> str | dict[str, Any]:
 
 def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     """Return a representative JSON decode error for malformed model output."""
-    from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+    from arnold_pipelines.megaplan.workers._payload import _deescape_double_encoded_json
 
     text = raw.strip()
     if not text:
@@ -4303,7 +4303,7 @@ def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     # GLM coding-endpoint double-encoded JSON: if the de-escaped form parses
     # cleanly, the output is not malformed, so do not report a decode error.
     try:
-        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+        from arnold_pipelines.megaplan.workers._payload import _deescape_double_encoded_json
 
         deescaped = _deescape_double_encoded_json(raw)
         if deescaped is not None:
@@ -6599,37 +6599,14 @@ def run_codex_prep_step(
 def _is_agent_available(agent: str) -> bool:
     """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
-        # The vendored run_agent.py and hermes_state.py now live under
-        # ``arnold/agent/``. Import ``arnold.agent`` to locate the directory,
-        # place it on ``sys.path`` so the legacy absolute imports resolve, then
-        # probe the two required modules so a partial install fails closed.
+        # Post-migration (B11) ``hermes`` agent specs are no longer a live
+        # dispatch surface — omp replaced the vendored hermes runtime, and
+        # hermes specs route through the omp adapter (B3 dispatch contract).
+        # Report availability via the omp CLI, matching the omp branch.
         try:
-            import importlib
-            import sys
-            from pathlib import Path
-
-            import arnold.agent as _agent_pkg
-
-            agent_dir = str(Path(_agent_pkg.__file__).resolve().parent)
-            if agent_dir not in sys.path:
-                sys.path.insert(0, agent_dir)
-
-            for module_name in ("run_agent", "hermes_state", "tools", "tools.registry"):
-                module = sys.modules.get(module_name)
-                module_file = getattr(module, "__file__", None)
-                if (
-                    module is not None
-                    and (
-                        not module_file
-                        or not str(Path(module_file).resolve()).startswith(agent_dir)
-                    )
-                ):
-                    sys.modules.pop(module_name, None)
-            importlib.invalidate_caches()
-            from run_agent import AIAgent  # noqa: F401
-            from hermes_state import SessionDB  # noqa: F401
+            import omp_rpc  # noqa: F401
         except ImportError:
-            return False
+            return bool(shutil.which("omp"))
         return True
     if agent in {"claude", "shannon"}:
         from arnold_pipelines.megaplan._core.io import (
@@ -6790,7 +6767,8 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             if agent == "hermes":
                 raise CliError(
                     "agent_deps_missing",
-                    "hermes backend requires the bundled runtime packages: pip install arnold (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
+                    "hermes agent specs route through the omp adapter (B3/B11); "
+                    "install the omp CLI (or omp_rpc) to run hermes-spec models.",
                 )
             if agent == "shannon":
                 from arnold_pipelines.megaplan._core.io import shannon_missing_deps
@@ -6821,7 +6799,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
         if not available:
             raise CliError(
                 "agent_not_found",
-                "No supported agents found. Install claude or codex, or install arnold (or pip install -e . in a source checkout) for hermes. The legacy '[agent]' extra is only a no-op compatibility alias.",
+                "No supported agents found. Install claude or codex, or install the omp CLI (omp_rpc) for omp/hermes-spec models.",
             )
         fallback = available[0]
         args._agent_fallback = {
@@ -7572,17 +7550,28 @@ def _run_step_with_worker_legacy(
         try:
             if os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") != "1":
                 if agent == "hermes":
-                    # Deferred import to avoid circular import (hermes_worker imports from workers)
-                    from arnold_pipelines.megaplan.workers.hermes import run_hermes_step
-                    worker = run_hermes_step(
+                    # Post-migration (B11): hermes agent specs are no longer a
+                    # live dispatch surface — they route through the omp worker,
+                    # which translates legacy hermes routes to canonical omp
+                    # specs (see workers.omp.omp_route_from_legacy).
+                    if os.getenv(MOCK_ENV_VAR) != "1":
+                        assert resolved_model is not None and resolved_model != "", (
+                            "run_step_with_worker about to invoke run_omp_step "
+                            "for a hermes-routed spec with empty resolved_model."
+                        )
+                    from arnold_pipelines.megaplan.workers.omp import run_omp_step
+
+                    worker = run_omp_step(
                         step,
                         state,
                         plan_dir,
                         root=root,
                         fresh=effective_refreshed,
-                        model=model,
+                        model=resolved_model,
                         effort=effort,
                         prompt_override=prompt_override,
+                        prompt_kwargs=prompt_kwargs,
+                        read_only=read_only,
                         output_path=output_path,
                         worker_options=worker_options,
                     )
@@ -7731,26 +7720,26 @@ def _run_step_with_worker_legacy(
                 # per-call closure registrations.  The outer auth/connection
                 # fallback (except CliError below) still wraps everything; the
                 # inner per-backend one-shot retry lives inside the closures.
-                from arnold.agent import ArnoldDispatcher
-                from arnold.agent.adapters.deepseek import DeepSeekAdapter as _DeepSeekAdapter
-                from arnold.agent.contracts import AgentRequest as _AgentRequest
+                from arnold.runtime.agent_dispatcher import ArnoldDispatcher
+                from arnold.runtime.agent_contracts import AgentRequest as _AgentRequest
                 _dispatcher = ArnoldDispatcher()
-                _dispatcher.register("hermes", _DeepSeekAdapter())
-                _dispatcher.register(
-                    "omp",
-                    lambda req: _omp_to_agent_result(
-                        req,
-                        step=step,
-                        state=state,
-                        plan_dir=plan_dir,
-                        root=root,
-                        worker_options=worker_options,
-                        prompt_override=prompt_override,
-                        prompt_kwargs=prompt_kwargs,
-                        output_path=output_path,
-                        effective_refreshed=effective_refreshed,
-                    ),
+                _omp_closure = lambda req: _omp_to_agent_result(
+                    req,
+                    step=step,
+                    state=state,
+                    plan_dir=plan_dir,
+                    root=root,
+                    worker_options=worker_options,
+                    prompt_override=prompt_override,
+                    prompt_kwargs=prompt_kwargs,
+                    output_path=output_path,
+                    effective_refreshed=effective_refreshed,
                 )
+                # Post-migration (B11): hermes agent specs route through the
+                # omp adapter; the legacy deepseek adapter registration is
+                # deleted.
+                _dispatcher.register("hermes", _omp_closure)
+                _dispatcher.register("omp", _omp_closure)
                 _dispatcher.register(
                     "codex",
                     lambda req: _codex_to_agent_result(

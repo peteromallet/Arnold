@@ -3,7 +3,7 @@
 The adapter subclasses ``arnold.execution.LocalJournalBackend`` and overrides
 ``_execute_node_payload`` to dispatch explicit node IDs to relocated product
 handlers in ``arnold_pipelines.megaplan.handlers``.  Model and tool work is
-routed through ``arnold.agent`` registries and ``arnold.execution.registries``;
+routed through neutral agent contracts and ``arnold.execution.registries``;
 no legacy worker paths from the neutral runtime are imported.
 """
 
@@ -231,7 +231,7 @@ def build_megaplan_registries(
     extra_capabilities: Mapping[str, Any] | None = None,
     extra_effects: Mapping[str, Any] | None = None,
 ) -> ExecutionRegistries:
-    """Build execution registries for Megaplan, backed by ``arnold.agent`` if available."""
+    """Build execution registries for Megaplan, backed by the agent dispatcher if available."""
 
     from arnold.execution.registries import build_agent_adapter_bridge
 

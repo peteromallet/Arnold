@@ -212,7 +212,6 @@ class TestM10ExternalMutationDiscovery:
         modules = self._modules()
         for path in (
             "arnold_pipelines/megaplan/skills/subagent-launcher/launch_claude_agent.py",
-            "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py",
         ):
             mutations = modules[path]["external_mutations"]
             subprocess_calls = [

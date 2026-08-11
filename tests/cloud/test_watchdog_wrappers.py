@@ -10885,7 +10885,7 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert text.index("launching Codex repair subagent") < text.index("launching Kimi goal operator")
 
 
-def test_kimi_goal_operator_reaps_run_agent_child_on_exit() -> None:
+def test_kimi_goal_operator_reaps_managed_child_on_exit() -> None:
     text = _wrapper("arnold-kimi-goal-operator")
 
     assert "set -m" in text
@@ -14619,7 +14619,7 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert 'CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE=1' in text
     assert '"recovery_sweep": recovery_sweep' in text
     assert 'SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"' in text
-    assert "launch_hermes_agent.py" not in text
+    assert "the-hermes-launch-script" not in text
     assert 'deepseek_model=$DEEPSEEK_MODEL' in text
     # Report paths.
     assert 'REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"' in text
@@ -14862,7 +14862,7 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
     }), encoding="utf-8")
 
     # Stub launcher that returns a canned hypothesis referencing the evidence.
-    launcher = tmp_path / "launch_hermes_agent.py"
+    launcher = tmp_path / "managed_agent_stub.py"
     canned = (
         "hypothesis: critique loop oscillating over cosmetic import wording; "
         "gate evaluator too strict for phase-0. recommend: tighten gate cosmetic flag."

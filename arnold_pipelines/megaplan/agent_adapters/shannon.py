@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from arnold.agent.contracts import AgentRequest, AgentResult
+from arnold.runtime.agent_contracts import AgentRequest, AgentResult
 from arnold_pipelines.megaplan.agent_adapters import _oneshot
 
 

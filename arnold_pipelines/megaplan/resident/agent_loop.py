@@ -21,7 +21,7 @@ from typing import Any, Mapping, Protocol
 from pydantic import BaseModel, ValidationError
 
 from arnold.execution.step_invocation import StepInvocation
-from arnold.agent.routing import MANAGED_AGENT_BACKENDS, resolve_managed_agent_route
+from arnold.runtime.agent_routing import MANAGED_AGENT_BACKENDS, resolve_managed_agent_route
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
 
 from .config import ResidentConfig
@@ -567,6 +567,45 @@ def _split_omp_model(model: str) -> tuple[str, str]:
     return provider, model_id
 
 
+def _hermes_route_to_omp(route: Any) -> Any:
+    """Translate a hermes managed-agent route to its canonical omp route.
+
+    The B11 migration deleted the hermes launcher; hermes agent specs route
+    through the omp RPC adapter.  The canonical ``omp:`` spec is taken from
+    ``route.model_spec`` when present (the frozen B1 table maps e.g.
+    ``zhipu:glm-5.2`` → ``omp:zai/glm-5.2``); otherwise the legacy
+    ``provider:model`` form is converted to ``provider/model``.
+    """
+    from arnold.runtime.agent_contracts import AgentSpec, parse_agent_spec
+    from arnold.runtime.agent_routing import ManagedAgentRoute
+
+    spec = getattr(route, "model_spec", None) or ""
+    parsed = parse_agent_spec(str(spec)) if str(spec).startswith("omp:") else None
+    if parsed is not None and parsed.model and "/" in parsed.model:
+        return ManagedAgentRoute(
+            backend="omp",
+            model=parsed.model,
+            model_spec=parsed.model,
+            effort=parsed.effort or getattr(route, "effort", None),
+            backend_source=getattr(route, "backend_source", "model_spec"),
+        )
+    legacy = getattr(route, "model", None) or ""
+    if ":" in str(legacy):
+        provider, _, model = str(legacy).partition(":")
+        provider = {"zhipu": "zai"}.get(provider, provider)
+        omp_model = f"{provider}/{model}"
+        return ManagedAgentRoute(
+            backend="omp",
+            model=omp_model,
+            model_spec=omp_model,
+            effort=getattr(route, "effort", None),
+            backend_source="hermes_legacy_translation",
+        )
+    raise AgentLoopError(
+        f"hermes route has no omp translation: model={legacy!r} model_spec={spec!r}"
+    )
+
+
 async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
     """Kill the Codex wrapper and descendants created for one invocation."""
 
@@ -600,7 +639,6 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
         cwd: str | Path,
         state_root: str | Path,
         codex_bin: str = "codex",
-        hermes_launcher: str | Path | None = None,
         claude_launcher: str | Path | None = None,
     ) -> None:
         self.config = config
@@ -608,9 +646,6 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
         self.state_root = Path(state_root).expanduser().resolve()
         launcher_root = Path(__file__).resolve().parents[1] / "skills" / "subagent-launcher"
         self.codex_bin = codex_bin
-        self.hermes_launcher = Path(
-            hermes_launcher or launcher_root / "launch_hermes_agent.py"
-        )
         self.claude_launcher = Path(
             claude_launcher or launcher_root / "launch_claude_agent.py"
         )
@@ -629,6 +664,11 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             model=self.config.model_name,
             default_backend=self.config.model_provider,
         )
+        if route.backend == "hermes":
+            # Post-migration (B11): hermes agent specs route through the omp
+            # RPC adapter; the hermes launcher was deleted.  Re-route to the
+            # canonical omp spec carried on the route.
+            route = _hermes_route_to_omp(route)
         if route.backend not in MANAGED_AGENT_BACKENDS:
             raise AgentLoopError(
                 f"resident provider {route.backend!r} has no managed CLI adapter"
@@ -1097,30 +1137,6 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                     "-",
                 ]
             return argv, paths["prompt"].read_text(encoding="utf-8"), env
-        if backend == "hermes":
-            if not self.hermes_launcher.exists():
-                raise AgentLoopError(f"Hermes launcher not found: {self.hermes_launcher}")
-            argv = [
-                sys.executable,
-                str(self.hermes_launcher),
-                "--model",
-                model,
-                "--toolsets",
-                self.config.model_toolsets,
-                "--max-tokens",
-                str(self.config.model_max_tokens),
-                "--project-dir",
-                str(self.cwd),
-                "--query-file",
-                str(paths["prompt"]),
-                "--session-id",
-                str(session_id),
-                "--metadata-file",
-                str(paths["metadata"]),
-            ]
-            if resume:
-                argv.append("--resume-session")
-            return argv, None, env
         if backend == "claude":
             if not self.claude_launcher.exists():
                 raise AgentLoopError(f"Claude launcher not found: {self.claude_launcher}")

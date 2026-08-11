@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.agent.contracts import AgentRequest, AgentResult
+from arnold.runtime.agent_contracts import AgentRequest, AgentResult
 from arnold.execution.registries import (
     AgentCapabilityHandler,
     AgentEffectHandler,
@@ -187,7 +187,7 @@ def test_manifest_fields_are_never_treated_as_import_paths() -> None:
 
 
 def test_agent_adapter_bridge_satisfies_protocols_without_product_imports() -> None:
-    """The bridge wraps an arnold.agent dispatcher; no megaplan pipeline import."""
+    """The bridge wraps an agent dispatcher; no megaplan pipeline import."""
 
     class FakeDispatcher:
         def dispatch(self, request: AgentRequest) -> AgentResult:

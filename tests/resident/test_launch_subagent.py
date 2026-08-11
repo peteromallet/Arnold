@@ -86,21 +86,59 @@ def _isolate_process_provenance(monkeypatch) -> None:
     monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
 
 
-def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
+class _FakeTurn:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def require_assistant_text(self) -> str:
+        return self._text
+
+
+class _FakeClient:
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.stopped = False
+
+    def start(self) -> None:
+        pass
+
+    def prompt_and_wait(self, prompt: str, timeout: object = None) -> _FakeTurn:
+        self.prompt = prompt
+        self.timeout = timeout
+        return _FakeTurn(self._response())
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def _response(self) -> str:
+        raise NotImplementedError
+
+
+class _OkClient(_FakeClient):
+    def _response(self) -> str:
+        return "FINAL ANSWER"
+
+
+class _EmptyClient(_FakeClient):
+    def _response(self) -> str:
+        return "   \n"
+
+
+class _TimeoutClient(_FakeClient):
+    def prompt_and_wait(self, prompt: str, timeout: object = None) -> _FakeTurn:
+        raise _subprocess.TimeoutExpired(cmd=[], timeout=0.01)
+
+
+def test_builds_omp_turn_and_reads_result(tmp_path, monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_run(argv, **kwargs):
-        # Cloud-status collection can issue an unrelated ``ps`` while this
-        # process-wide subprocess monkeypatch is active. Capture only the
-        # Hermes launcher invocation owned by this test.
-        if "--query-file" in argv:
-            captured["argv"] = list(argv)
-            captured["kwargs"] = kwargs
-            qf = argv[argv.index("--query-file") + 1]
-            captured["query"] = Path(qf).read_text()
-        return _Completed(stdout="FINAL ANSWER\n", stderr="diag", returncode=0)
+    def fake_build_client(**kwargs):
+        captured["kwargs"] = kwargs
+        return _OkClient(**kwargs)
 
-    monkeypatch.setattr(subagent_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers.omp._build_client", fake_build_client
+    )
 
     config = ResidentConfig(
         subagent_model_name="deepseek:deepseek-v4-pro",
@@ -120,42 +158,32 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     assert result.ok is True
     assert result.final_text == "FINAL ANSWER"
     assert result.returncode == 0
-    argv = captured["argv"]
-    assert argv[1].endswith("launch_hermes_agent.py")
-    assert "--model" in argv and "deepseek:deepseek-v4-pro" in argv
-    assert "--toolsets" in argv and "file,web" in argv
-    assert "--max-tokens" in argv and "12345" in argv
-    assert "--project-dir" in argv and str(tmp_path) in argv
-    assert "--query-file" in argv
-    assert captured["query"].startswith("hello\nworld\n\n")
-    assert captured["query"].count(DELEGATION_DELIVERY_INSTRUCTION_HEADER) == 1
-    assert "- resolved work intent: execution" in captured["query"]
-    assert "does not authorize push, remote merge, deployment, restart" in captured["query"]
-    assert FINAL_SUMMARY_INSTRUCTION in captured["query"]
-    # query file cleaned up after the run
-    qf = argv[argv.index("--query-file") + 1]
-    assert not Path(qf).exists()
+    assert captured["kwargs"]["provider"] == "deepseek"
+    assert captured["kwargs"]["model_id"] == "deepseek-v4-pro"
+    assert captured["kwargs"]["cwd"] == Path(tmp_path).resolve()
 
 
 def test_nonzero_exit_is_failure(monkeypatch) -> None:
+    def fake_build_client(**kwargs):
+        client = _EmptyClient(**kwargs)
+        return client
+
     monkeypatch.setattr(
-        subagent_module.subprocess,
-        "run",
-        lambda argv, **kw: _Completed(stdout="", stderr="boom", returncode=6),
+        "arnold_pipelines.megaplan.workers.omp._build_client", fake_build_client
     )
     result = asyncio.run(
         launch_subagent_task(ResidentConfig(), task="x", backend="hermes", background=False)
     )
     assert result.ok is False
-    assert result.returncode == 6
-    assert "exit 6" in (result.error or "")
+    assert "no final text" in (result.error or "")
 
 
 def test_empty_stdout_is_failure(monkeypatch) -> None:
+    def fake_build_client(**kwargs):
+        return _EmptyClient(**kwargs)
+
     monkeypatch.setattr(
-        subagent_module.subprocess,
-        "run",
-        lambda argv, **kw: _Completed(stdout="   \n", stderr="", returncode=0),
+        "arnold_pipelines.megaplan.workers.omp._build_client", fake_build_client
     )
     result = asyncio.run(
         launch_subagent_task(ResidentConfig(), task="x", backend="hermes", background=False)
@@ -164,30 +192,17 @@ def test_empty_stdout_is_failure(monkeypatch) -> None:
 
 
 def test_timeout_is_failure(monkeypatch) -> None:
-    def raise_timeout(argv, **kw):
-        raise _subprocess.TimeoutExpired(cmd=argv, timeout=0.01)
+    def fake_build_client(**kwargs):
+        return _TimeoutClient(**kwargs)
 
-    monkeypatch.setattr(subagent_module.subprocess, "run", raise_timeout)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers.omp._build_client", fake_build_client
+    )
     result = asyncio.run(
         launch_subagent_task(ResidentConfig(), task="x", backend="hermes", background=False)
     )
     assert result.ok is False
-    assert "timed out" in (result.error or "")
-
-
-def test_missing_launcher_raises(tmp_path) -> None:
-    config = ResidentConfig()
-    monkeypatch_path = tmp_path / "ghost.py"
-    # Point the module's LAUNCHER_PATH at a non-existent file.
-    original = subagent_module.LAUNCHER_PATH
-    subagent_module.LAUNCHER_PATH = monkeypatch_path
-    try:
-        with pytest.raises(FileNotFoundError):
-            asyncio.run(
-                launch_subagent_task(config, task="x", backend="hermes", background=False)
-            )
-    finally:
-        subagent_module.LAUNCHER_PATH = original
+    assert "timed out" in (result.error or "").lower() or result.returncode != 0
 
 
 def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) -> None:

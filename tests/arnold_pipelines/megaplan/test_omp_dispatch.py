@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from arnold.agent.contracts import AgentMode, parse_agent_spec
+from arnold.runtime.agent_contracts import AgentMode, parse_agent_spec
 from arnold_pipelines.megaplan._core.io import detect_available_agents
 from arnold_pipelines.megaplan.fallback_chains import (
     FallbackSpecChain,

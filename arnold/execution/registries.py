@@ -3,7 +3,7 @@
 All runtime dispatch is keyed by explicit string identifiers. Manifest fields
 are never treated as dynamic import paths. Unregistered keys fail closed.
 
-The ``arnold.agent`` adapter bridge proves that product agent contracts can
+The agent adapter bridge proves that product agent contracts can
 satisfy registry protocols without importing any product pipeline packages.
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
-from arnold.agent.contracts import AgentDispatcher, AgentRequest, AgentResult
+from arnold.runtime.agent_contracts import AgentDispatcher, AgentRequest, AgentResult
 from arnold.kernel import CapabilityCheck, CapabilityId, ControlBinding, ControlTransition
 
 
@@ -273,12 +273,12 @@ class ExecutionRegistries:
 
 
 # ---------------------------------------------------------------------------
-# arnold.agent adapter bridge (product-neutral)
+# agent adapter bridge (product-neutral)
 # ---------------------------------------------------------------------------
 
 
 class AgentCapabilityHandler:
-    """Wrap an ``arnold.agent`` dispatcher as a capability handler.
+    """Wrap an agent dispatcher as a capability handler.
 
     The manifest's capability_id is mapped to an agent name; the handler
     dispatches a read-only agent request and returns allowed=True when the
@@ -317,7 +317,7 @@ class AgentCapabilityHandler:
 
 
 class AgentEffectHandler:
-    """Wrap an ``arnold.agent`` dispatcher as an effect handler.
+    """Wrap an agent dispatcher as an effect handler.
 
     The manifest's effect_id is mapped to an agent name; payload fields are
     passed through the agent prompt. This is a neutral bridge: the runtime
@@ -355,7 +355,7 @@ class AgentEffectHandler:
 
 
 class AgentReducerHandler:
-    """Wrap an ``arnold.agent`` dispatcher as a reducer handler."""
+    """Wrap an agent dispatcher as a reducer handler."""
 
     def __init__(
         self,
@@ -390,7 +390,7 @@ def build_agent_adapter_bridge(
     *,
     mode: str = "unit",
 ) -> ExecutionRegistries:
-    """Return execution registries backed by an ``arnold.agent`` dispatcher."""
+    """Return execution registries backed by an agent dispatcher."""
 
     return ExecutionRegistries(
         capabilities=CapabilityRegistry(

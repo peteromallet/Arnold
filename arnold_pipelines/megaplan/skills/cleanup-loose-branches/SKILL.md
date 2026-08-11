@@ -493,7 +493,7 @@ When classification has medium-or-higher ambiguity — *is effort A superseded b
 *is this epic actually complete?*, *what's the merge conflict surface?*, *do these tests pass?*,
 *is this dirty worktree payload unique or duplicated elsewhere?* — fan the questions out to parallel
 **DeepSeek V4 Pro** agents (the `subagent-launcher` skill: `fan.py` for ≥5 agents,
-`launch_hermes_agent.py` for 1–4). One independent decision area per agent, run in parallel, no cross-talk.
+for 1–4). One independent decision area per agent, run in parallel, no cross-talk.
 The point is to cheaply convert uncertainty into a go/no-go cleanup recommendation; do not feel bad about
 using agents when a direct survey leaves anything important unclear.
 Best practices that earned their place:

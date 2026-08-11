@@ -13,7 +13,6 @@ NEUTRAL_PACKAGE_PREFIXES = (
     "arnold.workflow",
     "arnold.kernel",
     "arnold.execution",
-    "arnold.agent",
     "arnold.control",
     "arnold.conformance",
 )

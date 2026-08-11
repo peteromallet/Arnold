@@ -132,33 +132,13 @@ class TestSecurityCoverageMatrixGreen:
             result = client.evaluate_action(action_request)
             """,
         )
-        _arnold_module(
-            root,
-            "agent/tools/mcp_tool.py",
-            """
-            authorize_mcp_git_action(server_name, tool_name, args)
-            _should_strip_github_mcp_credentials()
-            _sanitize_mcp_server_config()
-            """,
-        )
-        _arnold_module(
-            root,
-            "agent/providers/pool.py",
+        _write_file(
+            root / "arnold_pipelines/megaplan/runtime/key_pool.py",
             """
             def acquire(self, provider):
                 if broker_production_mode_requested():
                     return self._acquire_brokered_key_unlocked(provider)
                 resolve_brokered_llm_proxy(provider)
-            """,
-        )
-        _arnold_module(
-            root,
-            "agent/agent/auxiliary_client.py",
-            """
-            def resolve_provider_client(provider):
-                if broker_production_mode_requested():
-                    resolve_brokered_llm_proxy(provider)
-                    warn_deferred_oauth_provider(provider)
             """,
         )
         result = check_security_coverage_matrix(repo_root=root)
@@ -181,10 +161,10 @@ class TestSecurityCoverageMatrixMissingClassification:
         root = _repo_root(tmp_path)
         _arnold_module(
             root,
-            "agent/providers/pool.py",
+            "security/policy.py",
             """
             import os
-            def acquire():
+            def evaluate():
                 return os.getenv("UNDOCUMENTED_SECRET_KEY")
             """,
         )
@@ -203,7 +183,7 @@ class TestSecurityCoverageMatrixMissingClassification:
         root = _repo_root(tmp_path)
         _arnold_module(
             root,
-            "agent/providers/env_loader.py",
+            "security/policy.py",
             """
             import os
             SECRET = os.environ.get("UNDOCUMENTED_TOKEN")
@@ -220,10 +200,10 @@ class TestSecurityCoverageMatrixMissingClassification:
         root = _repo_root(tmp_path)
         _arnold_module(
             root,
-            "agent/providers/pool.py",
+            "security/policy.py",
             """
             import os
-            def acquire():
+            def evaluate():
                 return os.getenv("OPENAI_API_KEY")
             """,
         )
@@ -254,7 +234,7 @@ class TestSecurityCoverageMatrixMissingClassification:
         )
         _arnold_module(
             root,
-            "agent/tools/mcp_tool.py",
+            "security/policy.py",
             """
             CMD = "git push origin main --force"
             authorize_mcp_git_action(server_name, tool_name, args)
@@ -262,24 +242,13 @@ class TestSecurityCoverageMatrixMissingClassification:
             _sanitize_mcp_server_config()
             """,
         )
-        _arnold_module(
-            root,
-            "agent/providers/pool.py",
+        _write_file(
+            root / "arnold_pipelines/megaplan/runtime/key_pool.py",
             """
             def acquire(self, provider):
                 if broker_production_mode_requested():
                     return self._acquire_brokered_key_unlocked(provider)
                 resolve_brokered_llm_proxy(provider)
-            """,
-        )
-        _arnold_module(
-            root,
-            "agent/agent/auxiliary_client.py",
-            """
-            def resolve_provider_client(provider):
-                if broker_production_mode_requested():
-                    resolve_brokered_llm_proxy(provider)
-                    warn_deferred_oauth_provider(provider)
             """,
         )
         result = check_security_coverage_matrix(repo_root=root)
@@ -332,35 +301,39 @@ class TestSecurityCoverageMatrixBrokerIsolationRegression:
         )
         assert result.passed is False
 
-    def test_missing_mcp_broker_snippets_fails(self, tmp_path: Path) -> None:
-        """If arnold/agent/tools/mcp_tool.py lacks broker authorization, fail."""
+    def test_deleted_sdk_surfaces_are_no_longer_enforced(self, tmp_path: Path) -> None:
+        """Deleted Hermes SDK surfaces (mcp_tool/auxiliary_client) are not required.
+
+        The omp migration deleted ``arnold/agent/tools/mcp_tool.py`` and
+        ``arnold/agent/agent/auxiliary_client.py``; their coverage entries are
+        gone, so a tree without them must not be flagged for isolation.
+        """
         root = _repo_root(tmp_path)
         _arnold_module(
             root,
-            "agent/tools/mcp_tool.py",
+            "security/git.py",
             """
-            # Simulated MCP tool without broker authorization
-            def call_tool(server_name, tool_name, args):
-                return {"result": "ok"}
+            client = BrokerClient.from_environment()
+            result = client.evaluate_action(action_request)
             """,
         )
         result = check_security_coverage_matrix(repo_root=root)
         failures = result.details["covered_isolation_failures"]
-        mcp_failures = [
-            f for f in failures if "mcp_tool.py" in str(f.get("path", ""))
+        sdk_failures = [
+            f
+            for f in failures
+            if "mcp_tool" in str(f.get("path", ""))
+            or "auxiliary_client" in str(f.get("path", ""))
         ]
-        assert len(mcp_failures) > 0, (
-            f"expected broker isolation failure for mcp_tool.py; "
-            f"failures: {failures}"
+        assert len(sdk_failures) == 0, (
+            f"deleted SDK surfaces must not be enforced; failures: {sdk_failures}"
         )
-        assert result.passed is False
 
     def test_missing_keypool_broker_snippets_fails(self, tmp_path: Path) -> None:
-        """If arnold/agent/providers/pool.py lacks broker token acquisition, fail."""
+        """If runtime/key_pool.py lacks broker token acquisition, fail."""
         root = _repo_root(tmp_path)
-        _arnold_module(
-            root,
-            "agent/providers/pool.py",
+        _write_file(
+            root / "arnold_pipelines/megaplan/runtime/key_pool.py",
             """
             class KeyPool:
                 def acquire(self, provider):
@@ -370,34 +343,10 @@ class TestSecurityCoverageMatrixBrokerIsolationRegression:
         result = check_security_coverage_matrix(repo_root=root)
         failures = result.details["covered_isolation_failures"]
         pool_failures = [
-            f for f in failures if "pool.py" in str(f.get("path", ""))
+            f for f in failures if "key_pool.py" in str(f.get("path", ""))
         ]
         assert len(pool_failures) > 0, (
-            f"expected broker isolation failure for pool.py; "
-            f"failures: {failures}"
-        )
-        assert result.passed is False
-
-    def test_missing_auxiliary_client_broker_snippets_fails(
-        self, tmp_path: Path
-    ) -> None:
-        """If auxiliary_client.py lacks broker proxy routing, fail."""
-        root = _repo_root(tmp_path)
-        _arnold_module(
-            root,
-            "agent/agent/auxiliary_client.py",
-            """
-            def resolve_provider_client(provider):
-                return provider
-            """,
-        )
-        result = check_security_coverage_matrix(repo_root=root)
-        failures = result.details["covered_isolation_failures"]
-        aux_failures = [
-            f for f in failures if "auxiliary_client.py" in str(f.get("path", ""))
-        ]
-        assert len(aux_failures) > 0, (
-            f"expected broker isolation failure for auxiliary_client.py; "
+            f"expected broker isolation failure for key_pool.py; "
             f"failures: {failures}"
         )
         assert result.passed is False
@@ -413,33 +362,13 @@ class TestSecurityCoverageMatrixBrokerIsolationRegression:
             result = client.evaluate_action(action_request)
             """,
         )
-        _arnold_module(
-            root,
-            "agent/tools/mcp_tool.py",
-            """
-            authorize_mcp_git_action(server_name, tool_name, args)
-            _should_strip_github_mcp_credentials()
-            _sanitize_mcp_server_config()
-            """,
-        )
-        _arnold_module(
-            root,
-            "agent/providers/pool.py",
+        _write_file(
+            root / "arnold_pipelines/megaplan/runtime/key_pool.py",
             """
             def acquire(self, provider):
                 if broker_production_mode_requested():
                     return self._acquire_brokered_key_unlocked(provider)
                 resolve_brokered_llm_proxy(provider)
-            """,
-        )
-        _arnold_module(
-            root,
-            "agent/agent/auxiliary_client.py",
-            """
-            def resolve_provider_client(provider):
-                if broker_production_mode_requested():
-                    resolve_brokered_llm_proxy(provider)
-                    warn_deferred_oauth_provider(provider)
             """,
         )
         result = check_security_coverage_matrix(repo_root=root)

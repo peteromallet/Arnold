@@ -32,7 +32,7 @@ def test_importing_new_package_only_loads_allowed_legacy_adapters() -> None:
     loaded = _collect_runtime_imports_of_legacy()
     # The new package should not statically import legacy modules. Dynamic
     # forwards from vendored agent adapters are a separate concern covered by
-    # the arnold.agent boundary test.
+    # the neutral runtime boundary test.
     assert loaded == set(), f"arnold_pipelines.megaplan loaded legacy modules: {loaded}"
 
 

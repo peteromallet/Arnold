@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from arnold.agent.contracts import AgentRequest, AgentResult, ResultProvenance
+from arnold.runtime.agent_contracts import AgentRequest, AgentResult, ResultProvenance
 from arnold_pipelines.megaplan._core import ensure_runtime_layout
 
 _ONESHOT_STEP = "critique"

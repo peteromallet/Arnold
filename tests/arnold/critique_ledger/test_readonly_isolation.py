@@ -13,7 +13,7 @@ local durable-state surfaces; three are external-effect surfaces:
 * gate           -> ``arnold_pipelines.megaplan.content_types.write_gate_signal_artifact``
 * lifecycle      -> the side-effecting ``SqliteAttemptLedgerStore`` mutating methods
 * queue          -> ``arnold.workflow._ledger_outbox_m9.FileBackedLedgerOutbox.enqueue``
-* git/provider   -> ``arnold.agent.dispatch`` (the model/provider dispatch entry)
+\* git/provider   -> ``arnold_pipelines.megaplan.workers._impl.run_step_with_worker`` (the model/provider dispatch entry)
 * delivery       -> ``arnold.workflow.ledger_outbox.LedgerOutbox.mark_dispatched``
 * external-effect -> ``arnold.workflow.effect_protocol.EffectProtocol.dispatch_effect``
 
@@ -338,9 +338,11 @@ def _install_category_spies(monkeypatch: pytest.MonkeyPatch) -> dict[str, LocalS
     monkeypatch.setattr(outbox_mod.FileBackedLedgerOutbox, "enqueue", queue_spy)
 
     # git/provider — the model/provider dispatch entry (spawns providers/git).
-    import arnold.agent as agent_mod
+    # The Hermes SDK dispatcher was deleted in the omp migration; the live
+    # dispatch entry is the megaplan worker dispatch.
+    import arnold_pipelines.megaplan.workers._impl as worker_impl
 
-    monkeypatch.setattr(agent_mod, "dispatch", git_provider_spy)
+    monkeypatch.setattr(worker_impl, "run_step_with_worker", git_provider_spy)
 
     # delivery — the transactional-outbox delivery mutation entry.
     import arnold.workflow.ledger_outbox as outbox_base

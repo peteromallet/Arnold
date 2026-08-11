@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold.agent.contracts import parse_agent_spec
+from arnold.runtime.agent_contracts import parse_agent_spec
 from arnold_pipelines.megaplan.types import is_premium_placeholder_agent
 from arnold_pipelines.megaplan.profiles import load_profiles
 from arnold_pipelines.megaplan.workers.omp import (
@@ -196,7 +196,7 @@ class TestCredentialMap:
         assert kwargs["api_key"] == "ant"
 
     def test_zai_credential_alias(self):
-        from arnold.agent.providers.pool import provider_credential_env_vars
+        from arnold_pipelines.megaplan.runtime.key_pool import provider_credential_env_vars
 
         aliases = provider_credential_env_vars("zhipu")
         assert "ZAI_API_KEY" in aliases

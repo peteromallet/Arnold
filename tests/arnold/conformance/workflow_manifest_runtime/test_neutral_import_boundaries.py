@@ -79,7 +79,6 @@ def test_fixture_loader_does_not_import_real_execution_runners() -> None:
         "arnold.pipeline",
         "arnold.runner",
         "arnold.kernel",
-        "arnold.agent",
     )
     violations: dict[str, tuple[str, ...]] = {}
 

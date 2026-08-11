@@ -188,13 +188,6 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert "STATE MISMATCH DETECTED — NOT CLEARED" in repair_wrapper
     assert 'mismatch_cleared = state_mismatch.get("cleared") is True' in repair_wrapper
     assert "Action taken: cleared chain last_state to match plan current_state" not in repair_wrapper
-    launcher = Path(
-        "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
-    ).read_text(encoding="utf-8")
-    assert "enabled_toolsets=toolset_list," in launcher
-    assert "enabled_toolsets=toolset_list or None" not in launcher
-
-
 def test_meta_dispatch_retries_failed_generation_without_false_receipt() -> None:
     watchdog = Path(
         "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"

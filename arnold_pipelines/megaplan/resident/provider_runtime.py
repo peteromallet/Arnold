@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold.agent.routing import managed_agent_capabilities
+from arnold.runtime.agent_routing import managed_agent_capabilities
 
 
 PROVIDER_EVENT_SCHEMA = "arnold-managed-provider-event-v1"

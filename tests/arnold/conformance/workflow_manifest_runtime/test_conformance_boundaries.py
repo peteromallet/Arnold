@@ -1,7 +1,7 @@
 """Additional conformance boundary gates for deleted Megaplan roots.
 
 Extends the neutral-package import boundary coverage to ``arnold.conformance``
-and ``arnold.agent``.  Imports of the deleted legacy product package
+and the neutral runtime.  Imports of the deleted legacy product package
 ``arnold.pipelines.megaplan`` are forbidden outside explicit scanner targets.
 """
 
@@ -17,7 +17,6 @@ RUNTIME_RUNNER_MODULES = (
     "arnold.pipeline",
     "arnold.runner",
     "arnold.kernel",
-    "arnold.agent",
 )
 
 
@@ -73,10 +72,10 @@ def test_conformance_package_does_not_import_deleted_product_package() -> None:
     assert violations == {}, f"arnold.conformance imports deleted product package: {violations}"
 
 
-def test_agent_package_does_not_import_deleted_product_package() -> None:
+def test_runtime_package_does_not_import_deleted_product_package() -> None:
     root = Path(__file__).parents[4]
-    violations = _scan_forbidden(root / "arnold" / "agent")
-    assert violations == {}, f"arnold.agent imports deleted product package: {violations}"
+    violations = _scan_forbidden(root / "arnold" / "runtime")
+    assert violations == {}, f"arnold.runtime imports deleted product package: {violations}"
 
 
 def test_fixture_validation_tests_do_not_invoke_real_execution_runners() -> None:

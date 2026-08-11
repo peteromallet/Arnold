@@ -15,8 +15,7 @@ def test_subagent_launcher_skill_bundle_is_portable() -> None:
 
     assert skill_file.is_file()
     assert not skill_file.is_symlink()
-    assert (skill_dir / "launch_hermes_agent.py").is_file()
-    assert (skill_dir / "fan.py").is_file()
+    assert (skill_dir / "launch_claude_agent.py").is_file()
 
 
 def test_subagent_launcher_is_synced_to_agent_skill_dirs() -> None:
@@ -39,7 +38,7 @@ def test_subagent_launcher_is_synced_to_agent_skill_dirs() -> None:
     skill_dir = _resolve_bundle_path("skills/subagent-launcher")
     assert skill_dir.is_dir()
     assert (skill_dir / "SKILL.md").is_file()
-    assert (skill_dir / "launch_hermes_agent.py").is_file()
+    assert (skill_dir / "launch_claude_agent.py").is_file()
 
 
 def test_fix_the_fixer_skill_bundle_is_portable() -> None:

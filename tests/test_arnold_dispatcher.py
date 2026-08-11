@@ -1,10 +1,10 @@
-"""Tests for ``arnold.agent.dispatcher.ArnoldDispatcher``.
+"""Tests for ``arnold.runtime.agent_dispatcher.ArnoldDispatcher``.
 
 Covers:
 * register / dispatch happy path
 * unknown agent raises LookupError
 * ``isinstance(ArnoldDispatcher(), AgentDispatcher)`` is True
-* ``sys.modules`` snapshot before ``import arnold.agent.dispatcher`` shows
+* ``sys.modules`` snapshot before ``import arnold.runtime.agent_dispatcher`` shows
   no ``arnold_pipelines.megaplan*`` module loaded as a side-effect
 """
 
@@ -14,8 +14,8 @@ import sys
 
 import pytest
 
-from arnold.agent.contracts import AgentDispatcher, AgentRequest, AgentResult
-from arnold.agent.dispatcher import ArnoldDispatcher
+from arnold.runtime.agent_contracts import AgentDispatcher, AgentRequest, AgentResult
+from arnold.runtime.agent_dispatcher import ArnoldDispatcher
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ class TestProtocolConformance:
 
 
 class TestZeroLeakSysModules:
-    """Verify that importing ``arnold.agent.dispatcher`` does not load any
+    """Verify that importing ``arnold.runtime.agent_dispatcher`` does not load any
     ``arnold_pipelines.megaplan*`` module into ``sys.modules`` as a side-effect.
     """
 
@@ -189,35 +189,35 @@ class TestZeroLeakSysModules:
         # the top-level import by checking against the full set now.
         # But since we took the snapshot AFTER the import, the stronger
         # check is: were any megaplan modules loaded at all that were NOT
-        # already loaded before *any* arnold.agent.dispatcher import?
+        # already loaded before *any* agent_dispatcher import?
         #
         # We do this by importing the module again under a fresh key:
         import importlib
 
         # Save the original module
-        orig = sys.modules.get("arnold.agent.dispatcher")
+        orig = sys.modules.get("arnold.runtime.agent_dispatcher")
 
         # Clear it so we can watch the fresh import
-        sys.modules.pop("arnold.agent.dispatcher", None)
+        sys.modules.pop("arnold.runtime.agent_dispatcher", None)
         # Also clear the sub-modules that dispatcher pulls in
         for mod_key in list(sys.modules):
-            if mod_key.startswith("arnold.agent.adapters"):
+            if mod_key.startswith("arnold.runtime.agent_"):
                 sys.modules.pop(mod_key, None)
 
         pre_fresh = {k for k in sys.modules if k.startswith(megaplan_prefix)}
 
         # Now do a fresh import
-        import arnold.agent.dispatcher  # noqa: F811
+        import arnold.runtime.agent_dispatcher  # noqa: F811
 
         post = {k for k in sys.modules if k.startswith(megaplan_prefix)}
 
         # Restore the original module
         if orig is not None:
-            sys.modules["arnold.agent.dispatcher"] = orig
+            sys.modules["arnold.runtime.agent_dispatcher"] = orig
 
         new_megaplan = post - pre_fresh
         assert not new_megaplan, (
-            f"Importing arnold.agent.dispatcher loaded megaplan modules: {new_megaplan}"
+            f"Importing arnold.runtime.agent_dispatcher loaded megaplan modules: {new_megaplan}"
         )
 
     def test_zero_leak_gate_on_imports(self):
@@ -226,16 +226,16 @@ class TestZeroLeakSysModules:
         import inspect
         from pathlib import Path
 
-        import arnold.agent.adapters
-        import arnold.agent.dispatcher
+        import arnold.runtime.agent_adapters
+        import arnold.runtime.agent_dispatcher
 
         megaplan_ref = "arnold_pipelines.megaplan"
 
         files_to_check = [
-            Path(inspect.getfile(arnold.agent.dispatcher)),
-            Path(inspect.getfile(arnold.agent.adapters)),
-            Path(inspect.getfile(arnold.agent.adapters)).parent / "deepseek.py",
-            Path(inspect.getfile(arnold.agent.adapters)).parent / "_pricing.py",
+            Path(inspect.getfile(arnold.runtime.agent_dispatcher)),
+            Path(inspect.getfile(arnold.runtime.agent_adapters)),
+            Path(inspect.getfile(arnold.runtime.agent_contracts)),
+            Path(inspect.getfile(arnold.runtime.agent_routing)),
         ]
 
         for path in files_to_check:

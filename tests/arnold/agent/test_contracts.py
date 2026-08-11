@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.agent import (
+from arnold.runtime.agent_adapters import BackendAdapter
+from arnold.runtime.agent_contracts import (
     AgentRequest,
     AgentResult,
     AgentSpec,
-    ArnoldDispatcher,
-    BackendAdapter,
     FanoutUnit,
     format_agent_spec,
     parse_agent_spec,
     scatter_agent_units,
 )
+from arnold.runtime.agent_dispatcher import ArnoldDispatcher
 
 
 def test_agent_spec_round_trips_premium_and_provider_specs() -> None:

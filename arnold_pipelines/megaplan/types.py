@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 from arnold.runtime.errors import ArnoldError
 
 # Re-export AgentSpec, format_agent_spec, and parse_agent_spec from the SSoT
-# so that identity holds across the megaplan/arnold.agent boundary.
-from arnold.agent.contracts import AgentMode, AgentSpec, format_agent_spec, parse_agent_spec
+# so that identity holds across the megaplan/arnold.runtime boundary.
+from arnold.runtime.agent_contracts import AgentMode, AgentSpec, format_agent_spec, parse_agent_spec
 
 if TYPE_CHECKING:
     from arnold_pipelines.megaplan.planning.state import PlanCurrentState
