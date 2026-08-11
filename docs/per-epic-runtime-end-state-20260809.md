@@ -441,3 +441,16 @@ Fix: journal `fallback_considered` + `fallback_taken` before the TMUX
 direct-exec (ledger failure blocks), or explicitly prohibit that branch, with
 ordering + ledger-failure tests. (Gate also noted: deployed production-box
 copies not verified — P7's box refresh covers that.)
+
+### P3→P4 extra gate (2026-08-10): NO-GO → P3 follow-up before P4
+
+Two bypasses + one correction:
+1. `wbc_runtime.py` (~:687) rejects only DENIED/UNREGISTERED writers and
+   explicitly ACCEPTS `GateResult.SHADOW_PASS` — it must REQUIRE
+   `guard.allowed` / `boundary.authorized` (SHADOW_PASS never permits a write
+   or effect through the facade).
+2. Blast-radius tests must cover explicit-disable values through the facade
+   (env=0 producing SHADOW must NOT permit) and missing attestation with
+   `MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=0` (must not authorize).
+3. Correction: the plan's G4 gate sits at **P4→P5** (not P3→P4). P4 begins
+   after this P3 follow-up; G4 is re-run at P4→P5.

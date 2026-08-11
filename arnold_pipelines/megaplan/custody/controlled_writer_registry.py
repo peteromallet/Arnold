@@ -1,20 +1,21 @@
-"""Controlled authoritative-writer boundary registry (M7 shadow-only).
+"""Controlled authoritative-writer boundary registry (M7 default-deny).
 
 Registers every Custody-owned controlled-writer boundary with an enablement
 cohort (``report_only``, ``shadow``, or ``active``) and provides the
 ``writer_guard`` function that must be called before any production write
 originating from a registered boundary.
 
-Production writes by shadow-only cohorts **fail closed** — the guard returns
-:attr:`WriteGuardDecision.DENIED` — until the writer is promoted to
-``active`` after M6/M6A machine-verifiable acceptance.
+Production writes **deny by default** — the guard returns
+:attr:`WriteGuardDecision.DENIED` for any non-``active`` cohort unless
+enforcement is explicitly disabled via
+``ARNOLD_M7_WRITER_GUARD_ENFORCEMENT=0``.
 
 North Star alignment
 --------------------
 * **Single-owner** — Custody is the sole owner of lease state.
   Cross-owner references are read-only.
-* **Shadow-first** — All M7 Custody writers start in ``shadow_only``.
-  No production gate or mutating effect is active.
+* **Deny-by-default** — Enforcement is ON unless explicitly disabled;
+  ``WriteGuardResult.allowed`` is ``True`` only for ``ALLOWED`` decisions.
 * **Fail-closed** — A shadow-only writer that attempts a production write
   is rejected with a structured denial record.  There is no silent
   promotion path.
@@ -453,14 +454,22 @@ def list_authority_increasing_writers() -> tuple[ControlledWriter, ...]:
 # ── Environment-flag enforcement ────────────────────────────────────────────────
 
 
+_WRITER_GUARD_ENFORCEMENT_ENV = "ARNOLD_M7_WRITER_GUARD_ENFORCEMENT"
+_DISABLE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
+
+
 def _production_enforcement_enabled() -> bool:
     """Check whether M7 production enforcement is enabled.
 
-    Defaults to ``False`` (shadow-only) per SD2.
-    Set ``ARNOLD_M7_WRITER_GUARD_ENFORCEMENT=1`` to enable production
-    enforcement gates.
+    Defaults to ``True`` (deny-by-default).  The
+    ``ARNOLD_M7_WRITER_GUARD_ENFORCEMENT`` environment variable is an
+    explicit-disable switch: a disable value (``"0"``, ``"false"``,
+    ``"no"``, ``"off"``) returns to shadow-only enforcement.
     """
-    return os.environ.get("ARNOLD_M7_WRITER_GUARD_ENFORCEMENT", "0").strip() in ("1", "true", "yes")
+    raw = os.environ.get(_WRITER_GUARD_ENFORCEMENT_ENV, "").strip().lower()
+    if not raw:
+        return True
+    return raw not in _DISABLE_VALUES
 
 
 def _fail_closed_mode() -> bool:
@@ -504,12 +513,13 @@ class WriteGuardResult:
 
     @property
     def allowed(self) -> bool:
-        """Return ``True`` when the guard admits or shadows the write path."""
-        return self.decision in {
-            WriteGuardDecision.ALLOWED,
-            WriteGuardDecision.SHADOW_PASS,
-            WriteGuardDecision.REPORT_ONLY,
-        }
+        """Return ``True`` only when the guard admits the production write.
+
+        Deny-by-default: only an ``ALLOWED`` decision (active cohort with
+        enforcement on) admits a write.  ``SHADOW_PASS`` and
+        ``REPORT_ONLY`` never authorize a production write.
+        """
+        return self.decision == WriteGuardDecision.ALLOWED
 
     @property
     def writer_id(self) -> str | None:

@@ -301,7 +301,7 @@ def resident_identity(item):
         or any(value.startswith("MEGAPLAN_RUNTIME_LAUNCH_SEED=") or value.startswith("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION=") for value in configured_env)
         or any(env_map.get(key) != value for key, value in secret_values.items())
         or env_map.get("PYTHONPATH") != capture["runtime_path"]
-        or env_map.get("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED") != "0"
+        or env_map.get("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED") not in (None, "1")
         or env_map.get("MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE") != "production"
         or any(key in env_map for key in ("BASH_ENV", "ENV", "SHELLOPTS", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT", "LD_PRELOAD", "LD_LIBRARY_PATH"))
         or actual_cmd != expected_cmd
@@ -672,7 +672,7 @@ if resident is None:
         "--workdir", cfg["resident_workdir"],
         "--env-file", sanitized_env_path,
         "--env", "PYTHONPATH=" + capture["runtime_path"],
-        "--env", "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=0",
+        "--env", "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=1",
         "--env", "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production",
         "--mount", "type=bind,src=" + cfg["workspace"] + ",dst=/workspace",
         "--mount", "type=bind,src=" + runtime_host_path + ",dst=" + cfg["expected_runtime_path"] + ",readonly",

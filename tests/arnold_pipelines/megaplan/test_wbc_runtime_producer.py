@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.custody.controlled_writer_registry import Cohort,
 from arnold_pipelines.megaplan.custody.contracts import CustodyLease, CustodyTargetKey
 from arnold_pipelines.megaplan.custody.outbox import OutboxRecord, OutboxRecordStatus, OutboxRecordType
 from arnold_pipelines.megaplan.custody.wbc_runtime import (
+    ActionBoundaryDeniedError,
     AttemptArtifact,
     ExactSourceLookupError,
     ExactSourceRecord,
@@ -678,3 +679,113 @@ def test_runtime_facade_fails_closed_for_unregistered_writer(tmp_path: Path) -> 
             expected_source_version="source.v1",
             action_context=_context("dispatch"),
         )
+
+
+def test_runtime_facade_denies_shadow_writer_by_default(tmp_path: Path) -> None:
+    """P3 deny-by-default: a SHADOW-cohort writer is DENIED by the facade.
+
+    The preflight writer_guard no longer shadow-passes non-active writers;
+    shadow writers must be explicitly promoted (or enforcement disabled)
+    before the runtime producer accepts their events.
+    """
+    register_writer(
+        ControlledWriter(
+            writer_id="shadow.runtime.writer",
+            surface_name="runtime.producer",
+            cohort=Cohort.SHADOW,
+            contract_ids=(TARGET.contract_id,),
+            source_file="arnold_pipelines/megaplan/custody/wbc_runtime.py",
+            function_name="WbcRuntimeProducerFacade",
+            required_wbc_phases=("start", "terminal"),
+            action_kind="dispatch",
+        )
+    )
+    facade = _facade(tmp_path)
+
+    with pytest.raises(WriterGuardError, match="is not authorized: denied"):
+        facade.reserve_attempt(
+            attempt_id="attempt-runtime-shadow",
+            writer_id="shadow.runtime.writer",
+            surface_name="runtime.producer",
+            source_lookup_key="dispatch:start",
+            expected_source_version="source.v1",
+            action_context=_context("dispatch"),
+        )
+
+
+def test_runtime_facade_denies_shadow_pass_writer_from_explicit_disable_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P3 follow-up: ARNOLD_M7_WRITER_GUARD_ENFORCEMENT=0 yields SHADOW_PASS
+    from the writer guard; the facade must still DENY — SHADOW_PASS never
+    permits a write or effect through the facade.
+    """
+    register_writer(
+        ControlledWriter(
+            writer_id="shadow.runtime.writer",
+            surface_name="runtime.producer",
+            cohort=Cohort.SHADOW,
+            contract_ids=(TARGET.contract_id,),
+            source_file="arnold_pipelines/megaplan/custody/wbc_runtime.py",
+            function_name="WbcRuntimeProducerFacade",
+            required_wbc_phases=("start", "terminal"),
+            action_kind="dispatch",
+        )
+    )
+    monkeypatch.setenv("ARNOLD_M7_WRITER_GUARD_ENFORCEMENT", "0")
+    facade = _facade(tmp_path)
+
+    with pytest.raises(WriterGuardError, match="is not authorized: shadow_pass"):
+        facade.reserve_attempt(
+            attempt_id="attempt-runtime-shadow-disable",
+            writer_id="shadow.runtime.writer",
+            surface_name="runtime.producer",
+            source_lookup_key="dispatch:start",
+            expected_source_version="source.v1",
+            action_context=_context("dispatch"),
+        )
+
+
+def test_runtime_facade_denies_shadow_pass_boundary(
+    tmp_path: Path,
+) -> None:
+    """P3 follow-up: a SHADOW_PASS action boundary (explicit enforcement
+    disable at the facade) must NOT permit a write — only AUTHORIZED
+    boundaries pass and no event is appended.
+    """
+    _register_writer()
+    attempt_id = "55555555-5555-4555-8555-555555555555"
+    store = SqliteAttemptLedgerStore(tmp_path / "attempt-ledger.sqlite3")
+    facade = WbcRuntimeProducerFacade(
+        store,
+        source_lookup=lambda key: ExactSourceRecord(
+            lookup_key=key,
+            version="source.v1",
+            source_uri="git+file:///repo#source.v1",
+            observed_at="2026-07-20T00:00:00+00:00",
+            metadata={"key": key},
+        ),
+        lease_store=FakeLeaseStore((_lease(),)),
+        outbox=FakeOutbox((_record(),)),
+        enforcement_enabled=False,
+    )
+
+    with pytest.raises(ActionBoundaryDeniedError, match="not authorized: shadow_pass"):
+        facade.start_attempt(
+            attempt_id=attempt_id,
+            event=_event(
+                attempt_id=attempt_id,
+                sequence=1,
+                event_type=AttemptEventType.STARTED,
+                idempotency_key="idem-start",
+            ),
+            writer_id="runtime.writer",
+            surface_name="runtime.producer",
+            source_lookup_key="dispatch:start",
+            expected_source_version="source.v1",
+            action_context=_context("dispatch"),
+            artifacts=_artifacts(attempt_id),
+        )
+
+    assert store.read_events(attempt_id) == []

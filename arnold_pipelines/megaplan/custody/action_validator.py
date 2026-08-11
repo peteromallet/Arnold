@@ -1,17 +1,20 @@
-"""Controlled authoritative-writer action-boundary validator (M7 shadow-only).
+"""Controlled authoritative-writer action-boundary validator (M7 default-deny).
 
 Provides the central conjunctive gate ``validate_action_boundary(...)`` that
 rereads current Run Authority grant/fence, current Custody lease/epoch, and
 required WBC attempt status immediately before dispatch, repair, completion,
 cancellation, publication, or delivery.
 
-Production enforcement is disabled by default and gated behind the
-``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` environment variable (default
-``"0"``).  When enforcement is off, the validator still performs every
-check and returns the full diagnostics, but the gate result is
-``shadow_pass`` instead of blocking the caller.  This mirrors the
-``ARNOLD_RESOLVER_OBSERVE`` / ``ARNOLD_RESOLVER_ENFORCEMENT`` pattern from
-:mod:`megaplan.cloud.feature_flags`.
+Production enforcement is **on by default** (deny-by-default).  The
+``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` environment variable is now an
+explicit-disable switch: absent means enforced, and a disable value
+(``"0"``, ``"false"``, ``"no"``, ``"off"``) returns to shadow mode.  The
+single source of truth for the flag is
+:func:`megaplan.cloud.feature_flags.production_enforcement_enabled`;
+this module exposes it publicly as
+:func:`production_enforcement_enabled`.  When enforcement is off, the
+validator still performs every check and returns the full diagnostics,
+but the gate result is ``shadow_pass`` instead of blocking the caller.
 
 North Star alignment
 --------------------
@@ -20,8 +23,9 @@ North Star alignment
   coordinator fence tokens) are read-only pointers, never duplicate ledgers.
 * **Conjunctive** — All three sources (Run Authority, Custody, WBC) must
   agree before an authority boundary action is accepted.
-* **Shadow-first** — Enforcement remains off until M6 proof and M6A
-  operational WBC API are machine-verifiably accepted.
+* **Deny-by-default** — Enforcement is ON unless explicitly disabled;
+  shadow mode must be opted into via
+  ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=0``.
 * **No stale-source acceptance** — Every call rereads current sources
   immediately; the validator never caches prior results.
 
@@ -39,7 +43,6 @@ delivery        A deliverable is about to be delivered to a downstream system.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -47,6 +50,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Optional
 
+from arnold_pipelines.megaplan.cloud.feature_flags import (
+    production_enforcement_enabled as _feature_flags_production_enforcement_enabled,
+)
 from arnold_pipelines.megaplan.custody.contracts import (
     CustodyLease,
     CustodyTargetKey,
@@ -74,26 +80,22 @@ ACTION_VALIDATOR_SCHEMA_VERSION = 1
 # ── Env-var gate constants ─────────────────────────────────────────────────
 
 _ENV_ENFORCEMENT = "ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT"
-_DISABLE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
 
 def _production_enforcement_enabled() -> bool:
-    """Return ``True`` only when the M7 action validator enforcement flag is on.
+    """Return ``True`` when M7 action-validator enforcement is active.
 
-    Controlled by ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` — defaults to
-    OFF (``"0"``).  This follows the same pattern as
-    :func:`~megaplan.cloud.feature_flags.resolver_enforcement_enabled`.
+    Delegates to the canonical
+    :func:`~megaplan.cloud.feature_flags.production_enforcement_enabled`
+    gate.  ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` now defaults to ON:
+    absent means enforced (deny-by-default); a disable value (``"0"``,
+    ``"false"``, ``"no"``, ``"off"``) explicitly disables enforcement.
 
-    When disabled (the default), the validator performs every check but
-    the gate result is ``shadow_pass``.  Callers must NOT treat a
-    ``shadow_pass`` as an authoritative authorization.
+    When disabled, the validator performs every check but the gate result
+    is ``shadow_pass``.  Callers must NOT treat a ``shadow_pass`` as an
+    authoritative authorization.
     """
-    raw = os.getenv(_ENV_ENFORCEMENT, "").strip().lower()
-    if not raw:
-        return False
-    if raw in _DISABLE_VALUES:
-        return False
-    return True
+    return _feature_flags_production_enforcement_enabled()
 
 
 # ── Action boundary types ──────────────────────────────────────────────────
@@ -1026,7 +1028,7 @@ def validate_action_boundary(
     enforcement_enabled:
         Override the production enforcement flag.  If ``None`` (default),
         reads ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` from the
-        environment (defaults to ``False``).
+        environment (defaults to ``True`` — deny-by-default).
     wbc_evidence_only:
         When ``True`` (M11 Step 10), authority is created **only** from
         RA grant/fence and Custody lease/epoch.  WBC is recorded as
@@ -1129,8 +1131,11 @@ def validate_action_boundary(
 def production_enforcement_enabled() -> bool:
     """Return ``True`` when M7 action-validator enforcement is active.
 
-    This is the public accessor for the ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT``
-    env var.  Callers should use this before treating
+    This is the single custody-facing accessor for the
+    ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` gate (delegating to the
+    canonical :func:`megaplan.cloud.feature_flags.production_enforcement_enabled`).
+    Defaults to ``True`` (deny-by-default); the env var only disables.
+    Callers should use this before treating
     :func:`validate_action_boundary` results as authoritative.
     """
     return _production_enforcement_enabled()
@@ -1190,7 +1195,7 @@ def validate_action_boundary_simple(
             return ActionBoundaryResult(
                 gate_result=GateResult.ERROR if enforcement else GateResult.SHADOW_PASS,
                 action_type=action_type,
-                target_digest="",
+                target_digest="invalid-target",
                 checks=(
                     SourceCheck(
                         source="target",

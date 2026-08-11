@@ -181,7 +181,7 @@ PY
   arnold_runtime_attestation_start() {
     local attestation_component="${1:-$component}"
     if [[ -z "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
-      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" != "1" ]]; then
+      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-1}" != "1" ]]; then
       return 0
     fi
     ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH="${MEGAPLAN_RUNTIME_PROCESS_ATTESTATION:-${MEGAPLAN_SUPERVISOR_STATUS_DIR:-${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}}/${attestation_component}.runtime-process-attestation.json}"
@@ -192,7 +192,7 @@ PY
   arnold_runtime_attestation_check() {
     local attestation_component="${1:-$component}"
     if [[ -z "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
-      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" != "1" ]]; then
+      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-1}" != "1" ]]; then
       return 0
     fi
     MEGAPLAN_RUNTIME_PROCESS_ATTESTATION="$ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH" \

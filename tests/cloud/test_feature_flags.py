@@ -1,10 +1,10 @@
 """Tests for centralized cloud repair feature flags.
 
 Covers:
-- Default-safe M1 behavior: resolver-observe ON, enforcement OFF,
+- Default-safe P3 behavior: resolver-observe ON, enforcement ON,
   escalation-ledger OFF, autonomy OFF, redaction ON.
 - Explicit opt-out for redaction.
-- Explicit opt-in for ledger, enforcement, autonomy.
+- Explicit opt-in for ledger, autonomy (enforcement is default-on).
 - Flag independence (each flag gated by its own env var).
 - Integration: flags are correctly wired into their consuming modules.
 """
@@ -38,6 +38,8 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     MUTATION_PATH_L2,
     MUTATION_PATH_L3,
     mutation_authorized,
+    production_enforcement_enabled,
+    production_enforcement_on,
     redaction_enabled,
     redaction_on,
     repair_request_queue_enabled,
@@ -83,10 +85,10 @@ class TestM1Defaults:
             assert resolver_observe_enabled() is True
             assert resolver_observe_on() is True
 
-    def test_resolver_enforcement_defaults_off(self) -> None:
+    def test_resolver_enforcement_defaults_on(self) -> None:
         with _clear_env():
-            assert resolver_enforcement_enabled() is False
-            assert resolver_enforcement_on() is False
+            assert resolver_enforcement_enabled() is True
+            assert resolver_enforcement_on() is True
 
     def test_escalation_ledger_defaults_off(self) -> None:
         with _clear_env():
@@ -162,7 +164,6 @@ class TestExplicitOptIn:
     @pytest.mark.parametrize(
         "env_var,flag_func",
         [
-            ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
         ],
@@ -244,8 +245,38 @@ class TestExplicitOptIn:
     def test_flag_off_when_env_empty(self, env_var: str, flag_func) -> None:
         with _set_env(**{env_var: ""}):
             # Empty string falls through to the flag's default.
-            expected = env_var == "ARNOLD_REPAIR_TRIGGER_ENABLED"
+            expected = env_var in ("ARNOLD_RESOLVER_ENFORCEMENT", "ARNOLD_REPAIR_TRIGGER_ENABLED")
             assert flag_func() is expected
+
+
+# ---------------------------------------------------------------------------
+# P3 custody production enforcement (default ON)
+# ---------------------------------------------------------------------------
+
+
+class TestProductionEnforcement:
+    """M7 custody production enforcement defaults ON with explicit opt-out."""
+
+    def test_production_enforcement_defaults_on(self) -> None:
+        with _clear_env():
+            assert production_enforcement_enabled() is True
+            assert production_enforcement_on() is True
+
+    def test_production_enforcement_off_when_env_0(self) -> None:
+        with _set_env(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="0"):
+            assert production_enforcement_enabled() is False
+
+    def test_production_enforcement_off_when_env_false(self) -> None:
+        with _set_env(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="false"):
+            assert production_enforcement_enabled() is False
+
+    def test_production_enforcement_on_when_env_1(self) -> None:
+        with _set_env(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="1"):
+            assert production_enforcement_enabled() is True
+
+    def test_production_enforcement_on_when_env_unknown(self) -> None:
+        with _set_env(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT="maybe"):
+            assert production_enforcement_enabled() is True
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +326,8 @@ class TestFlagIndependence:
 
     def test_resolver_enforcement_independent_of_observe(self) -> None:
         with _set_env(ARNOLD_RESOLVER_OBSERVE="1"):
-            assert resolver_enforcement_enabled() is False
+            # Observe does not turn enforcement off; enforcement defaults ON.
+            assert resolver_enforcement_enabled() is True
 
     def test_escalation_ledger_independent_of_autonomy(self) -> None:
         with _set_env(ARNOLD_AUTONOMY="1"):

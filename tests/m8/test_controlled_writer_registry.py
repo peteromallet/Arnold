@@ -247,8 +247,9 @@ class TestStaleWriterBehavior:
         register_writer(report_writer)
         result = writer_guard(writer_id=report_writer.writer_id)
         assert result.decision == WriteGuardDecision.REPORT_ONLY
-        assert result.allowed  # REPORT_ONLY is "allowed" for logging
+        assert not result.allowed  # deny-by-default: only ALLOWED admits writes
         assert not result.denied
+        assert not result.should_write()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -337,14 +338,15 @@ class TestWriterGuardFailClosed:
     def test_active_cohort_no_enforcement_is_shadow_pass(
         self, sample_writer: ControlledWriter
     ) -> None:
-        """ACTIVE writer without enforcement gets SHADOW_PASS."""
+        """ACTIVE writer without enforcement gets SHADOW_PASS (never allowed)."""
         register_writer(sample_writer)
         result = writer_guard(
             writer_id=sample_writer.writer_id,
             override_enforcement=False,
         )
         assert result.decision == WriteGuardDecision.SHADOW_PASS
-        assert result.allowed
+        assert not result.allowed  # deny-by-default: SHADOW_PASS never admits
+        assert not result.should_write()
 
     def test_active_cohort_with_enforcement_is_allowed(
         self, sample_writer: ControlledWriter
@@ -358,14 +360,38 @@ class TestWriterGuardFailClosed:
         assert result.decision == WriteGuardDecision.ALLOWED
         assert result.allowed
 
-    def test_shadow_cohort_is_shadow_pass(
+    def test_shadow_cohort_denied_by_default(
         self, shadow_writer: ControlledWriter
     ) -> None:
-        """SHADOW writer always gets SHADOW_PASS."""
+        """SHADOW writer is DENIED by default (enforcement + fail-closed on)."""
+        register_writer(shadow_writer)
+        result = writer_guard(writer_id=shadow_writer.writer_id)
+        assert result.decision == WriteGuardDecision.DENIED
+        assert not result.allowed
+        assert result.denied
+
+    def test_shadow_cohort_explicit_disable_is_shadow_pass(
+        self, shadow_writer: ControlledWriter
+    ) -> None:
+        """SHADOW writer with enforcement explicitly off gets SHADOW_PASS."""
+        register_writer(shadow_writer)
+        result = writer_guard(
+            writer_id=shadow_writer.writer_id,
+            override_enforcement=False,
+        )
+        assert result.decision == WriteGuardDecision.SHADOW_PASS
+        assert not result.allowed  # SHADOW_PASS never admits a write
+        assert not result.should_write()
+
+    def test_shadow_cohort_env_disable_is_shadow_pass(
+        self, shadow_writer: ControlledWriter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ARNOLD_M7_WRITER_GUARD_ENFORCEMENT=0 returns to shadow-only."""
+        monkeypatch.setenv("ARNOLD_M7_WRITER_GUARD_ENFORCEMENT", "0")
         register_writer(shadow_writer)
         result = writer_guard(writer_id=shadow_writer.writer_id)
         assert result.decision == WriteGuardDecision.SHADOW_PASS
-        assert result.allowed
+        assert not result.allowed
 
 
 # ═══════════════════════════════════════════════════════════════════════════

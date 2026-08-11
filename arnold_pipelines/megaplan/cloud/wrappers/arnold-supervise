@@ -67,7 +67,7 @@ authority_gap_continue() {
 }
 
 if [[ -n "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
-  || "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" == "1" ]]; then
+  || "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-1}" == "1" ]]; then
   SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]}")/arnold-supervisor-runtime-lib"
   if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" && -f "$SUPERVISE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib" ]]; then
     SUPERVISOR_RUNTIME_LIB="$SUPERVISE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
