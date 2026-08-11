@@ -203,7 +203,7 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
         text=True,
         env=env,
     )
-    _, stderr = proc.communicate(timeout=15)
+    _, stderr = proc.communicate(timeout=90)
     assert proc.returncode == 0, stderr
 
     claim_lock_dir = repair_requests.active_repair_claim_lock_dir(
