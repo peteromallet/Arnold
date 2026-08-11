@@ -10,7 +10,10 @@ shift
 # Resolve the shared supervisor runtime lib so the P1 admission gate and the
 # P2/G3 runtime-transition emitter are the SAME fail-closed authority every
 # leaf wrapper uses.  Installed layout first, then the checkout.
-ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}"
+# The runtime source is the fixed /workspace/arnold default; once the shared
+# lib is sourced below it re-resolves from the per-epic manifest
+# (epic.runtime_root) — no env-selector read (G4).
+ARNOLD_SRC="/workspace/arnold"
 SUPERVISOR_RUNTIME_LIB="$(dirname "$0")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
@@ -24,6 +27,14 @@ if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
 fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
+# Manifest-first runtime source (G4): the per-epic manifest runtime_root,
+# else the fixed /workspace/arnold fallback — no env-selector read.
+if declare -F arnold_runtime_manifest_epic_field >/dev/null; then
+  _manifest_runtime_root="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+  if [[ -n "$_manifest_runtime_root" ]]; then
+    ARNOLD_SRC="$_manifest_runtime_root"
+  fi
+fi
 # P1 leaf-wrapper admission gate (G2 correction 3): the shared lib authority
 # is the SOLE manifest resolver for wrapper entry.  A present-but-invalid
 # manifest exits 78; an absent manifest (including the compatibility_only

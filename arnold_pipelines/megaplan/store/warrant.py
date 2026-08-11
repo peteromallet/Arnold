@@ -13,7 +13,7 @@ from arnold_pipelines.megaplan._core.canonical import (
     sign_canonical_projection,
     verify_canonical_projection_signature,
 )
-from arnold_pipelines.megaplan._core.config_resolver import ConfigResolver
+from arnold_pipelines.megaplan._core.io import get_effective
 from arnold_pipelines.megaplan.schemas import Warrant, WarrantSignature, WarrantSourceProjection, utc_now
 
 
@@ -35,7 +35,6 @@ class WarrantBuildResult:
 def _resolve_warrant_key(
     *,
     warrant_key: str | bytes | bytearray | memoryview | None = None,
-    resolver: ConfigResolver | None = None,
 ) -> str | bytes | bytearray | memoryview:
     if warrant_key is not None:
         if isinstance(warrant_key, str) and not warrant_key:
@@ -43,7 +42,7 @@ def _resolve_warrant_key(
         if not isinstance(warrant_key, str) and not bytes(warrant_key):
             raise WarrantError("missing_warrant_key", "Warrant signing key is empty")
         return warrant_key
-    resolved = (resolver or ConfigResolver()).effective("signing", "warrant_key")
+    resolved = get_effective("signing", "warrant_key")
     if not resolved:
         raise WarrantError("missing_warrant_key", "Warrant signing key is not configured")
     return resolved
@@ -149,7 +148,6 @@ def build_warrant(
     projection: WarrantSourceProjection,
     *,
     warrant_key: str | bytes | bytearray | memoryview | None = None,
-    resolver: ConfigResolver | None = None,
     key_id: str | None = None,
     issued_at: datetime | str | None = None,
     signed_at: datetime | str | None = None,
@@ -163,7 +161,7 @@ def build_warrant(
             "Incomplete Warrant source projection cannot be signed",
             **_incomplete_source_details(projection),
         )
-    key = _resolve_warrant_key(warrant_key=warrant_key, resolver=resolver)
+    key = _resolve_warrant_key(warrant_key=warrant_key)
     warrant_metadata = {
         "source_projection_id": projection.projection_id,
         "source_refs": projection.source_refs,
@@ -203,11 +201,10 @@ def verify_warrant(
     warrant: Warrant | Mapping[str, Any],
     *,
     warrant_key: str | bytes | bytearray | memoryview | None = None,
-    resolver: ConfigResolver | None = None,
 ) -> bool:
     """Verify a Warrant signature against canonical frozen envelope bytes."""
     model = warrant if isinstance(warrant, Warrant) else Warrant.model_validate(warrant)
-    key = _resolve_warrant_key(warrant_key=warrant_key, resolver=resolver)
+    key = _resolve_warrant_key(warrant_key=warrant_key)
     envelope = warrant_signed_envelope(model)
     return verify_canonical_projection_signature(
         envelope,

@@ -98,16 +98,17 @@ subcommand. The workflow is:
 
 1. inventory or build a `WarrantSourceProjection`;
 2. verify that required source fields are present and signable;
-3. call `build_warrant(...)` with an explicit key or configured resolver;
+3. call `build_warrant(...)` with an explicit key or the configured
+   `signing.warrant_key` from the megaplan `config.json`;
 4. call `verify_warrant(...)` before relying on the signed output.
 
 The inventory adapter is read-only over existing plan-directory sources. Missing
 facts remain missing. Unsupported facts remain unsupported. Incomplete
 projections raise `incomplete_warrant_source` before a signing key is resolved.
 
-Set `MEGAPLAN_SIGNING_WARRANT_KEY` when using configuration-based signing. Keep
-key IDs descriptive enough for operators to rotate keys, but do not include
-secret material in projection metadata.
+Set `signing.warrant_key` in the megaplan `config.json` when using
+configuration-based signing. Keep key IDs descriptive enough for operators to
+rotate keys, but do not include secret material in projection metadata.
 
 ## Generated Reference Tooling
 

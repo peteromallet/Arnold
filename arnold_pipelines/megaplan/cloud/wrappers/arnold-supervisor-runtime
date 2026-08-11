@@ -3,7 +3,11 @@
 set -euo pipefail
 
 ROOT="${MEGAPLAN_SUPERVISOR_RUNTIME_ROOT:-/workspace/.megaplan/supervisor-python}"
-SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+# The supervisor venv is prepared from the fixed /workspace/arnold checkout
+# (per-epic manifest worktrees share its frozen venv).  The entrypoint's
+# fixed-literal export carries the same value; no env-selector read remains
+# (G4).
+SOURCE="/workspace/arnold"
 BASE_PYTHON="${MEGAPLAN_SUPERVISOR_BASE_PYTHON:-$(command -v python3)}"
 ACTION="${1:---prepare}"
 

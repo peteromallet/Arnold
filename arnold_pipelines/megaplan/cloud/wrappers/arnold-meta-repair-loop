@@ -66,7 +66,10 @@ fi
 
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
+# The runtime source resolves from the per-epic manifest (epic.runtime_root)
+# below, AFTER the admission authority runs.  The fixed /workspace/arnold
+# placeholder here only bootstraps lib discovery.
+ARNOLD_SRC="/workspace/arnold"
 SELF_PATH="${MEGAPLAN_META_SELF_PATH:-$ARNOLD_META_REPAIR_LOOP_ORIGIN}"
 if command -v readlink >/dev/null 2>&1; then
   SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
@@ -120,14 +123,16 @@ SUPERFIXER_SKILL="${MEGAPLAN_SUPERFIXER_SKILL:-$ARNOLD_SRC/arnold_pipelines/mega
 META_REPAIR_BUDGET="${MEGAPLAN_META_BUDGET_SECS:-7200}"
 META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"
 META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
-# Fixer-unification: prefer the per-epic runtime manifest's declared epic
-# branch so meta-repair commits target the runtime's own branch; the legacy
-# env/default chain applies to manifest-less runtimes only.
+# Fixer-unification: the per-epic runtime manifest is the push target.  Meta
+# repairs commit to the manifest-declared epic branch only, and this loop
+# executes from the manifest runtime_root — no env-selector fallback (P4
+# config cleanup); manifest-less (permit-admitted) runs keep the fixed
+# /workspace/arnold source and an empty sync branch, which fails closed.
 _MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
-if [[ -n "$_MANIFEST_EPIC_BRANCH" ]]; then
-  SYNC_BRANCH="$_MANIFEST_EPIC_BRANCH"
-else
-  SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
+_MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+SYNC_BRANCH="${_MANIFEST_EPIC_BRANCH:-}"
+if [[ -n "$_MANIFEST_RUNTIME_ROOT" ]]; then
+  ARNOLD_SRC="$_MANIFEST_RUNTIME_ROOT"
 fi
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"

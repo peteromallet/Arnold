@@ -468,11 +468,7 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     quickstart_parser.add_argument("--ssh-user", default="root", help="SSH user")
     quickstart_parser.add_argument("--ssh-port", type=int, default=22, help="SSH port")
     quickstart_parser.add_argument("--engine-ref", default="editible-install", help="Cloud megaplan engine ref")
-    quickstart_parser.add_argument(
-        "--sync-local-engine",
-        action="store_true",
-        help="Also sync this local Arnold checkout to editible-install before launch",
-    )
+
     quickstart_parser.add_argument(
         "--launch",
         action="store_true",
@@ -524,25 +520,9 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         ),
     )
     chain_parser.add_argument(
-        "--no-editable-install-sync",
-        action="store_true",
-        help=(
-            "Skip the pre-launch push that merges the current local HEAD into "
-            "the cloud editable install branch."
-        ),
-    )
-    chain_parser.add_argument(
         "--prepare-only",
         action="store_true",
         help="Upload and normalize canonical chain inputs without starting a runner.",
-    )
-    chain_parser.add_argument(
-        "--force-clean-editable-install",
-        action="store_true",
-        help=(
-            "Before remote editable-install refresh, reset and clean only "
-            "megaplan.src_path. Opt-in recovery for dirty remote Arnold checkouts."
-        ),
     )
     chain_parser.add_argument(
         "--allow-loose-chain-spec",
@@ -633,11 +613,6 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Pass --no-git-refresh to the remote chain start command",
     )
-    launch_epic_parser.add_argument(
-        "--no-editable-install-sync",
-        action="store_true",
-        help="Skip syncing the launching Arnold checkout to editible-install before launch",
-    )
     _add_repo_override_args(launch_epic_parser)
 
     preflight_parser = cloud_sub.add_parser(
@@ -691,11 +666,6 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "--one",
         action="store_true",
         help="Advance at most one completed child epic, then stop cleanly",
-    )
-    epic_chain_parser.add_argument(
-        "--no-editable-install-sync",
-        action="store_true",
-        help="Skip syncing the launching Arnold checkout to editible-install before launch",
     )
     _add_repo_override_args(epic_chain_parser)
 
@@ -1883,8 +1853,6 @@ def _run_quickstart(root: Path, args: argparse.Namespace) -> int:
             idea_dir=None,
             fresh=bool(args.fresh),
             no_git_refresh=False,
-            no_editable_install_sync=not bool(args.sync_local_engine),
-            force_clean_editable_install=False,
             allow_loose_chain_spec=False,
             allow_template_placeholders=False,
             allow_human_gates=False,
@@ -1916,7 +1884,6 @@ def _run_quickstart(root: Path, args: argparse.Namespace) -> int:
             "session": slug,
             "workspace": workspace,
             "spec": f"{workspace}/.megaplan/initiatives/{slug}/chain.yaml",
-            "local_engine_sync": bool(args.sync_local_engine),
             "chain_log": log_payload.get("chain_log") if isinstance(log_payload, dict) else None,
             "verification": verification if isinstance(verification, dict) else None,
         }
@@ -1943,7 +1910,7 @@ def _run_quickstart(root: Path, args: argparse.Namespace) -> int:
             "next": (
                 "Rerun with --launch, or run "
                 f"python -m arnold_pipelines.megaplan cloud chain {chain_path} "
-                f"--cloud-yaml {cloud_yaml} --fresh --no-editable-install-sync"
+                f"--cloud-yaml {cloud_yaml} --fresh"
             ),
         },
     }
@@ -2138,11 +2105,6 @@ def _validate_chain_spec_location(
         ),
         extra={"chain_spec": relative.as_posix()},
     )
-
-
-def _arnold_engine_repo_root() -> Path:
-    """Return the Arnold checkout whose code is currently launching cloud."""
-    return _git_repo_root(Path(__file__)) or Path(__file__).resolve().parents[3]
 
 
 def _remote_chain_workspace_path(local_path: Path, *, local_root: Path, target_workspace: str) -> str:
@@ -2553,7 +2515,7 @@ def _git_run(
     )
     if check and proc.returncode != 0:
         raise CliError(
-            "editable_install_sync_failed",
+            "git_command_failed",
             f"git {' '.join(args)} failed: {(proc.stderr or proc.stdout or '').strip()}",
             extra={
                 "command": ["git", *args],
@@ -2563,167 +2525,6 @@ def _git_run(
             },
         )
     return proc
-
-
-def _git_relative_path(root: Path, path: Path) -> str | None:
-    try:
-        return path.expanduser().resolve().relative_to(root.expanduser().resolve()).as_posix()
-    except ValueError:
-        return None
-
-
-def _porcelain_path(line: str) -> str:
-    path = line[3:] if len(line) > 3 else ""
-    if " -> " in path:
-        path = path.rsplit(" -> ", 1)[-1]
-    return path.strip()
-
-
-def _sync_launch_head_to_editable_install_branch(
-    root: Path,
-    *,
-    branch: str = "editible-install",
-    remote: str = "origin",
-    ignore_dirty_paths: list[Path] | None = None,
-) -> dict[str, Any]:
-    """Publish the local launch HEAD to the cloud editable-install branch.
-
-    The cloud worker refreshes `/workspace/arnold` from `editible-install`.
-    Before launching any new cloud chain, publish the code currently being used
-    to launch the run into that branch as well. If the editable branch has
-    unique commits that are not already contained by the launch HEAD, refuse to
-    sync so the divergent code can be reconciled deliberately first.
-    """
-    root = root.expanduser().resolve()
-    inside = _git_run(root, ["rev-parse", "--is-inside-work-tree"])
-    if inside.stdout.strip() != "true":
-        raise CliError(
-            "editable_install_sync_failed",
-            f"cloud chain must be launched from a git worktree to sync {branch}",
-        )
-    ignored = {
-        relative
-        for path in (ignore_dirty_paths or [])
-        if (relative := _git_relative_path(root, path)) is not None
-    }
-    dirty_lines = [
-        line
-        for line in _git_run(root, ["status", "--porcelain", "--untracked-files=all"]).stdout.splitlines()
-        if _porcelain_path(line) not in ignored
-    ]
-    if dirty_lines:
-        raise CliError(
-            "editable_install_sync_dirty",
-            (
-                f"Cannot sync cloud editable install branch {branch!r}: "
-                "the launch checkout has uncommitted changes. Commit or stash them, "
-                "or pass --no-editable-install-sync."
-            ),
-            extra={"dirty": dirty_lines},
-        )
-
-    launch_head = _git_run(root, ["rev-parse", "HEAD"]).stdout.strip()
-    launch_branch = _git_run(root, ["branch", "--show-current"], check=False).stdout.strip() or None
-    _git_run(root, ["fetch", remote, branch], check=False)
-    remote_ref = f"{remote}/{branch}"
-    remote_exists = _git_run(root, ["rev-parse", "--verify", remote_ref], check=False).returncode == 0
-    if remote_exists:
-        remote_head = _git_run(root, ["rev-parse", remote_ref]).stdout.strip()
-        contains_launch = _git_run(
-            root,
-            ["merge-base", "--is-ancestor", launch_head, remote_ref],
-            check=False,
-        ).returncode == 0
-        if contains_launch:
-            return {
-                "status": "already_contains",
-                "branch": branch,
-                "remote": remote,
-                "launch_head": launch_head,
-                "launch_branch": launch_branch,
-                "editable_head": remote_head,
-            }
-        launch_contains_remote = _git_run(
-            root,
-            ["merge-base", "--is-ancestor", remote_ref, launch_head],
-            check=False,
-        ).returncode == 0
-        if not launch_contains_remote:
-            counts = _git_run(
-                root,
-                ["rev-list", "--left-right", "--count", f"{launch_head}...{remote_ref}"],
-                check=False,
-            ).stdout.strip().split()
-            launch_only = int(counts[0]) if len(counts) == 2 else None
-            editable_only = int(counts[1]) if len(counts) == 2 else None
-            editable_commits = _git_run(
-                root,
-                ["log", "--oneline", "--max-count=5", f"{launch_head}..{remote_ref}"],
-                check=False,
-            ).stdout.strip().splitlines()
-            raise CliError(
-                "editable_install_sync_diverged",
-                (
-                    f"Refusing to sync {branch!r}: {remote_ref} has commits that "
-                    "are not contained in the launch HEAD. Merge or cherry-pick "
-                    "the editable-install work first, then retry the cloud sync."
-                ),
-                extra={
-                    "branch": branch,
-                    "remote": remote,
-                    "launch_head": launch_head,
-                    "launch_branch": launch_branch,
-                    "editable_head": remote_head,
-                    "launch_only_commits": launch_only,
-                    "editable_only_commits": editable_only,
-                    "editable_only_sample": editable_commits,
-                },
-            )
-    else:
-        remote_head = None
-
-    with TemporaryDirectory(prefix="editable-install-sync-") as tmp:
-        worktree = Path(tmp) / "worktree"
-        if remote_exists:
-            _git_run(root, ["worktree", "add", "--detach", str(worktree), launch_head])
-            _git_run(worktree, ["checkout", "-B", branch])
-            before = remote_head
-            merged = False
-        else:
-            _git_run(root, ["worktree", "add", "--detach", str(worktree), launch_head])
-            _git_run(worktree, ["checkout", "-B", branch])
-            before = None
-            merged = False
-
-        after = _git_run(worktree, ["rev-parse", "HEAD"]).stdout.strip()
-        push = _git_run(
-            worktree,
-            ["push", "--no-verify", remote, f"HEAD:{branch}"],
-            check=False,
-        )
-        if push.returncode != 0:
-            raise CliError(
-                "editable_install_sync_failed",
-                f"Could not push {branch}: {(push.stderr or push.stdout or '').strip()}",
-                extra={
-                    "branch": branch,
-                    "launch_head": launch_head,
-                    "stdout": push.stdout,
-                    "stderr": push.stderr,
-                },
-            )
-
-    _git_run(root, ["worktree", "prune"], check=False)
-    return {
-        "status": "pushed",
-        "branch": branch,
-        "remote": remote,
-        "launch_head": launch_head,
-        "launch_branch": launch_branch,
-        "editable_head_before": before,
-        "editable_head": after,
-        "merge_commit_created": merged,
-    }
 
 
 def _tmux_launch_status(result, *, session_name: str = "megaplan-chain") -> str:
@@ -2764,7 +2565,6 @@ def _cloud_chain_launch_provenance(
     uploaded_idea_count: int,
     repo_head: dict[str, str | None],
     tmux_result,
-    editable_install_sync: dict[str, Any] | None = None,
     engine_ref_check: dict[str, Any] | None = None,
     verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -2794,7 +2594,6 @@ def _cloud_chain_launch_provenance(
         "megaplan": {
             "ref": spec.megaplan.ref,
             "install_source": "cloud_image_runtime",
-            "editable_install_sync": editable_install_sync or {"status": "skipped"},
             "engine_ref_check": engine_ref_check or {"status": "unknown"},
         },
         "uploaded_idea_count": uploaded_idea_count,
@@ -2829,26 +2628,6 @@ _CLOUD_HOT_ENV_PATH = "/workspace/.cloud-hot-env"
 _CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
 _CHAIN_VERIFY_ATTEMPTS = 6
 _CHAIN_VERIFY_SLEEP_SECONDS = 5
-_EDITABLE_INSTALL_BRANCH = "editible-install"
-
-
-def _cloud_source_sync_branch(spec: CloudSpec) -> str | None:
-    """Choose the branch whose source checkout this run actually executes.
-
-    A chain with an explicitly isolated ``megaplan.src_path`` owns its runtime
-    checkout and must not publish that checkout into the shared resident
-    ``editible-install`` branch.  Publish to the configured source ref instead
-    (or skip the git publication when the ref is an immutable commit SHA).
-    Shared/default source paths retain the historical resident-branch sync.
-    """
-
-    source_path = str(spec.megaplan.src_path or "").rstrip("/")
-    ref = str(spec.megaplan.ref or "").strip()
-    if source_path and source_path != "/workspace/arnold":
-        if re.fullmatch(r"[0-9a-fA-F]{40}", ref):
-            return None
-        return ref or None
-    return _EDITABLE_INSTALL_BRANCH
 
 
 @dataclass(frozen=True)
@@ -3721,6 +3500,21 @@ def _emit_deploy_report(
     )
 
 
+def _pinned_manifest_field_read(field: str) -> str:
+    """Shell command substitution reading one ``epic`` field from the pinned
+    runtime manifest (``$PINNED_RUNTIME_MANIFEST``).
+
+    Stdlib JSON only, silent on absent/corrupt manifests — the caller's
+    fixed-path fallback decides.  The fields are module constants
+    (``runtime_root`` / ``expected_head``), never caller input.
+    """
+    return (
+        '$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c \'import json,sys; '
+        f'print(json.load(open(sys.argv[1])).get("epic",{{}}).get("{field}",""))\' '
+        '"$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)'
+    )
+
+
 def _chain_start_command(
     remote_spec_path: str,
     *,
@@ -3752,22 +3546,26 @@ def _chain_start_command(
         if project_dir
         else shlex.quote(log_relative)
     )
-    # The editable refresh runs immediately before this command and exports a
-    # private launch pin.  Capture it as readonly *before* an ordinary launch
-    # loads the mutable box-wide hot env: that file legitimately changes
-    # resident/watchdog selectors and may still advertise an older runtime.
-    # Isolated launches still need provider credentials from the box-wide hot
-    # env (for example ZHIPU/GLM keys).  Source it too, then reassert the
-    # refresh-verified runtime pin below so stale selectors cannot replace the
-    # accepted engine identity.
+    # The manifest activation runs immediately before this command and exports
+    # the per-epic runtime manifest as ARNOLD_RUNTIME_MANIFEST.  Capture that
+    # path as readonly *before* an ordinary launch loads the mutable box-wide
+    # hot env: that file legitimately changes resident/watchdog settings and
+    # may still advertise an older runtime.  Isolated launches still need
+    # provider credentials from the box-wide hot env (for example ZHIPU/GLM
+    # keys).  Source it too, then reassert the manifest pin below so a stale
+    # hot-env manifest cannot replace the accepted runtime identity.  The
+    # engine dir (PYTHONPATH) derives from the pinned manifest's
+    # ``epic.runtime_root``; nothing reads SRC selector envs (G4).
     prefix = (
-        'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"; '
-        'PINNED_LAUNCH_RUNTIME_REVISION="${MEGAPLAN_LAUNCH_RUNTIME_REVISION:-}"; '
-        'readonly PINNED_LAUNCH_RUNTIME_SRC PINNED_LAUNCH_RUNTIME_REVISION; '
+        'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"; '
+        'readonly PINNED_RUNTIME_MANIFEST; '
     )
     prefix += (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+        'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
+        'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; '
+        'fi; '
     )
     if repair_session:
         prefix += _managed_run_env_prefix(
@@ -3779,28 +3577,27 @@ def _chain_start_command(
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
+            f'ENGINE_DIR="{_pinned_manifest_field_read("runtime_root")}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
-            'if [ -n "$PINNED_LAUNCH_RUNTIME_SRC" ]; then '
-            'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$PINNED_LAUNCH_RUNTIME_SRC"; '
-            'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$PINNED_LAUNCH_RUNTIME_REVISION"; '
-            'export MEGAPLAN_RUNTIME_SRC="$PINNED_LAUNCH_RUNTIME_SRC"; '
-            'fi; '
         )
         if require_pinned_runtime_binding:
             prefix += (
-                'if [ -z "$PINNED_LAUNCH_RUNTIME_SRC" ] || '
-                '[ -z "$PINNED_LAUNCH_RUNTIME_REVISION" ]; then '
-                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing refresh-verified runtime pin" >> {log_target}; '
+                'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then '
+                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >> {log_target}; '
+                'exit 24; '
+                'fi; '
+                f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
+                'if [ -z "$_EXPECTED_REVISION" ]; then '
+                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
                 'exit 24; '
                 'fi; '
                 'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
-                'PYTHONPATH="$PINNED_LAUNCH_RUNTIME_SRC" '
+                'PYTHONPATH="$ENGINE_DIR" '
                 'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
-                '--expected-root "$PINNED_LAUNCH_RUNTIME_SRC" '
-                '--expected-revision "$PINNED_LAUNCH_RUNTIME_REVISION" '
+                '--expected-root "$ENGINE_DIR" '
+                '--expected-revision "$_EXPECTED_REVISION" '
                 f'>> {log_target} 2>&1; then '
-                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with refresh-verified runtime" >> {log_target}; '
+                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >> {log_target}; '
                 'exit 24; '
                 'fi; '
             )
@@ -3873,136 +3670,6 @@ def _plan_auto_command(
             f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
         )
     return f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {command} >> {log_target} 2>&1"
-
-
-def _megaplan_refresh_command(
-    spec: CloudSpec | None = None,
-    *,
-    force_clean_editable_install: bool = False,
-    runtime_src_path: str | None = None,
-) -> str:
-    src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
-    repo = (spec.megaplan.repo or "") if spec is not None else ""
-    ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
-    lines = [
-        "set -e",
-        "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
-        # Never inherit a previously selected runtime when the configured
-        # checkout is absent or refresh fails before producing a new receipt.
-        "unset MEGAPLAN_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_REVISION RUNTIME_REVISION",
-        f"SRC={shlex.quote(src)}",
-        f"REPO={shlex.quote(repo)}",
-        f"REF={shlex.quote(ref)}",
-        f"RUNTIME_SRC={shlex.quote(runtime_src_path or '')}",
-        'UPSTREAM_URL="$REPO"',
-        'if [ -n "$UPSTREAM_URL" ] && [ -n "${GITHUB_TOKEN:-}" ]; then',
-        '  case "$UPSTREAM_URL" in',
-        '    https://github.com/*) UPSTREAM_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${UPSTREAM_URL#https://github.com/}" ;;',
-        "  esac",
-        "fi",
-        # Linked Git worktrees expose ``.git`` as a file. Treat both a normal
-        # checkout directory and a worktree gitfile as an existing source.
-        'if [ -n "$REPO" ] && [ ! -e "$SRC/.git" ]; then',
-        '  mkdir -p "$(dirname "$SRC")"',
-        '  git clone --branch "$REF" "$UPSTREAM_URL" "$SRC"',
-        "fi",
-        'if [ -e "$SRC/.git" ]; then',
-        '  git -C "$SRC" fetch origin "$REF"',
-        '  BRANCH="$(git -C "$SRC" branch --show-current)"',
-        '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
-        *(
-            [
-                '  echo "[megaplan-refresh] force-clean enabled: resetting and cleaning $SRC"',
-                '  git -C "$SRC" reset --hard "origin/$REF"',
-                '  git -C "$SRC" clean -fd',
-            ]
-            if force_clean_editable_install
-            else []
-        ),
-        '  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
-        '    if [ -n "$RUNTIME_SRC" ]; then',
-        '      echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"',
-        '      rm -rf "$RUNTIME_SRC"',
-        '      mkdir -p "$(dirname "$RUNTIME_SRC")"',
-        '      git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"',
-        '      MIRROR_REMOTE="$UPSTREAM_URL"',
-        '      if [ -z "$MIRROR_REMOTE" ]; then MIRROR_REMOTE="$(git -C "$SRC" remote get-url origin)"; fi',
-        '      git -C "$RUNTIME_SRC" remote set-url origin "$MIRROR_REMOTE"',
-        '      git -C "$RUNTIME_SRC" fetch origin "+refs/heads/$REF:refs/remotes/origin/$REF"',
-        '      git -C "$RUNTIME_SRC" checkout --detach "refs/remotes/origin/$REF"',
-        '      export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"',
-        "    else",
-        '      echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
-        "      exit 19",
-        "    fi",
-        "  else",
-        '    if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
-        '      echo "[megaplan-refresh] source checkout has local commits not contained in origin/$REF; attempting push"',
-        '      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
-        '      if git -C "$SRC" push origin "$REF"; then',
-        '        git -C "$SRC" fetch origin "$REF"',
-        '      else',
-        '        echo "[megaplan-refresh] refusing editable install refresh: $SRC has unpushed local commits not contained in origin/$REF"',
-        "        exit 20",
-        "      fi",
-        "    fi",
-        '    git -C "$SRC" pull --ff-only origin "$REF"',
-        '    export MEGAPLAN_RUNTIME_SRC="$SRC"',
-        "  fi",
-        '  if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
-        '    echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"',
-        '    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
-        "    exit 20",
-        "  fi",
-        '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
-        '  RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
-        '  env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
-        "else",
-        '  echo "[megaplan-refresh] source clone missing at $SRC"',
-        "  exit 21",
-        "fi",
-        # Preserve the refresh-verified source across the later cloud hot-env
-        # load, which may still advertise an older resident runtime.
-        'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"',
-        'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"',
-        'echo "[megaplan-refresh] done"',
-        "true",
-    ]
-    return "\n".join(lines)
-
-
-def _megaplan_use_current_runtime_command(spec: CloudSpec | None = None) -> str:
-    """Activate an already-landed editable runtime without remote git mutation."""
-    src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
-    ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
-    lines = [
-        "set -e",
-        'echo "[megaplan-runtime] $(date -Iseconds) validating current source"',
-        f"SRC={shlex.quote(src)}",
-        f"REF={shlex.quote(ref)}",
-        'if [ ! -e "$SRC/.git" ]; then',
-        '  echo "[megaplan-runtime] source checkout missing at $SRC"',
-        "  exit 21",
-        "fi",
-        'BRANCH="$(git -C "$SRC" branch --show-current)"',
-        'if [ "$BRANCH" != "$REF" ]; then',
-        '  echo "[megaplan-runtime] expected branch $REF at $SRC, observed ${BRANCH:-detached}"',
-        "  exit 22",
-        "fi",
-        'if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
-        '  echo "[megaplan-runtime] refusing dirty tracked source at $SRC"',
-        "  exit 19",
-        "fi",
-        'export MEGAPLAN_RUNTIME_SRC="$SRC"',
-        'pip install -e "$MEGAPLAN_RUNTIME_SRC"',
-        'RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
-        'env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
-        'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"',
-        'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"',
-        'echo "[megaplan-runtime] current source accepted at $RUNTIME_REVISION"',
-        "true",
-    ]
-    return "\n".join(lines)
 
 
 def _chain_runtime_manifest_dir() -> str:
@@ -4246,10 +3913,9 @@ def _chain_runtime_provenance_payload(
 
 def _manifest_runtime_activate_command(binding: Mapping[str, Any]) -> str:
     """Validate the manifest-bound runtime exists and export the binding env
-    (MEGAPLAN_RUNTIME_SRC / MEGAPLAN_LAUNCH_RUNTIME_* / ARNOLD_RUNTIME_MANIFEST)
-    so the chain start resolves THROUGH this epic's manifest path — no
-    editable-install refresh, no global-pointer fallback. Fail closed (exit
-    23) when the worktree or manifest is missing."""
+    (ARNOLD_RUNTIME_MANIFEST) so the chain start resolves THROUGH this epic's
+    manifest path — no editable-install refresh, no SRC selector transport
+    (G4). Fail closed (exit 23) when the worktree or manifest is missing."""
     runtime_src = str(binding["runtime_src"])
     runtime_revision = str(binding["runtime_revision"])
     manifest_path = str(binding["manifest_path"])
@@ -4268,11 +3934,8 @@ def _manifest_runtime_activate_command(binding: Mapping[str, Any]) -> str:
             '  echo "[megaplan-runtime] manifest-bound runtime manifest missing at $MANIFEST"',
             "  exit 23",
             "fi",
-            'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"',
-            'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$RUNTIME_SRC"',
-            'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"',
             'export ARNOLD_RUNTIME_MANIFEST="$MANIFEST"',
-            'echo "[megaplan-runtime] manifest-bound runtime accepted: $RUNTIME_SRC @ $RUNTIME_REVISION"',
+            'echo "[megaplan-runtime] manifest-bound runtime accepted: $MANIFEST"',
             "true",
         ]
     )
@@ -4285,39 +3948,36 @@ def _refresh_then_chain_start_command(
     project_dir: str | None = None,
     one_shot: bool = False,
     no_git_refresh: bool = False,
-    force_clean_editable_install: bool = False,
-    refresh_editable_install: bool = True,
     log_relative: str = _CHAIN_LOG_RELATIVE,
     repair_session: str | None = None,
     repair_run_kind: str = "chain",
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
     runtime_binding: Mapping[str, Any] | None = None,
 ) -> str:
+    engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     if runtime_binding is not None:
         # Manifest-bound per-epic runtime (P1 producer routing): the runtime
-        # IS the code. Skip the editable-install refresh entirely and bind
-        # the launch env to the created runtime — no editable-install and no
-        # global-pointer fallback.
+        # IS the code. Bind the launch env to the created runtime — no
+        # editable-install refresh and no global-pointer fallback.
         refresh = _manifest_runtime_activate_command(runtime_binding)
-    else:
-        runtime_src_path = (
-            str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
-            if project_dir
-            else None
+        return (
+            f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
+            f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir, require_pinned_runtime_binding=bool(spec and spec.isolated_chain_runner))}"
         )
-        refresh = (
-            _megaplan_refresh_command(
-                spec,
-                force_clean_editable_install=force_clean_editable_install,
-                runtime_src_path=runtime_src_path,
-            )
-            if refresh_editable_install
-            else _megaplan_use_current_runtime_command(spec)
-        )
-    engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
-    return (
-        f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
-        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir, require_pinned_runtime_binding=bool(spec and spec.isolated_chain_runner))}"
+    # No binding (pre-binding marker write / legacy path): the editable-install
+    # machinery is deleted; the launch pin and the fixed /workspace/arnold
+    # engine fallback carry the runtime identity.
+    return _chain_start_command(
+        remote_spec_path,
+        project_dir=project_dir,
+        engine_dir=engine_dir,
+        one_shot=one_shot,
+        no_git_refresh=no_git_refresh,
+        log_relative=log_relative,
+        repair_session=repair_session,
+        repair_run_kind=repair_run_kind,
+        repair_marker_dir=repair_marker_dir,
+        require_pinned_runtime_binding=bool(spec and spec.isolated_chain_runner),
     )
 
 
@@ -4327,8 +3987,6 @@ def _tmux_chain_launch_command(
     *,
     one_shot: bool = False,
     no_git_refresh: bool = False,
-    force_clean_editable_install: bool = False,
-    refresh_editable_install: bool = True,
     session_name: str | None = None,
     spec: CloudSpec | None = None,
     log_relative: str = _CHAIN_LOG_RELATIVE,
@@ -4355,8 +4013,6 @@ def _tmux_chain_launch_command(
         project_dir=workspace,
         one_shot=one_shot,
         no_git_refresh=no_git_refresh,
-        force_clean_editable_install=force_clean_editable_install,
-        refresh_editable_install=refresh_editable_install,
         log_relative=log_relative,
         repair_session=name,
         repair_run_kind="chain",
@@ -4496,9 +4152,10 @@ def _epic_chain_start_command(
         )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
+        # The epic-chain runner executes from the fixed engine dir (spec
+        # src_path / /workspace/arnold); no SRC selector read (G4).
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
-            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            f'ENGINE_DIR={engine_path}; '
             f'cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
         )
     return (
@@ -4517,15 +4174,18 @@ def _refresh_then_epic_chain_start_command(
     repair_session: str | None = None,
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
-    refresh = _megaplan_refresh_command(
-        spec,
-        runtime_src_path=str(PurePosixPath(workspace) / ".megaplan" / "runtime" / "editable-engine"),
-    )
+    # The editable-install refresh machinery is deleted (P4): the epic-chain
+    # runner executes from the manifest-bound runtime (or the fixed
+    # /workspace/arnold engine fallback below); there is no refresh phase.
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
-    log_target = str(PurePosixPath(workspace) / log_relative)
-    return (
-        f"{{ {refresh}; }} >> {shlex.quote(log_target)} 2>&1 || true; "
-        f"{_epic_chain_start_command(remote_spec_path, workspace=workspace, engine_dir=engine_dir, one_shot=one_shot, log_relative=log_relative, repair_session=repair_session, repair_marker_dir=repair_marker_dir)}"
+    return _epic_chain_start_command(
+        remote_spec_path,
+        workspace=workspace,
+        engine_dir=engine_dir,
+        one_shot=one_shot,
+        log_relative=log_relative,
+        repair_session=repair_session,
+        repair_marker_dir=repair_marker_dir,
     )
 
 
@@ -5418,29 +5078,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch
-    editable_install_sync: dict[str, Any] | None
-    if bool(getattr(args, "no_editable_install_sync", False)):
-        editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
-    else:
-        sync_branch = _cloud_source_sync_branch(spec)
-        if sync_branch is None:
-            editable_install_sync = {
-                "status": "skipped",
-                "reason": "isolated_runtime_immutable_ref",
-                "source_ref": spec.megaplan.ref,
-            }
-        else:
-            editable_install_sync = _sync_launch_head_to_editable_install_branch(
-                _arnold_engine_repo_root(),
-                branch=sync_branch,
-                ignore_dirty_paths=generated_canonical_files,
-            )
-        sys.stderr.write(
-            "cloud chain editable-install sync: "
-            f"status={editable_install_sync.get('status')} "
-            f"branch={editable_install_sync.get('branch') or sync_branch} "
-            f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
-        )
     driver_overrides: dict[str, Any] = {}
     if spec.driver is not None and spec.driver.max_stall_iterations is not None:
         chain_spec.stall_threshold = spec.driver.max_stall_iterations
@@ -5575,18 +5212,10 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             project_dir=launch_ctx.workspace,
             log_relative=launch_ctx.log_relative,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
-            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
-            refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
             repair_session=launch_session,
             repair_run_kind="chain",
             repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
         ),
-        "editable_source_branch": launch_spec.megaplan.ref,
-        "editable_source_head": (
-            editable_install_sync.get("editable_head")
-            or editable_install_sync.get("launch_head")
-        ),
-        "editable_install_sync": editable_install_sync,
         "started_at": launch_started_at,
         "launch_outcome": _launch_outcome_payload(
             status="starting",
@@ -5637,10 +5266,10 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     # absent, invoke arnold-runtime-create ON THE BOX to create the runtime
     # worktree + pushed epic branch + manifest (stamping any allow_manifestless
     # permit from the runtime policy sidecar into manifest deviations[0]).
-    # The launch env is then bound to the created runtime's path
-    # (MEGAPLAN_RUNTIME_SRC / ARNOLD_RUNTIME_MANIFEST) with NO global-pointer
-    # fallback (G1), and the bound manifest path is recorded as launch
-    # provenance in the session marker.
+    # The launch env is then bound to the created runtime's manifest path
+    # (ARNOLD_RUNTIME_MANIFEST) with NO global-pointer fallback (G1), and the
+    # bound manifest path is recorded as launch provenance in the session
+    # marker.
     runtime_binding = _ensure_chain_runtime_binding(
         provider=provider,
         launch_ctx=launch_ctx,
@@ -5668,8 +5297,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         runtime_binding=runtime_binding,
         log_relative=launch_ctx.log_relative,
         no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
-        force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
-        refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
         repair_session=launch_session,
         repair_run_kind="chain",
         repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
@@ -5715,8 +5342,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             identity_digest=launch_ctx.digest,
             marker_payload=marker_payload,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
-            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
-            refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
             runtime_binding=runtime_binding,
         )
     )
@@ -5796,7 +5421,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         uploaded_idea_count=len(uploads),
         repo_head=repo_head,
         tmux_result=result,
-        editable_install_sync=editable_install_sync,
         engine_ref_check=engine_ref_check,
         verification={**verification, "watchdog_tracking": tracking},
     )
@@ -5819,7 +5443,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "base_branch": chain_spec.base_branch,
                 "provenance": provenance,
-                "editable_install_sync": editable_install_sync,
                 "engine_ref_check": engine_ref_check,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_session,
@@ -5997,15 +5620,7 @@ failure_code = None
 if not last.get("session_alive"):
     likely = "driver exited before epic-chain state advanced; inspect epic-chain log"
 elif not last.get("advanced_past_init"):
-    likely = "epic-chain stayed at init; inspect epic-chain log for engine refresh or startup failures"
-if "[megaplan-refresh] refusing editable install refresh" in tail_text:
-    likely = "editable install refresh failed before epic-chain start"
-    if "tracked changes in source checkout" in tail_text:
-        failure_code = "editable_install_refresh_dirty"
-    elif "local commits not contained" in tail_text:
-        failure_code = "editable_install_refresh_diverged"
-    else:
-        failure_code = "editable_install_refresh_failed"
+    likely = "epic-chain stayed at init; inspect epic-chain log for startup failures"
 last["likely_cause"] = likely
 last["failure_code"] = failure_code
 last["log_tail"] = log_tail
@@ -6055,28 +5670,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         epic_chain_spec=epic_chain_spec,
     )
 
-    if bool(getattr(args, "no_editable_install_sync", False)):
-        editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
-    else:
-        sync_branch = _cloud_source_sync_branch(spec)
-        if sync_branch is None:
-            editable_install_sync = {
-                "status": "skipped",
-                "reason": "isolated_runtime_immutable_ref",
-                "source_ref": spec.megaplan.ref,
-            }
-        else:
-            editable_install_sync = _sync_launch_head_to_editable_install_branch(
-                _arnold_engine_repo_root(),
-                branch=sync_branch,
-            )
-        sys.stderr.write(
-            "cloud epic-chain editable-install sync: "
-            f"status={editable_install_sync.get('status')} "
-            f"branch={editable_install_sync.get('branch') or sync_branch} "
-            f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
-        )
-
     launch_ctx = _derive_epic_chain_launch_context(
         root=project_root,
         spec=spec,
@@ -6125,12 +5718,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         "run_kind": "epic_chain",
         "run_id": str(uuid.uuid4()),
         "relaunch_command": relaunch_command,
-        "editable_source_branch": launch_spec.megaplan.ref,
-        "editable_source_head": (
-            editable_install_sync.get("editable_head")
-            or editable_install_sync.get("launch_head")
-        ),
-        "editable_install_sync": editable_install_sync,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "launch_outcome": _launch_outcome_payload(
             status="starting",
@@ -6285,7 +5872,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         "uploaded_files": len(uploads),
         "uploaded_roots": list(_DURABLE_MEGAPLAN_DIRS),
         "verification": {**verification, "watchdog_tracking": tracking},
-        "editable_install_sync": editable_install_sync,
         "engine_ref_check": engine_ref_check,
     }
     from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
@@ -6303,7 +5889,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "base_branch": epic_chain_spec.base_branch,
                 "provenance": payload,
-                "editable_install_sync": editable_install_sync,
                 "engine_ref_check": engine_ref_check,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_ctx.session_name,

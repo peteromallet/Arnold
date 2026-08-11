@@ -259,7 +259,7 @@ tmux() {
             "ARNOLD_AUTONOMY": "1",
             "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
             "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
-            "MEGAPLAN_RUNTIME_SRC": str(REPO_ROOT),
+            "ARNOLD_REPAIR_RUNTIME_SRC": str(REPO_ROOT),
         },
     )
 

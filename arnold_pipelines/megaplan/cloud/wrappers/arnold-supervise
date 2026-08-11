@@ -12,7 +12,10 @@ SUPERVISE_SESSION="${ARNOLD_SUPERVISE_SESSION:-}"
 SUPERVISE_WORKSPACE="${ARNOLD_SUPERVISE_WORKSPACE:-}"
 SUPERVISE_REMOTE_SPEC="${ARNOLD_SUPERVISE_REMOTE_SPEC:-}"
 SUPERVISE_RUN_KIND="${ARNOLD_SUPERVISE_RUN_KIND:-}"
-SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
+# Runtime source: the fixed /workspace/arnold default; when the
+# supervisor-runtime lib is available below the source re-resolves from the
+# per-epic manifest (epic.runtime_root) — no env-selector read (G4).
+SUPERVISE_SOURCE="/workspace/arnold"
 QUOTA_MAX=4; QUOTA_BACKOFF=1800
 OTHER_MAX=5
 # Exponential backoff: 60s, 120s, 240s, 480s, 960s
@@ -77,6 +80,14 @@ if [[ -n "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
   fi
   # shellcheck source=/dev/null
   source "$SUPERVISOR_RUNTIME_LIB"
+  # Manifest-first runtime source (P4): the per-epic manifest runtime_root,
+  # else the fixed /workspace/arnold fallback.
+  if declare -F arnold_runtime_manifest_epic_field >/dev/null; then
+    _manifest_runtime_root="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+    if [[ -n "$_manifest_runtime_root" ]]; then
+      SUPERVISE_SOURCE="$_manifest_runtime_root"
+    fi
+  fi
   arnold_supervisor_runtime_init supervisor "$SUPERVISE_SOURCE" || exit $?
 fi
 

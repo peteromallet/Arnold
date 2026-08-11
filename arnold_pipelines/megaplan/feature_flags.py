@@ -11,8 +11,8 @@ while the plan flag-registry behaviour remains in
 
 Companion flags
 ---------------
-The seven companion flags introduced for the unified-dispatch strangler
-(``UNIFIED_EMIT``, ``UNIFIED_EVIDENCE``, ``UNIFIED_CONFIG``, ``EFFECT_LEDGER``,
+The six companion flags introduced for the unified-dispatch strangler
+(``UNIFIED_EMIT``, ``UNIFIED_EVIDENCE``, ``EFFECT_LEDGER``,
 ``UNIFIED_RECOVERY``, ``UNIFIED_BUDGET``, ``UNIFIED_EVALUAND`` / ``R5_UNIFIED``)
 are deliberately **NOT** entries in the long-lived ``FLAG-*`` catalog.  Their
 lifecycle is tied to the strangler pattern — each flips once its organ has
@@ -111,11 +111,6 @@ def unified_emit_on() -> bool:
 def unified_evidence_on() -> bool:
     """``UNIFIED_EVIDENCE`` — evidence-attribution re-home companion."""
     return _companion_on("UNIFIED_EVIDENCE")
-
-
-def unified_config_on() -> bool:
-    """``UNIFIED_CONFIG`` — N-layer ConfigResolver companion."""
-    return _companion_on("UNIFIED_CONFIG")
 
 
 def effect_ledger_on() -> bool:

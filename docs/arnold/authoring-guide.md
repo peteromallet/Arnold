@@ -556,8 +556,8 @@ sign only when required fields are present. The inventory adapter is read-only:
 missing or unsupported facts stay missing or unsupported rather than being
 invented or written into receipts.
 
-Configure the signing key with `MEGAPLAN_SIGNING_WARRANT_KEY` or pass an
-explicit key through the API. Empty keys are errors.
+Configure the signing key under `signing.warrant_key` in the megaplan
+`config.json`, or pass an explicit key through the API. Empty keys are errors.
 
 ## Register a Non-Model Adapter and Validate
 

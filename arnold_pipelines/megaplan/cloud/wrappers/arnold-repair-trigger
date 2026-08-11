@@ -995,16 +995,15 @@ def _dispatch(
     # runtime checkout, not the chain's target workspace.  The latter remains
     # an incident/lineage link only; using it as ``--project-dir`` would make
     # a successful repair unverifiable (or mutate the wrong checkout).  The
-    # admission may pin the root; the resident runtime env is the safe
-    # fallback for older admission producers.  Fail closed when neither is
-    # available instead of launching a worker with ambiguous custody.
+    # admission may pin the root; the running engine root is the fallback —
+    # no env-selector read (G4).  Fail closed when neither is available
+    # instead of launching a worker with ambiguous custody.
     if meta_dispatch:
         runtime_root = str(
             engine_runtime_admission.get("engine_runtime_root")
             if isinstance(engine_runtime_admission, Mapping)
             else ""
         ).strip()
-        runtime_root = runtime_root or os.environ.get("MEGAPLAN_RUNTIME_SRC", "").strip()
         if not runtime_root:
             try:
                 from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root

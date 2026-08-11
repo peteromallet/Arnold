@@ -51,14 +51,14 @@ unset WATCHDOG_CALLER_RUNTIME_REQUIRED_SET WATCHDOG_CALLER_RUNTIME_REQUIRED
 WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
 SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
-  SUPERVISOR_RUNTIME_LIB="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+  SUPERVISOR_RUNTIME_LIB="/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
 fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
-arnold_supervisor_runtime_init watchdog "${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}" || exit $?
+arnold_supervisor_runtime_init watchdog /workspace/arnold || exit $?
 
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 if command -v readlink >/dev/null 2>&1; then
@@ -127,10 +127,12 @@ REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
 REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
 REPAIR_DATA_RETENTION_INTERVAL_SECS="${CLOUD_WATCHDOG_REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
 ENV_GONE_STRIKES="${CLOUD_WATCHDOG_ENV_GONE_STRIKES:-3}"
-SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
-SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
+# SRC_DIR and SYNC_BRANCH resolve below, after the manifest authority gate and
+# the manifest field reads: SRC_DIR = manifest epic.runtime_root (fixed
+# /workspace/arnold fallback) and SYNC_BRANCH = manifest epic.branch only — no
+# env-selector fallback (P4 config cleanup).
 # Bounded timeouts so a hung git sync / pip refresh can't freeze a sweep before
 # the snapshot is written (watchdog-snapshot-staleness-fix.md P2). Do NOT reuse
 # CODEX_TIMEOUT (7200s) for these network/install steps.
@@ -151,11 +153,18 @@ arnold_runtime_manifest_authority watchdog
 
 MANIFEST_REPAIR_BIN="$(arnold_runtime_manifest_epic_field epic.repair_bin)"
 MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field epic.branch)"
+# Runtime source + sync branch resolve from the per-epic manifest ONLY: the
+# manifest runtime_root, else the fixed /workspace/arnold fallback for
+# permit-admitted manifest-less runtimes.  Hot env and the legacy selectors
+# can never re-point a supervisor (P4 config cleanup).
+SRC_DIR="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"
+SYNC_BRANCH="${MANIFEST_EPIC_BRANCH:-}"
 # Dispatch runtime source: when the manifest supplies BOTH epic.repair_bin
 # and epic.runtime_root, the repair-loop child executes AND imports its code
 # from the SAME runtime (the manifest runtime_root), so the selected
 # executable and PYTHONPATH/ARNOLD_REPAIR_RUNTIME_SRC never diverge (review
-# finding #3).  Without a manifest pair the legacy fallback is preserved —
+# finding #3).  Without a manifest pair the fixed fallback is preserved —
 # the absent-manifest bootstrap state keeps
 # ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" (today's box behavior).
 REPAIR_DISPATCH_RUNTIME_SRC="$SRC_DIR"
@@ -4312,17 +4321,18 @@ default_chain_relaunch_command() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local log_relative repo runtime_src repair_queue_root repair_marker_dir
+  local log_relative runtime_src repair_queue_root repair_marker_dir
   if [[ "$session" == "megaplan-chain" ]]; then
     log_relative=".megaplan/cloud-chain.log"
   else
     log_relative=".megaplan/cloud-chain-${session}.log"
   fi
-  repo="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
-  case "$repo" in
-    https://*@github.com/*) repo="https://github.com/${repo#*@github.com/}" ;;
-  esac
-  runtime_src="$workspace/.megaplan/runtime/editable-engine"
+  # The runtime IS the code (P4): the launch bound this session to the
+  # per-epic manifest runtime; this safety fallback re-runs the same chain
+  # start from the manifest runtime root (fixed /workspace/arnold for
+  # permit-admitted manifest-less sessions).  No editable-install refresh, no
+  # source checkout mutation, no env-selector re-resolution.
+  runtime_src="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"
   repair_marker_dir="${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
   repair_queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${repair_marker_dir%/*}/repair-queue}"
   printf 'unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START
@@ -4330,53 +4340,9 @@ export ARNOLD_REPAIR_QUEUE_ROOT=%q
 export ARNOLD_REPAIR_MARKER_DIR=%q
 export ARNOLD_REPAIR_SESSION=%q
 export ARNOLD_REPAIR_RUN_KIND=%q
-{ set -e
-echo "[megaplan-refresh] $(date -Iseconds) starting"
-SRC=%q
-REPO=%q
-REF=%q
-RUNTIME_SRC=%q
-if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then
-  mkdir -p "$(dirname "$SRC")"
-  CLONE_URL="$REPO"
-  if [ -n "${GITHUB_TOKEN:-}" ]; then
-    case "$CLONE_URL" in
-      https://github.com/*) CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${CLONE_URL#https://github.com/}" ;;
-    esac
-  fi
-  git clone --branch "$REF" "$CLONE_URL" "$SRC"
-fi
-if [ -d "$SRC/.git" ]; then
-  git -C "$SRC" fetch origin "$REF"
-  BRANCH="$(git -C "$SRC" branch --show-current)"
-  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi
-  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
-    echo "[megaplan-refresh] source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror"
-    export MEGAPLAN_RUNTIME_SRC="$SRC"
-  else
-    if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
-      echo "[megaplan-refresh] source checkout ahead of origin/$REF; using current source checkout at $SRC for local repair runtime"
-      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || authority_gap_continue "T29-BYPASS-144" "authority-risk bypass converted to typed evidence gap"
-      export MEGAPLAN_RUNTIME_SRC="$SRC"
-    else
-      git -C "$SRC" pull --ff-only origin "$REF"
-      export MEGAPLAN_RUNTIME_SRC="$SRC"
-    fi
-  fi
-  if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
-    echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"
-    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || authority_gap_continue "T29-BYPASS-145" "authority-risk bypass converted to typed evidence gap"
-    exit 20
-  fi
-  pip install -e "$MEGAPLAN_RUNTIME_SRC"
-else
-  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"
-  export MEGAPLAN_RUNTIME_SRC="$SRC"
-fi
-echo "[megaplan-refresh] done"
-true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd %q && PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
     "$repair_queue_root" "$repair_marker_dir" "$session" "chain" \
-    "$SRC_DIR" "$repo" "$SYNC_BRANCH" "$runtime_src" "$workspace/$log_relative" "$workspace" "$remote_spec" "$workspace" "$workspace/$log_relative"
+    "$workspace" "$runtime_src" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
 resolve_relaunch_command() {

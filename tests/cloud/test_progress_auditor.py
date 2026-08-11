@@ -37,12 +37,19 @@ def _wrapper(name: str) -> str:
 def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
     text = _wrapper("arnold-progress-auditor")
     hot_env_at = text.index(". /workspace/.cloud-hot-env")
-    source_root_at = text.index('AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-')
+    source_root_at = text.index("AUDITOR_SOURCE_ROOT=")
     snapshot_guard_at = text.index("progress_auditor_running_snapshot=0")
     reexec_at = text.index('exec "$source_real" "$@"')
     assert hot_env_at < source_root_at < snapshot_guard_at < reexec_at
+    assert (
+        'AUDITOR_SOURCE_ROOT="$(arnold_runtime_manifest_epic_field '
+        "epic.runtime_root 2>/dev/null || true)\""
+    ) in text
+    assert 'AUDITOR_SOURCE_ROOT="${AUDITOR_SOURCE_ROOT:-/workspace/arnold}"' in text
     assert 'if [[ "$progress_auditor_running_snapshot" != "1" && -x "$SOURCE_AUDITOR" ]]' in text
-    assert 'CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold' in text
+    # G4 correction 3: the legacy selector fallback was deleted with P4.
+    assert "MEGAPLAN_AUDIT_ARNOLD_SRC" not in text
+    assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
 
 
 def _write_bounded_mktemp(bin_dir: Path) -> None:
@@ -117,16 +124,29 @@ def test_auditor_source_selection_snapshot_and_cleanup_are_bounded(
     installed.write_text(bounded, encoding="utf-8")
     source.chmod(source.stat().st_mode | stat.S_IXUSR)
     installed.chmod(installed.stat().st_mode | stat.S_IXUSR)
+    # The trampoline resolves the manifest through the co-located supervisor
+    # runtime lib (P4: AUDITOR_SOURCE_ROOT comes from epic.runtime_root, not an
+    # env selector), so mirror the real deployment: lib beside each wrapper.
+    runtime_lib = WRAPPER_DIR / "arnold-supervisor-runtime-lib"
+    for lib_dir in (source.parent, installed.parent):
+        (lib_dir / "arnold-supervisor-runtime-lib").write_text(
+            runtime_lib.read_text(encoding="utf-8"), encoding="utf-8"
+        )
     _write_bounded_mktemp(bin_dir)
 
     selected_entrypoint = installed if entrypoint == "installed" else source
+    runtime_manifest = tmp_path / "runtime-manifest.json"
+    runtime_manifest.write_text(
+        json.dumps({"epic": {"runtime_root": str(source_root)}}),
+        encoding="utf-8",
+    )
     result = subprocess.run(
         ["bash", str(selected_entrypoint)],
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
             "TMPDIR": str(snapshot_dir),
-            "MEGAPLAN_AUDIT_ARNOLD_SRC": str(source_root),
+            "ARNOLD_RUNTIME_MANIFEST": str(runtime_manifest),
             "PROBE": str(probe),
             "PROBE_TERMINATE": "1" if terminate else "0",
         },

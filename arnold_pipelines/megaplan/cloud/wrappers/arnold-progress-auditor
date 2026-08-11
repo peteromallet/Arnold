@@ -43,9 +43,9 @@ if [[ ! -d /workspace/arnold ]]; then
     "$CONTAINER" bash -lc '/usr/local/bin/arnold-progress-auditor "$@"' _ "$@"
 fi
 
-# Load the on-box source selection before the installed-wrapper trampoline.
-# Otherwise the trampoline always re-execs /workspace/arnold and can silently
-# discard a deployed corrective runtime selected by the watchdog hot env.
+# Load the on-box credentials before the installed-wrapper trampoline.
+# .cloud-hot-env is credentials-only (P4); runtime identity comes from the
+# per-epic runtime manifest below, never from hot env.
 if [[ -f /workspace/.cloud-hot-env ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -53,10 +53,19 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
-# Keep the installed container entrypoint tiny and load-bearing only as a
-# trampoline.  The editable checkout is the deployed recovery implementation
-# and is what the watchdog already treats as its current source of truth.
-AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}}"
+# Source the shared supervisor-runtime lib so the trampoline can resolve the
+# runtime from the per-epic manifest (epic.runtime_root) with a fixed
+# /workspace/arnold fallback — no env-selector re-resolution (P4).
+_trampoline_lib="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$_trampoline_lib" ]]; then
+  _trampoline_lib="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+if [[ -f "$_trampoline_lib" ]]; then
+  # shellcheck source=/dev/null
+  . "$_trampoline_lib"
+fi
+AUDITOR_SOURCE_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root 2>/dev/null || true)"
+AUDITOR_SOURCE_ROOT="${AUDITOR_SOURCE_ROOT:-/workspace/arnold}"
 SOURCE_AUDITOR="$AUDITOR_SOURCE_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"
 progress_auditor_current="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
 progress_auditor_snapshot_path="$(readlink -f "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH:-}" 2>/dev/null || printf '%s' "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH:-}")"
@@ -138,7 +147,8 @@ export ARNOLD_REPAIR_QUEUE_ROOT="$REPAIR_QUEUE_ROOT"
 REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
 REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
-ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}}"
+# Fixed placeholder for lib discovery; re-resolved from the manifest below.
+ARNOLD_SRC="/workspace/arnold"
 SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
@@ -149,6 +159,13 @@ fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
 arnold_supervisor_stdlib_init progress-auditor || exit $?
+# Runtime source resolves from the per-epic manifest (epic.runtime_root) with
+# the fixed /workspace/arnold fallback (P4 config cleanup) — hot env and the
+# legacy selectors can never re-point the auditor.
+MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+if [[ -n "$MANIFEST_RUNTIME_ROOT" ]]; then
+  ARNOLD_SRC="$MANIFEST_RUNTIME_ROOT"
+fi
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$REPORT_DIR"
 SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/arnold-supervisor-gap-scan}"
@@ -831,9 +848,10 @@ dependency_gap_by_session = {
 }
 sys.path.insert(0, str(pathlib.Path.cwd()))
 # The deployed source must win over the caller's working directory.  Audits
-# are often invoked from /workspace/arnold while a corrective runtime is
-# selected through MEGAPLAN_AUDIT_ARNOLD_SRC; reversing these inserts silently
-# mixes the old Python modules with the new wrapper.
+# are often invoked from /workspace/arnold while the runtime resolves from the
+# per-epic manifest (epic.runtime_root, fixed /workspace/arnold fallback);
+# reversing these inserts silently mixes the old Python modules with the new
+# wrapper.
 sys.path.insert(0, arnold_src)
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text

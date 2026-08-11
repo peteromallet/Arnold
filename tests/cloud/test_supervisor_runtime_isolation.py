@@ -180,7 +180,7 @@ touch {str(status_dir / 'watchdog.heartbeat')!r}
     env = os.environ.copy()
     env.update(
         {
-            "CLOUD_WATCHDOG_ARNOLD_SRC": str(REPO_ROOT),
+            "ARNOLD_REPAIR_RUNTIME_SRC": str(REPO_ROOT),
             "CLOUD_WATCHDOG_STATUS_DIR": str(status_dir),
             "MEGAPLAN_SUPERVISOR_PYTHON": str(not_ready_python),
             "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
@@ -352,12 +352,25 @@ def test_supervisor_queue_binds_current_plan_not_chain_spec(
 def test_supervise_python_helpers_use_pinned_runtime_source() -> None:
     text = _text("arnold-supervise")
 
+    # G4: no env-selector read — SUPERVISE_SOURCE starts at the fixed
+    # /workspace/arnold fallback and re-resolves from the per-epic manifest
+    # (epic.runtime_root via the shared lib) once the lib is available.
+    assert 'SUPERVISE_SOURCE="/workspace/arnold"' in text
+    assert "MEGAPLAN_SUPERVISOR_SOURCE" not in text
+    assert 'SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE' not in text
     assert (
-        'SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-'
-        '${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"'
+        'if declare -F arnold_runtime_manifest_epic_field >/dev/null; then\n'
+        "    _manifest_runtime_root=\"$(arnold_runtime_manifest_epic_field epic.runtime_root)\"\n"
+        '    if [[ -n "$_manifest_runtime_root" ]]; then\n'
+        '      SUPERVISE_SOURCE="$_manifest_runtime_root"\n'
+        "    fi\n"
+        "  fi"
     ) in text
     assert text.count('PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}"') == 2
     assert 'PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}"' not in text
+    # G4 correction 3: no runtime-selector fallback remains in the wrapper —
+    # only the entrypoint's fixed-literal transport export is allowed.
+    assert "MEGAPLAN_RUNTIME_SRC" not in text
 
 
 def test_dependency_independent_gap_scan_flags_execution_binding_drift(

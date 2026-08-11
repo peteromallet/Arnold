@@ -1295,14 +1295,6 @@ def get_effective(
     default_key = f"{section}.{key}"
     if default_key not in DEFAULTS:
         raise KeyError(default_key)
-    # M4 T13: flag-gated delegation to N-layer ConfigResolver. Flag-OFF path
-    # below is byte-identical to the pre-T13 behaviour for the 30+ callers.
-    from arnold_pipelines.megaplan.feature_flags import unified_config_on
-
-    if unified_config_on():
-        from arnold_pipelines.megaplan._core.config_resolver import ConfigResolver
-
-        return ConfigResolver().effective(section, key)
     config = load_config(home)
     section_config = config.get(section)
     if isinstance(section_config, dict) and key in section_config:
@@ -1337,13 +1329,6 @@ def setting_is_explicit(
     TOML (and absent from the global JSON config) is still counted as
     explicit — a project config entry is a deliberate operator pin.
     """
-    # M4 T13: flag-gated delegation. Flag-OFF retains existing behaviour.
-    from arnold_pipelines.megaplan.feature_flags import unified_config_on
-
-    if unified_config_on():
-        from arnold_pipelines.megaplan._core.config_resolver import ConfigResolver
-
-        return ConfigResolver().explicit_at(section, key) is not None
     config = load_config(home)
     section_config = config.get(section)
     if isinstance(section_config, dict) and key in section_config:
