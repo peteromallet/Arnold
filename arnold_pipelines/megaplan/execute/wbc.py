@@ -19,6 +19,7 @@ from arnold.workflow.execution_attempt_ledger import (
     VersionSet,
 )
 from arnold_pipelines.megaplan.authority.batch_scope import DISPATCH_IDENTITY_KEY
+from arnold_pipelines.megaplan.cloud.feature_flags import production_enforcement_enabled
 from arnold_pipelines.megaplan.authority.binding import DispatchIdentity
 from arnold_pipelines.megaplan.custody.action_validator import ActionBoundaryContext
 from arnold_pipelines.megaplan.custody.common_worker_dispatch import CommonWorkerDispatchSpec
@@ -33,6 +34,10 @@ from arnold_pipelines.megaplan.custody.wbc_runtime import (
     ImmutableAttemptArtifacts,
     PromotionMode,
     WbcRuntimeProducerFacade,
+)
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import (
+    _ensure_dispatch_leases,
+    _runtime_owner,
 )
 from arnold_pipelines.megaplan.types import PlanState
 
@@ -143,6 +148,9 @@ def _shadow_action_context(
     batch_number: int,
     attempt_id: str,
     action_type: str,
+    owner_host: str,
+    owner_pid: str,
+    owner_boot_id: str,
 ) -> ActionBoundaryContext:
     return ActionBoundaryContext(
         action_type=action_type,  # type: ignore[arg-type]
@@ -150,6 +158,9 @@ def _shadow_action_context(
         run_authority_grant_id=identity.dispatch_id,
         coordinator_fence_token=identity.fence_token,
         wbc_attempt_reference=attempt_id,
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
         required_capability=(identity.capabilities[0] if identity.capabilities else ""),
         required_wbc_evidence_version=execute_dispatch_source_version(
             identity,
@@ -243,7 +254,7 @@ def build_execute_batch_dispatch_spec(
     start_action_context: ActionBoundaryContext | None = None,
     success_action_context: ActionBoundaryContext | None = None,
     failure_action_context: ActionBoundaryContext | None = None,
-    enforcement_enabled: bool = False,
+    enforcement_enabled: bool | None = None,
 ) -> CommonWorkerDispatchSpec:
     del state  # reserved for future exact-source/state-backed adapters
     register_execute_wbc_writer()
@@ -268,6 +279,46 @@ def build_execute_batch_dispatch_spec(
         dispatch_identity,
         batch_number=batch_number,
     )
+    owner_host, owner_pid, owner_boot_id = _runtime_owner()
+    start_action_context = start_action_context or _shadow_action_context(
+        identity=dispatch_identity,
+        batch_number=batch_number,
+        attempt_id=attempt_id,
+        action_type="dispatch",
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
+    )
+    success_action_context = success_action_context or _shadow_action_context(
+        identity=dispatch_identity,
+        batch_number=batch_number,
+        attempt_id=attempt_id,
+        action_type="completion",
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
+    )
+    failure_action_context = failure_action_context or _shadow_action_context(
+        identity=dispatch_identity,
+        batch_number=batch_number,
+        attempt_id=attempt_id,
+        action_type="repair",
+        owner_host=owner_host,
+        owner_pid=owner_pid,
+        owner_boot_id=owner_boot_id,
+    )
+    # Acquire custody leases + outbox records for every action boundary BEFORE
+    # the facade is built (before any ledger write/reserve): a denied acquire
+    # raises ActionBoundaryDeniedError with no STARTED event appended.
+    lease_store, outbox = _ensure_dispatch_leases(
+        plan_dir=plan_dir,
+        action_contexts=(
+            start_action_context,
+            success_action_context,
+            failure_action_context,
+        ),
+        attempt_id=attempt_id,
+    )
     facade = WbcRuntimeProducerFacade(
         SqliteAttemptLedgerStore(plan_dir / EXECUTE_WBC_LEDGER_FILENAME),
         source_lookup=lambda key: ExactSourceRecord(
@@ -280,8 +331,14 @@ def build_execute_batch_dispatch_spec(
                 "batch_number": batch_number,
             },
         ),
+        lease_store=lease_store,
+        outbox=outbox,
         promotion_mode=PromotionMode.ACTION_OFF,
-        enforcement_enabled=enforcement_enabled,
+        enforcement_enabled=(
+            enforcement_enabled
+            if enforcement_enabled is not None
+            else production_enforcement_enabled()
+        ),
     )
     artifacts = ImmutableAttemptArtifacts(
         attempt_id=attempt_id,
@@ -337,33 +394,9 @@ def build_execute_batch_dispatch_spec(
                 "error": str(exc),
             },
         ),
-        start_action_context=(
-            start_action_context
-            or _shadow_action_context(
-                identity=dispatch_identity,
-                batch_number=batch_number,
-                attempt_id=attempt_id,
-                action_type="dispatch",
-            )
-        ),
-        success_action_context=(
-            success_action_context
-            or _shadow_action_context(
-                identity=dispatch_identity,
-                batch_number=batch_number,
-                attempt_id=attempt_id,
-                action_type="completion",
-            )
-        ),
-        failure_action_context=(
-            failure_action_context
-            or _shadow_action_context(
-                identity=dispatch_identity,
-                batch_number=batch_number,
-                attempt_id=attempt_id,
-                action_type="repair",
-            )
-        ),
+        start_action_context=start_action_context,
+        success_action_context=success_action_context,
+        failure_action_context=failure_action_context,
         artifacts=artifacts,
         writer_id=EXECUTE_DISPATCH_WRITER_ID,
         surface_name=EXECUTE_DISPATCH_SURFACE,

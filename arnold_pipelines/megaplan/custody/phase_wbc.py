@@ -28,6 +28,8 @@ from arnold_pipelines.megaplan.cloud.feature_flags import production_enforcement
 from arnold_pipelines.megaplan.types import PlanState
 
 from .controlled_writer_registry import Cohort, ControlledWriter, register_writer
+from .lease_store import open_lease_store
+from .outbox import open_outbox
 from .wbc_runtime import ExactSourceRecord, ImmutableAttemptArtifacts, PromotionMode, WbcRuntimeProducerFacade
 
 
@@ -932,6 +934,8 @@ def _phase_facade(plan_dir: Path) -> WbcRuntimeProducerFacade:
             observed_at=_utcnow(),
             metadata={"lookup_key": key},
         ),
+        lease_store=open_lease_store(plan_dir / "custody" / "leases"),
+        outbox=open_outbox(plan_dir / "custody" / "outbox"),
         promotion_mode=PromotionMode.ACTION_OFF,
         enforcement_enabled=production_enforcement_enabled(),
     )
