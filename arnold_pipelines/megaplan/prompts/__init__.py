@@ -32,6 +32,7 @@ from .execute import (
     _execute_review_block,
     _write_execute_batch_template,
     _write_execute_template,
+    render_reconcile_prompt,
 )
 from .feedback import build_feedback_prompt
 from .finalize import _finalize_prompt, _write_finalize_template
@@ -556,4 +557,5 @@ __all__ = [
     "create_hermes_prompt_components",
     "create_prompt",
     "create_prompt_components",
+    "render_reconcile_prompt",
 ]

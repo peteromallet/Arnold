@@ -74,6 +74,10 @@ VALID_FAILURE_ACTIONS = (
 )
 VALID_MERGE_POLICIES = ("auto", "review", "manual")
 DEFAULT_MERGE_POLICY = "auto"
+# P6 milestone kinds: ``product`` milestones advance the chain's own branch;
+# the generated terminal ``reconcile`` milestone cherry-picks selected engine
+# commits onto ``target_branch`` (default main) for human review.
+VALID_MILESTONE_KINDS = ("product", "reconcile")
 VALID_CHAIN_DEEPSEEK_PROVIDER_CHOICES = ("direct", "fireworks")
 
 # Autonomy-ladder bump ordering. These are the *one-tier-up* escalation maps
@@ -794,6 +798,14 @@ class MilestoneSpec:
     depends_on: list[str] = field(default_factory=list)
     validate: list[MilestoneValidationSpec] = field(default_factory=list)
     north_star_critical: bool = False
+    # P6 end-of-epic reconciliation: the generated final ``kind: reconcile``
+    # milestone selects engine commits for a PR onto ``target_branch`` (None =
+    # the chain's ``base_branch``).  ``merge_policy`` is a per-milestone
+    # override; a ``reconcile`` milestone forces ``review`` regardless of the
+    # chain-level policy.
+    kind: str = "product"
+    target_branch: str | None = None
+    merge_policy: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], index: int) -> "MilestoneSpec":
@@ -893,6 +905,32 @@ class MilestoneSpec:
             for validation_index, item in enumerate(validate_values)
         ]
         north_star_critical = _optional_bool(raw, "north_star_critical", index=index)
+        kind_raw = raw.get("kind", "product")
+        if not isinstance(kind_raw, str) or kind_raw not in VALID_MILESTONE_KINDS:
+            raise CliError(
+                "invalid_spec",
+                f"milestones[{index}].kind must be one of {sorted(VALID_MILESTONE_KINDS)}; got {kind_raw!r}",
+            )
+        target_branch_raw = raw.get("target_branch")
+        if target_branch_raw is not None and (
+            not isinstance(target_branch_raw, str) or not target_branch_raw.strip()
+        ):
+            raise CliError(
+                "invalid_spec",
+                f"milestones[{index}].target_branch must be a non-empty string when provided",
+            )
+        merge_policy_raw = raw.get("merge_policy")
+        if merge_policy_raw is not None and merge_policy_raw not in VALID_MERGE_POLICIES:
+            raise CliError(
+                "invalid_spec",
+                f"milestones[{index}].merge_policy must be one of {VALID_MERGE_POLICIES}; got {merge_policy_raw!r}",
+            )
+        if kind_raw == "reconcile" and merge_policy_raw not in (None, "review", "manual"):
+            raise CliError(
+                "invalid_spec",
+                f"milestones[{index}].kind=reconcile forces merge_policy review; "
+                f"got {merge_policy_raw!r}",
+            )
         return cls(
             label=label,
             idea=idea,
@@ -914,6 +952,11 @@ class MilestoneSpec:
             depends_on=depends_on,
             validate=validate,
             north_star_critical=north_star_critical,
+            kind=kind_raw,
+            target_branch=(
+                target_branch_raw.strip() if isinstance(target_branch_raw, str) else None
+            ),
+            merge_policy=merge_policy_raw,
         )
 
 
@@ -1003,6 +1046,12 @@ class ChainSpec:
     # Opt-in only; kept at the end so positional construction of legacy
     # ChainSpec instances retains its historical field order.
     fresh_child_admission: FreshChildAdmissionSpec | None = None
+    # P6 end-of-epic reconciliation (default ON). ``{"enabled": false}`` opts
+    # an initiative out of the generated ``kind: reconcile`` terminal
+    # milestone.  Kept at the very end for the same positional-order reason.
+    reconciliation: dict[str, Any] = field(
+        default_factory=lambda: {"enabled": True}
+    )
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
@@ -1019,6 +1068,7 @@ class ChainSpec:
             "on_escalate",
             "on_failure",
             "prerequisite_policy",
+            "reconciliation",
             "review_policy",
             "seed",
             "successors",
@@ -1209,6 +1259,21 @@ class ChainSpec:
                     f"north_star_critical requires at least `full` robustness.",
                 )
 
+        # --- reconciliation (P6, default ON) ---
+        reconciliation_raw = raw.get("reconciliation") or {}
+        if not isinstance(reconciliation_raw, dict):
+            raise CliError("invalid_spec", "`reconciliation` must be a mapping")
+        reconciliation_unknown = sorted(set(reconciliation_raw) - {"enabled"})
+        if reconciliation_unknown:
+            raise CliError(
+                "invalid_spec",
+                f"`reconciliation` unknown key `{reconciliation_unknown[0]}`",
+            )
+        enabled_raw = reconciliation_raw.get("enabled", True)
+        if not isinstance(enabled_raw, bool):
+            raise CliError("invalid_spec", "`reconciliation.enabled` must be a boolean")
+        reconciliation = {"enabled": enabled_raw}
+
         return cls(
             milestones=milestones,
             anchors=anchors,
@@ -1237,6 +1302,7 @@ class ChainSpec:
             require_anchor=require_anchor,
             missing_anchor_ack=missing_anchor_ack,
             north_star_critical=north_star_critical,
+            reconciliation=reconciliation,
         )
 
 

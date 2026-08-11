@@ -2468,3 +2468,328 @@ def _reconcile_terminal_pr_state(
         completed_entry["pr_state"] = reconciled
     _compat().save_chain_state(spec_path, state)
     return state
+
+
+def _ensure_reconcile_pr(
+    root: Path,
+    milestone: MilestoneSpec,
+    *,
+    base_branch: str,
+    writer,
+) -> int | None:
+    """Create or reuse the review PR for a ``kind: reconcile`` milestone.
+
+    Unlike :func:`_ensure_milestone_pr` this is FAIL-CLOSED on gh
+    availability: a reconcile milestone cannot complete without a reviewable
+    PR, so a missing ``gh`` executable or an unauthenticated/errored ``gh``
+    invocation raises ``CliError`` instead of silently skipping PR creation.
+    The only tolerated deferral is gh's ``no commits between`` answer, which
+    happens when the reconcile branch has not been populated yet; the caller
+    retries on the next tick and the reconcile flow never treats the absence
+    of a PR as a no-op.
+    """
+    if not milestone.branch:
+        raise CliError(
+            "missing_branch",
+            f"reconcile milestone {milestone.label!r} has no branch",
+        )
+    if shutil.which("gh") is None:
+        raise CliError(
+            "gh_unavailable",
+            "gh executable not found; reconcile PR creation is fail-closed "
+            f"for {milestone.branch}",
+        )
+    existing = _compat()._list_open_pr_for_branch(
+        root, milestone.branch, writer=writer
+    )
+    if existing and isinstance(existing.get("number"), int):
+        writer(
+            f"[chain] reusing PR #{existing['number']} for reconcile branch "
+            f"{milestone.branch}\n"
+        )
+        return int(existing["number"])
+    title = f"{milestone.label}: megaplan reconcile"
+    body = (
+        f"Automated megaplan reconcile milestone `{milestone.label}`.\n\n"
+        f"Base: `{base_branch}`\n\n"
+        "This PR carries the per-phase engine commits selected by the "
+        "reconcile executor; the per-phase commit history is the description."
+    )
+    try:
+        proc = _compat()._run_command(
+            root,
+            [
+                "gh",
+                "pr",
+                "create",
+                "--base",
+                base_branch,
+                "--head",
+                milestone.branch,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            writer=writer,
+            timeout=120,
+            error_code="gh_reconcile_pr_create_failed",
+        )
+    except CliError as exc:
+        extra = exc.extra if isinstance(exc.extra, dict) else {}
+        detail = "\n".join(
+            str(part).strip()
+            for part in (exc.message, extra.get("stderr"), extra.get("stdout"))
+            if isinstance(part, str) and part.strip()
+        ).lower()
+        if "no commits between" in detail:
+            writer(
+                f"[chain] deferring reconcile PR creation for {milestone.branch}: "
+                f"no commits are ahead of {base_branch} yet\n"
+            )
+            return None
+        raise
+    number = _compat()._parse_pr_number_from_url(proc.stdout.strip())
+    if number is not None:
+        return number
+    created = _compat()._list_open_pr_for_branch(
+        root, milestone.branch, writer=writer
+    )
+    if created and isinstance(created.get("number"), int):
+        return int(created["number"])
+    raise CliError(
+        "gh_reconcile_pr_create_failed",
+        f"could not determine PR number for {milestone.branch}",
+    )
+
+
+def _delete_reconcile_pr_branch(root: Path, branch: str, *, writer) -> bool:
+    """Delete a reconcile PR head branch locally and on origin.
+
+    Returns True when the branch is gone (deleted here or already deleted,
+    e.g. GitHub's auto-delete-head-branch after merge).  Raises ``CliError``
+    on any unexpected deletion failure.  Local deletion is best-effort: the
+    branch may never have been checked out in this worktree.
+    """
+    if not branch or not branch.strip():
+        raise CliError(
+            "missing_branch",
+            "reconcile PR branch deletion requires a branch name",
+        )
+    try:
+        _compat()._run_command(
+            root,
+            ["git", "branch", "-D", branch],
+            writer=writer,
+            error_code="git_branch_delete_failed",
+        )
+    except CliError:
+        # The branch is not checked out here (or already deleted); remote
+        # deletion below is what actually removes the PR head.
+        pass
+    try:
+        _compat()._run_command(
+            root,
+            ["git", "push", "origin", "--delete", branch],
+            writer=writer,
+            timeout=_GIT_PUSH_TIMEOUT_SECONDS,
+            error_code="git_push_delete_reconcile_branch_failed",
+        )
+    except CliError as exc:
+        extra = exc.extra if isinstance(exc.extra, dict) else {}
+        detail = "\n".join(
+            str(part).strip()
+            for part in (
+                exc.message,
+                extra.get("stderr"),
+                extra.get("stdout"),
+                extra.get("output"),
+            )
+            if isinstance(part, str) and part.strip()
+        ).lower()
+        if any(marker in detail for marker in _MISSING_REMOTE_REF_MARKERS):
+            writer(
+                f"[chain] reconcile branch {branch} already deleted on origin\n"
+            )
+            return True
+        raise
+    writer(f"[chain] deleted reconcile PR branch {branch} (local + origin)\n")
+    return True
+
+
+# Engine-source allowlist for reconcile selection validation.  A selected
+# commit must touch engine source (``arnold_pipelines/`` or ``arnold/``);
+# commits that only touch chain-control paths (briefs, docs, chain
+# scaffolding) are excluded by the controller per the P6 contract.
+_ENGINE_SOURCE_PREFIXES = ("arnold_pipelines/", "arnold/")
+_CHAIN_CONTROL_PREFIXES = (".megaplan/", "docs/", "briefs/")
+
+
+def _commit_is_ancestor(root: Path, commit: str, ref: str, *, writer) -> bool:
+    """True when ``commit`` is an ancestor of ``ref`` (or equal)."""
+    try:
+        proc = _compat().subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit, ref],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        writer(f"[chain] git merge-base --is-ancestor failed: {exc}\n")
+        return False
+    return proc.returncode == 0
+
+
+def _commit_paths(root: Path, commit: str, *, writer) -> list[str]:
+    """Return the paths changed by ``commit`` (empty on read failure)."""
+    try:
+        proc = _compat()._run_command(
+            root,
+            ["git", "show", "--format=", "--name-only", commit],
+            writer=writer,
+            error_code="git_show_commit_paths_failed",
+        )
+    except CliError:
+        return []
+    return [
+        line.strip()
+        for line in (proc.stdout or "").splitlines()
+        if line.strip()
+    ]
+
+
+def _commit_touches_engine_source(root: Path, commit: str, *, writer) -> bool:
+    """True when the commit changes any engine-source path."""
+    return any(
+        path.startswith(_ENGINE_SOURCE_PREFIXES)
+        for path in _commit_paths(root, commit, writer=writer)
+    )
+
+
+def _cherry_pick_reconcile_selection(
+    root: Path,
+    milestone: MilestoneSpec,
+    *,
+    base_branch: str,
+    selected_shas: list[str],
+    writer,
+) -> str:
+    """Cherry-pick the selected engine commits onto the reconcile branch.
+
+    Controller-side validation per the P6 contract, executed after the
+    reconcile executor returns its JSON selection:
+    - every selected SHA must resolve and be reachable from ``base_branch``
+      (fail-closed on uncertainty);
+    - SHAs already on the reconcile branch are skipped idempotently;
+    - SHAs touching only chain-control paths (no engine source) are excluded;
+    - the remaining SHAs are cherry-picked onto ``milestone.branch`` in the
+      current worktree; conflicts abort the cherry-pick and raise (fail-closed).
+
+    Returns the new reconcile branch head SHA.  Raises ``CliError`` on any
+    failure.
+    """
+    branch = milestone.branch
+    if not branch:
+        raise CliError(
+            "missing_branch",
+            f"reconcile milestone {milestone.label!r} has no branch",
+        )
+    if not selected_shas:
+        raise CliError(
+            "reconcile_no_selection",
+            "reconcile selection is empty; cannot publish a review PR",
+        )
+    target_head = _compat()._remote_branch_head(
+        root, base_branch
+    ) or _resolve_commitish(root, f"origin/{base_branch}", writer=writer)
+    if target_head is None:
+        raise CliError(
+            "reconcile_target_unresolvable",
+            f"reconcile target branch {base_branch} is unresolvable; "
+            "reachability cannot be verified (fail-closed)",
+        )
+    branch_head = _resolve_commitish(root, branch, writer=writer)
+    if branch_head is None:
+        raise CliError(
+            "missing_branch_ref",
+            f"reconcile branch {branch} does not exist locally",
+        )
+
+    to_cherry_pick: list[str] = []
+    for sha in selected_shas:
+        normalized = _resolve_commitish(root, sha, writer=writer)
+        if normalized is None:
+            raise CliError(
+                "reconcile_unreachable_commit",
+                f"selected SHA {sha} does not resolve in the repository",
+            )
+        if target_head is not None and not _commit_is_ancestor(
+            root, normalized, target_head, writer=writer
+        ):
+            raise CliError(
+                "reconcile_unreachable_commit",
+                f"selected SHA {sha[:12]} is not reachable from {base_branch}; "
+                "cannot cherry-pick it onto the reconcile branch",
+            )
+        if _commit_is_ancestor(root, normalized, branch_head, writer=writer):
+            writer(
+                f"[chain] reconcile selection {sha[:12]} already on {branch}; skipping\n"
+            )
+            continue
+        if not _commit_touches_engine_source(root, normalized, writer=writer):
+            writer(
+                f"[chain] reconcile selection {sha[:12]} touches no engine-source "
+                "path; excluding chain-control commit\n"
+            )
+            continue
+        to_cherry_pick.append(normalized)
+
+    if not to_cherry_pick:
+        return _branch_head(root) or branch_head
+
+    try:
+        current = _compat().subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        ).stdout.strip()
+        if current != branch:
+            _compat()._run_command(
+                root,
+                ["git", "checkout", branch],
+                writer=writer,
+                error_code="git_checkout_reconcile_branch_failed",
+            )
+        _compat()._run_command(
+            root,
+            ["git", "cherry-pick", *to_cherry_pick],
+            writer=writer,
+            error_code="reconcile_cherry_pick_failed",
+        )
+    except CliError:
+        try:
+            _compat()._run_command(
+                root,
+                ["git", "cherry-pick", "--abort"],
+                writer=writer,
+                error_code="reconcile_cherry_pick_abort_failed",
+            )
+        except CliError:
+            pass
+        raise
+    head = _branch_head(root)
+    if head is None:
+        raise CliError(
+            "reconcile_cherry_pick_failed",
+            "could not read the reconcile branch head after cherry-pick",
+        )
+    writer(
+        f"[chain] cherry-picked {len(to_cherry_pick)} selected commit(s) onto "
+        f"{branch}; head {head[:12]}\n"
+    )
+    return head

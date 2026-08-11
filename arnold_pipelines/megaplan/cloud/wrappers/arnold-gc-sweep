@@ -12,7 +12,7 @@
 #       after a clean-room restore of the tree's *runtime* has been proven.
 #   briefing: docs/megaplan-fixer-briefing-20260807.md — "Push before live."
 #
-# Usage: arnold-gc-sweep [--dry-run] [--restore-proven] <manifest-dir>
+# Usage: arnold-gc-sweep [--dry-run] [--restore-proven] [--fixer-branch <branch>] <manifest-dir>
 #
 #   Scans <manifest-dir>/*.json. For every CLOSED manifest whose runtime_root
 #   still exists it verifies:
@@ -33,6 +33,12 @@
 #   --dry-run previews what would be swept (closed + origin-resolvable) without
 #   deleting anything and still reports the restore-proven requirement.
 #
+#   --fixer-branch <branch> (P6 terminal finalizer): the manifest-declared
+#   fixer branch to delete (local + remote) after a restore-proven sweep of the
+#   manifest that declares it.  The sweep REFUSES to delete the branch while a
+#   pull ref on the remote still points at the branch head (an open PR is
+#   load-bearing; P6 terminal-state rules never sweep with a PR open).
+#
 # Environment overrides (all optional):
 #   ARNOLD_BASE_DIR             dir that contains runtime-candidates/ (default: /workspace)
 #   ARNOLD_BASE_REPO            repo that owns the worktrees          (default: $ARNOLD_BASE_DIR/arnold)
@@ -43,17 +49,27 @@ set -euo pipefail
 
 DRY=0
 RESTORE_PROVEN=0
+FIXER_BRANCH=""
 POSITIONAL=()
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run) DRY=1 ;;
-    --restore-proven) RESTORE_PROVEN=1 ;;
-    *) POSITIONAL+=("$arg") ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY=1; shift ;;
+    --restore-proven) RESTORE_PROVEN=1; shift ;;
+    --fixer-branch)
+      FIXER_BRANCH="${2:-}"
+      if [[ -z "$FIXER_BRANCH" ]]; then
+        echo "arnold-gc-sweep: --fixer-branch requires a branch name" >&2
+        exit 64
+      fi
+      shift 2
+      ;;
+    --fixer-branch=*) FIXER_BRANCH="${1#--fixer-branch=}"; shift ;;
+    *) POSITIONAL+=("$1"); shift ;;
   esac
 done
 
 if [[ ${#POSITIONAL[@]} -ne 1 ]]; then
-  echo "usage: arnold-gc-sweep [--dry-run] [--restore-proven] <manifest-dir>" >&2
+  echo "usage: arnold-gc-sweep [--dry-run] [--restore-proven] [--fixer-branch <branch>] <manifest-dir>" >&2
   exit 64
 fi
 
@@ -165,15 +181,44 @@ for mf in "$MANIFEST_DIR"/*.json; do
   if [[ "$RESTORE_PROVEN" == "1" || -f "$MANIFEST_DIR/restore-proven.txt" ]]; then
     RESTORE_OK=1
   fi
+
+  # (d) fixer-branch open-PR gate (P6 terminal-state rules): when the caller
+  #     asks to delete the manifest-declared fixer branch, the sweep refuses
+  #     while a pull ref on the remote still points at the branch head — an
+  #     open PR is load-bearing and the branch must never be deleted under it.
+  #     The gate is checked BEFORE the worktree removal (and before dry-run so
+  #     the preview reports it too).  REFUSE is a FAIL-CLOSED terminal-state
+  #     violation: it exits 3 (like promote's CAS rejection) so the P6
+  #     terminal finalizer can detect the refusal and block instead of
+  #     believing the sweep succeeded.
+  PR_REFERENCED=0
+  if [[ -n "$FIXER_BRANCH" && "$BRANCH" == "$FIXER_BRANCH" ]]; then
+    PULL_HEADS="$(git -C "$ROOT" ls-remote "$REMOTE" "refs/pull/*/head" 2>/dev/null | awk '{print $1}')"
+    if [[ -n "$PULL_HEADS" ]] && grep -qxF "$ORIGIN_HEAD" <<<"$PULL_HEADS"; then
+      PR_REFERENCED=1
+    fi
+  fi
   if [[ "$DRY" == "1" ]]; then
+    if [[ "$PR_REFERENCED" == "1" ]]; then
+      echo "gc-sweep: WOULD-REFUSE '$SLUG' — fixer branch '$FIXER_BRANCH' head is still referenced by an open pull ref on '$REMOTE'; sweep would be refused (P6 terminal-state rules never sweep with a PR open)"
+      continue
+    fi
     if [[ "$SCHEDULE_REFERENCED" == "1" ]]; then
       echo "gc-sweep: WOULD-SKIP '$SLUG' — schedule-store-referenced (store '$SCHEDULE_STORE_HIT' references slug/sha); probe-4 trees must never be swept"
     elif [[ "$RESTORE_OK" == "1" ]]; then
-      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable, restore-proven, schedule-store-clear); manifest would archive to '$ARCHIVE_DIR'"
+      note=""
+      if [[ -n "$FIXER_BRANCH" && "$BRANCH" == "$FIXER_BRANCH" ]]; then
+        note="; fixer branch '$FIXER_BRANCH' would be deleted local + remote"
+      fi
+      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable, restore-proven, schedule-store-clear); manifest would archive to '$ARCHIVE_DIR'$note"
     else
       echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable; restore-proven STILL REQUIRED before actual deletion — pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR')"
     fi
     continue
+  fi
+  if [[ "$PR_REFERENCED" == "1" ]]; then
+    echo "gc-sweep: REFUSE '$SLUG' — fixer branch '$FIXER_BRANCH' head is still referenced by an open pull ref on '$REMOTE'; refusing to sweep (P6 terminal-state rules never sweep with a PR open)" >&2
+    exit 3
   fi
   if [[ "$RESTORE_OK" != "1" ]]; then
     echo "gc-sweep: SKIP '$SLUG' — not restore-proven: pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR' (a clean-room restore of the tree's runtime must be proven before deletion)"
@@ -183,7 +228,6 @@ for mf in "$MANIFEST_DIR"/*.json; do
     echo "gc-sweep: SKIP '$SLUG' — schedule-store-referenced (store '$SCHEDULE_STORE_HIT' references slug/sha); probe-4 trees must never be swept"
     continue
   fi
-
 
   # Sweep: registered-worktree removal only — never rm -rf a tree blindly.
   if git -C "$BASE_REPO" worktree remove --force "$ROOT" 2>/dev/null; then
@@ -201,6 +245,24 @@ for mf in "$MANIFEST_DIR"/*.json; do
     echo "gc-sweep: removed epic venv '$VENV'"
   fi
 
+  # P6 terminal finalizer: delete the manifest-declared fixer branch (local +
+  # remote) after a restore-proven sweep.  The open-PR gate above already
+  # refused the sweep while the branch head was load-bearing; here the branch
+  # is only deleted for the manifest that declares it (fail-closed: never
+  # delete a branch this manifest did not declare).
+  if [[ -n "$FIXER_BRANCH" && "$BRANCH" == "$FIXER_BRANCH" ]]; then
+    if git -C "$BASE_REPO" branch -D "$FIXER_BRANCH" >/dev/null 2>&1; then
+      echo "gc-sweep: deleted local fixer branch '$FIXER_BRANCH'"
+    else
+      echo "gc-sweep: note — local fixer branch '$FIXER_BRANCH' already gone"
+    fi
+    if git -C "$BASE_REPO" push "$REMOTE" --delete "$FIXER_BRANCH" >/dev/null 2>&1; then
+      echo "gc-sweep: deleted remote fixer branch '$FIXER_BRANCH' on '$REMOTE'"
+    else
+      echo "gc-sweep: note — remote fixer branch '$FIXER_BRANCH' already gone on '$REMOTE'"
+    fi
+  fi
+
   mv "$mf" "$ARCHIVE_DIR/"
   echo "gc-sweep: SWEPT '$SLUG' — worktree '$ROOT' removed; manifest archived to '$ARCHIVE_DIR/$(basename "$mf")'"
 done
@@ -216,4 +278,4 @@ if [[ -d "$BASE_DIR/runtime-candidates" ]]; then
   done
 fi
 
-echo "gc-sweep: done (--dry-run=$DRY --restore-proven=$RESTORE_PROVEN)"
+echo "gc-sweep: done (--dry-run=$DRY --restore-proven=$RESTORE_PROVEN${FIXER_BRANCH:+ --fixer-branch=$FIXER_BRANCH})"

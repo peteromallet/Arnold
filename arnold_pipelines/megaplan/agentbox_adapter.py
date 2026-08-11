@@ -1201,6 +1201,199 @@ def _build_completion_dm_payload(run: Any, *, fallback_text: str) -> dict[str, A
     }
 
 
+def _build_reconcile_pr_ready_dm(
+    *,
+    chain_label: str,
+    pr_number: int,
+    pr_url: str,
+    branch: str,
+) -> str:
+    """Plain-text summary for the reconcile-pr-ready DM."""
+    url = pr_url if isinstance(pr_url, str) and pr_url else f"PR #{pr_number}"
+    return (
+        f"Reconcile PR #{pr_number} for megaplan chain `{chain_label}` is ready "
+        f"for human review.\n"
+        f"Branch: `{branch}`\n"
+        f"{url}"
+    )
+
+
+def _build_reconcile_pr_ready_payload(
+    *,
+    chain_label: str,
+    pr_number: int,
+    pr_url: str,
+    branch: str,
+) -> dict[str, Any]:
+    """Structured Discord payload for the reconcile-pr-ready DM."""
+    fields: list[dict[str, Any]] = [
+        {"label": "Chain", "value": chain_label, "style": "code"},
+        {"label": "Branch", "value": branch, "style": "code"},
+        {"label": "PR", "value": str(pr_number), "style": "code"},
+    ]
+    links: list[dict[str, str]] = []
+    if isinstance(pr_url, str) and pr_url:
+        links.append({"label": "Review PR", "url": pr_url})
+    return {
+        "title": f"Reconcile PR ready - {chain_label}",
+        "summary": (
+            f"End-of-epic reconcile milestone `{chain_label}` opened PR "
+            f"#{pr_number} for human review on branch `{branch}`."
+        ),
+        "fields": fields,
+        "links": links,
+        "next_action": (
+            "Review and merge or close the reconcile PR; the chain parks at "
+            "awaiting_pr_merge until the PR is merged or intentionally closed."
+        ),
+    }
+
+
+def _send_reconcile_pr_ready_dm(
+    *,
+    chain_label: str,
+    pr_number: int,
+    pr_url: str,
+    branch: str,
+    fallback_text: str,
+    delivery_effects: Any | None = None,
+) -> dict[str, Any]:
+    """Send the reconcile-pr-ready DM through the sole durable owner."""
+    if delivery_effects is None:
+        raise RuntimeError(
+            "AgentBox reconcile PR DM has no durable DeliveryEffects owner"
+        )
+    try:
+        payload = _build_reconcile_pr_ready_payload(
+            chain_label=chain_label,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            branch=branch,
+        )
+        payload["idempotency_key"] = f"reconcile-pr:{chain_label}:{pr_number}"
+        return send_discord_dm(payload, delivery_effects=delivery_effects)
+    except Exception as exc:
+        LOGGER.warning(
+            "Reconcile PR ready DM send crashed for %s PR #%s",
+            chain_label,
+            pr_number,
+            exc_info=True,
+        )
+        return {
+            "ok": False,
+            "reason": "delivery_adapter_indeterminate",
+            "outcome_kind": "INDETERMINATE",
+            "error": f"{type(exc).__name__}: {exc}",
+            "message_count": 0,
+        }
+
+
+def record_reconcile_pr_ready_dm(
+    config: AgentBoxConfig,
+    operation_id: str,
+    *,
+    chain_label: str,
+    pr_number: int,
+    pr_url: str,
+    branch: str,
+) -> dict[str, Any]:
+    """Send the reconcile-pr-ready operator DM once per (chain, PR).
+
+    Mirrors the completion-DM delivery contract (:func:`_record_completion_dm`):
+    the message is routed through the resident's durable delivery-effects owner
+    (never direct Discord), keyed by ``reconcile-pr:<chain>:<pr_number>`` for
+    idempotent redelivery, and the attempt is recorded in the operation run
+    directory.
+    """
+    paths = run_dir_paths(config, operation_id)
+    dm = _build_reconcile_pr_ready_dm(
+        chain_label=chain_label,
+        pr_number=pr_number,
+        pr_url=pr_url,
+        branch=branch,
+    )
+    update_agentbox_operation(
+        config,
+        operation_id,
+        metadata={"reconcile_pr_ready_dm": dm},
+    )
+    append_event(
+        paths,
+        "megaplan_chain.reconcile_pr_ready",
+        payload={
+            "chain_label": chain_label,
+            "pr_number": pr_number,
+            "pr_url": pr_url,
+            "branch": branch,
+            "dm": dm,
+        },
+    )
+    delivery_effects = None
+    try:
+        from arnold_pipelines.megaplan.resident.delivery_effects import (
+            open_resident_delivery_effects,
+        )
+
+        configured_root = str(
+            os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or ""
+        ).strip()
+        resident_root = (
+            Path(configured_root).expanduser().resolve()
+            if configured_root
+            else config.workspace_root / "resident_store"
+        )
+        delivery_effects = open_resident_delivery_effects(
+            resident_root / "delivery_effects",
+            production_enabled=True,
+        )
+        result = _send_reconcile_pr_ready_dm(
+            chain_label=chain_label,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            branch=branch,
+            fallback_text=dm,
+            delivery_effects=delivery_effects,
+        )
+        append_event(
+            paths,
+            "megaplan_chain.reconcile_pr_ready_delivery",
+            payload={
+                "ok": bool(result.get("ok")),
+                "reason": result.get("reason"),
+                "outcome_kind": result.get("outcome_kind"),
+                "glek": result.get("glek"),
+            },
+        )
+        return result
+    except Exception as exc:
+        # Fail closed: absence/corruption of the sole durable owner never
+        # falls through to the direct Discord transport.
+        LOGGER.warning(
+            "Reconcile PR ready DM has no usable durable effect owner for operation %s",
+            operation_id,
+            exc_info=True,
+        )
+        append_event(
+            paths,
+            "megaplan_chain.reconcile_pr_ready_delivery",
+            payload={
+                "ok": False,
+                "reason": "durable_delivery_owner_unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+        return {
+            "ok": False,
+            "reason": "durable_delivery_owner_unavailable",
+            "outcome_kind": "INDETERMINATE",
+            "error": f"{type(exc).__name__}: {exc}",
+            "message_count": 0,
+        }
+    finally:
+        if delivery_effects is not None:
+            delivery_effects.close()
+
+
 def _record_pr_and_ci(
     config: AgentBoxConfig,
     operation_id: str,
@@ -1283,4 +1476,5 @@ __all__ = [
     "MegaplanChainLaunchError",
     "MegaplanChainLaunchResult",
     "get_agentbox_adapter",
+    "record_reconcile_pr_ready_dm",
 ]

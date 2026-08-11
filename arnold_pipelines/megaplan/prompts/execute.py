@@ -119,6 +119,135 @@ _EXECUTE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
 ).strip()
 
 
+_RECONCILE_OUTPUT_SHAPE_EXAMPLE = textwrap.dedent(
+    """
+    ```json
+    {
+      "selected_shas": [
+        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        "f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1"
+      ],
+      "verification_evidence": {
+        "reachability_checked": true,
+        "all_selected_reachable_from_target": true,
+        "chain_control_commits_excluded": true,
+        "excluded_shas": ["c0c0c0d0d0d0e0e0f0f0a0a0b0b0c0c0d0d0e0e0"],
+        "per_phase": [
+          {
+            "phase": "P1",
+            "sha": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+            "subject": "feat(runtime): enforce manifest admission (P1)",
+            "reason": "engine-source change under arnold_pipelines/ + arnold/"
+          }
+        ],
+        "notes": "Selection follows the per-phase commit history; only engine-source commits are selected."
+      }
+    }
+    ```
+    """
+).strip()
+
+
+_RECONCILE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
+    """
+    Role: end-of-epic reconcile selector for a megaplan chain.
+
+    Your job is SELECTION, not narrative: decide which commits this epic
+    produced belong on the release branch, and return their SHAs as JSON.
+    The per-phase commit history IS the description — do not summarize it.
+
+    Inputs you are given:
+    - The two rubric documents (megaplan reference architecture +
+      per-epic runtime end-state) that define what a compliant epic looks like.
+    - `git log --first-parent` output for the epic's milestone branches.
+    - The candidate commit list (sha + subject + touched paths per commit).
+
+    Selection rules:
+    - Select commits that implement ENGINE SOURCE changes: paths under
+      `arnold_pipelines/` and `arnold/` (the runtime engine).
+    - EXCLUDE chain-control and meta commits: briefs, docs, .megaplan chain
+      scaffolding, generated milestone artifacts, seed/template commits, and
+      anything that only manages the chain process itself.
+    - A commit is selected only if it is REACHABLE from the reconcile target
+      branch's history (the target is `main` for generated reconcile
+      milestones).  When reachability cannot be verified, do not select it;
+      note the uncertainty in `verification_evidence`.
+    - When in doubt between including and excluding a commit, EXCLUDE it and
+      record the reason — a false inclusion corrupts the release branch,
+      while an excluded commit stays in the epic's own history.
+    - Do not modify files, open PRs, or touch the repository state.  This is
+      a read-only selection task; the controller performs the cherry-pick.
+
+    Return the following JSON exactly (the authoritative output — no prose
+    outside the JSON):
+    {reconcile_output_shape}
+    """
+).strip()
+
+
+def render_reconcile_prompt(
+    *,
+    rubric_docs: list[str],
+    first_parent_log: str,
+    candidate_commits: list[dict[str, Any]],
+    target_branch: str = "main",
+) -> str:
+    """Build the codex reconcile-execution prompt.
+
+    The reconcile executor SELECTS engine commits (a JSON SHA list) rather
+    than writing narrative: the per-phase commit history IS the description.
+    ``rubric_docs`` entries are rendered as quoted document blocks,
+    ``first_parent_log`` is the ``git log --first-parent`` output, and
+    ``candidate_commits`` is a list of ``{"sha", "subject", "paths"}`` maps.
+    """
+    rubric_block = "\n\n".join(
+        textwrap.dedent(
+            f"""
+            ### Rubric document
+            ```
+            {doc}
+            ```
+            """
+        ).strip()
+        for doc in rubric_docs
+        if isinstance(doc, str) and doc.strip()
+    )
+    if not rubric_block:
+        rubric_block = "(no rubric documents were provided)"
+    commit_lines = []
+    for index, commit in enumerate(candidate_commits or [], start=1):
+        sha = str(commit.get("sha") or "").strip()
+        subject = str(commit.get("subject") or "").strip()
+        paths = commit.get("paths") or []
+        if isinstance(paths, list):
+            paths = [str(path) for path in paths if isinstance(path, str)]
+        commit_lines.append(
+            f"{index}. {sha}  {subject}\n"
+            f"   paths: {', '.join(paths) if paths else '(none listed)'}"
+        )
+    candidates_block = "\n".join(commit_lines) if commit_lines else "(no candidates)"
+    return textwrap.dedent(
+        f"""
+        {_RECONCILE_REQUIREMENTS_TEMPLATE.format(
+            reconcile_output_shape=_RECONCILE_OUTPUT_SHAPE_EXAMPLE
+        )}
+
+        Target branch: {target_branch}
+
+        ## Candidate commits
+        {candidates_block}
+
+        ## git log --first-parent
+        ```
+        {first_parent_log}
+        ```
+
+        ## Rubric documents
+        {rubric_block}
+        """
+    ).strip()
+
+
 def _execute_review_block(
     plan_dir: Path,
     capabilities: PromptProjectionCapabilities | None = None,

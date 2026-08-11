@@ -557,6 +557,146 @@ def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
     assert "schedule-store-referenced" in dry.stdout
 
 
+# ── P6 terminal finalizer: fixer-branch deletion ────────────────────────────
+
+
+def test_gc_sweep_deletes_fixer_branch_after_restore_proof(
+    sandbox: dict[str, object],
+) -> None:
+    """P6: arnold-gc-sweep --fixer-branch <branch> deletes the manifest-
+    declared fixer branch local + remote after a restore-proven sweep."""
+    worktree = sandbox["create"]("epic-fixer")
+    branch = read_manifest(sandbox, "epic-fixer")["epic"]["branch"]
+    close = sandbox["run"](CLOSE, "epic-fixer", str(manifest_path(sandbox, "epic-fixer")))
+    assert close.returncode == 0, close.stderr
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
+
+    # branch exists local + remote before the sweep
+    assert git(Path(sandbox["base_repo"]), "rev-parse", "--verify", branch)
+    assert sandbox["origin_heads"](branch)
+
+    sweep = sandbox["run"](
+        GC_SWEEP,
+        "--restore-proven",
+        "--fixer-branch",
+        branch,
+        str(sandbox["manifest_dir"]),
+    )
+    assert sweep.returncode == 0, sweep.stderr
+    assert "SWEPT" in sweep.stdout
+    assert "deleted local fixer branch" in sweep.stdout
+    assert "deleted remote fixer branch" in sweep.stdout
+    assert not worktree.exists()
+    assert (Path(sandbox["manifest_dir"]) / "archived" / "epic-fixer.json").exists()
+    # branch gone local AND remote
+    gone = subprocess.run(
+        ["git", "-C", str(sandbox["base_repo"]), "rev-parse", "--verify", branch],
+        capture_output=True,
+        text=True,
+    )
+    assert gone.returncode != 0
+    assert not sandbox["origin_heads"](branch)
+
+
+def test_gc_sweep_refuses_fixer_branch_deletion_when_pr_still_open(
+    sandbox: dict[str, object],
+) -> None:
+    """P6 terminal-state rules: the sweep REFUSES while a pull ref on the
+    remote still points at the fixer branch head (an open PR is load-bearing;
+    never delete a branch under an open PR)."""
+    worktree = sandbox["create"]("epic-fixerpr")
+    branch = read_manifest(sandbox, "epic-fixerpr")["epic"]["branch"]
+    close = sandbox["run"](
+        CLOSE, "epic-fixerpr", str(manifest_path(sandbox, "epic-fixerpr"))
+    )
+    assert close.returncode == 0, close.stderr
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
+    branch_head = sandbox["origin_heads"](branch)
+    assert branch_head
+    # simulate an open PR: a refs/pull/*/head ref on the remote pointing at
+    # the fixer branch head (GitHub exposes open PR heads this way)
+    git(
+        Path(sandbox["base_repo"]),
+        "update-ref",
+        "refs/pull/42/head",
+        branch_head,
+    )
+    git(
+        Path(sandbox["base_repo"]),
+        "push",
+        str(sandbox["origin"]),
+        "refs/pull/42/head",
+    )
+
+    sweep = sandbox["run"](
+        GC_SWEEP,
+        "--restore-proven",
+        "--fixer-branch",
+        branch,
+        str(sandbox["manifest_dir"]),
+    )
+    # fail-closed: REFUSE exits 3 (detectable by the P6 terminal finalizer)
+    assert sweep.returncode == 3, sweep.stdout
+    assert "REFUSE" in sweep.stderr
+    assert "open pull ref" in sweep.stderr
+    # nothing deleted: worktree + manifest + branch all survive
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-fixerpr").exists()
+    assert sandbox["origin_heads"](branch)
+    # dry-run previews the same refusal (gate checked before the preview)
+    dry = sandbox["run"](
+        GC_SWEEP,
+        "--dry-run",
+        "--restore-proven",
+        "--fixer-branch",
+        branch,
+        str(sandbox["manifest_dir"]),
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert "WOULD-REFUSE" in dry.stdout
+    assert worktree.is_dir()
+
+
+def test_close_verifies_fixer_branch_pushed_before_backstop_tag(
+    sandbox: dict[str, object],
+) -> None:
+    """P6: arnold-close verifies the manifest-declared fixer branch
+    (epic.branch) is pushed BEFORE the backstop tag — an unpushed fixer
+    branch means the runtime's own line is box-only and close must fail."""
+    worktree = sandbox["create"]("epic-fixerunpushed")
+    branch = read_manifest(sandbox, "epic-fixerunpushed")["epic"]["branch"]
+    # advance the fixer branch locally WITHOUT pushing
+    epic_commit(worktree, "unpushed.txt", "unpushed\n", "unpushed fixer line")
+    proc = sandbox["run"](
+        CLOSE, "epic-fixerunpushed", str(manifest_path(sandbox, "epic-fixerunpushed"))
+    )
+    assert proc.returncode != 0
+    assert "fixer branch" in proc.stderr.lower()
+    assert read_manifest(sandbox, "epic-fixerunpushed")["state"] == "active"
+
+
+def test_close_passes_when_worktree_on_other_branch_but_fixer_pushed(
+    sandbox: dict[str, object],
+) -> None:
+    """The fixer branch is verified as a REF, not via the checked-out HEAD:
+    close must pass when the runtime worktree sits on a milestone/reconcile
+    branch while the manifest-declared fixer branch stays pushed (the P6
+    reconcile-flow shape)."""
+    worktree = sandbox["create"]("epic-fixerother")
+    branch = read_manifest(sandbox, "epic-fixerother")["epic"]["branch"]
+    # move the worktree onto a milestone-style branch + push it
+    git(worktree, "checkout", "-b", "reconcile/epic-fixerother-20260811")
+    epic_commit(worktree, "reconcile.txt", "reconciled\n", "reconcile work")
+    git(worktree, "push", "origin", "HEAD:refs/heads/reconcile/epic-fixerother-20260811")
+    # the fixer branch itself is still pushed (unmoved since creation)
+    assert sandbox["origin_heads"](branch)
+    proc = sandbox["run"](
+        CLOSE, "epic-fixerother", str(manifest_path(sandbox, "epic-fixerother"))
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert read_manifest(sandbox, "epic-fixerother")["state"] == "closed"
+
+
 # ── arnold-promote ───────────────────────────────────────────────────────────
 
 

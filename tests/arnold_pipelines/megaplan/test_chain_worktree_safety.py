@@ -81,6 +81,8 @@ def _write_chain_spec(
         f"base_branch: {base_branch}\n"
         "anchors:\n"
         "  north_star: NORTHSTAR.md\n"
+        "reconciliation:\n"
+        "  enabled: false\n"
         "milestones:\n"
         "  - label: m1\n"
         f"    idea: {idea}\n"

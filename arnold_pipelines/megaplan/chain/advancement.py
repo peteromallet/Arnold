@@ -25,7 +25,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .spec import ChainSpec, SuccessorSpec, effective_chain_policy, load_runtime_policy, load_spec
+from .spec import (
+    ChainSpec,
+    MilestoneSpec,
+    SuccessorSpec,
+    effective_chain_policy,
+    load_runtime_policy,
+    load_spec,
+)
 
 
 HUMAN_ONLY_STATES = frozenset(
@@ -77,11 +84,23 @@ def policy_for_spec(
     spec: ChainSpec,
     *,
     runtime_overrides: Mapping[str, Any] | None = None,
+    milestone: MilestoneSpec | None = None,
 ) -> AdvancementPolicy:
     effective = effective_chain_policy(spec, dict(runtime_overrides or {}))
     review = effective.get("review_policy") or {}
+    merge_policy = spec.merge_policy
+    if milestone is not None:
+        # P6: per-milestone merge_policy override; a ``kind: reconcile``
+        # milestone FORCES review even when the chain is auto (the generated
+        # milestone always declares it, this is the belt-and-braces guard).
+        if milestone.kind == "reconcile":
+            merge_policy = "review"
+        elif milestone.merge_policy:
+            merge_policy = milestone.merge_policy
+        if merge_policy == "manual":
+            merge_policy = "review"
     return AdvancementPolicy(
-        merge_policy=spec.merge_policy,
+        merge_policy=merge_policy,
         clean_milestone_pr=str(review.get("clean_milestone_pr") or "auto"),
         auto_approve=spec.auto_approve,
         source=str(effective.get("source") or "chain_yaml"),

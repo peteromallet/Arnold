@@ -2491,6 +2491,61 @@ def _render_execute_prompt_for_dispatch(
     return rendered.prompt
 
 
+def _reconcile_prompt_override(
+    plan_dir: Path,
+    batch_prompt: str | None,
+) -> str | None:
+    """Render the P6 reconcile executor prompt when this plan carries the marker.
+
+    The chain writes ``reconcile_inputs.json`` into a ``kind: reconcile``
+    milestone's plan dir at init (rubric docs + ``git log --first-parent`` +
+    candidate commits + target branch).  When present, the execute step is a
+    SELECTION task whose authoritative output is the JSON SHA list
+    (``selected_shas`` + ``verification_evidence``) — the generic batch
+    prompt cannot carry that contract, so the reconcile prompt replaces it.
+    Returns ``batch_prompt`` unchanged when the marker is absent or unusable
+    (fail-open on marker problems: the brief still instructs selection).
+    """
+    if batch_prompt is None:
+        return None
+    inputs_path = plan_dir / "reconcile_inputs.json"
+    if not inputs_path.is_file():
+        return batch_prompt
+    try:
+        from arnold_pipelines.megaplan.prompts.execute import render_reconcile_prompt
+
+        inputs = json.loads(inputs_path.read_text(encoding="utf-8"))
+        if not isinstance(inputs, dict):
+            return batch_prompt
+        rubric_docs = inputs.get("rubric_docs")
+        candidate_commits = inputs.get("candidate_commits")
+        first_parent_log = inputs.get("first_parent_log")
+        target_branch = inputs.get("target_branch")
+        # Shape-validate the marker payload: a malformed marker must fall
+        # back to the generic prompt, never render garbage (e.g. iterating a
+        # string rubric_docs character-by-character).
+        if not isinstance(rubric_docs, list) or not all(
+            isinstance(doc, str) for doc in rubric_docs
+        ):
+            return batch_prompt
+        if not isinstance(candidate_commits, list) or not all(
+            isinstance(commit, dict) for commit in candidate_commits
+        ):
+            return batch_prompt
+        if not isinstance(first_parent_log, str):
+            return batch_prompt
+        if not isinstance(target_branch, str) or not target_branch.strip():
+            target_branch = "main"
+        return render_reconcile_prompt(
+            rubric_docs=rubric_docs,
+            first_parent_log=first_parent_log,
+            candidate_commits=candidate_commits,
+            target_branch=target_branch,
+        )
+    except Exception:  # noqa: BLE001 - marker problems never break execute
+        return batch_prompt
+
+
 def _capture_execute_payload(
     *,
     agent: str,
@@ -4171,13 +4226,16 @@ def handle_execute_one_batch(
         batch_task_ids,
         batch_sense_check_ids,
     )
-    batch_prompt = _execute_batch_prompt(
-        state,
+    batch_prompt = _reconcile_prompt_override(
         plan_dir,
-        batch_task_ids,
-        completed_ids,
-        root=root,
-        batch_template_path=batch_template_path,
+        _execute_batch_prompt(
+            state,
+            plan_dir,
+            batch_task_ids,
+            completed_ids,
+            root=root,
+            batch_template_path=batch_template_path,
+        ),
     )
 
     # Per-batch tier resolution: when tier_map is provided, select the model
@@ -6241,18 +6299,23 @@ def handle_execute_auto_loop(
         batch_prompt = (
             None
             if single_batch_mode
-            else _execute_batch_prompt(
-                state,
+            else _reconcile_prompt_override(
                 plan_dir,
-                batch_task_ids,
-                completed_task_ids,
-                root=root,
-                rework_context=(
-                    _review_rework_context(review_data, finalize_data, batch_task_ids)
-                    if rework_mode
-                    else None
+                _execute_batch_prompt(
+                    state,
+                    plan_dir,
+                    batch_task_ids,
+                    completed_task_ids,
+                    root=root,
+                    rework_context=(
+                        _review_rework_context(
+                            review_data, finalize_data, batch_task_ids
+                        )
+                        if rework_mode
+                        else None
+                    ),
+                    batch_template_path=batch_template_path,
                 ),
-                batch_template_path=batch_template_path,
             )
         )
         batches_total_for_observation = total_batches

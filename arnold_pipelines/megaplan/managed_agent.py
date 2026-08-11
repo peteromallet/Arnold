@@ -75,6 +75,7 @@ AUTOMATIC_RUN_KINDS = frozenset(
         "automatic_watchdog_source_repair",
         "automatic_legacy_fixer",
         "automatic_research_subagent",
+        "automatic_reconcile",
     }
 )
 MACHINE_ORIGIN_KINDS = frozenset(
@@ -88,6 +89,7 @@ MACHINE_ORIGIN_KINDS = frozenset(
         "periodic_progress_auditor",
         "legacy_fixer_wrapper",
         "managed_parent_agent",
+        "reconcile_controller",
     }
 )
 _PROVENANCE_SAFE = frozenset(

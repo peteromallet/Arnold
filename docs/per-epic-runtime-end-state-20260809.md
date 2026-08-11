@@ -471,3 +471,13 @@ The plan removes ALL six selectors — no "transport" exemption. Remaining:
 - arnold-supervise reads MEGAPLAN_SUPERVISOR_SOURCE (test_supervisor_runtime_isolation.py:356 asserts it) — drop the selector; SUPERVISE_SOURCE = manifest runtime root / /workspace/arnold.
 - cloud/cli.py launch transport reads MEGAPLAN_LAUNCH_RUNTIME_SRC / MEGAPLAN_RUNTIME_SRC (test_editable_install_sync.py:90-91, test_cloud_chain_command.py:205/311) — the chain-start identity comes from ARNOLD_RUNTIME_MANIFEST alone (already exported by _manifest_runtime_activate_command); drop the launch SRC/REVISION transport exports. The launch PIN (snapshot before hot-env) survives, expressed via the manifest env.
 - Fixed-literal exports (e.g. entrypoint `export MEGAPLAN_RUNTIME_SRC=/workspace/arnold` for the pane-environ health check) are NOT selector reads and stay.
+
+### G6 gate (2026-08-10): NO-GO → two blockers before default-on rollout
+
+1. Legacy-chain generated-milestone persistence uses non-atomic write_text
+   (chain/__init__.py ~:6879) — a crash can truncate/corrupt the spec. Fix:
+   atomic tmp+rename write + a crash/restart fixture proving insertion
+   survives interruption.
+2. The final-conformance RECORDED-skip is log-only (:6810) and skips on ANY
+   terminal validate, not specifically final_conformance_gate. Fix: persist a
+   durable skip record (sidecar) + narrow the skip to final_conformance_gate.

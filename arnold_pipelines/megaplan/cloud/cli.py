@@ -4584,7 +4584,16 @@ _NORTH_STAR_TEMPLATE_PHRASES = (
 def _multi_sprint_north_star_findings(local_spec_path: Path, chain_spec: Any) -> list[dict[str, Any]]:
     """Return blocking findings for multi-sprint chains with stub North Stars."""
     milestones = list(getattr(chain_spec, "milestones", []) or [])
-    if len(milestones) <= 1:
+    # P6: the generated ``kind: reconcile`` terminal milestone is a meta-stage
+    # (engine PR + close/sweep), not a product sprint.  Counting it would turn
+    # every scaffolded single-sprint chain into "multi-sprint" and wrongly
+    # demand a filled-in North Star.
+    product_milestones = [
+        milestone
+        for milestone in milestones
+        if getattr(milestone, "kind", "product") != "reconcile"
+    ]
+    if len(product_milestones) <= 1:
         return []
     north_star = getattr(getattr(chain_spec, "anchors", None), "north_star", None)
     if not isinstance(north_star, str) or not north_star.strip():

@@ -13,7 +13,10 @@
 #
 #   Phase 1 — verify:
 #     a. all git state committed (git status --porcelain empty in the epic worktree)
-#     b. all git state pushed (local HEAD == origin/<epic branch> HEAD)
+#     b. the manifest-declared FIXER branch (epic.branch) is pushed
+#        (local refs/heads/<epic.branch> == origin refs/heads/<epic.branch>);
+#        the backstop tag below pins the closed HEAD, so the runtime's own
+#        durable line must be origin-resolvable BEFORE the tag is created
 #     c. no open lock files under the marker dir (manifest-writer locks
 #        <name>.json.lock are excluded — they are serialization locks, not
 #        runtime liveness)
@@ -102,17 +105,32 @@ if [[ -n "$DIRTY" ]]; then
   exit 1
 fi
 
-# 1b. All git state pushed to origin.
-LOCAL_HEAD="$(git -C "$WORKTREE" rev-parse HEAD)"
+# 1b. All git state pushed to origin.  The manifest-declared FIXER branch
+#     (epic.branch) is the runtime's durable identity: it must be pushed to
+#     origin BEFORE the backstop tag is created (the tag pins the closed HEAD
+#     and must stay origin-resolvable; an unpushed fixer branch means the
+#     runtime's own line is box-only and nothing authoritative runs unpushed).
+#     The fixer branch is compared as a ref, not via the checked-out HEAD: the
+#     runtime worktree may sit on a milestone/reconcile branch at close time
+#     while epic.branch remains the fixer branch.
+if ! LOCAL_BRANCH_HEAD="$(git -C "$WORKTREE" rev-parse --verify "refs/heads/$BRANCH" 2>/dev/null)"; then
+  echo "arnold-close: phase-1 FAILED — manifest-declared fixer branch 'refs/heads/$BRANCH' is missing locally; cannot verify it is pushed" >&2
+  exit 1
+fi
 ORIGIN_HEAD="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/heads/$BRANCH" | awk '{print $1}')"
 if [[ -z "$ORIGIN_HEAD" ]]; then
-  echo "arnold-close: phase-1 FAILED — refs/heads/$BRANCH does not exist on '$REMOTE'; push before closing (nothing authoritative runs unpushed)" >&2
+  echo "arnold-close: phase-1 FAILED — fixer branch 'refs/heads/$BRANCH' does not exist on '$REMOTE'; push before closing (nothing authoritative runs unpushed)" >&2
   exit 1
 fi
-if [[ "$LOCAL_HEAD" != "$ORIGIN_HEAD" ]]; then
-  echo "arnold-close: phase-1 FAILED — local HEAD $LOCAL_HEAD != origin/$BRANCH $ORIGIN_HEAD; push before closing" >&2
+if [[ "$LOCAL_BRANCH_HEAD" != "$ORIGIN_HEAD" ]]; then
+  echo "arnold-close: phase-1 FAILED — fixer branch 'refs/heads/$BRANCH' local $LOCAL_BRANCH_HEAD != origin $ORIGIN_HEAD; push before closing" >&2
   exit 1
 fi
+# The backstop tag pins the CLOSED HEAD — the worktree's checked-out HEAD
+# (the final runtime state, e.g. the reconcile branch tip after a merged
+# reconcile PR).  The fixer branch verification above is the push gate; the
+# tag is the snapshot of what is being closed.
+LOCAL_HEAD="$(git -C "$WORKTREE" rev-parse HEAD)"
 
 # 1c. No open lock files under the marker dir. Manifest-writer locks
 #     (<name>.json.lock) are excluded: they are writer-serialization locks that
