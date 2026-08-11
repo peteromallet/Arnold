@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ from arnold.workflow.execution_attempt_ledger import (
     RuntimeAdapter,
     VersionSet,
 )
-from arnold_pipelines.megaplan.custody.action_validator import ActionBoundaryContext
+from arnold_pipelines.megaplan.custody.action_validator import ActionBoundaryContext, GateResult
 from arnold_pipelines.megaplan.custody.common_worker_dispatch import (
     COMMON_WORKER_DISPATCH_SURFACE,
     COMMON_WORKER_DISPATCH_WRITER_ID,
@@ -259,6 +259,67 @@ def _facade(tmp_path: Path) -> tuple[SqliteAttemptLedgerStore, WbcRuntimeProduce
         enforcement_enabled=True,
     )
     return store, facade
+
+
+def _wire_dispatch_custody(spec: CommonWorkerDispatchSpec) -> CommonWorkerDispatchSpec:
+    """Wire valid custody stores into a production-built dispatch facade.
+
+    ``build_worker_dispatch_spec`` constructs its facade without lease/outbox
+    stores; under default enforcement (deny-by-default) the action boundary
+    must see valid custody to be AUTHORIZED.  This helper injects a lease and
+    outbox record for each boundary action type on the spec so the dispatch
+    runs end-to-end as an authorized worker dispatch.
+    """
+    leases: list[CustodyLease] = []
+    records: list[OutboxRecord] = []
+    for ctx in (
+        spec.start_action_context,
+        spec.success_action_context,
+        spec.failure_action_context,
+    ):
+        digest = ctx.target.target_digest
+        lease_id = f"custody-lease-{digest[:16]}"
+        leases.append(
+            CustodyLease(
+                lease_id=lease_id,
+                target_key=ctx.target,
+                owner=("runtime-host", "4321", "boot-1"),
+                epoch=5,
+                acquired_at="2026-07-20T00:00:00+00:00",
+                expires_at="2999-01-01T00:00:00+00:00",
+                fence_token=str(ctx.coordinator_fence_token),
+                status="active",
+                run_authority_grant_id=ctx.run_authority_grant_id,
+                wbc_attempt_reference=ctx.wbc_attempt_reference,
+            )
+        )
+        records.append(
+            OutboxRecord(
+                outbox_id=f"outbox-{ctx.action_type}-{spec.attempt_id}",
+                lease_id=lease_id,
+                record_type=OutboxRecordType.LEASE_ACQUIRE,
+                status=OutboxRecordStatus.PENDING,
+                occurred_at="2026-07-20T00:00:00+00:00",
+                idempotency_key=f"idem-{ctx.action_type}-{spec.attempt_id}",
+                wbc_attempt_reference=ctx.wbc_attempt_reference,
+                run_authority_grant_id=ctx.run_authority_grant_id,
+                coordinator_fence_token=ctx.coordinator_fence_token,
+                custody_epoch=5,
+                payload={
+                    "schema_version": spec.expected_source_version,
+                    "target_digest": digest,
+                },
+            )
+        )
+    wired = WbcRuntimeProducerFacade(
+        spec.facade._ledger_store,
+        source_lookup=spec.facade._source_lookup,
+        lease_store=FakeLeaseStore(tuple(leases)),
+        outbox=FakeOutbox(tuple(records)),
+        promotion_mode=PromotionMode.ACTION_OFF,
+        enforcement_enabled=True,
+    )
+    return dc_replace(spec, facade=wired)
 
 
 def _worker() -> worker_impl.WorkerResult:
@@ -560,6 +621,8 @@ def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged
     assert first.start_source_lookup_key.endswith(":critique:scope:initial:start")
     assert second.start_source_lookup_key.endswith(":critique:safety:initial:start")
 
+    first = _wire_dispatch_custody(first)
+    second = _wire_dispatch_custody(second)
     first.run(lambda _start: _worker())
     second.run(lambda _start: _worker())
     manifest = query_worker_dispatch_manifest(
@@ -693,6 +756,7 @@ def test_run_step_with_worker_enriches_wbc_metadata_with_worker_and_fallback_ide
         fallback_trigger="availability",
     )
     assert spec is not None
+    spec = _wire_dispatch_custody(spec)
 
     def fake_legacy(*args: Any, **kwargs: Any) -> tuple[worker_impl.WorkerResult, str, str, bool]:
         del args, kwargs
@@ -731,3 +795,114 @@ def test_run_step_with_worker_enriches_wbc_metadata_with_worker_and_fallback_ide
     assert evidence["fallback_trigger"] == "availability"
     assert evidence["worker_channel"] == "shannon_stream"
     assert evidence["auth_channel"] == "api_key"
+
+
+# ── P7A: worker-dispatch facade is ENFORCED by default ────────────────────
+
+
+def test_worker_dispatch_spec_is_enforced_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (P7A): the production dispatch facade must be ENFORCED under
+    default env — a valid dispatch yields an AUTHORIZED boundary, not
+    shadow_pass."""
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    state = {
+        "name": "plan-p7a",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-p7a"},
+        "active_step": {"run_id": "run-p7a"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    spec = build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step="review",
+        agent="claude",
+        selected_spec="claude:claude-sonnet-4-6:high",
+        route_kind="direct",
+    )
+    assert spec is not None
+    spec = _wire_dispatch_custody(spec)
+
+    result = spec.run(lambda _start: _worker())
+
+    assert result.reserve.action_boundary is not None
+    assert result.reserve.action_boundary.gate_result == GateResult.AUTHORIZED
+    assert result.reserve.action_boundary.enforcement_enabled is True
+    assert result.reserve.action_boundary.gate_result is not GateResult.SHADOW_PASS
+    assert result.reserve.action_boundary.is_shadow is False
+    assert [event.event_type for event in spec.facade._ledger_store.read_events(spec.attempt_id)] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.COMPLETED,
+    ]
+
+
+def test_worker_dispatch_spec_denies_when_custody_is_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under default enforcement, a dispatch without valid custody is denied —
+    the boundary must not fall through to shadow_pass."""
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    state = {
+        "name": "plan-p7a-denied",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-p7a-denied"},
+        "active_step": {"run_id": "run-p7a-denied"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    spec = build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step="review",
+        agent="claude",
+        selected_spec="claude:claude-sonnet-4-6:high",
+        route_kind="direct",
+    )
+    assert spec is not None
+
+    with pytest.raises(ActionBoundaryDeniedError, match="not authorized"):
+        spec.run(lambda _start: _worker())
+
+
+def test_worker_dispatch_spec_is_shadow_only_when_explicitly_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shadow mode is reachable only via the explicit disable switch; the
+    facade must be constructed with enforcement OFF then."""
+    monkeypatch.setenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", "0")
+    state = {
+        "name": "plan-p7a-shadow",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-p7a-shadow"},
+        "active_step": {"run_id": "run-p7a-shadow"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    spec = build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step="review",
+        agent="claude",
+        selected_spec="claude:claude-sonnet-4-6:high",
+        route_kind="direct",
+    )
+    assert spec is not None
+    assert spec.facade._enforcement_enabled is False
