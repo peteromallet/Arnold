@@ -86,13 +86,6 @@ export CODEX_HOME=/workspace/.codex
 export ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1
 umask 077
 
-# Seed /root/.hermes/.env from DEEPSEEK_API_KEY (idempotent; never overwrite an
-# existing key line).
-if [[ -n "${DEEPSEEK_API_KEY:-}" ]] && ! grep -q '^DEEPSEEK_API_KEY=' /root/.hermes/.env 2>/dev/null; then
-    printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY" >> /root/.hermes/.env
-    chmod 600 /root/.hermes/.env
-fi
-
 # --- dependency roots + auth guards ------------------------------------------
 for dep in fire openai requests; do
     if [[ ! -f "$dependency_root/$dep/__init__.py" ]]; then
@@ -102,10 +95,6 @@ for dep in fire openai requests; do
 done
 if [[ ! -s "$CODEX_HOME/auth.json" ]]; then
     echo "schedule-run-once: $CODEX_HOME/auth.json missing or empty" >&2
-    exit 1
-fi
-if [[ ! -f /root/.hermes/.env ]] || [[ "$(stat -c %a /root/.hermes/.env 2>/dev/null || true)" != "600" ]]; then
-    echo "schedule-run-once: /root/.hermes/.env missing or not mode 600" >&2
     exit 1
 fi
 
