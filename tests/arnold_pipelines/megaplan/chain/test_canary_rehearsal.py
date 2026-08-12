@@ -121,12 +121,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
 import yaml
 
 from arnold.workflow.attempt_ledger_store import (
+    AttemptEventType,
     AttemptLedgerError,
     SqliteAttemptLedgerStore,
 )
@@ -138,6 +140,8 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     verify_external_runtime_identity,
 )
 from arnold_pipelines.megaplan.chain.occurrence_join import (
+    occurrence_adoption_claim_attempt_id,
+    occurrence_adoption_join_lease_id,
     occurrence_claim_attempt_id,
     occurrence_join_lease_id,
 )
@@ -630,7 +634,19 @@ def _repair_identity() -> dict[str, object]:
     )
 
 
-def _plan_payload(identity: dict[str, object]) -> dict[str, object]:
+def _plan_payload(
+    identity: dict[str, object] | None = None,
+    *,
+    failure_recorded_at: str = "2026-08-12T00:00:00Z",
+) -> dict[str, object]:
+    """Plan-state payload for the copied-state rehearsal trees.
+
+    The plan state is IDENTITY-LESS by construction (T-0101e'): the blocked
+    occurrence being adopted carries no synthetic v1 repair identity
+    anywhere (not in ``meta``, not in ``latest_failure.metadata``) — the
+    old synthetic v1 seeding is removed.  The REQUEST-side identity (used by
+    ``_enqueue_repair``) is a separate, explicitly persisted test-owned fact.
+    """
     return {
         "schema_version": 1,
         "name": PLAN,
@@ -640,15 +656,15 @@ def _plan_payload(identity: dict[str, object]) -> dict[str, object]:
         "latest_failure": {
             "kind": "deterministic_phase_failure",
             "phase": "gate",
-            "recorded_at": "2026-08-12T00:00:00Z",
+            "recorded_at": failure_recorded_at,
             "message": "blocked_no_lease: no current custody lease for the gate boundary",
-            "metadata": {"blocked_no_lease": "gate", "repair_identity": identity},
+            "metadata": {"blocked_no_lease": "gate"},
         },
         "resume_cursor": {
             "phase": "gate",
             "retry_strategy": "repair_phase_contract",
         },
-        "meta": {"repair_identity": identity, "kept": True},
+        "meta": {"kept": True},
     }
 
 
@@ -2564,3 +2580,857 @@ def test_canary_rehearsal_cli_receipt_write_failure_injection(
     assert receipt["relation"]["decision_request_id"] == state["queue"]["request"][
         "request_id"
     ]
+
+
+# ── T-0101e' — identity-less copied-state adoption sequence ────────────────
+
+def _rehearsal_adopt_argv(
+    spec_path: Path,
+    tmp_path: Path,
+    *,
+    plan_path: Path,
+    plan_payload: dict,
+    marker_path: Path,
+    manifest_path: Path,
+    control_identity: Path,
+    control_receipt: Path,
+    roots: dict,
+    actor: str = "operator",
+    receipt_name: str = "occurrence-adopt-receipt.json",
+    failure_recorded_at: str = "2026-08-11T07:35:34Z",
+) -> list[str]:
+    """argv for ``megaplan chain occurrence-adopt`` against the rehearsed tree.
+
+    Every expected sha is computed from a fresh reread with the SAME
+    canonicalization the command uses, so the guard pass is byte-exact.
+    """
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    pause = state.metadata.get("operator_pause")
+    pause_sha = (
+        "sha256:" + _canonical_sha256(pause)
+        if pause is not None
+        else "sha256:" + "0" * 64
+    )
+    plan_dir = tmp_path / ".megaplan" / "plans" / PLAN
+    latest_failure = plan_payload["latest_failure"]
+    resume_cursor = plan_payload["resume_cursor"]
+    if failure_recorded_at != plan_payload["latest_failure"]["recorded_at"]:
+        latest_failure = dict(latest_failure)
+        latest_failure["recorded_at"] = failure_recorded_at
+    return [
+        "chain",
+        "occurrence-adopt",
+        "--spec", str(spec_path),
+        "--project-dir", str(tmp_path),
+        "--session", SESSION,
+        "--expected-current-plan", PLAN,
+        "--expected-phase", "gate",
+        "--expected-failure-kind", "deterministic_phase_failure",
+        "--expected-failure-code", "blocked_no_lease",
+        "--expected-failure-recorded-at", failure_recorded_at,
+        "--expected-resume-phase", "gate",
+        "--expected-retry-strategy", "repair_phase_contract",
+        "--expected-chain-state-sha256", "sha256:" + _sha256_file(
+            chain_spec._state_path_for(spec_path)
+        ),
+        "--expected-plan-state-sha256", "sha256:" + _sha256_file(plan_path),
+        "--expected-latest-failure-sha256", "sha256:" + _canonical_sha256(latest_failure),
+        "--expected-resume-cursor-sha256", "sha256:" + _canonical_sha256(resume_cursor),
+        "--expected-pause-authority-sha256", pause_sha,
+        "--runtime-manifest", str(manifest_path),
+        "--expected-runtime-manifest-sha256", "sha256:" + _sha256_file(manifest_path),
+        "--marker", str(marker_path),
+        "--expected-marker-sha256", "sha256:" + _sha256_file(marker_path),
+        "--runtime-identity", str(control_identity),
+        "--runtime-provenance-receipt", str(control_receipt),
+        "--candidate-root", roots["candidate_root"],
+        "--expected-runtime-roots-sha256", "sha256:" + _canonical_sha256(roots),
+        "--reason", "T-0101 rehearsal: adopt the identity-less blocked occurrence",
+        "--actor", actor,
+        "--receipt", str(tmp_path / ".megaplan" / "plans" / PLAN / "evidence" / receipt_name),
+    ]
+
+
+def _copy_rehearsal_tree(
+    src: Path, dst: Path, src_spec_path: Path
+) -> Path:
+    """Copy the rehearsed tree and rematerialize its chain state.
+
+    The chain-state storage path is derived from the spec path, so the copy
+    needs its own state file (the spec-path-keyed bytes are re-saved from the
+    source state for the copy's spec path).
+    """
+    shutil.copytree(src, dst, symlinks=True)
+    new_spec = dst / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    state = load_chain_state(src_spec_path, verify_execution_binding=False)
+    save_chain_state(new_spec, state)
+    return new_spec
+
+
+def test_canary_rehearsal_identityless_adoption_sequence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    """Copied-state case that begins with repair_identity = null.
+
+    Runs the full T-0101 sequence on identity-less state:
+
+        pause → prior T-0101 cutovers → occurrence-adopt → enqueue/accept
+        → occurrence-join → resume
+
+    and exercises every T-0101e' property: three identical runs produce the
+    same key/request/decision; one-bit changes to EVERY CAS digest refuse
+    with zero mutation; different plan/timestamp/cursor/roots produce a
+    different key; non-operator / missing pause / non-null existing identity
+    / ambiguous failure / unequal roots refuse; crash injection after the
+    adoption-authority / request writes converges on retry; two concurrent
+    adopters yield one record/request/accepted decision; superseding the
+    accepted decision blocks join; the join produces one real current
+    lease/epoch with request→decision→claim→attempt equality; resume
+    preserves the gate cursor byte-for-byte with fresh typed progress.
+    """
+    # ── copied state: progressed, blocked, UNBOUND chain, NO repair identity ─
+    spec_path = _pin_legacy_chain(tmp_path)
+    _git(tmp_path, "checkout", "-b", BRANCH)
+    chain_state = ChainState()
+    chain_state.current_milestone_index = 0
+    chain_state.current_plan_name = PLAN
+    chain_state.last_state = "blocked"
+    chain_state.chain_session = SESSION
+    chain_state.completed = []
+    save_chain_state(spec_path, chain_state)  # metadata stays unbound/unpaused
+
+    # The plan state is IDENTITY-LESS: no meta.repair_identity and no
+    # latest_failure.metadata.repair_identity (the synthetic v1 seeding is
+    # removed).  No repair request is enqueued at setup — the adoption
+    # command creates request + accepted decision itself.
+    plan_payload = _plan_payload(failure_recorded_at="2026-08-11T07:35:34Z")
+    plan_path = _write_plan_state(tmp_path, plan_payload)
+
+    real_old_identity = json.loads(
+        Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8")
+    )
+    real_old_identity_path = Path(offline_rollback_runtime["identity"])
+    real_old_receipt_path = Path(offline_rollback_runtime["receipt"])
+    old_identity = _masked_legacy_identity(real_old_identity, LEGACY_CANDIDATE)
+    old_root = Path(old_identity["import_root"]).resolve()
+    old_revision = str(old_identity["source_revision"])
+    masked_identity_path = (
+        tmp_path / "migration-evidence" / "runtime-identity-masked.json"
+    )
+    masked_identity_path.parent.mkdir(parents=True, exist_ok=True)
+    masked_identity_path.write_text(
+        json.dumps(old_identity, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    marker_path = _write_cloud_marker(tmp_path, spec_path, old_root=old_root)
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=old_root,
+        expected_head=old_revision,
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+    assert_quiesce_precondition(tmp_path)
+    control = _emit_control_runtime_receipt(offline_rollback_runtime)
+    control_revision = str(control["revision"])
+    assert control_revision == _git(REPO_ROOT, "rev-parse", "HEAD")
+    plan_dir = tmp_path / ".megaplan" / "plans" / PLAN
+    join_receipt_path = plan_dir / "evidence" / "occurrence-join-receipt.json"
+    rollback_receipt_path = tmp_path / "manifest-cutover-rollback.json"
+
+    # ── (a) pause via the REAL chain CLI ──────────────────────────────────
+    def _pause_argv() -> list[str]:
+        return [
+            "chain",
+            "pause",
+            "--spec", str(spec_path),
+            "--project-dir", str(tmp_path),
+            "--reason", "T-0101e' rehearsal: pause the identity-less chain",
+            "--actor", "operator",
+        ]
+
+    rc, payload = _chain_cli(tmp_path, _pause_argv(), capsys)
+    assert rc == 0 and payload is not None and payload["paused"] is True, payload
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    assert pause_record(state) is not None and state.last_state == "paused"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["current_state"] == "paused"
+    assert plan["latest_failure"] == plan_payload["latest_failure"]
+    assert plan["resume_cursor"] == plan_payload["resume_cursor"]
+
+    # ── (b) execution-binding-migrate via the REAL CLI (old runtime) ──────
+    execution_binding_module = sys.modules[
+        "arnold_pipelines.megaplan.chain.execution_binding"
+    ]
+    real_migrate_verifier = execution_binding_module.verify_external_runtime_identity
+
+    def _migrate_verifier(_identity_path: Path, _receipt_path: Path) -> dict:
+        real_verified = verify_external_runtime_identity(
+            real_old_identity_path, real_old_receipt_path
+        )
+        assert real_verified["import_root"] == real_old_identity["import_root"]
+        return dict(old_identity)
+
+    monkeypatch.setattr(
+        execution_binding_module,
+        "verify_external_runtime_identity",
+        _migrate_verifier,
+    )
+    try:
+        rc, payload = _chain_cli(
+            tmp_path,
+            [
+                "chain",
+                "execution-binding-migrate",
+                "--spec", str(spec_path),
+                "--project-dir", str(tmp_path),
+                "--old-runtime-identity", str(masked_identity_path),
+                "--old-runtime-provenance-receipt", str(real_old_receipt_path),
+                "--expected-current-milestone", "c1",
+                "--expected-current-plan", PLAN,
+                "--expected-branch", BRANCH,
+                "--expect-marker-sha256", _sha256_file(marker_path),
+                "--reason", "T-0101e' rehearsal: bind legacy runtime",
+                "--actor", "operator",
+            ],
+            capsys,
+        )
+    finally:
+        execution_binding_module.verify_external_runtime_identity = (
+            real_migrate_verifier
+        )
+    assert rc == 0 and payload is not None and payload["success"] is not False, payload
+    assert payload["old_runtime_root"] == str(old_root)
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    assert pause_record(state) is not None
+
+    # ── (c) legacy_marker_runtime_migration via its REAL module CLI ───────
+    candidate_dir = tmp_path / "workspace" / "runtime-candidates" / "arnold-canary-legacy"
+    (candidate_dir / ".venv").mkdir(parents=True, exist_ok=True)
+    wrapper = candidate_dir / "arnold-repair-loop"
+    wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    fixture = _migration_fixture(
+        tmp_path,
+        spec_path=spec_path,
+        old_identity=old_identity,
+        candidate_root=LEGACY_CANDIDATE,
+        workspace=str(tmp_path),
+        marker_path=marker_path,
+    )
+    masked_identity = fixture["masked_identity"]
+    real_offline_identity_path = Path(offline_rollback_runtime["identity"])
+    real_offline_receipt_path = Path(offline_rollback_runtime["receipt"])
+
+    def _migration_verifier(_identity_path: Path, _receipt_path: Path) -> dict:
+        real_verified = verify_external_runtime_identity(
+            real_offline_identity_path, real_offline_receipt_path
+        )
+        assert real_verified["import_root"] == real_old_identity["import_root"]
+        return dict(masked_identity)
+
+    real_migration_verifier = legacy_marker_module.verify_external_runtime_identity
+    monkeypatch.setattr(
+        legacy_marker_module, "verify_external_runtime_identity", _migration_verifier
+    )
+    try:
+        rc, payload = _migration_cli(
+            _migration_argv(fixture, tmp_path=tmp_path, spec_path=spec_path), capsys
+        )
+    finally:
+        legacy_marker_module.verify_external_runtime_identity = (
+            real_migration_verifier
+        )
+    assert rc == 0, payload
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["runtime_binding"]["current_identity"]["import_root"] == LEGACY_CANDIDATE
+    assert marker["operator_pause"]["active"] is True
+
+    # ── (d) install the full required-binding bundle (P/F) ────────────────
+    decision = _write_final_decision_asset(tmp_path)
+    assert decision.is_file()
+    snapshot, final = _commit_binding_bundle(
+        spec_path, tmp_path, assets=[ASSET_REL]
+    )
+    assert _git(tmp_path, "rev-parse", "HEAD") == final
+    _verify_clean_checkout_of_f(tmp_path, snapshot, final)
+
+    # ── (e) chain rebind via the REAL CLI ─────────────────────────────────
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    previous = state.metadata["execution_binding"]["launched_identity"]["bundle_sha256"]
+    active = active_execution_identity(spec_path)
+    rc, payload = _chain_cli(
+        tmp_path,
+        [
+            "chain",
+            "rebind",
+            "--spec", str(spec_path),
+            "--from-bundle-sha256", previous,
+            "--to-bundle-sha256", active["bundle_sha256"],
+            "--expected-current-milestone", "c1",
+            "--expected-current-plan", PLAN,
+            "--expected-next-milestone", "c2",
+            "--reason", "T-0101e' rehearsal: adopt the required-binding bundle",
+            "--actor", "operator",
+        ],
+        capsys,
+    )
+    assert rc == 0 and payload is not None and payload["success"] is not False, payload
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    assert state.metadata["chain_spec_sha256"] == _sha256_file(spec_path)
+    assert pause_record(state) is not None
+
+    # ── (f) chain runtime-cutover via the REAL CLI (old → control) ────────
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    previous_sha = state.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ]["content_sha256"]
+    report = execution_binding_report(spec_path, state)
+    active_sha = report["runtime_binding"]["active"]["content_sha256"]
+    rc, payload = _chain_cli(
+        tmp_path,
+        [
+            "chain",
+            "runtime-cutover",
+            "--spec", str(spec_path),
+            "--project-dir", str(tmp_path),
+            "--from-runtime-sha256", previous_sha,
+            "--to-runtime-sha256", active_sha,
+            "--expected-current-milestone", "c1",
+            "--expected-current-plan", PLAN,
+            "--direction", "cutover",
+            "--reason", "T-0101e' rehearsal: chain runtime cutover to control",
+            "--actor", "operator",
+        ],
+        capsys,
+    )
+    assert rc == 0 and payload is not None and payload["success"] is not False, payload
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    assert state.metadata["execution_environment"]["engine_root"] == str(REPO_ROOT)
+    assert pause_record(state) is not None
+
+    # ── (g) runtime_manifest CAS cutover via the REAL CLI ─────────────────
+    to_venv_path = REPO_ROOT / ".venv"
+    to_repair_bin = (
+        REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+    ) / "arnold-repair-loop"
+    assert to_venv_path.is_dir()
+    assert to_repair_bin.is_file() and os.access(to_repair_bin, os.X_OK)
+    manifest = load_manifest(manifest_path)
+    rc, payload = _manifest_cli(
+        [
+            "cutover",
+            str(manifest_path),
+            "--expect-manifest-sha256", _sha256_file(manifest_path),
+            "--expect-generation", str(manifest.generation),
+            "--from-runtime-root", str(old_root),
+            "--from-expected-head", old_revision,
+            "--to-runtime-root", str(REPO_ROOT),
+            "--to-expected-head", control_revision,
+            "--to-venv-path", str(to_venv_path),
+            "--to-repair-bin", str(to_repair_bin),
+            "--runtime-identity", str(control["identity"]),
+            "--runtime-provenance-receipt", str(control["receipt"]),
+            "--reason", "T-0101e' rehearsal: manifest cutover to control",
+            "--actor", "operator",
+            "--receipt-out", str(rollback_receipt_path),
+        ],
+        capsys,
+    )
+    assert rc == 0, payload
+    assert load_manifest(manifest_path).epic["runtime_root"] == str(REPO_ROOT)
+
+    # ── (h) marker runtime cutover via the REAL CLI ───────────────────────
+    control_identity_path = tmp_path / "marker-cutover-runtime-identity.json"
+    relaunch_file = tmp_path / "marker-relaunch-command.txt"
+    marker_bytes = marker_path.read_bytes()
+    marker = json.loads(marker_bytes)
+    previous_runtime_sha = marker_runtime_identity(marker)["content_sha256"]
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    active_runtime = state.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ]
+    control_identity_path.write_text(
+        json.dumps(active_runtime, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    relaunch = (
+        f"PYTHONPATH={REPO_ROOT} python -P -m arnold_pipelines.megaplan "
+        f"chain start --spec {spec_path.resolve(strict=False)} # {control_revision}"
+    )
+    relaunch_file.write_text(relaunch + "\n", encoding="utf-8")
+    rc, payload = _marker_cli(
+        [
+            "--marker", str(marker_path),
+            "--expect-marker-sha256", _sha256_file(marker_path),
+            "--from-runtime-sha256", previous_runtime_sha,
+            "--runtime-identity", str(control_identity_path),
+            "--relaunch-command-file", str(relaunch_file),
+            "--reason", "T-0101e' rehearsal: marker cutover to control",
+            "--actor", "operator",
+            "--direction", "cutover",
+            "--source-branch", BRANCH,
+        ],
+        capsys,
+    )
+    assert rc == 0, payload
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["runtime_binding"]["current_identity"]["import_root"] == str(REPO_ROOT)
+
+    # ── six-way runtime roots (all equal at the control runtime) ──────────
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    runtime = state.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+    chain_execution_root = str(Path(runtime["import_root"]).resolve())
+    recorded_engine_root = str(
+        Path(state.metadata["execution_environment"]["engine_root"]).resolve()
+    )
+    manifest_root = str(Path(load_manifest(manifest_path).epic["runtime_root"]).resolve())
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker_root = str(
+        Path(marker["runtime_binding"]["current_identity"]["import_root"]).resolve()
+    )
+    independent = subprocess.run(
+        [
+            str(REPO_ROOT / ".venv" / "bin" / "python3"), "-P", "-c",
+            "import pathlib, arnold_pipelines; "
+            "print(pathlib.Path(arnold_pipelines.__file__).resolve().parents[1])",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+    )
+    independent_root = Path(independent.stdout.strip()).resolve()
+    assert independent_root == REPO_ROOT, independent.stdout
+    roots = {
+        "chain_execution_root": chain_execution_root,
+        "recorded_engine_root": recorded_engine_root,
+        "manifest_runtime_root": manifest_root,
+        "marker_runtime_root": marker_root,
+        "independent_import_root": str(independent_root),
+        "candidate_root": str(REPO_ROOT),
+    }
+    assert len({Path(value).resolve() for value in roots.values()}) == 1
+    assert Path(chain_execution_root).resolve() == REPO_ROOT
+
+    adopt_argv = _rehearsal_adopt_argv(
+        spec_path,
+        tmp_path,
+        plan_path=plan_path,
+        plan_payload=plan_payload,
+        marker_path=marker_path,
+        manifest_path=manifest_path,
+        control_identity=Path(control["identity"]),
+        control_receipt=Path(control["receipt"]),
+        roots=roots,
+    )
+
+    # ── occurrence-adopt: crash injection first (fresh pre-adopt state) ───
+    pre_adopt = _snapshot(tmp_path)
+    real_enqueue = repair_requests.enqueue_owner_adopted_repair_request
+    real_write_decision = repair_requests.write_decision
+
+    def _crash_after_adoption_record():
+        def boom_wrapper(*_args, **_kwargs):
+            raise OSError("injected crash before enqueue")
+
+        monkeypatch.setattr(
+            repair_requests, "enqueue_owner_adopted_repair_request", boom_wrapper
+        )
+        try:
+            with pytest.raises(OSError):
+                _chain_cli(tmp_path, adopt_argv, capsys)
+        finally:
+            monkeypatch.setattr(
+                repair_requests, "enqueue_owner_adopted_repair_request", real_enqueue
+            )
+        adoptions = list((plan_dir / "evidence" / "occurrence-adoptions").glob("*.json"))
+        assert len(adoptions) == 1, "adoption record must persist before enqueue"
+        rc, payload = _chain_cli(tmp_path, adopt_argv, capsys)
+        assert rc == 0 and payload is not None and payload["status"] == "adopted", payload
+        queue = tmp_path / ".megaplan" / "repair-queue"
+        assert len(repair_requests.iter_repair_requests(queue)) == 1
+        assert len(
+            [
+                record
+                for record in repair_requests.iter_repair_decisions(queue)
+                if record["decision"] == "accepted"
+            ]
+        ) == 1
+        return payload
+
+    def _crash_after_request_write():
+        def boom_decision(*_args, **kwargs):
+            if kwargs.get("decision") == "accepted":
+                raise OSError("injected crash before accepted decision")
+            return real_write_decision(*_args, **kwargs)
+
+        monkeypatch.setattr(repair_requests, "write_decision", boom_decision)
+        try:
+            with pytest.raises(OSError):
+                _chain_cli(tmp_path, adopt_argv, capsys)
+        finally:
+            monkeypatch.setattr(repair_requests, "write_decision", real_write_decision)
+        queue = tmp_path / ".megaplan" / "repair-queue"
+        assert len(repair_requests.iter_repair_requests(queue)) == 1
+        assert repair_requests.iter_repair_decisions(queue) == []
+        rc, payload = _chain_cli(tmp_path, adopt_argv, capsys)
+        assert rc == 0 and payload is not None and payload["status"] == "adopted", payload
+        assert len(repair_requests.iter_repair_requests(queue)) == 1
+        accepted = [
+            record
+            for record in repair_requests.iter_repair_decisions(queue)
+            if record["decision"] == "accepted"
+        ]
+        assert len(accepted) == 1
+        return payload
+
+    _restore(tmp_path, pre_adopt)
+    crash_payload = _crash_after_adoption_record()
+    _restore(tmp_path, pre_adopt)
+    crash_payload_2 = _crash_after_request_write()
+    # The adopted occurrence identity and the deterministic request are the
+    # same across BOTH crash scenarios (the accepted decision's id embeds its
+    # second-resolution created_at, so two separately-crashed scenarios may
+    # record it at different wall-clock seconds — each converges to exactly
+    # one accepted decision for the SAME request).
+    assert crash_payload["repair_identity_key"] == crash_payload_2["repair_identity_key"]
+    assert crash_payload["request_id"] == crash_payload_2["request_id"]
+    assert crash_payload["claim_id"] == crash_payload_2["claim_id"]
+    _restore(tmp_path, pre_adopt)
+
+    # ── two concurrent adopters → one record/request/accepted decision ────
+    outcomes: list[tuple[int, dict | None]] = []
+    errors: list[BaseException] = []
+
+    def adopter() -> None:
+        try:
+            rc, payload = _chain_cli(tmp_path, adopt_argv, capsys)
+            outcomes.append((rc, payload))
+        except BaseException as exc:  # noqa: BLE001 - captured for assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=adopter), threading.Thread(target=adopter)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == [], errors
+    assert [rc for rc, _ in outcomes] == [0, 0], outcomes
+    first, second = outcomes[0][1], outcomes[1][1]
+    assert first["repair_identity_key"] == second["repair_identity_key"]
+    assert first["request_id"] == second["request_id"]
+    assert first["decision_id"] == second["decision_id"]
+    assert first["claim_id"] == second["claim_id"]
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    assert len(repair_requests.iter_repair_requests(queue)) == 1
+    assert len(
+        [
+            record
+            for record in repair_requests.iter_repair_decisions(queue)
+            if record["decision"] == "accepted"
+        ]
+    ) == 1
+    adoptions = list((plan_dir / "evidence" / "occurrence-adoptions").glob("*.json"))
+    assert len(adoptions) == 1
+    canonical_key = first["repair_identity_key"]
+    canonical_request = first["request_id"]
+    canonical_decision = first["decision_id"]
+    canonical_claim = first["claim_id"]
+
+    # ── three identical runs (the two concurrent + one more) → same ids ───
+    rc, payload = _chain_cli(tmp_path, adopt_argv, capsys)
+    assert rc == 0 and payload is not None and payload["status"] == "adopted", payload
+    assert payload["repair_identity_key"] == canonical_key
+    assert payload["request_id"] == canonical_request
+    assert payload["decision_id"] == canonical_decision
+    assert payload["claim_id"] == canonical_claim
+    assert len(repair_requests.iter_repair_requests(queue)) == 1
+    assert len(
+        [
+            record
+            for record in repair_requests.iter_repair_decisions(queue)
+            if record["decision"] == "accepted"
+        ]
+    ) == 1
+    assert len(list((plan_dir / "evidence" / "occurrence-adoptions").glob("*.json"))) == 1
+
+    # ── one-bit changes to EVERY CAS digest refuse with zero mutation ─────
+    pre = _snapshot_excluding_sqlite(tmp_path)
+    for flag in (
+        "--expected-chain-state-sha256",
+        "--expected-plan-state-sha256",
+        "--expected-latest-failure-sha256",
+        "--expected-resume-cursor-sha256",
+        "--expected-pause-authority-sha256",
+        "--expected-runtime-manifest-sha256",
+        "--expected-marker-sha256",
+        "--expected-runtime-roots-sha256",
+    ):
+        argv = list(adopt_argv)
+        index = argv.index(flag) + 1
+        value = argv[index]
+        flipped = "sha256:" + ("0" if value[7] != "0" else "1") + value[8:]
+        argv[index] = flipped
+        rc, payload = _chain_cli(tmp_path, argv, capsys)
+        assert rc == 1, (flag, rc, payload)
+        assert payload is not None and payload["success"] is False, (flag, payload)
+        assert payload["error"] == "cas_mismatch", (flag, payload)
+        assert _snapshot_excluding_sqlite(tmp_path) == pre, (
+            f"{flag} refusal must be zero-mutation"
+        )
+
+    # ── non-operator and unequal-roots refusals (argv-only, zero mutation) ─
+    argv = list(adopt_argv)
+    argv[argv.index("--actor") + 1] = "not-operator"
+    rc, payload = _chain_cli(tmp_path, argv, capsys)
+    assert rc == 1 and payload is not None and payload["error"] == "actor_forbidden"
+    assert _snapshot_excluding_sqlite(tmp_path) == pre
+    argv = list(adopt_argv)
+    argv[argv.index("--candidate-root") + 1] = "/elsewhere/root"
+    rc, payload = _chain_cli(tmp_path, argv, capsys)
+    assert rc == 1 and payload is not None and payload["error"] == "runtime_roots_unequal"
+    assert _snapshot_excluding_sqlite(tmp_path) == pre
+
+    # ── throwaway copies: missing pause / non-null identity / ambiguous
+    #    failure refuse, and a different failure timestamp yields a DIFFERENT
+    #    key (plan/timestamp/cursor/roots sensitivity) ─────────────────────
+    copy_root = tmp_path / "adopt-probes"
+    copy_root.mkdir(parents=True, exist_ok=True)
+    # Snapshot the rehearsed tree ONCE (before any probe copy exists, so the
+    # copies cannot nest into themselves); every probe copies from this base.
+    probe_base = tmp_path / "probe-base"
+    probe_base_spec = _copy_rehearsal_tree(tmp_path, probe_base, spec_path)
+
+    probe_root = copy_root / "missing-pause"
+    probe_spec = _copy_rehearsal_tree(probe_base, probe_root, probe_base_spec)
+    probe_state = load_chain_state(probe_spec, verify_execution_binding=False)
+    probe_state.metadata.pop("operator_pause", None)
+    save_chain_state(probe_spec, probe_state)
+    probe_argv = _rehearsal_adopt_argv(
+        probe_spec,
+        probe_root,
+        plan_path=probe_root / ".megaplan" / "plans" / PLAN / "state.json",
+        plan_payload=plan_payload,
+        marker_path=probe_root / ".megaplan" / "cloud-sessions" / f"{SESSION}.json",
+        manifest_path=probe_root / "runtime-manifest.json",
+        control_identity=Path(control["identity"]),
+        control_receipt=Path(control["receipt"]),
+        roots=roots,
+    )
+    rc, payload = _chain_cli(probe_root, probe_argv, capsys)
+    assert rc == 1 and payload is not None and payload["error"] == "chain_not_paused", payload
+
+    probe_root = copy_root / "non-null-identity"
+    probe_spec = _copy_rehearsal_tree(probe_base, probe_root, probe_base_spec)
+    probe_plan_path = probe_root / ".megaplan" / "plans" / PLAN / "state.json"
+    probe_plan = json.loads(probe_plan_path.read_text(encoding="utf-8"))
+    probe_plan["meta"]["repair_identity"] = _repair_identity()
+    probe_plan_path.write_text(json.dumps(probe_plan, indent=2) + "\n", encoding="utf-8")
+    probe_argv = _rehearsal_adopt_argv(
+        probe_spec,
+        probe_root,
+        plan_path=probe_plan_path,
+        plan_payload=plan_payload,
+        marker_path=probe_root / ".megaplan" / "cloud-sessions" / f"{SESSION}.json",
+        manifest_path=probe_root / "runtime-manifest.json",
+        control_identity=Path(control["identity"]),
+        control_receipt=Path(control["receipt"]),
+        roots=roots,
+    )
+    rc, payload = _chain_cli(probe_root, probe_argv, capsys)
+    assert rc == 1 and payload is not None, payload
+    assert payload["error"] == "repair_identity_already_present", payload
+
+    probe_root = copy_root / "ambiguous-failure"
+    probe_spec = _copy_rehearsal_tree(probe_base, probe_root, probe_base_spec)
+    probe_plan_path = probe_root / ".megaplan" / "plans" / PLAN / "state.json"
+    probe_plan = json.loads(probe_plan_path.read_text(encoding="utf-8"))
+    probe_plan["latest_failure"] = [probe_plan["latest_failure"]]
+    probe_plan_path.write_text(json.dumps(probe_plan, indent=2) + "\n", encoding="utf-8")
+    probe_argv = _rehearsal_adopt_argv(
+        probe_spec,
+        probe_root,
+        plan_path=probe_plan_path,
+        plan_payload=plan_payload,
+        marker_path=probe_root / ".megaplan" / "cloud-sessions" / f"{SESSION}.json",
+        manifest_path=probe_root / "runtime-manifest.json",
+        control_identity=Path(control["identity"]),
+        control_receipt=Path(control["receipt"]),
+        roots=roots,
+    )
+    rc, payload = _chain_cli(probe_root, probe_argv, capsys)
+    assert rc == 1 and payload is not None and payload["error"] == "ambiguous_failure", payload
+
+    probe_root = copy_root / "different-timestamp"
+    probe_spec = _copy_rehearsal_tree(probe_base, probe_root, probe_base_spec)
+    probe_plan_path = probe_root / ".megaplan" / "plans" / PLAN / "state.json"
+    probe_plan = json.loads(probe_plan_path.read_text(encoding="utf-8"))
+    probe_plan["latest_failure"]["recorded_at"] = "2026-08-11T08:00:00Z"
+    probe_plan_path.write_text(json.dumps(probe_plan, indent=2) + "\n", encoding="utf-8")
+    probe_argv = _rehearsal_adopt_argv(
+        probe_spec,
+        probe_root,
+        plan_path=probe_plan_path,
+        plan_payload=probe_plan,
+        marker_path=probe_root / ".megaplan" / "cloud-sessions" / f"{SESSION}.json",
+        manifest_path=probe_root / "runtime-manifest.json",
+        control_identity=Path(control["identity"]),
+        control_receipt=Path(control["receipt"]),
+        roots=roots,
+        failure_recorded_at="2026-08-11T08:00:00Z",
+    )
+    rc, payload = _chain_cli(probe_root, probe_argv, capsys)
+    assert rc == 0 and payload is not None and payload["status"] == "adopted", payload
+    assert payload["repair_identity_key"] != canonical_key, (
+        "a different failure timestamp must produce a different key"
+    )
+    assert payload["adoption_record_id"] != json.loads(
+        adoptions[0].read_text(encoding="utf-8")
+    )["adoption_record_id"]
+
+    # ── superseding the accepted decision blocks join ─────────────────────
+    supersede = repair_requests.write_decision(
+        queue,
+        request_id=canonical_request,
+        decision="superseded",
+        reason="superseded by a newer target",
+        related_request_id="newer-target",
+        created_at="2099-01-01T00:00:00Z",
+    )
+    join_argv = [
+        "chain",
+        "occurrence-join",
+        "--spec", str(spec_path),
+        "--project-dir", str(tmp_path),
+        "--session", SESSION,
+        "--occurrence", canonical_key,
+        "--request", canonical_request,
+        "--decision", canonical_decision,
+        "--claim", canonical_claim,
+        "--reason", "T-0101e' rehearsal: exact adopted-occurrence claim",
+        "--actor", "operator",
+        "--receipt", str(join_receipt_path),
+    ]
+    rc, payload = _chain_cli(tmp_path, join_argv, capsys)
+    assert rc == 1 and payload is not None and payload["error"] == "decision_superseded", payload
+    assert not join_receipt_path.exists()
+    # Remove the superseding decision (immutable records; deleting restores
+    # the accepted decision as latest) so the real join can proceed.
+    supersede_path = Path(supersede["_path"])
+    supersede_path.unlink()
+
+    # ── occurrence-join via the REAL CLI: adopted-occurrence fenced claim ─
+    rc, payload = _chain_cli(tmp_path, join_argv, capsys)
+    assert rc == 0, payload
+    assert payload is not None and payload["status"] == "claimed", payload
+    assert payload["claim_id"] == canonical_claim
+    assert payload["occurrence"] == canonical_key
+    assert payload["request_id"] == canonical_request
+    assert payload["decision_id"] == canonical_decision
+    assert join_receipt_path.exists()
+    receipt = json.loads(join_receipt_path.read_text(encoding="utf-8"))
+    assert receipt["identity_kind"] == "owner_boundary_adoption"
+    assert receipt["adoption"]["adoption_record_id"].startswith("sha256:")
+    assert receipt["lease"]["lease_origin"] == "owner_boundary_adoption_claim"
+    assert receipt["occurrence"]["fence_token"] == 1
+    assert receipt["occurrence"]["f01_digest"].startswith("sha256:")
+    assert receipt["relation"]["request_id"] == canonical_request
+    assert receipt["relation"]["decision_request_id"] == canonical_request
+    assert receipt["relation"]["claim_request_id"] == canonical_request
+    assert receipt["relation"]["attempt_request_id"] == canonical_request
+    assert receipt["relation"]["request_occurrence"] == canonical_key
+    assert receipt["relation"]["claim_occurrence_id"] == canonical_key
+    assert receipt["relation"]["attempt_occurrence_id"] == canonical_key
+    assert receipt["relation"]["attempt_claim_id"] == canonical_claim
+    assert receipt["relation"]["attempt_decision_id"] == canonical_decision
+    # The new claim attempt + lease derive from BOTH the key and the claim id.
+    assert payload["attempt_id"] == occurrence_adoption_claim_attempt_id(
+        plan_dir, canonical_key, canonical_claim
+    )
+    assert payload["lease_id"] == occurrence_adoption_join_lease_id(
+        canonical_key, canonical_claim
+    )
+    # ONE real current lease + custody epoch created AT JOIN TIME.
+    lease = open_lease_store(plan_dir / "custody" / "leases").current_lease(
+        payload["lease_id"]
+    )
+    assert lease is not None and not lease.is_expired
+    assert int(lease.custody_epoch) >= 1
+    assert str(lease.run_authority_grant_id) == canonical_request
+    wbc = SqliteAttemptLedgerStore(plan_dir / PHASE_WBC_LEDGER_FILENAME)
+    started = wbc.read_events(payload["attempt_id"])
+    assert len(started) == 1
+    assert started[0].event_type == AttemptEventType.STARTED
+    assert wbc.has_terminal_event(payload["attempt_id"]) is False
+    event_payload = started[0].payload
+    assert event_payload["occurrence_id"] == canonical_key
+    assert event_payload["occurrence_digest"] == receipt["occurrence"]["f01_digest"]
+    assert event_payload["fence_token"] == 1
+    assert event_payload["wbc_attempt_reference"].startswith("owner-adoption-attempt:")
+    assert event_payload["coordinator_attempt_id"] == event_payload["wbc_attempt_reference"]
+    assert event_payload["request_id"] == canonical_request
+    assert event_payload["decision_id"] == canonical_decision
+    assert event_payload["claim_id"] == canonical_claim
+    assert event_payload["lease_id"] == payload["lease_id"]
+    # The join never rewrites chain/plan/queue state.
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["current_state"] == "paused"
+    assert load_chain_state(spec_path, verify_execution_binding=False).last_state == "paused"
+    assert len(repair_requests.iter_repair_requests(queue)) == 1
+    # An identical re-join is idempotent.
+    rc, payload = _chain_cli(tmp_path, join_argv, capsys)
+    assert rc == 0 and payload is not None and payload["status"] == "already_claimed", payload
+
+    # ── (j) resume via the REAL chain CLI ─────────────────────────────────
+    rc, payload = _chain_cli(
+        tmp_path,
+        [
+            "chain",
+            "resume",
+            "--spec", str(spec_path),
+            "--project-dir", str(tmp_path),
+            "--actor", "operator",
+        ],
+        capsys,
+    )
+    assert rc == 0 and payload is not None, payload
+    assert payload["changed"] is True and payload["paused"] is False, payload
+    assert payload["plan"] == PLAN and payload["restored_plan_state"] == "blocked"
+    state = load_chain_state(spec_path)
+    assert pause_record(state) is None
+    assert state.last_state == "blocked"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["current_state"] == "blocked"
+    # Gate cursor byte-identical + fresh typed progress.
+    assert plan["latest_failure"] == plan_payload["latest_failure"]
+    assert plan["resume_cursor"] == plan_payload["resume_cursor"]
+    assert "blocked" in _RUNNER_RESUMABLE_STATES
+    # The adoption claim lease is still current after resume.
+    lease = open_lease_store(plan_dir / "custody" / "leases").current_lease(
+        occurrence_adoption_join_lease_id(canonical_key, canonical_claim)
+    )
+    assert lease is not None and not lease.is_expired
+    # Final six-way root equality at the control runtime.
+    chain_root = Path(
+        state.metadata["execution_binding"]["runtime_binding"]["current_identity"][
+            "import_root"
+        ]
+    ).resolve()
+    engine_root = Path(state.metadata["execution_environment"]["engine_root"]).resolve()
+    manifest_root = Path(load_manifest(manifest_path).epic["runtime_root"]).resolve()
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker_root = Path(
+        marker["runtime_binding"]["current_identity"]["import_root"]
+    ).resolve()
+    assert (
+        chain_root
+        == engine_root
+        == manifest_root
+        == marker_root
+        == independent_root
+        == REPO_ROOT
+    ), "all six T-0101 roots must be equal at the control runtime"

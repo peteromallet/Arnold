@@ -1,4 +1,5 @@
 from arnold_pipelines.megaplan.cloud.relaunch_resolution import (
+    _rejects_foreign_runtime_path,
     is_stale_marker_relaunch_command,
     marker_relaunch_command,
 )
@@ -357,3 +358,73 @@ def test_no_accepted_root_keeps_per_epic_path_admissible() -> None:
     assert marker_relaunch_command({"relaunch_command": command}) == command
     # The same command with the accepted root supplied is rejected.
     assert is_stale_marker_relaunch_command(command, _ACCEPTED_ROOT)
+
+
+_FOREIGN_CANDIDATE_ROOT = "/workspace/runtime-candidates/arnold-OTHER"
+
+
+def test_foreign_runtime_candidate_on_pythonpath_is_rejected() -> None:
+    """G7 negative: a persisted command selecting a DIFFERENT runtime
+    candidate (``arnold-OTHER`` while the accepted root is ``arnold-new``)
+    on PYTHONPATH is a foreign runtime selection — with the accepted root
+    supplied it is stale and regenerated, never returned verbatim.
+    """
+    command = (
+        f"PYTHONPATH={_FOREIGN_CANDIDATE_ROOT}:${{PYTHONPATH:-}} "
+        "python -P -m arnold_pipelines.megaplan chain start"
+    )
+    assert _rejects_foreign_runtime_path(command, _ACCEPTED_ROOT)
+    assert is_stale_marker_relaunch_command(command, _ACCEPTED_ROOT)
+    assert marker_relaunch_command({"relaunch_command": command}, _ACCEPTED_ROOT) is None
+
+
+def test_megaplan_state_paths_are_not_foreign_runtime_references() -> None:
+    """G7 negative: workspace STATE paths under ``/.megaplan/``
+    (cloud-session marker dir, repair queue, the per-epic manifest) are
+    named by a relaunch while it binds a single runtime root — they are not
+    runtime selections and must never mark the command stale.
+    """
+    command = (
+        "ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions "
+        "ARNOLD_REPAIR_QUEUE_ROOT=/workspace/.megaplan/repair-queue "
+        "MANIFEST=/workspace/.megaplan/megaplan-maintenance.json "
+        f"PYTHONPATH={_ACCEPTED_ROOT}:${{PYTHONPATH:-}} "
+        "python -P -m arnold_pipelines.megaplan chain start"
+    )
+    assert not _rejects_foreign_runtime_path(command, _ACCEPTED_ROOT)
+    assert not is_stale_marker_relaunch_command(command, _ACCEPTED_ROOT)
+    assert marker_relaunch_command({"relaunch_command": command}, _ACCEPTED_ROOT) == command
+
+
+def test_builder_style_log_redirect_fragments_are_admissible() -> None:
+    """G7 negative: the canonical ``_refresh_then_chain_start_command``
+    builder emits ``>> .megaplan/cloud-chain.log 2>&1`` (and ``> /tmp/x``
+    style redirects) while binding a matching runtime root — the removed
+    over-broad `` >>`` / `` >`` stale fragments rejected the builder's own
+    output.  Redirect targets are not runtime references and stay
+    admissible.
+    """
+    command = (
+        f"{{ cd {_ACCEPTED_ROOT}; }} >> .megaplan/cloud-chain.log 2>&1 && "
+        f"PYTHONPATH={_ACCEPTED_ROOT}:${{PYTHONPATH:-}} "
+        "python -P -m arnold_pipelines.megaplan chain start "
+        "> /tmp/x 2>&1"
+    )
+    assert not _rejects_foreign_runtime_path(command, _ACCEPTED_ROOT)
+    assert not is_stale_marker_relaunch_command(command, _ACCEPTED_ROOT)
+    assert marker_relaunch_command({"relaunch_command": command}, _ACCEPTED_ROOT) == command
+
+
+def test_foreign_candidate_still_wins_over_megaplan_state_paths() -> None:
+    """G7 negative (mixed): a ``.megaplan`` state path alongside a foreign
+    runtime candidate stays stale — the foreign path IS a runtime selection
+    and wins.
+    """
+    command = (
+        "ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions "
+        f"PYTHONPATH={_FOREIGN_CANDIDATE_ROOT}:${{PYTHONPATH:-}} "
+        "python -P -m arnold_pipelines.megaplan chain start"
+    )
+    assert _rejects_foreign_runtime_path(command, _ACCEPTED_ROOT)
+    assert is_stale_marker_relaunch_command(command, _ACCEPTED_ROOT)
+    assert marker_relaunch_command({"relaunch_command": command}, _ACCEPTED_ROOT) is None
