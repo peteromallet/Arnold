@@ -1492,3 +1492,84 @@ class TestReplayStateConsistency:
         assert lease_after is not None
         assert lease_after.owner_host == "host-new"
         assert lease_after.custody_epoch == 3
+
+
+# ── Occurrence-scoped claim serialization (T-0101e) ─────────────────────────
+
+
+class TestOccurrenceClaimLock:
+    """The occurrence-digest flock serializes scan→acquire→append across
+    DISTINCT claims for the SAME occurrence (claim-scoped locks share zero
+    serialization), while different occurrences stay independent."""
+
+    def test_same_occurrence_serializes_across_threads(self, tmp_path: Path) -> None:
+        import threading
+        import time
+
+        store = open_lease_store(tmp_path, flock=True)
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        concurrent = 0
+        max_concurrent = 0
+        entered: list[str] = []
+
+        def _hold(key: str) -> None:
+            nonlocal concurrent, max_concurrent
+            barrier.wait()
+            with store.occurrence_claim_lock(key):
+                with lock:
+                    concurrent += 1
+                    max_concurrent = max(max_concurrent, concurrent)
+                time.sleep(0.1)
+                with lock:
+                    concurrent -= 1
+                entered.append(key)
+
+        threads = [
+            threading.Thread(target=_hold, args=("occurrence-X",)),
+            threading.Thread(target=_hold, args=("occurrence-X",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        # The two holders for the SAME occurrence were strictly serialized.
+        assert max_concurrent == 1, max_concurrent
+        assert sorted(entered) == ["occurrence-X", "occurrence-X"]
+        # The lock sidecar exists (never unlinked — fence must not split).
+        from arnold_pipelines.megaplan.custody.lease_store import _occurrence_lock_path
+        assert _occurrence_lock_path(store.base_dir, "occurrence-X").exists()
+
+    def test_different_occurrences_do_not_serialize(self, tmp_path: Path) -> None:
+        import threading
+        import time
+
+        store = open_lease_store(tmp_path, flock=True)
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        concurrent = 0
+        max_concurrent = 0
+
+        def _hold(key: str) -> None:
+            nonlocal concurrent, max_concurrent
+            barrier.wait()
+            with store.occurrence_claim_lock(key):
+                with lock:
+                    concurrent += 1
+                    max_concurrent = max(max_concurrent, concurrent)
+                time.sleep(0.1)
+                with lock:
+                    concurrent -= 1
+
+        threads = [
+            threading.Thread(target=_hold, args=("occurrence-A",)),
+            threading.Thread(target=_hold, args=("occurrence-B",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        # Independent occurrences hold their locks concurrently.
+        assert max_concurrent == 2, max_concurrent

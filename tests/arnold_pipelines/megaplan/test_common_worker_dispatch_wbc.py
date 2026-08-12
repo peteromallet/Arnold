@@ -1346,3 +1346,111 @@ def test_worker_dispatch_spec_renews_lease_before_completion_boundary_after_ttl(
         AttemptEventType.STARTED,
         AttemptEventType.COMPLETED,
     ]
+
+
+# ── Fence + custody-epoch carry (T-0101e) ───────────────────────────────────
+
+
+def _build_dispatch_spec_with_state(
+    tmp_path: Path,
+    *,
+    state: dict[str, object],
+    step: str = "critique",
+) -> object:
+    from arnold_pipelines.megaplan.custody.phase_wbc import activate_phase_wbc
+    from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
+
+    phase = activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step=step,
+        agent="critic",
+    )
+    assert phase is not None
+    return build_worker_dispatch_spec(
+        plan_dir=tmp_path,
+        state=state,  # type: ignore[arg-type]
+        step=step,
+        agent="hermes",
+        selected_spec="hermes:zhipu:glm-5.2",
+        route_kind="subprocess",
+    )
+
+
+def test_worker_dispatch_leases_carry_repair_identity_fence_and_epoch(
+    tmp_path: Path,
+) -> None:
+    """When the plan runs inside a repair occurrence, every dispatch lease,
+    outbox record and action-boundary context carries the occurrence's
+    AUTHORITATIVE fence token + custody epoch instead of a fabricated 0/1."""
+    from tests.cloud.repair_identity_fixtures import repair_identity
+
+    identity = repair_identity(
+        session="dispatch-carry-session",
+        plan="dispatch-plan",
+        failure_kind="deterministic_phase_failure",
+        phase="critique",
+        task="phase:critique",
+        fence_token=7,
+        custody_epoch=3,
+        coordinator_attempt_id="coord-carry",
+    )
+    state: dict[str, object] = {
+        "name": "plan-dispatch-carry",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-carry", "repair_identity": identity},
+        "active_step": {"run_id": "run-carry"},
+    }
+    spec = _build_dispatch_spec_with_state(tmp_path, state=state)
+    assert spec is not None
+
+    # The action-boundary contexts carry the same fence as the leases.
+    assert spec.start_action_context.coordinator_fence_token == 7
+
+    lease_store = spec.facade._lease_store
+    seen_leases = 0
+    for ctx in (
+        spec.start_action_context,
+        spec.success_action_context,
+        spec.failure_action_context,
+    ):
+        lease = lease_store.current_lease(
+            f"custody-lease-{ctx.target.target_digest[:16]}"
+        )
+        assert lease is not None, ctx.action_type
+        assert lease.coordinator_fence_token == 7, ctx.action_type
+        assert lease.custody_epoch == 3, ctx.action_type
+        seen_leases += 1
+    assert seen_leases == 3
+
+    # Outbox records mirror the ACTUAL recorded lease state (fence + epoch).
+    records = spec.facade._outbox.list_records()
+    assert records
+    for record in records:
+        assert record.coordinator_fence_token == 7
+        assert record.custody_epoch == 3
+
+
+def test_worker_dispatch_leases_default_fence_zero_epoch_one_without_identity(
+    tmp_path: Path,
+) -> None:
+    """Plans without a repair identity keep the neutral fence=0 / epoch=1
+    dispatch contract (unchanged behavior)."""
+    state: dict[str, object] = {
+        "name": "plan-plain",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-plain"},
+        "active_step": {"run_id": "run-plain"},
+    }
+    spec = _build_dispatch_spec_with_state(tmp_path, state=state)
+    assert spec is not None
+    assert spec.start_action_context.coordinator_fence_token == 0
+
+    lease_store = spec.facade._lease_store
+    ctx = spec.start_action_context
+    lease = lease_store.current_lease(f"custody-lease-{ctx.target.target_digest[:16]}")
+    assert lease is not None
+    assert lease.coordinator_fence_token == 0
+    assert lease.custody_epoch == 1

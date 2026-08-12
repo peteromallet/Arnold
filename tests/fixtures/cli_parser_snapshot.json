@@ -1582,6 +1582,164 @@
           ],
           "positionals": [],
           "subcommands": {
+            "execution-binding-migrate": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "old_runtime_identity",
+                  "help": "Content-addressed offline runtime identity JSON for the legacy runtime. Requires --old-runtime-provenance-receipt and is freshly reverified by the receipt's independent interpreter.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--old-runtime-identity"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "old_runtime_provenance_receipt",
+                  "help": "Digest-bound runtime_provenance receipt emitted by the legacy runtime's interpreter. Requires --old-runtime-identity.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--old-runtime-provenance-receipt"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_current_milestone",
+                  "help": "Exact current milestone label, or @terminal for a fully completed chain (with --expected-current-plan @none).",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-current-milestone"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_current_plan",
+                  "help": "Exact current plan name, or @none when the cursor has no plan yet.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-current-plan"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_branch",
+                  "help": "Exact current git branch of the project checkout.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-branch"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "reason",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--reason"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "operator",
+                  "dest": "actor",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--actor"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
             "manifest": {
               "mutually_exclusive_groups": [],
               "options": [
@@ -1659,6 +1817,179 @@
                     "--output"
                   ],
                   "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "occurrence-join": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "session",
+                  "help": "Recorded repair session id",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--session"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "occurrence",
+                  "help": "Exact recorded occurrence id (the repair request repair_identity_key)",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--occurrence"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "request",
+                  "help": "Exact recorded repair request id",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--request"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "decision",
+                  "help": "Exact recorded repair decision id",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--decision"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "claim",
+                  "help": "Claim id to acquire for the exact occurrence",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--claim"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "reason",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--reason"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "operator",
+                  "dest": "actor",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--actor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "receipt",
+                  "help": "Durable receipt JSON output path (written only on success)",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--receipt"
+                  ],
+                  "required": true,
                   "type": null
                 }
               ],
@@ -1764,6 +2095,96 @@
                   "nargs": null,
                   "option_strings": [
                     "--set-review-clean-milestone-pr"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "allow_manifestless",
+                  "help": "Grant an expiring allow_manifestless permit (admission exception for manifest-less chain execution) recorded in the runtime policy sidecar.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--allow-manifestless"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "reason",
+                  "help": "Required with --allow-manifestless: why the deviation is granted.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--reason"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expires_at",
+                  "help": "Required with --allow-manifestless: UTC expiry timestamp. Must be within 24 hours of issuance.",
+                  "metavar": "ISO8601",
+                  "nargs": null,
+                  "option_strings": [
+                    "--expires-at"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "actor",
+                  "help": "Required with --allow-manifestless: attribution for the permit (caller-supplied, not authentication).",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--actor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_AppendAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "evidence",
+                  "help": "Repeatable evidence string attached to the permit record.",
+                  "metavar": "TEXT",
+                  "nargs": null,
+                  "option_strings": [
+                    "--evidence"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "revoke",
+                  "help": "Revoke the active allow_manifestless permit by stamping an auditable revoked_at tombstone (the record is never deleted).",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--revoke"
                   ],
                   "required": false,
                   "type": null
@@ -2171,6 +2592,197 @@
                   "nargs": null,
                   "option_strings": [
                     "--actor"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "runtime-cutover": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "from_runtime_sha256",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--from-runtime-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "to_runtime_sha256",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--to-runtime-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_current_milestone",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-current-milestone"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_current_plan",
+                  "help": "Exact current plan name, or @none when no plan is active. A fully completed chain uses --expected-current-milestone @terminal with --expected-current-plan @none; terminal state and the exact completed milestone set are then verified.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-current-plan"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": [
+                    "cutover",
+                    "rollback"
+                  ],
+                  "const": null,
+                  "default": "cutover",
+                  "dest": "direction",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--direction"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "reason",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--reason"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "operator",
+                  "dest": "actor",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--actor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "runtime_identity",
+                  "help": "Content-addressed offline runtime identity JSON. Requires --runtime-provenance-receipt and is freshly reverified by the receipt's independent interpreter. The adopted identity's import_root becomes the new engine_root.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--runtime-identity"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "runtime_provenance_receipt",
+                  "help": "Digest-bound runtime_provenance receipt emitted by the offline runtime's interpreter. Requires --runtime-identity.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--runtime-provenance-receipt"
                   ],
                   "required": false,
                   "type": null
@@ -4099,6 +4711,21 @@
               "type": null
             },
             {
+              "action": "_StoreFalseAction",
+              "choices": null,
+              "const": false,
+              "default": true,
+              "dest": "adaptive_critique",
+              "help": null,
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--no-adaptive-critique"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
               "action": "_StoreTrueAction",
               "choices": null,
               "const": true,
@@ -4135,6 +4762,7 @@
                 "extreme",
                 "full",
                 "light",
+                "medium",
                 "robust",
                 "standard",
                 "superrobust",
@@ -5165,6 +5793,51 @@
               "choices": null,
               "const": null,
               "default": null,
+              "dest": "plan_version",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--plan-version"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "replacement_sha256",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--replacement-sha256"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "repair_ref",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repair-ref"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
               "dest": "plan",
               "help": null,
               "metavar": null,
@@ -5251,6 +5924,24 @@
               "type": null
             },
             {
+              "action": "_StoreAction",
+              "choices": [
+                "engine_runtime",
+                "target_workspace"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "repair_scope",
+              "help": "Code surface whose validated HEAD contains the repair.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--repair-scope"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
               "action": "_StoreTrueAction",
               "choices": null,
               "const": true,
@@ -5272,6 +5963,7 @@
                 "extreme",
                 "full",
                 "light",
+                "medium",
                 "robust",
                 "standard",
                 "superrobust",
@@ -5301,6 +5993,40 @@
               "nargs": null,
               "option_strings": [
                 "--profile"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "built-in",
+                "project",
+                "user"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "expected_profile_source",
+              "help": "Fail closed unless set-profile resolves from this registry layer.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--expected-profile-source"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "expected_profile_sha256",
+              "help": "Fail closed unless the resolved profile content has this SHA-256 digest.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--expected-profile-sha256"
               ],
               "required": false,
               "type": null
@@ -5420,6 +6146,7 @@
                 "adopt-execution",
                 "force-proceed",
                 "recover-blocked",
+                "reconcile-plan-ledger",
                 "replan",
                 "resume-clarify",
                 "set-model",
@@ -6457,6 +7184,36 @@
               "nargs": "0",
               "option_strings": [
                 "--pending-human"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "cloud_session",
+              "help": "==SUPPRESS==",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--cloud-session"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "cloud_marker_dir",
+              "help": "==SUPPRESS==",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--cloud-marker-dir"
               ],
               "required": false,
               "type": null

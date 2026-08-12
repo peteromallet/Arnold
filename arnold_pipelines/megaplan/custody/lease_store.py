@@ -94,6 +94,17 @@ def _lock_path(base_dir: Path, lease_id: str) -> Path:
     return base_dir / f"{lease_id}.lock"
 
 
+def _occurrence_lock_path(base_dir: Path, occurrence_key: str) -> Path:
+    """Return the occurrence-scoped lock path for *occurrence_key*.
+
+    The lock is keyed by the OCCURRENCE identity (not the claim/lease id), so
+    two distinct claims for the same occurrence serialize their
+    scan → acquire → append instead of racing on claim-scoped locks.
+    """
+    digest = hashlib.sha256(str(occurrence_key or "").strip().encode("utf-8")).hexdigest()
+    return base_dir / f"occurrence-{digest[:32]}.lock"
+
+
 # ── Atomic file write ─────────────────────────────────────────────────────
 
 
@@ -1119,6 +1130,46 @@ class CustodyLeaseStore:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
+
+    @contextmanager
+    def occurrence_claim_lock(self, occurrence_key: str) -> Iterator[None]:
+        """Serialize occurrence-scoped claim acquisition across ALL claims.
+
+        The custody lease is keyed by the *claim* id, so per-lease flocks
+        share zero serialization between two distinct claims for the SAME
+        occurrence — both could scan, acquire, and append STARTED before
+        either sees the other.  This advisory flock is keyed by the
+        OCCURRENCE identity instead (mirroring the per-record flock pattern
+        in ``repair_lock._job_record_flock``) and MUST be held across the
+        caller's scan → acquire → append so exactly one contender wins; the
+        loser re-scans inside the lock and refuses with a typed error and
+        zero mutation.
+
+        The sidecar ``occurrence-<digest>.lock`` is intentionally never
+        removed — unlinking a lock file while another waiter blocks on the
+        same inode lets a third opener create a fresh inode and split the
+        fence.
+
+        Under the occurrence-join zero-mutation refusal contract (T-0101h),
+        this lock file is ALLOWED provisioning: a refusal that occurs after
+        the lock is entered may leave ``occurrence-<digest>.lock`` behind,
+        and that is the ONLY permitted refusal side effect on the plan side
+        (plan state files, queue records, markers/manifests, the WBC ledger
+        and lease history/state bytes stay untouched).
+        """
+        import fcntl
+
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        lock_p = _occurrence_lock_path(self.base_dir, occurrence_key)
+        fd = os.open(lock_p, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     def _append_inproc(self, lease_id: str, event: CustodyLeaseEvent) -> None:
         """Append without flock (single-process fallback)."""

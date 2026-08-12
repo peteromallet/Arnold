@@ -10496,6 +10496,106 @@ def build_chain_parser(subparsers: Any) -> None:
         ),
     )
 
+    runtime_cutover_parser = chain_sub.add_parser(
+        "runtime-cutover",
+        help=(
+            "Guardedly cut over or roll back the bound runtime AND the recorded "
+            "metadata.execution_environment.engine_root atomically"
+        ),
+    )
+    runtime_cutover_parser.add_argument("--spec", required=True)
+    runtime_cutover_parser.add_argument("--project-dir", required=False)
+    runtime_cutover_parser.add_argument("--from-runtime-sha256", required=True)
+    runtime_cutover_parser.add_argument("--to-runtime-sha256", required=True)
+    runtime_cutover_parser.add_argument("--expected-current-milestone", required=True)
+    runtime_cutover_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help=(
+            "Exact current plan name, or @none when no plan is active. A fully "
+            "completed chain uses --expected-current-milestone @terminal with "
+            "--expected-current-plan @none; terminal state and the exact "
+            "completed milestone set are then verified."
+        ),
+    )
+    runtime_cutover_parser.add_argument(
+        "--direction", choices=("cutover", "rollback"), default="cutover"
+    )
+    runtime_cutover_parser.add_argument("--reason", required=True)
+    runtime_cutover_parser.add_argument("--actor", default="operator")
+    runtime_cutover_parser.add_argument(
+        "--runtime-identity",
+        help=(
+            "Content-addressed offline runtime identity JSON. Requires "
+            "--runtime-provenance-receipt and is freshly reverified by the "
+            "receipt's independent interpreter. The adopted identity's "
+            "import_root becomes the new engine_root."
+        ),
+    )
+    runtime_cutover_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help=(
+            "Digest-bound runtime_provenance receipt emitted by the offline "
+            "runtime's interpreter. Requires --runtime-identity."
+        ),
+    )
+
+    execution_binding_migrate_parser = chain_sub.add_parser(
+        "execution-binding-migrate",
+        help=(
+            "Initialize the execution binding for a durably-paused, progressed, "
+            "unbound chain from its independently verified legacy runtime"
+        ),
+    )
+    execution_binding_migrate_parser.add_argument("--spec", required=True)
+    execution_binding_migrate_parser.add_argument("--project-dir", required=True)
+    execution_binding_migrate_parser.add_argument(
+        "--old-runtime-identity",
+        required=True,
+        help=(
+            "Content-addressed offline runtime identity JSON for the legacy "
+            "runtime. Requires --old-runtime-provenance-receipt and is freshly "
+            "reverified by the receipt's independent interpreter."
+        ),
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--old-runtime-provenance-receipt",
+        required=True,
+        help=(
+            "Digest-bound runtime_provenance receipt emitted by the legacy "
+            "runtime's interpreter. Requires --old-runtime-identity."
+        ),
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expected-current-milestone",
+        required=True,
+        help=(
+            "Exact current milestone label, or @terminal for a fully completed "
+            "chain (with --expected-current-plan @none)."
+        ),
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expected-branch",
+        required=True,
+        help="Exact current git branch of the project checkout.",
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expect-marker-sha256",
+        help=(
+            "Exact sha256 of the cloud-session marker file.  REQUIRED when the "
+            "marker is identity-less (no runtime identity fields): that form is "
+            "accepted only under this CAS plus the relaunch-root guard.  "
+            "Optional for markers already carrying a runtime identity form."
+        ),
+    )
+    execution_binding_migrate_parser.add_argument("--reason", required=True)
+    execution_binding_migrate_parser.add_argument("--actor", default="operator")
+
     target_rebind_parser = chain_sub.add_parser(
         "target-rebind",
         help=(
@@ -10595,6 +10695,38 @@ def build_chain_parser(subparsers: Any) -> None:
     resume_chain_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
     resume_chain_parser.add_argument("--project-dir", required=False)
     resume_chain_parser.add_argument("--actor", default="operator")
+
+    occurrence_join_parser = chain_sub.add_parser(
+        "occurrence-join",
+        help=(
+            "Operator-only: join the EXACT blocked repair occurrence of the "
+            "current plan and acquire a fenced claim/lease for it (T-0101e)"
+        ),
+    )
+    occurrence_join_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    occurrence_join_parser.add_argument("--project-dir", required=False)
+    occurrence_join_parser.add_argument("--session", required=True, help="Recorded repair session id")
+    occurrence_join_parser.add_argument(
+        "--occurrence",
+        required=True,
+        help="Exact recorded occurrence id (the repair request repair_identity_key)",
+    )
+    occurrence_join_parser.add_argument(
+        "--request", required=True, help="Exact recorded repair request id"
+    )
+    occurrence_join_parser.add_argument(
+        "--decision", required=True, help="Exact recorded repair decision id"
+    )
+    occurrence_join_parser.add_argument(
+        "--claim", required=True, help="Claim id to acquire for the exact occurrence"
+    )
+    occurrence_join_parser.add_argument("--reason", required=True)
+    occurrence_join_parser.add_argument("--actor", default="operator")
+    occurrence_join_parser.add_argument(
+        "--receipt",
+        required=True,
+        help="Durable receipt JSON output path (written only on success)",
+    )
 
     verify_parser = chain_sub.add_parser(
         "verify", help="Replay landed-diff completion evidence for completed milestones"
@@ -10813,6 +10945,38 @@ def run_chain_cli(
         )
         return 0
 
+    if action == "occurrence-join":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        receipt_arg = getattr(args, "receipt", None)
+        if not isinstance(receipt_arg, str) or not receipt_arg.strip():
+            return _emit_error(CliError("invalid_args", "--receipt is required"))
+        try:
+            from arnold_pipelines.megaplan.chain.occurrence_join import (
+                join_exact_occurrence,
+            )
+
+            payload = join_exact_occurrence(
+                spec_path=spec_path,
+                project_dir=project_root,
+                session=args.session,
+                occurrence_id=args.occurrence,
+                request_id=args.request,
+                decision_id=args.decision,
+                claim_id=args.claim,
+                reason=args.reason,
+                actor=args.actor,
+                receipt_path=Path(receipt_arg).expanduser(),
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps({"success": True, "spec": str(spec_path), **payload}, indent=2) + "\n"
+        )
+        return 0
+
     if action == "reconcile-source":
         try:
             spec = chain_spec.load_spec(spec_path)
@@ -10953,6 +11117,125 @@ def run_chain_cli(
                     "success": True,
                     "spec": str(spec_path),
                     "action": "runtime-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "runtime-cutover":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                cutover_runtime_identity,
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "chain runtime cutover refused: --runtime-identity and "
+                    "--runtime-provenance-receipt must be supplied together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+            result = cutover_runtime_identity(
+                spec_path,
+                chain_state,
+                expected_previous_runtime_sha256=args.from_runtime_sha256,
+                expected_active_runtime_sha256=args.to_runtime_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                direction=args.direction,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        f"chain runtime cutover refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "runtime-cutover",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "execution-binding-migrate":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                migrate_execution_binding,
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(
+                getattr(args, "old_runtime_identity", "") or ""
+            ).strip()
+            receipt_arg = str(
+                getattr(args, "old_runtime_provenance_receipt", "") or ""
+            ).strip()
+            if not identity_arg or not receipt_arg:
+                raise CliError(
+                    "chain_execution_binding_migrate_refused",
+                    "execution-binding-migrate requires --old-runtime-identity "
+                    "and --old-runtime-provenance-receipt together",
+                )
+            external_identity = verify_external_runtime_identity(
+                Path(identity_arg).expanduser().resolve(strict=False),
+                Path(receipt_arg).expanduser().resolve(strict=False),
+            )
+            result = migrate_execution_binding(
+                spec_path,
+                project_root,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_branch=args.expected_branch,
+                reason=args.reason,
+                actor=args.actor,
+                expected_marker_sha256=(
+                    getattr(args, "expect_marker_sha256", None) or None
+                ),
+                verified_external_runtime_identity=external_identity,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "execution-binding-migrate",
                     **result,
                 },
                 indent=2,
