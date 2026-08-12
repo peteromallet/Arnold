@@ -197,35 +197,26 @@ def test_execute_wbc_is_shadow_only_when_explicitly_disabled(
     assert explicit.facade._enforcement_enabled is False
 
 
-def test_execute_wbc_shadow_mode_proceeds_end_to_end_with_evidence(
+def test_execute_wbc_shadow_mode_is_denied_with_no_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The execute builder inherits the Option-A shadow contract from the
-    shared dispatch-custody helpers: with ARNOLD_M7_ACTION_VALIDATOR_
-    ENFORCEMENT=0 the facade ACCEPTS SHADOW_PASS boundaries and reserve/
-    start/complete all succeed with shadow evidence (lease + outbox record)
-    recorded — no denial."""
+    """T-0013 deny-by-default lock: ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=0
+    puts the execute builder in functional shadow mode (SHADOW_PASS
+    boundaries), but SHADOW_PASS NEVER authorizes a WBC effect — the dispatch
+    is DENIED at the reserve boundary and no ledger event is appended.  The
+    previous Option-A behavior of accepting SHADOW_PASS boundaries end to end
+    blessed the unsafe path and is locked out here; observation-only rereads
+    remain available."""
     monkeypatch.setenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", "0")
     spec = _spec(tmp_path, _dispatch(coordinator_attempt_id="coord-1", fence_token=1))
     assert spec.facade._enforcement_enabled is False
 
-    result = spec.run(lambda _start: {"success": True})
+    with pytest.raises(ActionBoundaryDeniedError, match="not authorized: shadow_pass"):
+        spec.run(lambda _start: {"success": True})
 
-    for phase_result in (result.reserve, result.start, result.terminal):
-        assert phase_result.action_boundary is not None
-        assert phase_result.action_boundary.gate_result == GateResult.SHADOW_PASS
-        assert phase_result.action_boundary.enforcement_enabled is False
-        assert phase_result.action_boundary.is_shadow is True
-    lease = spec.facade._lease_store.current_lease(
-        f"custody-lease-{spec.start_action_context.target.target_digest[:16]}"
-    )
-    assert lease is not None
-    assert lease.is_expired is False
-    assert lease.owner_host == spec.start_action_context.owner_host
-    records = spec.facade._outbox.list_records()
-    assert len([r for r in records if r.wbc_attempt_reference == spec.attempt_id]) == 1
-    assert [event.event_type for event in spec.facade._ledger_store.read_events(spec.attempt_id)] == [
-        AttemptEventType.STARTED,
-        AttemptEventType.COMPLETED,
-    ]
+    # Fail-closed: the denied dispatch appended no WBC events.  (Custody
+    # leases/outbox records are acquired at spec build, before any boundary
+    # validation, and are unchanged — the SHADOW_PASS boundary itself never
+    # admits an effect.)
+    assert spec.facade._ledger_store.read_events(spec.attempt_id) == []

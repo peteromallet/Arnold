@@ -10,10 +10,12 @@ from arnold_pipelines.run_authority import (
     CASExpectation,
     CapabilityGrant,
     Claim,
+    COHERENT,
     ContractError,
     CoordinatorFence,
     Decision,
     EvidenceEnvelope,
+    INCOHERENT,
     IdempotencyConflict,
     IdempotencyKey,
     IdentityConflict,
@@ -21,13 +23,54 @@ from arnold_pipelines.run_authority import (
     PayloadConflict,
     ProjectionMetadata,
     QuarantineRecord,
+    RUNTIME_OBSERVATION_FIELDS,
     RevisionConflict,
     SubjectAttempt,
+    UNKNOWN,
     assert_idempotent,
     contract_from_dict,
+    evaluate_runtime_observation,
     validate_scope_binding,
     validate_relationships,
 )
+
+
+def _coherent_capture():
+    return {
+        "recorded_engine_root": "/workspace/arnold",
+        "manifest_runtime_root": "/workspace/arnold",
+        "manifest_expected_head": "a" * 40,
+        "live_import_root": "/workspace/arnold",
+        "wrapper_digest": "b" * 64,
+        "dependency_generation": "v3-r7",
+        "environment_identity": "env-a",
+        "session_identity": "env-a",
+    }
+
+
+def _capture_observation(
+    observation_id="obs-coherent",
+    *,
+    source_identity="collector://one",
+    source_version="1.2.3",
+    source_cursor=7,
+    content_hash="c" * 64,
+    **capture_changes,
+):
+    capture = _coherent_capture()
+    capture.update(capture_changes)
+    return ObservationEnvelope.capture(
+        observation_id=observation_id,
+        run_id="run-1",
+        run_revision="rev-2",
+        observation_type="runtime",
+        source="collector://one",
+        runtime_observation=capture,
+        source_identity=source_identity,
+        source_version=source_version,
+        source_cursor=source_cursor,
+        content_hash=content_hash,
+    )
 
 
 def _records():
@@ -241,3 +284,203 @@ def test_contract_package_has_no_megaplan_or_persistence_policy() -> None:
         "finalize.json", "state.json", "pathlib", "sqlite", "repository", "journal.append",
     )
     assert all(term not in source for term in forbidden)
+
+
+def test_runtime_capture_complete_agreement_is_coherent_and_dispatchable() -> None:
+    envelope = _capture_observation()
+
+    assert envelope.coherence == COHERENT
+    assert envelope.is_dispatchable is True
+    assert envelope.coherence_reasons == ()
+    # A coherent envelope must carry the capture that backs the verdict.
+    assert envelope.runtime_observation is not None
+    assert envelope.runtime_observation["live_import_root"] == "/workspace/arnold"
+
+    # The typed capture fields survive a canonical round trip unchanged.
+    encoded = envelope.to_json()
+    decoded = ObservationEnvelope.from_json(encoded)
+    assert decoded == envelope
+    assert decoded.coherence == COHERENT
+    assert decoded.is_dispatchable is True
+    assert contract_from_dict(envelope.to_dict()) == envelope
+
+
+def test_missing_runtime_source_is_unknown_and_never_dispatchable() -> None:
+    envelope = _capture_observation(observation_id="obs-missing", live_import_root=None)
+
+    assert envelope.coherence == UNKNOWN
+    assert envelope.is_dispatchable is False
+    assert "missing_runtime_observation_field:live_import_root" in envelope.coherence_reasons
+
+    # Removing a whole capture is unknown, not coherent and not an error.
+    assert evaluate_runtime_observation(None) == (UNKNOWN, ("missing_runtime_observation",))
+
+
+def test_disagreeing_engine_roots_are_incoherent_and_never_dispatchable() -> None:
+    envelope = _capture_observation(
+        observation_id="obs-torn", live_import_root="/workspace/other",
+    )
+
+    assert envelope.coherence == INCOHERENT
+    assert envelope.is_dispatchable is False
+    assert "engine_root_mismatch" in envelope.coherence_reasons
+
+
+def test_cross_environment_capture_is_incoherent() -> None:
+    envelope = _capture_observation(
+        observation_id="obs-cross-env", session_identity="env-b",
+    )
+
+    assert envelope.coherence == INCOHERENT
+    assert envelope.is_dispatchable is False
+    assert "environment_session_identity_mismatch" in envelope.coherence_reasons
+
+
+def test_stale_or_invalid_capture_is_unknown() -> None:
+    stale = _capture_observation(observation_id="obs-stale", stale=True)
+    assert stale.coherence == UNKNOWN
+    assert stale.is_dispatchable is False
+    assert "stale_runtime_observation" in stale.coherence_reasons
+
+    invalid = _capture_observation(
+        observation_id="obs-invalid", dependency_generation=42,
+    )
+    assert invalid.coherence == UNKNOWN
+    assert invalid.is_dispatchable is False
+    assert "invalid_runtime_observation_field:dependency_generation" in invalid.coherence_reasons
+
+
+def test_legacy_observation_dict_deserializes_only_as_typed_unknown() -> None:
+    legacy = ObservationEnvelope(
+        "legacy-1", "run-1", "old-revision", "terminal_status_label",
+        "legacy://state", (), {"status": "complete"},
+    )
+    legacy_dict = {
+        "contract_type": "observation",
+        "schema_version": 1,
+        "observation_id": "legacy-1",
+        "run_id": "run-1",
+        "run_revision": "old-revision",
+        "observation_type": "terminal_status_label",
+        "source": "legacy://state",
+        "evidence_ids": [],
+        "payload": {"status": "complete"},
+        "payload_hash": legacy.payload_hash,
+    }
+
+    decoded = ObservationEnvelope.from_dict(legacy_dict)
+
+    # The legacy record is preserved, but only as explicitly typed unknown
+    # evidence: it is never coherent and never dispatchable.
+    assert decoded.observation_id == "legacy-1"
+    assert decoded.coherence == UNKNOWN
+    assert decoded.is_dispatchable is False
+    assert "legacy_record_without_coherence_fields" in decoded.coherence_reasons
+    assert decoded.runtime_observation is None
+    # The typed-unknown legacy record round trips deterministically.
+    assert ObservationEnvelope.from_dict(decoded.to_dict()) == decoded
+
+
+def test_legacy_positional_construction_stays_typed_unknown() -> None:
+    legacy = ObservationEnvelope(
+        "legacy-2", "run-1", "old-revision", "terminal_status_label",
+        "legacy://state", (), {"status": "done"},
+    )
+
+    assert legacy.coherence == UNKNOWN
+    assert legacy.is_dispatchable is False
+    assert legacy.runtime_observation is None
+    assert legacy.coherence_reasons
+
+
+def test_coherent_envelope_cannot_be_constructed_from_incomplete_input() -> None:
+    incomplete = _coherent_capture()
+    del incomplete["wrapper_digest"]
+
+    with pytest.raises(ContractError):
+        ObservationEnvelope(
+            "obs-1", "run-1", "rev-2", "runtime", "collector://one", (),
+            {}, coherence=COHERENT, runtime_observation=incomplete,
+        )
+    with pytest.raises(ContractError):
+        ObservationEnvelope(
+            "obs-1", "run-1", "rev-2", "runtime", "collector://one", (),
+            {}, coherence=COHERENT,
+        )
+    # A verdict that contradicts the capture is never silently accepted.
+    with pytest.raises(ContractError):
+        ObservationEnvelope(
+            "obs-lying", "run-1", "rev-2", "runtime", "collector://one", (),
+            {}, coherence=UNKNOWN, runtime_observation=_coherent_capture(),
+            source_identity="collector://one", source_version="1.2.3",
+            source_cursor=7, content_hash="c" * 64,
+        )
+
+
+def test_missing_provenance_is_unknown_and_never_dispatchable() -> None:
+    # A fully agreeing runtime capture without any provenance is UNKNOWN, not
+    # COHERENT: an envelope lacking source identity/version/cursor and content
+    # hash can never authorize dispatch.
+    bare = _capture_observation(
+        observation_id="obs-no-provenance",
+        source_identity=None, source_version=None,
+        source_cursor=None, content_hash=None,
+    )
+
+    assert bare.coherence == UNKNOWN
+    assert bare.is_dispatchable is False
+    for name in ("source_identity", "source_version", "source_cursor", "content_hash"):
+        assert f"missing_provenance_field:{name}" in bare.coherence_reasons
+
+    # Partially filled provenance is UNKNOWN too, never COHERENT.
+    partial = _capture_observation(
+        observation_id="obs-partial-provenance",
+        source_cursor=None, content_hash=None,
+    )
+    assert partial.coherence == UNKNOWN
+    assert partial.is_dispatchable is False
+    assert "missing_provenance_field:source_cursor" in partial.coherence_reasons
+    assert "missing_provenance_field:content_hash" in partial.coherence_reasons
+    assert "missing_provenance_field:source_identity" not in partial.coherence_reasons
+
+
+def test_validated_capture_fields_reject_malformed_values() -> None:
+    with pytest.raises(ContractError):
+        ObservationEnvelope(
+            "obs-1", "run-1", "rev-2", "runtime", "collector://one", (),
+            {}, coherence="MAYBE",
+        )
+    with pytest.raises(ContractError):
+        ObservationEnvelope(
+            "obs-1", "run-1", "rev-2", "runtime", "collector://one", (),
+            {}, content_hash="not-a-hash",
+        )
+    with pytest.raises(ContractError):
+        ObservationEnvelope(
+            "obs-1", "run-1", "rev-2", "runtime", "collector://one", (),
+            {}, source_cursor=-1,
+        )
+    with pytest.raises(ContractError):
+        ObservationEnvelope(
+            "obs-1", "run-1", "rev-2", "runtime", "collector://one", (),
+            {}, source_cursor=True,
+        )
+
+    envelope = ObservationEnvelope(
+        "obs-1", "run-1", "rev-2", "runtime", "collector://one", (),
+        {}, source_identity="collector://one", source_version="1.2.3",
+        source_cursor=7, content_hash="c" * 64,
+    )
+    assert envelope.source_cursor == 7
+    assert envelope.content_hash == "c" * 64
+    assert envelope.coherence == UNKNOWN
+
+
+def test_runtime_observation_fields_cover_every_agreement_dimension() -> None:
+    expected = {
+        "recorded_engine_root", "manifest_runtime_root", "manifest_expected_head",
+        "live_import_root", "wrapper_digest", "dependency_generation",
+        "environment_identity", "session_identity",
+    }
+    assert set(RUNTIME_OBSERVATION_FIELDS) == expected
+    assert len(RUNTIME_OBSERVATION_FIELDS) == len(expected)

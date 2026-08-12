@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from arnold_pipelines.megaplan.cloud.github_sync import (
     GitHubSyncConfig,
@@ -10,9 +10,28 @@ from arnold_pipelines.megaplan.cloud.github_sync import (
     main,
     sync_persistent_problems,
 )
+from arnold_pipelines.megaplan.custody.action_validator import GateResult
 from arnold_pipelines.megaplan.notification_safety import FixtureSafetyDecision
 from arnold_pipelines.megaplan.cloud.incident_bridge import append_github_issue_published
 from arnold_pipelines.megaplan.incident import IncidentLedger
+
+
+def _authorized_publication_adapter():
+    """Test publication adapter: explicit AUTHORIZED gate over a mock protocol.
+
+    T-0017: publications must be routed through an adapter that owns the
+    action gate — a direct github_cli call is never allowed.
+    """
+    from arnold_pipelines.megaplan.cloud.publication_adapter import PublicationAdapter
+
+    protocol = Mock()
+    reservation = Mock()
+    reservation.global_logical_effect_key = "glek-test-t0017"
+    protocol.reserve_and_start.return_value = reservation
+    return PublicationAdapter(
+        protocol,
+        action_gate_check=lambda family, target_key: GateResult.AUTHORIZED,
+    )
 
 
 def _problem_projection(
@@ -92,6 +111,7 @@ def test_sync_persistent_problems_creates_redacted_issue_and_appends_publication
                     config=GitHubSyncConfig(repo="acme/repo", repo_path=tmp_path),
                     root=tmp_path,
                     projections=projections,
+                    publication_adapter=_authorized_publication_adapter(),
                 )
 
     assert result["published"] == [
@@ -185,6 +205,7 @@ def test_sync_persistent_problems_comments_existing_issue_when_threshold_crosses
             config=GitHubSyncConfig(repo="acme/repo", repo_path=tmp_path),
             root=tmp_path,
             projections=projections,
+            publication_adapter=_authorized_publication_adapter(),
         )
 
     assert result["published"][0]["action"] == "commented"
@@ -207,6 +228,7 @@ def test_sync_persistent_problems_records_publish_failures_in_ledger(tmp_path: P
             config=GitHubSyncConfig(repo="acme/repo", repo_path=tmp_path),
             root=tmp_path,
             projections=projections,
+            publication_adapter=_authorized_publication_adapter(),
         )
 
     assert result["published"] == []
@@ -216,45 +238,42 @@ def test_sync_persistent_problems_records_publish_failures_in_ledger(tmp_path: P
     assert payload["next_expected_event"] == "github_sync.retry"
 
 
-def test_sync_persistent_problems_retries_without_missing_labels(tmp_path: Path) -> None:
+def test_sync_persistent_problems_adapter_makes_one_provider_call_on_missing_label_error(
+    tmp_path: Path,
+) -> None:
+    """T-0017: the ungated label-retry fallback is gone — the adapter path
+    makes exactly one provider call and records the rejection as a typed
+    failure instead of retrying without the missing label."""
     projections = _projections(_problem_projection(), _incident_projection())
 
     with patch("arnold_pipelines.megaplan.cloud.github_sync.github_cli.create_issue") as create_issue:
-        create_issue.side_effect = [
-            {
-                "ok": False,
-                "error": "could not add label: 'incident-control-plane' not found",
-                "fix_command": "gh auth login",
-            },
-            {
-                "ok": True,
-                "evidence_ref": {
-                    "kind": "github.issue",
-                    "repo": "acme/repo",
-                    "number": 42,
-                    "url": "https://github.com/acme/repo/issues/42",
-                    "action": "created",
-                },
-            },
-        ]
+        create_issue.return_value = {
+            "ok": False,
+            "error": "could not add label: 'incident-control-plane' not found",
+            "fix_command": "gh auth login",
+        }
 
         result = sync_persistent_problems(
             config=GitHubSyncConfig(repo="acme/repo", repo_path=tmp_path),
             root=tmp_path,
             projections=projections,
+            publication_adapter=_authorized_publication_adapter(),
         )
 
-    assert result["failed"] == []
-    assert result["published"][0]["issue_number"] == 42
-    assert create_issue.call_args_list[0].kwargs["labels"] == ["incident-control-plane", "persistent-problem"]
-    assert create_issue.call_args_list[1].kwargs["labels"] == ["persistent-problem"]
+    assert result["published"] == []
+    assert result["failed"] == [
+        {
+            "problem_id": "prob-sync-1",
+            "action": "created",
+            "error": "could not add label: 'incident-control-plane' not found",
+            "ledger_event_id": result["failed"][0]["ledger_event_id"],
+        }
+    ]
+    assert create_issue.call_count == 1
 
     payload = _read_ledger_events(tmp_path)[-1]["payload"]
-    assert payload["type"] == "github_sync.issue_published"
-    assert payload["links"]["label_fallback"] == {
-        "omitted_labels": ["incident-control-plane"],
-        "applied_labels": ["persistent-problem"],
-    }
+    assert payload["type"] == "github_sync.issue_publish_failed"
+    assert payload["next_expected_event"] == "github_sync.retry"
 
 
 def test_sync_persistent_problems_skips_real_publication_when_action_off(tmp_path: Path, monkeypatch) -> None:
@@ -269,6 +288,7 @@ def test_sync_persistent_problems_skips_real_publication_when_action_off(tmp_pat
             config=GitHubSyncConfig(repo="acme/repo", repo_path=tmp_path),
             root=tmp_path,
             projections=projections,
+            publication_adapter=_authorized_publication_adapter(),
         )
 
     assert result["published"] == []
@@ -298,6 +318,7 @@ def test_sync_persistent_problems_uses_configurable_thresholds(tmp_path: Path) -
             ),
             root=tmp_path,
             projections=projections,
+            publication_adapter=_authorized_publication_adapter(),
         )
 
     assert result["published"] == []
@@ -305,25 +326,19 @@ def test_sync_persistent_problems_uses_configurable_thresholds(tmp_path: Path) -
     create_issue.assert_not_called()
 
 
-def test_main_prints_json_result(tmp_path: Path, capsys: object) -> None:
+def test_main_fails_closed_without_explicit_gate(tmp_path: Path, capsys: object) -> None:
+    """T-0017: production main() installs no explicit action gate — every
+    publication is refused (typed failure), zero github_cli calls, exit 1."""
     projections = _projections(_problem_projection(), _incident_projection())
     with patch("arnold_pipelines.megaplan.cloud.github_sync.rebuild_projections", return_value=projections):
         with patch("arnold_pipelines.megaplan.cloud.github_sync.github_cli.create_issue") as create_issue:
-            create_issue.return_value = {
-                "ok": True,
-                "evidence_ref": {
-                    "kind": "github.issue",
-                    "repo": "acme/repo",
-                    "number": 42,
-                    "url": "https://github.com/acme/repo/issues/42",
-                    "action": "created",
-                },
-            }
-
             exit_code = main(["--repo", "acme/repo", "--repo-path", str(tmp_path), "--root", str(tmp_path)])
 
     out, _ = capsys.readouterr()
-    assert exit_code == 0
+    assert exit_code == 1
     payload = json.loads(out)
     assert payload["repo"] == "acme/repo"
-    assert payload["published"][0]["problem_id"] == "prob-sync-1"
+    assert payload["published"] == []
+    assert len(payload["failed"]) == 1
+    assert "refused" in payload["failed"][0]["error"]
+    create_issue.assert_not_called()

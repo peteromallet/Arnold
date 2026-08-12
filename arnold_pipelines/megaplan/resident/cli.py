@@ -1022,11 +1022,20 @@ def _resident_discord(
     )
     delivery_effects = None
     if config.allows_operational_discord_delivery:
-        from .delivery_effects import open_resident_delivery_effects
+        from .delivery_effects import (
+            current_delivery_gate_check,
+            open_resident_delivery_effects,
+        )
 
+        # Production delivery requires an explicitly installed current gate;
+        # the verdict re-reads the production-boundary policy on every
+        # delivery so a changed configuration denies before any provider call.
         delivery_effects = open_resident_delivery_effects(
             resident_state_root / "delivery_effects",
             production_enabled=True,
+            action_gate_check=current_delivery_gate_check(
+                lambda: config.allows_operational_discord_delivery
+            ),
         )
     # Dev/test residents may handle interactive test traffic, but durable
     # operational outboxes belong exclusively to the production bot boundary.

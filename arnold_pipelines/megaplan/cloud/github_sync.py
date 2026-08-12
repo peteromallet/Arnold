@@ -35,7 +35,6 @@ _INCIDENT_LEDGER_DIR = Path(".megaplan") / "incident-ledger"
 _EVENTS_FILE = "events.jsonl"
 _PUBLICATION_TEXT_LIMIT_BYTES = 2 * 1024
 _PUBLICATION_TEXT_TRUNCATION = "\n[truncated to fit 2KB publication gate]"
-_MISSING_LABEL_RE = re.compile(r"could not add label: ['\"]?([^'\"]+)['\"]? not found", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -219,13 +218,41 @@ def sync_persistent_problems(
 ) -> dict[str, Any]:
     """Publish persistent problem projections to GitHub without reading GitHub state.
 
-    When *publication_adapter* is provided (Step 13B2), issue creation and
-    comment calls are routed through the action gate and WBC effect protocol
-    with stable repository/issue/occurrence global-effect keys.  The
-    adapter's ``apply_fn`` must be a fake client (real GitHub is action-off
-    in M10 per SD3).
+    Issue creation and comment calls are routed through *publication_adapter*
+    (Step 13B2): the action gate and WBC effect protocol with stable
+    repository/issue/occurrence global-effect keys.  The adapter's
+    ``apply_fn`` must be a fake client (real GitHub is action-off in M10 per
+    SD3).  Publication authority is resolved BEFORE any filesystem effect: a
+    missing gate (no adapter) or any non-AUTHORIZED gate verdict denies the
+    whole sync with zero writes (T-0017: publication effects close by
+    default; there is no ungated direct github_cli fallback and no ungated
+    publication path).
     """
     workspace_root = Path.cwd() if root is None else Path(root)
+
+    # T-0017 (G4): resolve publication authority BEFORE any filesystem write.
+    # A missing gate (no adapter) or any non-AUTHORIZED gate verdict
+    # (SHADOW_PASS, blocked, error) denies the whole sync — zero
+    # rebuild_projections, zero ledger/bridge appends.  Only an AUTHORIZED
+    # publication may write.
+    if publication_adapter is None:
+        return _sync_gate_denial(
+            config,
+            _publication_refusal(config, None)["error"],
+        )
+    from arnold_pipelines.megaplan.cloud.publication_adapter import (
+        PublicationTarget,
+    )
+
+    denial = publication_adapter.check_gate(
+        PublicationTarget(repo=config.repo, occurrence_key="sync")
+    )
+    if denial is not None:
+        return _sync_gate_denial(
+            config,
+            denial.error or "publication denied by action gate",
+        )
+
     docs = projections or rebuild_projections(workspace_root)
     incidents_by_id = {
         incident["incident_id"]: incident
@@ -299,47 +326,39 @@ def sync_persistent_problems(
         if action == "create":
             issue_title = _issue_title(problem)
             issue_body = _issue_body(problem, incident)
-            if publication_adapter is not None:
-                # Step 13B2: route through action gate + WBC protocol
-                from arnold_pipelines.megaplan.cloud.publication_adapter import (
-                    PublicationTarget,
-                )
+            # Step 13B2: route through action gate + WBC protocol (the
+            # pre-flight gate check above guarantees an adapter is present).
+            from arnold_pipelines.megaplan.cloud.publication_adapter import (
+                PublicationTarget,
+            )
 
-                target = PublicationTarget(
-                    repo=config.repo,
-                    issue_number=None,
-                    occurrence_key=problem_id,
-                )
+            target = PublicationTarget(
+                repo=config.repo,
+                issue_number=None,
+                occurrence_key=problem_id,
+            )
 
-                def _fake_create(intent: dict[str, Any]) -> dict[str, Any]:
-                    return github_cli.create_issue(
-                        str(config.repo_path),
-                        config.repo,
-                        intent.get("title", issue_title),
-                        intent.get("body", issue_body),
-                        labels=list(config.issue_labels),
-                    )
-
-                pub_outcome = publication_adapter.publish(
-                    target=target,
-                    action="create",
-                    intent_payload={
-                        "title": issue_title,
-                        "body": issue_body,
-                        "labels": list(config.issue_labels),
-                        "problem_id": problem_id,
-                    },
-                    apply_fn=_fake_create,
-                )
-                result = _publication_outcome_to_result(pub_outcome)
-            else:
-                result = _create_issue_with_label_fallback(
-                    repo_path=config.repo_path,
-                    repo=config.repo,
-                    title=issue_title,
-                    body=issue_body,
+            def _fake_create(intent: dict[str, Any]) -> dict[str, Any]:
+                return github_cli.create_issue(
+                    str(config.repo_path),
+                    config.repo,
+                    intent.get("title", issue_title),
+                    intent.get("body", issue_body),
                     labels=list(config.issue_labels),
                 )
+
+            pub_outcome = publication_adapter.publish(
+                target=target,
+                action="create",
+                intent_payload={
+                    "title": issue_title,
+                    "body": issue_body,
+                    "labels": list(config.issue_labels),
+                    "problem_id": problem_id,
+                },
+                apply_fn=_fake_create,
+            )
+            result = _publication_outcome_to_result(pub_outcome)
             summary = f"Published persistent problem {problem_id} to GitHub as a new issue"
             publish_action = "created"
         else:
@@ -352,44 +371,37 @@ def sync_persistent_problems(
                 )
                 continue
             issue_body = _issue_comment(problem, incident, publication)
-            if publication_adapter is not None:
-                # Step 13B2: route through action gate + WBC protocol
-                from arnold_pipelines.megaplan.cloud.publication_adapter import (
-                    PublicationTarget,
-                )
+            # Step 13B2: route through action gate + WBC protocol (the
+            # pre-flight gate check above guarantees an adapter is present).
+            from arnold_pipelines.megaplan.cloud.publication_adapter import (
+                PublicationTarget,
+            )
 
-                target = PublicationTarget(
-                    repo=config.repo,
-                    issue_number=int(publication["number"]),
-                    occurrence_key=problem_id,
-                )
+            target = PublicationTarget(
+                repo=config.repo,
+                issue_number=int(publication["number"]),
+                occurrence_key=problem_id,
+            )
 
-                def _fake_comment(intent: dict[str, Any]) -> dict[str, Any]:
-                    return github_cli.comment_issue(
-                        str(config.repo_path),
-                        config.repo,
-                        int(publication["number"]),
-                        intent.get("body", issue_body),
-                    )
-
-                pub_outcome = publication_adapter.publish(
-                    target=target,
-                    action="comment",
-                    intent_payload={
-                        "body": issue_body,
-                        "problem_id": problem_id,
-                        "issue_number": int(publication["number"]),
-                    },
-                    apply_fn=_fake_comment,
-                )
-                result = _publication_outcome_to_result(pub_outcome)
-            else:
-                result = github_cli.comment_issue(
-                    config.repo_path,
+            def _fake_comment(intent: dict[str, Any]) -> dict[str, Any]:
+                return github_cli.comment_issue(
+                    str(config.repo_path),
                     config.repo,
                     int(publication["number"]),
-                    issue_body,
+                    intent.get("body", issue_body),
                 )
+
+            pub_outcome = publication_adapter.publish(
+                target=target,
+                action="comment",
+                intent_payload={
+                    "body": issue_body,
+                    "problem_id": problem_id,
+                    "issue_number": int(publication["number"]),
+                },
+                apply_fn=_fake_comment,
+            )
+            result = _publication_outcome_to_result(pub_outcome)
             summary = f"Published persistent problem {problem_id} update to GitHub issue #{publication['number']}"
             publish_action = "commented"
 
@@ -404,18 +416,6 @@ def sync_persistent_problems(
                 "source_record": validation_evidence["source_record"],
             }
         )
-        if result.get("omitted_labels"):
-            publication_links["label_fallback"] = {
-                "omitted_labels": list(result["omitted_labels"]),
-                "applied_labels": list(result.get("applied_labels") or []),
-            }
-            event_evidence.append(
-                {
-                    "kind": "github_sync.label_fallback",
-                    "omitted_labels": list(result["omitted_labels"]),
-                    "applied_labels": list(result.get("applied_labels") or []),
-                }
-            )
         incident_id = incident.get("incident_id") if isinstance(incident, dict) else None
 
         if result.get("ok"):
@@ -445,6 +445,21 @@ def sync_persistent_problems(
             continue
 
         error_text = str(result.get("error") or "GitHub publication failed")
+        if _is_gate_denial_outcome(pub_outcome):
+            # T-0017 (G4): a denied publication performs ZERO filesystem
+            # effects — the typed denial is returned in-memory only (no
+            # ledger/bridge append).  Only an AUTHORIZED publication may
+            # write; a post-authorization failure still records its ledger
+            # event below.
+            failed.append(
+                {
+                    "problem_id": problem_id,
+                    "action": publish_action,
+                    "error": error_text,
+                }
+            )
+            continue
+
         bridge_result = append_github_issue_publish_failed(
             summary=f"Failed to publish persistent problem {problem_id} to GitHub",
             repo=config.repo,
@@ -493,6 +508,21 @@ def _publication_outcome_to_result(
     }
 
 
+def _is_gate_denial_outcome(outcome: Any) -> bool:
+    """True when *outcome* is a pre-effect gate denial.
+
+    A denial is a FAILED outcome with no protocol reservation (empty GLEK)
+    and no provider call.  Post-authorization failures — a rejected provider
+    or a protocol INDETERMINATE — carry a GLEK or a different outcome kind
+    and must still be recorded in the ledger.
+    """
+    return (
+        getattr(outcome, "ok", True) is False
+        and getattr(outcome, "outcome_kind", "") == "FAILED"
+        and not getattr(outcome, "glek", None)
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -507,6 +537,11 @@ def main(argv: list[str] | None = None) -> int:
         dest="labels",
     )
     args = parser.parse_args(argv)
+
+    # T-0017: production publication effects close by default.  The standalone
+    # CLI installs no explicit action gate (SD3 keeps real GitHub action-off
+    # in M10), so sync_persistent_problems refuses every publication — there
+    # is no ungated publication path in production.
     result = sync_persistent_problems(
         config=GitHubSyncConfig(
             repo=args.repo,
@@ -523,53 +558,43 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if not result["failed"] else 1
 
 
-def _create_issue_with_label_fallback(
-    *,
-    repo_path: Path | str,
-    repo: str,
-    title: str,
-    body: str,
-    labels: list[str],
-) -> dict[str, Any]:
-    requested_labels = [label.strip() for label in labels if str(label).strip()]
-    attempted_labels = list(requested_labels)
-    omitted_labels: list[str] = []
-    while True:
-        result = github_cli.create_issue(
-            repo_path,
-            repo,
-            title,
-            body,
-            labels=attempted_labels or None,
-        )
-        if result.get("ok"):
-            if omitted_labels:
-                result["omitted_labels"] = list(omitted_labels)
-                result["applied_labels"] = list(attempted_labels)
-            return result
-        retry_labels = _retry_labels_after_missing_label_error(
-            result.get("error"),
-            attempted_labels,
-        )
-        if retry_labels is None:
-            return result
-        omitted_labels.extend(label for label in attempted_labels if label not in retry_labels)
-        attempted_labels = retry_labels
+def _sync_gate_denial(config: GitHubSyncConfig, error: str) -> dict[str, Any]:
+    """Typed sync-level denial result — zero filesystem effects.
+
+    T-0017 (G4): a missing gate (no publication adapter) or any gate verdict
+    other than AUTHORIZED denies the whole sync BEFORE any filesystem write
+    (no rebuild_projections, no ledger/bridge append).  Only an AUTHORIZED
+    publication may write.
+    """
+    return {
+        "repo": config.repo,
+        "published": [],
+        "failed": [
+            {
+                "action": "create",
+                "error": error,
+            }
+        ],
+        "skipped": [],
+    }
 
 
-def _retry_labels_after_missing_label_error(
-    error: Any,
-    attempted_labels: list[str],
-) -> list[str] | None:
-    if not attempted_labels:
-        return None
-    match = _MISSING_LABEL_RE.search(str(error or ""))
-    if match is None:
-        return None
-    missing_label = match.group(1).strip()
-    if missing_label not in attempted_labels:
-        return None
-    return [label for label in attempted_labels if label != missing_label]
+def _publication_refusal(config: GitHubSyncConfig, problem_id: str | None) -> dict[str, Any]:
+    """Fail-closed typed refusal for a publication without an adapter.
+
+    T-0017: the direct github_cli fallbacks were removed — publication
+    effects close by default.  Without a publication adapter (the only path
+    that owns the action gate + WBC protocol) the publication is refused
+    with a typed failure and zero provider calls.
+    """
+    target_desc = f" for problem {problem_id}" if problem_id else ""
+    return {
+        "ok": False,
+        "error": (
+            "publication refused: no authorized publication adapter installed"
+            f"{target_desc} (T-0017 publication effects close by default)"
+        ),
+    }
 
 
 def _publication_action(

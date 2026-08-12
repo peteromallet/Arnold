@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -47,6 +48,44 @@ class CleanupSurveyReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {"findings": [finding.to_dict() for finding in self.findings]}
+
+
+def _reference_census(root: str) -> tuple[str, list[str]]:
+    """Run the canonical runtime reference census (T-0012/T-0027) for *root*.
+
+    Store paths are read from env at CALL time (not import time) so the
+    census is always fresh and injectable per environment.  A missing store
+    is not a reference; an unreadable/corrupt store makes the verdict UNKNOWN
+    (fail-closed — delete-on-unknown never happens).
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_references import run_census
+
+    return run_census(
+        root=root,
+        workspace=os.environ.get("ARNOLD_BASE_DIR", ""),
+        manifest_store=os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"),
+        current_manifest="",
+        chain_store=os.environ.get(
+            "ARNOLD_REFERENCE_CHAIN_STORE", "/workspace/.megaplan/plans/.chains"
+        ),
+        marker_store=os.environ.get(
+            "ARNOLD_REFERENCE_MARKER_STORE",
+            "/workspace/.megaplan/cloud-sessions:/workspace/watchdog-reports",
+        ),
+        schedule_store=os.environ.get(
+            "ARNOLD_REFERENCE_SCHEDULE_STORES",
+            "/workspace/arnold/.megaplan/resident/scheduled_jobs:"
+            "/workspace/arnold/.megaplan/resident/schedules/heads:"
+            "/workspace/.megaplan/ops/schedules",
+        ),
+        repair_queue=os.environ.get(
+            "ARNOLD_REFERENCE_REPAIR_QUEUE", "/workspace/.megaplan/repair-queue"
+        ),
+        lease_store=os.environ.get(
+            "ARNOLD_REFERENCE_LEASE_STORE",
+            os.path.expanduser("~/.megaplan/custody/leases"),
+        ),
+    )
 
 
 def survey_cleanup(config: AgentBoxConfig) -> CleanupSurveyReport:
@@ -260,6 +299,46 @@ def _apply_delete(config: AgentBoxConfig, finding: CleanupFinding) -> dict[str, 
             pass
 
     worktree_path_value = finding.worktree_path
+    target = Path(worktree_path_value) if worktree_path_value else None
+
+    # T-0027: the delete (git branch -D + git worktree remove) is behind the
+    # canonical reference census.  The exact worktree root must have a fresh
+    # CLEAR verdict before ANY branch/worktree deletion; REFERENCED/DANGLING/
+    # UNKNOWN refuse (fail-closed: a referenced runtime root is load-bearing,
+    # an unreadable store cannot attest completeness, and confirmation or
+    # --force-style authority is NOT evidence of safety).
+    branch_delete = bool(
+        repo_path is not None
+        and branch
+        and _worktree_for_branch(repo_path, branch) is None
+        and has_local_branch(repo_path, branch)
+    )
+    worktree_delete = bool(
+        repo_path is not None and target is not None and _is_registered_worktree(repo_path, target)
+    )
+    if branch_delete or worktree_delete:
+        census_target = worktree_path_value or str(repo_path)
+        if not census_target:
+            return {
+                "ok": False,
+                "action": "delete",
+                "finding_id": finding.finding_id,
+                "error": "delete refused: no reference-census target for the branch/worktree being removed",
+            }
+        verdict, reasons = _reference_census(census_target)
+        if verdict != "CLEAR":
+            return {
+                "ok": False,
+                "action": "delete",
+                "finding_id": finding.finding_id,
+                "census_verdict": verdict,
+                "error": (
+                    f"delete refused: reference census {verdict} for {census_target} "
+                    f"(only CLEAR may delete; delete-on-unknown never happens)"
+                ),
+                "census_reasons": reasons,
+            }
+
     if repo_path and branch:
         checked_out = _worktree_for_branch(repo_path, branch)
         if checked_out is None and has_local_branch(repo_path, branch):

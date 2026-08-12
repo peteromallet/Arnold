@@ -30,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPERS_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
 TRIGGER = WRAPPERS_DIR / "arnold-repair-trigger"
 WATCHDOG = WRAPPERS_DIR / "arnold-watchdog"
+CHAIN = WRAPPERS_DIR / "arnold-chain"
 RUNTIME_LIB = WRAPPERS_DIR / "arnold-supervisor-runtime-lib"
 DEFAULT_MANIFEST_PATH = "/workspace/.megaplan/runtime-manifest.json"
 
@@ -76,6 +77,59 @@ def _write_allow_manifestless_policy(
         }
     policy_path.write_text(json.dumps(payload), encoding="utf-8")
     return policy_path
+
+
+def _schema_valid_manifest() -> dict[str, object]:
+    """A manifest the canonical validator (bootstrap_manifest) accepts: schema
+    ``"1"`` with every required top-level and nested key (G2 round 4 — the
+    minimal ``{"epic": {"branch": ...}}`` shape only ever passed admission
+    through the deleted raw-parse fallback)."""
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "runtime_id": "demo-runtime",
+        "schema": "1",
+        "generation": 1,
+        "epic_id": "demo-epic",
+        "state": "active",
+        "owner": "test",
+        "base": {
+            "ref": "main",
+            "commit": "0" * 40,
+            "editable_install_path": "/workspace/.megaplan/editable",
+            "venv_path": "/workspace/.megaplan/venv",
+        },
+        "epic": {
+            "branch": "fixer/p1-wave2",
+            "worktree_path": "/workspace/demo-epic-worktree",
+            "venv_path": "/workspace/.megaplan/venv",
+            "runtime_root": "/workspace/demo-epic-worktree",
+            "expected_head": "0" * 40,
+            "repair_bin": "/usr/local/bin/arnold-repair-loop",
+            "deps_lockfile": "requirements.lock",
+        },
+        "indirection": {
+            "host_path": "/tmp/demo",
+            "container_path": "/workspace/demo",
+            "mount_table": [],
+            "execution_namespace": "demo",
+            "verified_head": "0" * 40,
+            "last_verified_at": now,
+            "attestation": {
+                "module_file": "arnold_pipelines/megaplan/__init__.py",
+                "module_digest": "0" * 64,
+                "mount_id": "demo-mount",
+            },
+        },
+        "policy": {
+            "policy_sha": "0" * 64,
+            "model_policy_sha": "0" * 64,
+            "sync_policy": "manifest-only",
+        },
+        "promotions": [],
+        "timestamps": {"created": now, "updated": now, "closed": None},
+        "gc_policy": "keep",
+        "commands": [],
+    }
 
 
 def _run_trigger(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -421,6 +475,9 @@ echo "GATE_OK"
     assert "GATE_OK" in admitted.stdout
 
     # 3) Present corrupt manifest -> fail closed (78) regardless of permit.
+    #    The typed load-failure message proves the raw-parse fallback is gone
+    #    (G2 round 4): an unreadable manifest is an admission failure, never
+    #    a silent empty field read.
     corrupt = tmp_path / "corrupt-manifest.json"
     corrupt.write_text("{not valid json", encoding="utf-8")
     corrupt_blocked = run_gate(
@@ -428,12 +485,17 @@ echo "GATE_OK"
         policy_path=policy,
     )
     assert corrupt_blocked.returncode == 78
-    assert "manifest present without epic.branch" in corrupt_blocked.stderr
+    assert (
+        "present but failed to load (corrupt or schema-invalid)" in corrupt_blocked.stderr
+    )
 
-    # 4) Present valid manifest (epic.branch) -> admit.
+    # 4) Present valid manifest (schema-valid, epic.branch) -> admit.  The
+    #    manifest must satisfy the canonical bootstrap_manifest validator —
+    #    a minimal {"epic": {"branch": ...}} payload is schema-invalid and
+    #    now fails closed (it only ever passed through the deleted fallback).
     valid = tmp_path / "valid-manifest.json"
     valid.write_text(
-        json.dumps({"epic": {"branch": "fixer/p1-wave2"}}),
+        json.dumps(_schema_valid_manifest()),
         encoding="utf-8",
     )
     valid_ok = run_gate(
@@ -442,6 +504,39 @@ echo "GATE_OK"
     )
     assert valid_ok.returncode == 0, valid_ok.stderr
     assert "GATE_OK" in valid_ok.stdout
+
+    # 5) DANGLING SYMLINK at the manifest path -> fail closed (78), even with
+    #    a valid permit present.  G5 round-13 finding: the old ``[[ -f ]]``
+    #    guard FOLLOWED the link to its missing target, reported false, and
+    #    collapsed the PRESENT-but-unreadable entry into the manifestless
+    #    permit check (which would admit).  Present must never degrade to
+    #    absent — the typed dangling-symlink message proves the permit did
+    #    not rescue the run.
+    dangling_target = tmp_path / "vanished-target.json"
+    dangling_link = tmp_path / "dangling-manifest.json"
+    dangling_link.symlink_to(dangling_target)  # target never created
+    dangling_blocked = run_gate(
+        manifest_path=dangling_link,
+        policy_path=policy,
+    )
+    assert dangling_blocked.returncode == 78
+    assert "present but unreadable (dangling symlink)" in dangling_blocked.stderr
+    assert "GATE_OK" not in dangling_blocked.stdout
+
+    # 6) STAT-INACCESSIBLE manifest path (a parent component is a regular
+    #    file -> ENOTDIR, the same OSError fail-closed class as EACCES) ->
+    #    exit 78 even with a valid permit: absence is unprovable, so the
+    #    entry must never fall through to the manifestless permit check.
+    not_a_dir = tmp_path / "plain-file"
+    not_a_dir.write_text("i am a file, not a directory", encoding="utf-8")
+    enotdir_manifest = not_a_dir / "runtime-manifest.json"
+    enotdir_blocked = run_gate(
+        manifest_path=enotdir_manifest,
+        policy_path=policy,
+    )
+    assert enotdir_blocked.returncode == 78
+    assert "present but unreadable (stat/lstat failed)" in enotdir_blocked.stderr
+    assert "GATE_OK" not in enotdir_blocked.stdout
 
 
 def test_lib_authority_treats_compatibility_only_pointer_as_absent(
@@ -638,3 +733,104 @@ def test_attest_runtime_detects_tree_content_drift(tmp_path: Path) -> None:
     # Contract keys all present.
     for key in ("module_file", "module_digest", "mount_id", "declared_vs_observed_match", "errors"):
         assert key in result
+
+
+# ── T-0024: raw-but-fail-closed readers distinguish absent from invalid ──────
+
+
+def test_arnold_chain_refuses_present_but_corrupt_manifest(tmp_path: Path) -> None:
+    """arnold-chain pins the runtime manifest BEFORE any launch: a PRESENT
+    but corrupt manifest must exit 24 with the typed binding-drift message —
+    the corrupt file is never treated as absent/empty and never falls back to
+    a fixed engine dir."""
+    corrupt = tmp_path / "runtime-manifest.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    spec = tmp_path / "chain.yaml"
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    env = {
+        **_base_env(),
+        "ARNOLD_RUNTIME_MANIFEST": str(corrupt),
+        "MEGAPLAN_PROJECT_DIR": str(tmp_path),
+    }
+    proc = subprocess.run(
+        [str(CHAIN), str(spec)],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 24, (proc.stdout, proc.stderr)
+    assert "isolated_chain_runtime_binding_drift" in proc.stderr
+    assert "manifest lacks epic.runtime_root" in proc.stderr
+
+
+def test_current_target_resolver_fails_closed_on_present_but_invalid_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """current_target's manifest root reader distinguishes ABSENT from INVALID
+    (T-0024): a genuinely missing manifest (env unset) degrades, but a
+    PRESENT-but-corrupt manifest raises the typed ManifestError — the
+    resolver never falls back to the workspace as the executed tree."""
+    from arnold_pipelines.megaplan.cloud.current_target import (
+        _manifest_runtime_root,
+        _resolver_tree_path,
+    )
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        load_manifest,
+    )
+
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    assert _manifest_runtime_root() is None
+
+    # A genuinely missing pinned file is ABSENT -> still degrades.
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(tmp_path / "missing.json"))
+    assert _manifest_runtime_root() is None
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    assert _resolver_tree_path(workspace, None) == workspace
+
+    # A PRESENT-but-corrupt manifest is INVALID -> typed fail-closed, never
+    # a workspace fallback.
+    corrupt = tmp_path / "runtime-manifest.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(corrupt))
+    with pytest.raises(ManifestError, match="present but failed to load"):
+        _manifest_runtime_root()
+    with pytest.raises(ManifestError, match="present but failed to load"):
+        _resolver_tree_path(workspace, None)
+
+    # A canonically schema-valid manifest IS trusted (proves the corrupt
+    # rejection is about invalidity, not about the env pin being ignored).
+    # The fixture is a full schema "1" manifest that the canonical validator
+    # (load_manifest / bootstrap_manifest) accepts — NEVER the schema-less
+    # {"epic": {"runtime_root": ...}} shape, which is canonically invalid
+    # and must not be blessed as a valid manifest.
+    tree = tmp_path / "manifest-tree"
+    tree.mkdir()
+    manifest_payload = _schema_valid_manifest()
+    manifest_payload["epic"]["runtime_root"] = str(tree)  # type: ignore[index]
+    valid = tmp_path / "valid.json"
+    valid.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(valid))
+    assert load_manifest(valid).epic["runtime_root"] == str(tree)
+    assert _manifest_runtime_root() == tree
+    assert _resolver_tree_path(workspace, None) == tree
+
+    # The reader above is deliberately FIELD-PRESENCE-ONLY (T-0024): it
+    # distinguishes ABSENT from INVALID-on-load (corrupt JSON, non-object,
+    # missing runtime_root), NOT schema conformance — canonical schema
+    # validation lives at launcher admission (exit 78 via bootstrap_manifest).
+    # The schema-less {"epic": {"runtime_root": ...}} shape is canonically
+    # REFUSED by the validator even though this reader still reads its
+    # runtime_root field; the trusted fixture above therefore stays
+    # schema-valid so this test never blesses the schema-less shape.
+    schema_less = tmp_path / "schema-less.json"
+    schema_less.write_text(
+        json.dumps({"epic": {"runtime_root": str(tree)}}), encoding="utf-8"
+    )
+    with pytest.raises(ManifestError, match="missing required fields"):
+        load_manifest(schema_less)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(schema_less))
+    assert _manifest_runtime_root() == tree

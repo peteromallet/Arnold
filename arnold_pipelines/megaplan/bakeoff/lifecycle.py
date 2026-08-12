@@ -26,7 +26,12 @@ from arnold_pipelines.megaplan.bakeoff.wbc import (
     record_bakeoff_wbc_evidence,
     validate_bakeoff_transition,
 )
-from arnold_pipelines.megaplan.bakeoff.worktree import mark_crashed, remove_worktree
+from arnold_pipelines.megaplan.bakeoff.worktree import (
+    WorktreeDeleteRefused,
+    mark_crashed,
+    reference_census_verdict,
+    remove_worktree,
+)
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import AUTOMATION_TERMINAL_STATES
 
@@ -168,6 +173,26 @@ def _abandon_profile_worktree(record: BakeoffProfileRecord) -> None:
     try:
         remove_worktree(target, force=True)
     except CliError as exc:
+        if exc.code == "bakeoff_worktree_delete_refused":
+            # G6 finding 3: the reference census refused the deletion — this
+            # is a typed refusal, NOT a git failure to paper over.  The
+            # rmtree fallback must never run (zero deletion on
+            # REFERENCED/DANGLING/UNKNOWN).
+            raise
+        # Git-level removal failure: the raw rmtree fallback is itself a
+        # runtime-worktree deletion and is censused exactly like
+        # `git worktree remove` before it runs (G6 finding 3).  REFERENCED /
+        # DANGLING / UNKNOWN refuse with a typed error (zero deletion);
+        # only CLEAR proceeds.
+        verdict, reasons = reference_census_verdict(target)
+        if verdict != "CLEAR":
+            detail = "; ".join(reasons) or verdict
+            raise WorktreeDeleteRefused(
+                "bakeoff_worktree_delete_refused",
+                f"refusing rmtree fallback for worktree {target}: reference "
+                f"census {verdict} (only CLEAR may delete; delete-on-unknown "
+                f"never happens): {detail}",
+            )
         print(
             f"warning: failed to remove worktree for {record['name']}: {exc.message}",
             file=sys.stderr,

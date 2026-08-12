@@ -41,9 +41,19 @@ def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
     snapshot_guard_at = text.index("progress_auditor_running_snapshot=0")
     reexec_at = text.index('exec "$source_real" "$@"')
     assert hot_env_at < source_root_at < snapshot_guard_at < reexec_at
+    # T-0024 absent-vs-invalid: the field-read exit status is checked so a
+    # PRESENT-but-invalid manifest fails closed (exit 78) instead of silently
+    # collapsing into the fixed /workspace/arnold fallback.
     assert (
-        'AUDITOR_SOURCE_ROOT="$(arnold_runtime_manifest_epic_field '
-        "epic.runtime_root 2>/dev/null || true)\""
+        'if declare -F arnold_runtime_manifest_epic_field >/dev/null 2>&1; then\n'
+        '  AUDITOR_SOURCE_ROOT="$(arnold_runtime_manifest_epic_field '
+        "epic.runtime_root 2>/dev/null)\"\n"
+        '  AUDITOR_MANIFEST_FIELD_RC=$?\n'
+        '  if [[ "$AUDITOR_MANIFEST_FIELD_RC" -ne 0 ]]; then\n'
+        '    echo "arnold-progress-auditor: runtime manifest present but invalid; failing closed" >&2\n'
+        "    exit 78\n"
+        "  fi\n"
+        "fi"
     ) in text
     assert 'AUDITOR_SOURCE_ROOT="${AUDITOR_SOURCE_ROOT:-/workspace/arnold}"' in text
     assert 'if [[ "$progress_auditor_running_snapshot" != "1" && -x "$SOURCE_AUDITOR" ]]' in text
@@ -137,7 +147,63 @@ def test_auditor_source_selection_snapshot_and_cleanup_are_bounded(
     selected_entrypoint = installed if entrypoint == "installed" else source
     runtime_manifest = tmp_path / "runtime-manifest.json"
     runtime_manifest.write_text(
-        json.dumps({"epic": {"runtime_root": str(source_root)}}),
+        json.dumps(
+            {
+                # Canonically schema-valid (schema "1", all required keys) —
+                # a minimal {"epic": {"runtime_root": ...}} payload is
+                # schema-invalid and fails closed at the trampoline gate
+                # (T-0024 / G5 round-8 finding 4).
+                "runtime_id": "auditor-test-runtime",
+                "schema": "1",
+                "generation": 1,
+                "epic_id": "auditor-test-epic",
+                "state": "active",
+                "owner": "test",
+                "base": {
+                    "ref": "main",
+                    "commit": "0" * 40,
+                    "editable_install_path": str(source_root),
+                    "venv_path": str(source_root / "venv"),
+                },
+                "epic": {
+                    "branch": "fixer/auditor-test",
+                    "worktree_path": str(source_root),
+                    "venv_path": str(source_root / "venv"),
+                    "runtime_root": str(source_root),
+                    "expected_head": "0" * 40,
+                    "repair_bin": str(
+                        source_root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"
+                    ),
+                    "deps_lockfile": "requirements.lock",
+                },
+                "indirection": {
+                    "host_path": str(source_root),
+                    "container_path": "/workspace/auditor-test",
+                    "mount_table": [],
+                    "execution_namespace": "auditor-test",
+                    "verified_head": "0" * 40,
+                    "last_verified_at": "2026-08-12T00:00:00+00:00",
+                    "attestation": {
+                        "module_file": "arnold_pipelines/megaplan/__init__.py",
+                        "module_digest": "0" * 64,
+                        "mount_id": "auditor-test-mount",
+                    },
+                },
+                "policy": {
+                    "policy_sha": "0" * 64,
+                    "model_policy_sha": "0" * 64,
+                    "sync_policy": "manifest-only",
+                },
+                "promotions": [],
+                "timestamps": {
+                    "created": "2026-08-12T00:00:00+00:00",
+                    "updated": "2026-08-12T00:00:00+00:00",
+                    "closed": None,
+                },
+                "gc_policy": "keep",
+                "commands": [],
+            }
+        ),
         encoding="utf-8",
     )
     result = subprocess.run(

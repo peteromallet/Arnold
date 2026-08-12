@@ -28,6 +28,10 @@ from arnold_pipelines.megaplan.chain.git_effect_adapter import (
     GitOutcome,
     GitEffectAdapter,
 )
+from arnold_pipelines.megaplan.custody.action_validator import (
+    ActionBoundaryType,
+    GateResult,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -45,9 +49,13 @@ def mock_protocol():
 
 @pytest.fixture
 def adapter(mock_protocol):
-    """Create a GitEffectAdapter with shadow gate."""
+    """Create a GitEffectAdapter with an explicit AUTHORIZED action gate."""
+    def authorizer(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.AUTHORIZED
+
     return GitEffectAdapter(
         mock_protocol,
+        action_gate_check=authorizer,
         production_enabled=False,
     )
 
@@ -444,3 +452,105 @@ def test_route_passes_payload_to_apply_fn(adapter, add_target, mock_protocol):
         fence_token=1,
     )
     assert captured["received"] == {"paths": ["a.py"], "extra": "data"}
+
+
+# ── Action gate default-deny negatives ──────────────────────────────────────
+
+# Branch/cleanup (13E2) and commit/staging (13E3) families routed via route().
+_GIT_FAMILY_SHARDS = (
+    (GitEffectShard.RESET, {"command": "reset", "args": ["--hard", "HEAD~1"]}),
+    (GitEffectShard.CLEAN, {"command": "clean", "args": ["-fd"]}),
+    (GitEffectShard.CHECKOUT, {"command": "checkout", "args": ["main"]}),
+    (GitEffectShard.ADD, {"paths": ["a.py"]}),
+    (GitEffectShard.COMMIT, {"message": "commit msg"}),
+    (GitEffectShard.UPDATE_REF, {"ref": "refs/heads/main", "target_hash": "abc123"}),
+)
+
+
+def _git_target(shard):
+    return GitTarget(
+        shard=shard,
+        module="test/git_ops.py",
+        enclosing_function="test_fn",
+        repository="test-repo",
+        branch="main",
+    )
+
+
+def test_route_missing_gate_blocks_every_family(mock_protocol):
+    """Missing gate denies branch/cleanup/commit effects before reservation."""
+    ungated = GitEffectAdapter(mock_protocol, production_enabled=False)
+    spies = []
+    for shard, payload in _GIT_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True})
+        spies.append(apply_fn)
+        outcome = ungated.route(
+            target=_git_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "error"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()
+
+
+def test_route_gate_exception_returns_typed_denial(mock_protocol):
+    """A raising gate check denies dispatch instead of crashing the adapter."""
+    def exploding(family: ActionBoundaryType, target_key: str) -> GateResult:
+        raise RuntimeError("gate check exploded")
+
+    gated = GitEffectAdapter(
+        mock_protocol,
+        action_gate_check=exploding,
+        production_enabled=False,
+    )
+    apply_fn = MagicMock(return_value={"ok": True})
+    outcome = gated.route(
+        target=_git_target(GitEffectShard.COMMIT),
+        intent_payload={"message": "commit msg"},
+        apply_fn=apply_fn,
+        fence_token=1,
+    )
+    assert outcome.ok is False
+    assert outcome.outcome_kind == OUTCOME_FAILED
+    assert "Action gate blocked" in outcome.error
+    assert outcome.evidence.get("gate_verdict") == "error"
+    assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    apply_fn.assert_not_called()
+
+
+def test_route_shadow_pass_blocks_every_family(mock_protocol):
+    """SHADOW_PASS verdict denies branch/cleanup/commit effects."""
+    def shadow(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.SHADOW_PASS
+
+    gated = GitEffectAdapter(
+        mock_protocol,
+        action_gate_check=shadow,
+        production_enabled=False,
+    )
+    spies = []
+    for shard, payload in _GIT_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True})
+        spies.append(apply_fn)
+        outcome = gated.route(
+            target=_git_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "shadow_pass"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()

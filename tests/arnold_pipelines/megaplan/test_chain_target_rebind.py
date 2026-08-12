@@ -14,6 +14,7 @@ from arnold_pipelines.megaplan.chain.operator_pause import (
 )
 from arnold_pipelines.megaplan.chain.target_rebind import (
     PROJECT_SOURCE_REBIND_ERROR,
+    _restore_git,
     assert_chain_project_source_binding,
     assert_plan_project_source_binding,
     publish_bound_project_source_branch,
@@ -577,6 +578,123 @@ def test_failure_injection_restores_git_and_both_state_files(
         == 1
     )
     assert (fixture["plan_dir"] / "phase_result.json").exists()
+
+
+def _restore_git_fixture(tmp_path: Path) -> dict[str, Any]:
+    root = tmp_path / "restore-repo"
+    origin = tmp_path / "origin-restore.git"
+    subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
+    root.mkdir()
+    subprocess.run(
+        ["git", "init", "--initial-branch", M9_BRANCH],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    _git(root, "config", "user.name", "Restore Test")
+    _git(root, "config", "user.email", "restore@example.invalid")
+    _git(root, "remote", "add", "origin", str(origin))
+    (root / "source.txt").write_text("m9\n", encoding="utf-8")
+    _git(root, "add", "source.txt")
+    _git(root, "commit", "-m", "m9 source")
+    source_sha = _git(root, "rev-parse", "HEAD")
+    _git(root, "branch", "stray-rollback-branch")
+    return {"root": root, "source": source_sha}
+
+
+def _sandbox_census_stores(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Point the reference census at sandboxed (initially absent) stores."""
+    monkeypatch.setenv("ARNOLD_BASE_DIR", "")
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST_DIR", str(tmp_path / "ref-manifests"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_CHAIN_STORE", str(tmp_path / "ref-chains"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_MARKER_STORE", str(tmp_path / "ref-markers"))
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_SCHEDULE_STORES", str(tmp_path / "ref-schedules")
+    )
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_REPAIR_QUEUE", str(tmp_path / "ref-repair-queue")
+    )
+    monkeypatch.setenv("ARNOLD_REFERENCE_LEASE_STORE", str(tmp_path / "ref-leases"))
+
+
+def test_restore_git_refuses_created_branch_delete_on_referenced_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rollback must never delete the branch it created while a runtime store
+    still references the project root (census REFERENCED hard-skip: the
+    rollback branch delete is refused and the branch survives)."""
+    fixture = _restore_git_fixture(tmp_path)
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    store = tmp_path / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "chain-ref.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "execution_environment": {"engine_root": str(fixture["root"])}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError, match="reference census REFERENCED"):
+        _restore_git(
+            fixture["root"],
+            branch=M9_BRANCH,
+            head=fixture["source"],
+            created_branch="stray-rollback-branch",
+        )
+    assert _git(fixture["root"], "rev-parse", "stray-rollback-branch")
+
+
+def test_restore_git_blocks_created_branch_delete_on_unknown_census(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A corrupt reference store makes the census UNKNOWN and BLOCKS the
+    rollback branch delete (fail-closed: delete-on-unknown never happens)."""
+    fixture = _restore_git_fixture(tmp_path)
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    store = tmp_path / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "corrupt.json").write_text(
+        '{"metadata": {"execution_environment": ', encoding="utf-8"
+    )
+
+    with pytest.raises(CliError, match="reference census UNKNOWN"):
+        _restore_git(
+            fixture["root"],
+            branch=M9_BRANCH,
+            head=fixture["source"],
+            created_branch="stray-rollback-branch",
+        )
+    assert _git(fixture["root"], "rev-parse", "stray-rollback-branch")
+
+
+def test_restore_git_deletes_created_branch_on_clear_census(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CLEAR reference census keeps the route authority: the rollback
+    deletes the created branch exactly as before."""
+    fixture = _restore_git_fixture(tmp_path)
+    _sandbox_census_stores(monkeypatch, tmp_path)
+
+    _restore_git(
+        fixture["root"],
+        branch=M9_BRANCH,
+        head=fixture["source"],
+        created_branch="stray-rollback-branch",
+    )
+    assert (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", "refs/heads/stray-rollback-branch"],
+            cwd=fixture["root"],
+            check=False,
+        ).returncode
+        == 1
+    )
 
 
 def test_rollback_is_exact_inverse_before_execute(tmp_path: Path) -> None:

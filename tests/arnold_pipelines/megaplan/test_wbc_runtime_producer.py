@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,82 @@ class FakeLeaseStore:
 
 
 @dataclass
+class RecordingLeaseStore:
+    """Custody lease store that records every ``renew`` call.
+
+    ``renew`` extends the stored lease's expiry — modelling the keep-alive
+    without altering the caller's epoch view — and appends the call to
+    ``renew_calls`` so tests can assert whether a lease write was attempted.
+    """
+
+    lease: CustodyLease
+    renew_calls: list[dict[str, object]] = field(default_factory=list)
+
+    def current_lease(self, lease_id: str) -> CustodyLease | None:
+        if lease_id == self.lease.lease_id:
+            return self.lease
+        return None
+
+    def find_by_target_key(
+        self,
+        subject_type: str,
+        subject_id: str,
+        action: str,
+        target_kind: str,
+        target_id: str,
+        contract_id: str,
+    ) -> tuple[CustodyLease, ...]:
+        lease = self.lease
+        if (
+            lease.target_key is not None
+            and lease.target_key.subject_type == subject_type
+            and lease.target_key.subject_id == subject_id
+            and lease.target_key.action == action
+            and lease.target_key.target_kind == target_kind
+            and lease.target_key.target_id == target_id
+            and lease.target_key.contract_id == contract_id
+        ):
+            return (lease,)
+        return ()
+
+    def renew(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        custody_epoch: int,
+        expires_at: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        self.renew_calls.append(
+            {
+                "lease_id": lease_id,
+                "owner_host": owner_host,
+                "owner_pid": owner_pid,
+                "owner_boot_id": owner_boot_id,
+                "custody_epoch": custody_epoch,
+                "expires_at": expires_at,
+            }
+        )
+        if expires_at is not None and lease_id == self.lease.lease_id:
+            current = self.lease
+            self.lease = CustodyLease(
+                lease_id=current.lease_id,
+                target_key=current.target_key,
+                owner=(current.owner_host, current.owner_pid, current.owner_boot_id),
+                epoch=current.custody_epoch,
+                acquired_at=current.acquired_at,
+                expires_at=expires_at,
+                fence_token=str(current.coordinator_fence_token),
+                status=current.status or "active",
+                run_authority_grant_id=current.run_authority_grant_id,
+                wbc_attempt_reference=current.wbc_attempt_reference,
+            )
+
+
+@dataclass
 class FakeOutbox:
     records: tuple[OutboxRecord, ...]
 
@@ -107,6 +184,22 @@ def _lease(*, epoch: int = 5, grant_id: str = GRANT.grant_id) -> CustodyLease:
         epoch=epoch,
         acquired_at="2026-07-20T00:00:00+00:00",
         expires_at="2999-01-01T00:00:00+00:00",
+        fence_token=str(FENCE.token),
+        status="active",
+        run_authority_grant_id=grant_id,
+        wbc_attempt_reference="wbc-T7",
+    )
+
+
+def _expired_lease(*, epoch: int = 5, grant_id: str = GRANT.grant_id) -> CustodyLease:
+    """A self-owned lease that expired a few minutes ago (keep-alive would fire)."""
+    return CustodyLease(
+        lease_id="lease-T7",
+        target_key=TARGET,
+        owner=("runtime-host", "4321", "boot-1"),
+        epoch=epoch,
+        acquired_at="2026-07-20T00:00:00+00:00",
+        expires_at=(datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
         fence_token=str(FENCE.token),
         status="active",
         run_authority_grant_id=grant_id,
@@ -747,14 +840,17 @@ def test_runtime_facade_denies_shadow_pass_writer_from_explicit_disable_env(
         )
 
 
-def test_runtime_facade_accepts_shadow_pass_boundary_when_enforcement_disabled(
+def test_runtime_facade_denies_shadow_pass_boundary_even_when_enforcement_disabled(
     tmp_path: Path,
 ) -> None:
-    """Option-A contract: with enforcement explicitly disabled at the facade, a
-    SHADOW_PASS action boundary is ACCEPTED — the dispatch proceeds and the
-    event is appended (shadow evidence recorded).  Enforcement ON remains
-    deny-by-default and is covered by the P7A enforcement tests; SHADOW_PASS
-    is never authoritative authorization.
+    """T-0013 deny-by-default lock: SHADOW_PASS NEVER authorizes a WBC effect.
+    Even with enforcement explicitly disabled at the facade (functional shadow
+    mode), the SHADOW_PASS action boundary is DENIED — the event is NOT
+    appended and no shadow evidence is recorded.  Enforcement OFF means shadow
+    mode (diagnostics), never authority; the previous Option-A behavior of
+    accepting the boundary and proceeding with the effect blessed the unsafe
+    path and is locked out here.  The pure observation-only reread path
+    remains available and is covered by its own tests.
     """
     _register_writer()
     attempt_id = "55555555-5555-4555-8555-555555555555"
@@ -773,6 +869,183 @@ def test_runtime_facade_accepts_shadow_pass_boundary_when_enforcement_disabled(
         enforcement_enabled=False,
     )
 
+    with pytest.raises(ActionBoundaryDeniedError, match="not authorized: shadow_pass"):
+        facade.start_attempt(
+            attempt_id=attempt_id,
+            event=_event(
+                attempt_id=attempt_id,
+                sequence=1,
+                event_type=AttemptEventType.STARTED,
+                idempotency_key="idem-start",
+            ),
+            writer_id="runtime.writer",
+            surface_name="runtime.producer",
+            source_lookup_key="dispatch:start",
+            expected_source_version="source.v1",
+            action_context=_context("dispatch"),
+            artifacts=_artifacts(attempt_id),
+        )
+
+    # Fail-closed: the denied attempt must not have appended any event.
+    assert store.read_events(attempt_id) == []
+
+
+def test_runtime_facade_shadow_mode_keeps_observation_only_reread_working(
+    tmp_path: Path,
+) -> None:
+    """T-0013 carve-out: SHADOW_PASS never authorizes an EFFECT, but the pure
+    observation-only path (authoritative reread — diagnostics, no state
+    mutation) still works under enforcement-disabled shadow mode.  The reread
+    emits the SHADOW_PASS boundary and reads the ledger without appending."""
+    _register_writer()
+    attempt_id = "66666666-6666-4666-8666-666666666666"
+    store = SqliteAttemptLedgerStore(tmp_path / "attempt-ledger.sqlite3")
+    facade = WbcRuntimeProducerFacade(
+        store,
+        source_lookup=lambda key: ExactSourceRecord(
+            lookup_key=key,
+            version="source.v1",
+            source_uri="git+file:///repo#source.v1",
+            observed_at="2026-07-20T00:00:00+00:00",
+            metadata={"key": key},
+        ),
+        lease_store=FakeLeaseStore((_lease(),)),
+        outbox=FakeOutbox((_record(),)),
+        enforcement_enabled=False,
+    )
+
+    result = facade.authoritative_reread(
+        attempt_id=attempt_id,
+        writer_id="runtime.writer",
+        surface_name="runtime.producer",
+        source_lookup_key="dispatch:start",
+        expected_source_version="source.v1",
+        action_context=_context("dispatch"),
+    )
+
+    assert result.action_boundary is not None
+    assert result.action_boundary.gate_result == GateResult.SHADOW_PASS
+    assert result.action_boundary.enforcement_enabled is False
+    assert result.action_boundary.is_shadow is True
+    # Observation only: the reread read the (empty) ledger and appended nothing.
+    assert result.authoritative_reread is not None
+    assert result.authoritative_reread.events == ()
+    assert store.read_events(attempt_id) == []
+
+
+def test_runtime_facade_shadow_reread_performs_no_lease_renewal(tmp_path: Path) -> None:
+    """G4 extra: the AUTHORITATIVE_REREAD SHADOW_PASS carve-out is genuinely
+    effect-free.  A self-owned expired lease would previously be renewed by
+    ``_renew_owned_lease_before_boundary`` (a lease_store.renew WRITE) before
+    the gate admitted the reread; the reread path now skips renewal entirely,
+    so the shadow observer reads the ledger with zero lease writes."""
+    _register_writer()
+    attempt_id = "77777777-7777-4777-8777-777777777777"
+    store = SqliteAttemptLedgerStore(tmp_path / "attempt-ledger.sqlite3")
+    lease_store = RecordingLeaseStore(_expired_lease())
+    facade = WbcRuntimeProducerFacade(
+        store,
+        source_lookup=lambda key: ExactSourceRecord(
+            lookup_key=key,
+            version="source.v1",
+            source_uri="git+file:///repo#source.v1",
+            observed_at="2026-07-20T00:00:00+00:00",
+            metadata={"key": key},
+        ),
+        lease_store=lease_store,
+        outbox=FakeOutbox((_record(),)),
+        enforcement_enabled=False,
+    )
+
+    result = facade.authoritative_reread(
+        attempt_id=attempt_id,
+        writer_id="runtime.writer",
+        surface_name="runtime.producer",
+        source_lookup_key="dispatch:start",
+        expected_source_version="source.v1",
+        action_context=_context("dispatch"),
+    )
+
+    assert result.action_boundary is not None
+    assert result.action_boundary.gate_result == GateResult.SHADOW_PASS
+    # The shadow admission performed NO lease write.
+    assert lease_store.renew_calls == []
+    # Observation only: ledger unchanged, reread read the (empty) ledger.
+    assert result.authoritative_reread is not None
+    assert result.authoritative_reread.events == ()
+    assert store.read_events(attempt_id) == []
+
+
+def test_runtime_facade_authorized_reread_works_without_lease_renewal(
+    tmp_path: Path,
+) -> None:
+    """G4 extra: the enforcement-ON AUTHORITATIVE_REREAD still admits with an
+    AUTHORIZED boundary and reads the ledger.  Skipping the keep-alive does
+    not degrade the authorized observation path — renewal is only needed by
+    the append/effect operations, and an authorized reread with a current
+    lease never needs a write."""
+    _register_writer()
+    attempt_id = "88888888-8888-4888-8888-888888888888"
+    store = SqliteAttemptLedgerStore(tmp_path / "attempt-ledger.sqlite3")
+    lease_store = RecordingLeaseStore(_lease())
+    facade = WbcRuntimeProducerFacade(
+        store,
+        source_lookup=lambda key: ExactSourceRecord(
+            lookup_key=key,
+            version="source.v1",
+            source_uri="git+file:///repo#source.v1",
+            observed_at="2026-07-20T00:00:00+00:00",
+            metadata={"key": key},
+        ),
+        lease_store=lease_store,
+        outbox=FakeOutbox((_record(),)),
+        enforcement_enabled=True,
+    )
+
+    result = facade.authoritative_reread(
+        attempt_id=attempt_id,
+        writer_id="runtime.writer",
+        surface_name="runtime.producer",
+        source_lookup_key="dispatch:start",
+        expected_source_version="source.v1",
+        action_context=_context("dispatch"),
+    )
+
+    assert result.action_boundary is not None
+    assert result.action_boundary.authorized is True
+    assert result.action_boundary.gate_result == GateResult.AUTHORIZED
+    # The reread path never writes a lease — not even when authorized.
+    assert lease_store.renew_calls == []
+    assert result.authoritative_reread is not None
+    assert result.authoritative_reread.events == ()
+    assert store.read_events(attempt_id) == []
+
+
+def test_runtime_facade_append_operation_still_renews_expired_lease(
+    tmp_path: Path,
+) -> None:
+    """G4 extra regression guard: skipping renewal is scoped to the
+    observation-only reread.  A real append operation (start_attempt) with a
+    self-owned expired lease still renews the keep-alive before the boundary
+    and proceeds when the lease is brought back current."""
+    _register_writer()
+    attempt_id = "99999999-9999-4999-8999-999999999999"
+    store = SqliteAttemptLedgerStore(tmp_path / "attempt-ledger.sqlite3")
+    lease_store = RecordingLeaseStore(_expired_lease())
+    facade = WbcRuntimeProducerFacade(
+        store,
+        source_lookup=lambda key: ExactSourceRecord(
+            lookup_key=key,
+            version="source.v1",
+            source_uri="git+file:///repo#source.v1",
+            observed_at="2026-07-20T00:00:00+00:00",
+            metadata={"key": key},
+        ),
+        lease_store=lease_store,
+        outbox=FakeOutbox((_record(),)),
+        enforcement_enabled=True,
+    )
+
     result = facade.start_attempt(
         attempt_id=attempt_id,
         event=_event(
@@ -789,10 +1062,13 @@ def test_runtime_facade_accepts_shadow_pass_boundary_when_enforcement_disabled(
         artifacts=_artifacts(attempt_id),
     )
 
+    # The append boundary renews the expired keep-alive lease before the gate.
+    assert lease_store.renew_calls != []
+    assert lease_store.renew_calls[0]["lease_id"] == "lease-T7"
     assert result.action_boundary is not None
-    assert result.action_boundary.gate_result == GateResult.SHADOW_PASS
-    assert result.action_boundary.enforcement_enabled is False
-    assert result.action_boundary.is_shadow is True
+    assert result.action_boundary.authorized is True
+    assert result.append_result is not None
+    # The event was appended after the renewal brought the lease current.
     assert [event.event_type for event in store.read_events(attempt_id)] == [
-        AttemptEventType.STARTED,
+        AttemptEventType.STARTED
     ]

@@ -450,6 +450,31 @@ def test_gate_denies_invalid_bound_manifest_even_with_permit(
         require_runtime_manifest_permit(spec)
 
 
+def test_gate_denies_dangling_symlink_manifest_even_with_permit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A DANGLING symlink at the bound manifest path is PRESENT but unreadable
+    — the gate fails closed with ``runtime_manifest_invalid`` and NEVER
+    reaches the manifestless permit (which authorizes only a genuinely absent
+    file, G5 round-12)."""
+    spec = _chain(tmp_path)
+    dangling = tmp_path / "runtime" / "runtime-manifest.json"
+    dangling.parent.mkdir(parents=True, exist_ok=True)
+    dangling.symlink_to(tmp_path / "missing-target.json")
+    monkeypatch.setenv(RUNTIME_MANIFEST_BINDING_ENV, str(dangling))
+    issue_allow_manifestless_permit(
+        spec,
+        reason="permit must not rescue a broken manifest entry",
+        expires_at=_utc(timedelta(hours=1)),
+        actor="operator",
+        evidence=[],
+    )
+    with pytest.raises(CliError) as exc_info:
+        require_runtime_manifest_permit(spec)
+    assert exc_info.value.code == "runtime_manifest_invalid"
+    assert "dangling symlink" in str(exc_info.value)
+
+
 def test_gate_denies_schema_mismatched_manifest(tmp_path: Path, monkeypatch) -> None:
     spec = _chain(tmp_path)
     manifest = _write_manifest(

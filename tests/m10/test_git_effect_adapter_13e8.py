@@ -16,7 +16,10 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import uuid
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -59,9 +62,13 @@ def mock_protocol():
 
 @pytest.fixture
 def adapter(mock_protocol):
-    """Create a GitEffectAdapter with shadow gate."""
+    """Create a GitEffectAdapter with an explicit AUTHORIZED action gate."""
+    def authorizer(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.AUTHORIZED
+
     return GitEffectAdapter(
         mock_protocol,
+        action_gate_check=authorizer,
         production_enabled=False,
     )
 
@@ -629,3 +636,184 @@ def test_loop_git_module_only_has_two_sinks():
     assert len(GIT_SHARD_13E8) == 2
     assert GitEffectShard.LOOP_COMMIT in GIT_SHARD_13E8
     assert GitEffectShard.LOOP_REVERT in GIT_SHARD_13E8
+
+
+# ── Action gate default-deny negatives ──────────────────────────────────────
+
+_LOOP_FAMILY_SHARDS = (
+    (GitEffectShard.LOOP_COMMIT, {"message": "msg", "allowed_changes": ["a.py"]}),
+    (GitEffectShard.LOOP_REVERT, {"commit_sha": "abc123", "project_dir": "/tmp/proj"}),
+)
+
+
+def _loop_target(shard):
+    return GitTarget(
+        shard=shard,
+        module="arnold_pipelines/megaplan/loop/git.py",
+        enclosing_function="test_fn",
+        repository="arnold-repo",
+        branch="main",
+    )
+
+
+def test_route_loop_git_missing_gate_blocks_every_family(mock_protocol):
+    """Missing gate denies loop commit/revert effects before reservation."""
+    ungated = GitEffectAdapter(mock_protocol, production_enabled=False)
+    spies = []
+    for shard, payload in _LOOP_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True, "sha": "abc123"})
+        spies.append(apply_fn)
+        outcome = ungated.route_loop_git(
+            target=_loop_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "error"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()
+
+
+def test_route_loop_git_shadow_pass_blocks_every_family(mock_protocol):
+    """SHADOW_PASS verdict denies loop commit/revert effects."""
+    def shadow(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.SHADOW_PASS
+
+    gated = GitEffectAdapter(
+        mock_protocol,
+        action_gate_check=shadow,
+        production_enabled=False,
+    )
+    spies = []
+    for shard, payload in _LOOP_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True, "sha": "abc123"})
+        spies.append(apply_fn)
+        outcome = gated.route_loop_git(
+            target=_loop_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "shadow_pass"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()
+
+
+# ── Worktree removal reference census (T-0027) ───────────────────────────────
+
+
+def _worktree_remove_target() -> GitTarget:
+    return GitTarget(
+        shard=GitEffectShard.WORKTREE,
+        module="arnold_pipelines/megaplan/bakeoff/worktree.py",
+        enclosing_function="remove_worktree",
+        repository="arnold-repo",
+        branch="main",
+    )
+
+
+def _sandbox_census_stores(monkeypatch, tmp_path) -> None:
+    """Point the reference census at sandboxed (initially absent) stores."""
+    monkeypatch.setenv("ARNOLD_BASE_DIR", "")
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST_DIR", str(tmp_path / "ref-manifests"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_CHAIN_STORE", str(tmp_path / "ref-chains"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_MARKER_STORE", str(tmp_path / "ref-markers"))
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_SCHEDULE_STORES", str(tmp_path / "ref-schedules")
+    )
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_REPAIR_QUEUE", str(tmp_path / "ref-repair-queue")
+    )
+    monkeypatch.setenv("ARNOLD_REFERENCE_LEASE_STORE", str(tmp_path / "ref-leases"))
+
+
+def test_route_worktree_remove_refuses_on_reference(
+    adapter, mock_protocol, tmp_path, monkeypatch
+) -> None:
+    """A worktree removal whose target path is still referenced by a runtime
+    store is refused before reservation or dispatch (census REFERENCED)."""
+    wt = tmp_path / "wt-remove"
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    store = tmp_path / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "chain-ref.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "execution_environment": {"engine_root": str(wt)}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    apply_fn = MagicMock(return_value={"ok": True})
+    outcome = adapter.route_worktree(
+        target=_worktree_remove_target(),
+        intent_payload={"path": str(wt), "action": "remove"},
+        apply_fn=apply_fn,
+        fence_token=1,
+    )
+    assert outcome.ok is False
+    assert outcome.outcome_kind == OUTCOME_FAILED
+    assert "Reference census refused worktree removal" in outcome.error
+    assert outcome.evidence.get("census_verdict") == "REFERENCED"
+    assert outcome.evidence.get("worktree_path") == str(wt)
+    apply_fn.assert_not_called()
+    mock_protocol.reserve_and_start.assert_not_called()
+
+
+def test_route_worktree_remove_blocks_on_unknown_census(
+    adapter, mock_protocol, tmp_path, monkeypatch
+) -> None:
+    """A corrupt reference store makes the census UNKNOWN and BLOCKS the
+    worktree removal (fail-closed: delete-on-unknown never happens)."""
+    wt = tmp_path / "wt-remove"
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    store = tmp_path / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "corrupt.json").write_text(
+        '{"metadata": {"execution_environment": ', encoding="utf-8"
+    )
+    apply_fn = MagicMock(return_value={"ok": True})
+    outcome = adapter.route_worktree(
+        target=_worktree_remove_target(),
+        intent_payload={"path": str(wt), "action": "remove"},
+        apply_fn=apply_fn,
+        fence_token=1,
+    )
+    assert outcome.ok is False
+    assert outcome.outcome_kind == OUTCOME_FAILED
+    assert "Reference census refused worktree removal" in outcome.error
+    assert outcome.evidence.get("census_verdict") == "UNKNOWN"
+    apply_fn.assert_not_called()
+    mock_protocol.reserve_and_start.assert_not_called()
+
+
+def test_route_worktree_remove_proceeds_on_clear_census(
+    adapter, mock_protocol, tmp_path, monkeypatch
+) -> None:
+    """A CLEAR reference census keeps the route authority: the removal row
+    dispatches through WBC exactly as before."""
+    wt = tmp_path / "wt-remove"
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    apply_fn = MagicMock(return_value={"ok": True})
+    outcome = adapter.route_worktree(
+        target=_worktree_remove_target(),
+        intent_payload={"path": str(wt), "action": "remove"},
+        apply_fn=apply_fn,
+        fence_token=1,
+    )
+    assert outcome.ok is True
+    assert outcome.outcome_kind == OUTCOME_COMPLETED
+    apply_fn.assert_called_once()
+    mock_protocol.reserve_and_start.assert_called_once()

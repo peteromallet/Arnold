@@ -65,6 +65,11 @@ HOT_ENV_RUNTIME_SELECTOR_NAMES: tuple[str, ...] = (
     "CLOUD_WATCHDOG_SYNC_BRANCH",
     "KIMI_GOAL_SYNC_BRANCH",
     "MEGAPLAN_META_SYNC_BRANCH",
+    # Retired selectors (T-0023/G5): kept so hot env can never re-introduce
+    # them; runtime identity comes from the per-session manifest only.
+    "KIMI_GOAL_ARNOLD_SRC",
+    "MEGAPLAN_DISCORD_DM_ARNOLD_SRC",
+    "MEGAPLAN_DISCOVER_ARNOLD_SRC",
 )
 
 # Nonsecret tuning that must never ride in the credentials-only hot env:

@@ -209,3 +209,138 @@ def test_crash_restart_replay_with_prefix_and_reordering_produces_identical_proj
     # All views must have the same hash (strongest determinism check)
     assert len({baseline.view_hash, duplicate.view_hash, crash_replay.view_hash,
                 shuffled.view_hash, interleaved_view.view_hash}) == 1
+
+
+def _coherent_observation(observation_id="obs-coherent"):
+    return ObservationEnvelope.capture(
+        observation_id=observation_id,
+        run_id="run-1",
+        run_revision="rev-2",
+        observation_type="runtime",
+        source="collector://one",
+        runtime_observation={
+            "recorded_engine_root": "/workspace/arnold",
+            "manifest_runtime_root": "/workspace/arnold",
+            "manifest_expected_head": "a" * 40,
+            "live_import_root": "/workspace/arnold",
+            "wrapper_digest": "b" * 64,
+            "dependency_generation": "v3-r7",
+            "environment_identity": "env-a",
+            "session_identity": "env-a",
+        },
+        source_identity="collector://one",
+        source_version="1.2.3",
+        source_cursor=7,
+        content_hash="c" * 64,
+    )
+
+
+def test_unknown_and_incoherent_observations_never_collapse_to_success() -> None:
+    legacy = ObservationEnvelope(
+        "legacy-1", "run-1", "old-revision", "legacy_terminal_label",
+        "legacy://state", (), {"status": "complete"},
+    )
+    torn = ObservationEnvelope.capture(
+        observation_id="obs-torn",
+        run_id="run-1",
+        run_revision="rev-2",
+        observation_type="runtime",
+        source="collector://one",
+        runtime_observation={
+            "recorded_engine_root": "/workspace/arnold",
+            "manifest_runtime_root": "/workspace/arnold",
+            "manifest_expected_head": "a" * 40,
+            "live_import_root": "/workspace/other",
+            "wrapper_digest": "b" * 64,
+            "dependency_generation": "v3-r7",
+            "environment_identity": "env-a",
+            "session_identity": "env-a",
+        },
+    )
+
+    view = reduce_run_authority((legacy, torn), run_id="run-1", run_revision="rev-2")
+
+    # Both are preserved as observations for auditability...
+    assert {item.observation_id for item in view.observations} == {"legacy-1", "obs-torn"}
+    # ...but neither is ever projected as coherent or mints authority.
+    assert view.coherent_observations == ()
+    assert view.claims == ()
+    assert view.decisions == ()
+    non_coherent = [item for item in view.diagnostics if item.code == "non_coherent_observation"]
+    assert {item.record_id for item in non_coherent} == {"legacy-1", "obs-torn"}
+    assert all(item.reason.endswith("cannot_authorize_dispatch") for item in non_coherent)
+
+
+def test_coherent_observation_is_projected_but_mints_no_authority() -> None:
+    envelope = _coherent_observation()
+
+    view = reduce_run_authority(
+        (envelope,), run_id="run-1", run_revision="rev-2", journal_cursor=8,
+    )
+
+    assert view.observations == (envelope,)
+    assert view.coherent_observations == (envelope,)
+    # A coherent observation is still only an observation: it never creates
+    # accepted progress by itself.
+    assert view.claims == ()
+    assert view.decisions == ()
+    assert not any(item.code == "non_coherent_observation" for item in view.diagnostics)
+
+
+def test_coherent_observation_does_not_rescue_an_unresolved_claim() -> None:
+    claim = Claim(
+        "claim-1", "run-1", "rev-2", "subject-1", "attempt-1", "grant-1", "coord-1", 3,
+        "result", ("ev-1",), "claim-key", {"state": "complete"},
+    )
+    envelope = _coherent_observation()
+
+    view = reduce_run_authority(
+        (claim, envelope), run_id="run-1", run_revision="rev-2", journal_cursor=8,
+    )
+
+    assert view.claims == ()
+    assert view.decisions == ()
+    assert any(q.reason.startswith("missing_matching") for q in view.quarantines)
+    assert view.coherent_observations == (envelope,)
+
+
+def test_older_revision_observation_is_stale_and_never_dispatchable() -> None:
+    current = _coherent_observation("obs-current")
+    stale = replace(_coherent_observation("obs-stale"), run_revision="rev-1")
+    foreign = replace(_coherent_observation("obs-foreign"), run_id="run-other")
+    future = replace(_coherent_observation("obs-future"), source_cursor=9)
+
+    view = reduce_run_authority(
+        (stale, current, foreign, future),
+        run_id="run-1",
+        run_revision="rev-2",
+        journal_cursor=8,
+    )
+
+    # Same run id + matching revision: projected coherent.
+    assert view.coherent_observations == (current,)
+    # Same run id, older run revision: preserved for auditability but never
+    # projected coherent, and surfaced as a stale diagnostic.
+    assert stale in view.observations
+    assert stale not in view.coherent_observations
+    # Differing run id: not projected at all.
+    assert foreign not in view.observations
+    assert foreign not in view.coherent_observations
+    # Source cursor beyond the view's journal boundary is stale too.
+    assert future in view.observations
+    assert future not in view.coherent_observations
+
+    stale_diagnostics = [
+        item for item in view.diagnostics
+        if item.code == "non_coherent_observation"
+        and item.record_id in {"obs-stale", "obs-future"}
+    ]
+    assert {item.record_id for item in stale_diagnostics} == {"obs-stale", "obs-future"}
+    assert all(
+        item.reason == "stale_observation_cannot_authorize_dispatch"
+        for item in stale_diagnostics
+    )
+    assert not any(
+        item.code == "non_coherent_observation" and item.record_id == "obs-current"
+        for item in view.diagnostics
+    )

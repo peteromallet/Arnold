@@ -63,9 +63,13 @@ def mock_protocol():
 
 @pytest.fixture
 def adapter(mock_protocol):
-    """Create a GitEffectAdapter with shadow gate."""
+    """Create a GitEffectAdapter with an explicit AUTHORIZED action gate."""
+    def authorizer(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.AUTHORIZED
+
     return GitEffectAdapter(
         mock_protocol,
+        action_gate_check=authorizer,
         production_enabled=False,
     )
 
@@ -698,8 +702,12 @@ def test_route_pr_production_warns_but_still_works(
     mock_protocol, pr_ready_target, fake_gh_success, reconciliation_not_applied
 ):
     """When production_enabled=True, dispatch still works but warns."""
+    def authorizer(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.AUTHORIZED
+
     prod_adapter = GitEffectAdapter(
         mock_protocol,
+        action_gate_check=authorizer,
         production_enabled=True,
     )
     outcome = prod_adapter.route_pr(
@@ -712,6 +720,15 @@ def test_route_pr_production_warns_but_still_works(
     # With production enabled + reconciliation, dispatch proceeds
     assert outcome.ok is True
     assert outcome.outcome_kind == OUTCOME_COMPLETED
+
+
+def test_route_pr_production_requires_explicit_gate(mock_protocol):
+    """A production-enabled adapter must install an explicit gate."""
+    with pytest.raises(ValueError, match="explicit action_gate_check"):
+        GitEffectAdapter(
+            mock_protocol,
+            production_enabled=True,
+        )
 
 
 # ── Shard overflow gate ──────────────────────────────────────────────────────
@@ -745,3 +762,74 @@ def test_route_pr_enforces_13e6_exclusivity(adapter, fake_gh_success):
                     apply_fn=fake_gh_success,
                     fence_token=1,
                 )
+
+
+# ── Action gate default-deny negatives ──────────────────────────────────────
+
+_PR_FAMILY_SHARDS = (
+    (GitEffectShard.PR_READY, {"pr_number": 42}),
+    (GitEffectShard.PR_MERGE, {"pr_number": 42, "merge_strategy": "auto"}),
+)
+
+
+def _pr_target(shard):
+    return GitTarget(
+        shard=shard,
+        module="test/git_ops.py",
+        enclosing_function="test_fn",
+        repository="test-org/test-repo",
+        branch="feature-branch",
+    )
+
+
+def test_route_pr_missing_gate_blocks_every_family(mock_protocol):
+    """Missing gate denies PR effects before reservation or subprocess."""
+    ungated = GitEffectAdapter(mock_protocol, production_enabled=False)
+    spies = []
+    for shard, payload in _PR_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True, "pr_number": 42})
+        spies.append(apply_fn)
+        outcome = ungated.route_pr(
+            target=_pr_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "error"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()
+
+
+def test_route_pr_shadow_pass_blocks_every_family(mock_protocol):
+    """SHADOW_PASS verdict denies PR effects."""
+    def shadow(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.SHADOW_PASS
+
+    gated = GitEffectAdapter(
+        mock_protocol,
+        action_gate_check=shadow,
+        production_enabled=False,
+    )
+    spies = []
+    for shard, payload in _PR_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True, "pr_number": 42})
+        spies.append(apply_fn)
+        outcome = gated.route_pr(
+            target=_pr_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "shadow_pass"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()

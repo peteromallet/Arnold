@@ -5,6 +5,7 @@ import ast
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -26,9 +27,12 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _chain_runtime_probe_and_create_command,
     _chain_runtime_provenance_payload,
     _chain_start_command,
+    _epic_chain_start_command,
     _manifest_runtime_activate_command,
     _parse_chain_runtime_binding,
+    _plan_auto_command,
     _refresh_then_chain_start_command,
+    _refresh_then_epic_chain_start_command,
     _cloud_chains_command,
     _cloud_session_plan_state,
     _derive_chain_launch_context,
@@ -207,19 +211,143 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
         'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
         'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; fi;'
     ) in command
+    # G6 round-2 finding 2: the ENGINE_DIR read is CANONICAL-schema gated —
+    # the emitted reader requires schema "1" plus the manifest's required key
+    # sets, so a present-but-schema-invalid manifest fails closed.
     assert (
         'ENGINE_DIR="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c '
-        '\'import json,sys; print(json.load(open(sys.argv[1])).get("epic",{}).get("runtime_root",""))\' '
-        '"$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)"'
+        "'import json,sys; d=json.load(open(sys.argv[1]));"
     ) in command
-    assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
+    assert 'd.get("schema")=="1"' in command
+    assert "all(k in d for k in R)" in command
+    assert "all(k in e for k in E)" in command
+    # T-0011: the ENGINE_DIR fallback is gone — the manifest pin is mandatory
+    # and fails closed on a missing/unreadable manifest, empty runtime_root or
+    # expected_head, or a failed runtime_provenance check.
+    assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=' not in command
+    assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in command
+    assert "isolated_chain_runtime_binding_drift: runtime manifest unreadable" in command
+    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime_root" in command
+    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" in command
+    assert '--expected-root "$ENGINE_DIR"' in command
+    assert '--expected-revision "$_EXPECTED_REVISION"' in command
+    # G5 round-2 finding 1: the pin existence/readability checks run BEFORE
+    # the manifest JSON-reader subprocess — on a missing or unreadable pin
+    # the gate exits 24 with ZERO subprocess starts.
+    assert command.index(
+        'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then'
+    ) < command.index(
+        'ENGINE_DIR="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c'
+    )
+    assert command.index(
+        'if [ ! -r "$PINNED_RUNTIME_MANIFEST" ]; then'
+    ) < command.index(
+        'ENGINE_DIR="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c'
+    )
+    # G5 round-6 finding 2: the emitted cd is the manifest-bound accepted
+    # root ($ENGINE_DIR) — never project_dir (the workspace) and never the
+    # launch-time engine_dir guess.
     assert (
-        'cd /workspace/project && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        'cd "$ENGINE_DIR" && env -u PYTHONHOME PYTHONSAFEPATH=1 '
         'PYTHONPATH="$ENGINE_DIR"' in command
     )
+    assert 'cd /workspace/project' not in command
     assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
     assert "MEGAPLAN_RUNTIME_SRC" not in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+
+
+def test_chain_start_command_cd_is_manifest_accepted_root_not_project_or_engine() -> None:
+    """G5 round-6 finding 2: the emitted cd is ALWAYS the manifest-bound
+    accepted root.  project_dir (the chain workspace) and the launch-time
+    engine_dir guess (e.g. the shared /workspace/arnold) must never reach
+    the cd, even when both differ from the accepted root."""
+    command = _chain_start_command(
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        project_dir="/workspace/project",
+        engine_dir="/workspace/arnold",
+    )
+    assert 'cd "$ENGINE_DIR"' in command
+    assert 'cd /workspace/project' not in command
+    assert 'cd /workspace/arnold' not in command
+    assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' not in command
+
+
+def test_epic_chain_start_command_pins_manifest_before_hot_env_and_fails_closed() -> None:
+    command = _epic_chain_start_command(
+        "/workspace/app/epic-chain.yaml",
+        workspace="/workspace/app",
+        log_relative=".megaplan/epic.log",
+    )
+
+    pin_at = command.index(
+        'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"'
+    )
+    hot_env_at = command.index(
+        "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;"
+    )
+    assert pin_at < hot_env_at
+    assert (
+        'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
+        'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; fi;'
+    ) in command
+    # G6 round-2 finding 2: the ENGINE_DIR read is CANONICAL-schema gated —
+    # the emitted reader requires schema "1" plus the manifest's required key
+    # sets, so a present-but-schema-invalid manifest fails closed.
+    assert (
+        'ENGINE_DIR="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c '
+        "'import json,sys; d=json.load(open(sys.argv[1]));"
+    ) in command
+    assert 'd.get("schema")=="1"' in command
+    assert "all(k in d for k in R)" in command
+    assert "all(k in e for k in E)" in command
+    # G2 round 2: the epic-chain parent launch has NO fixed engine dir — the
+    # per-session manifest pin is mandatory and fails closed (exit 24) on a
+    # missing/unreadable manifest, empty runtime_root or expected_head, or a
+    # failed runtime_provenance check.
+    assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=' not in command
+    assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in command
+    assert "isolated_chain_runtime_binding_drift: runtime manifest unreadable" in command
+    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime_root" in command
+    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" in command
+    assert "isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" in command
+    assert '--expected-root "$ENGINE_DIR"' in command
+    assert '--expected-revision "$_EXPECTED_REVISION"' in command
+    assert (
+        'cd "$ENGINE_DIR" && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        'PYTHONPATH="$ENGINE_DIR"' in command
+    )
+    assert 'cd /workspace/app' not in command
+    # PYTHONPATH carries ONLY the manifest-bound engine root: no fixed-path
+    # literal and no merge with any inherited PYTHONPATH.
+    assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' not in command
+    assert "/workspace/arnold" not in command
+    assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
+    assert "MEGAPLAN_RUNTIME_SRC" not in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start" in command
+
+
+def test_refresh_then_epic_chain_start_command_has_no_spec_engine_or_fixed_fallback() -> None:
+    # The refresh wrapper delegates straight to the manifest-pinned launch:
+    # the spec's megaplan.src_path is NOT consulted and there is no fixed
+    # engine dir fallback (G2 round 2).
+    command = _refresh_then_epic_chain_start_command(
+        "/workspace/app/epic-chain.yaml",
+        workspace="/workspace/app",
+        log_relative=".megaplan/epic.log",
+    )
+
+    assert 'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"' in command
+    assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in command
+    assert "runtime_provenance --expected-root" in command
+    assert 'PYTHONPATH="$ENGINE_DIR"' in command
+    assert "/workspace/arnold" not in command
+    assert "/workspace/some-src" not in command
+    assert "megaplan-refresh" not in command
+    assert "pip install -e" not in command
+    assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
+    assert "MEGAPLAN_RUNTIME_SRC" not in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start" in command
 
 
 def test_managed_chain_start_exports_canonical_repair_route() -> None:
@@ -318,7 +446,10 @@ def test_tmux_chain_launch_never_refreshes_remote_git() -> None:
     assert 'BRANCH="$(git -C "$SRC" branch --show-current)"' not in command
     assert "megaplan-refresh" not in command
     assert "pip install -e" not in command
-    assert "runtime_provenance --expected-root" not in command
+    # T-0011: the manifest pin + runtime_provenance gate is mandatory for
+    # every production chain start (no fixed-path fallback), even with a
+    # non-isolated spec.
+    assert "runtime_provenance --expected-root" in command
     assert 'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"' in command
     assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
     assert "MEGAPLAN_RUNTIME_SRC" not in command
@@ -330,6 +461,10 @@ def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
     shim.write_text(
         "#!/bin/sh\n"
         "case \"$*\" in\n"
+        "  *json.load*)\n"
+        "    printf '%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$ARNOLD_RUNTIME_MANIFEST\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "    exec \"$REAL_PYTHON\" \"$@\" ;;\n"
         "  *arnold_pipelines.megaplan.cloud.runtime_provenance*)\n"
         "    printf '%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$ARNOLD_RUNTIME_MANIFEST\" "
         "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
@@ -340,6 +475,18 @@ def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
         "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
         "    if [ \"$HOT_ENV_SOURCED\" = 1 ] && [ -z \"$ZHIPU_API_KEY\" ]; then exit 3; fi\n"
         "    exit 0 ;;\n"
+        "  *\"arnold_pipelines.megaplan epic-chain start\"*)\n"
+        "    printf '%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$ARNOLD_RUNTIME_MANIFEST\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "    exit 0 ;;\n"
+        "  *\"arnold_pipelines.megaplan auto\"*)\n"
+        "    printf '%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$ARNOLD_RUNTIME_MANIFEST\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "    exit 0 ;;\n"
+        "  *\"arnold_pipelines.megaplan init\"*)\n"
+        "    printf '%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$ARNOLD_RUNTIME_MANIFEST\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "    exit 0 ;;\n"
         "esac\n"
         "exec \"$REAL_PYTHON\" \"$@\"\n",
         encoding="utf-8",
@@ -348,22 +495,89 @@ def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
     return shim
 
 
+def _canonical_manifest_payload(
+    runtime_root: str, *, expected_head: str
+) -> dict[str, object]:
+    """Canonical schema-"1" runtime-manifest payload (G6 round-2 finding 2).
+
+    Must pass :func:`load_manifest` (trusted-case fixtures must be genuinely
+    schema-valid) and must satisfy the shell pin-gate's canonical required
+    key sets (``TOP_LEVEL_REQUIRED`` / ``EPIC_REQUIRED``), which the
+    schema-gated pinned-manifest reads now enforce.
+    """
+    return {
+        "runtime_id": "pincheck-runtime-1",
+        "schema": "1",
+        "generation": 1,
+        "epic_id": "pincheck-epic",
+        "state": "active",
+        "owner": "test",
+        "base": {
+            "ref": "refs/heads/main",
+            "commit": expected_head or "0" * 40,
+            "editable_install_path": f"{runtime_root}/base",
+            "venv_path": f"{runtime_root}/base/venv",
+        },
+        "epic": {
+            "branch": "main",
+            "worktree_path": runtime_root,
+            "venv_path": f"{runtime_root}/venv",
+            "runtime_root": runtime_root,
+            "expected_head": expected_head,
+            "repair_bin": f"{runtime_root}/venv/bin/arnold-repair-loop",
+            "deps_lockfile": f"{runtime_root}/uv.lock",
+        },
+        "indirection": {
+            "host_path": runtime_root,
+            "container_path": "/workspace/pincheck",
+            "mount_table": [],
+            "execution_namespace": "pincheck-ns",
+            "verified_head": expected_head or "0" * 40,
+            "last_verified_at": "2026-08-12T00:00:00Z",
+            "attestation": {
+                "module_file": f"{runtime_root}/arnold_pipelines/__init__.py",
+                "module_digest": "0" * 64,
+                "mount_id": "0:0",
+            },
+        },
+        "policy": {
+            "policy_sha": "0" * 64,
+            "model_policy_sha": "0" * 64,
+            "sync_policy": "disabled",
+        },
+        "promotions": [],
+        "timestamps": {
+            "created": "2026-08-12T00:00:00Z",
+            "updated": "2026-08-12T00:00:00Z",
+            "closed": "",
+        },
+        "gc_policy": "closed-only",
+        "commands": [],
+    }
+
+
 def _write_runtime_manifest(path: Path, *, runtime_root: Path, revision: str) -> Path:
-    path.write_text(
-        json.dumps(
-            {
-                "epic": {
-                    "runtime_root": str(runtime_root),
-                    "expected_head": revision,
-                }
-            }
+    """Write a canonically schema-valid runtime manifest (G6 round-2 finding 2).
+
+    The pinned-manifest reads are schema-gated, so trusted-case fixtures must
+    be real canonical manifests (schema "1" + required key sets), not the old
+    schema-less ``{"epic": ...}`` shape.
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        RuntimeManifest,
+        write_manifest,
+    )
+
+    write_manifest(
+        RuntimeManifest.from_dict(
+            _canonical_manifest_payload(str(runtime_root), expected_head=revision)
         ),
-        encoding="utf-8",
+        path,
     )
     return path
 
 
-def test_isolated_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
+def test_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -395,12 +609,13 @@ def test_isolated_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
     monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
     shim = _runtime_probe_shim(tmp_path)
     capture = tmp_path / "capture.txt"
+    # The manifest pin is mandatory regardless of isolated_chain_runner
+    # (T-0011); the /fallback/runtime engine_dir must never reach PYTHONPATH.
     command = cloud_cli._chain_start_command(
         str(tmp_path / "chain.yaml"),
         project_dir=str(tmp_path),
         engine_dir="/fallback/runtime",
         log_relative="chain.log",
-        require_pinned_runtime_binding=True,
     )
 
     result = subprocess.run(
@@ -414,13 +629,23 @@ def test_isolated_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
             "RUNTIME_CAPTURE": str(capture),
             "REAL_PYTHON": sys.executable,
             "ARNOLD_RUNTIME_MANIFEST": str(accepted_manifest),
+            # G5 round-6 finding 2: an ambient shared-root PYTHONPATH must
+            # not leak into the launch — only the manifest-bound accepted
+            # root may reach the python processes.
+            "PYTHONPATH": "/workspace/arnold",
         },
     )
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    assert len(observations) == 2
-    for observation in observations:
+    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
+    # run inside the pin gate; provenance + chain start follow.
+    assert len(observations) == 4, observations
+    json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
+    assert len(json_reads) == 2, observations
+    main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
+    assert len(main) == 2, observations
+    for observation in main:
         (
             pythonpath,
             manifest,
@@ -432,12 +657,23 @@ def test_isolated_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
         assert manifest == str(accepted_manifest)
         assert hot_env_sourced == "1"
         assert pythonhome == "unset"
-    assert "runtime_provenance" in observations[0]
-    assert f"--expected-revision {revision}" in observations[0]
-    assert "chain start" in observations[1]
+    for observation in json_reads:
+        (
+            _pythonpath,
+            manifest,
+            hot_env_sourced,
+            pythonhome,
+            _args,
+        ) = observation.split("|", 4)
+        assert manifest == str(accepted_manifest)
+        assert hot_env_sourced == "1"
+        assert pythonhome == "unset"
+    assert "runtime_provenance" in main[0]
+    assert f"--expected-revision {revision}" in main[0]
+    assert "chain start" in main[1]
 
 
-def test_isolated_chain_launch_fails_closed_before_chain_on_runtime_drift(
+def test_chain_launch_fails_closed_before_chain_on_runtime_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -462,7 +698,6 @@ def test_isolated_chain_launch_fails_closed_before_chain_on_runtime_drift(
         project_dir=str(tmp_path),
         engine_dir="/fallback/runtime",
         log_relative="chain.log",
-        require_pinned_runtime_binding=True,
     )
 
     result = subprocess.run(
@@ -481,31 +716,695 @@ def test_isolated_chain_launch_fails_closed_before_chain_on_runtime_drift(
 
     assert result.returncode == 24
     observations = capture.read_text(encoding="utf-8").splitlines()
-    assert len(observations) == 1
-    assert "runtime_provenance" in observations[0]
-    assert "chain start" not in observations[0]
+    # The two manifest JSON-reader subprocesses ran inside the pin gate;
+    # provenance is the only main-step invocation (chain start never ran).
+    assert len(observations) == 3, observations
+    json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
+    assert len(json_reads) == 2, observations
+    main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
+    assert len(main) == 1, observations
+    assert "runtime_provenance" in main[0]
+    assert "chain start" not in main[0]
     assert "isolated_chain_runtime_binding_drift" in (
         tmp_path / "chain.log"
     ).read_text(encoding="utf-8")
 
 
-def test_isolated_chain_spec_enables_post_hot_env_runtime_gate() -> None:
-    spec = replace(
+def test_chain_launch_schema_invalid_manifest_fails_closed_before_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G6 round-2 finding 2: a PRESENT-but-schema-invalid manifest at the pin
+    (the runtime pin fields present, but no canonical schema — no schema
+    version, no top-level required keys) must fail closed: exit 24 and no
+    chain start, instead of deriving an ENGINE_DIR from it."""
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text(
+        "export ARNOLD_RUNTIME_MANIFEST=/stale/manifest.json\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+    schema_invalid = tmp_path / "schema-invalid-manifest.json"
+    schema_invalid.write_text(
+        json.dumps(
+            {
+                "epic": {
+                    "runtime_root": str(tmp_path / "accepted-runtime"),
+                    "expected_head": "a" * 40,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    command = cloud_cli._chain_start_command(
+        str(tmp_path / "chain.yaml"),
+        project_dir=str(tmp_path),
+        engine_dir="/fallback/runtime",
+        log_relative="chain.log",
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
+            "ARNOLD_RUNTIME_MANIFEST": str(schema_invalid),
+        },
+    )
+
+    assert result.returncode == 24, result.stderr
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    # The canonical-gated runtime_root read ran and yielded nothing, so the
+    # gate exited 24 immediately — the expected_head read, provenance, and
+    # chain start never ran.
+    assert len(observations) == 1, observations
+    json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
+    assert len(json_reads) == 1, observations
+    assert "chain start" not in capture.read_text(encoding="utf-8")
+    log_text = (tmp_path / "chain.log").read_text(encoding="utf-8")
+    assert "isolated_chain_runtime_binding_drift" in log_text
+    assert "manifest lacks runtime_root" in log_text
+
+
+def _epic_chain_launch_command(
+    workspace: Path,
+    *,
+    log_relative: str = ".megaplan/epic.log",
+) -> str:
+    return _epic_chain_start_command(
+        "/workspace/app/epic-chain.yaml",
+        workspace=str(workspace),
+        log_relative=log_relative,
+    )
+
+
+def test_epic_chain_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    stale = tmp_path / "stale-runtime"
+    accepted = tmp_path / "accepted-runtime"
+    stale.mkdir()
+    accepted.mkdir()
+    accepted_manifest = _write_runtime_manifest(
+        tmp_path / "accepted-manifest.json",
+        runtime_root=accepted,
+        revision="a" * 40,
+    )
+    stale_manifest = tmp_path / "stale-manifest.json"
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text(
+        "\n".join(
+            [
+                f"export ARNOLD_RUNTIME_MANIFEST={stale_manifest}",
+                f"export PYTHONPATH={stale}",
+                f"export PYTHONHOME={stale}",
+                "export HOT_ENV_SOURCED=1",
+                "export ZHIPU_API_KEY=sentinel",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+
+    command = _epic_chain_launch_command(workspace)
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
+            "ARNOLD_RUNTIME_MANIFEST": str(accepted_manifest),
+            # G5 round-6 finding 2: an ambient shared-root PYTHONPATH must
+            # not leak into the launch — only the manifest-bound accepted
+            # root may reach the python processes.
+            "PYTHONPATH": "/workspace/arnold",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
+    # run inside the pin gate; provenance + epic-chain start follow.
+    assert len(observations) == 4, observations
+    json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
+    assert len(json_reads) == 2, observations
+    main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
+    assert len(main) == 2, observations
+    for observation in main:
+        (
+            pythonpath,
+            manifest,
+            hot_env_sourced,
+            pythonhome,
+            _args,
+        ) = observation.split("|", 4)
+        assert pythonpath == str(accepted)
+        assert manifest == str(accepted_manifest)
+        assert hot_env_sourced == "1"
+        assert pythonhome == "unset"
+    for observation in json_reads:
+        (
+            _pythonpath,
+            manifest,
+            hot_env_sourced,
+            pythonhome,
+            _args,
+        ) = observation.split("|", 4)
+        assert manifest == str(accepted_manifest)
+        assert hot_env_sourced == "1"
+        assert pythonhome == "unset"
+    assert "runtime_provenance" in main[0]
+    assert "epic-chain start" in main[1]
+    assert "/workspace/arnold" not in capture.read_text(encoding="utf-8")
+
+
+def test_epic_chain_launch_unbound_manifest_fails_closed_before_launch(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+
+    command = _epic_chain_launch_command(workspace)
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
+        },
+    )
+
+    assert result.returncode == 24
+    # No provenance probe and no launch boundary were reached.
+    capture_text = capture.read_text(encoding="utf-8") if capture.exists() else ""
+    assert capture_text == ""
+    log_text = (workspace / ".megaplan" / "epic.log").read_text(encoding="utf-8")
+    assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in log_text
+
+
+@pytest.mark.parametrize(
+    ("case", "manifest", "provenance_rc", "expect"),
+    [
+        (
+            "missing-file",
+            "/nonexistent/runtime-manifest.json",
+            0,
+            "runtime manifest unreadable",
+        ),
+        (
+            "empty-epic",
+            {"epic": {}},
+            0,
+            "manifest lacks runtime_root",
+        ),
+        (
+            "no-expected-head",
+            _canonical_manifest_payload("/some/root", expected_head=""),
+            0,
+            "manifest lacks runtime identity",
+        ),
+        (
+            "schema-invalid",
+            {"epic": {"runtime_root": "/some/root", "expected_head": "a" * 40}},
+            0,
+            "manifest lacks runtime_root",
+        ),
+        (
+            "unsupported-schema",
+            {
+                "schema": "2",
+                "epic": {"runtime_root": "/some/root", "expected_head": "a" * 40},
+            },
+            0,
+            "manifest lacks runtime_root",
+        ),
+        (
+            "provenance-mismatch",
+            "valid",
+            23,
+            "active imports disagree with manifest-bound runtime",
+        ),
+    ],
+)
+def test_epic_chain_launch_invalid_manifest_fails_closed_before_launch(
+    tmp_path: Path,
+    case: str,
+    manifest: object,
+    provenance_rc: int,
+    expect: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    shim = _runtime_probe_shim(tmp_path, provenance_exit=provenance_rc)
+    capture = tmp_path / "capture.txt"
+    env = {
+        **os.environ,
+        "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+        "RUNTIME_CAPTURE": str(capture),
+        "REAL_PYTHON": sys.executable,
+    }
+    manifest_path = tmp_path / "runtime-manifest.json"
+    if manifest == "valid":
+        manifest_path = _write_runtime_manifest(
+            manifest_path,
+            runtime_root=tmp_path / "accepted-runtime",
+            revision="a" * 40,
+        )
+        env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    elif isinstance(manifest, dict):
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    else:
+        env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest)
+
+    result = subprocess.run(
+        ["bash", "-c", _epic_chain_launch_command(workspace)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 24, (case, result.stdout, result.stderr)
+    log_text = (workspace / ".megaplan" / "epic.log").read_text(encoding="utf-8")
+    assert "isolated_chain_runtime_binding_drift" in log_text, case
+    assert expect in log_text, case
+    # No launch boundary was reached for any rejection.
+    capture_text = capture.read_text(encoding="utf-8") if capture.exists() else ""
+    assert "epic-chain start" not in capture_text, case
+
+
+def _plan_auto_launch_command(
+    workspace: Path, *, log_relative: str = ".megaplan/plan.log"
+) -> str:
+    return _plan_auto_command(
+        "demo-plan",
+        workspace=str(workspace),
+        log_relative=log_relative,
+    )
+
+
+def test_plan_auto_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    stale = tmp_path / "stale-runtime"
+    accepted = tmp_path / "accepted-runtime"
+    stale.mkdir()
+    accepted.mkdir()
+    accepted_manifest = _write_runtime_manifest(
+        tmp_path / "accepted-manifest.json",
+        runtime_root=accepted,
+        revision="a" * 40,
+    )
+    stale_manifest = tmp_path / "stale-manifest.json"
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text(
+        "\n".join(
+            [
+                f"export ARNOLD_RUNTIME_MANIFEST={stale_manifest}",
+                f"export PYTHONPATH={stale}",
+                f"export PYTHONHOME={stale}",
+                "export HOT_ENV_SOURCED=1",
+                "export ZHIPU_API_KEY=sentinel",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+
+    command = _plan_auto_launch_command(workspace)
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
+            "ARNOLD_RUNTIME_MANIFEST": str(accepted_manifest),
+            # G5 round-6 finding 2: an ambient shared-root PYTHONPATH must
+            # not leak into the launch — only the manifest-bound accepted
+            # root may reach the python processes.
+            "PYTHONPATH": "/workspace/arnold",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
+    # run inside the pin gate; provenance + auto follow.
+    assert len(observations) == 4, observations
+    json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
+    assert len(json_reads) == 2, observations
+    main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
+    assert len(main) == 2, observations
+    for observation in main:
+        (
+            pythonpath,
+            manifest,
+            hot_env_sourced,
+            pythonhome,
+            _args,
+        ) = observation.split("|", 4)
+        assert pythonpath == str(accepted)
+        assert manifest == str(accepted_manifest)
+        assert hot_env_sourced == "1"
+        assert pythonhome == "unset"
+    for observation in json_reads:
+        (
+            _pythonpath,
+            manifest,
+            hot_env_sourced,
+            pythonhome,
+            _args,
+        ) = observation.split("|", 4)
+        assert manifest == str(accepted_manifest)
+        assert hot_env_sourced == "1"
+        assert pythonhome == "unset"
+    assert "runtime_provenance" in main[0]
+    assert "arnold_pipelines.megaplan auto" in main[1]
+    assert "/workspace/arnold" not in capture.read_text(encoding="utf-8")
+    assert "/workspace/arnold" not in command
+
+
+def test_plan_auto_launch_unbound_manifest_fails_closed_before_launch(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+
+    command = _plan_auto_launch_command(workspace)
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
+        },
+    )
+
+    assert result.returncode == 24
+    # No provenance probe and no launch boundary were reached.
+    capture_text = capture.read_text(encoding="utf-8") if capture.exists() else ""
+    assert capture_text == ""
+    log_text = (workspace / ".megaplan" / "plan.log").read_text(encoding="utf-8")
+    assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in log_text
+
+
+@pytest.mark.parametrize(
+    ("case", "manifest", "provenance_rc", "expect"),
+    [
+        (
+            "missing-file",
+            "/nonexistent/runtime-manifest.json",
+            0,
+            "runtime manifest unreadable",
+        ),
+        (
+            "empty-epic",
+            {"epic": {}},
+            0,
+            "manifest lacks runtime_root",
+        ),
+        (
+            "no-expected-head",
+            _canonical_manifest_payload("/some/root", expected_head=""),
+            0,
+            "manifest lacks runtime identity",
+        ),
+        (
+            "schema-invalid",
+            {"epic": {"runtime_root": "/some/root", "expected_head": "a" * 40}},
+            0,
+            "manifest lacks runtime_root",
+        ),
+        (
+            "unsupported-schema",
+            {
+                "schema": "2",
+                "epic": {"runtime_root": "/some/root", "expected_head": "a" * 40},
+            },
+            0,
+            "manifest lacks runtime_root",
+        ),
+        (
+            "provenance-mismatch",
+            "valid",
+            23,
+            "active imports disagree with manifest-bound runtime",
+        ),
+    ],
+)
+def test_plan_auto_launch_invalid_manifest_fails_closed_before_launch(
+    tmp_path: Path,
+    case: str,
+    manifest: object,
+    provenance_rc: int,
+    expect: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    shim = _runtime_probe_shim(tmp_path, provenance_exit=provenance_rc)
+    capture = tmp_path / "capture.txt"
+    env = {
+        **os.environ,
+        "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+        "RUNTIME_CAPTURE": str(capture),
+        "REAL_PYTHON": sys.executable,
+    }
+    manifest_path = tmp_path / "runtime-manifest.json"
+    if manifest == "valid":
+        manifest_path = _write_runtime_manifest(
+            manifest_path,
+            runtime_root=tmp_path / "accepted-runtime",
+            revision="a" * 40,
+        )
+        env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    elif isinstance(manifest, dict):
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    else:
+        env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest)
+
+    result = subprocess.run(
+        ["bash", "-c", _plan_auto_launch_command(workspace)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 24, (case, result.stdout, result.stderr)
+    log_text = (workspace / ".megaplan" / "plan.log").read_text(encoding="utf-8")
+    assert "isolated_chain_runtime_binding_drift" in log_text, case
+    assert expect in log_text, case
+    # No launch boundary was reached for any rejection.
+    capture_text = capture.read_text(encoding="utf-8") if capture.exists() else ""
+    assert "arnold_pipelines.megaplan auto" not in capture_text, case
+
+
+def test_bootstrap_launch_unbound_manifest_fails_closed_before_init(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    marker_dir = tmp_path / "markers"
+    monkeypatch.setattr(cloud_cli, "_CHAIN_SESSION_MARKER_DIR", str(marker_dir))
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+    # Spy on mkdir: record every invocation, then pass through to the real
+    # binary so the assertion below can prove ZERO dir creation.
+    mkdir_capture = tmp_path / "mkdir-capture.txt"
+    mkdir_spy = tmp_path / "bin" / "mkdir"
+    mkdir_spy.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {shlex.quote(str(mkdir_capture))}\n'
+        'exec /bin/mkdir "$@"\n',
+        encoding="utf-8",
+    )
+    mkdir_spy.chmod(0o755)
+
+    command = cloud_cli._bootstrap_launch_command(
+        workspace=str(workspace),
+        remote_idea_path=str(workspace / "idea.txt"),
+        plan_name="demo-plan",
+        robustness="standard",
+        session_name="plan-session",
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
+        },
+    )
+
+    assert result.returncode == 24, result.stderr
+    # G5 round-2 finding 1: the pin gate runs BEFORE the marker write and the
+    # init launch — the shim records ZERO python invocations (the manifest
+    # JSON-reader subprocess never starts) and the session marker is NOT
+    # written.
+    capture_text = capture.read_text(encoding="utf-8") if capture.exists() else ""
+    assert capture_text == "", capture_text.splitlines()
+    assert "json.load(open(sys.argv[1]))" not in capture_text
+    assert "arnold_pipelines.megaplan init" not in capture_text
+    marker_path = marker_dir / "plan-session.json"
+    assert not marker_path.exists(), "session marker written before the pin gate"
+    # G5 round-6 finding 1a: the pin gate is the FIRST side-effecting
+    # statement — the missing pin exits 24 with ZERO mkdir/dir-creation, so
+    # neither the marker dir nor the cloud-logs dir is ever created and the
+    # drift message falls back to stderr (no log dir exists to write to).
+    assert not mkdir_capture.exists(), mkdir_capture.read_text(encoding="utf-8")
+    assert not marker_dir.exists()
+    assert not (workspace / ".megaplan" / "cloud-logs").exists()
+    assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in (
+        result.stderr
+    )
+
+
+def test_bootstrap_launch_bound_manifest_reaches_init_with_manifest_root_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    marker_dir = tmp_path / "markers"
+    monkeypatch.setattr(cloud_cli, "_CHAIN_SESSION_MARKER_DIR", str(marker_dir))
+    accepted = tmp_path / "accepted-runtime"
+    accepted.mkdir()
+    accepted_manifest = _write_runtime_manifest(
+        tmp_path / "accepted-manifest.json",
+        runtime_root=accepted,
+        revision="a" * 40,
+    )
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+
+    command = cloud_cli._bootstrap_launch_command(
+        workspace=str(workspace),
+        remote_idea_path=str(workspace / "idea.txt"),
+        plan_name="demo-plan",
+        robustness="standard",
+        session_name="plan-session",
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": sys.executable,
+            "ARNOLD_RUNTIME_MANIFEST": str(accepted_manifest),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
+    # run inside the pin gate, then runtime_provenance, then init.
+    assert len(observations) == 4, observations
+    json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
+    assert len(json_reads) == 2, observations
+    provenance = [o for o in observations if "runtime_provenance" in o]
+    init = [o for o in observations if "arnold_pipelines.megaplan init" in o]
+    assert len(provenance) == 1 and len(init) == 1, observations
+    for observation in observations:
+        pythonpath, manifest, _hot, _home, args = observation.split("|", 4)
+        assert manifest == str(accepted_manifest)
+        if "json.load(open(sys.argv[1]))" not in args:
+            assert pythonpath == str(accepted)
+    assert "runtime_provenance" in provenance[0]
+    assert "arnold_pipelines.megaplan init" in init[0]
+    assert "/workspace/arnold" not in capture.read_text(encoding="utf-8")
+    assert "/workspace/arnold" not in command
+    # G5 round-6 finding 1a: with a valid pin the gate passes first, THEN
+    # the mkdir runs — the marker dir and the cloud-logs dir are created and
+    # the marker is written (the command proceeds).
+    assert marker_dir.is_dir()
+    assert (workspace / ".megaplan" / "cloud-logs").is_dir()
+    assert (marker_dir / "plan-session.json").is_file()
+
+
+def test_chain_spec_enables_post_hot_env_runtime_gate_regardless_of_isolated_runner() -> None:
+    # T-0011: the runtime pin is mandatory for EVERY production chain start;
+    # isolated_chain_runner no longer toggles it.
+    for spec in (
+        replace(_cloud_spec(), isolated_chain_runner=True),
         _cloud_spec(),
-        isolated_chain_runner=True,
-        isolated_chain_runner_image_id="sha256:" + "a" * 64,
-    )
+    ):
+        command = _tmux_chain_launch_command(
+            "/workspace/project",
+            "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+            spec=spec,
+        )
 
-    command = _tmux_chain_launch_command(
-        "/workspace/project",
-        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
-        spec=spec,
-    )
-
-    assert "isolated_chain_runtime_binding_drift" in command
-    assert "--expected-root" in command
-    assert "--expected-revision" in command
-    assert ". /workspace/.cloud-hot-env" in command
+        assert "isolated_chain_runtime_binding_drift" in command
+        assert "--expected-root" in command
+        assert "--expected-revision" in command
+        assert ". /workspace/.cloud-hot-env" in command
 
 
 # ── P1 producer routing: per-epic runtime creation + manifest binding ────────
@@ -656,7 +1555,6 @@ def test_parse_chain_runtime_binding_accepts_binding_record() -> None:
     binding = _parse_chain_runtime_binding(
         result,
         slug="demo-abc123",
-        default_runtime_src="/workspace/runtime-candidates/demo-abc123",
     )
     assert binding["runtime_revision"] == "a" * 40
     assert binding["runtime_src"] == "/workspace/runtime-candidates/demo-abc123"
@@ -669,7 +1567,6 @@ def test_parse_chain_runtime_binding_rejects_unreadable_output() -> None:
         _parse_chain_runtime_binding(
             result,
             slug="demo-abc123",
-            default_runtime_src="/workspace/runtime-candidates/demo-abc123",
         )
     assert excinfo.value.code == "chain_runtime_probe_unreadable"
 
@@ -685,9 +1582,173 @@ def test_parse_chain_runtime_binding_rejects_epic_mismatch() -> None:
         _parse_chain_runtime_binding(
             result,
             slug="demo-abc123",
-            default_runtime_src="/workspace/runtime-candidates/demo-abc123",
         )
     assert excinfo.value.code == "chain_runtime_epic_mismatch"
+
+
+def test_parse_chain_runtime_binding_rejects_missing_runtime_src() -> None:
+    """G6 round-9 finding 2: a binding record without ``runtime_src`` fails
+    closed (typed ``chain_runtime_manifest_incomplete``) — there is NO
+    default runtime source fallback. Only the manifest's own
+    ``epic.runtime_root`` is ever used."""
+    payload = {
+        "present": True,
+        "created": 1,
+        "epic_id": "demo-abc123",
+        "runtime_id": "demo-abc123-20260810",
+        # runtime_src deliberately absent
+        "runtime_revision": "a" * 40,
+    }
+    result = subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+    with pytest.raises(CliError) as excinfo:
+        _parse_chain_runtime_binding(
+            result,
+            slug="demo-abc123",
+        )
+    assert excinfo.value.code == "chain_runtime_manifest_incomplete"
+    assert "no epic.runtime_root" in excinfo.value.message
+
+
+def test_parse_chain_runtime_binding_rejects_empty_runtime_src() -> None:
+    """An empty-string ``runtime_src`` is the same fail-closed state as an
+    absent one — never a silent default."""
+    payload = {
+        "present": True,
+        "epic_id": "demo-abc123",
+        "runtime_src": "",
+        "runtime_revision": "a" * 40,
+    }
+    result = subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+    with pytest.raises(CliError) as excinfo:
+        _parse_chain_runtime_binding(
+            result,
+            slug="demo-abc123",
+        )
+    assert excinfo.value.code == "chain_runtime_manifest_incomplete"
+    assert "no epic.runtime_root" in excinfo.value.message
+
+
+def _run_binding_reader(
+    manifest_path: Path, *, created: int = 0
+) -> subprocess.CompletedProcess[str]:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    return subprocess.run(
+        [sys.executable, "-", str(manifest_path), str(created)],
+        input=cloud_cli._RUNTIME_MANIFEST_BINDING_READER,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_runtime_binding_reader_emits_binding_for_canonical_manifest(
+    tmp_path: Path,
+) -> None:
+    """The box-side probe reader prints a binding record ONLY for a
+    canonically schema-valid per-epic manifest (schema "1" + required key
+    sets), and the record's ``runtime_src`` is the manifest's own
+    ``epic.runtime_root``."""
+    runtime_root = tmp_path / "accepted-runtime"
+    runtime_root.mkdir()
+    manifest = _write_runtime_manifest(
+        tmp_path / "manifest.json",
+        runtime_root=runtime_root,
+        revision="a" * 40,
+    )
+
+    result = _run_binding_reader(manifest)
+
+    assert result.returncode == 0, result.stderr
+    binding = json.loads(result.stdout)
+    assert binding["present"] is True
+    assert binding["runtime_src"] == str(runtime_root)
+    assert binding["runtime_revision"] == "a" * 40
+
+
+@pytest.mark.parametrize(
+    ("case", "payload"),
+    [
+        (
+            "schema-less-raw-fields",
+            {
+                "epic_id": "pincheck-epic",
+                "epic": {
+                    "runtime_root": "/workspace/runtime-candidates/demo",
+                    "expected_head": "a" * 40,
+                },
+            },
+        ),
+        (
+            "wrong-schema-version",
+            dict(
+                _canonical_manifest_payload(
+                    "/workspace/runtime-candidates/demo", expected_head="a" * 40
+                ),
+                schema="2",
+            ),
+        ),
+        (
+            "missing-top-level-required",
+            {
+                key: value
+                for key, value in _canonical_manifest_payload(
+                    "/workspace/runtime-candidates/demo", expected_head="a" * 40
+                ).items()
+                if key != "state"
+            },
+        ),
+        (
+            "missing-epic-required",
+            dict(
+                _canonical_manifest_payload(
+                    "/workspace/runtime-candidates/demo", expected_head="a" * 40
+                ),
+                epic={
+                    "runtime_root": "/workspace/runtime-candidates/demo",
+                    "expected_head": "a" * 40,
+                },
+            ),
+        ),
+    ],
+)
+def test_runtime_binding_reader_rejects_schema_invalid_manifest_fail_closed(
+    tmp_path: Path, case: str, payload: dict[str, object]
+) -> None:
+    """G6 round-9 finding 2: a PRESENT-but-schema-invalid per-epic manifest
+    at the box-side probe read must fail closed — non-zero exit and NO raw
+    fields on stdout (no binding record), so the calling ``set -e`` probe
+    aborts and the launch fails loudly instead of using raw fields."""
+    manifest = tmp_path / f"{case}.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _run_binding_reader(manifest)
+
+    assert result.returncode != 0, case
+    assert result.stdout.strip() == "", case
+    assert "schema-invalid" in result.stderr, case
+
+
+def test_chain_runtime_probe_and_create_command_reader_is_schema_gated() -> None:
+    """The probe/create command's embedded binding reader must carry the
+    canonical schema gate (generated from runtime_manifest's own constants),
+    so a present-but-schema-invalid manifest on the box can never yield raw
+    fields."""
+    command = _chain_runtime_probe_and_create_command(
+        slug="demo-abc123",
+        manifest_path="/workspace/.megaplan/demo-abc123.json",
+        runtime_src="/workspace/runtime-candidates/demo-abc123",
+        manifest_dir="/workspace/.megaplan",
+        base_repo="/workspace/arnold",
+        base_ref="editible-install",
+        policy_path=None,
+    )
+    assert 'd.get("schema")' in command
+    assert "TOP_LEVEL_REQUIRED" in command
+    assert "EPIC_REQUIRED" in command
+    assert "MANIFEST_SCHEMA_VERSION" in command
+    assert "refusing to read raw fields" in command
+    assert "sys.exit(24)" in command
 
 
 def test_chain_runtime_provenance_payload_records_bound_manifest() -> None:
@@ -997,18 +2058,50 @@ def test_bootstrap_launch_command_writes_plan_marker_and_relaunch_command() -> N
         plan_name="per-workflow-window-chat-cloud-20260628",
         robustness="full",
         session_name="vibecomfy-per-workflow-window-chat",
-        engine_dir="/workspace/arnold",
     )
 
     assert "/workspace/.megaplan/cloud-sessions/vibecomfy-per-workflow-window-chat.json" in command
     assert '"run_kind": "plan"' in command
     assert '"plan_name": "per-workflow-window-chat-cloud-20260628"' in command
-    assert "python3 -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in command
+    assert "python -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in command
     assert (
-        "python3 -P -m arnold_pipelines.megaplan init --project-dir "
+        "python -P -m arnold_pipelines.megaplan init --project-dir "
         "/workspace/vibecomfy-per-workflow-window-chat-20260628"
     ) in command
     assert "--name per-workflow-window-chat-cloud-20260628" in command
+    # T-0021: bootstrap is manifest-bound with no megaplan.src_path read and
+    # no /workspace/arnold fallback; the pin must be enforced before init.
+    assert "isolated_chain_runtime_binding_drift" in command
+    assert 'PYTHONPATH="$ENGINE_DIR"' in command
+    assert 'PYTHONPATH="/workspace/arnold' not in command
+    assert "PYTHONPATH=/workspace/arnold" not in command
+    assert command.index("isolated_chain_runtime_binding_drift") < command.index(
+        "arnold_pipelines.megaplan init"
+    )
+    # G5 round-2 finding 1: the pin gate runs BEFORE the session-marker write
+    # — a missing/unreadable pin exits 24 with zero marker side effects.
+    assert command.index("isolated_chain_runtime_binding_drift") < command.index(
+        '"relaunch_command"'
+    )
+    # G5 round-6 finding 1a: the pin gate is the FIRST side-effecting
+    # statement — the mkdir -p for the marker dir + cloud-logs runs only
+    # after the missing/unreadable pin checks, so a missing pin exits 24
+    # with ZERO dir-creation side effects.
+    assert command.index(
+        'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then'
+    ) < command.index("mkdir -p")
+    assert command.index(
+        'if [ ! -r "$PINNED_RUNTIME_MANIFEST" ]; then'
+    ) < command.index("mkdir -p")
+    # The relaunch command embedded in the marker carries the same pin gate.
+    assert "relaunch_command" in command
+    # The embedded relaunch (the whole launch shell command, JSON-escaped in
+    # the marker payload) carries the same canonical-gated pin.
+    relaunch_embedded = command.split("relaunch_command", 1)[1]
+    assert "isolated_chain_runtime_binding_drift" in relaunch_embedded
+    # JSON-escaped in the marker payload, so assert the engine pin fragments.
+    assert "ENGINE_DIR" in relaunch_embedded
+    assert "arnold_pipelines.megaplan auto" in relaunch_embedded
 
 
 def test_run_bootstrap_wrapper_writes_marker_using_repo_named_session(tmp_path: Path, monkeypatch) -> None:

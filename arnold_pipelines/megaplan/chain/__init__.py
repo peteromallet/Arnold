@@ -6658,6 +6658,62 @@ def _promoted_refs(
     return refs
 
 
+def _reconcile_scope_manifest(
+    manifest_path: Path | None, *, milestone_label: str
+) -> Mapping[str, Any] | None:
+    """Load the bound session runtime manifest for reconcile skip detection.
+
+    Distinguishes ABSENT from INVALID (T-0024).  A ``None`` path or a
+    genuinely never-existing file (stat and lstat both report ENOENT) is
+    absent and yields ``None`` — the scope computation then degrades to
+    ``pr_required``/``uncertain`` (never a silent no-op).  A PRESENT entry —
+    including a DANGLING SYMLINK (the link itself exists even though its
+    target is gone) and a stat-inaccessible path (e.g. EACCES on a parent
+    directory) — fails closed with a typed :class:`CliError`
+    (``reconcile_manifest_invalid``) so the reconcile is BLOCKED: a
+    present-but-unreadable manifest is never collapsed to ``None``, which
+    would let ``compute_reconcile_scope`` treat it as absent and waive the
+    reconcile (``noop``) on top of a broken manifest.
+    """
+    if manifest_path is None:
+        return None
+    path = Path(manifest_path)
+
+    def _blocked(exc: Exception | None = None) -> None:
+        """Fail closed: the manifest entry is PRESENT but unusable."""
+        detail = f": {exc}" if exc is not None else " (dangling symlink)"
+        raise CliError(
+            "reconcile_manifest_invalid",
+            f"reconcile milestone {milestone_label} blocked: session runtime "
+            f"manifest {manifest_path} is present but unreadable/invalid{detail}",
+        ) from exc
+
+    try:
+        path.stat()
+    except FileNotFoundError:
+        # stat() FOLLOWS symlinks, so a dangling symlink (target missing)
+        # reports ENOENT even though the link entry itself exists.  lstat()
+        # sees the entry itself: a link with a missing target is PRESENT but
+        # unreadable and must fail closed — only a genuinely never-existing
+        # path (lstat ENOENT too) counts as absent.
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:  # noqa: BLE001 - lstat itself inaccessible
+            _blocked(exc)
+        _blocked()
+    except OSError as exc:  # noqa: BLE001 - EACCES etc: absence unprovable
+        _blocked(exc)
+
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
+
+    try:
+        return load_manifest(path).to_dict()
+    except Exception as exc:  # noqa: BLE001 - fail closed on unreadable manifest
+        _blocked(exc)
+
+
 def compute_reconcile_scope(
     spec: ChainSpec,
     manifest: Mapping[str, Any] | None,
@@ -8042,16 +8098,9 @@ def run_chain(
                     # running the agent; any uncertainty degrades to
                     # ``pr_required`` (never a silent no-op).
                     manifest_path = chain_spec.session_runtime_manifest_path()
-                    manifest: Mapping[str, Any] | None = None
-                    if manifest_path is not None and manifest_path.exists():
-                        try:
-                            from arnold_pipelines.megaplan.cloud.runtime_manifest import (
-                                load_manifest,
-                            )
-
-                            manifest = load_manifest(manifest_path).to_dict()
-                        except Exception:
-                            manifest = None
+                    manifest = _reconcile_scope_manifest(
+                        manifest_path, milestone_label=milestone.label
+                    )
                     scope = compute_reconcile_scope(
                         spec,
                         manifest,
@@ -9197,6 +9246,83 @@ def _write_reconcile_plan_inputs(
         )
 
 
+_GC_SWEEP_STANDALONE_MARKER_RE = re.compile(
+    r"(?:gc-sweep:\s*)?SWEPT=(YES|NO(?::[A-Z0-9_-]+)?)\s+'([^']+)'"
+)
+_GC_SWEEP_EMBEDDED_MARKER_RE = re.compile(r"SWEPT=(YES|NO(?::[A-Z0-9_-]+)?)")
+_GC_SWEEP_DECISION_RE = re.compile(
+    r"^gc-sweep:\s+(SWEPT|SKIP|NEEDS-RECONCILE|UNKNOWN|REFUSE)\s+'([^']+)'"
+)
+
+
+def _sweep_reason_tail(text: str) -> str:
+    rest = text.strip().lstrip("\u2014\u2013-").strip()
+    return rest[:2000]
+
+
+def _parse_gc_sweep_outcome(output: str, slug: str) -> tuple[str, str]:
+    """Extract the sweep's decision for *slug* from its combined output.
+
+    Keys on the machine-readable per-slug ``SWEPT=`` marker the sweep emits
+    (G6 round-3 finding 1 protocol): ``SWEPT=YES '<slug>'`` as a standalone
+    line on real deletion, and ``SWEPT=NO:<verdict>`` (REFERENCED /
+    DANGLING / …) embedded in the SKIP / NEEDS-RECONCILE decision line on
+    skip-but-alive.  UNKNOWN / REFUSE abort on stderr with no marker (they
+    also exit non-zero).  Legacy ``gc-sweep: SWEPT/SKIP/NEEDS-RECONCILE/
+    UNKNOWN/REFUSE '<slug>'`` decision lines without a marker are honored as
+    a fallback, with marker-absent SKIP/NEEDS-RECONCILE treated as
+    not-swept.  Returns ``(outcome, reason)``; defaults to ``UNKNOWN`` with
+    an empty reason when no decision line names the slug (fail-closed:
+    absence of proof that the runtime was removed is not removal — G6
+    round-3 finding 2 / E5-F collapse-to-success).  ``SWEPT=YES`` outranks
+    any later no-marker SKIP (e.g. a compatibility pointer manifest echoing
+    the same slug after the real manifest was swept).
+    """
+    swept_yes_reason: str | None = None
+    swept_no: tuple[str, str] | None = None
+    decision: tuple[str, str] | None = None
+    for line in output.splitlines():
+        standalone = _GC_SWEEP_STANDALONE_MARKER_RE.match(line)
+        if standalone and standalone.group(2) == slug:
+            token = standalone.group(1)
+            reason = _sweep_reason_tail(line[standalone.end() :])
+            if token == "YES":
+                swept_yes_reason = reason
+            else:
+                verdict = (
+                    token[3:].strip().upper() or "SKIP"
+                    if token.startswith("NO")
+                    else "SKIP"
+                )
+                swept_no = (verdict if verdict.isalnum() else "SKIP", reason)
+            continue
+        matched = _GC_SWEEP_DECISION_RE.match(line)
+        if not matched or matched.group(2) != slug:
+            continue
+        embedded = _GC_SWEEP_EMBEDDED_MARKER_RE.search(line)
+        reason = _sweep_reason_tail(line[matched.end() :])
+        if embedded:
+            token = embedded.group(1)
+            if token == "YES":
+                swept_yes_reason = reason
+            else:
+                verdict = (
+                    token[3:].strip().upper() or "SKIP"
+                    if token.startswith("NO")
+                    else "SKIP"
+                )
+                swept_no = (verdict if verdict.isalnum() else "SKIP", reason)
+        else:
+            decision = (matched.group(1), reason)
+    if swept_yes_reason is not None:
+        return "SWEPT", swept_yes_reason
+    if swept_no is not None:
+        return swept_no
+    if decision is not None:
+        return decision
+    return "UNKNOWN", ""
+
+
 def _run_reconcile_terminal_finalizer(
     *,
     root: Path,
@@ -9232,6 +9358,15 @@ def _run_reconcile_terminal_finalizer(
     sweep SKIPs already-gone worktrees.  Returns a ``blocked`` result dict
     when close or sweep fails (the runtime must not be left half-torn), or
     ``None`` when there is nothing to finalize.
+
+    ``swept: True`` is recorded ONLY when the sweep's output proves the
+    runtime was actually removed (``SWEPT`` decision line for the slug — a
+    CLEAR census outcome).  A skipped sweep (REFERENCED / DANGLING census
+    verdicts or any other SKIP, exit 0) or a blocked sweep (UNKNOWN
+    census / open-PR REFUSE / nonzero exit) records ``swept: False`` with
+    the sweep outcome/reason and returns a ``blocked`` result — the
+    completion guard never treats a skipped sweep as a successful close
+    (G6 round-3 finding 2, E5/F collapse-to-success).
     """
     reconcile_milestones = [
         milestone for milestone in spec.milestones if _is_reconcile_milestone(milestone)
@@ -9289,12 +9424,56 @@ def _run_reconcile_terminal_finalizer(
         )
         return None
     manifest_path = Path(manifest_path)
-    if not manifest_path.is_file():
-        log(
-            f"[chain] runtime manifest {manifest_path} already gone — close/sweep "
-            "already finalized (idempotent skip)"
+    try:
+        manifest_path.stat()
+    except FileNotFoundError:
+        # stat() FOLLOWS symlinks, so a dangling symlink (target missing)
+        # reports ENOENT even though the link entry itself exists.  lstat()
+        # sees the entry itself: a link with a missing target is PRESENT but
+        # unreadable and must fail closed — only a genuinely never-existing
+        # path (lstat ENOENT too) counts as "already gone" (idempotent skip;
+        # G5 round-5 finding 3(a): a dangling manifest must never collapse
+        # to done on top of a broken runtime).
+        try:
+            manifest_path.lstat()
+        except FileNotFoundError:
+            log(
+                f"[chain] runtime manifest {manifest_path} already gone — "
+                "close/sweep already finalized (idempotent skip)"
+            )
+            return None
+        except OSError as exc:  # noqa: BLE001 - lstat itself inaccessible
+            return _result(
+                "blocked",
+                state,
+                events,
+                spec=spec,
+                reason=(
+                    f"reconcile terminal finalizer blocked: runtime manifest "
+                    f"{manifest_path} present but unreadable (lstat failed: {exc})"
+                ),
+            )
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                f"reconcile terminal finalizer blocked: runtime manifest "
+                f"{manifest_path} present but unreadable (dangling symlink)"
+            ),
         )
-        return None
+    except OSError as exc:  # noqa: BLE001 - EACCES etc: absence unprovable
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                f"reconcile terminal finalizer blocked: runtime manifest "
+                f"{manifest_path} present but unreadable (stat failed: {exc})"
+            ),
+        )
 
     try:
         from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
@@ -9397,7 +9576,30 @@ def _run_reconcile_terminal_finalizer(
         capture_output=True,
         text=True,
     )
+    sweep_output = (sweep.stdout or "") + "\n" + (sweep.stderr or "")
+    sweep_outcome, sweep_reason = _parse_gc_sweep_outcome(sweep_output, slug)
+
+    def _sweep_not_swept_evidence() -> dict[str, Any]:
+        return {
+            "milestone": milestone.label,
+            "outcome": outcome,
+            "slug": slug,
+            "fixer_branch": fixer_branch,
+            "manifest_path": str(manifest_path),
+            "closed": True,
+            "swept": False,
+            "sweep_outcome": sweep_outcome,
+            "sweep_reason": sweep_reason,
+            "finalized_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+
     if sweep.returncode != 0:
+        # Blocked: UNKNOWN census (exit 5), open-PR REFUSE (exit 3), or any
+        # sweep failure.  The runtime was NOT removed — record the false
+        # swept evidence and never report terminal completion (fail-closed;
+        # G6 round-3 finding 2: a blocked sweep must not collapse to done).
+        state.metadata["reconcile_terminal_finalizer"] = _sweep_not_swept_evidence()
+        chain_spec.save_chain_state(spec_path, state)
         return _result(
             "blocked",
             state,
@@ -9407,6 +9609,25 @@ def _run_reconcile_terminal_finalizer(
                 f"reconcile terminal finalizer blocked: arnold-gc-sweep failed "
                 f"(exit {sweep.returncode}): "
                 f"{(sweep.stderr or sweep.stdout or '').strip()[:2000]}"
+            ),
+        )
+    if sweep_outcome != "SWEPT":
+        # The sweep exited 0 but did NOT remove this runtime (REFERENCED /
+        # DANGLING census skips, schedule-store/origin/restore-proven skips,
+        # already-gone root, or no decision line for the slug).  Record
+        # swept:false and block — the completion guard must never treat a
+        # skipped sweep as a successful close (E5/F collapse-to-success).
+        state.metadata["reconcile_terminal_finalizer"] = _sweep_not_swept_evidence()
+        chain_spec.save_chain_state(spec_path, state)
+        return _result(
+            "blocked",
+            state,
+            events,
+            spec=spec,
+            reason=(
+                f"reconcile terminal finalizer blocked: arnold-gc-sweep did not "
+                f"remove runtime {slug} (outcome {sweep_outcome}): "
+                f"{sweep_reason or 'sweep skipped the runtime (see sweep output)'}"
             ),
         )
     log(f"[chain] arnold-gc-sweep completed for runtime {slug}")
@@ -9419,6 +9640,7 @@ def _run_reconcile_terminal_finalizer(
         "manifest_path": str(manifest_path),
         "closed": True,
         "swept": True,
+        "sweep_outcome": sweep_outcome,
         "finalized_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     chain_spec.save_chain_state(spec_path, state)

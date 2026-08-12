@@ -431,23 +431,264 @@ def _publication_observation_values(
     return source, values
 
 
+def _observation_payload_stale(observation: ObservationEnvelope) -> bool:
+    """True when an envelope's own payload declares the observation stale.
+
+    A capture that labels itself stale (``stale`` or ``stale_heartbeats``
+    true) must never authorize a green status, for any observation type —
+    not just heartbeat types.  The flag is read from the trusted envelope
+    payload, never from a mapping's self-declared fields.
+    """
+
+    return bool(_observation_value(observation.payload, {}, "stale", "stale_heartbeats"))
+
+
+def _observation_gate_reason(
+    observation: ObservationEnvelope | Mapping[str, Any],
+    *,
+    run_id: str | None,
+    run_revision: str | None,
+    journal_cursor: int | None,
+) -> tuple[str, str] | None:
+    """Fail-closed admission gate for one observation.
+
+    Returns ``(code, reason)`` when the observation must never authorize a
+    green status, else ``None``.
+
+    ``ObservationEnvelope`` records carry the typed coherence verdict and
+    source provenance needed for the gate: a record whose coherence is UNKNOWN
+    or INCOHERENT (``is_dispatchable`` is false) is never green, a coherent
+    record whose own payload is explicitly marked stale (``stale`` or
+    ``stale_heartbeats`` true) is never green, and a coherent record that is
+    stale for the supplied run context — run_id/run_revision mismatch, or a
+    source cursor beyond the journal boundary the view was built at — is never
+    green either.
+
+    Plain mappings are UNKNOWN-typed evidence: they stay visible for
+    observation/diagnostic purposes but can never authorize a green status.
+    Only a wrapped ``ObservationEnvelope`` that is coherent and current may
+    produce ``ready``/``live``; a mapping's own ``coherence`` or
+    ``is_dispatchable`` claim is never trusted.
+    """
+
+    if isinstance(observation, ObservationEnvelope):
+        if not observation.is_dispatchable:
+            return (
+                "non_coherent_observation",
+                f"{observation.coherence.lower()}_observation_cannot_authorize_dispatch",
+            )
+        if _observation_payload_stale(observation):
+            return ("stale_observation", "observation_payload_stale")
+        if run_id is not None and observation.run_id != run_id:
+            return ("stale_observation", "observation_run_id_mismatch")
+        if run_revision is not None and observation.run_revision != run_revision:
+            return ("stale_observation", "observation_run_revision_mismatch")
+        if (
+            journal_cursor is not None
+            and observation.source_cursor is not None
+            and observation.source_cursor > journal_cursor
+        ):
+            return ("stale_observation", "observation_source_cursor_beyond_journal")
+        return None
+    return _raw_mapping_gate_reason(observation)
+
+
+def _raw_mapping_gate_reason(observation: Mapping[str, Any]) -> tuple[str, str]:
+    """Fail-closed admission gate for a plain mapping (UNKNOWN-typed evidence).
+
+    A raw mapping is always UNKNOWN-typed evidence: it may stay visible in the
+    projection for observation/diagnostic purposes but can never push the view
+    to ``ready``/``live``.  Only a wrapped ``ObservationEnvelope`` (hard-gated
+    on ``is_dispatchable`` and run-context provenance) may authorize a green
+    status, so a mapping's self-declared ``coherence`` or ``is_dispatchable``
+    field is never consulted — the gate is unconditional.
+    """
+
+    return ("non_coherent_observation", "raw_observation_cannot_authorize_dispatch")
+
+
+def _observation_environment_identity(
+    observation: ObservationEnvelope | Mapping[str, Any],
+) -> str | None:
+    """Environment/session identity declared by one observation, if any.
+
+    A coherent envelope records identical ``environment_identity`` and
+    ``session_identity`` in its runtime capture; mappings may declare either
+    name at the top level or inside ``payload``.
+    """
+
+    if isinstance(observation, ObservationEnvelope):
+        capture = observation.runtime_observation
+        if isinstance(capture, Mapping):
+            return _optional_string(capture.get("environment_identity") or capture.get("session_identity"))
+        return None
+    payload = observation.get("payload")
+    if not isinstance(payload, Mapping):
+        payload = observation
+    return _optional_string(
+        _observation_value(payload, observation, "environment_identity", "session_identity")
+    )
+
+
+def _observation_source(observation: ObservationEnvelope | Mapping[str, Any]) -> str:
+    """Best-effort source string for one observation."""
+
+    if isinstance(observation, ObservationEnvelope):
+        return _optional_string(observation.source) or "observation://unknown"
+    return _optional_string(observation.get("source")) or "observation://unknown"
+
+
+def _cross_environment_gate_reason(
+    observations: Iterable[ObservationEnvelope | Mapping[str, Any]],
+) -> tuple[str, str, str] | None:
+    """Fail-closed cross-observation environment/session agreement check.
+
+    Returns ``(code, reason, source)`` when the admitted observations declare
+    more than one distinct environment/session identity: mixed-environment
+    evidence can never authorize a green status even when every envelope is
+    individually coherent and current.
+    """
+
+    identities: dict[str, set[str]] = {}
+    for item in observations:
+        identity = _observation_environment_identity(item)
+        if identity is not None:
+            identities.setdefault(identity, set()).add(_observation_source(item))
+    if len(identities) > 1:
+        sources = ",".join(sorted(source for group in identities.values() for source in group))
+        return (
+            "cross_environment_observation",
+            "observations_declare_conflicting_environment_identity",
+            sources,
+        )
+    return None
+
+
+def _cross_run_gate_reason(
+    observations: Iterable[ObservationEnvelope | Mapping[str, Any]],
+    *,
+    run_id: str | None,
+    run_revision: str | None,
+) -> tuple[str, str, str] | None:
+    """Fail-closed cross-observation run provenance agreement check.
+
+    Returns ``(code, reason, source)`` when the admitted envelopes do not
+    agree on an un-anchored run dimension.  Without a supplied ``run_id``
+    anchor the per-observation gate cannot compare envelopes against a shared
+    run, so two individually coherent envelopes from different runs are
+    indistinguishable from a coherent pair captured in one run — and mixed-run
+    evidence must never authorize a green status.  The same holds for
+    ``run_revision``.  A dimension the caller anchored is already uniform
+    among admitted envelopes (the per-observation gate excludes mismatches),
+    so only un-anchored dimensions are checked here.  Plain mappings carry no
+    trusted run provenance and are ignored; they can never authorize green
+    regardless.
+    """
+
+    run_ids: set[str] = set()
+    run_revisions: set[str] = set()
+    sources_by_run_id: dict[str, set[str]] = {}
+    sources_by_run_revision: dict[str, set[str]] = {}
+    for item in observations:
+        if not isinstance(item, ObservationEnvelope):
+            continue
+        run_ids.add(item.run_id)
+        run_revisions.add(item.run_revision)
+        sources_by_run_id.setdefault(item.run_id, set()).add(_observation_source(item))
+        sources_by_run_revision.setdefault(item.run_revision, set()).add(_observation_source(item))
+    if run_id is None and len(run_ids) > 1:
+        sources = ",".join(sorted(source for group in sources_by_run_id.values() for source in group))
+        return (
+            "mixed_run_observation",
+            "observations_declare_conflicting_run_ids_without_anchor",
+            sources,
+        )
+    if run_revision is None and len(run_revisions) > 1:
+        sources = ",".join(sorted(source for group in sources_by_run_revision.values() for source in group))
+        return (
+            "mixed_run_observation",
+            "observations_declare_conflicting_run_revisions_without_anchor",
+            sources,
+        )
+    return None
+
+
 def derive_publication_view(
     observations: Iterable[ObservationEnvelope | Mapping[str, Any]],
+    *,
+    run_id: str | None = None,
+    run_revision: str | None = None,
+    journal_cursor: int | None = None,
 ) -> PublicationView:
     """Project publication readiness without performing Git, PR, or auth work.
 
     Inputs may be incomplete.  Every required field remains visible as a known,
     unknown, or contradicted observation, and the view neither reads execution
     state nor consumes a ``RunnerView``.
+
+    ``ObservationEnvelope`` records are admitted only when they are coherent
+    and current: an envelope whose coherence verdict is UNKNOWN or INCOHERENT
+    (``is_dispatchable`` is false), whose own payload declares it stale
+    (``stale`` or ``stale_heartbeats`` true — for any observation type), or
+    whose provenance is stale for the supplied run context (run_id/run_revision
+    mismatch, or a source cursor beyond ``journal_cursor``), is excluded from
+    the projection and surfaced as a ``non_coherent_observation``/
+    ``stale_observation`` diagnostic.  Plain mappings are UNKNOWN-typed
+    evidence: they remain visible for observation/diagnostic purposes but are
+    always gated and can never push the view to ``ready`` — a mapping's own
+    ``coherence``/``is_dispatchable`` claim is never trusted.  Only a wrapped
+    ``ObservationEnvelope`` that is coherent and current may authorize a green
+    status.  Admitted observations must also agree on environment/session
+    identity: mixed-environment evidence forces ``pending``
+    (``cross_environment_observation``).  When no run anchor is supplied,
+    admitted envelopes must likewise agree on the un-anchored run dimension:
+    mixed run_id/run_revision evidence forces ``pending``
+    (``mixed_run_observation``) because without an anchor the view cannot tell
+    one run's coherent capture from another's.  When any observation is gated,
+    the status can never be ``ready``: it becomes ``pending`` unless a more
+    specific non-green status (``blocked`` or ``contradicted``) already
+    applies.
     """
+
+    for name, value in (("run_id", run_id), ("run_revision", run_revision)):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{name} must be a non-empty string when provided")
+    if journal_cursor is not None and (
+        not isinstance(journal_cursor, int) or isinstance(journal_cursor, bool) or journal_cursor < 0
+    ):
+        raise ValueError("journal_cursor must be a non-negative integer when provided")
 
     values_by_field: dict[str, set[str | bool]] = {field: set() for field in _PUBLICATION_FIELDS}
     sources_by_field: dict[str, set[str]] = {field: set() for field in _PUBLICATION_FIELDS}
+    gated: list[tuple[str, str, str, frozenset[str]]] = []
+    admitted: list[ObservationEnvelope | Mapping[str, Any]] = []
     for item in observations:
         source, values = _publication_observation_values(item)
+        gate = _observation_gate_reason(
+            item, run_id=run_id, run_revision=run_revision, journal_cursor=journal_cursor
+        )
+        if gate is not None:
+            code, reason = gate
+            gated.append((code, reason, source, frozenset(values)))
+            if isinstance(item, ObservationEnvelope):
+                # A gated envelope is excluded from the projection entirely; a
+                # gated plain mapping stays observable but can never authorize
+                # a green status (soft gate).
+                continue
+        admitted.append(item)
         for field, value in values.items():
             values_by_field[field].add(value)
             sources_by_field[field].add(source)
+
+    cross_environment = _cross_environment_gate_reason(admitted)
+    if cross_environment is not None:
+        code, reason, source = cross_environment
+        gated.append((code, reason, source, frozenset()))
+
+    cross_run = _cross_run_gate_reason(admitted, run_id=run_id, run_revision=run_revision)
+    if cross_run is not None:
+        code, reason, source = cross_run
+        gated.append((code, reason, source, frozenset()))
 
     normalized: list[PublicationObservation] = []
     diagnostics: list[PublicationDiagnostic] = []
@@ -494,6 +735,11 @@ def derive_publication_view(
             "branch has no common history with the target base", item.source,
         ))
 
+    for code, reason, source, claimed in gated:
+        fields = tuple(sorted(claimed)) if claimed else ("observation",)
+        for field in fields:
+            diagnostics.append(PublicationDiagnostic(code, field, reason, source))
+
     if any(item.state == "contradicted" for item in normalized):
         status = "contradicted"
     elif (
@@ -506,6 +752,11 @@ def derive_publication_view(
         status = "ready"
     else:
         status = "unknown"
+    if gated and status in ("ready", "unknown"):
+        # A non-coherent or stale observation is present: the view can never go
+        # green.  ``pending`` names that state explicitly (awaiting a coherent,
+        # current capture) while harder blockers keep their more specific status.
+        status = "pending"
 
     values = {
         "schema_version": 1,
@@ -587,17 +838,76 @@ def derive_runner_view(
     *,
     expected_identity: str | None = None,
     stale_after_seconds: int = 300,
+    run_id: str | None = None,
+    run_revision: str | None = None,
+    journal_cursor: int | None = None,
 ) -> RunnerView:
     """Project process/session/heartbeat observations without deciding execution.
 
     ``stale_after_seconds`` is explicit rather than clock-derived, so the same
     normalized observation set always produces the same view and hash.
+
+    ``ObservationEnvelope`` records are admitted only when they are coherent
+    and current: an envelope whose coherence verdict is UNKNOWN or INCOHERENT
+    (``is_dispatchable`` is false), whose own payload declares it stale
+    (``stale`` or ``stale_heartbeats`` true — for any observation type), or
+    whose provenance is stale for the supplied run context (run_id/run_revision
+    mismatch, or a source cursor beyond ``journal_cursor``), is excluded from
+    the projection and surfaced as a ``non_coherent_observation``/
+    ``stale_observation`` diagnostic.  Plain mappings are UNKNOWN-typed
+    evidence: they remain visible for observation/diagnostic purposes but are
+    always gated and can never push the view to ``live`` — a mapping's own
+    ``coherence``/``is_dispatchable`` claim is never trusted.  Only a wrapped
+    ``ObservationEnvelope`` that is coherent and current may authorize a green
+    status.  Admitted observations must also agree on environment/session
+    identity: mixed-environment evidence forces ``pending``
+    (``cross_environment_observation``).  When no run anchor is supplied,
+    admitted envelopes must likewise agree on the un-anchored run dimension:
+    mixed run_id/run_revision evidence forces ``pending``
+    (``mixed_run_observation``) because without an anchor the view cannot tell
+    one run's coherent capture from another's.  When any observation is gated,
+    or any admitted observation declares itself stale, the status can never be
+    ``live``: it becomes ``pending`` unless a more specific non-green status
+    (``identity_mismatch``, ``stopped``, or ``stale``) already applies.
     """
 
     if isinstance(stale_after_seconds, bool) or not isinstance(stale_after_seconds, int) or stale_after_seconds < 0:
         raise ValueError("stale_after_seconds must be a non-negative integer")
+    for name, value in (("run_id", run_id), ("run_revision", run_revision)):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{name} must be a non-empty string when provided")
+    if journal_cursor is not None and (
+        not isinstance(journal_cursor, int) or isinstance(journal_cursor, bool) or journal_cursor < 0
+    ):
+        raise ValueError("journal_cursor must be a non-negative integer when provided")
+    gated: list[tuple[str, str, str]] = []
+    admitted: list[ObservationEnvelope | Mapping[str, Any]] = []
+    for item in observations:
+        gate = _observation_gate_reason(
+            item, run_id=run_id, run_revision=run_revision, journal_cursor=journal_cursor
+        )
+        if gate is not None:
+            code, reason = gate
+            gated.append((code, reason, _observation_source(item)))
+            if isinstance(item, ObservationEnvelope):
+                # A gated envelope is excluded from the projection entirely; a
+                # gated plain mapping stays observable but can never authorize
+                # a green status (soft gate).
+                continue
+        admitted.append(item)
+
+    cross_environment = _cross_environment_gate_reason(admitted)
+    if cross_environment is not None:
+        code, reason, source = cross_environment
+        gated.append((code, reason, source))
+
+    cross_run = _cross_run_gate_reason(admitted, run_id=run_id, run_revision=run_revision)
+    if cross_run is not None:
+        code, reason, source = cross_run
+        gated.append((code, reason, source))
+
     normalized = tuple(sorted(
-        {_normalized_runner_observation(item) for item in observations},
+        {_normalized_runner_observation(item) for item in admitted},
         key=lambda item: canonical_json(item.to_dict()),
     ))
     configured_identity = _optional_string(expected_identity)
@@ -621,6 +931,16 @@ def derive_runner_view(
             item.source,
         ))
 
+    # A payload that declares itself stale is stale evidence regardless of its
+    # observation type.  Envelope payloads are gated out of the projection
+    # entirely by ``_observation_gate_reason``; admitted stale mappings remain
+    # observable (soft gate) but must never authorize ``live`` either.
+    stale_observations = tuple(item for item in normalized if item.stale)
+    for item in stale_observations:
+        diagnostics.append(RunnerDiagnostic(
+            "stale_observation", "observation_payload_stale", item.source,
+        ))
+
     stale_heartbeats = tuple(
         item for item in normalized
         if item.observation_type in {"heartbeat", "runner_heartbeat"}
@@ -642,22 +962,30 @@ def derive_runner_view(
         ))
 
     known_liveness = tuple(item for item in normalized if item.state in _LIVE_RUNNER_STATES | _STOPPED_RUNNER_STATES)
-    if not known_liveness and not stale_heartbeats and not mismatched:
+    if not known_liveness and not stale_heartbeats and not stale_observations and not mismatched:
         source = ",".join(item.source for item in normalized) or "observation://unknown"
         diagnostics.append(RunnerDiagnostic(
             "runner_unknown", "no observation establishes runner liveness", source
         ))
 
+    for code, reason, source in gated:
+        diagnostics.append(RunnerDiagnostic(code, reason, source))
+
     if mismatched or len(declared_identities) > 1:
         status = "identity_mismatch"
     elif stopped:
         status = "stopped"
-    elif stale_heartbeats:
+    elif stale_observations or stale_heartbeats:
         status = "stale"
     elif any(item.state in _LIVE_RUNNER_STATES for item in normalized):
         status = "live"
     else:
         status = "unknown"
+    if gated and status in ("live", "unknown"):
+        # A non-coherent or stale observation is present: the view can never go
+        # green.  ``pending`` names that state explicitly (awaiting a coherent,
+        # current capture) while harder blockers keep their specific status.
+        status = "pending"
 
     values = {
         "schema_version": 1,

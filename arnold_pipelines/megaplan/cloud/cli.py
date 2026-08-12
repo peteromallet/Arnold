@@ -40,6 +40,11 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud import status_format, status_snapshot
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    EPIC_REQUIRED,
+    MANIFEST_SCHEMA_VERSION,
+    TOP_LEVEL_REQUIRED,
+)
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, encode_phase_model_value
 from arnold_pipelines.megaplan.finite_canary_policy import (
     finite_canary_policy_is_exact,
@@ -3505,14 +3510,118 @@ def _pinned_manifest_field_read(field: str) -> str:
     runtime manifest (``$PINNED_RUNTIME_MANIFEST``).
 
     Stdlib JSON only, silent on absent/corrupt manifests — the caller's
-    fixed-path fallback decides.  The fields are module constants
-    (``runtime_root`` / ``expected_head``), never caller input.
+    unconditional manifest-pin checks fail closed on an empty read.  The
+    fields are module constants (``runtime_root`` / ``expected_head``),
+    never caller input.
+
+    G6 round-2 finding 2: the read is gated on the CANONICAL manifest
+    schema.  The emitted script prints the field only when the pinned file
+    is a schema-valid runtime manifest — ``schema`` equals
+    ``MANIFEST_SCHEMA_VERSION`` and both the canonical top-level and
+    ``epic`` required key sets are present.  The key sets and schema version
+    are generated from runtime_manifest's own constants, so the shell gate
+    can never drift from the schema definition.  A present-but-schema-
+    invalid manifest (schema-less, wrong schema version, or missing required
+    sections) yields an EMPTY read, so the pin gate fails closed with exit
+    24 instead of deriving a dirty ENGINE_DIR from it.
     """
     return (
         '$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c \'import json,sys; '
-        f'print(json.load(open(sys.argv[1])).get("epic",{{}}).get("{field}",""))\' '
+        f"d=json.load(open(sys.argv[1])); R={json.dumps(TOP_LEVEL_REQUIRED)}; "
+        f"E={json.dumps(EPIC_REQUIRED)}; "
+        f"e=d.get(\"epic\") if isinstance(d,dict) and d.get(\"schema\")=={json.dumps(MANIFEST_SCHEMA_VERSION)} and all(k in d for k in R) else None; "
+        f"print(e.get(\"{field}\",\"\")) if isinstance(e,dict) and all(k in e for k in E) else None\' "
         '"$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)'
     )
+
+
+def _manifest_pin_fail_closed_prefix(
+    log_target: str, *, post_pin_checks: str = ""
+) -> str:
+    """Shell fragment enforcing the manifest-bound runtime pin (T-0021).
+
+    Derives ENGINE_DIR ONLY from the pinned per-session runtime manifest's
+    ``epic.runtime_root`` and requires nonempty ``epic.expected_head`` plus a
+    successful runtime_provenance check.  Missing, unreadable, or disagreeing
+    pins exit 24 (``isolated_chain_runtime_binding_drift``) BEFORE any state
+    load or subprocess starts — there is NO fixed-path shared-root fallback
+    (no ``megaplan.src_path`` read, no ``/workspace/arnold``).  The caller
+    must have exported ``PINNED_RUNTIME_MANIFEST`` (readonly) beforehand and
+    must place this fragment before the first state-loading subprocess.  The
+    pin existence/readability checks here run before this fragment's own
+    manifest JSON-reader subprocesses (G5 round-2 finding 1): on a missing or
+    unreadable pin the gate exits 24 with ZERO subprocess starts.  The field
+    reads are themselves gated on the CANONICAL manifest schema (G6 round-2
+    finding 2): a present-but-schema-invalid manifest (schema-less, wrong
+    schema version, missing required sections) yields an empty read and the
+    gate exits 24 — it can never derive a dirty ENGINE_DIR from a
+    non-canonical manifest.
+
+    ``post_pin_checks`` is an optional shell fragment inserted AFTER the
+    missing/unreadable checks and BEFORE the manifest field reads.  G5 round-6
+    finding 1a: callers (bootstrap) use it for side-effecting setup such as
+    ``mkdir -p`` so those pins still exit 24 with ZERO filesystem side
+    effects, while the later ENGINE_DIR reads and the provenance log redirect
+    can rely on the created directories on a fresh workspace.
+    """
+    # Pin existence/readability gate FIRST: no manifest field read (a python
+    # subprocess) may run while the pin is missing or unreadable, and no
+    # caller side effect (post_pin_checks) may run either.
+
+    def _drift_echo(message: str) -> str:
+        # G5 round-6 finding 1a: bootstrap runs this gate BEFORE its mkdir,
+        # so the log dir may not exist yet on a fresh workspace — write the
+        # drift message to the log when possible, otherwise surface it on
+        # stderr so the failure stays observable with zero side effects.
+        return (
+            f'{{ echo "{message}" >> {log_target}; }} 2>/dev/null || '
+            f'echo "{message}" >&2; '
+        )
+
+    prefix = (
+        'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then '
+        + _drift_echo(
+            "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin"
+        )
+        + 'exit 24; '
+        'fi; '
+        'if [ ! -r "$PINNED_RUNTIME_MANIFEST" ]; then '
+        + _drift_echo(
+            "[megaplan-launch] isolated_chain_runtime_binding_drift: runtime manifest unreadable"
+        )
+        + 'exit 24; '
+        'fi; '
+    )
+    if post_pin_checks:
+        prefix += f"{post_pin_checks}; "
+    prefix += f'ENGINE_DIR="{_pinned_manifest_field_read("runtime_root")}"; '
+    prefix += (
+        'if [ -z "$ENGINE_DIR" ]; then '
+        + _drift_echo(
+            "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime_root"
+        )
+        + 'exit 24; '
+        'fi; '
+        f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
+        'if [ -z "$_EXPECTED_REVISION" ]; then '
+        + _drift_echo(
+            "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity"
+        )
+        + 'exit 24; '
+        'fi; '
+        'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        'PYTHONPATH="$ENGINE_DIR" '
+        'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+        '--expected-root "$ENGINE_DIR" '
+        '--expected-revision "$_EXPECTED_REVISION" '
+        f'>> {log_target} 2>&1; then '
+        + _drift_echo(
+            "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime"
+        )
+        + 'exit 24; '
+        'fi; '
+    )
+    return prefix
 
 
 def _chain_start_command(
@@ -3526,7 +3635,6 @@ def _chain_start_command(
     repair_session: str | None = None,
     repair_run_kind: str = "chain",
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
-    require_pinned_runtime_binding: bool = False,
 ) -> str:
     """Construct the ``python -m arnold_pipelines.megaplan chain start`` command with canonical quoting.
 
@@ -3574,35 +3682,55 @@ def _chain_start_command(
             marker_dir=repair_marker_dir,
         )
     if engine_dir:
-        cwd = shlex.quote(project_dir or engine_dir)
-        engine_path = shlex.quote(engine_dir)
+        # G5 round-6 finding 2: the emitted cd is ALWAYS the manifest-bound
+        # accepted root ($ENGINE_DIR, re-read from the pinned manifest and
+        # validated by runtime_provenance) — never project_dir and never the
+        # launch-time engine_dir guess.  project_dir is the chain workspace
+        # and can differ from the accepted runtime root (per-epic runtimes
+        # live outside the workspace); the megaplan process receives
+        # --project-dir and an absolute log target explicitly, so the shell
+        # cwd is only a fallback that must point at the accepted root.
+        # Fail closed (T-0011): there is NO fixed-path ENGINE_DIR fallback.
+        # Every production chain start requires a readable per-session
+        # ARNOLD_RUNTIME_MANIFEST pin with nonempty epic.runtime_root +
+        # epic.expected_head and a successful runtime_provenance check,
+        # regardless of isolated_chain_runner.  G5 round-2 finding 1: the
+        # pin existence/readability checks run BEFORE the manifest field-read
+        # subprocesses — on a missing or unreadable pin the gate exits 24
+        # with ZERO subprocess starts.
         prefix += (
-            f'ENGINE_DIR="{_pinned_manifest_field_read("runtime_root")}"; '
-            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then '
+            f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >> {log_target}; '
+            'exit 24; '
+            'fi; '
+            'if [ ! -r "$PINNED_RUNTIME_MANIFEST" ]; then '
+            f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: runtime manifest unreadable" >> {log_target}; '
+            'exit 24; '
+            'fi; '
         )
-        if require_pinned_runtime_binding:
-            prefix += (
-                'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then '
-                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >> {log_target}; '
-                'exit 24; '
-                'fi; '
-                f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
-                'if [ -z "$_EXPECTED_REVISION" ]; then '
-                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
-                'exit 24; '
-                'fi; '
-                'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
-                'PYTHONPATH="$ENGINE_DIR" '
-                'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
-                '--expected-root "$ENGINE_DIR" '
-                '--expected-revision "$_EXPECTED_REVISION" '
-                f'>> {log_target} 2>&1; then '
-                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >> {log_target}; '
-                'exit 24; '
-                'fi; '
-            )
+        prefix += f'ENGINE_DIR="{_pinned_manifest_field_read("runtime_root")}"; '
         prefix += (
-            f'cd {cwd} && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+            'if [ -z "$ENGINE_DIR" ]; then '
+            f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime_root" >> {log_target}; '
+            'exit 24; '
+            'fi; '
+            f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
+            'if [ -z "$_EXPECTED_REVISION" ]; then '
+            f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
+            'exit 24; '
+            'fi; '
+            'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+            'PYTHONPATH="$ENGINE_DIR" '
+            'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+            '--expected-root "$ENGINE_DIR" '
+            '--expected-revision "$_EXPECTED_REVISION" '
+            f'>> {log_target} 2>&1; then '
+            f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >> {log_target}; '
+            'exit 24; '
+            'fi; '
+        )
+        prefix += (
+            'cd "$ENGINE_DIR" && env -u PYTHONHOME PYTHONSAFEPATH=1 '
             'PYTHONPATH="$ENGINE_DIR" '
         )
     return (
@@ -3640,15 +3768,33 @@ def _plan_auto_command(
     plan_name: str,
     *,
     workspace: str,
-    engine_dir: str | None = None,
     log_relative: str,
     repair_session: str | None = None,
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
+    """Build the ``python -P -m arnold_pipelines.megaplan auto`` relaunch command.
+
+    The auto relaunch is manifest-bound like chain start (T-0021): the engine
+    dir (PYTHONPATH) derives ONLY from the per-session runtime manifest pin
+    (``ARNOLD_RUNTIME_MANIFEST`` -> ``epic.runtime_root``) validated against
+    ``epic.expected_head`` by the runtime_provenance check.  There is NO
+    ``megaplan.src_path`` read and NO fixed-path ``/workspace/arnold``
+    fallback; a missing, unreadable, or disagreeing pin exits 24 BEFORE any
+    state load or subprocess starts.
+    """
     log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
+    # Capture the pin before the mutable box-wide hot env is sourced, then
+    # reassert it (same ordering as the chain-start launch prefix).
     prefix = (
+        'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"; '
+        'readonly PINNED_RUNTIME_MANIFEST; '
+    )
+    prefix += (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+        'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
+        'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; '
+        'fi; '
     )
     if repair_session:
         prefix += _managed_run_env_prefix(
@@ -3656,20 +3802,14 @@ def _plan_auto_command(
             run_kind="plan",
             marker_dir=repair_marker_dir,
         )
-    if engine_dir:
-        engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
-        command = (
-            f"python3 -P -m arnold_pipelines.megaplan auto "
-            f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
-        )
-    else:
-        command = (
-            f"cd {shlex.quote(workspace)} && "
-            f"python3 -P -m arnold_pipelines.megaplan auto "
-            f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
-        )
-    return f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {command} >> {log_target} 2>&1"
+    prefix += _manifest_pin_fail_closed_prefix(log_target)
+    return (
+        f"{prefix}cd \"$ENGINE_DIR\" && env -u PYTHONHOME PYTHONSAFEPATH=1 "
+        'PYTHONPATH="$ENGINE_DIR" '
+        'MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan auto '
+        f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)} "
+        f">> {log_target} 2>&1"
+    )
 
 
 def _chain_runtime_manifest_dir() -> str:
@@ -3695,21 +3835,44 @@ def _chain_runtime_worktree_path(slug: str) -> str:
 
 # Reader used by the box-side probe: prints one JSON binding record from the
 # per-epic manifest — {"present": true, "created": 0|1, "epic_id",
-# "runtime_id", "runtime_src", "runtime_revision"}. Any failure exits non-zero
-# (set -e in the calling command), so the launch fails loudly.
-_RUNTIME_MANIFEST_BINDING_READER = """import json, pathlib, sys
+# "runtime_id", "runtime_src", "runtime_revision"}. The read is schema-gated
+# on the CANONICAL runtime-manifest schema (G6 round-9 finding 2): the
+# manifest must carry ``schema == MANIFEST_SCHEMA_VERSION`` plus the
+# canonical top-level and ``epic`` required key sets — generated from
+# runtime_manifest's own constants so this box-side gate can never drift from
+# the schema definition. A present-but-schema-invalid manifest exits non-zero
+# with NO binding record on stdout (no raw fields); ``set -e`` in the calling
+# command then aborts the probe so the launch fails loudly. Any other failure
+# also exits non-zero (set -e in the calling command), so the launch fails
+# loudly.
+_RUNTIME_MANIFEST_BINDING_READER = f"""import json, pathlib, sys
+TOP_LEVEL_REQUIRED = {json.dumps(list(TOP_LEVEL_REQUIRED))}
+EPIC_REQUIRED = {json.dumps(list(EPIC_REQUIRED))}
+MANIFEST_SCHEMA_VERSION = {json.dumps(MANIFEST_SCHEMA_VERSION)}
 path = pathlib.Path(sys.argv[1])
 created = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 payload = json.loads(path.read_text(encoding="utf-8"))
-epic = payload.get("epic") or {}
-print(json.dumps({
+epic = payload.get("epic") if isinstance(payload, dict) else None
+if not (
+    isinstance(payload, dict)
+    and payload.get("schema") == MANIFEST_SCHEMA_VERSION
+    and all(k in payload for k in TOP_LEVEL_REQUIRED)
+    and isinstance(epic, dict)
+    and all(k in epic for k in EPIC_REQUIRED)
+):
+    sys.stderr.write(
+        f"per-epic runtime manifest {{path}} is present but schema-invalid; "
+        "refusing to read raw fields\\n"
+    )
+    sys.exit(24)
+print(json.dumps({{
     "present": True,
     "created": created,
     "epic_id": payload.get("epic_id", ""),
     "runtime_id": payload.get("runtime_id", ""),
     "runtime_src": epic.get("runtime_root", ""),
     "runtime_revision": epic.get("expected_head", ""),
-}, sort_keys=True))
+}}, sort_keys=True))
 """
 
 
@@ -3795,7 +3958,6 @@ def _parse_chain_runtime_binding(
     result: subprocess.CompletedProcess[str],
     *,
     slug: str,
-    default_runtime_src: str,
 ) -> dict[str, Any]:
     """Strictly parse the probe/create binding record; deny-by-default on any
     unreadable, mismatched, or incomplete record."""
@@ -3823,6 +3985,16 @@ def _parse_chain_runtime_binding(
                 f"does not match chain slug {slug!r}"
             ),
         )
+    runtime_src = str(payload.get("runtime_src") or "")
+    if not runtime_src:
+        # G6 round-9 finding 2: NO default runtime source fallback — the
+        # per-epic manifest must itself declare epic.runtime_root, or the
+        # launch fails closed. Only a canonically-valid manifest's runtime
+        # source is ever used.
+        raise CliError(
+            "chain_runtime_manifest_incomplete",
+            "cloud chain runtime manifest declares no epic.runtime_root",
+        )
     runtime_revision = str(payload.get("runtime_revision") or "")
     if not runtime_revision:
         raise CliError(
@@ -3830,7 +4002,7 @@ def _parse_chain_runtime_binding(
             "cloud chain runtime manifest declares no epic.expected_head",
         )
     return {
-        "runtime_src": str(payload.get("runtime_src") or default_runtime_src),
+        "runtime_src": runtime_src,
         "runtime_revision": runtime_revision,
         "runtime_id": str(payload.get("runtime_id") or ""),
         "created": bool(payload.get("created")),
@@ -3885,7 +4057,6 @@ def _ensure_chain_runtime_binding(
     binding = _parse_chain_runtime_binding(
         result,
         slug=slug,
-        default_runtime_src=runtime_src,
     )
     binding["manifest_path"] = manifest_path
     binding["slug"] = slug
@@ -3954,6 +4125,10 @@ def _refresh_then_chain_start_command(
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
     runtime_binding: Mapping[str, Any] | None = None,
 ) -> str:
+    # engine_dir only SELECTS the manifest-pinned launch path (the
+    # `if engine_dir:` guard in _chain_start_command): it never reaches the
+    # emitted command.  PYTHONPATH and the emitted cd both come from the
+    # manifest-bound $ENGINE_DIR re-read at runtime (G5 round-6 finding 2).
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     if runtime_binding is not None:
         # Manifest-bound per-epic runtime (P1 producer routing): the runtime
@@ -3962,11 +4137,11 @@ def _refresh_then_chain_start_command(
         refresh = _manifest_runtime_activate_command(runtime_binding)
         return (
             f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
-            f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir, require_pinned_runtime_binding=bool(spec and spec.isolated_chain_runner))}"
+            f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir)}"
         )
     # No binding (pre-binding marker write / legacy path): the editable-install
-    # machinery is deleted; the launch pin and the fixed /workspace/arnold
-    # engine fallback carry the runtime identity.
+    # machinery is deleted; the manifest pin is mandatory and fails closed —
+    # there is no fixed-path engine fallback (T-0011).
     return _chain_start_command(
         remote_spec_path,
         project_dir=project_dir,
@@ -3977,7 +4152,6 @@ def _refresh_then_chain_start_command(
         repair_session=repair_session,
         repair_run_kind=repair_run_kind,
         repair_marker_dir=repair_marker_dir,
-        require_pinned_runtime_binding=bool(spec and spec.isolated_chain_runner),
     )
 
 
@@ -4130,7 +4304,6 @@ def _epic_chain_start_command(
     remote_spec_path: str,
     *,
     workspace: str,
-    engine_dir: str | None = None,
     one_shot: bool = False,
     log_relative: str,
     repair_session: str | None = None,
@@ -4140,9 +4313,20 @@ def _epic_chain_start_command(
     if one_shot:
         flags += " --one"
     log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
+    # The epic-chain runner executes from the manifest-bound runtime
+    # (ARNOLD_RUNTIME_MANIFEST -> epic.runtime_root); no SRC selector read
+    # (G4).  Capture the pin before the hot-env load, then reassert it so a
+    # stale box-wide manifest cannot replace the accepted runtime identity.
     prefix = (
+        'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"; '
+        'readonly PINNED_RUNTIME_MANIFEST; '
+    )
+    prefix += (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+        'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
+        'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; '
+        'fi; '
     )
     if repair_session:
         prefix += _managed_run_env_prefix(
@@ -4150,14 +4334,50 @@ def _epic_chain_start_command(
             run_kind="epic_chain",
             marker_dir=repair_marker_dir,
         )
-    if engine_dir:
-        engine_path = shlex.quote(engine_dir)
-        # The epic-chain runner executes from the fixed engine dir (spec
-        # src_path / /workspace/arnold); no SRC selector read (G4).
-        prefix += (
-            f'ENGINE_DIR={engine_path}; '
-            f'cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
-        )
+    # Fail closed (G2 round 2): there is NO fixed-path ENGINE_DIR fallback
+    # for the epic-chain parent launch.  Every epic-chain start requires a
+    # readable per-session ARNOLD_RUNTIME_MANIFEST pin with nonempty
+    # epic.runtime_root + epic.expected_head and a successful
+    # runtime_provenance check; the manifest root is the ONLY directory that
+    # reaches PYTHONPATH.  G5 round-2 finding 1: the pin existence/
+    # readability checks run BEFORE the manifest field-read subprocesses —
+    # on a missing or unreadable pin the gate exits 24 with ZERO subprocess
+    # starts.
+    prefix += (
+        'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then '
+        f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >> {log_target}; '
+        'exit 24; '
+        'fi; '
+        'if [ ! -r "$PINNED_RUNTIME_MANIFEST" ]; then '
+        f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: runtime manifest unreadable" >> {log_target}; '
+        'exit 24; '
+        'fi; '
+    )
+    prefix += f'ENGINE_DIR="{_pinned_manifest_field_read("runtime_root")}"; '
+    prefix += (
+        'if [ -z "$ENGINE_DIR" ]; then '
+        f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime_root" >> {log_target}; '
+        'exit 24; '
+        'fi; '
+        f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
+        'if [ -z "$_EXPECTED_REVISION" ]; then '
+        f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
+        'exit 24; '
+        'fi; '
+        'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        'PYTHONPATH="$ENGINE_DIR" '
+        'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+        '--expected-root "$ENGINE_DIR" '
+        '--expected-revision "$_EXPECTED_REVISION" '
+        f'>> {log_target} 2>&1; then '
+        f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >> {log_target}; '
+        'exit 24; '
+        'fi; '
+    )
+    prefix += (
+        'cd "$ENGINE_DIR" && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        'PYTHONPATH="$ENGINE_DIR" '
+    )
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start {flags} "
         f">> {log_target} 2>&1"
@@ -4167,7 +4387,6 @@ def _epic_chain_start_command(
 def _refresh_then_epic_chain_start_command(
     remote_spec_path: str,
     *,
-    spec: CloudSpec | None = None,
     workspace: str,
     one_shot: bool = False,
     log_relative: str,
@@ -4175,13 +4394,14 @@ def _refresh_then_epic_chain_start_command(
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     # The editable-install refresh machinery is deleted (P4): the epic-chain
-    # runner executes from the manifest-bound runtime (or the fixed
-    # /workspace/arnold engine fallback below); there is no refresh phase.
-    engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
+    # runner executes from the manifest-bound runtime.  There is no
+    # spec-derived engine dir and no fixed-path engine fallback — the
+    # per-session ARNOLD_RUNTIME_MANIFEST pin (epic.runtime_root) is the ONLY
+    # accepted engine dir and the launch fails closed on any missing or
+    # mismatched pin (G2 round 2).
     return _epic_chain_start_command(
         remote_spec_path,
         workspace=workspace,
-        engine_dir=engine_dir,
         one_shot=one_shot,
         log_relative=log_relative,
         repair_session=repair_session,
@@ -4195,7 +4415,6 @@ def _tmux_epic_chain_launch_command(
     *,
     one_shot: bool = False,
     session_name: str,
-    spec: CloudSpec | None = None,
     log_relative: str,
     marker_path: str,
     identity_digest: str,
@@ -4203,7 +4422,6 @@ def _tmux_epic_chain_launch_command(
 ) -> str:
     epic_chain_cmd = _refresh_then_epic_chain_start_command(
         remote_spec_path,
-        spec=spec,
         workspace=workspace,
         one_shot=one_shot,
         log_relative=log_relative,
@@ -4325,18 +4543,24 @@ def _chain_state_reset_command(
     force: bool = False,
 ) -> str:
     script = f"""
-import json, pathlib, shutil
+import json, os, pathlib, shutil
 workspace = pathlib.Path({workspace!r})
 state_path = pathlib.Path({state_path!r})
 force = {bool(force)!r}
 reason = None
+state_unreadable = None
 removed = []
 if state_path.exists():
     try:
         raw = json.loads(state_path.read_text())
     except Exception as exc:
         raw = {{}}
-        reason = "invalid-json:" + str(exc)
+        state_unreadable = "state_unreadable: " + str(exc)
+        reason = state_unreadable
+    if state_unreadable is None and not isinstance(raw, dict):
+        raw = {{}}
+        state_unreadable = "state_unreadable: state root is not a JSON object"
+        reason = state_unreadable
     completed = raw.get("completed") or []
     last_state = raw.get("last_state")
     current_plan = raw.get("current_plan_name")
@@ -4348,19 +4572,70 @@ if state_path.exists():
         reason = "stalled-without-completed-milestones"
     elif no_progress and last_state is None and not current_plan:
         reason = "empty-no-progress-state"
-    if reason:
-        state_path.unlink(missing_ok=True)
-        removed.append(str(state_path))
+    if state_unreadable:
+        # G6 round-6: a corrupt/unreadable state file means the true
+        # plan/target is UNKNOWN.  Block the reset and preserve the state
+        # file: the census must never run against an empty-derived target and
+        # must never yield CLEAR (delete-on-unknown never happens).
+        print(json.dumps({{
+            "status": "blocked",
+            "reason": state_unreadable,
+            "state_path": str(state_path),
+            "plan_dir": None,
+            "census_reasons": [],
+        }}, sort_keys=True))
+    elif reason:
+        plan_dir = None
         if isinstance(current_plan, str) and current_plan and "/" not in current_plan:
-            plan_dir = workspace / ".megaplan" / "plans" / current_plan
+            candidate = workspace / ".megaplan" / "plans" / current_plan
             try:
-                plan_dir.relative_to(workspace / ".megaplan" / "plans")
-                if plan_dir.exists():
+                candidate.relative_to(workspace / ".megaplan" / "plans")
+                plan_dir = candidate
+            except ValueError:
+                plan_dir = None
+        # T-0027: the chain-reset is behind the canonical reference census.
+        # A plan dir holding referenced custody/leases must not be removed,
+        # and an unreadable/corrupt reference store blocks the reset
+        # (fail-closed: delete-on-unknown never happens; --force is NOT
+        # evidence of safety).  The census runs BEFORE any deletion so a
+        # blocked reset leaves the chain state untouched.
+        census_verdict = "CLEAR"
+        census_reasons = []
+        if plan_dir is not None and plan_dir.exists():
+            try:
+                from arnold_pipelines.megaplan.cloud.runtime_references import run_census
+                census_verdict, census_reasons = run_census(
+                    root=str(plan_dir),
+                    workspace=os.environ.get("ARNOLD_BASE_DIR", ""),
+                    manifest_store=os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"),
+                    current_manifest="",
+                    chain_store=os.environ.get("ARNOLD_REFERENCE_CHAIN_STORE", "/workspace/.megaplan/plans/.chains"),
+                    marker_store=os.environ.get("ARNOLD_REFERENCE_MARKER_STORE", "/workspace/.megaplan/cloud-sessions:/workspace/watchdog-reports"),
+                    schedule_store=os.environ.get("ARNOLD_REFERENCE_SCHEDULE_STORES", "/workspace/arnold/.megaplan/resident/scheduled_jobs:/workspace/arnold/.megaplan/resident/schedules/heads:/workspace/.megaplan/ops/schedules"),
+                    repair_queue=os.environ.get("ARNOLD_REFERENCE_REPAIR_QUEUE", "/workspace/.megaplan/repair-queue"),
+                    lease_store=os.environ.get("ARNOLD_REFERENCE_LEASE_STORE", str(pathlib.Path.home() / ".megaplan" / "custody" / "leases")),
+                )
+            except Exception as exc:
+                census_verdict = "UNKNOWN"
+                census_reasons = [f"reference census unavailable: {{exc}}"]
+        if census_verdict != "CLEAR":
+            print(json.dumps({{
+                "status": "blocked",
+                "reason": "reference-census-" + census_verdict,
+                "state_path": str(state_path),
+                "plan_dir": str(plan_dir) if plan_dir is not None else None,
+                "census_reasons": census_reasons,
+            }}, sort_keys=True))
+        else:
+            state_path.unlink(missing_ok=True)
+            removed.append(str(state_path))
+            if plan_dir is not None and plan_dir.exists():
+                try:
                     shutil.rmtree(plan_dir)
                     removed.append(str(plan_dir))
-            except Exception as exc:
-                print("[chain-reset] skipped plan dir:", exc)
-        print(json.dumps({{"status": "reset", "reason": reason, "removed": removed}}, sort_keys=True))
+                except Exception as exc:
+                    print("[chain-reset] skipped plan dir:", exc)
+            print(json.dumps({{"status": "reset", "reason": reason, "removed": removed}}, sort_keys=True))
     else:
         print(json.dumps({{"status": "preserved", "reason": "resumable-or-progressed-state", "state_path": str(state_path)}}, sort_keys=True))
 else:
@@ -5544,17 +5819,136 @@ def _validate_epic_chain_local_inputs(
                 )
 
 
-def _epic_chain_state_reset_command(*, state_path: str, force: bool) -> str:
+def _epic_chain_state_reset_command(*, workspace: str, state_path: str, force: bool) -> str:
     if not force:
         return "true"
     script = f"""
-import json, pathlib
+import json, hashlib, os, pathlib, shutil, sys
+workspace = pathlib.Path({workspace!r})
 state_path = pathlib.Path({state_path!r})
 removed = []
+reason = None
+plan_dir = None
+state_unreadable = None
 if state_path.exists():
-    state_path.unlink()
-    removed.append(str(state_path))
-print(json.dumps({{"status": "reset", "removed": removed}}, sort_keys=True))
+    try:
+        raw = json.loads(state_path.read_text())
+    except Exception as exc:
+        raw = {{}}
+        state_unreadable = "state_unreadable: " + str(exc)
+        reason = state_unreadable
+    if state_unreadable is None and not isinstance(raw, dict):
+        raw = {{}}
+        state_unreadable = "state_unreadable: state root is not a JSON object"
+        reason = state_unreadable
+    if state_unreadable:
+        # G6 round-6: a corrupt/unreadable state file means the true
+        # plan/target is UNKNOWN.  Block the reset and preserve the state
+        # file: the census must never run against an empty-derived target and
+        # must never yield CLEAR (delete-on-unknown never happens).
+        print(json.dumps({{
+            "status": "blocked",
+            "reason": state_unreadable,
+            "state_path": str(state_path),
+            "plan_dir": None,
+            "census_reasons": [],
+        }}, sort_keys=True))
+        sys.exit(0)
+    # The parent epic-chain drives one child chain at a time.  The plan dir
+    # the parent's state live-references is the CURRENT child's plan dir:
+    # current_spec_path -> child chain state (.chains/<stem>-<digest>.json
+    # next to the child spec) -> current_plan_name -> <workspace>/.megaplan/
+    # plans/<plan> (the child runner's project root falls back to the
+    # epic-chain workspace cwd).
+    current_spec_path = raw.get("current_spec_path")
+    if isinstance(current_spec_path, str) and current_spec_path:
+        child_spec = pathlib.Path(current_spec_path)
+        child_digest = hashlib.sha1(str(child_spec.resolve()).encode("utf-8")).hexdigest()[:12]
+        child_state_path = (
+            child_spec.parent
+            / ".megaplan"
+            / "plans"
+            / ".chains"
+            / f"{{child_spec.stem}}-{{child_digest}}.json"
+        )
+        child_plan = None
+        child_state_unreadable = None
+        if child_state_path.exists():
+            try:
+                child_raw = json.loads(child_state_path.read_text())
+            except Exception as exc:
+                child_raw = {{}}
+                child_state_unreadable = "child_state_unreadable: " + str(exc)
+            if child_state_unreadable is None and not isinstance(child_raw, dict):
+                child_raw = {{}}
+                child_state_unreadable = "child_state_unreadable: child state root is not a JSON object"
+            if child_state_unreadable:
+                # G6 round-8: the CHILD chain state determines the plan dir /
+                # target; unreadable means UNKNOWN.  Block the reset and
+                # preserve the parent state + plan dir: the census must never
+                # run against an empty-derived target (child_raw={{}} ->
+                # plan_dir=None -> CLEAR -> unlink/rmtree never happens).
+                print(json.dumps({{
+                    "status": "blocked",
+                    "reason": child_state_unreadable,
+                    "state_path": str(state_path),
+                    "plan_dir": None,
+                    "census_reasons": [],
+                }}, sort_keys=True))
+                sys.exit(0)
+            child_plan = child_raw.get("current_plan_name")
+        if isinstance(child_plan, str) and child_plan and "/" not in child_plan:
+            candidate = workspace / ".megaplan" / "plans" / child_plan
+            try:
+                candidate.relative_to(workspace / ".megaplan" / "plans")
+                plan_dir = candidate
+            except ValueError:
+                plan_dir = None
+    # T-0027: the epic-chain reset is behind the canonical reference census,
+    # exactly like _chain_state_reset_command.  A plan dir holding referenced
+    # custody/leases must not be removed, and an unreadable/corrupt reference
+    # store blocks the reset (fail-closed: delete-on-unknown never happens;
+    # --fresh is NOT evidence of safety).  The census runs BEFORE any state
+    # unlink / rmtree so a blocked reset leaves the chain state untouched.
+    census_verdict = "CLEAR"
+    census_reasons = []
+    if plan_dir is not None and plan_dir.exists():
+        try:
+            from arnold_pipelines.megaplan.cloud.runtime_references import run_census
+            census_verdict, census_reasons = run_census(
+                root=str(plan_dir),
+                workspace=os.environ.get("ARNOLD_BASE_DIR", ""),
+                manifest_store=os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"),
+                current_manifest="",
+                chain_store=os.environ.get("ARNOLD_REFERENCE_CHAIN_STORE", "/workspace/.megaplan/plans/.chains"),
+                marker_store=os.environ.get("ARNOLD_REFERENCE_MARKER_STORE", "/workspace/.megaplan/cloud-sessions:/workspace/watchdog-reports"),
+                schedule_store=os.environ.get("ARNOLD_REFERENCE_SCHEDULE_STORES", "/workspace/arnold/.megaplan/resident/scheduled_jobs:/workspace/arnold/.megaplan/resident/schedules/heads:/workspace/.megaplan/ops/schedules"),
+                repair_queue=os.environ.get("ARNOLD_REFERENCE_REPAIR_QUEUE", "/workspace/.megaplan/repair-queue"),
+                lease_store=os.environ.get("ARNOLD_REFERENCE_LEASE_STORE", str(pathlib.Path.home() / ".megaplan" / "custody" / "leases")),
+            )
+        except Exception as exc:
+            census_verdict = "UNKNOWN"
+            census_reasons = [f"reference census unavailable: {{exc}}"]
+    if census_verdict != "CLEAR":
+        print(json.dumps({{
+            "status": "blocked",
+            "reason": "reference-census-" + census_verdict,
+            "state_path": str(state_path),
+            "plan_dir": str(plan_dir) if plan_dir is not None else None,
+            "census_reasons": census_reasons,
+        }}, sort_keys=True))
+    else:
+        state_path.unlink(missing_ok=True)
+        removed.append(str(state_path))
+        if plan_dir is not None and plan_dir.exists():
+            try:
+                shutil.rmtree(plan_dir)
+                removed.append(str(plan_dir))
+            except Exception as exc:
+                print("[epic-chain-reset] skipped plan dir:", exc)
+        print(json.dumps({{"status": "reset", "reason": reason, "removed": removed}}, sort_keys=True))
+else:
+    print(json.dumps({{"status": "absent", "state_path": str(state_path)}}, sort_keys=True))
 """
     return f"python3 - <<'MEGAPLAN_EPIC_CHAIN_RESET'\n{script.strip()}\nMEGAPLAN_EPIC_CHAIN_RESET"
 
@@ -5711,7 +6105,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
 
     relaunch_command = _refresh_then_epic_chain_start_command(
         launch_ctx.remote_spec_path,
-        spec=launch_spec,
         workspace=launch_ctx.workspace,
         one_shot=bool(getattr(args, "one", False)),
         log_relative=launch_ctx.log_relative,
@@ -5772,6 +6165,7 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
 
     reset_result = provider.ssh_exec(
         _epic_chain_state_reset_command(
+            workspace=launch_ctx.workspace,
             state_path=launch_ctx.state_path,
             force=bool(getattr(args, "fresh", False)),
         )
@@ -5782,13 +6176,28 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
             "provider_failed",
             f"remote epic-chain state reset failed (exit {reset_result.returncode})",
         )
+    if bool(getattr(args, "fresh", False)):
+        reset_out: dict[str, Any] = {}
+        try:
+            raw = (reset_result.stdout or "").strip().splitlines()
+            reset_out = json.loads(raw[-1]) if raw else {}
+        except (ValueError, json.JSONDecodeError):
+            reset_out = {}
+        if reset_out.get("status") == "blocked":
+            _relay_output(reset_result, secret_names=spec.secrets, env=os.environ)
+            raise CliError(
+                "epic_chain_state_reset_blocked",
+                "epic-chain --fresh refused: "
+                f"{reset_out.get('reason') or 'reference-census-UNKNOWN'}; "
+                "state file and plan dir left untouched",
+                extra={"reset": reset_out},
+            )
 
     result = provider.ssh_exec(
         _tmux_epic_chain_launch_command(
             launch_ctx.workspace,
             launch_ctx.remote_spec_path,
             session_name=launch_ctx.session_name,
-            spec=launch_spec,
             log_relative=launch_ctx.log_relative,
             marker_path=launch_ctx.marker_path,
             identity_digest=launch_ctx.digest,
@@ -5963,14 +6372,12 @@ def _bootstrap_launch_command(
     plan_name: str,
     robustness: str,
     session_name: str,
-    engine_dir: str,
 ) -> str:
     marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session_name}.json")
     log_relative = _bootstrap_log_relative(plan_name)
     relaunch_command = _plan_auto_command(
         plan_name,
         workspace=workspace,
-        engine_dir=engine_dir,
         log_relative=log_relative,
         repair_session=session_name,
         repair_marker_dir=str(PurePosixPath(marker_path).parent),
@@ -5982,14 +6389,52 @@ def _bootstrap_launch_command(
         plan_name=plan_name,
         relaunch_command=relaunch_command,
     )
+    log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
+    # Manifest-bound bootstrap (T-0021): the engine dir (PYTHONPATH) derives
+    # ONLY from the per-session ARNOLD_RUNTIME_MANIFEST pin; there is no
+    # megaplan.src_path read and no /workspace/arnold fallback.  Missing,
+    # unreadable, or disagreeing pins exit 24 BEFORE init loads any state.
+    prefix = (
+        'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"; '
+        'readonly PINNED_RUNTIME_MANIFEST; '
+    )
+    prefix += (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+        'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
+        'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; '
+        'fi; '
+    )
+    prefix += _managed_run_env_prefix(
+        session_name,
+        run_kind="plan",
+        marker_dir=str(PurePosixPath(marker_path).parent),
+    )
+    # G5 round-6 finding 1a: the mkdir -p is a side effect, so it must NOT
+    # run before the manifest pin gate — a missing/unreadable pin exits 24
+    # with ZERO filesystem side effects.  The dir creation is therefore
+    # passed INTO the gate as post_pin_checks: it runs only after the pin
+    # existence/readability checks pass, and before the ENGINE_DIR reads +
+    # provenance so the log redirect still has a cloud-logs dir on a fresh
+    # workspace.
+    prefix += _manifest_pin_fail_closed_prefix(
+        log_target,
+        post_pin_checks=(
+            f"mkdir -p {shlex.quote(str(PurePosixPath(marker_path).parent))} "
+            f"{shlex.quote(str(PurePosixPath(workspace) / '.megaplan' / 'cloud-logs'))} "
+            "|| exit 1"
+        ),
+    )
     command = (
-        f"mkdir -p {shlex.quote(str(PurePosixPath(marker_path).parent))} "
-        f"{shlex.quote(str(PurePosixPath(workspace) / '.megaplan' / 'cloud-logs'))} && "
+        # G5 round-2 finding 1: the manifest pin gate (pin existence /
+        # readability, ENGINE_DIR provenance) runs BEFORE the session-marker
+        # write — on a missing/unreadable pin the command exits 24 with ZERO
+        # marker side effects.
+        f"{prefix}cd {shlex.quote(workspace)} && "
         f"{_write_session_marker_command(marker_path, marker_payload)} && "
-        f"{_managed_run_env_prefix(session_name, run_kind='plan', marker_dir=str(PurePosixPath(marker_path).parent))}"
-        f"cd {shlex.quote(workspace)} && "
-        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(engine_dir)}:${{PYTHONPATH:-}} "
-        f"python3 -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(workspace)} "
+        "env -u PYTHONHOME PYTHONSAFEPATH=1 "
+        'PYTHONPATH="$ENGINE_DIR" '
+        f"python -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(workspace)} "
         f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
         f"--robustness {shlex.quote(robustness)} --name {shlex.quote(plan_name)}"
     )
@@ -6011,7 +6456,6 @@ def _run_bootstrap_wrapper(args: argparse.Namespace, spec: CloudSpec, provider) 
         plan_name=plan_name,
         robustness=args.robustness,
         session_name=_derive_bootstrap_session_name(spec),
-        engine_dir=spec.megaplan.src_path,
     )
     result = provider.ssh_exec(command)
     _relay_output(result, secret_names=spec.secrets, env=os.environ)

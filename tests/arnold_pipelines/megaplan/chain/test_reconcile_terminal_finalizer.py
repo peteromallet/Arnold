@@ -209,6 +209,28 @@ def _finalize(
     return result or {"status": "ok", "events": events}
 
 
+def _plant_chain_store_reference(
+    sandbox: dict[str, object], engine_root: str
+) -> Path:
+    """Plant a chain-state file in the workspace-relative reference-census
+    chain store carrying an ``engine_root`` path reference.
+
+    The census (runtime_references, T-0012) matches path values by EXACT
+    normalized equality with the swept runtime root: a present path is
+    REFERENCED, a missing path is DANGLING, corrupt JSON is UNKNOWN — the
+    exact fail-closed verdicts ``arnold-gc-sweep`` surfaces as SKIP /
+    NEEDS-RECONCILE / exit-5 BLOCK."""
+    store_dir = Path(sandbox["base_dir"]) / ".megaplan" / "plans" / ".chains"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "label": "planted",
+        "metadata": {"execution_environment": {"engine_root": engine_root}},
+    }
+    path = store_dir / "chain-planted.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
 # ── terminal outcomes → close + sweep ────────────────────────────────────────
 
 
@@ -244,9 +266,11 @@ def test_finalizer_merged_reconcile_closes_and_sweeps(sandbox: dict[str, object]
     gone = _git(Path(sandbox["base_repo"]), "rev-parse", "--verify", fixer_branch)
     assert gone.returncode != 0
     assert not sandbox["origin_heads"](fixer_branch)
-    # durable evidence on chain state
-    assert state.metadata["reconcile_terminal_finalizer"]["outcome"] == "merged"
-    assert state.metadata["reconcile_terminal_finalizer"]["swept"] is True
+    # durable evidence on chain state: CLEAR sweep → swept:true + completion
+    evidence = state.metadata["reconcile_terminal_finalizer"]
+    assert evidence["outcome"] == "merged"
+    assert evidence["swept"] is True
+    assert evidence["sweep_outcome"] == "SWEPT"
 
 
 def test_finalizer_rejected_reconcile_closes_and_sweeps(
@@ -296,6 +320,103 @@ def test_finalizer_noop_reconcile_closes_and_sweeps(sandbox: dict[str, object]) 
     assert not worktree.exists()
     assert not sandbox["origin_heads"](fixer_branch)
     assert state.metadata["reconcile_terminal_finalizer"]["outcome"] == "noop"
+
+
+# ── swept truth: CLEAR vs skipped/blocked sweep (G6 round-3 finding 2) ───────
+
+
+def test_finalizer_referenced_sweep_skip_fails_closed(
+    sandbox: dict[str, object],
+) -> None:
+    """A sweep that exits 0 but SKIPs the runtime (REFERENCED census
+    verdict) must record swept:false and BLOCK — the completion guard never
+    collapses to terminal completion on top of a live, referenced runtime
+    (E5/F collapse-to-success)."""
+    worktree = _create_runtime(sandbox, "epic-ref")
+    fixer_branch = _read_manifest(sandbox, "epic-ref")["epic"]["branch"]
+    _plant_chain_store_reference(sandbox, str(worktree))
+
+    spec = _reconcile_spec()
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        pr_number=None,
+        pr_state=None,
+        completed=[_reconcile_record()],
+    )
+    result = _finalize(sandbox, spec, state, slug="epic-ref")
+    assert result["status"] == "blocked"
+    assert "did not remove runtime" in result["reason"]
+    assert "REFERENCED" in result["reason"]
+    # close ran (manifest closed) but the runtime was NOT removed
+    assert worktree.is_dir()
+    assert _read_manifest(sandbox, "epic-ref")["state"] == "closed"
+    assert sandbox["origin_heads"](fixer_branch)
+    evidence = state.metadata["reconcile_terminal_finalizer"]
+    assert evidence["swept"] is False
+    assert "REFERENCED" in evidence["sweep_reason"]
+
+
+def test_finalizer_dangling_sweep_skip_fails_closed(
+    sandbox: dict[str, object],
+) -> None:
+    """A DANGLING census verdict makes the sweep report NEEDS-RECONCILE
+    (exit 0, runtime untouched): swept:false + blocked, never a false
+    completion."""
+    worktree = _create_runtime(sandbox, "epic-dang")
+    fixer_branch = _read_manifest(sandbox, "epic-dang")["epic"]["branch"]
+    _plant_chain_store_reference(
+        sandbox, str(Path(sandbox["base_dir"]) / "runtime-candidates" / "ghost")
+    )
+
+    spec = _reconcile_spec()
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        pr_number=None,
+        pr_state=None,
+        completed=[_reconcile_record()],
+    )
+    result = _finalize(sandbox, spec, state, slug="epic-dang")
+    assert result["status"] == "blocked"
+    assert "did not remove runtime" in result["reason"]
+    assert "DANGLING" in result["reason"]
+    assert worktree.is_dir()
+    assert sandbox["origin_heads"](fixer_branch)
+    evidence = state.metadata["reconcile_terminal_finalizer"]
+    assert evidence["swept"] is False
+    assert "DANGLING" in evidence["sweep_reason"]
+
+
+def test_finalizer_unknown_sweep_block_fails_closed(
+    sandbox: dict[str, object],
+) -> None:
+    """An UNKNOWN census verdict (unreadable/corrupt store) makes the sweep
+    BLOCK with exit 5: swept:false + blocked, the runtime is never reported
+    gone (delete-on-unknown never happens)."""
+    worktree = _create_runtime(sandbox, "epic-unk")
+    fixer_branch = _read_manifest(sandbox, "epic-unk")["epic"]["branch"]
+    store_dir = Path(sandbox["base_dir"]) / ".megaplan" / "plans" / ".chains"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "chain-corrupt.json").write_text("{not json")
+
+    spec = _reconcile_spec()
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        pr_number=None,
+        pr_state=None,
+        completed=[_reconcile_record()],
+    )
+    result = _finalize(sandbox, spec, state, slug="epic-unk")
+    assert result["status"] == "blocked"
+    assert "arnold-gc-sweep failed" in result["reason"]
+    assert "exit 5" in result["reason"]
+    assert worktree.is_dir()
+    assert sandbox["origin_heads"](fixer_branch)
+    evidence = state.metadata["reconcile_terminal_finalizer"]
+    assert evidence["swept"] is False
+    assert evidence["sweep_outcome"] == "UNKNOWN"
 
 
 # ── idempotency ──────────────────────────────────────────────────────────────
@@ -392,6 +513,62 @@ def test_finalizer_second_run_after_sweep_is_noop(sandbox: dict[str, object]) ->
     second = _finalize(sandbox, spec, state, slug="epic-twice")
     assert second["status"] == "ok"
     assert any("already gone" in event["msg"] for event in second["events"])
+
+
+# ── manifest presence triage: absent vs present-but-unreadable ──────────────
+
+
+def test_finalizer_dangling_manifest_symlink_fails_closed(
+    sandbox: dict[str, object],
+) -> None:
+    """G5 round-5 finding 3(a): a DANGLING manifest symlink is PRESENT but
+    unreadable.  ``is_file()`` follows the link to its missing target and
+    reports False, which the old guard collapsed to 'already gone' and let
+    the chain complete (done) on top of a broken runtime.  The finalizer
+    must fail CLOSED with a typed blocked result — never an idempotent skip,
+    never done — and never run close/sweep."""
+    worktree = _create_runtime(sandbox, "epic-sym")
+    manifest = _manifest_path(sandbox, "epic-sym")
+    manifest.unlink()
+    manifest.symlink_to(manifest.parent / "missing-target.json")
+    assert manifest.is_symlink()
+    assert not manifest.exists()  # stat() follows the link: ENOENT
+
+    spec = _reconcile_spec()
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        pr_number=None,
+        pr_state=None,
+        completed=[_reconcile_record()],
+    )
+    result = _finalize(sandbox, spec, state, slug="epic-sym")
+    assert result["status"] == "blocked"
+    assert "present but unreadable" in result["reason"]
+    assert "reconcile_terminal_finalizer" not in state.metadata
+    assert worktree.is_dir()  # nothing was closed or swept
+    assert manifest.is_symlink()  # the broken entry is left for the operator
+
+
+def test_finalizer_absent_manifest_stays_idempotent_skip(
+    sandbox: dict[str, object],
+) -> None:
+    """A GENUINELY absent bound manifest (never created, or archived by a
+    previous sweep) is an idempotent skip — 'already gone', chain completes
+    done.  Only ENOENT on the entry itself (stat AND lstat) may take this
+    path; a dangling symlink cannot."""
+    spec = _reconcile_spec()
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        pr_number=None,
+        pr_state=None,
+        completed=[_reconcile_record()],
+    )
+    result = _finalize(sandbox, spec, state, slug="epic-never-existed")
+    assert result["status"] == "ok"
+    assert any("already gone" in event["msg"] for event in result["events"])
+    assert "reconcile_terminal_finalizer" not in state.metadata
 
 
 # ── fail-closed gates: never close on unknown / awaiting / unbound ──────────

@@ -6,6 +6,8 @@ import signal
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +19,11 @@ from agentbox.services import (
     list_services,
     restart_service,
     service_logs,
+)
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    COMPATIBILITY_ONLY_KEY,
+    MANIFEST_SCHEMA_VERSION,
+    load_manifest,
 )
 from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 
@@ -32,6 +39,60 @@ class _DetachedProcess:
 
 def _fake_detached_popen(*_args, **_kwargs):
     return _DetachedProcess()
+
+
+def _valid_manifest(runtime_root: str | Path) -> dict[str, object]:
+    """A manifest the canonical validator (``load_manifest``) accepts: schema
+    "1" with every required top-level and nested key (G5 round 15 — the
+    schema-less ``{"epic": {"runtime_root": ...}}`` shape is canonically
+    invalid and must never be blessed as a valid manifest)."""
+    now = datetime.now(timezone.utc).isoformat()
+    root = str(runtime_root)
+    return {
+        "runtime_id": "agentbox-runtime-test",
+        "schema": MANIFEST_SCHEMA_VERSION,
+        "generation": 1,
+        "epic_id": "agentbox-test-epic",
+        "state": "active",
+        "owner": "test",
+        "base": {
+            "ref": "refs/heads/base/editable-install",
+            "commit": "0" * 40,
+            "editable_install_path": root,
+            "venv_path": f"{root}/venv",
+        },
+        "epic": {
+            "branch": "fixer/agentbox-test",
+            "worktree_path": root,
+            "venv_path": f"{root}/venv",
+            "runtime_root": root,
+            "expected_head": "0" * 40,
+            "repair_bin": f"{root}/venv/bin/arnold-repair-loop",
+            "deps_lockfile": f"{root}/uv.lock",
+        },
+        "indirection": {
+            "host_path": root,
+            "container_path": "/workspace/agentbox-test",
+            "mount_table": [],
+            "execution_namespace": "agentbox-test-ns",
+            "verified_head": "0" * 40,
+            "last_verified_at": now,
+            "attestation": {
+                "module_file": f"{root}/arnold_pipelines/__init__.py",
+                "module_digest": "0" * 64,
+                "mount_id": "0:42",
+            },
+        },
+        "policy": {
+            "policy_sha": "0" * 64,
+            "model_policy_sha": "0" * 64,
+            "sync_policy": "manifest-only",
+        },
+        "promotions": [],
+        "timestamps": {"created": now, "updated": now, "closed": None},
+        "gc_policy": "keep",
+        "commands": [],
+    }
 
 
 def test_list_services_returns_expected_service_names() -> None:
@@ -90,6 +151,11 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", _fake_detached_popen)
+    monkeypatch.setattr(
+        services,
+        "_resident_runtime_request",
+        lambda: {"runtime_source": "/workspace/runtime", "runtime_revision": "a" * 40},
+    )
     monkeypatch.setattr(
         "agentbox.services._wait_for_tmux_resident",
         lambda pane_id, *, old_pane_pid: {
@@ -170,6 +236,11 @@ def test_replayed_discord_restart_does_not_launch_second_supervisor(
         return _DetachedProcess()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        services,
+        "_resident_runtime_request",
+        lambda: {"runtime_source": "/workspace/runtime", "runtime_revision": "a" * 40},
+    )
 
     first = restart_service("agentbox-discord-resident", notification_root=tmp_path)
     replay = restart_service("agentbox-discord-resident", notification_root=tmp_path)
@@ -195,12 +266,172 @@ def test_runtime_request_reads_worktree_revision(tmp_path, monkeypatch) -> None:
     (git_dir / "commondir").write_text("../..\n")
     (common / "refs" / "heads").mkdir(parents=True)
     (common / "refs" / "heads" / "runtime").write_text("a" * 40 + "\n")
-    monkeypatch.setenv("MEGAPLAN_RUNTIME_SRC", str(runtime))
+    manifest = tmp_path / "runtime-manifest.json"
+    manifest.write_text(
+        json.dumps(_valid_manifest(runtime)),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
 
     assert services._resident_runtime_request() == {
         "runtime_source": str(runtime.resolve()),
         "runtime_revision": "a" * 40,
     }
+
+
+def test_manifest_runtime_root_fails_closed_on_present_but_invalid(
+    monkeypatch, tmp_path
+) -> None:
+    """A PRESENT-but-invalid manifest never binds the resident runtime (G5).
+
+    Only a canonically schema-valid, non-``compatibility_only`` manifest with
+    a nonempty ``epic.runtime_root`` yields the root. The schema-less minimal
+    shape that previously bound a runtime (``epic.runtime_root`` present but
+    no schema), corrupt JSON, an empty root, and a ``compatibility_only``
+    pointer all return ``""`` (unbound, fail closed) — matching the T-0024
+    absent-vs-invalid contract.
+    """
+
+    def root_for(payload: str | None, name: str) -> str:
+        path = tmp_path / name
+        if payload is not None:
+            path.write_text(payload, encoding="utf-8")
+        monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(path))
+        return services._manifest_runtime_root()
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    valid_payload = _valid_manifest(tree)
+
+    # Schema-valid manifest -> root returned (bound). The canonical validator
+    # accepting the fixture proves it is not the schema-less blessed shape.
+    valid_path = tmp_path / "valid.json"
+    valid_path.write_text(json.dumps(valid_payload), encoding="utf-8")
+    assert load_manifest(valid_path).epic["runtime_root"] == str(tree)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(valid_path))
+    assert services._manifest_runtime_root() == str(tree)
+
+    # Schema-invalid minimal shape WITH epic.runtime_root -> "" (G5 round 15:
+    # the raw-parse reader bound this; the canonical validator refuses it).
+    assert root_for(
+        json.dumps({"epic": {"runtime_root": str(tree)}}), "schema-invalid.json"
+    ) == ""
+
+    # compatibility_only pointer (schema-valid but demoted) -> "".
+    assert root_for(
+        json.dumps({**valid_payload, COMPATIBILITY_ONLY_KEY: True}),
+        "compatibility-only.json",
+    ) == ""
+
+    # Corrupt JSON -> "".
+    assert root_for("{not valid json", "corrupt.json") == ""
+
+    # Missing file -> "" (genuinely absent stays unbound).
+    assert root_for(None, "missing.json") == ""
+
+    # Present but empty runtime_root -> "" (unbound).
+    empty_root = dict(valid_payload)
+    empty_root["epic"] = {**valid_payload["epic"], "runtime_root": "   "}
+    assert root_for(json.dumps(empty_root), "empty-root.json") == ""
+
+
+def test_resident_systemd_restart_refuses_unbound_manifest(
+    monkeypatch, tmp_path
+) -> None:
+    """A missing, corrupt, root-less, schema-invalid, or compatibility-only
+    manifest never launches the restart supervisor.
+
+    The Discord resident restart binds idempotency to the manifest-pinned
+    runtime source+revision; with no binding the restart is refused before
+    any notification reservation or detached supervisor launch (G5).
+    """
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/systemctl")
+
+    def fake_run(argv, **kwargs):
+        if argv[1] == "show":
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout="KillMode=process\nExecStop=\nExecStopPost=\nMainPID=12345\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    launches: list[list[str]] = []
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: launches.append(args) or _DetachedProcess(),
+    )
+
+    manifest_states = {
+        "missing": None,
+        "corrupt": "{not valid json",
+        "root-less": json.dumps({"epic": {}}),
+        "no-epic": json.dumps({}),
+        "schema-invalid-with-root": json.dumps({"epic": {"runtime_root": "/tmp/x"}}),
+        "compatibility-only": json.dumps(
+            {**_valid_manifest(tmp_path / "runtime"), COMPATIBILITY_ONLY_KEY: True}
+        ),
+    }
+    for label, payload in manifest_states.items():
+        manifest = tmp_path / f"manifest-{label}.json"
+        if payload is not None:
+            manifest.write_text(payload, encoding="utf-8")
+        monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+        result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
+
+        assert result["ok"] is False, label
+        assert result["backend"] == "systemd"
+        assert "runtime manifest is missing, corrupt, or root-less" in result["error"]
+        assert result["safety"]["stop_scope"] == "resident main process only"
+        assert DISCORD_RESIDENT_RESTART_COMMAND in result["fix_command"]
+
+    assert launches == []
+    assert list_reset_notifications(notification_root=tmp_path)["records"] == []
+
+
+def test_resident_tmux_restart_refuses_unbound_manifest(
+    monkeypatch, tmp_path
+) -> None:
+    """The tmux resident path also fails closed without a manifest binding."""
+
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: None if name == "systemctl" else f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=(
+                "%39\t1989952\t0\tbash\t"
+                "python -m arnold_pipelines.megaplan resident discord --mode dev\n"
+            ),
+            stderr="",
+        ),
+    )
+    launches: list[list[str]] = []
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: launches.append(args) or _DetachedProcess(),
+    )
+
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(tmp_path / "absent-manifest.json"))
+    result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
+
+    assert result["ok"] is False
+    assert result["backend"] == "tmux"
+    assert "runtime manifest is missing, corrupt, or root-less" in result["error"]
+    assert result["safety"]["stop_scope"] == "canonical Discord resident tmux pane only"
+    assert launches == []
+    assert list_reset_notifications(notification_root=tmp_path)["records"] == []
 
 
 def test_resident_tmux_restart_marks_notification_failed_when_supervisor_cannot_launch(
@@ -228,6 +459,11 @@ def test_resident_tmux_restart_marks_notification_failed_when_supervisor_cannot_
         subprocess,
         "Popen",
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cannot fork")),
+    )
+    monkeypatch.setattr(
+        services,
+        "_resident_runtime_request",
+        lambda: {"runtime_source": "/workspace/runtime", "runtime_revision": "a" * 40},
     )
 
     result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
@@ -317,6 +553,11 @@ def test_resident_restart_targets_only_guarded_service(monkeypatch, tmp_path) ->
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", _fake_detached_popen)
+    monkeypatch.setattr(
+        services,
+        "_resident_runtime_request",
+        lambda: {"runtime_source": "/workspace/runtime", "runtime_revision": "a" * 40},
+    )
 
     result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
 
@@ -363,6 +604,11 @@ def test_failed_guarded_restart_never_enables_a_success_confirmation(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", _fake_detached_popen)
+    monkeypatch.setattr(
+        services,
+        "_resident_runtime_request",
+        lambda: {"runtime_source": "/workspace/runtime", "runtime_revision": "a" * 40},
+    )
 
     result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
 

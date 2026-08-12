@@ -9,8 +9,11 @@ import shlex
 import subprocess
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+
+from arnold.workflow.effect_protocol import EffectProtocol
 
 from arnold_pipelines.megaplan.cloud import cli as cloud_cli
 from arnold_pipelines.megaplan.cloud.providers.ssh import (
@@ -30,8 +33,30 @@ from arnold_pipelines.megaplan.cloud.spec import (
     SshSpec,
     load_spec,
 )
+from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import SshEffectAdapter
 from arnold_pipelines.megaplan.cloud.template import render_entrypoint
+from arnold_pipelines.megaplan.custody.action_validator import GateResult
 from arnold_pipelines.megaplan.types import CliError
+
+
+def _authorized_effect_adapter() -> SshEffectAdapter:
+    """Real adapter with an explicit authorized gate and a bypassed stale
+    fence, so isolated deploy command capture runs through the actual WBC
+    route (SSH mutations are otherwise action-off)."""
+    protocol = MagicMock(spec=EffectProtocol)
+    reservation = MagicMock()
+    reservation.global_logical_effect_key = "glek-isolated-deploy"
+    protocol.reserve_and_start.return_value = reservation
+
+    class FenceBypassAdapter(SshEffectAdapter):
+        def _check_stale_fence(self, target, fence_token):
+            return True
+
+    return FenceBypassAdapter(
+        protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+        production_enabled=False,
+    )
 
 
 def _spec(**overrides: object) -> CloudSpec:
@@ -384,7 +409,10 @@ def test_stale_normal_image_is_forced_through_fixed_isolated_boot_command() -> N
         def _sync_deploy_dir(self, deploy_dir: Path) -> None:
             del deploy_dir
 
-    provider = CaptureSshProvider(_spec())
+    provider = CaptureSshProvider(
+        _spec(),
+        ssh_effect_adapter=_authorized_effect_adapter(),
+    )
     assert provider.deploy(Path("/tmp/deploy"), secrets={}) == 0
 
     combined = "\n".join(commands)
@@ -475,7 +503,8 @@ def test_isolated_deploy_rejects_stopped_mismatched_identity_without_mutation() 
 
     with pytest.raises(CliError, match="mismatched"):
         CollisionProvider(
-            _spec(isolated_chain_runner_image_id=image_id)
+            _spec(isolated_chain_runner_image_id=image_id),
+            ssh_effect_adapter=_authorized_effect_adapter(),
         ).deploy(Path("/tmp/deploy"), secrets={})
 
     assert len(commands) == 3
@@ -545,7 +574,8 @@ def test_isolated_deploy_recovers_exact_stopped_identity_in_place() -> None:
             del deploy_dir
 
     provider = RecoverStoppedProvider(
-        _spec(isolated_chain_runner_image_id=image_id)
+        _spec(isolated_chain_runner_image_id=image_id),
+        ssh_effect_adapter=_authorized_effect_adapter(),
     )
     assert provider.deploy(Path("/tmp/deploy"), secrets={}) == 0
 
@@ -600,7 +630,8 @@ def test_isolated_redeploy_accepts_only_exact_running_attestation_without_mutati
             del deploy_dir
 
     assert IdempotentProvider(
-        _spec(isolated_chain_runner_image_id=image_id)
+        _spec(isolated_chain_runner_image_id=image_id),
+        ssh_effect_adapter=_authorized_effect_adapter(),
     ).deploy(Path("/tmp/deploy"), secrets={}) == 0
     assert len(commands) == 5
     assert not any("docker rm" in command for command in commands)
@@ -830,7 +861,9 @@ def test_isolated_exec_targets_attested_container_id_not_mutable_name() -> None:
             remote_commands.append(command)
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
-    provider = IdTargetProvider(_spec())
+    provider = IdTargetProvider(
+        _spec(), ssh_effect_adapter=_authorized_effect_adapter()
+    )
     provider.attest_isolated_chain_runner_runtime()
     provider.ssh_exec("true")
     assert remote_commands == [f"docker exec {container_id} bash -lc true"]

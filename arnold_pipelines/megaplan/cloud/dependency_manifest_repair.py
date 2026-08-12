@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,6 +27,96 @@ class RepairResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"repaired": self.repaired, "reason": self.reason, "details": self.details}
+
+
+class CensusRefusalError(RuntimeError):
+    """The reference census (T-0012 runtime_references) did not CLEAR a
+    target plan dir / nested ``.megaplan`` dir slated for replacement by
+    plan rematerialization (rmtree/copytree).  Carries the verdict and store
+    reasons; callers MUST refuse the replacement (zero deletion)."""
+
+    def __init__(self, *, path: Path, verdict: str, reasons: list[str]) -> None:
+        self.path = Path(path)
+        self.verdict = verdict
+        self.reasons = list(reasons)
+        detail = "; ".join(reasons) if reasons else "no reasons given"
+        super().__init__(f"reference census {verdict} for {path}: {detail}")
+
+
+def _census_verdict(path: Path) -> tuple[str, list[str]]:
+    """Classify *path* with the reference census (runtime_references.run_census).
+
+    Wired from the same env-store variables as the T-0027 destructive
+    routes: an unset variable falls back to the canonical /workspace store
+    path (an absent store on a developer machine is not a reference).  When
+    ``ARNOLD_BASE_DIR`` is set the target workspace's own chain state,
+    cloud-session markers, and per-plan custody lease stores
+    (``<workspace>/.megaplan/plans/<plan>/custody/leases``) are scanned in
+    addition to the fixed stores, exactly like the chain-reset route.
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_references import (
+        DEFAULT_MANAGED_RUN_STORE,
+        DEFAULT_OPS_STORE,
+        DEFAULT_PLAN_LEASE_ROOT,
+        DEFAULT_STATUS_DIR,
+        run_census,
+    )
+
+    return run_census(
+        root=str(path.resolve(strict=False)),
+        workspace=os.environ.get("ARNOLD_BASE_DIR", ""),
+        manifest_store=os.environ.get(
+            "ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"
+        ),
+        current_manifest="",
+        chain_store=os.environ.get(
+            "ARNOLD_REFERENCE_CHAIN_STORE", "/workspace/.megaplan/plans/.chains"
+        ),
+        marker_store=os.environ.get(
+            "ARNOLD_REFERENCE_MARKER_STORE",
+            "/workspace/.megaplan/cloud-sessions:/workspace/watchdog-reports",
+        ),
+        schedule_store=os.environ.get(
+            "ARNOLD_REFERENCE_SCHEDULE_STORES",
+            "/workspace/arnold/.megaplan/resident/scheduled_jobs:"
+            "/workspace/arnold/.megaplan/resident/schedules/heads:"
+            "/workspace/.megaplan/ops/schedules",
+        ),
+        repair_queue=os.environ.get(
+            "ARNOLD_REFERENCE_REPAIR_QUEUE", "/workspace/.megaplan/repair-queue"
+        ),
+        lease_store=os.environ.get(
+            "ARNOLD_REFERENCE_LEASE_STORE",
+            str(Path.home() / ".megaplan" / "custody" / "leases"),
+        ),
+        plan_lease_root=os.environ.get(
+            "ARNOLD_REFERENCE_PLAN_LEASE_ROOT", DEFAULT_PLAN_LEASE_ROOT
+        ),
+        managed_run_store=os.environ.get(
+            "ARNOLD_REFERENCE_MANAGED_RUN_STORE", DEFAULT_MANAGED_RUN_STORE
+        ),
+        status_dir=os.environ.get("ARNOLD_REFERENCE_STATUS_DIR", DEFAULT_STATUS_DIR),
+        ops_store=os.environ.get("ARNOLD_REFERENCE_OPS_STORE", DEFAULT_OPS_STORE),
+    )
+
+
+def _require_clear_census(path: Path) -> None:
+    """G6 round-10: gate plan rematerialization on the reference census.
+
+    Only a CLEAR verdict permits rmtree/copytree of *path*.  REFERENCED,
+    DANGLING, or UNKNOWN — including a census that cannot run at all
+    (fail-closed, mirroring the T-0027 routes) — raises
+    :class:`CensusRefusalError` so zero deletion or overwrite happens."""
+    try:
+        verdict, reasons = _census_verdict(path)
+    except Exception as exc:  # pragma: no cover - defensive fail-closed
+        raise CensusRefusalError(
+            path=path,
+            verdict="UNKNOWN",
+            reasons=[f"reference census unavailable: {exc}"],
+        ) from exc
+    if verdict != "CLEAR":
+        raise CensusRefusalError(path=path, verdict=verdict, reasons=reasons)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -152,6 +243,10 @@ def _sync_completed_prerequisite(
     target_nested = target_chain.parent / ".megaplan"
     copied_nested = False
     if source_nested.is_dir():
+        # G6 round-10: never rmtree/copytree a census-referenced nested
+        # .megaplan dir — the reference census must CLEAR the target first
+        # (REFERENCED / DANGLING / UNKNOWN refuse with zero deletion).
+        _require_clear_census(target_nested)
         if target_nested.exists():
             shutil.rmtree(target_nested)
         shutil.copytree(source_nested, target_nested)
@@ -169,6 +264,10 @@ def _sync_completed_prerequisite(
         source_plan = source_root / ".megaplan" / "plans" / plan
         target_plan = target_root / ".megaplan" / "plans" / plan
         if source_plan.is_dir():
+            # G6 round-10: never rmtree/copytree a census-referenced plan dir
+            # (incl. per-plan custody lease stores inside it) — the reference
+            # census must CLEAR the target first.
+            _require_clear_census(target_plan)
             if target_plan.exists():
                 shutil.rmtree(target_plan)
             target_plan.parent.mkdir(parents=True, exist_ok=True)
@@ -397,14 +496,37 @@ def repair_dependency_manifests(*, workspace: Path, remote_spec: Path, marker_di
             target_spec = load_spec(target_chain)
         except Exception:
             target_spec = prereq_spec
-        sync = _sync_completed_prerequisite(
-            target_root=target_root,
-            target_chain=target_chain,
-            source_root=source_root,
-            source_chain=source_chain,
-            spec=target_spec,
-            state=prereq_state,
-        )
+        try:
+            sync = _sync_completed_prerequisite(
+                target_root=target_root,
+                target_chain=target_chain,
+                source_root=source_root,
+                source_chain=source_chain,
+                spec=target_spec,
+                state=prereq_state,
+            )
+        except CensusRefusalError as exc:
+            # G6 round-10: a census-referenced / unreadable target plan dir
+            # refuses replacement — record the writer note and skip the whole
+            # candidate (zero rmtree/copytree; the audit-doc and blocked-state
+            # rewrites must NOT claim a sync that never happened).
+            repairs.append(
+                {
+                    "precondition": candidate_name,
+                    "chain": str(prereq_rel),
+                    "source_workspace": str(source_root),
+                    "source_chain": str(source_chain),
+                    "sync": None,
+                    "refused": {
+                        "path": str(exc.path),
+                        "verdict": exc.verdict,
+                        "reasons": exc.reasons,
+                    },
+                    "changed_states": [],
+                    "changed_docs": [],
+                }
+            )
+            continue
         changed_docs = _refresh_stale_dependency_audit_docs(target_root, prereq_rel, prereq_state, target_spec)
         changed_states = _clear_dependent_blocked_plan_state(target_root, prereq_rel)
         repairs.append(
@@ -420,6 +542,14 @@ def repair_dependency_manifests(*, workspace: Path, remote_spec: Path, marker_di
         )
 
     if repairs:
+        if all(item.get("refused") for item in repairs):
+            # No candidate could be synced: every replacement was refused by
+            # the reference census.  Report the refusal distinctly (fail
+            # closed, zero deletion) so callers do not mistake it for a
+            # successful repair.
+            return RepairResult(
+                False, "dependency_manifest_repair_refused_census", {"repairs": repairs}
+            )
         return RepairResult(True, "dependency_manifests_repaired", {"repairs": repairs})
     return RepairResult(False, "no_repairable_dependency_manifest", {})
 

@@ -23,6 +23,11 @@ from agentbox.reset_notifications import (
     reset_notification_root,
     reset_transaction_request,
 )
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    ManifestError,
+    is_compatibility_only_pointer,
+    load_manifest,
+)
 
 
 SERVICE_UNITS = {
@@ -46,10 +51,41 @@ _TMUX_RESTART_GRACE_SECONDS = 1.0
 _GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 
 
-def _resident_runtime_request() -> dict[str, str]:
-    """Bind restart idempotency to the installed resident source revision."""
+def _manifest_runtime_root() -> str:
+    """Return the manifest-pinned resident runtime root, or ``""`` unbound.
 
-    configured = str(os.environ.get("MEGAPLAN_RUNTIME_SRC") or "").strip()
+    Reads ``ARNOLD_RUNTIME_MANIFEST`` (default
+    ``/workspace/.megaplan/runtime-manifest.json``) through the canonical
+    validator (``load_manifest``) -> ``epic.runtime_root``. A genuinely
+    absent manifest (env unset or file missing) yields ``""``; a PRESENT but
+    invalid manifest (corrupt JSON, non-object, schema-mismatched, missing
+    runtime_root, or a ``compatibility_only`` pointer) ALSO yields ``""`` —
+    fail closed, never binding the resident runtime to an unvalidated tree
+    (G5 round 15).
+    """
+    manifest_path = Path(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST", "/workspace/.megaplan/runtime-manifest.json")
+    )
+    if is_compatibility_only_pointer(manifest_path):
+        return ""
+    try:
+        manifest = load_manifest(manifest_path)
+    except ManifestError:
+        return ""
+    root = manifest.epic.get("runtime_root")
+    return str(root).strip() if isinstance(root, str) else ""
+
+
+def _resident_runtime_request() -> dict[str, str]:
+    """Bind restart idempotency to the manifest-pinned resident source revision.
+
+    The resident runtime root resolves from the per-session manifest
+    (``ARNOLD_RUNTIME_MANIFEST`` -> ``epic.runtime_root``).  The retired
+    ``MEGAPLAN_RUNTIME_SRC`` env-selector read is gone (G5): a missing or
+    corrupt manifest yields no runtime binding rather than an ambient tree.
+    """
+
+    configured = _manifest_runtime_root()
     if not configured:
         return {}
     source = Path(configured).expanduser().resolve()
@@ -100,6 +136,33 @@ def _resident_runtime_request() -> dict[str, str]:
     if not _GIT_REVISION_RE.fullmatch(revision):
         return {}
     return {"runtime_source": str(source), "runtime_revision": revision}
+
+
+def _refuse_unbound_manifest_restart(
+    service_name: str, unit: str, backend: str, safety: dict[str, Any]
+) -> dict[str, Any]:
+    """Fail-closed refusal when no manifest-pinned runtime is resolvable.
+
+    A missing, corrupt, or root-less runtime manifest yields no runtime
+    binding; the Discord resident restart supervisor must never launch with
+    an empty binding (G5) — refuse the restart instead.
+    """
+    return {
+        "ok": False,
+        "service": service_name,
+        "unit": unit,
+        "backend": backend,
+        "error": (
+            "refusing Discord resident restart: runtime manifest is missing, "
+            "corrupt, or root-less; no manifest-pinned runtime source/revision "
+            "to restart into"
+        ),
+        "safety": safety,
+        "fix_command": (
+            f"restore a valid runtime manifest (ARNOLD_RUNTIME_MANIFEST -> "
+            f"epic.runtime_root), then retry `{DISCORD_RESIDENT_RESTART_COMMAND}`"
+        ),
+    }
 
 
 def services_available() -> bool:
@@ -221,6 +284,11 @@ def restart_service(
 
     reservation = None
     if service_name == DISCORD_RESIDENT_SERVICE:
+        runtime_request = _resident_runtime_request()
+        if not runtime_request:
+            return _refuse_unbound_manifest_restart(
+                service_name, unit, "systemd", safety or {}
+            )
         try:
             reservation = prepare_reset_notification(
                 notification_root=notification_root,
@@ -230,7 +298,7 @@ def restart_service(
                     "unit": unit,
                     "backend": "systemd",
                     "old_identity": _systemd_identity(safety or {}),
-                    **_resident_runtime_request(),
+                    **runtime_request,
                 },
             )
         except ResetNotificationError as exc:
@@ -298,6 +366,11 @@ def _restart_discord_resident_tmux(
             ),
         }
 
+    runtime_request = _resident_runtime_request()
+    if not runtime_request:
+        return _refuse_unbound_manifest_restart(
+            service_name, unit, "tmux", safety
+        )
     try:
         reservation = prepare_reset_notification(
             notification_root=notification_root,
@@ -307,7 +380,7 @@ def _restart_discord_resident_tmux(
                 "unit": unit,
                 "backend": "tmux",
                 "old_identity": _tmux_identity(safety),
-                **_resident_runtime_request(),
+                **runtime_request,
             },
         )
     except ResetNotificationError as exc:

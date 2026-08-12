@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+from typing import Any, Mapping
 
 import pytest
 
@@ -36,6 +37,7 @@ from arnold_pipelines.run_authority import (
     CoordinatorFence,
     EvidenceEnvelope,
     IdempotencyKey,
+    ObservationEnvelope,
     QuarantineRecord,
     reduce_run_authority,
 )
@@ -456,14 +458,17 @@ def test_runner_view_preserves_liveness_states_without_execution_authority() -> 
         "status": "indeterminate",
     },))
 
+    # Raw mappings are UNKNOWN-typed evidence: they preserve the observable
+    # non-green states (stopped/stale/identity mismatch) but can never
+    # authorize ``live`` (``running``/``indeterminate`` degrade to pending).
     assert [view.status for view in (stopped, live, stale, mismatch, unknown)] == [
-        "stopped", "live", "stale", "identity_mismatch", "unknown",
+        "stopped", "pending", "stale", "identity_mismatch", "pending",
     ]
     assert stopped.to_dict()["shadow"] is stopped.to_dict()["read_only"] is True
     assert all("accepted_task_ids" not in view.to_dict() for view in (stopped, live, stale, mismatch, unknown))
-    assert {item.code for item in stale.diagnostics} == {"stale_heartbeat"}
+    assert {item.code for item in stale.diagnostics} == {"stale_heartbeat", "non_coherent_observation"}
     assert {item.source for item in mismatch.diagnostics} == {"cloud/session.json"}
-    assert {item.code for item in unknown.diagnostics} == {"runner_unknown"}
+    assert {item.code for item in unknown.diagnostics} == {"runner_unknown", "non_coherent_observation"}
 
 
 def test_runner_view_is_deterministic_and_retains_identity_contradictions() -> None:
@@ -485,7 +490,9 @@ def test_runner_view_is_deterministic_and_retains_identity_contradictions() -> N
     assert first.to_json() == second.to_json()
     assert len(first.view_hash) == 64
     assert first.status == "identity_mismatch"
-    assert {item.code for item in first.diagnostics} == {"runner_identity_mismatch"}
+    assert {item.code for item in first.diagnostics} == {
+        "runner_identity_mismatch", "non_coherent_observation",
+    }
     assert set(first.source_paths) == {"cloud/heartbeat.json", "cloud/process.json"}
 
 
@@ -507,11 +514,16 @@ def test_publication_view_keeps_observations_unknowns_and_blockers_separate() ->
     assert {item.field for item in blocked.observations} == {
         "branch", "branch_ancestry", "dirty_workspace", "pushed_sha", "pull_request", "auth", "no_push",
     }
-    assert {item.code for item in blocked.diagnostics} == {"no_push_configured", "publication_observation_unknown"}
+    assert {item.code for item in blocked.diagnostics} == {
+        "no_push_configured", "publication_observation_unknown", "non_coherent_observation",
+    }
     assert "chain/command" in blocked.source_paths
     unknown = {item.field for item in incomplete.observations if item.state == "unknown"}
     assert unknown == {"branch_ancestry", "dirty_workspace", "pushed_sha", "pull_request", "auth", "no_push"}
-    assert incomplete.status == "unknown"
+    # A raw mapping can report fields but never authorizes ``ready``; without a
+    # coherence claim the incomplete view degrades from ``unknown`` to ``pending``.
+    assert incomplete.status == "pending"
+    assert {"non_coherent_observation"} <= {item.code for item in incomplete.diagnostics}
     assert all("accepted_task_ids" not in view.to_dict() for view in (blocked, incomplete))
 
 
@@ -564,6 +576,603 @@ def test_publication_blocked_is_independent_of_execution_and_runner_views() -> N
     assert runner.status == "stopped"
     assert publication.status == "blocked"
     assert publication.view_hash not in {execution.view_hash, runner.view_hash}
+
+
+_RUNTIME_CAPTURE = {
+    "recorded_engine_root": "/opt/arnold/engine",
+    "manifest_runtime_root": "/opt/arnold/engine",
+    "manifest_expected_head": "expected-head-1",
+    "live_import_root": "/opt/arnold/engine",
+    "wrapper_digest": "wrapper-digest-1",
+    "dependency_generation": "generation-1",
+    "environment_identity": "env-1",
+    "session_identity": "env-1",
+}
+
+_PUBLICATION_PAYLOAD = {
+    "branch": "feature/authority",
+    "branch_ancestry": "valid",
+    "dirty_workspace": False,
+    "pushed_sha": "a" * 40,
+    "pull_request": "https://example.test/pr/7",
+    "auth": True,
+    "no_push": False,
+}
+
+
+def _envelope(
+    observation_id: str,
+    *,
+    observation_type: str,
+    source: str,
+    payload: Mapping[str, Any],
+    run_id: str = RUN,
+    run_revision: str = REVISION,
+    source_cursor: int | None = 5,
+    runtime_capture: Mapping[str, Any] | None = None,
+) -> ObservationEnvelope:
+    """A coherent current capture envelope unless overridden (stale/non-coherent)."""
+
+    return ObservationEnvelope.capture(
+        observation_id=observation_id,
+        run_id=run_id,
+        run_revision=run_revision,
+        observation_type=observation_type,
+        source=source,
+        payload=dict(payload),
+        runtime_observation=_RUNTIME_CAPTURE if runtime_capture is None else runtime_capture,
+        source_identity="test-source",
+        source_version="test-version",
+        source_cursor=source_cursor,
+        content_hash="a" * 64,
+    )
+
+
+def _publication_envelope(
+    observation_id: str, *, payload: Mapping[str, Any] | None = None, **overrides: Any,
+) -> ObservationEnvelope:
+    return _envelope(
+        observation_id,
+        observation_type="publication",
+        source=f"envelope://publication/{observation_id}",
+        payload=_PUBLICATION_PAYLOAD if payload is None else payload,
+        **overrides,
+    )
+
+
+def _runner_envelope(
+    observation_id: str, *, state: str = "running", payload: Mapping[str, Any] | None = None, **overrides: Any,
+) -> ObservationEnvelope:
+    return _envelope(
+        observation_id,
+        observation_type="process",
+        source=f"envelope://runner/{observation_id}",
+        payload=(
+            {"state": state, "identity": "runner-1", "expected_identity": "runner-1"}
+            if payload is None else payload
+        ),
+        **overrides,
+    )
+
+
+def test_publication_view_coherent_current_envelope_is_ready() -> None:
+    view = derive_publication_view(
+        (_publication_envelope("pub-ready"),),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "ready"
+    assert all(item.state == "known" for item in view.observations)
+    assert view.diagnostics == ()
+
+
+def test_publication_view_gates_non_coherent_envelopes_never_ready() -> None:
+    unknown_capture = dict(_RUNTIME_CAPTURE)
+    unknown_capture.pop("wrapper_digest")
+    incoherent_capture = dict(_RUNTIME_CAPTURE)
+    incoherent_capture["live_import_root"] = "/opt/arnold/other"
+
+    unknown = _publication_envelope("pub-unknown", runtime_capture=unknown_capture)
+    incoherent = _publication_envelope("pub-incoherent", runtime_capture=incoherent_capture)
+    assert unknown.coherence == "UNKNOWN"
+    assert incoherent.coherence == "INCOHERENT"
+    assert unknown.is_dispatchable is False
+    assert incoherent.is_dispatchable is False
+
+    # The coherence gate applies even without an explicit run context.
+    no_context = derive_publication_view((unknown,))
+    gated = derive_publication_view((unknown, incoherent), run_id=RUN, run_revision=REVISION, journal_cursor=10)
+
+    for view in (no_context, gated):
+        assert view.status != "ready"
+        assert view.status == "pending"
+        assert all(item.state == "unknown" for item in view.observations)
+        assert {"non_coherent_observation"} <= {item.code for item in view.diagnostics}
+
+
+def test_publication_view_gates_stale_envelopes_never_ready() -> None:
+    stale_revision = _publication_envelope("pub-old-revision", run_revision="revision-old")
+    stale_cursor = _publication_envelope("pub-beyond-journal", source_cursor=50)
+    wrong_run = _publication_envelope("pub-other-run", run_id="plan-other")
+
+    views = tuple(
+        derive_publication_view((observation,), run_id=RUN, run_revision=REVISION, journal_cursor=10)
+        for observation in (stale_revision, stale_cursor, wrong_run)
+    )
+    for view in views:
+        assert view.status != "ready"
+        assert view.status == "pending"
+        assert {"stale_observation"} <= {item.code for item in view.diagnostics}
+
+
+def test_publication_view_never_ready_when_any_envelope_gated() -> None:
+    view = derive_publication_view(
+        (
+            _publication_envelope("pub-ready"),
+            _publication_envelope("pub-stale", run_revision="revision-old"),
+        ),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"stale_observation"}
+
+
+def test_runner_view_coherent_current_envelope_is_live() -> None:
+    view = derive_runner_view(
+        (_runner_envelope("run-live"),),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "live"
+    assert len(view.observations) == 1
+    assert view.diagnostics == ()
+
+
+def test_runner_view_gates_non_coherent_and_stale_envelopes_never_live() -> None:
+    unknown_capture = dict(_RUNTIME_CAPTURE)
+    unknown_capture.pop("wrapper_digest")
+    incoherent_capture = dict(_RUNTIME_CAPTURE)
+    incoherent_capture["live_import_root"] = "/opt/arnold/other"
+
+    unknown = _runner_envelope("run-unknown", runtime_capture=unknown_capture)
+    incoherent = _runner_envelope("run-incoherent", runtime_capture=incoherent_capture)
+    stale_revision = _runner_envelope("run-old-revision", run_revision="revision-old")
+    stale_cursor = _runner_envelope("run-beyond-journal", source_cursor=50)
+
+    assert unknown.coherence == "UNKNOWN"
+    assert incoherent.coherence == "INCOHERENT"
+
+    # The coherence gate applies even without an explicit run context.
+    no_context = derive_runner_view((unknown,))
+    for observation in (unknown, incoherent, stale_revision, stale_cursor):
+        view = derive_runner_view((observation,), run_id=RUN, run_revision=REVISION, journal_cursor=10)
+        assert view.status != "live"
+        assert view.status == "pending"
+        assert view.observations == ()
+    assert no_context.status == "pending"
+    assert {item.code for item in no_context.diagnostics} == {"non_coherent_observation", "runner_unknown"}
+    assert {item.code for item in derive_runner_view(
+        (stale_revision,), run_id=RUN, run_revision=REVISION, journal_cursor=10,
+    ).diagnostics} == {"stale_observation", "runner_unknown"}
+
+
+def test_runner_view_never_live_when_any_envelope_gated() -> None:
+    view = derive_runner_view(
+        (
+            _runner_envelope("run-live"),
+            _runner_envelope("run-stale", run_revision="revision-old"),
+        ),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"stale_observation"}
+
+
+def test_runner_view_never_live_from_stale_payload_envelope() -> None:
+    """A coherent envelope whose OWN payload is stale is stale evidence."""
+    # A coherent ``process`` observation (state=running) that declares itself
+    # stale must never authorize ``live`` — the payload-stale gate applies to
+    # every observation type, not just heartbeats.
+    stale_payload = _runner_envelope("run-stale-payload", payload={
+        "state": "running", "identity": "runner-1", "expected_identity": "runner-1", "stale": True,
+    })
+    assert stale_payload.coherence == "COHERENT"
+    assert stale_payload.is_dispatchable is True
+
+    view = derive_runner_view(
+        (stale_payload,),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status != "live"
+    assert view.status == "pending"
+    # Gated envelopes are excluded from the projection entirely.
+    assert view.observations == ()
+    assert {item.code for item in view.diagnostics} == {"stale_observation", "runner_unknown"}
+    assert any(
+        item.code == "stale_observation" and item.reason == "observation_payload_stale"
+        for item in view.diagnostics
+    )
+
+    # The ``stale_heartbeats`` alias marks the same stale evidence.
+    stale_heartbeats = _runner_envelope("run-stale-heartbeats", payload={
+        "state": "running", "identity": "runner-1", "expected_identity": "runner-1",
+        "stale_heartbeats": True,
+    })
+    view = derive_runner_view(
+        (stale_heartbeats,),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert any(
+        item.code == "stale_observation" and item.reason == "observation_payload_stale"
+        for item in view.diagnostics
+    )
+
+    # A stale payload beside a live, current envelope denies live too.
+    mixed = derive_runner_view(
+        (_runner_envelope("run-live"), stale_payload),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert mixed.status == "pending"
+    assert {item.code for item in mixed.diagnostics} == {"stale_observation"}
+
+
+def test_runner_view_never_live_from_stale_raw_mapping() -> None:
+    """An admitted stale mapping stays visible but can never authorize live."""
+    stale_raw = {
+        "type": "process", "source": "cloud/process.json",
+        "status": "running", "identity": "runner-1", "expected_identity": "runner-1",
+        "stale": True,
+    }
+    view = derive_runner_view((stale_raw,), expected_identity="runner-1")
+    assert view.status != "live"
+    assert view.status == "stale"
+    # Soft gate: the raw mapping remains observable for diagnostics.  A raw
+    # mapping is unconditionally non-coherent evidence, and its self-declared
+    # staleness is additionally surfaced as a stale_observation diagnostic.
+    assert len(view.observations) == 1
+    assert {item.code for item in view.diagnostics} == {"non_coherent_observation", "stale_observation"}
+    assert any(
+        item.code == "stale_observation" and item.reason == "observation_payload_stale"
+        for item in view.diagnostics
+    )
+
+
+def test_publication_view_never_ready_from_stale_payload_envelope() -> None:
+    """Publication readiness applies the same payload-stale gate."""
+    stale_payload = _publication_envelope(
+        "pub-stale-payload", payload={**_PUBLICATION_PAYLOAD, "stale": True},
+    )
+    assert stale_payload.coherence == "COHERENT"
+    assert stale_payload.is_dispatchable is True
+
+    view = derive_publication_view(
+        (stale_payload,),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status != "ready"
+    assert view.status == "pending"
+    assert {"stale_observation"} <= {item.code for item in view.diagnostics}
+    assert any(
+        item.code == "stale_observation" and item.reason == "observation_payload_stale"
+        for item in view.diagnostics
+    )
+
+    # The ``stale_heartbeats`` alias marks the same stale evidence.
+    stale_heartbeats = _publication_envelope(
+        "pub-stale-heartbeats", payload={**_PUBLICATION_PAYLOAD, "stale_heartbeats": True},
+    )
+    view = derive_publication_view(
+        (stale_heartbeats,),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {"stale_observation"} <= {item.code for item in view.diagnostics}
+    assert any(
+        item.code == "stale_observation" and item.reason == "observation_payload_stale"
+        for item in view.diagnostics
+    )
+
+    # A stale payload beside a ready envelope denies ready too.
+    mixed = derive_publication_view(
+        (_publication_envelope("pub-ready"), stale_payload),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert mixed.status == "pending"
+    assert {item.code for item in mixed.diagnostics} == {"stale_observation"}
+
+
+def test_publication_view_never_ready_from_raw_mappings() -> None:
+    complete = {
+        "branch": "feature/authority",
+        "branch_ancestry": "valid",
+        "dirty_workspace": False,
+        "pushed_sha": "a" * 40,
+        "pull_request": "https://example.test/pr/7",
+        "auth": True,
+        "no_push": False,
+        "source": "git/combined.json",
+    }
+
+    # A complete raw mapping reports every field but has no coherence claim:
+    # it can never authorize ``ready``.
+    complete_view = derive_publication_view((complete,))
+    assert complete_view.status == "pending"
+    assert all(item.state == "known" for item in complete_view.observations)
+    assert {item.code for item in complete_view.diagnostics} == {"non_coherent_observation"}
+
+    # Even beside a coherent, current envelope, one raw mapping denies ready.
+    mixed = derive_publication_view(
+        (_publication_envelope("pub-ready"), complete),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert mixed.status == "pending"
+    assert {item.code for item in mixed.diagnostics} == {"non_coherent_observation"}
+
+
+def test_runner_view_never_live_from_raw_mappings() -> None:
+    raw_live = {
+        "type": "process", "source": "cloud/process.json",
+        "status": "running", "identity": "runner-1", "expected_identity": "runner-1",
+    }
+    view = derive_runner_view((raw_live,), expected_identity="runner-1")
+    assert view.status == "pending"
+    # The raw mapping stays visible (soft gate) but cannot authorize live.
+    assert len(view.observations) == 1
+    assert {item.code for item in view.diagnostics} == {"non_coherent_observation"}
+
+    # Even beside a coherent, current envelope, one raw mapping denies live.
+    mixed = derive_runner_view(
+        (_runner_envelope("run-live"), raw_live),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert mixed.status == "pending"
+    assert {item.code for item in mixed.diagnostics} == {"non_coherent_observation"}
+
+
+def test_raw_mapping_self_asserted_coherence_never_authorizes() -> None:
+    # A raw mapping that self-declares ``coherence`` COHERENT plus matching run
+    # provenance can never authorize ``live``: only a wrapped, coherent and
+    # current ObservationEnvelope may produce a green status.
+    raw_coherent = {
+        "type": "process", "source": "cloud/process.json",
+        "status": "running", "identity": "runner-1", "expected_identity": "runner-1",
+        "coherence": "COHERENT",
+        "run_id": RUN, "run_revision": REVISION, "source_cursor": 3,
+    }
+    live = derive_runner_view(
+        (raw_coherent,),
+        expected_identity="runner-1",
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert live.status == "pending"
+    assert len(live.observations) == 1  # soft gate: still visible for observation
+    assert {item.code for item in live.diagnostics} == {"non_coherent_observation"}
+
+    # The same holds for the publication view: a complete raw mapping with a
+    # self-asserted COHERENT verdict can never produce ``ready``.
+    raw_ready = {
+        "branch": "feature/authority",
+        "branch_ancestry": "valid",
+        "dirty_workspace": False,
+        "pushed_sha": "a" * 40,
+        "pull_request": "https://example.test/pr/7",
+        "auth": True,
+        "no_push": False,
+        "coherence": "COHERENT",
+        "run_id": RUN, "run_revision": REVISION, "source_cursor": 3,
+        "source": "git/combined.json",
+    }
+    ready = derive_publication_view(
+        (raw_ready,),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert ready.status == "pending"
+    assert all(item.state == "known" for item in ready.observations)
+    assert {item.code for item in ready.diagnostics} == {"non_coherent_observation"}
+
+    # Matching provenance does not unlock the raw mapping either: the
+    # self-asserted coherence field is never trusted.
+    mixed = derive_runner_view(
+        (_runner_envelope("run-live"), raw_coherent),
+        expected_identity="runner-1",
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert mixed.status == "pending"
+    assert {item.code for item in mixed.diagnostics} == {"non_coherent_observation"}
+
+
+def test_raw_mapping_self_asserted_is_dispatchable_never_authorizes() -> None:
+    raw_dispatchable = {
+        "type": "process", "source": "cloud/process.json",
+        "status": "running", "identity": "runner-1", "expected_identity": "runner-1",
+        "is_dispatchable": True,
+        "run_id": RUN, "run_revision": REVISION, "source_cursor": 3,
+    }
+    view = derive_runner_view(
+        (raw_dispatchable,),
+        expected_identity="runner-1",
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"non_coherent_observation"}
+
+    # A self-asserted ``is_dispatchable`` mapping beside a coherent envelope
+    # still denies live.
+    mixed = derive_runner_view(
+        (_runner_envelope("run-live"), raw_dispatchable),
+        expected_identity="runner-1",
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert mixed.status == "pending"
+    assert {item.code for item in mixed.diagnostics} == {"non_coherent_observation"}
+
+
+def test_publication_view_never_ready_from_mixed_environment_envelopes() -> None:
+    other_env = dict(_RUNTIME_CAPTURE)
+    other_env["environment_identity"] = "env-2"
+    other_env["session_identity"] = "env-2"
+
+    view = derive_publication_view(
+        (
+            _publication_envelope("pub-env-1"),
+            _publication_envelope("pub-env-2", runtime_capture=other_env),
+        ),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"cross_environment_observation"}
+    assert view.observations
+
+
+def test_runner_view_never_live_from_mixed_environment_envelopes() -> None:
+    other_env = dict(_RUNTIME_CAPTURE)
+    other_env["environment_identity"] = "env-2"
+    other_env["session_identity"] = "env-2"
+
+    view = derive_runner_view(
+        (
+            _runner_envelope("run-env-1"),
+            _runner_envelope("run-env-2", runtime_capture=other_env),
+        ),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"cross_environment_observation"}
+    assert view.observations
+
+
+def test_publication_view_never_ready_from_mixed_run_envelopes_without_context() -> None:
+    # Two individually coherent, same-environment envelopes captured in
+    # different runs: without a run anchor the view cannot tell one run's
+    # coherent capture from another's, so mixed-run evidence must be pending.
+    view = derive_publication_view(
+        (
+            _publication_envelope("pub-run-1"),
+            _publication_envelope("pub-run-2", run_id="plan-other"),
+        ),
+    )
+    assert view.status == "pending"
+    assert view.status != "ready"
+    assert {item.code for item in view.diagnostics} == {"mixed_run_observation"}
+    assert view.observations
+
+
+def test_publication_view_never_ready_from_mixed_revisions_without_context() -> None:
+    view = derive_publication_view(
+        (
+            _publication_envelope("pub-rev-1"),
+            _publication_envelope("pub-rev-2", run_revision="revision-other"),
+        ),
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"mixed_run_observation"}
+
+
+def test_publication_view_single_run_envelopes_without_context_stay_ready() -> None:
+    # The common single-source case is unchanged: one coherent envelope (or
+    # several from one run) with no supplied context may still be ready.
+    single = derive_publication_view((_publication_envelope("pub-ready"),))
+    assert single.status == "ready"
+    same_run = derive_publication_view(
+        (
+            _publication_envelope("pub-ready-a"),
+            _publication_envelope("pub-ready-b"),
+        ),
+    )
+    assert same_run.status == "ready"
+
+
+def test_publication_view_anchored_run_still_disambiguates_mixed_envelopes() -> None:
+    # With a run anchor supplied, the per-observation gate disambiguates: the
+    # foreign-run envelope is stale evidence and the cross-run gate does not
+    # fire — the view is pending for the stale observation, never "ready".
+    view = derive_publication_view(
+        (
+            _publication_envelope("pub-run-1"),
+            _publication_envelope("pub-run-2", run_id="plan-other"),
+        ),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"stale_observation"}
+
+
+def test_runner_view_never_live_from_mixed_run_envelopes_without_context() -> None:
+    view = derive_runner_view(
+        (
+            _runner_envelope("run-live-1"),
+            _runner_envelope("run-live-2", run_id="plan-other"),
+        ),
+    )
+    assert view.status == "pending"
+    assert view.status != "live"
+    assert {item.code for item in view.diagnostics} == {"mixed_run_observation"}
+    assert view.observations
+
+
+def test_runner_view_single_run_envelopes_without_context_stay_live() -> None:
+    single = derive_runner_view((_runner_envelope("run-live"),))
+    assert single.status == "live"
+    same_run = derive_runner_view(
+        (
+            _runner_envelope("run-live-a"),
+            _runner_envelope("run-live-b"),
+        ),
+    )
+    assert same_run.status == "live"
+
+
+def test_runner_view_anchored_run_still_disambiguates_mixed_envelopes() -> None:
+    view = derive_runner_view(
+        (
+            _runner_envelope("run-live-1"),
+            _runner_envelope("run-live-2", run_id="plan-other"),
+        ),
+        run_id=RUN,
+        run_revision=REVISION,
+        journal_cursor=10,
+    )
+    assert view.status == "pending"
+    assert {item.code for item in view.diagnostics} == {"stale_observation"}
 
 
 # ---------------------------------------------------------------------------

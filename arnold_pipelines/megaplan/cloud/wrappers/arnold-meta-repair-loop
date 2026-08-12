@@ -89,6 +89,14 @@ fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
 arnold_supervisor_stdlib_init meta-repair-loop || exit $?
+# P1 admission authority (G2 correction 3): the shared lib gate is the SOLE
+# manifest resolver for wrapper entry — a present-but-invalid manifest exits
+# 78, and an absent manifest (including the compatibility_only global
+# pointer, which is treated as ABSENT) is admitted only by a valid unexpired
+# allow_manifestless permit.  Direct invocation therefore fails closed, not
+# via the expected parent.  Runs BEFORE any manifest field read, ARNOLD_SRC
+# use, or supervisor runtime attestation (runtime_init) below.
+arnold_runtime_manifest_authority meta-repair-loop
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "$ARNOLD_META_REPAIR_LOOP_ORIGIN")/arnold-supervisor-gap-scan}"
 if [[ ! -x "$SUPERVISOR_GAP_SCAN" ]]; then
@@ -101,14 +109,6 @@ if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
     --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
 fi
 arnold_supervisor_runtime_init meta-repair-loop "$ARNOLD_SRC" || exit $?
-# P1 admission authority (G2 correction 3): the shared lib gate is the SOLE
-# manifest resolver for wrapper entry — a present-but-invalid manifest exits
-# 78, and an absent manifest (including the compatibility_only global
-# pointer, which is treated as ABSENT) is admitted only by a valid unexpired
-# allow_manifestless permit.  Direct invocation therefore fails closed, not
-# via the expected parent.  Runs BEFORE any manifest field read or ARNOLD_SRC
-# use below.
-arnold_runtime_manifest_authority meta-repair-loop
 LAUNCHER="${MEGAPLAN_META_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 export LAUNCHER SUBAGENT_SKILL

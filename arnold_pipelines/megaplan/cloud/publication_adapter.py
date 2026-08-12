@@ -37,6 +37,7 @@ from arnold.workflow.execution_attempt_ledger import (
 from arnold_pipelines.megaplan.custody.action_validator import (
     ActionBoundaryType,
     GateResult,
+    adapter_effect_authorized,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -92,6 +93,15 @@ class PublicationOutcome:
 # ── Publication adapter ──────────────────────────────────────────────────────
 
 
+class PublicationAdapterGateError(RuntimeError):
+    """Raised when a production publication adapter is opened without a gate.
+
+    Production construction without an explicit ``action_gate_check`` is a
+    wiring error, not a runtime denial: the constructor raises before any
+    dispatch so a missing gate can never be installed in production mode.
+    """
+
+
 class PublicationAdapter:
     """Routes GitHub issue publication through action_validator + effect_protocol.
 
@@ -99,10 +109,17 @@ class PublicationAdapter:
     Step 13B2: github_sync issue creation/comment are explicitly gated.
 
     The adapter receives an :class:`EffectProtocol` instance (the
-    single durable WBC adapter) and an optional action-gate checker.
-    When the action-gate checker is supplied, every dispatch is gated
-    through it first; when it is absent (shadow mode), the gate runs
-    but does not block.
+    single durable WBC adapter) and an action-gate checker.  Every
+    dispatch is gated through the checker; a missing gate, an
+    exceptional gate, or any verdict other than :attr:`GateResult.AUTHORIZED`
+    yields a typed failed publication outcome before any protocol
+    reservation or publication callback.
+
+    Production construction (``production_enabled=True``) without an explicit
+    ``action_gate_check`` is a wiring error: the constructor raises
+    :class:`PublicationAdapterGateError` before any dispatch.  Observation-only
+    construction (``production_enabled=False``) may omit the gate — every
+    dispatch then fails closed as a typed denial.
 
     Real GitHub stays action-off (SD3).  The ``apply_fn`` must be a
     fake or test client that does not mutate production GitHub.
@@ -117,17 +134,99 @@ class PublicationAdapter:
         ] = None,
         production_enabled: bool = False,
     ) -> None:
+        if production_enabled and action_gate_check is None:
+            raise PublicationAdapterGateError(
+                "PublicationAdapter refuses production construction without "
+                "an explicit action_gate_check; pass a current gate (or an "
+                "equivalent denial gate) so production publication reflects "
+                "current policy, or open in observation mode "
+                "(production_enabled=False)"
+            )
         self._protocol = protocol
         self._action_gate_check = action_gate_check
         self._production_enabled = production_enabled
 
     # ── gate ────────────────────────────────────────────────────────────
 
-    def _gate(self, target: PublicationTarget) -> GateResult:
-        """Check the action gate.  Returns SHADOW_PASS if no gate is set."""
+    def _gate(self, target: PublicationTarget) -> GateResult | None:
+        """Run the installed action gate; ``None`` when none is installed.
+
+        A missing gate is a fail-closed condition, never a shadow pass: the
+        caller must convert it (and every non-AUTHORIZED verdict) into a
+        typed denial before any publication effect is dispatched.
+        """
         if self._action_gate_check is None:
-            return GateResult.SHADOW_PASS
+            return None
         return self._action_gate_check("publication", target.target_key)
+
+    @staticmethod
+    def _deny(
+        target: PublicationTarget,
+        *,
+        action: str,
+        verdict_label: str,
+        detail: str,
+    ) -> PublicationOutcome:
+        """Typed pre-effect denial: no reservation, intent, or publication."""
+        return PublicationOutcome(
+            ok=False,
+            action=action,
+            repo=target.repo,
+            issue_number=target.issue_number,
+            issue_url="",
+            glek="",
+            outcome_kind=OUTCOME_FAILED,
+            error=f"Action gate denied: {detail}",
+            evidence={"gate_verdict": verdict_label},
+        )
+
+    def _checked_gate(
+        self,
+        target: PublicationTarget,
+        *,
+        action: str,
+    ) -> PublicationOutcome | None:
+        """Run the installed gate; return a typed denial, or ``None`` when AUTHORIZED.
+
+        A missing gate, an exceptional gate, and every verdict other than
+        :attr:`GateResult.AUTHORIZED` yield a typed failed publication outcome
+        — zero protocol reservation, zero publication callback.
+        """
+        try:
+            verdict = self._gate(target)
+        except Exception as exc:
+            return self._deny(
+                target,
+                action=action,
+                verdict_label="error",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        if adapter_effect_authorized(verdict):
+            return None
+        if isinstance(verdict, GateResult):
+            label = verdict.value
+        elif verdict is None:
+            label = "missing"
+        else:
+            label = type(verdict).__name__
+        return self._deny(
+            target,
+            action=action,
+            verdict_label=label,
+            detail=label if verdict is not None else "no action gate installed",
+        )
+
+    def check_gate(self, target: PublicationTarget) -> PublicationOutcome | None:
+        """Resolve the action gate for *target* without dispatching anything.
+
+        Returns ``None`` when the verdict is :attr:`GateResult.AUTHORIZED`
+        (publication may proceed) or a typed denial :class:`PublicationOutcome`
+        otherwise — a missing gate, an exceptional gate, and every other
+        verdict fail closed.  Zero protocol reservation, zero provider calls,
+        zero filesystem effects: integration code can resolve publication
+        authority BEFORE any filesystem write and deny without side effects.
+        """
+        return self._checked_gate(target, action="create")
 
     # ── GLEK construction ────────────────────────────────────────────────
 
@@ -199,23 +298,10 @@ class PublicationAdapter:
                 target.target_key,
             )
 
-        # 1. Action gate check
-        verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
-            return PublicationOutcome(
-                ok=False,
-                action=action,
-                repo=target.repo,
-                issue_number=target.issue_number,
-                issue_url="",
-                glek="",
-                outcome_kind=OUTCOME_FAILED,
-                error=f"Action gate blocked: {verdict.value}",
-                evidence={"gate_verdict": verdict.value},
-            )
+        # 1. Action gate check — deny before any reservation or callback.
+        denial = self._checked_gate(target, action=action)
+        if denial is not None:
+            return denial
 
         # 2. Build identity
         aid = attempt_id or str(uuid.uuid4())
@@ -250,7 +336,7 @@ class PublicationAdapter:
             try:
                 result = apply_fn(intent_payload)
             except Exception as exc:
-                outcome = self._protocol.accept_outcome(
+                self._protocol.accept_outcome(
                     aid, glek, OUTCOME_FAILED,
                     {"error": f"{type(exc).__name__}: {exc}"},
                 )
@@ -264,6 +350,23 @@ class PublicationAdapter:
                     outcome_kind=OUTCOME_FAILED,
                     error=str(exc),
                     evidence={"glek": glek},
+                )
+            if isinstance(result, dict) and result.get("ok") is False:
+                # A provider-visible rejection is a FAILED effect, never a
+                # COMPLETED one (T-0017: publication effects close by default).
+                self._protocol.accept_outcome(
+                    aid, glek, OUTCOME_FAILED, dict(result),
+                )
+                return PublicationOutcome(
+                    ok=False,
+                    action=action,
+                    repo=target.repo,
+                    issue_number=target.issue_number,
+                    issue_url="",
+                    glek=glek,
+                    outcome_kind=OUTCOME_FAILED,
+                    error=str(result.get("error") or "provider rejected publication"),
+                    evidence={"glek": glek, "result": result},
                 )
 
             # 5. Accept outcome
@@ -324,7 +427,18 @@ class PublicationAdapter:
         reason: str,
         attempt_id: str | None = None,
     ) -> PublicationOutcome:
-        """Record an indeterminate publication outcome (no dispatch)."""
+        """Record an indeterminate publication outcome (no dispatch).
+
+        Gated exactly like :meth:`publish`: a missing gate, an exceptional
+        gate, or any verdict other than :attr:`GateResult.AUTHORIZED` is a
+        typed denial with zero protocol reservation.  An indeterminate
+        record is only written when publication authority was explicitly
+        granted (T-0017: publication effects close by default).
+        """
+        denial = self._checked_gate(target, action=action)
+        if denial is not None:
+            return denial
+
         aid = attempt_id or str(uuid.uuid4())
         ei = self._build_effect_identity(target, action)
         ident, prov, adapter, versions, grant_ref = self._build_identity_bundle(aid)

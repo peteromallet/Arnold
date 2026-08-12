@@ -89,13 +89,17 @@ def test_bootstrap_and_image_entrypoints_materialize_marker_before_managed_run()
         plan_name="demo-plan",
         robustness="standard",
         session_name="plan-session",
-        engine_dir="/workspace/arnold",
     )
     _assert_managed_contract(bootstrap, session="plan-session", run_kind="plan")
     assert '"run_id":' in bootstrap
     assert bootstrap.index('"run_id":') < bootstrap.index(
         "arnold_pipelines.megaplan init"
     )
+    # T-0021: bootstrap is manifest-bound — the pin gate precedes init and no
+    # engine_dir argument / shared-root fallback is consulted.
+    assert "isolated_chain_runtime_binding_drift" in bootstrap
+    assert 'PYTHONPATH="$ENGINE_DIR"' in bootstrap
+    assert 'PYTHONPATH="/workspace/arnold' not in bootstrap
 
     auto_entrypoint = cloud_template._auto_command(_spec(mode="auto"))
     chain_entrypoint = cloud_template._chain_command(_spec(mode="chain"))
@@ -229,7 +233,21 @@ def test_recovery_launchers_preserve_the_managed_owner_contract() -> None:
     )
     assert watchdog.count(hot_env_fence) >= 2
     assert hot_env_fence in repair_loop
-    assert chain_wrapper.count(hot_env_fence) == 2
+    # arnold-chain loads the (credentials-only) hot env once at wrapper top,
+    # AFTER pinning ARNOLD_RUNTIME_MANIFEST and BEFORE the mandatory manifest
+    # gate / owner-lease unset at each launch boundary (G2 finding 1): the
+    # pin is reasserted after the reload, so a stale hot-env value can never
+    # select the runtime the launch binds to.
+    hot_env_reload = (
+        "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; "
+        ". /workspace/.cloud-hot-env; set +a; fi;"
+    )
+    assert chain_wrapper.count(hot_env_reload) == 1
+    assert chain_wrapper.index(
+        "PINNED_RUNTIME_MANIFEST"
+    ) < chain_wrapper.index(hot_env_reload) < chain_wrapper.index(
+        "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START"
+    )
 
     for wrapper in (
         "arnold-chain",

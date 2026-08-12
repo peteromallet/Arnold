@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
+import sys
 from argparse import Namespace
 from pathlib import Path
+
+import pytest
 
 import arnold_pipelines.megaplan.chain as chain_cli
 from arnold_pipelines.megaplan.chain.epic_chain import (
@@ -20,6 +24,7 @@ from arnold_pipelines.megaplan.chain.spec import (
     load_chain_state,
     save_chain_state,
 )
+from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -152,6 +157,7 @@ def test_epic_chain_spec_and_state_round_trip(tmp_path: Path) -> None:
 
 def test_epic_chain_waits_for_live_child_observe_spec_without_relaunch(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_root = tmp_path / "source"
     live_root = tmp_path / "live"
@@ -173,6 +179,7 @@ def test_epic_chain_waits_for_live_child_observe_spec_without_relaunch(
             metadata={
                 "execution_environment": {
                     "project_root": str(live_root),
+                    "engine_root": str(megaplan_engine_root()),
                 }
             },
         ),
@@ -182,6 +189,7 @@ def test_epic_chain_waits_for_live_child_observe_spec_without_relaunch(
         child_spec=child_spec,
         observe_spec=live_child_spec,
     )
+    _set_preflight_runtime(tmp_path, monkeypatch)
 
     calls: list[str] = []
 
@@ -201,11 +209,15 @@ def test_epic_chain_waits_for_live_child_observe_spec_without_relaunch(
     assert calls == []
 
 
-def test_epic_chain_advances_completed_child_and_honors_one(tmp_path: Path) -> None:
+def test_epic_chain_advances_completed_child_and_honors_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     child_a = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
     child_b = _write_child_chain_spec(tmp_path, "native-python-pipelines-completion")
     artifact = tmp_path / "docs" / "arnold" / "python-shaped-authoring-contract.md"
     _write_text(artifact, "contract\n")
+    engine_root = _set_preflight_runtime(tmp_path, monkeypatch)
     save_chain_state(
         child_a,
         ChainState(
@@ -217,8 +229,22 @@ def test_epic_chain_advances_completed_child_and_honors_one(tmp_path: Path) -> N
             metadata={
                 "execution_environment": {
                     "project_root": str(tmp_path),
+                    "engine_root": str(engine_root),
                 }
             },
+        ),
+    )
+    # The next child (never launched under --one) must still pass the
+    # runtime-binding preflight when the loop observes it.
+    save_chain_state(
+        child_b,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(engine_root),
+                }
+            }
         ),
     )
     parent_spec = _write_parent_spec(
@@ -250,10 +276,27 @@ def test_epic_chain_advances_completed_child_and_honors_one(tmp_path: Path) -> N
     ]
 
 
-def test_epic_chain_launches_not_started_child_via_chain_start(tmp_path: Path) -> None:
+def test_epic_chain_launches_not_started_child_via_chain_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
     parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
     plan_name = "m1-plan"
+    engine_root = _set_preflight_runtime(tmp_path, monkeypatch)
+    # The outer-path preflight now runs BEFORE the first observe, so the
+    # not-started child must already carry a valid recorded engine root.
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(engine_root),
+                }
+            }
+        ),
+    )
 
     def _start_child(child, *, parent_spec_path: Path) -> subprocess.CompletedProcess[str]:
         assert child.id == "python-shaped-workflow-authoring"
@@ -270,6 +313,7 @@ def test_epic_chain_launches_not_started_child_via_chain_start(tmp_path: Path) -
                 metadata={
                     "execution_environment": {
                         "project_root": str(tmp_path),
+                        "engine_root": str(engine_root),
                     }
                 },
             ),
@@ -357,9 +401,24 @@ def test_chain_state_load_prefers_more_advanced_nested_symlink_state(tmp_path: P
     assert load_chain_state(root_alias).current_plan_name == "m1-plan"
 
 
-def test_epic_chain_treats_already_running_launch_as_live_child(tmp_path: Path) -> None:
+def test_epic_chain_treats_already_running_launch_as_live_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
     parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    engine_root = _set_preflight_runtime(tmp_path, monkeypatch)
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(engine_root),
+                }
+            }
+        ),
+    )
 
     def _start_child(*_args, **_kwargs) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
@@ -385,6 +444,7 @@ def test_epic_chain_treats_already_running_launch_as_live_child(tmp_path: Path) 
 
 def test_epic_chain_authority_drift_captured_when_legacy_complete_but_views_disagree(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Child-run aggregation captures drift when legacy says complete but
     authority views (execution batches) say otherwise.
@@ -406,6 +466,7 @@ def test_epic_chain_authority_drift_captured_when_legacy_complete_but_views_disa
     # because completed_prefix (1) >= len(milestones) (1).
     plan_name = "test-plan"
     _write_plan_state(tmp_path, plan_name, "done")
+    engine_root = _set_preflight_runtime(tmp_path, monkeypatch)
     save_chain_state(
         child_spec,
         ChainState(
@@ -416,6 +477,7 @@ def test_epic_chain_authority_drift_captured_when_legacy_complete_but_views_disa
             metadata={
                 "execution_environment": {
                     "project_root": str(tmp_path),
+                    "engine_root": str(engine_root),
                 }
             },
         ),
@@ -447,6 +509,7 @@ def test_epic_chain_authority_drift_captured_when_legacy_complete_but_views_disa
 
 def test_epic_chain_no_authority_drift_when_plan_dir_unavailable(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the child has no project_root or no current_plan_name, the
     authority drift check is skipped cleanly — the child is still classified
@@ -455,13 +518,20 @@ def test_epic_chain_no_authority_drift_when_plan_dir_unavailable(
     parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
 
     # Chain state with completed milestones but NO current_plan_name and
-    # NO execution_environment metadata (so project_root is None).
+    # NO execution_environment.project_root (so project_root is None) — the
+    # runtime-binding preflight still needs a recorded engine_root + manifest.
+    engine_root = _set_preflight_runtime(tmp_path, monkeypatch)
     save_chain_state(
         child_spec,
         ChainState(
             current_milestone_index=1,
             last_state="done",
             completed=[{"label": "m1", "plan": "some-plan", "status": "done"}],
+            metadata={
+                "execution_environment": {
+                    "engine_root": str(engine_root),
+                }
+            },
         ),
     )
 
@@ -473,3 +543,442 @@ def test_epic_chain_no_authority_drift_when_plan_dir_unavailable(
     assert child.effective_status == "complete"
     # Authority drift should be None when the check can't run (no project_root/plan).
     assert child.authority_drift is None
+
+
+# ── T-0011: child relaunch enforces recorded = manifest = live engine root ──
+
+
+def _write_runtime_manifest_file(root: Path, runtime_root: Path) -> Path:
+    manifest = root / "runtime-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "epic": {
+                    "runtime_root": str(runtime_root),
+                    "expected_head": "a" * 40,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def _set_preflight_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    engine_root: Path | None = None,
+) -> Path:
+    """Pin a valid per-session runtime binding so the child-runtime preflight
+    (T-0011 / G2 round-5 finding 1) passes on observe paths that must
+    legitimately load child state."""
+    root = engine_root or megaplan_engine_root()
+    manifest = _write_runtime_manifest_file(tmp_path, root)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    return root
+
+
+def _reject_admission_spies(monkeypatch: pytest.MonkeyPatch):
+    """Spy state load, execution binding, spawn, and child observation; all
+    must stay untouched when the runtime-binding preflight rejects a
+    relaunch or an outer-path observe. The observe spy wraps the REAL
+    function (records, then delegates) so a call that slips past the
+    preflight is a genuine regression, not a stub artifact."""
+    from arnold_pipelines.megaplan.chain import epic_chain as epic_chain_module
+    from arnold_pipelines.megaplan.chain import execution_binding as binding_module
+
+    state_loads: list = []
+    binds: list = []
+    spawns: list = []
+    observes: list = []
+    real_observe = epic_chain_module._observe_child_epic
+    monkeypatch.setattr(
+        epic_chain_module,
+        "load_chain_state",
+        lambda *args, **kwargs: state_loads.append(args) or ChainState(),
+    )
+    monkeypatch.setattr(
+        binding_module,
+        "bind_execution_identity",
+        lambda *args, **kwargs: binds.append(args) or {},
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: spawns.append(args)
+        or subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(
+        epic_chain_module,
+        "_observe_child_epic",
+        lambda *args, **kwargs: observes.append(args)
+        or real_observe(*args, **kwargs),
+    )
+    return state_loads, binds, spawns, observes
+
+
+def test_epic_chain_child_relaunch_requires_manifest_pin_before_state_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.chain.epic_chain import (
+        EpicSpec,
+        _default_start_child_chain,
+    )
+    from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+    from arnold_pipelines.megaplan.types import CliError
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(megaplan_engine_root()),
+                }
+            }
+        ),
+    )
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    state_loads, binds, spawns, observes = _reject_admission_spies(monkeypatch)
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    with pytest.raises(CliError) as excinfo:
+        _default_start_child_chain(epic, parent_spec_path=parent_spec)
+
+    assert excinfo.value.code == "chain_runtime_binding_drift"
+    assert "missing runtime manifest pin" in excinfo.value.message
+    assert state_loads == []
+    assert binds == []
+    assert spawns == []
+    assert observes == []
+
+
+def test_epic_chain_child_relaunch_fails_closed_on_manifest_without_runtime_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.chain.epic_chain import (
+        EpicSpec,
+        _default_start_child_chain,
+    )
+    from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+    from arnold_pipelines.megaplan.types import CliError
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(megaplan_engine_root()),
+                }
+            }
+        ),
+    )
+    manifest = tmp_path / "runtime-manifest.json"
+    manifest.write_text(
+        json.dumps({"epic": {"expected_head": "a" * 40}}) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    state_loads, binds, spawns, observes = _reject_admission_spies(monkeypatch)
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    with pytest.raises(CliError) as excinfo:
+        _default_start_child_chain(epic, parent_spec_path=parent_spec)
+
+    assert excinfo.value.code == "chain_runtime_binding_drift"
+    assert "lacks a nonempty epic.runtime_root" in excinfo.value.message
+    assert state_loads == []
+    assert binds == []
+    assert spawns == []
+    assert observes == []
+
+
+def test_epic_chain_child_relaunch_fails_closed_when_recorded_engine_root_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.chain.epic_chain import (
+        EpicSpec,
+        _default_start_child_chain,
+    )
+    from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+    from arnold_pipelines.megaplan.types import CliError
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    # Chain state persists WITHOUT metadata.execution_environment.engine_root.
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={"execution_environment": {"project_root": str(tmp_path)}}
+        ),
+    )
+    manifest = _write_runtime_manifest_file(tmp_path, megaplan_engine_root())
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    state_loads, binds, spawns, observes = _reject_admission_spies(monkeypatch)
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    with pytest.raises(CliError) as excinfo:
+        _default_start_child_chain(epic, parent_spec_path=parent_spec)
+
+    assert excinfo.value.code == "chain_runtime_binding_drift"
+    assert "lacks metadata.execution_environment.engine_root" in excinfo.value.message
+    assert state_loads == []
+    assert binds == []
+    assert spawns == []
+    assert observes == []
+
+
+def test_epic_chain_child_relaunch_fails_closed_when_recorded_engine_root_dangling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.chain.epic_chain import (
+        EpicSpec,
+        _default_start_child_chain,
+    )
+    from arnold_pipelines.megaplan.types import CliError
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    gone_root = tmp_path / "gone-runtime"
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(gone_root),
+                }
+            }
+        ),
+    )
+    # The manifest agrees with the recorded root, but the root itself is gone.
+    manifest = _write_runtime_manifest_file(tmp_path, gone_root)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    state_loads, binds, spawns, observes = _reject_admission_spies(monkeypatch)
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    with pytest.raises(CliError) as excinfo:
+        _default_start_child_chain(epic, parent_spec_path=parent_spec)
+
+    assert excinfo.value.code == "chain_runtime_binding_drift"
+    assert "is missing or dangling" in excinfo.value.message
+    assert state_loads == []
+    assert binds == []
+    assert spawns == []
+    assert observes == []
+
+
+def test_epic_chain_child_relaunch_rejects_engine_root_mismatch_against_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.chain.epic_chain import (
+        EpicSpec,
+        _default_start_child_chain,
+    )
+    from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+    from arnold_pipelines.megaplan.types import CliError
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    live_root = megaplan_engine_root()
+    other_root = tmp_path / "other-runtime"
+    other_root.mkdir()
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(live_root),
+                }
+            }
+        ),
+    )
+    # Manifest names a different runtime than the recorded/live root.
+    manifest = _write_runtime_manifest_file(tmp_path, other_root)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    state_loads, binds, spawns, observes = _reject_admission_spies(monkeypatch)
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    with pytest.raises(CliError) as excinfo:
+        _default_start_child_chain(epic, parent_spec_path=parent_spec)
+
+    assert excinfo.value.code == "chain_runtime_binding_drift"
+    assert "engine root mismatch" in excinfo.value.message
+    assert str(live_root) in excinfo.value.message
+    assert str(other_root) in excinfo.value.message
+    assert state_loads == []
+    assert binds == []
+    assert spawns == []
+    assert observes == []
+
+
+def test_epic_chain_child_relaunch_rejects_engine_root_mismatch_against_live_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.chain import epic_chain as epic_chain_module
+    from arnold_pipelines.megaplan.chain.epic_chain import (
+        EpicSpec,
+        _default_start_child_chain,
+    )
+    from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+    from arnold_pipelines.megaplan.types import CliError
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    live_root = megaplan_engine_root()
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(live_root),
+                }
+            }
+        ),
+    )
+    manifest = _write_runtime_manifest_file(tmp_path, live_root)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    # The live import root differs from the recorded/manifest root.
+    monkeypatch.setattr(
+        epic_chain_module,
+        "megaplan_engine_root",
+        lambda: tmp_path / "live-import-root",
+    )
+    state_loads, binds, spawns, observes = _reject_admission_spies(monkeypatch)
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    with pytest.raises(CliError) as excinfo:
+        _default_start_child_chain(epic, parent_spec_path=parent_spec)
+
+    assert excinfo.value.code == "chain_runtime_binding_drift"
+    assert "engine root mismatch" in excinfo.value.message
+    assert state_loads == []
+    assert binds == []
+    assert spawns == []
+    assert observes == []
+
+
+def test_epic_chain_child_relaunch_binds_accepted_engine_root_only_on_pythonpath(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.chain import epic_chain as epic_chain_module
+    from arnold_pipelines.megaplan.chain.epic_chain import (
+        EpicSpec,
+        _default_start_child_chain,
+    )
+    from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    live_root = megaplan_engine_root()
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(live_root),
+                }
+            }
+        ),
+    )
+    manifest = _write_runtime_manifest_file(tmp_path, live_root)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+
+    state_loads: list = []
+    monkeypatch.setattr(
+        epic_chain_module,
+        "load_chain_state",
+        lambda spec_path: state_loads.append(spec_path)
+        or ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(live_root),
+                }
+            }
+        ),
+    )
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    result = _default_start_child_chain(epic, parent_spec_path=parent_spec)
+
+    assert result.returncode == 0
+    assert len(state_loads) == 1
+    env = captured["env"]
+    # ONLY the accepted engine root reaches the child's PYTHONPATH (T-0011).
+    assert env["PYTHONPATH"] == str(live_root)
+    assert env["MEGAPLAN_ENGINE_ROOT"] == str(live_root)
+    assert env["PYTHONSAFEPATH"] == "1"
+    assert captured["cmd"][:2] == [sys.executable, "-P"]
+
+
+# ── G2 round-5 finding 1: outer-path observe rejects drift BEFORE state load ──
+
+
+def test_epic_chain_outer_path_rejects_runtime_drift_before_state_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The outer epic-chain path (run_epic_chain -> _observe_child_epic) must
+    run the runtime-binding preflight BEFORE _observe_child_epic or
+    load_chain_state: a recorded engine_root that is missing/dangling raises
+    chain_runtime_binding_drift with zero child state loads (G2 round-5
+    finding 1 — the T-0011 guards were previously only exercised via
+    _default_start_child_chain directly)."""
+    from arnold_pipelines.megaplan.types import CliError
+
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+    # The persisted child state records an engine root that no longer exists
+    # (dangling) — the manifest agrees with it, so only the dangling check
+    # fires, and it must fire before ANY child state load / observation.
+    gone_root = tmp_path / "gone-runtime"
+    save_chain_state(
+        child_spec,
+        ChainState(
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                    "engine_root": str(gone_root),
+                }
+            }
+        ),
+    )
+    manifest = _write_runtime_manifest_file(tmp_path, gone_root)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    state_loads, binds, spawns, observes = _reject_admission_spies(monkeypatch)
+
+    with pytest.raises(CliError) as excinfo:
+        run_epic_chain(tmp_path, parent_spec, writer=lambda _msg: None)
+
+    assert excinfo.value.code == "chain_runtime_binding_drift"
+    assert "is missing or dangling" in excinfo.value.message
+    # The outer path must reject BEFORE any child state read or observation.
+    assert state_loads == []
+    assert observes == []
+    assert binds == []
+    assert spawns == []

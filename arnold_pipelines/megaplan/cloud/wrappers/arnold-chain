@@ -4,9 +4,51 @@ SPEC="$1"
 ONE_FLAG="${2:-}"
 CANONICAL_LOG=".megaplan/cloud-chain.log"
 PROJECT_DIR="${MEGAPLAN_PROJECT_DIR:-$(pwd)}"
-ENGINE_DIR="${MEGAPLAN_ENGINE_DIR:-/workspace/arnold}"
 EXPECTED_SESSION="${ARNOLD_CHAIN_SESSION:-${ARNOLD_SUPERVISE_SESSION:-chain}}"
 EXPECTED_PLAN_NAME="${ARNOLD_CHAIN_PLAN_NAME:-${MEGAPLAN_CHAIN_PLAN_NAME:-}}"
+
+# ── mandatory manifest-bound runtime (G2 finding 1; T-0011) ──────────
+# The engine dir is derived ONLY from the per-session runtime manifest
+# (epic.runtime_root); there is NO fixed-path shared-root fallback.
+# Pin the manifest BEFORE the mutable box-wide hot env is sourced
+# (.cloud-hot-env is credentials-only but may still advertise an older
+# runtime), then reassert it so a stale value can never replace the accepted
+# runtime identity — the same ordering as the launch prefix in cloud/cli.py.
+PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"
+readonly PINNED_RUNTIME_MANIFEST
+if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;
+if [[ -n "$PINNED_RUNTIME_MANIFEST" ]]; then export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; fi
+
+# Fail closed (T-0011): a readable per-session ARNOLD_RUNTIME_MANIFEST pin
+# with nonempty epic.runtime_root + epic.expected_head and a successful
+# runtime_provenance check is MANDATORY before any launch.
+if [[ -z "$PINNED_RUNTIME_MANIFEST" ]]; then
+  echo "[arnold-chain] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >&2
+  exit 24
+fi
+if [[ ! -r "$PINNED_RUNTIME_MANIFEST" ]]; then
+  echo "[arnold-chain] isolated_chain_runtime_binding_drift: runtime manifest unreadable ($PINNED_RUNTIME_MANIFEST)" >&2
+  exit 24
+fi
+ENGINE_DIR="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c 'import json,sys; print(json.load(open(sys.argv[1])).get("epic",{}).get("runtime_root",""))' "$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)"
+if [[ -z "$ENGINE_DIR" ]]; then
+  echo "[arnold-chain] isolated_chain_runtime_binding_drift: manifest lacks epic.runtime_root" >&2
+  exit 24
+fi
+EXPECTED_REVISION="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c 'import json,sys; print(json.load(open(sys.argv[1])).get("epic",{}).get("expected_head",""))' "$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)"
+if [[ -z "$EXPECTED_REVISION" ]]; then
+  echo "[arnold-chain] isolated_chain_runtime_binding_drift: manifest lacks epic.expected_head" >&2
+  exit 24
+fi
+# The provenance check runs with PYTHONPATH set to exactly the manifest root
+# so active imports cannot resolve through an unbound shared checkout.
+if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" \
+    python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
+    --expected-root "$ENGINE_DIR" \
+    --expected-revision "$EXPECTED_REVISION" >/dev/null 2>&1; then
+  echo "[arnold-chain] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >&2
+  exit 24
+fi
 
 # ── pre-flight acceptance gate ───────────────────────────────────────
 # In atomic/enforce mode a completed chain with successors requiring
@@ -15,7 +57,7 @@ EXPECTED_PLAN_NAME="${ARNOLD_CHAIN_PLAN_NAME:-${MEGAPLAN_CHAIN_PLAN_NAME:-}}"
 # outside the Python chain flow.
 _check_acceptance_gate() {
   local spec="$1" workspace="$2" gate_json gate_rc validation_rc validation_message
-  if gate_json="$(PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}" python3 -P - "$spec" "$workspace" "chain_wrapper" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
+  if gate_json="$(PYTHONPATH="$ENGINE_DIR" python3 -P - "$spec" "$workspace" "chain_wrapper" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
 spec_path, workspace, caller = sys.argv[1:4]
@@ -48,7 +90,7 @@ PY
   # Validate through the canonical helper module.  This is intentionally the
   # only decision parser: the shell never defaults missing/malformed fields
   # open and never interprets a raw gate_open value itself.
-  if validation_message="$(PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}" python3 -P - "$gate_json" "$spec" "$workspace" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
+  if validation_message="$(PYTHONPATH="$ENGINE_DIR" python3 -P - "$gate_json" "$spec" "$workspace" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
 import sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import (
     AcceptanceGateDecisionError,
@@ -87,7 +129,7 @@ PY
 _check_acceptance_gate "$SPEC" "$PROJECT_DIR"
 
 if [ "$ONE_FLAG" = "--one" ]; then
-    exec bash -lc "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0:\${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
+    exec bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
 else
-    exec bash -lc "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0:\${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
+    exec bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
 fi

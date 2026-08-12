@@ -161,6 +161,21 @@ class GateResult(StrEnum):
     ERROR = "error"
 
 
+def adapter_effect_authorized(gate_result: object) -> bool:
+    """Return whether a raw mutation adapter may dispatch its effect.
+
+    Only the canonical, current :attr:`GateResult.AUTHORIZED` verdict grants
+    authority. ``None``, exceptions, malformed or foreign values, shadow
+    observations, and every blocked/error verdict fail closed.
+
+    The deliberately broad input type makes this predicate safe at raw
+    adapter boundaries, where gate wiring and third-party callbacks are not
+    trusted to return a well-formed value. This helper is pure and does not
+    provide the observation-only reread exception used by WBC runtime code.
+    """
+    return gate_result is GateResult.AUTHORIZED
+
+
 # ── Per-source check result ────────────────────────────────────────────────
 
 
@@ -1259,6 +1274,7 @@ __all__ = [
     "GateResult",
     "SourceCheck",
     "ValidationOutcome",
+    "adapter_effect_authorized",
     "production_enforcement_enabled",
     "validate_action_boundary",
     "validate_action_boundary_simple",

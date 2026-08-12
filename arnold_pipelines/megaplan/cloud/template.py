@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 import stat
 from importlib import resources
 from pathlib import Path, PurePosixPath
 from string import Template
 
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    COMPATIBILITY_ONLY_KEY,
+    EPIC_REQUIRED,
+    MANIFEST_SCHEMA_VERSION,
+    TOP_LEVEL_REQUIRED,
+)
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, RepoSpec, ToolchainSpec
 from arnold_pipelines.megaplan.profiles import (
     DEFAULT_AGENT_ROUTING,
@@ -30,7 +37,6 @@ PLACEHOLDERS = (
     "MEGAPLAN_REF",
     "MEGAPLAN_REPO",
     "MEGAPLAN_INSTALL_SPEC_OVERRIDE",
-    "MEGAPLAN_SRC_PATH",
     "CODEX_AUTH_METHOD",
     "CODEX_AUTH_CONFIG_BLOCK",
     "ROBUSTNESS",
@@ -204,18 +210,95 @@ os.replace(tmp_name, path)
     )
 
 
+def _pinned_manifest_field_read(field: str) -> str:
+    """Shell command substitution reading one ``epic`` field from the pinned
+    runtime manifest (``$PINNED_RUNTIME_MANIFEST``).
+
+    Stdlib JSON only, silent on absent/corrupt manifests — the caller's
+    unconditional manifest-pin checks fail closed on an empty read.  The
+    field is a module constant (``runtime_root`` / ``expected_head``), never
+    caller input.
+
+    G6 round-9 finding 1: the read is gated on the CANONICAL manifest
+    schema and rejects ``compatibility_only`` pointers.  The emitted script
+    prints the field only when the pinned file is a schema-valid runtime
+    manifest — ``schema`` equals ``MANIFEST_SCHEMA_VERSION``, both the
+    canonical top-level and ``epic`` required key sets are present, and the
+    ``compatibility_only`` marker is not set (a pointer is NON-AUTHORITATIVE
+    telemetry and can never select a runtime).  The key sets and schema
+    version are generated from runtime_manifest's own constants, so the
+    shell gate can never drift from the schema definition.  A present-but-
+    schema-invalid manifest (schema-less, wrong schema version, missing
+    required sections) or a ``compatibility_only`` pointer yields an EMPTY
+    read, so the pin gate fails closed with exit 24 instead of deriving a
+    dirty ENGINE_DIR from it.
+    """
+    return (
+        '$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c \'import json,sys; '
+        f"d=json.load(open(sys.argv[1])); R={json.dumps(TOP_LEVEL_REQUIRED)}; "
+        f"E={json.dumps(EPIC_REQUIRED)}; "
+        f"e=d.get(\"epic\") if isinstance(d,dict) and d.get(\"schema\")=={json.dumps(MANIFEST_SCHEMA_VERSION)} and d.get({json.dumps(COMPATIBILITY_ONLY_KEY)}) is not True and all(k in d for k in R) else None; "
+        f"print(e.get(\"{field}\",\"\")) if isinstance(e,dict) and all(k in e for k in E) else None\' "
+        '"$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)'
+    )
+
+
 def _auto_command(spec: CloudSpec) -> str:
     assert spec.auto is not None
     plan_dir = f"{spec.repo.workspace}/.megaplan/plans/{spec.auto.plan_name}"
+    manifest_pin = (
+        """# Explicit per-session manifest pin (T-0021): the auto bootstrap derives its
+# engine dir ONLY from ARNOLD_RUNTIME_MANIFEST (epic.runtime_root) and fails
+# closed (exit 24, isolated_chain_runtime_binding_drift) when the manifest is
+# absent, unreadable, schema-invalid, a compatibility_only pointer, or
+# disagrees with the active imports.  The container env may carry the
+# per-session pin; the canonical bootstrap manifest path is the explicit
+# default.  There is NO fixed-path shared-root fallback (no megaplan.src_path
+# read, no /workspace/arnold) and the pin is enforced BEFORE the session
+# marker write, init, or any state load.
+export ARNOLD_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}"
+PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"
+readonly PINNED_RUNTIME_MANIFEST
+if [[ -z "$PINNED_RUNTIME_MANIFEST" ]]; then
+  echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >&2
+  exit 24
+fi
+if [[ ! -r "$PINNED_RUNTIME_MANIFEST" ]]; then
+  echo "[megaplan-launch] isolated_chain_runtime_binding_drift: runtime manifest unreadable ($PINNED_RUNTIME_MANIFEST)" >&2
+  exit 24
+fi
+"""
+        + f'ENGINE_DIR="{_pinned_manifest_field_read("runtime_root")}"\n'
+        + """if [[ -z "$ENGINE_DIR" ]]; then
+  echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime_root" >&2
+  exit 24
+fi
+"""
+        + f'EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"\n'
+        + """if [[ -z "$EXPECTED_REVISION" ]]; then
+  echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >&2
+  exit 24
+fi
+# The provenance check runs with PYTHONPATH set to exactly the manifest root
+# so active imports cannot resolve through an unbound shared checkout.
+if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" \
+    python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
+    --expected-root "$ENGINE_DIR" \
+    --expected-revision "$EXPECTED_REVISION" >/dev/null 2>&1; then
+  echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >&2
+  exit 24
+fi
+"""
+    )
     script = f"""
 set -euo pipefail
-{_managed_run_prelude(session="agent", workspace=spec.repo.workspace, remote_spec=plan_dir, run_kind="plan")}
+{manifest_pin}{_managed_run_prelude(session="agent", workspace=spec.repo.workspace, remote_spec=plan_dir, run_kind="plan")}
 PLAN_DIR={shlex.quote(plan_dir)}
 if [[ ! -d "$PLAN_DIR" ]]; then
   IDEA="$(cat "$IDEA_FILE")"
-  python3 -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(spec.repo.workspace)} --name {shlex.quote(spec.auto.plan_name)} --auto-approve --robustness {shlex.quote(spec.auto.robustness)} "$IDEA"
+  env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" python3 -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(spec.repo.workspace)} --name {shlex.quote(spec.auto.plan_name)} --auto-approve --robustness {shlex.quote(spec.auto.robustness)} "$IDEA"
 fi
-exec arnold-supervise {shlex.quote(f"auto-{spec.auto.plan_name}")} python3 -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(spec.auto.plan_name)} --project-dir {shlex.quote(spec.repo.workspace)}
+exec arnold-supervise {shlex.quote(f"auto-{spec.auto.plan_name}")} env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" python3 -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(spec.auto.plan_name)} --project-dir {shlex.quote(spec.repo.workspace)}
 """
     return _quoted(script)
 
@@ -225,6 +308,12 @@ def _chain_command(spec: CloudSpec) -> str:
     script = f"""
 set -euo pipefail
 {_managed_run_prelude(session="agent", workspace=spec.repo.workspace, remote_spec=spec.chain.spec, run_kind="chain")}
+# Explicit per-session manifest pin (G2 finding 1 / T-0011): arnold-chain
+# derives its engine dir ONLY from ARNOLD_RUNTIME_MANIFEST and fails closed
+# (exit 24) when the manifest is absent, unreadable, or disagrees with the
+# active imports.  The container env may carry the per-session pin; the
+# canonical bootstrap manifest path is the explicit default.
+export ARNOLD_RUNTIME_MANIFEST="${{ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}}"
 exec arnold-supervise chain arnold-chain {shlex.quote(spec.chain.spec)}
 """
     return _quoted(script)
@@ -391,7 +480,6 @@ def render_entrypoint(spec: CloudSpec) -> str:
         "MEGAPLAN_REF": spec.megaplan.ref,
         "MEGAPLAN_REPO": spec.megaplan.repo or "",
         "MEGAPLAN_INSTALL_SPEC_OVERRIDE": spec.megaplan.install_spec or "",
-        "MEGAPLAN_SRC_PATH": spec.megaplan.src_path or "/workspace/arnold",
         "CODEX_AUTH_METHOD": spec.megaplan.codex_auth,
         "CODEX_AUTH_CONFIG_BLOCK": _codex_auth_config_block(spec),
         "ROBUSTNESS": spec.auto.robustness if spec.auto is not None else "standard",

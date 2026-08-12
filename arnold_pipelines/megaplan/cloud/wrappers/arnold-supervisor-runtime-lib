@@ -131,6 +131,12 @@ PY
   fi
 
   export MEGAPLAN_SUPERVISOR_PYTHON="$resolved"
+  # MEGAPLAN_SUPERVISOR_SOURCE_ROOT is a NON-SELECTING internal binding: it is
+  # exported by THIS lib from the fixed/manifest source_root parameter and read
+  # back only by this lib's own helpers (arnold_supervisor_python,
+  # arnold_supervisor_select_exact_fallback). It is never read from the ambient
+  # environment to select a runtime — the manifest epic.runtime_root is the
+  # only runtime selector (G4); do not re-introduce an env-selector read.
   export MEGAPLAN_SUPERVISOR_SOURCE_ROOT="$source_root"
   export MEGAPLAN_SUPERVISOR_ISOLATED="$isolated"
   arnold_supervisor_python() {
@@ -238,7 +244,10 @@ arnold_supervisor_select_exact_fallback() {
 # One runtime-manifest.json per runtime is the post-bootstrap runtime
 # resolver.  These helpers read a single dotted epic field and print it (or
 # nothing when absent), so wrappers prefer the manifest and keep their legacy
-# env/default fallback chain only for manifest-less runtimes.
+# env/default fallback chain only for manifest-less runtimes.  A PRESENT
+# manifest is validated by the canonical bootstrap_manifest — a present but
+# unreadable/schema-invalid manifest is an admission failure (fail closed),
+# never a silent empty field read.
 
 arnold_runtime_manifest_path() {
   printf '%s' "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}"
@@ -281,7 +290,6 @@ arnold_runtime_manifest_epic_field() {
   # runtime — permit-admitted manifestless runs keep the legacy fallback.
   arnold_runtime_manifest_is_compatibility_only "$manifest_path" && return 0
   python3 - "$manifest_path" "$field" <<'PY'
-import json
 import pathlib
 import sys
 
@@ -294,12 +302,13 @@ try:
     epic = getattr(manifest, "epic", None)
     value = epic.get(field) if isinstance(epic, dict) else None
 except Exception:
-    try:
-        payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-        epic = payload.get("epic") if isinstance(payload, dict) else None
-        value = epic.get(field) if isinstance(epic, dict) else None
-    except Exception:
-        sys.exit(0)
+    # No raw-fallback parse (G2 round 4): a PRESENT manifest that
+    # bootstrap_manifest rejects (corrupt JSON, schema mismatch, missing
+    # required fields) is an admission failure, never an absent field.
+    # Fail closed (non-zero, no output) so the caller treats it as
+    # present-but-invalid; the caller's present/absent triage already
+    # handled the only genuine "not present" case.
+    sys.exit(1)
 if isinstance(value, str) and value:
     print(value)
 PY
@@ -388,6 +397,7 @@ arnold_runtime_manifest_authority() {
   # P1 admission gate — sole manifest authority resolver for wrapper entry.
   #   present + valid (epic.branch, NOT compatibility_only) => pass
   #   present + invalid (corrupt / no epic.branch)          => exit 78
+  #   present-but-unreadable (dangling symlink / stat EACCES) => exit 78
   #   compatibility_only pointer / absent / unbound          => permit check
   #   absent  + valid unexpired permit                       => pass
   #   absent  + no permit                                    => exit 78
@@ -396,18 +406,64 @@ arnold_runtime_manifest_authority() {
   # can never select a runtime — admission treats it as ABSENT and falls
   # through to the permit check (G1 no-global-pointer fallback).
   local component="${1:-unknown}"
-  local manifest_path branch
+  local manifest_path branch field_status verdict STAT_ERR
   manifest_path="$(arnold_runtime_manifest_path)"
-  if [[ -f "$manifest_path" ]]; then
-    if ! arnold_runtime_manifest_is_compatibility_only "$manifest_path"; then
-      branch="$(arnold_runtime_manifest_epic_field branch)"
-      if [[ -n "$branch" ]]; then
-        return 0
-      fi
-      printf '%s\n' "runtime manifest present without epic.branch; failing closed" >&2
-      exit 78
+  # G5 round-13 finding: triage PRESENT vs ABSENT with stat semantics, never
+  # a bare ``[[ -f ]]`` (a dangling symlink / stat-inaccessible manifest fails
+  # ``-f`` and would fall through to the manifestless permit).  ``[[ -e ]]``
+  # FOLLOWS symlinks (stat); ``[[ -L ]]`` sees the ENTRY itself (lstat).  A
+  # DANGLING symlink (link entry exists, target gone) fails ``-e`` but passes
+  # ``-L``; a stat-inaccessible path (EACCES on the manifest or a parent dir)
+  # fails BOTH probes exactly like ENOENT.  Only a GENUINELY absent manifest
+  # (lstat ENOENT — incl. a missing parent dir) may fall through to the
+  # permit check; present-but-unreadable fails closed (exit 78).  The stat
+  # error text is the only reliable absent-vs-inaccessible signal (gc-sweep
+  # convention); the message is captured in a variable and matched with
+  # ``[[ ]]`` so ``set -o pipefail`` can never defeat the check.
+  if [[ -e "$manifest_path" ]]; then
+    verdict="present"
+  elif [[ -L "$manifest_path" ]]; then
+    verdict="dangling"
+  elif ! STAT_ERR="$(stat "$manifest_path" 2>&1)"; then
+    if [[ "$STAT_ERR" == *"No such file"* ]]; then
+      verdict="absent"
+    else
+      verdict="unreadable"
     fi
+  else
+    verdict="present"  # raced: entry appeared between the probes
   fi
+  case "$verdict" in
+    present)
+      if ! arnold_runtime_manifest_is_compatibility_only "$manifest_path"; then
+        branch="$(arnold_runtime_manifest_epic_field branch)"
+        field_status=$?
+        # A non-zero field read means the PRESENT manifest failed canonical
+        # validation (corrupt / schema-invalid) — fail closed with a typed
+        # message, never a silent empty value that falls through to permit
+        # checks (G2 round 4: no raw-fallback admission).
+        if [[ "$field_status" -ne 0 ]]; then
+          printf '%s\n' "runtime manifest present but failed to load (corrupt or schema-invalid); failing closed" >&2
+          exit 78
+        fi
+        if [[ -n "$branch" ]]; then
+          return 0
+        fi
+        printf '%s\n' "runtime manifest present without epic.branch; failing closed" >&2
+        exit 78
+      fi
+      ;;
+    dangling)
+      printf '%s\n' "runtime manifest present but unreadable (dangling symlink); failing closed" >&2
+      exit 78
+      ;;
+    unreadable)
+      printf '%s\n' "runtime manifest present but unreadable (stat/lstat failed); failing closed" >&2
+      exit 78
+      ;;
+    absent)
+      : ;;  # genuinely absent — fall through to the permit check below
+  esac
   if ! arnold_manifest_allow_manifestless; then
     printf '%s\n' "runtime manifest absent without a valid allow_manifestless permit; failing closed" >&2
     exit 78

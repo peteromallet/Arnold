@@ -194,6 +194,7 @@ def test_production_notification_wiring_inventory_is_closed() -> None:
     constructors: list[tuple[Path, ast.Call]] = []
     sweeps: list[tuple[Path, ast.Call]] = []
     legacy_discord_sends: list[tuple[Path, ast.Call]] = []
+    effect_owners: list[tuple[Path, ast.Call]] = []
     for root in production_roots:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -213,6 +214,8 @@ def test_production_notification_wiring_inventory_is_closed() -> None:
                     sweeps.append((path.relative_to(repo), node))
                 elif name == "send_discord_dm":
                     legacy_discord_sends.append((path.relative_to(repo), node))
+                elif name == "open_resident_delivery_effects":
+                    effect_owners.append((path.relative_to(repo), node))
 
     # The only standalone constructor is an explicitly named manual test
     # helper. The resident production constructor must inject the owner.
@@ -244,6 +247,18 @@ def test_production_notification_wiring_inventory_is_closed() -> None:
     assert all(
         "delivery_effects" in {keyword.arg for keyword in call.keywords}
         for _path, call in legacy_discord_sends
+    )
+
+    # Every production construction of the durable delivery owner must
+    # install an explicit current gate; a None-gate production path is
+    # forbidden (Batch 0B.2, T-0015).
+    assert {str(path) for path, _ in effect_owners} == {
+        "arnold_pipelines/megaplan/agentbox_adapter.py",
+        "arnold_pipelines/megaplan/resident/cli.py",
+    }
+    assert all(
+        "action_gate_check" in {keyword.arg for keyword in call.keywords}
+        for _path, call in effect_owners
     )
 
 

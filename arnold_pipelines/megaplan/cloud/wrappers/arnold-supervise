@@ -81,9 +81,18 @@ if [[ -n "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
   # shellcheck source=/dev/null
   source "$SUPERVISOR_RUNTIME_LIB"
   # Manifest-first runtime source (P4): the per-epic manifest runtime_root,
-  # else the fixed /workspace/arnold fallback.
+  # else the fixed /workspace/arnold fallback.  A PRESENT-but-invalid
+  # manifest fails closed (T-0024): the shared-lib field reader exits
+  # non-zero exactly when the manifest exists but cannot be canonically
+  # validated — only a genuinely missing manifest (rc 0 + empty) may keep
+  # the fixed fallback.
   if declare -F arnold_runtime_manifest_epic_field >/dev/null; then
     _manifest_runtime_root="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+    _manifest_field_rc=$?
+    if [[ "$_manifest_field_rc" -ne 0 ]]; then
+      echo "arnold-supervise: runtime manifest present but invalid; failing closed" >&2
+      exit 78
+    fi
     if [[ -n "$_manifest_runtime_root" ]]; then
       SUPERVISE_SOURCE="$_manifest_runtime_root"
     fi
