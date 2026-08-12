@@ -151,16 +151,33 @@ def _rejects_foreign_runtime_path(value: str, accepted_root: str | None) -> bool
     """Return whether a command references a runtime path other than the
     accepted root.  Without an accepted root the comparison cannot run and
     the command stays admissible (the shared-root/selector blacklists above
-    still apply)."""
+    still apply).
+
+    Workspace STATE paths under ``<workspace>/.megaplan`` (cloud-session
+    marker dir, repair queue, the per-epic manifest) are not runtime
+    selections — a relaunch legitimately names them while binding a single
+    runtime root — so they never count as foreign.  Only references that
+    select a DIFFERENT runtime candidate (a path under a
+    ``runtime-candidates`` or shared-runtime root) are foreign.
+    """
     root = str(accepted_root or "").strip()
     if not root:
         return False
     root = os.path.normpath(root)
+    workspace_megaplan = "/.megaplan/"
     for reference in _runtime_path_references(value):
         normalized = os.path.normpath(reference)
         if normalized == root or normalized.startswith(root + "/"):
             continue
-        return True
+        # Non-runtime workspace state (marker dir, repair queue, manifest):
+        # never a runtime selection, never foreign.
+        if "/.megaplan/" in normalized or normalized.endswith("/.megaplan"):
+            continue
+        # A runtime-candidates path different from the accepted root IS a
+        # foreign runtime selection (the shared /workspace/arnold root is
+        # already rejected by _SHARED_ROOT_TOKEN_RE above).
+        if "/runtime-candidates/" in normalized:
+            return True
     return False
 
 
@@ -192,8 +209,6 @@ _STALE_MARKER_FRAGMENTS = (
     "chown ",
     "tee ",
     "sed -i ",
-    " >>",
-    " >",
 )
 
 

@@ -100,7 +100,7 @@ from arnold.workflow.execution_attempt_ledger import (
 
 from arnold_pipelines.megaplan._core.state import resolve_plan_dir
 from arnold_pipelines.megaplan.chain import spec as chain_spec
-from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+from arnold_pipelines.megaplan.chain.operator_pause import is_paused, pause_record
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import decision_admission_lock
 from arnold_pipelines.megaplan.custody.contracts import (
@@ -127,6 +127,11 @@ _STOPPED_BLOCKED_STATES = frozenset({"blocked", "failed"})
 #: request/decision records, markers, manifests) never lives under it, so a
 #: receipt can never alias plan-side state.
 EVIDENCE_DIRNAME = "evidence"
+#: Adoption-record evidence subdirectory: ``chain occurrence-adopt`` persists
+#: the deterministic owner-boundary adoption authority/WBC record here
+#: (``<adoption_record_id>.json``); the owner-adoption join path re-reads and
+#: verifies it before acquiring the claim.
+ADOPTIONS_DIRNAME = "occurrence-adoptions"
 
 
 def _utc_now() -> str:
@@ -162,15 +167,54 @@ def occurrence_join_lease_id(claim_id: str) -> str:
     return f"occurrence-join-{digest[:16]}"
 
 
-def _load_request_record(queue_root: Path, request_id: str) -> dict[str, Any]:
+def occurrence_adoption_claim_attempt_id(
+    plan_dir: str | Path, occurrence_id: str, claim_id: str
+) -> str:
+    """Return the deterministic WBC attempt id for an owner-adoption claim.
+
+    Derived from the exact plan directory AND the repair identity key AND the
+    claim id, so an owner-adoption re-join with the same claim id resolves to
+    the same attempt stream (the claim/attempt relational identity is stable
+    and provable from the adoption record + receipt).
+    """
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"occurrence-join::{Path(plan_dir).resolve()}::"
+            f"{str(occurrence_id).strip()}::{str(claim_id).strip()}",
+        )
+    )
+
+
+def occurrence_adoption_join_lease_id(occurrence_id: str, claim_id: str) -> str:
+    """Return the deterministic custody lease id for an owner-adoption claim.
+
+    Derived from BOTH the repair identity key and the claim id so two
+    distinct claims for the same occurrence (or the same claim id under a
+    different occurrence) never share a lease id.
+    """
+    digest = hashlib.sha256(
+        f"{str(occurrence_id).strip()}::{str(claim_id).strip()}".encode("utf-8")
+    ).hexdigest()
+    return f"occurrence-join-{digest[:16]}"
+
+
+def _load_request_record(
+    queue_root: Path, request_id: str, *, require_claimable: bool = True
+) -> dict[str, Any]:
     request_path = repair_requests.requests_dir(queue_root) / f"{request_id}.json"
     try:
         record = json.loads(request_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         record = None
-    if (
-        not isinstance(record, Mapping)
-        or not repair_requests.has_claimable_repair_request_contract(record)
+    if not isinstance(record, Mapping):
+        raise CliError(
+            "request_not_found",
+            f"repair request {request_id!r} is not recorded as a claimable "
+            "request in the central repair queue",
+        )
+    if require_claimable and not repair_requests.has_claimable_repair_request_contract(
+        record
     ):
         raise CliError(
             "request_not_found",
@@ -389,6 +433,187 @@ def _plan_latest_failure_summary(plan_state: Mapping[str, Any]) -> dict[str, Any
     if isinstance(metadata, Mapping) and isinstance(metadata.get("blocked_no_lease"), str):
         summary["blocked_no_lease"] = metadata["blocked_no_lease"]
     return summary
+
+
+def _canonical_object_sha256(value: Any) -> str:
+    return "sha256:" + hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _file_sha256_str(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _verify_owner_adoption_still_current(
+    *,
+    plan_dir: Path,
+    spec_path: Path,
+    plan_state: Mapping[str, Any],
+    chain_state: Any,
+    adoption_identity: Mapping[str, Any],
+    occurrence_id: str,
+    claim_id: str,
+) -> None:
+    """Re-read + verify the persisted adoption record and the occurrence CAS.
+
+    Owner-boundary adoption joins consume the identity written by ``chain
+    occurrence-adopt``.  Before any lease/WBC effect:
+
+    * the adoption record MUST exist under
+      ``<plan dir>/evidence/occurrence-adoptions/<adoption_record_id>.json``,
+      embed the EXACT identity whose key equals the requested occurrence, and
+      declare the exact requested claim id;
+    * every occurrence-defining CAS field recorded at adoption time (chain
+      state file, plan state file, canonical latest_failure, canonical
+      resume_cursor, canonical pause authority, plan name, chain session)
+      must still match a FRESH reread of the live bytes — the occurrence
+      joined is STILL the adopted occurrence;
+    * the plan must STILL be identity-less (an adoption cannot be layered on
+      top of a later v1 identity).
+
+    All checks are read-only and fail closed with zero mutation.
+    """
+    authority = adoption_identity.get("authority")
+    authority = authority if isinstance(authority, Mapping) else {}
+    adoption_record_id = str(authority.get("adoption_record_id") or "").strip()
+    adoption_occurrence = adoption_identity.get("occurrence")
+    adoption_cas = adoption_identity.get("cas")
+    if (
+        not isinstance(adoption_occurrence, Mapping)
+        or not isinstance(adoption_cas, Mapping)
+        or not adoption_record_id
+    ):
+        raise CliError(
+            "occurrence_not_recorded",
+            "owner-boundary adoption identity is malformed",
+        )
+    if str(adoption_occurrence.get("chain_session") or "").strip() != str(
+        getattr(chain_state, "chain_session", "") or ""
+    ).strip():
+        raise CliError(
+            "occurrence_cas_changed",
+            "chain session changed since the occurrence was adopted",
+        )
+    if str(adoption_occurrence.get("plan_name") or "").strip() != str(
+        getattr(chain_state, "current_plan_name", "") or ""
+    ).strip():
+        raise CliError(
+            "occurrence_cas_changed",
+            "current plan changed since the occurrence was adopted",
+        )
+
+    record_dir = plan_dir / EVIDENCE_DIRNAME / ADOPTIONS_DIRNAME
+    record: dict[str, Any] | None = None
+    if record_dir.is_dir():
+        for candidate in sorted(record_dir.glob("*.json")):
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            if str(payload.get("adoption_record_id") or "").strip() != adoption_record_id:
+                continue
+            record = dict(payload)
+            break
+    if record is None:
+        raise CliError(
+            "adoption_record_missing",
+            f"no persisted adoption record {adoption_record_id} under "
+            f"{record_dir}; the occurrence cannot be joined without its "
+            "persisted adoption authority",
+        )
+    if str(record.get("repair_identity_key") or "").strip() != occurrence_id:
+        raise CliError(
+            "adoption_record_mismatch",
+            "persisted adoption record disagrees with the requested occurrence",
+        )
+    if str(record.get("claim_id") or "").strip() != claim_id:
+        raise CliError(
+            "adoption_record_mismatch",
+            "persisted adoption record disagrees with the requested claim",
+        )
+    persisted_identity = repair_requests.normalize_owner_adoption_identity(
+        record.get("identity")
+    )
+    if (
+        persisted_identity is None
+        or repair_requests.owner_adoption_identity_key(persisted_identity)
+        != occurrence_id
+    ):
+        raise CliError(
+            "adoption_record_mismatch",
+            "persisted adoption identity disagrees with the requested occurrence",
+        )
+
+    # ── Still-current occurrence CAS (fresh rereads, byte-exact) ──────────
+    if repair_requests.plan_state_has_repair_identity(plan_state):
+        raise CliError(
+            "occurrence_mismatch",
+            "plan state now carries a persisted repair identity; the adopted "
+            "identity-less occurrence is no longer the current occurrence",
+        )
+    latest_failure = plan_state.get("latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        raise CliError(
+            "ambiguous_failure",
+            "plan latest_failure is no longer a singular mapping",
+        )
+    if (
+        str(latest_failure.get("kind") or "").strip()
+        != str(adoption_occurrence.get("failure_kind") or "").strip()
+        or str(latest_failure.get("recorded_at") or "").strip()
+        != str(adoption_occurrence.get("failure_recorded_at") or "").strip()
+    ):
+        raise CliError(
+            "occurrence_cas_changed",
+            "plan latest failure changed since the occurrence was adopted",
+        )
+    resume_cursor = plan_state.get("resume_cursor")
+    if not isinstance(resume_cursor, Mapping):
+        raise CliError(
+            "occurrence_cas_changed",
+            "plan resume cursor vanished since the occurrence was adopted",
+        )
+    if _canonical_object_sha256(latest_failure) != str(
+        adoption_cas.get("latest_failure_sha256") or ""
+    ):
+        raise CliError(
+            "occurrence_cas_changed",
+            "latest failure CAS changed since the occurrence was adopted",
+        )
+    if _canonical_object_sha256(resume_cursor) != str(
+        adoption_cas.get("resume_cursor_sha256") or ""
+    ):
+        raise CliError(
+            "occurrence_cas_changed",
+            "resume cursor CAS changed since the occurrence was adopted",
+        )
+    chain_state_file = chain_spec._state_path_for(spec_path)
+    if not chain_state_file.is_file() or _file_sha256_str(chain_state_file) != str(
+        adoption_cas.get("chain_state_sha256") or ""
+    ):
+        raise CliError(
+            "occurrence_cas_changed",
+            "chain state CAS changed since the occurrence was adopted",
+        )
+    state_path = plan_dir / "state.json"
+    if not state_path.is_file() or _file_sha256_str(state_path) != str(
+        adoption_cas.get("plan_state_sha256") or ""
+    ):
+        raise CliError(
+            "occurrence_cas_changed",
+            "plan state CAS changed since the occurrence was adopted",
+        )
+    pause = pause_record(chain_state)
+    if pause is None or _canonical_object_sha256(pause) != str(
+        adoption_cas.get("pause_authority_sha256") or ""
+    ):
+        raise CliError(
+            "occurrence_cas_changed",
+            "pause authority CAS changed since the occurrence was adopted",
+        )
 
 
 def _live_claim_records(store: SqliteAttemptLedgerStore, occurrence_id: str) -> list[dict[str, Any]]:
@@ -765,7 +990,9 @@ def join_exact_occurrence(
             repair_requests.decisions_dir(queue_root),
         ],
     )
-    request_record = _load_request_record(queue_root, request_id_n)
+    request_record = _load_request_record(
+        queue_root, request_id_n, require_claimable=False
+    )
     recorded_session = str(request_record.get("session") or "").strip()
     if recorded_session != session_n:
         raise CliError(
@@ -800,45 +1027,128 @@ def join_exact_occurrence(
     normalized_identity = repair_requests.normalize_repair_identity(
         request_record.get("repair_identity")
     )
+    adoption_identity: dict[str, Any] | None = None
     if normalized_identity is None:
-        raise CliError(
-            "occurrence_not_recorded",
-            f"repair request {request_id_n!r} carries no normalized repair identity",
+        adoption_identity = repair_requests.normalize_owner_adoption_identity(
+            request_record.get("repair_identity")
         )
-    occurrence_raw = normalized_identity.get("occurrence")
-    occurrence_key = (
-        normalize_repair_occurrence_key(occurrence_raw)
-        if isinstance(occurrence_raw, Mapping)
-        else None
-    )
-    if occurrence_key is None:
-        raise CliError(
-            "occurrence_not_recorded",
-            f"repair request {request_id_n!r} occurrence contract is invalid",
-        )
-    f01_digest = str(occurrence_key.occurrence_digest or "").strip()
-
-    # Plan-side occurrence cross-check (only when the plan persisted identity).
-    plan_meta = plan_state.get("meta") if isinstance(plan_state, Mapping) else {}
-    plan_identity_raw = plan_meta.get("repair_identity") if isinstance(plan_meta, Mapping) else None
-    if plan_identity_raw is not None:
-        plan_identity = repair_requests.normalize_repair_identity(plan_identity_raw)
-        if (
-            plan_identity is None
-            or repair_requests.repair_identity_key(plan_identity) != occurrence_id_n
+        if adoption_identity is None:
+            raise CliError(
+                "occurrence_not_recorded",
+                f"repair request {request_id_n!r} carries no normalized repair identity",
+            )
+        if not repair_requests.has_owner_adopted_repair_request_contract(
+            request_record
         ):
             raise CliError(
+                "occurrence_not_recorded",
+                f"repair request {request_id_n!r} adoption request contract is "
+                "invalid (generic claimable requests cannot bind an "
+                "owner-boundary adoption occurrence)",
+            )
+        if repair_requests.owner_adoption_identity_key(
+            adoption_identity
+        ) != occurrence_id_n:
+            raise CliError(
                 "occurrence_mismatch",
-                "plan-state repair identity disagrees with the requested occurrence",
+                f"occurrence {occurrence_id_n!r} does not match the adopted "
+                f"occurrence for request {request_id_n!r}",
                 extra={
                     "expected_occurrence": occurrence_id_n,
-                    "plan_occurrence_key": (
-                        repair_requests.repair_identity_key(plan_identity)
-                        if plan_identity is not None
-                        else ""
-                    ),
+                    "request_id": request_id_n,
                 },
             )
+    else:
+        if not repair_requests.has_claimable_repair_request_contract(request_record):
+            raise CliError(
+                "request_not_found",
+                f"repair request {request_id_n!r} is not recorded as a claimable "
+                "request in the central repair queue",
+            )
+
+    is_adoption = adoption_identity is not None
+    if is_adoption:
+        adoption_occurrence = adoption_identity.get("occurrence")
+        f01_digest = str(
+            (adoption_occurrence or {}).get("subject_occurrence_digest") or ""
+        ).strip()
+        if not f01_digest:
+            raise CliError(
+                "occurrence_not_recorded",
+                "owner-boundary adoption identity carries no subject "
+                "occurrence digest",
+            )
+        authority = adoption_identity.get("authority")
+        authority = authority if isinstance(authority, Mapping) else {}
+        fence_token = int(authority.get("adoption_fence_token") or 0)
+        coordinator_attempt_id = str(
+            authority.get("adoption_attempt_id") or ""
+        ).strip()
+        wbc_attempt_reference = str(
+            authority.get("wbc_attempt_reference") or ""
+        ).strip()
+        # NO historical custody epoch exists for an adopted occurrence: the
+        # new claim lease + its custody epoch are created AT JOIN TIME.
+        identity_custody_epoch = 0
+        seed_custody_epoch = max(identity_custody_epoch, 1)
+        _verify_owner_adoption_still_current(
+            plan_dir=plan_dir,
+            spec_path=spec_path,
+            plan_state=plan_state,
+            chain_state=chain_state,
+            adoption_identity=adoption_identity,
+            occurrence_id=occurrence_id_n,
+            claim_id=claim_id_n,
+        )
+    else:
+        occurrence_raw = normalized_identity.get("occurrence")
+        occurrence_key = (
+            normalize_repair_occurrence_key(occurrence_raw)
+            if isinstance(occurrence_raw, Mapping)
+            else None
+        )
+        if occurrence_key is None:
+            raise CliError(
+                "occurrence_not_recorded",
+                f"repair request {request_id_n!r} occurrence contract is invalid",
+            )
+        f01_digest = str(occurrence_key.occurrence_digest or "").strip()
+
+        # Plan-side occurrence cross-check (only when the plan persisted identity).
+        plan_meta = plan_state.get("meta") if isinstance(plan_state, Mapping) else {}
+        plan_identity_raw = (
+            plan_meta.get("repair_identity") if isinstance(plan_meta, Mapping) else None
+        )
+        if plan_identity_raw is not None:
+            plan_identity = repair_requests.normalize_repair_identity(plan_identity_raw)
+            if (
+                plan_identity is None
+                or repair_requests.repair_identity_key(plan_identity) != occurrence_id_n
+            ):
+                raise CliError(
+                    "occurrence_mismatch",
+                    "plan-state repair identity disagrees with the requested occurrence",
+                    extra={
+                        "expected_occurrence": occurrence_id_n,
+                        "plan_occurrence_key": (
+                            repair_requests.repair_identity_key(plan_identity)
+                            if plan_identity is not None
+                            else ""
+                        ),
+                    },
+                )
+
+        # ── Authoritative fence + custody epoch (carried from the recorded
+        #    occurrence identity; never fabricated per-claim) ──────────────
+        fence_token = int(occurrence_key.fence_token or 0)
+        coordinator_attempt_id = str(
+            occurrence_key.coordinator_attempt_id or ""
+        ).strip()
+        wbc_attempt_reference = str(
+            occurrence_key.wbc_attempt_reference or ""
+        ).strip()
+        identity_custody_epoch = int(normalized_identity.get("custody_epoch") or 0)
+        seed_custody_epoch = max(identity_custody_epoch, 1)
 
     decision_record = _load_decision_record(queue_root, decision_id_n)
     decision_request_id = str(decision_record.get("request_id") or "").strip()
@@ -882,17 +1192,18 @@ def join_exact_occurrence(
         )
     _verify_decision_still_latest(queue_root, request_id_n, decision_id_n)
 
-    # ── Authoritative fence + custody epoch (carried from the recorded
-    #    occurrence identity; never fabricated per-claim) ──────────────────
-    fence_token = int(occurrence_key.fence_token or 0)
-    coordinator_attempt_id = str(occurrence_key.coordinator_attempt_id or "").strip()
-    wbc_attempt_reference = str(occurrence_key.wbc_attempt_reference or "").strip()
-    identity_custody_epoch = int(normalized_identity.get("custody_epoch") or 0)
-    seed_custody_epoch = max(identity_custody_epoch, 1)
-
     # ── Claim identity + fences (read-only until acquisition) ─────────────
-    attempt_id = occurrence_claim_attempt_id(plan_dir, claim_id_n)
-    lease_id = occurrence_join_lease_id(claim_id_n)
+    # Owner-adoption claims derive their attempt + lease ids from BOTH the
+    # repair identity key and the claim id (the v1 claim id alone is not
+    # unique across adopted occurrences).
+    if is_adoption:
+        attempt_id = occurrence_adoption_claim_attempt_id(
+            plan_dir, occurrence_id_n, claim_id_n
+        )
+        lease_id = occurrence_adoption_join_lease_id(occurrence_id_n, claim_id_n)
+    else:
+        attempt_id = occurrence_claim_attempt_id(plan_dir, claim_id_n)
+        lease_id = occurrence_join_lease_id(claim_id_n)
 
     wbc_path = plan_dir / PHASE_WBC_LEDGER_FILENAME
     lease_store = open_lease_store(plan_dir / "custody" / "leases")
@@ -1021,7 +1332,14 @@ def join_exact_occurrence(
 
             claim_payload = {
                 "kind": CLAIM_KIND,
-                "occurrence_key": occurrence_key.to_dict(),
+                "occurrence_key": (
+                    adoption_occurrence if is_adoption else occurrence_key.to_dict()
+                ),
+                "identity_kind": (
+                    repair_requests.OWNER_ADOPTION_IDENTITY_KIND
+                    if is_adoption
+                    else "v1"
+                ),
                 "occurrence_id": occurrence_id_n,
                 "claim_id": claim_id_n,
                 "request_id": request_id_n,
@@ -1252,6 +1570,11 @@ def join_exact_occurrence(
             "paused": paused,
             "stopped_blocked": stopped_blocked,
         },
+        "identity_kind": (
+            repair_requests.OWNER_ADOPTION_IDENTITY_KIND
+            if is_adoption
+            else "v1"
+        ),
         "occurrence": {
             "id": occurrence_id_n,
             "f01_digest": f01_digest,
@@ -1260,6 +1583,36 @@ def join_exact_occurrence(
             "wbc_attempt_reference": wbc_attempt_reference,
             "latest_failure": _plan_latest_failure_summary(plan_state),
         },
+        "adoption": (
+            {
+                "adoption_record_id": str(
+                    (adoption_identity.get("authority") or {}).get(
+                        "adoption_record_id"
+                    )
+                    or ""
+                ),
+                "adoption_run_id": str(
+                    (adoption_identity.get("authority") or {}).get(
+                        "adoption_run_id"
+                    )
+                    or ""
+                ),
+                "adoption_grant_id": str(
+                    (adoption_identity.get("authority") or {}).get(
+                        "adoption_grant_id"
+                    )
+                    or ""
+                ),
+                "adoption_fence_token": int(
+                    (adoption_identity.get("authority") or {}).get(
+                        "adoption_fence_token"
+                    )
+                    or 0
+                ),
+            }
+            if is_adoption
+            else None
+        ),
         "session": session_n,
         "request_id": request_id_n,
         "decision_id": decision_id_n,
@@ -1267,6 +1620,11 @@ def join_exact_occurrence(
         "attempt_id": attempt_id,
         "lease": {
             "lease_id": lease_id,
+            # The owner-adoption claim lease is a NEW current lease created at
+            # join time — never the missing historical lease (T-0101e').
+            "lease_origin": (
+                "owner_boundary_adoption_claim" if is_adoption else "occurrence_join_claim"
+            ),
             "event_id": str(getattr(lease_event, "event_id", "") or ""),
             "coordinator_fence_token": (
                 int(getattr(lease_record, "coordinator_fence_token", 0) or 0)
@@ -1388,14 +1746,18 @@ def _release_lease_best_effort(
 
 
 __all__ = [
+    "ADOPTIONS_DIRNAME",
     "CLAIM_KIND",
     "DEFAULT_LEASE_TTL_SECONDS",
     "EVIDENCE_DIRNAME",
     "OPERATOR_ACTOR",
     "SCHEMA",
     "_validate_receipt_destination",
+    "_verify_owner_adoption_still_current",
     "_write_receipt_durably",
     "join_exact_occurrence",
+    "occurrence_adoption_claim_attempt_id",
+    "occurrence_adoption_join_lease_id",
     "occurrence_claim_attempt_id",
     "occurrence_join_lease_id",
 ]
