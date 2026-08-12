@@ -184,6 +184,55 @@ def test_cloud_exec_accepts_on_box_provider() -> None:
     assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
 
 
+def test_cloud_supervise_accepts_on_box_provider() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    args = _cloud_parser().parse_args(
+        [
+            "cloud",
+            "supervise",
+            "--chain",
+            "--remote-spec",
+            "initiative/chain.yaml",
+            "--on-box",
+        ]
+    )
+
+    assert args.cloud_action == "supervise"
+    assert args.chain is True
+    assert args.remote_spec == "initiative/chain.yaml"
+    assert args.on_box is True
+    assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
+
+
+def test_on_box_refused_for_action_outside_allowlist() -> None:
+    """G7 negative: --on-box is allowlisted per action — an action outside
+    the allowlist (status) refuses with the updated message listing
+    supervise, while exec stays allowed.
+    """
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    with pytest.raises(
+        CliError,
+        match=(
+            "--on-box is supported only for cloud chain, exec, launch-epic, "
+            "sync-megaplan, and supervise"
+        ),
+    ):
+        _provider_for_action(
+            _cloud_spec(),
+            argparse.Namespace(cloud_action="status", on_box=True, session=None),
+        )
+
+    assert isinstance(
+        _provider_for_action(
+            _cloud_spec(),
+            argparse.Namespace(cloud_action="exec", on_box=True, session=None),
+        ),
+        OnBoxProvider,
+    )
+
+
 def test_cloud_chain_accepts_prepare_only() -> None:
     args = _cloud_parser().parse_args(
         ["cloud", "chain", "initiative/chain.yaml", "--prepare-only"]

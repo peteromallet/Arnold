@@ -2670,6 +2670,158 @@ def test_execution_binding_migrate_refuses_unprogressed_chain(
     assert _state_path_for(spec_path).read_bytes() == state_bytes
 
 
+def test_execution_binding_migrate_env_marker_dir_takes_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G7: migrate resolves the cloud-session marker through
+    ARNOLD_CHAIN_SESSION_MARKER_DIR first.  A valid marker ONLY in the env
+    dir — with a corrupt decoy at the project-relative fallback — must be
+    resolved: reading the decoy would raise, so success proves the env dir
+    wins over the fallback.
+    """
+    fixture = _migrate_fixture(tmp_path, monkeypatch, session="g7-marker-env")
+    spec_path = fixture["spec_path"]
+    runtime = fixture["runtime"]
+    env_marker_dir = tmp_path / "env-layout" / ".megaplan" / "cloud-sessions"
+    _write_cloud_marker(
+        tmp_path / "env-layout",
+        spec_path,
+        session="g7-marker-env",
+        plan="c1-plan",
+        runtime=runtime,
+    )
+    # Decoy: the project-relative fallback holds a corrupt marker for the
+    # same session — reading it would raise, not silently succeed.
+    fixture["marker_path"].write_text("{ not json", encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_CHAIN_SESSION_MARKER_DIR", str(env_marker_dir))
+
+    result = migrate_execution_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        expected_branch="canary-work",
+        reason="env marker dir precedence",
+        actor="test-operator",
+        verified_external_runtime_identity=runtime,
+    )
+    assert result["engine_root"] == str(Path(runtime["import_root"]).resolve())
+
+
+def test_execution_binding_migrate_canonical_workspace_marker_dir_used_without_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G7: without the env override the CANONICAL workspace marker dir
+    (/workspace/.megaplan/cloud-sessions, cli.py:2640) is consulted before
+    the project-relative fallback.  The canonical probe is simulated (the
+    test host has no /workspace) with the exact bytes a real box marker
+    would hold; a corrupt decoy at the fallback proves the canonical dir
+    was read first.
+    """
+    fixture = _migrate_fixture(tmp_path, monkeypatch, session="g7-marker-canonical")
+    spec_path = fixture["spec_path"]
+    runtime = fixture["runtime"]
+    canonical_bytes = _write_cloud_marker(
+        tmp_path / "canonical-layout",
+        spec_path,
+        session="g7-marker-canonical",
+        plan="c1-plan",
+        runtime=runtime,
+    ).read_bytes()
+    # Decoy: the project-relative fallback holds a corrupt marker.
+    fixture["marker_path"].write_text("{ not json", encoding="utf-8")
+    monkeypatch.delenv("ARNOLD_CHAIN_SESSION_MARKER_DIR", raising=False)
+
+    canonical_probe = (
+        Path("/workspace/.megaplan/cloud-sessions") / "g7-marker-canonical.json"
+    )
+    real_exists = Path.exists
+    real_read_bytes = Path.read_bytes
+
+    def _fake_exists(self: Path) -> bool:
+        return self == canonical_probe or real_exists(self)
+
+    def _fake_read_bytes(self: Path) -> bytes:
+        if self == canonical_probe:
+            return canonical_bytes
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "exists", _fake_exists)
+    monkeypatch.setattr(Path, "read_bytes", _fake_read_bytes)
+
+    result = migrate_execution_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        expected_branch="canary-work",
+        reason="canonical marker dir",
+        actor="test-operator",
+        verified_external_runtime_identity=runtime,
+    )
+    assert result["engine_root"] == str(Path(runtime["import_root"]).resolve())
+
+
+def test_execution_binding_migrate_project_relative_marker_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G7: when neither the env override nor the canonical workspace marker
+    dir holds the marker, the project-relative .megaplan/cloud-sessions
+    fallback (the rehearsal's tmp layout) still resolves it.
+    """
+    monkeypatch.delenv("ARNOLD_CHAIN_SESSION_MARKER_DIR", raising=False)
+    fixture = _migrate_fixture(tmp_path, monkeypatch, session="g7-marker-fallback")
+    spec_path = fixture["spec_path"]
+    runtime = fixture["runtime"]
+
+    result = migrate_execution_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        expected_branch="canary-work",
+        reason="project-relative marker fallback",
+        actor="test-operator",
+        verified_external_runtime_identity=runtime,
+    )
+    assert result["engine_root"] == str(Path(runtime["import_root"]).resolve())
+
+
+def test_execution_binding_migrate_refuses_missing_marker_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G7 negative: with the marker NOWHERE (no env override, no canonical
+    workspace marker, no project-relative fallback) migrate refuses with the
+    missing-marker guard and mutates nothing.
+    """
+    monkeypatch.delenv("ARNOLD_CHAIN_SESSION_MARKER_DIR", raising=False)
+    fixture = _migrate_fixture(tmp_path, monkeypatch, session="g7-marker-missing")
+    spec_path = fixture["spec_path"]
+    fixture["marker_path"].unlink()
+    state_bytes = _state_path_for(spec_path).read_bytes()
+    manifest_bytes = fixture["manifest_path"].read_bytes()
+    plan_bytes = fixture["plan_path"].read_bytes()
+
+    with pytest.raises(CliError, match="cloud-session marker is missing"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="missing marker guard",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+    assert fixture["manifest_path"].read_bytes() == manifest_bytes
+    assert fixture["plan_path"].read_bytes() == plan_bytes
+
+
 def test_b_cli_execution_binding_migrate_initializes_binding_via_command(
     tmp_path: Path,
     offline_rollback_runtime: dict[str, Path | str],
