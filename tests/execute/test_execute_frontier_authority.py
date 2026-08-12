@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
+
+import pytest
 
 from arnold_pipelines.megaplan._core import execute_batch_artifact_path
 from arnold_pipelines.megaplan.authority import (
@@ -218,3 +221,88 @@ def test_effective_execute_projection_emits_drift_for_raw_terminal_disagreement(
     assert records[0]["diagnostics"]["execute_completion"] == (
         "accepted_attempt_projection"
     )
+
+
+# ── T-0019: execute frontier admits no effect without explicit authority ─────
+
+
+class _RecordingProtocol:
+    """EffectProtocol spy: records every effect call without side effects."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    def reserve_and_start(self, **kwargs) -> object:
+        self.calls.append(("reserve_and_start",))
+        return type(
+            "_Reservation",
+            (),
+            {"global_logical_effect_key": "glek-exec-frontier"},
+        )()
+
+    def persist_intent(self, **kwargs) -> None:
+        self.calls.append(("persist_intent",))
+
+    def accept_outcome(self, *args, **kwargs) -> None:
+        self.calls.append(("accept_outcome",))
+
+
+@pytest.mark.parametrize(
+    "family,missing_gate",
+    [
+        pytest.param("local_workspace", True, id="local_workspace-missing-gate"),
+        pytest.param("process", True, id="process-missing-gate"),
+        pytest.param("terminal", True, id="terminal-missing-gate"),
+        pytest.param("publication_handoff", True, id="publication_handoff-missing-gate"),
+        pytest.param("local_workspace", False, id="local_workspace-shadow-pass"),
+        pytest.param("process", False, id="process-shadow-pass"),
+        pytest.param("terminal", False, id="terminal-shadow-pass"),
+        pytest.param("publication_handoff", False, id="publication_handoff-shadow-pass"),
+    ],
+)
+def test_execute_frontier_denies_every_effect_family_before_any_effect_call(
+    family: str,
+    missing_gate: bool,
+) -> None:
+    from arnold_pipelines.megaplan.custody.action_validator import GateResult
+    from arnold_pipelines.megaplan.execute.effect_gate import (
+        ExecuteEffectGate,
+        ExecuteEffectFamily,
+        ExecuteTarget,
+    )
+
+    protocol = _RecordingProtocol()
+    gate_kwargs = {} if missing_gate else {
+        "action_gate_check": lambda f, t: GateResult.SHADOW_PASS,
+    }
+    gate = ExecuteEffectGate(protocol, **gate_kwargs)
+    target = ExecuteTarget(
+        family=ExecuteEffectFamily(family),
+        batch_number=1,
+        task_ids=("T1",),
+        action="dispatch",
+    )
+    applied: list = []
+
+    outcome = gate.route(
+        target=target,
+        intent_payload={"data": 1},
+        apply_fn=lambda payload: applied.append(payload) or {"ok": True},
+    )
+
+    assert outcome.ok is False
+    assert outcome.glek == ""
+    assert outcome.outcome_kind == "FAILED"
+    assert outcome.evidence["gate_verdict"] == ("missing" if missing_gate else "shadow_pass")
+    assert protocol.calls == []
+    assert applied == []
+
+
+def test_execute_effect_gate_source_keeps_no_shadow_pass_admission() -> None:
+    from arnold_pipelines.megaplan.execute import effect_gate as effect_gate_module
+
+    gate_source = inspect.getsource(effect_gate_module.ExecuteEffectGate)
+    assert "adapter_effect_authorized(verdict)" in gate_source
+    assert "SHADOW_PASS" not in gate_source
+    gate_method_source = inspect.getsource(effect_gate_module.ExecuteEffectGate._gate)
+    assert "return None" in gate_method_source

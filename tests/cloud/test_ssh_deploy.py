@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import shlex
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from arnold.workflow.effect_protocol import EffectProtocol
 
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
@@ -13,6 +20,28 @@ from arnold_pipelines.megaplan.cloud.spec import (
     ResourcesSpec,
     SshSpec,
 )
+from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import SshEffectAdapter
+from arnold_pipelines.megaplan.custody.action_validator import GateResult
+from arnold_pipelines.megaplan.types import CliError
+
+
+def _authorized_effect_adapter() -> SshEffectAdapter:
+    """Real adapter with an explicit authorized gate and a bypassed stale
+    fence, so deploy command capture runs through the actual WBC route."""
+    protocol = MagicMock(spec=EffectProtocol)
+    reservation = MagicMock()
+    reservation.global_logical_effect_key = "glek-deploy-test"
+    protocol.reserve_and_start.return_value = reservation
+
+    class FenceBypassAdapter(SshEffectAdapter):
+        def _check_stale_fence(self, target, fence_token):
+            return True
+
+    return FenceBypassAdapter(
+        protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+        production_enabled=False,
+    )
 
 
 def _minimal_cloud_spec(**ssh_overrides) -> CloudSpec:
@@ -61,7 +90,10 @@ class TestSshDeployPersistentMounts:
             def _sync_deploy_dir(self, deploy_dir):
                 pass  # skip for this test
 
-        provider = CaptureSshProvider(spec)
+        provider = CaptureSshProvider(
+            spec,
+            ssh_effect_adapter=_authorized_effect_adapter(),
+        )
         provider.deploy(Path("/tmp/fake"), secrets={"OPENAI_API_KEY": "sk-test"})
         # Return the concatenated commands for assertion
         return "\n".join(captured_commands)
@@ -142,6 +174,336 @@ class TestSshDeployPersistentMounts:
         assert f"-p {port}:{port}" in commands
 
 
+class TestSshProviderMissingEffectAdapter:
+    """A missing ssh_effect_adapter is a typed denial (ssh.py:2800-2803):
+
+    no gate/adapter may fall back to direct SSH, upload, deploy, or
+    remote-command execution — blocked cases make zero transport calls.
+    """
+
+    def _capture_provider(self, spec: CloudSpec):
+        from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
+
+        captured_commands: list[str] = []
+
+        class CaptureSshProvider(SshProvider):
+            def _remote_run(self, command, *, capture_output=True, input=None):
+                captured_commands.append(command)
+                from subprocess import CompletedProcess
+                return CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+            def _run(self, argv, *, capture_output=True, input=None):
+                captured_commands.append(" ".join(argv))
+                from subprocess import CompletedProcess
+                return CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+            def _sync_deploy_dir(self, deploy_dir):
+                pass
+
+        provider = CaptureSshProvider(spec)
+        return provider, captured_commands
+
+    def test_deploy_without_adapter_is_typed_denial_with_zero_transport(self) -> None:
+        """deploy() with _ssh_effect_adapter None raises a typed denial."""
+        provider, captured_commands = self._capture_provider(_minimal_cloud_spec())
+
+        with pytest.raises(CliError) as caught:
+            provider.deploy(Path("/tmp/fake"), secrets={"OPENAI_API_KEY": "sk-test"})
+
+        assert caught.value.code == "ssh_effect_adapter_unavailable"
+        assert "no ssh_effect_adapter installed" in caught.value.message
+        assert captured_commands == []
+
+    def test_build_without_adapter_is_typed_denial_with_zero_transport(self) -> None:
+        """build() with _ssh_effect_adapter None raises a typed denial."""
+        provider, captured_commands = self._capture_provider(_minimal_cloud_spec())
+
+        with pytest.raises(CliError) as caught:
+            provider.build(Path("/tmp/fake"))
+
+        assert caught.value.code == "ssh_effect_adapter_unavailable"
+        assert captured_commands == []
+
+    def test_destroy_without_adapter_is_typed_denial_with_zero_transport(self) -> None:
+        """destroy() with _ssh_effect_adapter None raises a typed denial."""
+        provider, captured_commands = self._capture_provider(_minimal_cloud_spec())
+
+        with pytest.raises(CliError) as caught:
+            provider.destroy()
+
+        assert caught.value.code == "ssh_effect_adapter_unavailable"
+        assert captured_commands == []
+
+    def test_route_through_wbc_without_adapter_is_typed_denial(self) -> None:
+        """The 2800-2803 branch itself denies and never invokes apply_fn."""
+        from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
+
+        apply_calls: list[dict] = []
+        provider = SshProvider(_minimal_cloud_spec())
+
+        with pytest.raises(CliError, match="no ssh_effect_adapter installed"):
+            provider._maybe_route_through_wbc(
+                "deploy",
+                {"deploy_dir": "/tmp/fake"},
+                lambda payload: apply_calls.append(payload),
+            )
+
+        assert apply_calls == []
+
+
+class TestSshProviderGatedDirectTransport:
+    """Step 13F (T-0018): ssh_exec/upload/down are action-off and gate-only.
+
+    Direct transport must route through the adapter gate: a missing adapter
+    or a non-AUTHORIZED gate verdict is a typed denial with zero transport
+    calls, while observation-only paths (prelaunch/capacity/status) keep
+    working without any adapter.
+    """
+
+    def _capture_provider(self, spec: CloudSpec, adapter=None):
+        from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
+
+        captured_commands: list[str] = []
+
+        class CaptureSshProvider(SshProvider):
+            def _remote_run(self, command, *, capture_output=True, input=None, surface=None):
+                del capture_output, input, surface
+                captured_commands.append(command)
+                return subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout='{"ok": true}\n', stderr=""
+                )
+
+            def _run(self, argv, *, capture_output=True, input=None, surface=None):
+                del capture_output, input, surface
+                captured_commands.append(" ".join(argv))
+                return subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="", stderr=""
+                )
+
+            def _sync_deploy_dir(self, deploy_dir):
+                pass
+
+        return CaptureSshProvider(spec, ssh_effect_adapter=adapter), captured_commands
+
+    def _shadow_adapter(self) -> SshEffectAdapter:
+        return SshEffectAdapter(
+            MagicMock(spec=EffectProtocol),
+            action_gate_check=lambda _boundary, _target_key: GateResult.SHADOW_PASS,
+            production_enabled=False,
+        )
+
+    def _assert_denied(
+        self, adapter, operation, *, code: str, message_part: str
+    ) -> None:
+        provider, captured = self._capture_provider(
+            _minimal_cloud_spec(), adapter=adapter
+        )
+        with pytest.raises(CliError) as caught:
+            operation(provider)
+        assert caught.value.code == code
+        assert message_part in caught.value.message
+        assert captured == []
+
+    # ── missing adapter: typed denial, zero transport ──
+
+    def test_ssh_exec_without_adapter_is_typed_denial_with_zero_transport(self) -> None:
+        self._assert_denied(
+            None,
+            lambda p: p.ssh_exec("echo hi"),
+            code="ssh_effect_adapter_unavailable",
+            message_part="no ssh_effect_adapter installed",
+        )
+
+    def test_upload_file_without_adapter_is_typed_denial_with_zero_transport(self) -> None:
+        self._assert_denied(
+            None,
+            lambda p: p.upload_file(Path("/tmp/fake"), "/remote/f"),
+            code="ssh_effect_adapter_unavailable",
+            message_part="no ssh_effect_adapter installed",
+        )
+
+    def test_upload_archive_without_adapter_is_typed_denial_with_zero_transport(self) -> None:
+        self._assert_denied(
+            None,
+            lambda p: p.upload_archive(Path("/tmp/fake.tar.gz"), "/remote"),
+            code="ssh_effect_adapter_unavailable",
+            message_part="no ssh_effect_adapter installed",
+        )
+
+    def test_down_without_adapter_is_typed_denial_with_zero_transport(self) -> None:
+        self._assert_denied(
+            None,
+            lambda p: p.down(),
+            code="ssh_effect_adapter_unavailable",
+            message_part="no ssh_effect_adapter installed",
+        )
+
+    # ── non-AUTHORIZED gate: typed denial, zero transport ──
+
+    def test_direct_transport_denied_on_non_authorized_gate(self) -> None:
+        shadow = self._shadow_adapter()
+        for operation in (
+            lambda p: p.ssh_exec("echo hi"),
+            lambda p: p.upload_file(Path("/tmp/fake"), "/remote/f"),
+            lambda p: p.upload_archive(Path("/tmp/fake.tar.gz"), "/remote"),
+            lambda p: p.down(),
+        ):
+            self._assert_denied(
+                shadow,
+                operation,
+                code="provider_failed",
+                message_part="Action gate blocked",
+            )
+
+    def test_direct_transport_denied_on_production_adapter_even_when_authorized(
+        self,
+    ) -> None:
+        production = SshEffectAdapter(
+            MagicMock(spec=EffectProtocol),
+            action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+            production_enabled=True,
+        )
+        self._assert_denied(
+            production,
+            lambda p: p.ssh_exec("echo hi"),
+            code="provider_failed",
+            message_part="action-off",
+        )
+
+    # ── authorized gate: transport runs ──
+
+    def test_ssh_exec_runs_through_authorized_gate(self) -> None:
+        provider, captured = self._capture_provider(
+            _minimal_cloud_spec(), adapter=_authorized_effect_adapter()
+        )
+        result = provider.ssh_exec("echo hi")
+        assert result.returncode == 0
+        assert captured == ["docker exec megaplan-cloud-agent bash -lc 'echo hi'"]
+
+    def test_down_runs_through_authorized_gate(self) -> None:
+        provider, captured = self._capture_provider(
+            _minimal_cloud_spec(), adapter=_authorized_effect_adapter()
+        )
+        assert provider.down() == 0
+        assert captured == ["docker stop megaplan-cloud-agent"]
+
+    # ── production construction: fail closed when the adapter is unavailable ──
+
+    def test_production_factory_fails_closed_without_adapter(self) -> None:
+        from arnold_pipelines.megaplan.cloud.providers.base import get_provider
+
+        # Production construction must refuse to build an SshProvider without
+        # an effect adapter: an unavailable adapter is a construction error,
+        # never a None-adapter fallback that could run ungated transport.
+        with pytest.raises(CliError) as caught:
+            get_provider("ssh", _minimal_cloud_spec())
+        assert caught.value.code == "ssh_effect_adapter_unavailable"
+        assert "no ssh_effect_adapter installed" in caught.value.message
+        assert "construction refused" in caught.value.message
+
+    # ── observation paths unaffected ──
+
+    def test_observation_paths_unaffected_without_adapter(self) -> None:
+        provider, captured = self._capture_provider(_minimal_cloud_spec())
+
+        # status read works without an adapter
+        payload = provider.status_payload(
+            plan=None, workspace="/opt/megaplan-cloud/workspace"
+        )
+        assert payload["ok"] is True
+
+        # prelaunch capacity works without an adapter
+        provider.observe_container = lambda: {
+            "status": "available",
+            "lifecycle": "running",
+            "workspace_bind": {"status": "missing"},
+        }
+        prelaunch = provider.observe_prelaunch_capacity()
+        assert prelaunch["verdict"] == "NO-GO"
+
+        # capacity inventory works without an adapter
+        inventory = {
+            "schema": "arnold.cloud.ssh_capacity_inventory.v1",
+            "workspace": "/opt/megaplan-cloud/workspace",
+            "filesystem": {"free_bytes": 1, "free_inodes": 20, "block_size": 4096},
+            "mount": {
+                "st_dev": 1,
+                "device_major": 0,
+                "device_minor": 1,
+                "inode": 2,
+            },
+            "scopes": [
+                {"path": path, "status": "available", "size_bytes": 1}
+                for path in (
+                    "/opt/megaplan-cloud/workspace",
+                    "/opt/megaplan-cloud/deploy",
+                    "/opt/megaplan-cloud/cache",
+                )
+            ],
+            "docker_disk_usage": [],
+            "errors": [],
+            "status": "available",
+            "returncode": 0,
+        }
+        provider._host_observation = lambda operation: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(inventory) + "\n", stderr=""
+        )
+        capacity = provider.observe_capacity_inventory()
+        assert isinstance(capacity, dict)
+
+        # The only transport is the status read itself (ungated observation);
+        # no gated mutation command (docker stop/upload/exec-mutation) ran.
+        assert len(captured) == 1
+        assert "docker exec" in captured[0]
+        assert "megaplan status" in captured[0]
+
+    def test_observation_transports_ungated_without_adapter(self) -> None:
+        """T-0018: read_remote_file/logs are observation-only and attach is
+        interactive transport — all three keep working without an effect
+        adapter (classified in source, never gated, never mutating)."""
+        provider, captured = self._capture_provider(_minimal_cloud_spec())
+
+        # read_remote_file: read-only remote inspection (cat), ungated
+        content = provider.read_remote_file("/opt/megaplan-cloud/state.json")
+        assert content == '{"ok": true}\n'
+        assert "cat" in captured[0]
+
+        # logs (non-follow): read-only docker logs stream, ungated
+        assert provider.logs(follow=False) == 0
+        assert "docker logs" in captured[1]
+
+        # attach: interactive PTY transport (tmux client attach), ungated
+        assert provider.attach() == 0
+        assert "tmux attach" in captured[2]
+
+        # status_payload: documented observation-only read, ungated
+        captured.clear()
+        payload = provider.status_payload(
+            plan=None, workspace="/opt/megaplan-cloud/workspace"
+        )
+        assert payload["ok"] is True
+        assert "megaplan status" in captured[0]
+
+    def test_observation_classification_documented(self) -> None:
+        """T-0018: read_remote_file/logs are explicitly documented in source
+        as observation-only transports and attach as interactive transport —
+        an explicit classification, never a silent ungated bypass."""
+        import inspect
+
+        from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
+
+        assert "Observation-only transport" in inspect.getsource(
+            SshProvider.read_remote_file
+        )
+        assert "Observation-only transport" in inspect.getsource(
+            SshProvider.logs
+        )
+        assert "Interactive transport" in inspect.getsource(SshProvider.attach)
+        assert "Observation-only path" in inspect.getsource(
+            SshProvider.status_payload
+        )
+
+
 def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
     from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 
@@ -160,23 +522,26 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
         "/workspace/.megaplan/resident-runtime.env"
     )
     assert "tmux new-session -d -s megaplan-resident-discord -c /workspace" in entrypoint
-    assert "runtime_src=/workspace/arnold" in entrypoint
-    assert "export MEGAPLAN_RUNTIME_SRC=/workspace/arnold" in entrypoint
+    assert "runtime_src=/workspace/arnold" not in entrypoint
+    assert "MEGAPLAN_RUNTIME_SRC" not in entrypoint
     assert r'cd \"\$runtime_src\"' in entrypoint
 
 
-def test_entrypoint_boot_supervisors_use_fixed_workspace_runtime() -> None:
+def test_entrypoint_boot_supervisors_use_manifest_pinned_runtime() -> None:
     from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 
     entrypoint = render_entrypoint(_minimal_cloud_spec())
 
-    # Heartbeat, watchdog, and resident all execute from the fixed
-    # /workspace/arnold checkout (P4 config cleanup): hot env is
-    # credentials-only and the legacy runtime selectors are retired, so
-    # runtime_src is a literal, never an env-expanded selector chain.
-    assert entrypoint.count("runtime_src=/workspace/arnold") == 3
+    # Heartbeat, watchdog, and resident all resolve runtime_src from the
+    # per-session manifest (ARNOLD_RUNTIME_MANIFEST -> epic.runtime_root):
+    # no shared-root literal and no env-selector read (G5).  An unbound pin
+    # skips the supervisor sessions instead of launching from /workspace/arnold.
+    assert entrypoint.count("runtime_src=/workspace/arnold") == 0
+    assert entrypoint.count("arnold_runtime_manifest_epic_field epic.runtime_root") == 1
+    assert entrypoint.count("ENTRYPOINT_RUNTIME_ROOT") >= 4
     assert entrypoint.count(r'cd \"\$runtime_src\"') == 3
     assert r"MEGAPLAN_RUNTIME_SRC:-\${CLOUD_WATCHDOG_ARNOLD_SRC" not in entrypoint
+    assert "MEGAPLAN_RUNTIME_SRC" not in entrypoint
     assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in entrypoint
     assert (
         r'exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/'
@@ -303,5 +668,6 @@ def test_resident_self_heal_starts_the_production_bot_boundary() -> None:
         "/workspace/.megaplan/resident-runtime.env"
     )
     assert 'readlink -f "/proc/$pane_pid/exe"' in ensure_script
-    assert '"MEGAPLAN_RUNTIME_SRC=$runtime_src"' in ensure_script
+    assert 'grep -F -- "PYTHONPATH=$runtime_src:"' in ensure_script
     assert '"MEGAPLAN_RUNTIME_PYTHON=$runtime_python"' in ensure_script
+    assert "MEGAPLAN_RUNTIME_SRC" not in ensure_script

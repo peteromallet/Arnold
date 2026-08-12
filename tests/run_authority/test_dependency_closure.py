@@ -24,12 +24,15 @@ from dataclasses import replace
 from arnold_pipelines.run_authority import (
     CapabilityGrant,
     Claim,
+    COHERENT,
     CoordinatorFence,
     Decision,
     EvidenceEnvelope,
+    INCOHERENT,
     IdempotencyKey,
     ObservationEnvelope,
     SubjectAttempt,
+    UNKNOWN,
     reduce_run_authority,
 )
 
@@ -317,3 +320,113 @@ def test_repeated_legacy_done_labels_remain_observations_only() -> None:
     assert view.claims == ()
     assert view.decisions == ()
     assert view.quarantines == ()
+
+
+# ---------------------------------------------------------------------------
+# Coherence closure — observations are typed and never authorize dispatch.
+# ---------------------------------------------------------------------------
+
+def _runtime_observation(*, live_import_root: str = "/workspace/arnold") -> dict:
+    return {
+        "recorded_engine_root": "/workspace/arnold",
+        "manifest_runtime_root": "/workspace/arnold",
+        "manifest_expected_head": "a" * 40,
+        "live_import_root": live_import_root,
+        "wrapper_digest": "b" * 64,
+        "dependency_generation": "v3-r7",
+        "environment_identity": "env-a",
+        "session_identity": "env-a",
+    }
+
+
+def test_legacy_done_label_is_explicitly_typed_unknown_evidence() -> None:
+    legacy = _legacy_done_label()
+
+    # A legacy record without coherence fields is typed UNKNOWN, never green.
+    assert legacy.coherence == UNKNOWN
+    assert legacy.is_dispatchable is False
+    assert legacy.runtime_observation is None
+
+    # A legacy label tied to an old revision is stale: the stale branch
+    # precedes the unknown branch, and an old revision makes the UNKNOWN
+    # record stale too (locked decision — never reordered to unknown).
+    view = reduce_run_authority((legacy,), run_id=RUN_ID, run_revision=REVISION)
+    assert view.coherent_observations == ()
+    stale = [d for d in view.diagnostics if d.code == "non_coherent_observation"]
+    assert stale and stale[0].reason == "stale_observation_cannot_authorize_dispatch"
+
+    # A legacy label carrying the view's revision (no stale revision info)
+    # falls through to the unknown branch: UNKNOWN typing can never
+    # authorize dispatch.
+    current_revision = replace(legacy, run_revision=REVISION)
+    view = reduce_run_authority((current_revision,), run_id=RUN_ID, run_revision=REVISION)
+    assert view.coherent_observations == ()
+    unknown = [d for d in view.diagnostics if d.code == "non_coherent_observation"]
+    assert unknown and unknown[0].reason == "unknown_observation_cannot_authorize_dispatch"
+
+
+def test_non_coherent_observation_cannot_authorize_or_rescue_dispatch() -> None:
+    legacy = _legacy_done_label("legacy-rescue")
+    torn = ObservationEnvelope.capture(
+        observation_id="obs-torn", run_id=RUN_ID, run_revision=REVISION,
+        observation_type="runtime", source="collector://one",
+        runtime_observation=_runtime_observation(live_import_root="/workspace/other"),
+    )
+    claim = next(record for record in _accepted_kernel_chain() if isinstance(record, Claim))
+
+    # Neither a legacy label nor an incoherent capture can stand in for the
+    # missing kernel evidence, and neither is ever projected as coherent.
+    view = reduce_run_authority((claim, legacy, torn), run_id=RUN_ID, run_revision=REVISION)
+
+    assert torn.coherence == INCOHERENT
+    assert view.claims == ()
+    assert view.decisions == ()
+    assert view.coherent_observations == ()
+    assert any(q.reason.startswith("missing_matching") for q in view.quarantines)
+    assert {d.record_id for d in view.diagnostics if d.code == "non_coherent_observation"} == {
+        "legacy-rescue", "obs-torn",
+    }
+
+
+def test_coherent_observation_alone_never_mints_accepted_progress() -> None:
+    envelope = ObservationEnvelope.capture(
+        observation_id="obs-coherent", run_id=RUN_ID, run_revision=REVISION,
+        observation_type="runtime", source="collector://one",
+        runtime_observation=_runtime_observation(),
+        source_identity="collector://one",
+        source_version="1.2.3",
+        source_cursor=7,
+        content_hash="c" * 64,
+    )
+
+    assert envelope.coherence == COHERENT
+    assert envelope.is_dispatchable is True
+
+    view = reduce_run_authority(
+        (envelope,), run_id=RUN_ID, run_revision=REVISION, journal_cursor=8,
+    )
+    assert view.coherent_observations == (envelope,)
+    assert view.claims == ()
+    assert view.decisions == ()
+    assert view.quarantines == ()
+
+
+def test_kernel_chain_acceptance_is_never_supplemented_by_observations() -> None:
+    chain = _accepted_kernel_chain()
+    torn = ObservationEnvelope.capture(
+        observation_id="obs-torn", run_id=RUN_ID, run_revision=REVISION,
+        observation_type="runtime", source="collector://one",
+        runtime_observation=_runtime_observation(live_import_root="/workspace/other"),
+    )
+
+    view = reduce_run_authority(chain + (torn,), run_id=RUN_ID, run_revision=REVISION)
+
+    # The kernel chain alone is what produced accepted progress; the
+    # non-coherent observation is preserved as evidence, recorded as a
+    # diagnostic, and never folded into the accepted result.
+    assert _accepted_ids(view) == (["claim-1"], ["decision-1"])
+    assert view.coherent_observations == ()
+    assert any(
+        d.code == "non_coherent_observation" and d.record_id == "obs-torn"
+        for d in view.diagnostics
+    )

@@ -73,7 +73,7 @@ def test_status_projection_wraps_forged_inputs_as_display_only(
     assert not (set(_authority_strings(projection)) & FORBIDDEN_ACTION_FIELDS)
 
 
-def test_process_facts_can_show_liveness_but_not_task_or_action_authority() -> None:
+def test_raw_process_facts_never_show_live_or_task_authority() -> None:
     runner = derive_runner_view(
         (
             {
@@ -89,7 +89,9 @@ def test_process_facts_can_show_liveness_but_not_task_or_action_authority() -> N
     )
     payload = runner.to_dict()
 
-    assert payload["status"] == "live"
+    # A raw mapping is UNKNOWN-typed evidence: it stays visible but can never
+    # authorize ``live`` (the view degrades to ``pending``).
+    assert payload["status"] == "pending"
     assert payload["read_only"] is True
     assert payload["shadow"] is True
     assert "accepted_task_ids" not in payload
@@ -110,7 +112,10 @@ def test_publication_observations_do_not_smuggle_execution_authority() -> None:
     )
     payload = publication.to_dict()
 
-    assert payload["status"] == "ready"
+    # A complete raw mapping reports every field but carries no coherence
+    # claim: it can never authorize ``ready`` (the view degrades to
+    # ``pending``) and smuggles no execution authority.
+    assert payload["status"] == "pending"
     assert payload["read_only"] is True
     assert payload["shadow"] is True
     assert "accepted_task_ids" not in payload

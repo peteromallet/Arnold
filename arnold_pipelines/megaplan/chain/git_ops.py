@@ -2089,6 +2089,67 @@ def _capture_pr_merged_evidence(
     )
 
 
+def _reference_census(root: Path) -> tuple[str, list[str]]:
+    """Run the canonical runtime reference census for *root* (T-0027).
+
+    Fail-closed gate shared by every destructive git route: returns
+    ``(CLEAR, [])`` only when every reference store is readable and holds no
+    exact reference to *root*; otherwise the verdict (``REFERENCED`` /
+    ``DANGLING`` / ``UNKNOWN``) plus the census reasons.  Callers MUST treat
+    any non-CLEAR verdict as a hard deletion refusal — no route may treat
+    ``--force`` / ``--fresh`` / ``--restore-proven`` as evidence of safety.
+
+    Store dirs come from the SAME env vars as ``arnold-gc-sweep``
+    (``ARNOLD_REFERENCE_CHAIN_STORE``, ``ARNOLD_REFERENCE_MARKER_STORE``,
+    ``ARNOLD_REFERENCE_SCHEDULE_STORES``, ``ARNOLD_REFERENCE_REPAIR_QUEUE``,
+    ``ARNOLD_REFERENCE_LEASE_STORE``, ``ARNOLD_RUNTIME_MANIFEST_DIR``,
+    ``ARNOLD_BASE_DIR``) with the census module defaults as fallback, so
+    tests sandbox the stores exactly like the sweep.  A raising or
+    unavailable census is ``UNKNOWN`` — delete-on-unknown never happens.
+    """
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_references import (
+            DEFAULT_CHAIN_STORE,
+            DEFAULT_LEASE_STORE,
+            DEFAULT_MARKER_STORE,
+            DEFAULT_REPAIR_QUEUE,
+            DEFAULT_SCHEDULE_STORE,
+            normalize_root,
+            run_census,
+        )
+    except Exception as exc:  # pragma: no cover - defensive boundary
+        return "UNKNOWN", [f"reference census unavailable: {exc}"]
+    normalized = normalize_root(str(root))
+    if not normalized:
+        return "UNKNOWN", [f"root {root!r} is not an absolute runtime root"]
+    try:
+        return run_census(
+            root=normalized,
+            workspace=os.environ.get("ARNOLD_BASE_DIR", ""),
+            manifest_store=os.environ.get(
+                "ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"
+            ),
+            current_manifest="",
+            chain_store=os.environ.get(
+                "ARNOLD_REFERENCE_CHAIN_STORE", DEFAULT_CHAIN_STORE
+            ),
+            marker_store=os.environ.get(
+                "ARNOLD_REFERENCE_MARKER_STORE", DEFAULT_MARKER_STORE
+            ),
+            schedule_store=os.environ.get(
+                "ARNOLD_REFERENCE_SCHEDULE_STORES", DEFAULT_SCHEDULE_STORE
+            ),
+            repair_queue=os.environ.get(
+                "ARNOLD_REFERENCE_REPAIR_QUEUE", DEFAULT_REPAIR_QUEUE
+            ),
+            lease_store=os.environ.get(
+                "ARNOLD_REFERENCE_LEASE_STORE", DEFAULT_LEASE_STORE
+            ),
+        )
+    except Exception as exc:  # pragma: no cover - defensive boundary
+        return "UNKNOWN", [f"reference census raised: {exc}"]
+
+
 def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
     status = _compat().subprocess.run(
         ["git", "status", "--porcelain", "-uall"],
@@ -2120,6 +2181,20 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
             f"changes first: {sample}",
             extra={"dirty_status": status.stdout},
         )
+    # Reference census (T-0027): the PR head branch must never be deleted
+    # while a runtime store still references this checkout (an open PR /
+    # manifest / job reference is load-bearing).  REFERENCED / DANGLING /
+    # UNKNOWN all skip the --delete-branch flag — fail-closed, the deletion
+    # is refused even though the non-destructive merge itself proceeds.
+    # CLEAR keeps the existing route authority (merge + delete-branch).
+    census_verdict, census_reasons = _reference_census(root)
+    delete_branch = census_verdict == "CLEAR"
+    if not delete_branch:
+        detail = "; ".join(census_reasons) or census_verdict
+        writer(
+            f"[chain] reference census {census_verdict}: refusing --delete-branch "
+            f"for PR #{pr_number} head branch ({detail})\n"
+        )
     try:
         _compat()._run_command(
             root,
@@ -2130,7 +2205,7 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
                 str(pr_number),
                 "--auto",
                 "--squash",
-                "--delete-branch",
+                *(["--delete-branch"] if delete_branch else []),
             ],
             writer=writer,
             timeout=120,
@@ -2172,7 +2247,14 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
         writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
     _compat()._run_command(
         root,
-        ["gh", "pr", "merge", str(pr_number), "--squash", "--delete-branch"],
+        [
+            "gh",
+            "pr",
+            "merge",
+            str(pr_number),
+            "--squash",
+            *(["--delete-branch"] if delete_branch else []),
+        ],
         writer=writer,
         timeout=120,
         error_code="gh_pr_merge_failed",
@@ -2567,15 +2649,30 @@ def _delete_reconcile_pr_branch(root: Path, branch: str, *, writer) -> bool:
     """Delete a reconcile PR head branch locally and on origin.
 
     Returns True when the branch is gone (deleted here or already deleted,
-    e.g. GitHub's auto-delete-head-branch after merge).  Raises ``CliError``
-    on any unexpected deletion failure.  Local deletion is best-effort: the
-    branch may never have been checked out in this worktree.
+    e.g. GitHub's auto-delete-head-branch after merge).  Returns False —
+    WITHOUT deleting anything — when the reference census is not CLEAR for
+    *root* (a referenced branch is load-bearing and never deleted).  Raises
+    ``CliError`` on any unexpected deletion failure.  Local deletion is
+    best-effort: the branch may never have been checked out in this worktree.
     """
     if not branch or not branch.strip():
         raise CliError(
             "missing_branch",
             "reconcile PR branch deletion requires a branch name",
         )
+    # Reference census (T-0027): a reconcile branch referenced by an open PR
+    # / manifest / job is load-bearing and must never be deleted.  The census
+    # is consulted BEFORE local or origin deletion; REFERENCED / DANGLING /
+    # UNKNOWN refuse the deletion outright (fail-closed — delete-on-reference
+    # or -unknown never happens).  Only CLEAR keeps the route authority.
+    census_verdict, census_reasons = _reference_census(root)
+    if census_verdict != "CLEAR":
+        detail = "; ".join(census_reasons) or census_verdict
+        writer(
+            f"[chain] NOT deleting reconcile PR branch {branch}: reference "
+            f"census {census_verdict} for {root} ({detail})\n"
+        )
+        return False
     try:
         _compat()._run_command(
             root,

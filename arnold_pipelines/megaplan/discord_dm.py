@@ -67,6 +67,7 @@ def send_discord_dm(
     env: Mapping[str, str] | None = None,
     opener: Any | None = None,
     delivery_effects: Any | None = None,
+    allow_direct_transport: bool = False,
 ) -> dict[str, Any]:
     """Send a structured payload as one or more Discord bot DMs.
 
@@ -75,6 +76,10 @@ def send_discord_dm(
     adapter with stable parent/target/channel global-effect keys.
     The adapter owns the one provider callback.  Adapter denial or ambiguity
     is returned to the caller and never falls through to direct Discord.
+
+    When *delivery_effects* is None, delivery fails closed with a typed
+    ``delivery_adapter_unavailable`` denial unless the caller explicitly
+    opts into the direct Discord transport via *allow_direct_transport*.
     """
 
     environment = env if env is not None else os.environ
@@ -195,6 +200,13 @@ def send_discord_dm(
                 "message_count": 0,
                 "outcome_kind": "INDETERMINATE",
             }
+
+    if not allow_direct_transport:
+        return {
+            "ok": False,
+            "reason": "delivery_adapter_unavailable",
+            "message_count": 0,
+        }
 
     urlopen = opener or request.urlopen
     try:

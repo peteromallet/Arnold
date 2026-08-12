@@ -162,9 +162,93 @@ def create_worktree(repo: Path, target: Path, base_sha: str) -> None:
         raise CliError("bakeoff_worktree_failed", _git_error_detail(result))
 
 
+class WorktreeDeleteRefused(CliError):
+    """Typed refusal: the reference census did not attest CLEAR for *target*.
+
+    Raised by :func:`remove_worktree` and the rmtree fallback in
+    ``bakeoff.lifecycle`` when the canonical reference census (T-0012 /
+    T-0027) reports REFERENCED / DANGLING / UNKNOWN for the worktree root.
+    Subclasses :class:`CliError` so existing ``except CliError`` callers stay
+    fail-closed (a refusal never deletes); callers that fall back to
+    ``shutil.rmtree`` MUST re-check the census before that fallback (G6
+    finding 3 — the raw fallback is itself a runtime-worktree deletion).
+    """
+
+
+def reference_census_verdict(target: Path) -> tuple[str, list[str]]:
+    """Run the canonical reference census (T-0012/T-0027) for *target*.
+
+    Fail-closed gate shared by every bakeoff worktree deletion: returns
+    ``("CLEAR", [])`` only when every reference store is readable and holds
+    no exact reference to *target*; otherwise the verdict (``REFERENCED`` /
+    ``DANGLING`` / ``UNKNOWN``) plus the census reasons.  Callers MUST treat
+    any non-CLEAR verdict as a hard deletion refusal — ``force`` is NOT
+    evidence of safety and delete-on-unknown never happens.
+
+    Store dirs come from the SAME env vars as ``arnold-gc-sweep``
+    (``ARNOLD_REFERENCE_*`` / ``ARNOLD_RUNTIME_MANIFEST_DIR`` /
+    ``ARNOLD_BASE_DIR``) with the census module defaults as fallback, so
+    tests sandbox the stores exactly like the sweep.  A raising or
+    unavailable census is ``UNKNOWN`` (fail-closed).
+    """
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_references import (
+            DEFAULT_CHAIN_STORE,
+            DEFAULT_LEASE_STORE,
+            DEFAULT_MARKER_STORE,
+            DEFAULT_REPAIR_QUEUE,
+            DEFAULT_SCHEDULE_STORE,
+            normalize_root,
+            run_census,
+        )
+    except Exception as exc:  # pragma: no cover - defensive boundary
+        return "UNKNOWN", [f"reference census unavailable: {exc}"]
+    normalized = normalize_root(str(target))
+    if not normalized:
+        return "UNKNOWN", [f"target {target!r} is not an absolute runtime root"]
+    try:
+        return run_census(
+            root=normalized,
+            workspace=os.environ.get("ARNOLD_BASE_DIR", ""),
+            manifest_store=os.environ.get(
+                "ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"
+            ),
+            current_manifest="",
+            chain_store=os.environ.get(
+                "ARNOLD_REFERENCE_CHAIN_STORE", DEFAULT_CHAIN_STORE
+            ),
+            marker_store=os.environ.get(
+                "ARNOLD_REFERENCE_MARKER_STORE", DEFAULT_MARKER_STORE
+            ),
+            schedule_store=os.environ.get(
+                "ARNOLD_REFERENCE_SCHEDULE_STORES", DEFAULT_SCHEDULE_STORE
+            ),
+            repair_queue=os.environ.get(
+                "ARNOLD_REFERENCE_REPAIR_QUEUE", DEFAULT_REPAIR_QUEUE
+            ),
+            lease_store=os.environ.get(
+                "ARNOLD_REFERENCE_LEASE_STORE", DEFAULT_LEASE_STORE
+            ),
+        )
+    except Exception as exc:  # pragma: no cover - defensive boundary
+        return "UNKNOWN", [f"reference census raised: {exc}"]
+
+
 def remove_worktree(target: Path, force: bool = True) -> None:
     if not target.exists():
         return
+    # G6 finding 3: a bakeoff worktree is a runtime root — never remove it
+    # while the reference census still references it.  REFERENCED /
+    # DANGLING / UNKNOWN refuse with a typed error (zero deletion); only
+    # CLEAR proceeds.  ``force`` is NOT evidence of safety.
+    verdict, reasons = reference_census_verdict(target)
+    if verdict != "CLEAR":
+        detail = "; ".join(reasons) or verdict
+        raise WorktreeDeleteRefused(
+            "bakeoff_worktree_delete_refused",
+            f"refusing to remove worktree {target}: reference census {verdict} "
+            f"(only CLEAR may delete; delete-on-unknown never happens): {detail}",
+        )
     repo = _main_worktree_for(target)
     args = ["worktree", "remove"]
     if force:

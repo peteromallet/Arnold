@@ -101,7 +101,7 @@ def test_send_discord_dm_suppresses_pytest_fixture_before_network() -> None:
     assert result["suppression_reason"] == "pytest_workspace:workspace"
 
 
-def test_send_discord_dm_posts_dm_channel_then_messages() -> None:
+def test_send_discord_dm_without_adapter_fails_closed_without_opt_in() -> None:
     requests: list[dict[str, Any]] = []
 
     class _FakeResponse:
@@ -140,6 +140,56 @@ def test_send_discord_dm_posts_dm_channel_then_messages() -> None:
             "DISCORD_DM_USER_ID": "user-456",
         },
         opener=fake_urlopen,
+    )
+
+    assert result == {
+        "ok": False,
+        "reason": "delivery_adapter_unavailable",
+        "message_count": 0,
+    }
+    assert requests == []
+
+
+def test_send_discord_dm_direct_transport_requires_explicit_opt_in() -> None:
+    requests: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload).encode("utf-8")
+
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_urlopen(req, timeout=10):
+        requests.append(
+            {
+                "url": req.full_url,
+                "auth": req.get_header("Authorization"),
+                "body": json.loads(req.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        if req.full_url.endswith("/users/@me/channels"):
+            return _FakeResponse({"id": "dm-channel-1"})
+        return _FakeResponse({"id": f"msg-{len(requests)}"})
+
+    result = send_discord_dm(
+        {
+            "title": "Megaplan chain complete - chain-1",
+            "fields": [{"label": "Operation", "value": "chain-1", "style": "code"}],
+        },
+        env={
+            "DISCORD_BOT_TOKEN": "token-123",
+            "DISCORD_DM_USER_ID": "user-456",
+        },
+        opener=fake_urlopen,
+        allow_direct_transport=True,
     )
 
     assert result == {
@@ -188,6 +238,7 @@ def test_send_discord_dm_redacts_payload_before_delivery() -> None:
             "DISCORD_DM_USER_ID": "user-456",
         },
         opener=fake_urlopen,
+        allow_direct_transport=True,
     )
 
     assert result["ok"] is True
@@ -242,6 +293,7 @@ def test_send_discord_dm_returns_chunked_message_ids_without_secret_bearing_fiel
             "DISCORD_DM_USER_ID": "user-456",
         },
         opener=fake_urlopen,
+        allow_direct_transport=True,
     )
 
     assert result["ok"] is True
@@ -272,3 +324,55 @@ def test_selected_delivery_adapter_exception_never_falls_back_to_direct_provider
     assert result["ok"] is False
     assert result["reason"] == "delivery_adapter_indeterminate"
     assert result["outcome_kind"] == "INDETERMINATE"
+
+
+def test_send_discord_dm_delivery_effects_ok_and_blocked_outcomes_unchanged() -> None:
+    class _Outcome:
+        def __init__(
+            self,
+            *,
+            ok: bool,
+            error: str | None = None,
+            outcome_kind: str | None = None,
+        ) -> None:
+            self.ok = ok
+            self.error = error
+            self.outcome_kind = outcome_kind
+            self.glek = "glek:test"
+            self.evidence = {"channel_id": "dm-channel-1", "message_ids": ["msg-1"]}
+
+    class _Effects:
+        def __init__(self, outcome: _Outcome) -> None:
+            self._outcome = outcome
+
+        def deliver(self, **_kwargs: object) -> _Outcome:
+            return self._outcome
+
+    ok_result = send_discord_dm(
+        {"title": "incident", "incident_occurrence_id": "occ-1"},
+        env={"DISCORD_BOT_TOKEN": "token", "DISCORD_DM_USER_ID": "user"},
+        delivery_effects=_Effects(_Outcome(ok=True, outcome_kind="APPLIED")),
+    )
+    assert ok_result == {
+        "ok": True,
+        "channel_id": "dm-channel-1",
+        "message_ids": ["msg-1"],
+        "message_count": 1,
+        "glek": "glek:test",
+    }
+
+    blocked_result = send_discord_dm(
+        {"title": "incident", "incident_occurrence_id": "occ-1"},
+        env={"DISCORD_BOT_TOKEN": "token", "DISCORD_DM_USER_ID": "user"},
+        delivery_effects=_Effects(
+            _Outcome(ok=False, error="policy denied", outcome_kind="BLOCKED")
+        ),
+    )
+    assert blocked_result == {
+        "ok": False,
+        "reason": "delivery_adapter_blocked",
+        "error": "policy denied",
+        "message_count": 0,
+        "glek": "glek:test",
+        "outcome_kind": "BLOCKED",
+    }

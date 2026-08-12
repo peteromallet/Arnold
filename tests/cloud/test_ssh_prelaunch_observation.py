@@ -5,8 +5,11 @@ import json
 import shlex
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+
+from arnold.workflow.effect_protocol import EffectProtocol
 
 from arnold_pipelines.megaplan.cloud import cli as cloud_cli
 from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
@@ -27,7 +30,23 @@ from arnold_pipelines.megaplan.cloud.spec import (
     SshSpec,
     load_spec,
 )
+from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import SshEffectAdapter
+from arnold_pipelines.megaplan.custody.action_validator import GateResult
 from arnold_pipelines.megaplan.types import CliError
+
+
+def _authorized_effect_adapter() -> SshEffectAdapter:
+    """Real adapter with an explicit authorized gate so the action-off
+    ssh_exec transport runs through the Step 13F gate in tests."""
+    protocol = MagicMock(spec=EffectProtocol)
+    reservation = MagicMock()
+    reservation.global_logical_effect_key = "glek-ssh-exec-test"
+    protocol.reserve_and_start.return_value = reservation
+    return SshEffectAdapter(
+        protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+        production_enabled=False,
+    )
 
 
 def _spec(
@@ -182,7 +201,7 @@ def test_run_preserves_redacted_stderr_stdout_and_returncode_without_command(
             f"stderr Authorization: Bearer {secret}",
         ),
     )
-    provider = SshProvider(_spec())
+    provider = SshProvider(_spec(), ssh_effect_adapter=_authorized_effect_adapter())
 
     with pytest.raises(CliError) as caught:
         provider.ssh_exec(f"tool --api-key={secret}")
@@ -219,7 +238,9 @@ def test_run_preserves_stdout_only_failure(
     )
 
     with pytest.raises(CliError) as caught:
-        SshProvider(_spec()).ssh_exec("stat /workspace")
+        SshProvider(
+            _spec(), ssh_effect_adapter=_authorized_effect_adapter()
+        ).ssh_exec("stat /workspace")
 
     assert "returncode=1" in caught.value.message
     assert "stdout: Error response from daemon" in caught.value.message

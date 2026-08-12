@@ -595,6 +595,155 @@ def test_compute_reconcile_scope_no_engine_changes_noop_without_plan_dir(
     assert scope["waiver_path"] is None
 
 
+# ── T-0024: reconcile-scope manifest reader (absent vs invalid) ─────────────
+
+
+def _reconcile_valid_manifest(path: Path) -> Path:
+    """Write a schema-valid session runtime manifest and return *path*."""
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        RuntimeManifest,
+        write_manifest,
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    manifest = RuntimeManifest.from_dict(
+        {
+            "runtime_id": "reconcile-reader-test",
+            "schema": "1",
+            "generation": 1,
+            "epic_id": "epic-reconcile",
+            "state": "active",
+            "owner": "test",
+            "base": {
+                "ref": "main",
+                "commit": "0" * 40,
+                "editable_install_path": "/tmp/editable",
+                "venv_path": "/tmp/venv",
+            },
+            "epic": {
+                "branch": "fixer/epic-reconcile",
+                "worktree_path": "/tmp/wt",
+                "venv_path": "/tmp/venv",
+                "runtime_root": "/tmp/wt",
+                "expected_head": "0" * 40,
+                "repair_bin": "/usr/local/bin/arnold-repair-loop",
+                "deps_lockfile": "requirements.lock",
+            },
+            "indirection": {
+                "host_path": "/tmp/host",
+                "container_path": "/tmp/container",
+                "mount_table": [],
+                "execution_namespace": "test",
+                "verified_head": "0" * 40,
+                "last_verified_at": now,
+                "attestation": {
+                    "module_file": "arnold_pipelines/__init__.py",
+                    "module_digest": "0" * 64,
+                    "mount_id": "mount-test",
+                },
+            },
+            "policy": {
+                "policy_sha": "0" * 64,
+                "model_policy_sha": "0" * 64,
+                "sync_policy": "manifest-only",
+            },
+            "promotions": [],
+            "timestamps": {"created": now, "updated": now, "closed": None},
+            "gc_policy": "keep",
+            "commands": [],
+        }
+    )
+    write_manifest(manifest, path)
+    return path
+
+
+def test_reconcile_scope_manifest_absent_returns_none(tmp_path: Path) -> None:
+    """A genuinely ABSENT manifest (no binding, or a missing file) yields
+    None — the scope computation then degrades to pr_required/uncertain,
+    never a silent no-op."""
+    assert (
+        chain_module._reconcile_scope_manifest(None, milestone_label="reconcile")
+        is None
+    )
+    assert (
+        chain_module._reconcile_scope_manifest(
+            tmp_path / "missing.json", milestone_label="reconcile"
+        )
+        is None
+    )
+
+
+def test_reconcile_scope_manifest_present_but_invalid_blocks(tmp_path: Path) -> None:
+    """A PRESENT-but-invalid manifest must FAIL CLOSED with a typed error —
+    never collapse to None, which would let compute_reconcile_scope treat it
+    as absent and waive the reconcile (noop) on top of a corrupt manifest."""
+    # (a) corrupt JSON
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(CliError) as excinfo:
+        chain_module._reconcile_scope_manifest(corrupt, milestone_label="reconcile")
+    assert excinfo.value.code == "reconcile_manifest_invalid"
+    assert "present but unreadable/invalid" in excinfo.value.message
+    assert "reconcile" in excinfo.value.message
+
+    # (b) valid JSON but schema-invalid (missing required fields) — same
+    #     fail-closed block, still distinguishable from absent.
+    schema_bad = tmp_path / "schema-bad.json"
+    schema_bad.write_text('{"epic_id": "epic-x"}', encoding="utf-8")
+    with pytest.raises(CliError) as excinfo:
+        chain_module._reconcile_scope_manifest(schema_bad, milestone_label="reconcile")
+    assert excinfo.value.code == "reconcile_manifest_invalid"
+    assert "present but unreadable/invalid" in excinfo.value.message
+
+
+def test_reconcile_scope_manifest_present_valid_returns_payload(tmp_path: Path) -> None:
+    """A present, valid manifest loads into the dict the scope computation
+    consumes — the valid case still works end to end."""
+    valid = _reconcile_valid_manifest(tmp_path / "valid.json")
+    payload = chain_module._reconcile_scope_manifest(valid, milestone_label="reconcile")
+    assert isinstance(payload, dict)
+    assert payload["epic_id"] == "epic-reconcile"
+    assert payload["state"] == "active"
+
+
+def test_reconcile_scope_manifest_dangling_symlink_fails_closed(tmp_path: Path) -> None:
+    """A DANGLING symlink at the manifest path is PRESENT but unreadable —
+    never absent.  ``Path.exists()``/``stat()`` follow the link and report
+    ENOENT, so a naive exists() check collapses it to absent; with no
+    engine-source changes in range that would let ``compute_reconcile_scope``
+    waive the reconcile (noop) on top of a broken manifest.  The reader must
+    BLOCK with the typed error instead, while the genuinely-absent and valid
+    cases keep their existing behavior."""
+    # (i) dangling symlink -> reconcile BLOCKED (CliError
+    #     reconcile_manifest_invalid), never collapsed to absent/waived
+    dangling = tmp_path / "dangling.json"
+    dangling.symlink_to(tmp_path / "missing-target.json")
+    assert dangling.is_symlink()
+    assert not dangling.exists()  # stat() follows the link: ENOENT
+    with pytest.raises(CliError) as excinfo:
+        chain_module._reconcile_scope_manifest(dangling, milestone_label="reconcile")
+    assert excinfo.value.code == "reconcile_manifest_invalid"
+    assert "reconcile milestone reconcile blocked" in excinfo.value.message
+    assert "present but unreadable/invalid" in excinfo.value.message
+
+    # (ii) genuinely absent path stays absent -> None (the scope computation
+    #     then degrades to pr_required/uncertain — no waiver of the noop kind)
+    assert (
+        chain_module._reconcile_scope_manifest(
+            tmp_path / "never-existed.json", milestone_label="reconcile"
+        )
+        is None
+    )
+
+    # (iii) present, valid manifest still returns the payload (existing
+    #     behavior, exercised through the same reader entry point)
+    valid = _reconcile_valid_manifest(tmp_path / "valid.json")
+    payload = chain_module._reconcile_scope_manifest(valid, milestone_label="reconcile")
+    assert isinstance(payload, dict)
+    assert payload["epic_id"] == "epic-reconcile"
+    assert payload["state"] == "active"
+
+
 # ── completion guard: waiver acceptance / rejection ────────────────────────
 
 

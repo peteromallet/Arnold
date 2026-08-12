@@ -618,3 +618,116 @@ class TestM5FlagIndependence:
             assert audit_autofix_enabled() is True
             assert meta_repair_commit_enabled() is True
             assert audit_autofix_commit_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# T-0013 regression locks: SHADOW_PASS / explicit-disable never authorize WBC
+# ---------------------------------------------------------------------------
+
+
+class TestT0013WbcShadowLock:
+    """SHADOW_PASS, explicit-disable values, and missing attestation NEVER
+    authorize a WBC effect — enforcement-off means shadow mode, never
+    authority (deny-by-default)."""
+
+    def test_shadow_pass_never_authorizes_wbc_boundary_effect(self) -> None:
+        """A SHADOW_PASS gate result is NEVER authoritative: with custody
+        enforcement disabled the boundary result is ``shadow_pass`` and
+        ``authorized`` stays False; with enforcement enabled the same
+        boundary is blocked.  WBC effects must test ``authorized`` — never
+        treat ``shadow_pass`` as a pass (worker_dispatch_wbc consumes
+        :func:`production_enforcement_enabled` for this exact gate)."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            ActionBoundaryContext,
+            GateResult,
+            adapter_effect_authorized,
+            validate_action_boundary,
+        )
+        from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
+
+        target = CustodyTargetKey(
+            environment="prod",
+            session="s1",
+            chain="c1",
+            plan_revision="p1",
+            phase="execute",
+            task="T1",
+            attempt="1",
+            normalized_failure_kind="blocked_no_lease",
+            blocker_or_phase_result_hash="hash",
+            fence="fence",
+        )
+        context = ActionBoundaryContext(
+            action_type="repair",
+            target=target,
+            run_authority_grant_id="grant-1",
+            coordinator_fence_token=1,
+        )
+        with _clear_env():
+            shadow = validate_action_boundary(context, enforcement_enabled=False)
+        assert shadow.gate_result == GateResult.SHADOW_PASS
+        # SHADOW_PASS is never an authorization — it is shadow telemetry.
+        assert shadow.authorized is False
+        assert shadow.blocked is False  # shadow mode is observe-only
+        # And the denial must stop the effect: the shared raw-adapter
+        # predicate that admits mutations fails closed on SHADOW_PASS, so no
+        # adapter can reserve or dispatch under this verdict.
+        assert adapter_effect_authorized(shadow.gate_result) is False
+        with _clear_env():
+            enforced = validate_action_boundary(context, enforcement_enabled=True)
+        assert enforced.authorized is False
+        assert enforced.blocked is True
+        assert enforced.gate_result != GateResult.AUTHORIZED
+        # Enforcement mode verdicts are likewise inadmissible at the effect
+        # boundary — only an explicit AUTHORIZED verdict ever dispatches.
+        assert adapter_effect_authorized(enforced.gate_result) is False
+
+    @pytest.mark.parametrize("value", ("0", "false", "no", "off", "FALSE", "Off"))
+    def test_shadow_mode_explicit_disable_values_never_authorize(self, value: str) -> None:
+        """Every explicit-disable spelling (0/false/no/off, case-insensitive)
+        turns OFF the WBC custody enforcement gate — the validator runs in
+        shadow mode (``shadow_pass``), which never authorizes an effect."""
+        with _set_env(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=value):
+            assert production_enforcement_enabled() is False
+            assert production_enforcement_on() is False
+
+    def test_shadow_mode_unknown_or_empty_enforcement_values_stay_deny_by_default(self) -> None:
+        """Unknown/empty values keep enforcement ON (deny-by-default): only
+        the explicit disable set turns the gate off, and even then the
+        feature-flag consumer reports shadow mode, never authorization."""
+        for value in ("", "maybe", "1", "true", "yes", "on"):
+            with _set_env(ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT=value):
+                assert production_enforcement_enabled() is True
+
+    def test_wbc_dispatch_shadow_gate_consumes_production_enforcement(self) -> None:
+        """The WBC dispatch facade's enforcement flag is the feature-flag
+        accessor itself — no separate shadow default lives in the consumer
+        (worker_dispatch_wbc imports it directly)."""
+        import inspect
+
+        from arnold_pipelines.megaplan.custody import worker_dispatch_wbc
+
+        source = inspect.getsource(worker_dispatch_wbc)
+        assert "production_enforcement_enabled" in source
+        assert (
+            "enforcement_enabled=production_enforcement_enabled()" in source
+        )
+
+
+# ---------------------------------------------------------------------------
+# T-0014 shared raw-adapter effect authorization contract
+# ---------------------------------------------------------------------------
+
+
+class TestT0014AdapterEffectAuthorization:
+    """Raw mutation adapters require one explicit authoritative verdict."""
+
+    def test_only_authorized_verdict_allows_an_effect(self) -> None:
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            GateResult,
+            adapter_effect_authorized,
+        )
+
+        assert adapter_effect_authorized(GateResult.AUTHORIZED) is True
+        assert adapter_effect_authorized(GateResult.SHADOW_PASS) is False
+        assert adapter_effect_authorized(None) is False

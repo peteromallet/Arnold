@@ -5,7 +5,18 @@ MODE="${1:-tmux-unmarked}"
 shift || true
 
 MARKER_DIR="${MEGAPLAN_DISCOVER_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
-SRC_DIR="${MEGAPLAN_DISCOVER_ARNOLD_SRC:-/workspace/arnold}"
+# Runtime root ALWAYS resolves from the per-session manifest
+# (ARNOLD_RUNTIME_MANIFEST -> epic.runtime_root).  --src-dir is
+# OBSERVATION-ONLY (G5 round-5 finding 1): it can never skip manifest
+# resolution, never become the executed root (argv[2]), and never reach a
+# generated launch's cd/PYTHONPATH.  The plan-mode preflight and the
+# generated auto launch resolve the manifest root and fail closed (typed
+# drift, exit 24) when the pin is missing/unreadable/root-less; the chain
+# relaunch runs through the fail-closed arnold-chain wrapper with the pinned
+# manifest.  There is no env-selector read and no shared-root fallback: a
+# missing/corrupt manifest fails closed at startup (exit 78).
+SRC_DIR=""
+OBSERVED_SRC_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -14,7 +25,8 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --src-dir)
-      SRC_DIR="$2"
+      # Observation hint for discovery only — never the executed root.
+      OBSERVED_SRC_DIR="$2"
       shift 2
       ;;
     *)
@@ -24,9 +36,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# The executed root resolves from the manifest UNCONDITIONALLY: --src-dir
+# must never skip manifest resolution or become argv[2].
+SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+if [[ -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  # shellcheck disable=SC1090
+  . "$SUPERVISOR_RUNTIME_LIB"
+fi
+SRC_DIR="$(arnold_runtime_manifest_epic_field epic.runtime_root 2>/dev/null || true)"
+if [[ -z "$SRC_DIR" || ! -d "$SRC_DIR" ]]; then
+  echo "arnold-cloud-discover: runtime root unbound (missing/invalid ARNOLD_RUNTIME_MANIFEST); failing closed" >&2
+  exit 78
+fi
+
 case "$MODE" in
   tmux-unmarked)
-    python3 - "$MARKER_DIR" "$SRC_DIR" <<'PY'
+    python3 - "$MARKER_DIR" "$SRC_DIR" "$OBSERVED_SRC_DIR" <<'PY'
+import hashlib
+import importlib.util
+import json
 import pathlib
 import re
 import shlex
@@ -36,6 +67,10 @@ import os
 
 marker_dir = pathlib.Path(sys.argv[1])
 src_dir = sys.argv[2]
+# argv[3] is the OBSERVATION-ONLY --src-dir hint: it may inform discovery
+# classification but can never become the executed root or reach a generated
+# launch's cd/PYTHONPATH (G5 round-5 finding 1).
+observed_src_dir = sys.argv[3] if len(sys.argv) > 3 else ""
 workspace_root = os.environ.get("MEGAPLAN_DISCOVER_WORKSPACE_ROOT", "/workspace").rstrip("/") or "/workspace"
 
 try:
@@ -137,13 +172,165 @@ def _managed_route(session: str, run_kind: str) -> str:
     )
 
 
+def _runtime_binding_drift(reason: str) -> None:
+    print(f"chain_runtime_binding_drift: {reason}", file=sys.stderr)
+    raise SystemExit(24)
+
+
+def _manifest_runtime_root() -> str:
+    """Mandatory ARNOLD_RUNTIME_MANIFEST pin -> epic.runtime_root, resolved
+    canonically.  Fail closed (typed drift, exit 24) when the pin is missing,
+    unreadable, or root-less — no env-selector read, no shared-root
+    fallback.  Mirrors epic_chain.py ``_assert_child_runtime_binding``."""
+    # Mandatory manifest pin FIRST: no chain-state read runs while the pin is
+    # missing, unreadable, or root-less.
+    manifest_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "")
+    if not manifest_path:
+        _runtime_binding_drift("missing runtime manifest pin (ARNOLD_RUNTIME_MANIFEST unset)")
+    try:
+        manifest_raw = json.loads(pathlib.Path(manifest_path).read_text(encoding="utf-8"))
+    except Exception:
+        _runtime_binding_drift(f"runtime manifest {manifest_path} missing or unreadable")
+    epic = manifest_raw.get("epic") if isinstance(manifest_raw, dict) else None
+    manifest_root = epic.get("runtime_root") if isinstance(epic, dict) else None
+    if not isinstance(manifest_root, str) or not manifest_root.strip():
+        _runtime_binding_drift(f"runtime manifest {manifest_path} lacks a nonempty epic.runtime_root")
+    return str(pathlib.Path(manifest_root).expanduser().resolve())
+
+
+def _live_import_root() -> str:
+    """The ACTUAL runtime checkout this wrapper executes from: the root the
+    running python process resolves ``arnold_pipelines`` from.  This is a
+    NON-MANIFEST signal — whatever PYTHONPATH/cwd actually resolved — so a
+    discover process running from a stale or shared checkout cannot pass a
+    preflight whose manifest pins a different root (the previous comparison
+    re-compared the manifest-derived argv[2] ``src_dir`` back against the
+    manifest itself and could never fail: tautological).  Fail closed when
+    the package is not importable — a discover process that cannot import
+    its own package cannot build a relaunch either."""
+    spec = importlib.util.find_spec("arnold_pipelines")
+    if spec is None or spec.origin is None:
+        _runtime_binding_drift("arnold_pipelines import root unavailable")
+    return str(pathlib.Path(spec.origin).resolve().parent.parent)
+
+
+def _chain_engine_root_preflight(workspace: str, remote_spec: str) -> str:
+    """T-0022 + G5 finding 2: re-read the persisted
+    ``metadata.execution_environment.engine_root`` from the chain-state JSON
+    and fail closed (typed drift, exit 24) unless it EXISTS and EQUALS the
+    manifest epic.runtime_root AND this wrapper's live import root BEFORE a
+    relaunch command is built.  The ARNOLD_RUNTIME_MANIFEST pin is
+    MANDATORY — exactly like the fail-closed
+    arnold-chain wrapper: a missing, unreadable, or root-less pin refuses
+    the relaunch, so ``--src-dir`` can never override the manifest root for
+    the launch (it is an observation hint only).  G5 round-2 finding 1: the
+    manifest-pin check runs BEFORE the chain-state read — a missing pin
+    fails closed with ZERO chain-state reads.  G5 (round-14 finding 1): the
+    live arm compares the recorded root against the ACTUAL import root of
+    this running python (a non-manifest signal); the previous comparison of
+    the manifest-derived ``src_dir`` against the manifest was tautological
+    and could never fail.  G5 (round-17 finding 1b): the live-root
+    comparison runs BEFORE the chain-state read — a live root that disagrees
+    with the manifest pin fails closed (typed drift, exit 24) with ZERO
+    chain-state reads.  Mirrors epic_chain.py
+    ``_assert_child_runtime_binding``.  Returns the accepted root — the ONLY
+    root a relaunch may put on PYTHONPATH or use as its launch directory."""
+    manifest = pathlib.Path(_manifest_runtime_root())
+    # G5 (round-17 finding 1b): the live-root comparison runs BEFORE the
+    # chain-state read — a live import root that disagrees with the manifest
+    # pin fails closed with ZERO chain-state reads, so a discover process
+    # executing from a drifted/shared checkout cannot pass the preflight by
+    # pointing at a state file that records the manifest root.
+    live = pathlib.Path(_live_import_root())
+    if manifest != live:
+        _runtime_binding_drift(f"engine root mismatch: manifest={manifest} live={live}")
+
+    spec_path = pathlib.Path(remote_spec)
+    if not spec_path.is_absolute():
+        spec_path = pathlib.Path(workspace) / spec_path
+    try:
+        spec_path = spec_path.resolve()
+    except OSError:
+        pass
+    digest = hashlib.sha1(str(spec_path).encode("utf-8")).hexdigest()[:12]
+    state_path = pathlib.Path(workspace) / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        _runtime_binding_drift(f"chain state {state_path} missing or unreadable")
+    if not isinstance(payload, dict):
+        _runtime_binding_drift(f"chain state {state_path} is not an object")
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        _runtime_binding_drift(f"chain state {state_path} lacks metadata")
+    execution_environment = metadata.get("execution_environment")
+    if not isinstance(execution_environment, dict):
+        _runtime_binding_drift(f"chain state {state_path} lacks metadata.execution_environment")
+    recorded_root = execution_environment.get("engine_root")
+    if not isinstance(recorded_root, str) or not recorded_root.strip():
+        _runtime_binding_drift(f"chain state {state_path} lacks metadata.execution_environment.engine_root")
+    recorded = pathlib.Path(recorded_root).expanduser().resolve()
+    if not recorded.is_dir() or not (recorded / ".git").exists():
+        _runtime_binding_drift(f"recorded engine root {recorded_root} is missing or dangling")
+    if recorded != manifest:
+        _runtime_binding_drift(f"engine root mismatch: recorded={recorded} manifest={manifest}")
+    # live == manifest was proven above (before the state read), and
+    # recorded == manifest here, so recorded == live is implied.
+    return str(recorded)
+
+
+def _plan_engine_root_preflight(plan_name: str, workspace: str) -> str:
+    """G5 round-5 finding 1: the accepted engine root for a plan relaunch is
+    the manifest epic.runtime_root ONLY — ``--src-dir`` is observation-only
+    and can never fall back in as the executed root.  Resolves the one
+    canonical chain whose persisted execution binding owns the plan;
+    standalone plans have none persisted, so the manifest root is the
+    accepted root.  A missing/unreadable/root-less ARNOLD_RUNTIME_MANIFEST
+    pin or a binding-lookup import/exec failure all fail closed (typed
+    drift, exit 24) — there is NO src-dir fallback.  G5 (round-17 finding
+    1a): a STANDALONE plan (no bound chain) must STILL prove the manifest
+    epic.runtime_root EQUALS the actual live import root of this running
+    python (importlib find_spec of ``arnold_pipelines``) — the manifest
+    root is never returned unchecked, and a drifted live root fails closed
+    (typed drift, exit 24).  Bound plans carry the same live check inside
+    ``_chain_engine_root_preflight``.  Mirrors _chain_engine_root_preflight's
+    manifest-mandate posture."""
+    manifest = pathlib.Path(_manifest_runtime_root())
+    try:
+        from arnold_pipelines.megaplan.chain.execution_binding import find_bound_chain_spec
+    except Exception:
+        _runtime_binding_drift("plan chain-binding lookup unavailable (execution_binding import failed)")
+    try:
+        spec = find_bound_chain_spec(pathlib.Path(workspace), plan_name=plan_name)
+    except Exception:
+        _runtime_binding_drift(f"plan chain-binding lookup failed for plan {plan_name}")
+    if spec is None:
+        # G5 (round-17 finding 1a): the standalone branch MUST ALSO verify
+        # the manifest root equals the actual live import root of this
+        # running python — a discover process executing from a drifted or
+        # shared checkout cannot pass a preflight that returns the manifest
+        # root unchecked.
+        live = pathlib.Path(_live_import_root())
+        if manifest != live:
+            _runtime_binding_drift(f"engine root mismatch: manifest={manifest} live={live}")
+        return str(manifest)
+    return _chain_engine_root_preflight(workspace, str(spec))
+
+
 def _plan_relaunch_command(plan_name: str, workspace: str, session: str) -> str:
     log_path = f"{workspace}/.megaplan/cloud-logs/{plan_name}.log"
+    # G5 round-5 finding 1: the accepted root is the preflight's manifest
+    # root ONLY (--src-dir can never reach cd/PYTHONPATH), and the command
+    # carries the pinned ARNOLD_RUNTIME_MANIFEST like the chain relaunch.
+    accepted_root = _plan_engine_root_preflight(plan_name, workspace)
+    manifest_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "")
     return (
         "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; "
         + _managed_route(session, "plan")
-        + f"cd {shlex.quote(src_dir)} && "
-        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(src_dir)}:${{PYTHONPATH:-}} "
+        + f"export ARNOLD_RUNTIME_MANIFEST={shlex.quote(manifest_path)}; "
+        + f"cd {shlex.quote(accepted_root)} && "
+        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(accepted_root)} "
         "MEGAPLAN_TRUSTED_CONTAINER=1 "
         f"python3 -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(plan_name)} "
         f"--project-dir {shlex.quote(workspace)} >> {shlex.quote(log_path)} 2>&1"
@@ -152,14 +339,22 @@ def _plan_relaunch_command(plan_name: str, workspace: str, session: str) -> str:
 
 def _chain_relaunch_command(remote_spec: str, workspace: str, session: str) -> str:
     log_relative = ".megaplan/cloud-chain.log" if session == "megaplan-chain" else f".megaplan/cloud-chain-{session}.log"
+    # G5 finding 2: the relaunch runs through the fail-closed arnold-chain
+    # wrapper (mandatory manifest pin -> engine-root provenance + acceptance
+    # gate) instead of a bare module launch.  The command carries the pinned
+    # ARNOLD_RUNTIME_MANIFEST, binds the workspace via MEGAPLAN_PROJECT_DIR,
+    # and launches from the preflight-accepted (manifest) root only — never
+    # from --src-dir (an observation hint at most).
+    accepted_root = _chain_engine_root_preflight(workspace, remote_spec)
+    manifest_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "")
     return (
         "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; "
         + _managed_route(session, "chain")
-        + f"cd {shlex.quote(src_dir)} && "
-        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(src_dir)}:${{PYTHONPATH:-}} "
-        "MEGAPLAN_TRUSTED_CONTAINER=1 "
-        f"python3 -P -m arnold_pipelines.megaplan chain start --spec {shlex.quote(remote_spec)} "
-        f"--project-dir {shlex.quote(workspace)} >> {shlex.quote(workspace + '/' + log_relative)} 2>&1"
+        + f"export ARNOLD_RUNTIME_MANIFEST={shlex.quote(manifest_path)}; "
+        + f"export MEGAPLAN_PROJECT_DIR={shlex.quote(workspace)}; "
+        + f"export ARNOLD_CHAIN_SESSION={shlex.quote(session)}; "
+        + f"cd {shlex.quote(accepted_root)} && "
+        + f"exec arnold-chain {shlex.quote(remote_spec)} >> {shlex.quote(workspace + '/' + log_relative)} 2>&1"
     )
 
 
@@ -238,12 +433,14 @@ RELAUNCH_MATERIALIZER_NON_AUTHORITATIVE_FAMILIES = (
     "direct_module.auto_or_resume",
     "direct_module.chain_start",
     "arnold_supervise.bash_lc",
+    "arnold_chain_wrapper",
 )
 
 _RELAUNCH_DIRECT_MODULE_RE = re.compile(
     r"python3\b.*?\s+-m\s+arnold_pipelines\.megaplan\s+(\S+)"
 )
 _RELAUNCH_SUPERVISE_RE = re.compile(r"arnold-supervise\b.*?\sbash\s+-lc\b")
+_RELAUNCH_CHAIN_WRAPPER_RE = re.compile(r"\barnold-chain\b")
 
 _RELAUNCH_FORBIDDEN_AUTHORITY_SOURCES = (
     ("label", re.compile(r"--authority-label|REPAIR_AUTHORITY_LABEL|repair-authority-label")),
@@ -259,6 +456,8 @@ _RELAUNCH_FORBIDDEN_AUTHORITY_SOURCES = (
 def _relaunch_materializer_classify(relaunch_command: str) -> str:
     if _RELAUNCH_SUPERVISE_RE.search(relaunch_command):
         return "arnold_supervise.bash_lc"
+    if _RELAUNCH_CHAIN_WRAPPER_RE.search(relaunch_command):
+        return "arnold_chain_wrapper"
     match = _RELAUNCH_DIRECT_MODULE_RE.search(relaunch_command)
     if match:
         verb = match.group(1).strip("\"'")
@@ -309,7 +508,7 @@ for raw in panes_proc.stdout.splitlines():
     if (marker_dir / f"{session}.json").exists():
         continue
     workspace = _workspace_for(current_path)
-    if workspace is None or workspace in {workspace_root, src_dir}:
+    if workspace is None or workspace in {workspace_root, src_dir, observed_src_dir}:
         continue
     try:
         pane_pid = int(pane_pid_raw)

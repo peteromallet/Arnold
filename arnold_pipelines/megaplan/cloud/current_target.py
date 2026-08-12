@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ from arnold_pipelines.megaplan.observability.event_checkpoint import (
     read_bounded_event_projection,
 )
 from arnold_pipelines.megaplan.cloud.shadow_attestation import attest_target_content
+from arnold_pipelines.megaplan.cloud.runtime_manifest import ManifestError
 
 _FINGERPRINT_ALGORITHM = "sha256"
 _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
@@ -37,6 +39,7 @@ _PARTIAL_EVIDENCE_KINDS = {
     "event_checkpoint_invalid",
     "invalid_marker_json",
     "invalid_needs_human_json",
+    "runtime_manifest_invalid",
     "missing_chain_state",
     "missing_plan_state",
 }
@@ -92,19 +95,82 @@ def attestation_section(tree_path: Path | None) -> dict[str, Any]:
     }
 
 
+def _manifest_runtime_root() -> Path | None:
+    """Resolve ``epic.runtime_root`` from the bound session runtime manifest.
+
+    Reads ``ARNOLD_RUNTIME_MANIFEST`` when set.  Only a genuinely ABSENT
+    manifest (env unset, or a never-existing pinned file — stat AND lstat
+    both ENOENT) returns ``None`` — the caller falls back to workspace/spec,
+    then reports ``tree_path_unavailable``.  A PRESENT-but-unreadable entry
+    (dangling symlink, stat-inaccessible) or a PRESENT-but-invalid manifest
+    (corrupt JSON, non-object, or lacking a nonempty ``epic.runtime_root``)
+    raises :class:`ManifestError`: present-but-invalid NEVER degrades to
+    absent, so the resolver never silently selects the workspace as the
+    executed tree (T-0024 absent-vs-invalid distinction).
+    """
+    manifest_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
+    if not manifest_path:
+        return None
+    path = Path(manifest_path)
+
+    def _present_but_unreadable(exc: Exception | None = None) -> None:
+        """Fail closed: the manifest entry is PRESENT but unusable."""
+        detail = f": {exc}" if exc is not None else " (dangling symlink)"
+        raise ManifestError(
+            f"runtime manifest {path} present but unreadable (dangling "
+            f"symlink/stat failed){detail}"
+        ) from exc
+
+    try:
+        path.stat()
+    except FileNotFoundError:
+        # stat() FOLLOWS symlinks, so a dangling symlink (target missing)
+        # reports ENOENT even though the link entry itself exists.  lstat()
+        # sees the entry itself: only a genuinely never-existing path (lstat
+        # ENOENT too) counts as absent and degrades; a PRESENT-but-unreadable
+        # entry must fail closed below.
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:  # noqa: BLE001 - lstat itself inaccessible
+            _present_but_unreadable(exc)
+        _present_but_unreadable()
+    except OSError as exc:  # noqa: BLE001 - EACCES etc: absence unprovable
+        _present_but_unreadable(exc)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ManifestError(
+            f"runtime manifest {path} present but failed to load: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ManifestError(f"runtime manifest {path} present but is not an object")
+    epic = raw.get("epic")
+    runtime_root = epic.get("runtime_root") if isinstance(epic, dict) else None
+    if not isinstance(runtime_root, str) or not runtime_root.strip():
+        raise ManifestError(
+            f"runtime manifest {path} present but lacks a nonempty epic.runtime_root"
+        )
+    return Path(runtime_root).expanduser().resolve()
+
+
 def _resolver_tree_path(
     workspace: Path | None, remote_spec: Path | None
 ) -> Path | None:
     """Best runtime-tree candidate for the resolved target.
 
-    Preference order: the explicitly executed runtime source
-    (``MEGAPLAN_RUNTIME_SRC`` env), then the marker workspace, then the
-    remote-spec parent directory.  Returns ``None`` when no candidate exists
-    (the caller then reports ``tree_path_unavailable``).
+    Preference order: the session runtime manifest's ``epic.runtime_root``
+    (``ARNOLD_RUNTIME_MANIFEST``, when bound and readable — no env selector
+    read), then the marker workspace, then the remote-spec parent directory.
+    Returns ``None`` when no candidate exists (the caller then reports
+    ``tree_path_unavailable``).  A PRESENT-but-invalid manifest raises
+    :class:`ManifestError` — the workspace fallback below must never be
+    selected when the bound manifest is corrupt (T-0024).
     """
-    runtime_src = os.environ.get("MEGAPLAN_RUNTIME_SRC", "").strip()
-    if runtime_src:
-        return Path(runtime_src)
+    manifest_root = _manifest_runtime_root()
+    if manifest_root is not None:
+        return manifest_root
     if workspace is not None:
         return workspace
     if remote_spec is not None:
@@ -451,6 +517,27 @@ def resolve_current_target(
         observed_at_epoch_ms=_observed_at_epoch_ms,
     )
 
+    # The runtime tree resolves from the bound session manifest.  A
+    # PRESENT-but-invalid manifest (corrupt / schema-mismatched) must never
+    # degrade to the workspace: the reader raises ManifestError and the
+    # resolver records typed fail-closed evidence instead of selecting a
+    # fallback tree (T-0024 absent-vs-invalid distinction).
+    try:
+        resolver_tree_path = _resolver_tree_path(workspace, remote_spec)
+    except ManifestError as exc:
+        manifest_env = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
+        stale_evidence.append(
+            _artifact(
+                kind="runtime_manifest_invalid",
+                path=Path(manifest_env) if manifest_env else Path("runtime-manifest.json"),
+                error=str(exc),
+            )
+        )
+        rationale.append(
+            "runtime manifest present but invalid; failing closed without a workspace fallback"
+        )
+        resolver_tree_path = None
+
     # ── M9: evidence IDs for rejections and drift ──
     def _evidence_id_for_artifact(item: dict[str, Any]) -> str:
         kind = str(item.get("kind") or "")
@@ -472,9 +559,7 @@ def resolve_current_target(
         tmux_live=tmux_process.get("live_status"),
     )
 
-    runtime_attestation = attestation_section(
-        _resolver_tree_path(workspace, remote_spec)
-    )
+    runtime_attestation = attestation_section(resolver_tree_path)
     return {
         "schema_version": 2,
         "session": session,

@@ -16,6 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from arnold_pipelines.megaplan.custody.action_validator import GateResult
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -44,9 +46,13 @@ class TestPublicationAdapter:
             PublicationAdapter,
             PublicationTarget,
         )
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
 
         protocol = _make_protocol(tmp_path)
-        adapter = PublicationAdapter(protocol)
+        adapter = PublicationAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = PublicationTarget(
             repo="owner/repo",
@@ -74,9 +80,13 @@ class TestPublicationAdapter:
             PublicationAdapter,
             PublicationTarget,
         )
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
 
         protocol = _make_protocol(tmp_path)
-        adapter = PublicationAdapter(protocol)
+        adapter = PublicationAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = PublicationTarget(
             repo="owner/repo",
@@ -130,9 +140,13 @@ class TestPublicationAdapter:
             PublicationAdapter,
             PublicationTarget,
         )
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
 
         protocol = _make_protocol(tmp_path)
-        adapter = PublicationAdapter(protocol)
+        adapter = PublicationAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = PublicationTarget(repo="owner/repo", occurrence_key="prob-1")
         outcome = adapter.publish_indeterminate(
@@ -168,6 +182,7 @@ class TestExecuteEffectGate:
     """Steps 13C-13D3: execute batch mutation routing."""
 
     def test_route_local_workspace(self, tmp_path):
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
         from arnold_pipelines.megaplan.execute.effect_gate import (
             ExecuteEffectGate,
             ExecuteEffectFamily,
@@ -175,7 +190,10 @@ class TestExecuteEffectGate:
         )
 
         protocol = _make_protocol(tmp_path)
-        gate = ExecuteEffectGate(protocol)
+        gate = ExecuteEffectGate(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = ExecuteTarget(
             family=ExecuteEffectFamily.LOCAL_WORKSPACE,
@@ -198,6 +216,7 @@ class TestExecuteEffectGate:
         assert outcome.glek != ""
 
     def test_route_process(self, tmp_path):
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
         from arnold_pipelines.megaplan.execute.effect_gate import (
             ExecuteEffectGate,
             ExecuteEffectFamily,
@@ -205,7 +224,10 @@ class TestExecuteEffectGate:
         )
 
         protocol = _make_protocol(tmp_path)
-        gate = ExecuteEffectGate(protocol)
+        gate = ExecuteEffectGate(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = ExecuteTarget(
             family=ExecuteEffectFamily.PROCESS,
@@ -224,6 +246,7 @@ class TestExecuteEffectGate:
         assert outcome.family == "process"
 
     def test_route_terminal(self, tmp_path):
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
         from arnold_pipelines.megaplan.execute.effect_gate import (
             ExecuteEffectGate,
             ExecuteEffectFamily,
@@ -231,7 +254,10 @@ class TestExecuteEffectGate:
         )
 
         protocol = _make_protocol(tmp_path)
-        gate = ExecuteEffectGate(protocol)
+        gate = ExecuteEffectGate(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = ExecuteTarget(
             family=ExecuteEffectFamily.TERMINAL,
@@ -250,6 +276,7 @@ class TestExecuteEffectGate:
         assert outcome.family == "terminal"
 
     def test_route_publication_handoff(self, tmp_path):
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
         from arnold_pipelines.megaplan.execute.effect_gate import (
             ExecuteEffectGate,
             ExecuteEffectFamily,
@@ -257,7 +284,10 @@ class TestExecuteEffectGate:
         )
 
         protocol = _make_protocol(tmp_path)
-        gate = ExecuteEffectGate(protocol)
+        gate = ExecuteEffectGate(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = ExecuteTarget(
             family=ExecuteEffectFamily.PUBLICATION_HANDOFF,
@@ -344,7 +374,10 @@ class TestGitEffectAdapter:
         )
 
         protocol = _make_protocol(tmp_path)
-        adapter = GitEffectAdapter(protocol)
+        adapter = GitEffectAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = GitTarget(
             shard=GitEffectShard.RESET,
@@ -373,7 +406,10 @@ class TestGitEffectAdapter:
         )
 
         protocol = _make_protocol(tmp_path)
-        adapter = GitEffectAdapter(protocol)
+        adapter = GitEffectAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = GitTarget(
             shard=GitEffectShard.CLEAN,
@@ -399,7 +435,10 @@ class TestGitEffectAdapter:
         )
 
         protocol = _make_protocol(tmp_path)
-        adapter = GitEffectAdapter(protocol)
+        adapter = GitEffectAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = GitTarget(
             shard=GitEffectShard.CHECKOUT,
@@ -426,7 +465,10 @@ class TestGitEffectAdapter:
         )
 
         protocol = _make_protocol(tmp_path)
-        adapter = GitEffectAdapter(protocol)
+        adapter = GitEffectAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = GitTarget(
             shard=GitEffectShard.RESET,
@@ -454,7 +496,10 @@ class TestGitEffectAdapter:
         )
 
         protocol = _make_protocol(tmp_path)
-        adapter = GitEffectAdapter(protocol)
+        adapter = GitEffectAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = GitTarget(
             shard=GitEffectShard.CLEAN,
@@ -481,7 +526,10 @@ class TestGitEffectAdapter:
         )
 
         protocol = _make_protocol(tmp_path)
-        adapter = GitEffectAdapter(protocol)
+        adapter = GitEffectAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         target = GitTarget(
             shard=GitEffectShard.CHECKOUT,
@@ -510,7 +558,10 @@ class TestGitEffectAdapter:
         import pytest as pt
 
         protocol = _make_protocol(tmp_path)
-        adapter = GitEffectAdapter(protocol)
+        adapter = GitEffectAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         # Only RESET, CLEAN, CHECKOUT are in GIT_SHARD_13E2
         assert len(GIT_SHARD_13E2) == 3
@@ -536,7 +587,10 @@ class TestDeliveryEffects:
         )
 
         protocol = _make_protocol(tmp_path)
-        effects = DeliveryEffects(protocol)
+        effects = DeliveryEffects(
+            protocol,
+            action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+        )
 
         target = DeliveryTarget(
             channel=DeliveryChannel.DISCORD_DM,
@@ -566,7 +620,10 @@ class TestDeliveryEffects:
         )
 
         protocol = _make_protocol(tmp_path)
-        effects = DeliveryEffects(protocol)
+        effects = DeliveryEffects(
+            protocol,
+            action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+        )
 
         target = DeliveryTarget(
             channel=DeliveryChannel.AGENTBOX,
@@ -588,7 +645,10 @@ class TestDeliveryEffects:
         from arnold_pipelines.megaplan.resident.delivery_effects import DeliveryEffects
 
         protocol = _make_protocol(tmp_path)
-        effects = DeliveryEffects(protocol)
+        effects = DeliveryEffects(
+            protocol,
+            action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+        )
 
         outcome = effects.deliver_discord_dm(
             user_id="user-1",
@@ -603,7 +663,10 @@ class TestDeliveryEffects:
         from arnold_pipelines.megaplan.resident.delivery_effects import DeliveryEffects
 
         protocol = _make_protocol(tmp_path)
-        effects = DeliveryEffects(protocol)
+        effects = DeliveryEffects(
+            protocol,
+            action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+        )
 
         outcome = effects.deliver_agentbox(
             operation_id="op-1",
@@ -662,7 +725,10 @@ class TestDeliveryEffects:
                 custody_reread_check=lambda _attempt: True,
             ),
         )
-        effects = DeliveryEffects(protocol)
+        effects = DeliveryEffects(
+            protocol,
+            action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+        )
         calls = 0
 
         def provider(_payload):
@@ -1076,10 +1142,14 @@ class TestGithubSyncWithAdapter:
             GitHubSyncThresholds,
         )
         from arnold_pipelines.megaplan.cloud.publication_adapter import PublicationAdapter
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
         from unittest.mock import patch
 
         protocol = _make_protocol(tmp_path)
-        adapter = PublicationAdapter(protocol)
+        adapter = PublicationAdapter(
+            protocol,
+            action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+        )
 
         problem = {
             "problem_id": "prob-sync-2",

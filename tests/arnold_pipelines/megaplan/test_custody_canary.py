@@ -37,6 +37,7 @@ from arnold_pipelines.megaplan.custody.canary import (
     PromotionGateDecision,
     PromotionGateResult,
     SourceProvenanceCheck,
+    _compute_promotion_gate,
     _verify_source_provenance,
     canary_enforcement_enabled,
     validate_promotion_gate,
@@ -155,6 +156,24 @@ class PromotionGateDecisionTests(TestCase):
         }
         actual = {e.value for e in PromotionGateDecision}
         self.assertEqual(expected, actual)
+
+    def test_shadow_pass_is_never_authorized_or_green(self) -> None:
+        """SHADOW_PASS is a distinct diagnostic decision — never green."""
+        self.assertIsNot(
+            PromotionGateDecision.SHADOW_PASS,
+            PromotionGateDecision.AUTHORIZED,
+        )
+        # Any result carrying SHADOW_PASS must read as blocked/non-green.
+        pgr = PromotionGateResult(
+            gate_result=PromotionGateDecision.SHADOW_PASS,
+            projection_id="p",
+            target_digest="abc",
+            checks=(),
+            enforcement_enabled=False,
+        )
+        self.assertFalse(pgr.authorized)
+        self.assertTrue(pgr.blocked)
+        self.assertEqual(pgr.gate_result.value, "shadow_pass")
 
 
 # ── SourceProvenanceCheck ────────────────────────────────────────────────
@@ -378,12 +397,13 @@ class SourceProvenanceVerificationTests(TestCase):
 class PromotionGateShadowModeTests(TestCase):
     """validate_promotion_gate in shadow mode (enforcement disabled)."""
 
-    def test_shadow_mode_returns_shadow_pass(self) -> None:
+    def test_shadow_mode_returns_non_green_shadow_pass(self) -> None:
         ctx = _make_context()
         result = validate_promotion_gate(ctx, enforcement_enabled=False)
         self.assertEqual(result.gate_result, PromotionGateDecision.SHADOW_PASS)
         self.assertFalse(result.authorized)
-        self.assertFalse(result.blocked)
+        # SHADOW_PASS is diagnostic-only and is treated as blocked.
+        self.assertTrue(result.blocked)
         self.assertTrue(result.is_shadow)
 
     def test_shadow_mode_has_all_four_checks(self) -> None:
@@ -485,6 +505,92 @@ class PromotionGateEnforcementModeTests(TestCase):
         self.assertTrue(result.target_digest)
 
 
+# ── Promotion gate aggregation (shadow-as-success removal) ────────────────
+
+
+class PromotionGateAggregationTests(TestCase):
+    """_compute_promotion_gate never yields a green SHADOW_PASS."""
+
+    def _all_satisfied_checks(self) -> tuple[CanaryCheck, ...]:
+        return tuple(
+            CanaryCheck(check_type=ct, outcome=CanaryOutcome.SATISFIED)
+            for ct in (
+                "source_provenance",
+                "run_authority",
+                "custody_lease",
+                "wbc_attempt",
+            )
+        )
+
+    def test_enforcement_off_keeps_shadow_pass_diagnostic(self) -> None:
+        """Enforcement off still reports SHADOW_PASS so diagnostics stay visible."""
+        checks = self._all_satisfied_checks()
+        decision = _compute_promotion_gate(checks, enforcement_enabled=False)
+        self.assertEqual(decision, PromotionGateDecision.SHADOW_PASS)
+
+    def test_shadow_pass_aggregation_is_non_green(self) -> None:
+        """A SHADOW_PASS aggregation is never a green canary or dispatch receipt."""
+        checks = self._all_satisfied_checks()
+        decision = _compute_promotion_gate(checks, enforcement_enabled=False)
+        result = PromotionGateResult(
+            gate_result=decision,
+            projection_id="p",
+            target_digest="abc",
+            checks=checks,
+            enforcement_enabled=False,
+        )
+        self.assertEqual(result.gate_result, PromotionGateDecision.SHADOW_PASS)
+        self.assertFalse(result.authorized)
+        self.assertTrue(result.blocked)
+
+    def test_authorized_requires_enforcement_and_all_satisfied(self) -> None:
+        """AUTHORIZED alone passes: enforcement on with every check satisfied."""
+        checks = self._all_satisfied_checks()
+        decision = _compute_promotion_gate(checks, enforcement_enabled=True)
+        self.assertEqual(decision, PromotionGateDecision.AUTHORIZED)
+        result = PromotionGateResult(
+            gate_result=decision,
+            projection_id="p",
+            target_digest="abc",
+            checks=checks,
+            enforcement_enabled=True,
+        )
+        self.assertTrue(result.authorized)
+        self.assertFalse(result.blocked)
+
+    def test_any_failing_check_blocks_under_enforcement(self) -> None:
+        """A failing check under enforcement never aggregates to AUTHORIZED."""
+        checks = (
+            CanaryCheck(
+                check_type="source_provenance",
+                outcome=CanaryOutcome.SATISFIED,
+            ),
+            CanaryCheck(
+                check_type="run_authority",
+                outcome=CanaryOutcome.SATISFIED,
+            ),
+            CanaryCheck(
+                check_type="custody_lease",
+                outcome=CanaryOutcome.MISSING,
+            ),
+            CanaryCheck(
+                check_type="wbc_attempt",
+                outcome=CanaryOutcome.SATISFIED,
+            ),
+        )
+        decision = _compute_promotion_gate(checks, enforcement_enabled=True)
+        self.assertEqual(decision, PromotionGateDecision.BLOCKED_NO_LEASE)
+        result = PromotionGateResult(
+            gate_result=decision,
+            projection_id="p",
+            target_digest="abc",
+            checks=checks,
+            enforcement_enabled=True,
+        )
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.authorized)
+
+
 # ── PromotionGateResult dataclass ────────────────────────────────────────
 
 
@@ -503,7 +609,7 @@ class PromotionGateResultTests(TestCase):
         self.assertFalse(pgr.blocked)
         self.assertFalse(pgr.is_shadow)
 
-    def test_not_authorized_when_shadow_pass(self) -> None:
+    def test_shadow_pass_is_blocked_and_not_authorized(self) -> None:
         pgr = PromotionGateResult(
             gate_result=PromotionGateDecision.SHADOW_PASS,
             projection_id="p",
@@ -512,7 +618,7 @@ class PromotionGateResultTests(TestCase):
             enforcement_enabled=False,
         )
         self.assertFalse(pgr.authorized)
-        self.assertFalse(pgr.blocked)
+        self.assertTrue(pgr.blocked)
 
     def test_blocked_when_gate_is_blocked(self) -> None:
         pgr = PromotionGateResult(
@@ -524,6 +630,23 @@ class PromotionGateResultTests(TestCase):
         )
         self.assertTrue(pgr.blocked)
         self.assertFalse(pgr.authorized)
+
+    def test_only_authorized_is_green(self) -> None:
+        """AUTHORIZED alone passes; every other decision (incl. SHADOW_PASS) is blocked."""
+        for decision in PromotionGateDecision:
+            with self.subTest(decision=decision.value):
+                pgr = PromotionGateResult(
+                    gate_result=decision,
+                    projection_id="p",
+                    target_digest="abc",
+                    checks=(),
+                    enforcement_enabled=(
+                        decision is PromotionGateDecision.AUTHORIZED
+                    ),
+                )
+                is_green = decision is PromotionGateDecision.AUTHORIZED
+                self.assertEqual(pgr.authorized, is_green)
+                self.assertEqual(pgr.blocked, not is_green)
 
     def test_to_dict_round_trip(self) -> None:
         checks = (
@@ -699,12 +822,13 @@ class CanaryBlockingProjectionPromotionTests(TestCase):
         if os.path.exists(self._tmp_path):
             os.unlink(self._tmp_path)
 
-    def test_shadow_mode_never_blocks(self) -> None:
-        """In shadow mode, the canary never blocks promotion."""
+    def test_shadow_mode_is_non_green_and_never_authorizes(self) -> None:
+        """In shadow mode the canary is diagnostic-only: SHADOW_PASS is blocked."""
         ctx = _make_context(source_path="")
         result = validate_promotion_gate(ctx, enforcement_enabled=False)
         self.assertEqual(result.gate_result, PromotionGateDecision.SHADOW_PASS)
-        self.assertFalse(result.blocked)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.authorized)
 
     def test_missing_provenance_blocks_in_enforcement(self) -> None:
         """Missing installed source provenance blocks promotion."""

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
+
+import pytest
 
 from arnold_pipelines.megaplan.authority.batch_scope import (
     DISPATCH_IDENTITY_KEY,
@@ -19,10 +23,51 @@ from arnold_pipelines.megaplan.authority.binding import (
     TaskAttempt,
     TaskClaim,
 )
+from arnold_pipelines.megaplan.custody.action_validator import (
+    GateResult,
+    adapter_effect_authorized,
+)
 from arnold_pipelines.megaplan.execute import merge as merge_module
 from arnold_pipelines.megaplan.execute.merge import _grant_aware_validate_entries
 from arnold_pipelines.run_authority import CASExpectation, EvidenceEnvelope
 from arnold_pipelines.run_authority import reducer as generic_reducer
+
+
+class _UnknownGateResult(StrEnum):
+    AUTHORIZED = "authorized"
+
+
+@pytest.mark.parametrize(
+    "gate_result",
+    [
+        None,
+        RuntimeError("gate failed"),
+        _UnknownGateResult.AUTHORIZED,
+        "authorized",
+        {"gate_result": "authorized"},
+    ],
+)
+def test_adapter_effect_authorization_denies_absent_exceptional_or_malformed_results(
+    gate_result: object,
+) -> None:
+    assert adapter_effect_authorized(gate_result) is False
+
+
+@pytest.mark.parametrize(
+    "gate_result",
+    [result for result in GateResult if result.name.startswith("BLOCKED_")],
+)
+def test_adapter_effect_authorization_denies_every_blocked_verdict(
+    gate_result: GateResult,
+) -> None:
+    assert adapter_effect_authorized(gate_result) is False
+
+
+@pytest.mark.parametrize("gate_result", [GateResult.SHADOW_PASS, GateResult.ERROR])
+def test_adapter_effect_authorization_denies_non_authoritative_gate_outcomes(
+    gate_result: GateResult,
+) -> None:
+    assert adapter_effect_authorized(gate_result) is False
 
 
 def _task_entry(
@@ -552,3 +597,218 @@ def test_retired_execute_authority_paths_are_not_executable() -> None:
     assert "legacy_no_authority_metadata" not in merge_source
     assert "execute_batch_*_output.json" not in hermes_source
     assert "apply_authoritative_execute_overrides" not in evidence_source
+
+
+# ── T-0019: ExecuteEffectGate closes effects behind the frozen contract ──────
+
+
+@dataclass
+class _Reservation:
+    global_logical_effect_key: str
+
+
+class _RecordingProtocol:
+    """EffectProtocol spy: records every effect call without side effects."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    def reserve_and_start(self, **kwargs: Any) -> _Reservation:
+        self.calls.append(("reserve_and_start",))
+        return _Reservation(global_logical_effect_key="glek-exec-test")
+
+    def persist_intent(self, **kwargs: Any) -> None:
+        self.calls.append(("persist_intent",))
+
+    def accept_outcome(self, *args: Any, **kwargs: Any) -> None:
+        self.calls.append(("accept_outcome",))
+
+
+def _effect_target() -> Any:
+    from arnold_pipelines.megaplan.execute.effect_gate import (
+        ExecuteEffectFamily,
+        ExecuteTarget,
+    )
+
+    return ExecuteTarget(
+        family=ExecuteEffectFamily.LOCAL_WORKSPACE,
+        batch_number=1,
+        task_ids=("T1",),
+        action="write_artifact",
+    )
+
+
+def _route_with_gate(
+    *,
+    gate_builder: Any,
+    applied: list[Any],
+) -> Any:
+    from arnold_pipelines.megaplan.execute.effect_gate import ExecuteEffectGate
+
+    protocol = _RecordingProtocol()
+    kwargs = {} if gate_builder is None else {"action_gate_check": gate_builder}
+    gate = ExecuteEffectGate(protocol, **kwargs)
+    return protocol, gate.route(
+        target=_effect_target(),
+        intent_payload={"data": 1},
+        apply_fn=lambda payload: applied.append(payload) or {"written": True},
+    )
+
+
+@pytest.mark.parametrize(
+    "gate_builder,verdict_label",
+    [
+        pytest.param(None, "missing", id="no-gate-installed"),
+        pytest.param(
+            lambda f, t: (_ for _ in ()).throw(RuntimeError("gate failed")),
+            "error",
+            id="gate-raises-exception",
+        ),
+        pytest.param(
+            lambda f, t: GateResult.SHADOW_PASS,
+            "shadow_pass",
+            id="shadow-pass",
+        ),
+        pytest.param(
+            lambda f, t: GateResult.ERROR,
+            "error",
+            id="gate-error-verdict",
+        ),
+        pytest.param(
+            lambda f, t: GateResult.BLOCKED_NO_LEASE,
+            "blocked_no_lease",
+            id="blocked-verdict",
+        ),
+        pytest.param(
+            lambda f, t: "authorized",
+            "str",
+            id="malformed-string",
+        ),
+        pytest.param(
+            lambda f, t: _UnknownGateResult.AUTHORIZED,
+            "_UnknownGateResult",
+            id="foreign-enum",
+        ),
+    ],
+)
+def test_execute_effect_gate_denies_before_any_protocol_or_effect_call(
+    gate_builder: Any,
+    verdict_label: str,
+) -> None:
+    applied: list[Any] = []
+    protocol, outcome = _route_with_gate(
+        gate_builder=gate_builder,
+        applied=applied,
+    )
+
+    assert outcome.ok is False
+    assert outcome.glek == ""
+    assert outcome.outcome_kind == "FAILED"
+    assert outcome.error is not None
+    assert outcome.error.startswith("Action gate denied")
+    assert outcome.evidence["gate_verdict"] == verdict_label
+    assert protocol.calls == []  # no reserve/start, intent, or outcome write
+    assert applied == []  # workspace/process/terminal mutation never ran
+
+
+def test_execute_effect_gate_completes_when_authorized() -> None:
+    from arnold_pipelines.megaplan.execute.effect_gate import ExecuteEffectGate
+
+    protocol = _RecordingProtocol()
+    gate = ExecuteEffectGate(
+        protocol,
+        action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+    )
+    applied: list[Any] = []
+    outcome = gate.route(
+        target=_effect_target(),
+        intent_payload={"data": 1},
+        apply_fn=lambda payload: applied.append(payload) or {"written": True},
+    )
+
+    assert outcome.ok is True
+    assert outcome.glek == "glek-exec-test"
+    assert outcome.outcome_kind == "COMPLETED"
+    assert [call[0] for call in protocol.calls] == [
+        "reserve_and_start",
+        "persist_intent",
+        "accept_outcome",
+    ]
+    assert applied == [{"data": 1}]
+
+
+def test_execute_effect_gate_missing_gate_is_typed_denial_not_shadow() -> None:
+    applied: list[Any] = []
+    protocol, outcome = _route_with_gate(gate_builder=None, applied=applied)
+
+    assert outcome.ok is False
+    assert outcome.evidence["gate_verdict"] == "missing"
+    assert "no action gate installed" in (outcome.error or "")
+    assert protocol.calls == []
+    assert applied == []
+
+
+# ── T-0019 (G4): production construction requires an explicit gate ──────────
+
+
+def test_execute_effect_gate_production_without_gate_raises_at_construction() -> None:
+    """T-0019: production_enabled=True without an explicit action_gate_check
+    is a wiring error — the constructor raises a typed error before any
+    dispatch, so an ungated production gate can never be installed."""
+    from arnold_pipelines.megaplan.execute.effect_gate import (
+        ExecuteEffectGate,
+        ExecuteEffectGateError,
+    )
+
+    with pytest.raises(ExecuteEffectGateError) as excinfo:
+        ExecuteEffectGate(_RecordingProtocol(), production_enabled=True)
+    assert "action_gate_check" in str(excinfo.value)
+
+
+def test_execute_effect_gate_production_with_explicit_gate_routes() -> None:
+    """T-0019: production_enabled=True with an explicit gate constructs and
+    routes through the gate exactly like observation mode."""
+    from arnold_pipelines.megaplan.execute.effect_gate import ExecuteEffectGate
+
+    protocol = _RecordingProtocol()
+    gate = ExecuteEffectGate(
+        protocol,
+        production_enabled=True,
+        action_gate_check=lambda f, t: GateResult.AUTHORIZED,
+    )
+    applied: list[Any] = []
+    outcome = gate.route(
+        target=_effect_target(),
+        intent_payload={"data": 1},
+        apply_fn=lambda payload: applied.append(payload) or {"written": True},
+    )
+
+    assert outcome.ok is True
+    assert outcome.outcome_kind == "COMPLETED"
+    assert [call[0] for call in protocol.calls] == [
+        "reserve_and_start",
+        "persist_intent",
+        "accept_outcome",
+    ]
+    assert applied == [{"data": 1}]
+
+
+def test_execute_effect_gate_observation_flag_without_gate_fails_closed() -> None:
+    """T-0019: observation-only construction (production_enabled=False) may
+    omit the gate — routing still fails closed as a typed denial."""
+    from arnold_pipelines.megaplan.execute.effect_gate import ExecuteEffectGate
+
+    protocol = _RecordingProtocol()
+    gate = ExecuteEffectGate(protocol, production_enabled=False)
+    applied: list[Any] = []
+    outcome = gate.route(
+        target=_effect_target(),
+        intent_payload={"data": 1},
+        apply_fn=lambda payload: applied.append(payload) or {"written": True},
+    )
+
+    assert outcome.ok is False
+    assert outcome.outcome_kind == "FAILED"
+    assert outcome.evidence["gate_verdict"] == "missing"
+    assert protocol.calls == []
+    assert applied == []

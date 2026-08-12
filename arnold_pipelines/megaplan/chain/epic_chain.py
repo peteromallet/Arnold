@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -20,10 +21,12 @@ except ImportError as exc:  # pragma: no cover - import guard
 from arnold.runtime.durable_ops import OperationState
 
 from arnold_pipelines.megaplan._core import atomic_write_json
+from arnold_pipelines.megaplan.chain.execution_binding import RUNTIME_DRIFT_ERROR
 from arnold_pipelines.megaplan.chain.spec import AnchorSpec
 from arnold_pipelines.megaplan.chain.spec import (
     ChainSpec,
     ChainState,
+    _state_path_for as _persisted_state_path_for,
     effective_chain_policy,
     load_chain_state,
     load_runtime_policy,
@@ -48,7 +51,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_FINALIZED,
     STATE_PAUSED,
 )
-from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env
+from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
 from arnold_pipelines.megaplan.types import CliError
 
 log = logging.getLogger("megaplan")
@@ -379,6 +382,105 @@ def _child_project_root(observed_spec_path: Path, chain_state: ChainState) -> Pa
     return _find_project_root_from_spec_path(observed_spec_path)
 
 
+def _persisted_engine_root(observed_spec_path: Path) -> str | None:
+    """Read ``metadata.execution_environment.engine_root`` from the raw
+    persisted chain-state JSON (the canonical path ``save_chain_state``
+    writes and ``load_chain_state`` reads) without loading/normalizing the
+    execution binding."""
+    state_path = _persisted_state_path_for(observed_spec_path)
+    if not state_path.exists():
+        return None
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    metadata = raw.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    execution_environment = metadata.get("execution_environment")
+    if not isinstance(execution_environment, dict):
+        return None
+    engine_root = execution_environment.get("engine_root")
+    if not isinstance(engine_root, str) or not engine_root.strip():
+        return None
+    return engine_root.strip()
+
+
+def _manifest_runtime_root(manifest_path: Path) -> Path | None:
+    """Read ``epic.runtime_root`` from the per-session runtime manifest."""
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    epic = raw.get("epic")
+    if not isinstance(epic, dict):
+        return None
+    runtime_root = epic.get("runtime_root")
+    if not isinstance(runtime_root, str) or not runtime_root.strip():
+        return None
+    return Path(runtime_root).expanduser().resolve()
+
+
+def _assert_child_runtime_binding(observed_spec_path: Path) -> Path:
+    """Fail closed unless the child's persisted engine root exists and equals
+    the per-session manifest root and this interpreter's live import root.
+
+    Reads only the persisted chain-state JSON (never ``load_chain_state`` /
+    ``bind_execution_identity``) so a missing, dangling, or mismatched runtime
+    rejects the relaunch BEFORE state load/spawn (T-0011).  Returns the
+    accepted engine root — the ONLY root placed on the child's PYTHONPATH.
+    """
+    manifest_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+    if not manifest_path:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "child relaunch requires ARNOLD_RUNTIME_MANIFEST (missing runtime manifest pin)",
+        )
+    manifest_root = _manifest_runtime_root(Path(manifest_path))
+    if manifest_root is None:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"runtime manifest {manifest_path} lacks a nonempty epic.runtime_root",
+        )
+    state_path = _persisted_state_path_for(observed_spec_path)
+    recorded_root = _persisted_engine_root(observed_spec_path)
+    if recorded_root is None:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"child chain state {state_path} lacks metadata.execution_environment.engine_root",
+        )
+    recorded = Path(recorded_root).expanduser().resolve()
+    if not recorded.is_dir() or not (recorded / ".git").exists():
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"recorded engine root {recorded_root} is missing or dangling",
+        )
+    live_root = megaplan_engine_root()
+    if recorded != manifest_root or recorded != live_root:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            (
+                f"engine root mismatch: recorded={recorded} "
+                f"manifest={manifest_root} live={live_root}"
+            ),
+        )
+    return recorded
+
+
+def _child_launch_env(engine_root: Path) -> dict[str, str]:
+    """Env for a child chain spawn: ONLY the accepted engine root on
+    PYTHONPATH (no shared/caller paths, T-0011)."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(engine_root)
+    env["MEGAPLAN_ENGINE_ROOT"] = str(engine_root)
+    env["PYTHONSAFEPATH"] = "1"
+    return env
+
+
 def _read_child_plan_status(
     project_root: Path | None,
     chain_state: ChainState,
@@ -419,6 +521,13 @@ def _observe_child_epic(epic: EpicSpec, *, parent_spec_path: Path) -> ObservedCh
     observed_spec_path = _resolve_child_spec_path(
         parent_spec_path, epic.observe_spec or epic.spec
     )
+    # Fail closed BEFORE any child state read on EVERY entry path (outer
+    # observe+load in run_epic_chain, post-launch re-observe, and the status
+    # CLI): a missing/dangling/mismatched recorded engine root must raise
+    # chain_runtime_binding_drift before load_chain_state is ever reached
+    # (G2 round-5 finding 1). _default_start_child_chain repeats the check
+    # before spawn so direct child-start stays guarded independently.
+    _assert_child_runtime_binding(observed_spec_path)
     chain_spec = load_spec(spec_path)
     chain_state = load_chain_state(observed_spec_path)
     project_root = _child_project_root(observed_spec_path, chain_state)
@@ -670,11 +779,16 @@ def _default_start_child_chain(
     parent_spec_path: Path,
 ) -> subprocess.CompletedProcess[str]:
     child_spec_path = _resolve_child_spec_path(parent_spec_path, child.spec)
-    child_chain_state = load_chain_state(
-        _resolve_child_spec_path(parent_spec_path, child.observe_spec or child.spec)
+    observed_spec_path = _resolve_child_spec_path(
+        parent_spec_path, child.observe_spec or child.spec
     )
+    # Fail closed BEFORE state load / execution binding / spawn: the persisted
+    # engine root must exist and equal the manifest root and the live import
+    # root (T-0011).
+    engine_root = _assert_child_runtime_binding(observed_spec_path)
+    child_chain_state = load_chain_state(observed_spec_path)
     child_project_root = _child_project_root(
-        _resolve_child_spec_path(parent_spec_path, child.observe_spec or child.spec),
+        observed_spec_path,
         child_chain_state,
     ) or _find_project_root_from_spec_path(child_spec_path) or Path.cwd()
     cmd = [
@@ -695,7 +809,7 @@ def _default_start_child_chain(
         capture_output=True,
         text=True,
         check=False,
-        env=megaplan_engine_env(),
+        env=_child_launch_env(engine_root),
     )
 
 
@@ -736,6 +850,12 @@ def run_epic_chain(
         state.current_epic_id = epic.id
         state.current_spec_path = str(_resolve_child_spec_path(spec_path, epic.spec))
         save_epic_chain_state(spec_path, state)
+        # Fail closed on the OUTER path BEFORE _observe_child_epic touches
+        # child state (G2 round-5 finding 1): a runtime-binding drift must
+        # raise chain_runtime_binding_drift here, not after a state load.
+        _assert_child_runtime_binding(
+            _resolve_child_spec_path(spec_path, epic.observe_spec or epic.spec)
+        )
         child = _observe_child_epic(epic, parent_spec_path=spec_path)
         state.last_state = child.effective_status
         state.pr_number = child.chain_state.pr_number
@@ -1098,6 +1218,13 @@ def run_epic_chain_cli(
             summary = format_epic_chain_status(spec, state)
             if summary.get("current_epic") is not None:
                 current = spec.epics[_display_current_epic_index(spec, state)]
+                # Same fail-closed guarantee as run_epic_chain: reject runtime
+                # drift BEFORE the status observe reads child state.
+                _assert_child_runtime_binding(
+                    _resolve_child_spec_path(
+                        spec_path, current.observe_spec or current.spec
+                    )
+                )
                 active_child = _observe_child_epic(current, parent_spec_path=spec_path)
             else:
                 active_child = None

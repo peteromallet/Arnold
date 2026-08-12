@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -224,8 +225,28 @@ def test_append_completed_with_guard_records_chain_wbc_evidence(
     assert evidence["transition"] == "chain_milestone_advance"
 
 
-def test_epic_chain_records_wbc_transition_evidence_for_completion(tmp_path: Path) -> None:
+def test_epic_chain_records_wbc_transition_evidence_for_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+
     child_spec = _write_child_chain_spec(tmp_path, "child")
+    engine_root = megaplan_engine_root()
+    manifest = tmp_path / "runtime-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "epic": {
+                    "runtime_root": str(engine_root),
+                    "expected_head": "a" * 40,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
     save_chain_state(
         child_spec,
         ChainState(
@@ -235,6 +256,7 @@ def test_epic_chain_records_wbc_transition_evidence_for_completion(tmp_path: Pat
             metadata={
                 "execution_environment": {
                     "project_root": str(tmp_path),
+                    "engine_root": str(engine_root),
                 }
             },
         ),

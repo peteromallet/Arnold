@@ -36,7 +36,9 @@ from .outbox import CustodyOutbox
 # Dispatch custody leases are acquired with a 1h TTL.  A worker that outlives
 # that TTL must not be denied at the completion/repair boundary after having
 # executed, so ``_preflight`` renews a self-owned lease that is expired or
-# inside the grace window immediately before the boundary re-read.
+# inside the grace window immediately before the boundary re-read.  The
+# AUTHORITATIVE_REREAD operation is observation-only and never renews: a
+# shadow-mode reread must perform no state mutation.
 
 _LEASE_TTL_HOURS = 1
 _LEASE_RENEW_GRACE_SECONDS = 300
@@ -264,6 +266,7 @@ class WbcRuntimeProducerFacade:
         cursor_key: str = "default",
     ) -> RuntimeProducerResult:
         guard, source_record, boundary, rollback_validation = self._preflight(
+            operation=RuntimeOperation.RESERVE,
             writer_id=writer_id,
             surface_name=surface_name,
             source_lookup_key=source_lookup_key,
@@ -520,6 +523,7 @@ class WbcRuntimeProducerFacade:
         cursor_key: str = "default",
     ) -> RuntimeProducerResult:
         guard, source_record, boundary, rollback_validation = self._preflight(
+            operation=RuntimeOperation.EFFECT_OUTCOME,
             writer_id=writer_id,
             surface_name=surface_name,
             source_lookup_key=source_lookup_key,
@@ -604,6 +608,7 @@ class WbcRuntimeProducerFacade:
         cursor_key: str = "default",
     ) -> RuntimeProducerResult:
         guard, source_record, boundary, rollback_validation = self._preflight(
+            operation=RuntimeOperation.AUTHORITATIVE_REREAD,
             writer_id=writer_id,
             surface_name=surface_name,
             source_lookup_key=source_lookup_key,
@@ -651,6 +656,7 @@ class WbcRuntimeProducerFacade:
         cursor_key: str,
     ) -> RuntimeProducerResult:
         guard, source_record, boundary, rollback_validation = self._preflight(
+            operation=operation,
             writer_id=writer_id,
             surface_name=surface_name,
             source_lookup_key=source_lookup_key,
@@ -699,6 +705,7 @@ class WbcRuntimeProducerFacade:
     def _preflight(
         self,
         *,
+        operation: RuntimeOperation,
         writer_id: str,
         surface_name: str,
         source_lookup_key: str,
@@ -720,7 +727,12 @@ class WbcRuntimeProducerFacade:
             # Keep-alive before the boundary re-read: a self-owned lease that
             # expired (or is about to) while the worker executed is renewed so
             # the completion/repair boundary is not denied post-execution.
-            self._renew_owned_lease_before_boundary(action_context)
+            # AUTHORITATIVE_REREAD is observation-only and must perform no
+            # state mutation — not even a lease keep-alive — so renewal is
+            # skipped for it (the SHADOW_PASS carve-out below admits it
+            # purely as a reader of the ledger).
+            if operation != RuntimeOperation.AUTHORITATIVE_REREAD:
+                self._renew_owned_lease_before_boundary(action_context)
             boundary = validate_action_boundary(
                 action_context,
                 lease_store=self._lease_store,
@@ -728,16 +740,19 @@ class WbcRuntimeProducerFacade:
                 enforcement_enabled=self._enforcement_enabled,
             )
             if not boundary.authorized:
+                # Deny-by-default (North Star): SHADOW_PASS is NEVER
+                # authoritative — enforcement-off is shadow mode, not
+                # authority — so a SHADOW_PASS boundary never admits a WBC
+                # effect, regardless of enforcement_enabled.  The one
+                # carve-out is the observation-only authoritative reread,
+                # which emits diagnostics but performs no state mutation
+                # (a shadow-mode observer may still read the ledger).  The
+                # reread is genuinely effect-free: its lease renewal is
+                # skipped above, so admitting it writes nothing.
                 if (
-                    self._enforcement_enabled is False
-                    and boundary.gate_result == GateResult.SHADOW_PASS
+                    boundary.gate_result == GateResult.SHADOW_PASS
+                    and operation == RuntimeOperation.AUTHORITATIVE_REREAD
                 ):
-                    # Functional shadow mode (ARNOLD_M7_ACTION_VALIDATOR_
-                    # ENFORCEMENT=0): the validator executed every check but
-                    # reported SHADOW_PASS, which is never authoritative.  The
-                    # facade accepts the boundary so the dispatch proceeds and
-                    # its evidence is recorded.  Enforcement ON denies
-                    # SHADOW_PASS (deny-by-default).
                     pass
                 else:
                     raise ActionBoundaryDeniedError(

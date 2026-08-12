@@ -3,15 +3,105 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
+# Canonical manifest validation runs in a CHILD interpreter (the same shape
+# as the supervisor-runtime-lib's arnold_runtime_manifest_epic_field, which
+# shells out to python3 + bootstrap_manifest).  Importing the validator
+# in-process would cache ``arnold_pipelines`` (and its parents) in
+# sys.modules from the wrapper's own environment, so the later production
+# import would resolve from that tree instead of the manifest root — exactly
+# the self-checkout preference G5 forbids.  The child validates canonically
+# and prints only the accepted runtime_root; the wrapper process imports
+# nothing until the manifest root is on sys.path.
+_VALIDATE_MANIFEST = """\
+import pathlib
+import sys
+
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        is_compatibility_only_pointer,
+        load_manifest,
+    )
+except Exception as exc:
+    raise SystemExit(
+        "arnold-discord-dm: runtime manifest authority unavailable "
+        "(%s: %s); failing closed" % (type(exc).__name__, exc)
+    )
+
+path = pathlib.Path(sys.argv[1])
+if is_compatibility_only_pointer(path):
+    raise SystemExit(
+        "arnold-discord-dm: runtime manifest %s is a compatibility_only "
+        "pointer and can never select a runtime; failing closed" % path
+    )
+try:
+    manifest = load_manifest(path)
+except ManifestError as exc:
+    raise SystemExit(
+        "arnold-discord-dm: runtime manifest %s failed canonical "
+        "validation: %s" % (path, exc)
+    )
+root = manifest.epic.get("runtime_root")
+if not isinstance(root, str) or not root.strip():
+    raise SystemExit(
+        "arnold-discord-dm: runtime manifest %s has no epic.runtime_root" % path
+    )
+print(root)
+"""
+
+
 def _resolve_root() -> Path:
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "arnold_pipelines" / "megaplan" / "discord_dm.py").exists():
-            return parent
-    return Path(os.environ.get("MEGAPLAN_DISCORD_DM_ARNOLD_SRC", "/workspace/arnold"))
+    # The runtime root resolves from the per-session manifest
+    # (ARNOLD_RUNTIME_MANIFEST -> epic.runtime_root) and never from this
+    # wrapper's own checkout: the wrapper must run from the manifest-declared
+    # root or fail closed.  No env-selector read, no self-checkout selection,
+    # and no shared-root fallback (G5): a missing/corrupt manifest fails
+    # closed instead of silently importing from the wrapper checkout or
+    # /workspace/arnold.
+    manifest_path = Path(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST", "/workspace/.megaplan/runtime-manifest.json")
+    )
+    # G6 round-2 finding 1: the manifest is validated canonically BEFORE any
+    # sys.path mutation or production import.  The supervisor-runtime-lib
+    # manifest authority (runtime_manifest.load_manifest) rejects schema-less,
+    # schema-invalid, and missing-runtime_root manifests, and a
+    # compatibility_only pointer is non-authoritative telemetry that can never
+    # select a runtime.  Every present-but-invalid state fails closed with a
+    # typed SystemExit — there is no raw json.loads fallback and no manifest
+    # root reaches sys.path unless the manifest is canonically valid.
+    try:
+        validated = subprocess.run(
+            [sys.executable, "-c", _VALIDATE_MANIFEST, str(manifest_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as exc:
+        raise SystemExit(
+            f"arnold-discord-dm: runtime manifest authority unavailable "
+            f"({type(exc).__name__}: {exc}); failing closed"
+        ) from exc
+    if validated.returncode != 0:
+        detail = (validated.stderr or validated.stdout).strip()
+        raise SystemExit(
+            detail
+            or f"arnold-discord-dm: runtime manifest {manifest_path} failed canonical validation"
+        )
+    root = validated.stdout.strip()
+    if not root:
+        raise SystemExit(
+            f"arnold-discord-dm: runtime manifest {manifest_path} has no epic.runtime_root"
+        )
+    resolved = Path(root).resolve()
+    if not (resolved / "arnold_pipelines" / "megaplan" / "discord_dm.py").exists():
+        raise SystemExit(
+            f"arnold-discord-dm: manifest runtime root {resolved} has no discord_dm module"
+        )
+    return resolved
 
 
 ROOT = _resolve_root()
@@ -20,6 +110,35 @@ if str(ROOT) not in sys.path:
 
 from arnold_pipelines.megaplan.discord_dm import send_discord_dm
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
+
+
+def _open_gated_delivery_effects(root: Path):
+    """Open the gated resident delivery-effects owner for this payload.
+
+    Production delivery routes exclusively through the durable
+    delivery-effects adapter (T-0015); this wrapper never enables the direct
+    Discord transport.  The adapter is opened in production mode with an
+    explicit current gate so a missing or corrupt owner fails closed with a
+    typed denial before any provider contact.
+    """
+    from arnold_pipelines.megaplan.resident.delivery_effects import (
+        current_delivery_gate_check,
+        open_resident_delivery_effects,
+    )
+
+    configured_root = str(os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or "").strip()
+    resident_root = (
+        Path(configured_root).expanduser().resolve()
+        if configured_root
+        else root / ".megaplan" / "resident"
+    )
+    return open_resident_delivery_effects(
+        resident_root / "delivery_effects",
+        production_enabled=True,
+        action_gate_check=current_delivery_gate_check(
+            lambda: bool(str(os.environ.get("DISCORD_BOT_TOKEN") or "").strip())
+        ),
+    )
 
 
 def main() -> int:
@@ -32,7 +151,30 @@ def main() -> int:
             "error": str(exc),
         }
     else:
-        result = send_discord_dm(redact_payload(payload))
+        # Production delivery always routes through the gated
+        # delivery-effects adapter.  With no usable adapter the wrapper fails
+        # closed with a typed denial — it never falls back to direct Discord.
+        delivery_effects = None
+        adapter_error = ""
+        try:
+            delivery_effects = _open_gated_delivery_effects(ROOT)
+        except Exception as exc:
+            adapter_error = f"{type(exc).__name__}: {exc}"
+        if delivery_effects is None:
+            result = {
+                "ok": False,
+                "reason": "delivery_adapter_unavailable",
+                "error": adapter_error or "no gated delivery-effects adapter",
+                "message_count": 0,
+            }
+        else:
+            try:
+                result = send_discord_dm(
+                    redact_payload(payload),
+                    delivery_effects=delivery_effects,
+                )
+            finally:
+                delivery_effects.close()
     json.dump(result, sys.stdout, sort_keys=True)
     sys.stdout.write("\n")
     return 0

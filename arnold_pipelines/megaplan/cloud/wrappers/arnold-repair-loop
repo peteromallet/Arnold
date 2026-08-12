@@ -186,18 +186,17 @@ SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
 FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
 FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
 # The runtime source resolves from the per-epic manifest (epic.runtime_root)
-# below, AFTER the admission authority runs.  The fixed /workspace/arnold
-# placeholder here only bootstraps lib discovery; the manifest re-resolution
-# happens right after the authority + field reads.
+# via the authority helpers BELOW; the fixed /workspace/arnold placeholder
+# here ONLY bootstraps lib discovery and is re-bound from the manifest right
+# after the admission authority runs (G5).  A present manifest wins over any
+# env selector — the pre-authority env-selector read is gone; the watchdog
+# threads that name only as a diagnostic child handoff.
 ARNOLD_SRC="/workspace/arnold"
 # The immutable-snapshot re-exec keeps ARNOLD_REPAIR_LOOP_ORIGIN at the
 # authoritative origin path, so the origin-adjacent lib is the first source
 # even when BASH_SOURCE points at the tmp snapshot.  Only re-derive from
 # BASH_SOURCE when the origin-adjacent lib is absent (direct execution).
 SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/arnold-supervisor-runtime-lib"
-# A repair trigger may select an isolated, pre-attested runtime for one repair
-# child without changing the shared runtime or the watchdog runtime.
-ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
 fi
@@ -209,7 +208,9 @@ if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
 fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
-arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
+# Dependency-free stdlib interpreter pin (mirrors the meta/auditor wrappers)
+# so the admission gate's stdlib-only checks never depend on ambient PATH.
+arnold_supervisor_stdlib_init repair-loop || exit $?
 # P1 admission authority (G2 correction 3): the shared lib gate is the SOLE
 # manifest resolver for wrapper entry — a present-but-invalid manifest exits
 # 78, and an absent manifest (including the compatibility_only global
@@ -218,6 +219,22 @@ arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
 # via the expected parent.  Runs BEFORE any manifest field read or ARNOLD_SRC
 # use below.
 arnold_runtime_manifest_authority repair-loop
+# Fixer-unification: the per-epic runtime manifest is the push target.
+# Repair source fixes belong on the manifest-declared epic branch
+# (arnold-promote is the only path that advances the base); the manifest
+# runtime_root is the source this loop executes.  There is NO env-selector
+# fallback (P4 config cleanup): manifest-less (permit-admitted) runs keep the
+# fixed /workspace/arnold source and an empty sync branch, which fails closed.
+MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
+MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+SYNC_BRANCH="${MANIFEST_EPIC_BRANCH:-}"
+if [[ -n "$MANIFEST_RUNTIME_ROOT" ]]; then
+  ARNOLD_SRC="$MANIFEST_RUNTIME_ROOT"
+fi
+# The supervisor runtime init binds the interpreter and import root to the
+# AUTHORITATIVE ARNOLD_SRC (manifest epic.runtime_root, else the fixed
+# fallback for permit-admitted manifestless runs) — never to an env selector.
+arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
 
 resolve_policy_model() {
   # Print the canonical model for one mode/rung from the fixer model policy
@@ -454,18 +471,6 @@ if [[ "$REPAIR_LOOP_DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
-# Fixer-unification: the per-epic runtime manifest is the push target.
-# Repair source fixes belong on the manifest-declared epic branch
-# (arnold-promote is the only path that advances the base); the manifest
-# runtime_root is the source this loop executes.  There is NO env-selector
-# fallback (P4 config cleanup): manifest-less (permit-admitted) runs keep the
-# fixed /workspace/arnold source and an empty sync branch, which fails closed.
-MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
-MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
-SYNC_BRANCH="${MANIFEST_EPIC_BRANCH:-}"
-if [[ -n "$MANIFEST_RUNTIME_ROOT" ]]; then
-  ARNOLD_SRC="$MANIFEST_RUNTIME_ROOT"
-fi
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
@@ -1753,10 +1758,127 @@ session_health_status() {
   echo "stopped"
 }
 
+# T-0022: relaunch runtime-binding preflight.  Mirrors epic_chain.py
+# _assert_child_runtime_binding: re-read the persisted
+# metadata.execution_environment.engine_root from the chain-state JSON and
+# fail closed (typed drift, exit 24) unless it EXISTS and EQUALS the manifest
+# epic.runtime_root AND this wrapper's live import root BEFORE any relaunch
+# PYTHONPATH is built.  Prints the accepted root on stdout — the ONLY root a
+# relaunch may put on PYTHONPATH.
+chain_engine_root_preflight() {
+  local workspace="$1"
+  local remote_spec="$2"
+  local live_root="$3"
+  local plan_name="${4:-}"
+  local manifest_root="${MANIFEST_RUNTIME_ROOT:-}"
+  [[ -n "$workspace" && -n "$live_root" ]] || {
+    echo "chain_runtime_binding_drift: relaunch preflight missing workspace or live import root" >&2
+    return 24
+  }
+  # T-0021 (G5): the manifest runtime pin is MANDATORY.  A repair loop without
+  # a manifest epic.runtime_root pin cannot prove the relaunch runtime
+  # binding; fail closed (typed drift, exit 24) BEFORE resolving the bound
+  # chain spec or reading any chain/plan state.
+  if [[ -z "$manifest_root" ]]; then
+    echo "chain_runtime_binding_drift: relaunch preflight missing manifest epic.runtime_root pin" >&2
+    return 24
+  fi
+  if [[ -z "$remote_spec" && -n "$plan_name" ]]; then
+    # A plan relaunch carries no spec: resolve the one canonical chain whose
+    # persisted execution binding owns the plan.  A plan with no bound chain
+    # (standalone) still MUST prove live == manifest below — the root is
+    # never returned unchecked (G5 round-8 finding 1).
+    remote_spec="$(python3 - "$workspace" "$plan_name" <<'PY' 2>/dev/null || true
+import pathlib
+import sys
+
+try:
+    from arnold_pipelines.megaplan.chain.execution_binding import find_bound_chain_spec
+except Exception:
+    raise SystemExit(1)
+spec = find_bound_chain_spec(pathlib.Path(sys.argv[1]), plan_name=sys.argv[2])
+if spec:
+    print(spec)
+PY
+)"
+  fi
+  python3 - "$workspace" "$remote_spec" "$manifest_root" "$live_root" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+workspace, remote_spec, manifest_root, live_root = sys.argv[1:5]
+workspace_path = pathlib.Path(workspace)
+manifest = pathlib.Path(manifest_root).expanduser().resolve()
+live = pathlib.Path(live_root).expanduser().resolve()
+
+
+def drift(reason: str) -> None:
+    print(f"chain_runtime_binding_drift: {reason}", file=sys.stderr)
+    raise SystemExit(24)
+
+
+if not remote_spec:
+    # T-0023 (G5 round-8 finding 1): a STANDALONE plan carries no recorded
+    # engine root, but it still executes from a manifest-bound runtime.  The
+    # live import root MUST equal the manifest epic.runtime_root pin — never
+    # return it unchecked, or a drifted runtime could accept a relaunch
+    # PYTHONPATH it cannot prove.  Fail closed on mismatch.
+    if manifest != live:
+        drift(f"engine root mismatch: manifest={manifest} live={live}")
+    print(live_root)
+    raise SystemExit(0)
+
+spec_path = pathlib.Path(remote_spec)
+if not spec_path.is_absolute():
+    spec_path = workspace_path / spec_path
+try:
+    spec_path = spec_path.resolve()
+except OSError:
+    pass
+digest = hashlib.sha1(str(spec_path).encode("utf-8")).hexdigest()[:12]
+state_path = workspace_path / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+
+try:
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    drift(f"chain state {state_path} missing or unreadable")
+if not isinstance(payload, dict):
+    drift(f"chain state {state_path} is not an object")
+metadata = payload.get("metadata")
+if not isinstance(metadata, dict):
+    drift(f"chain state {state_path} lacks metadata")
+execution_environment = metadata.get("execution_environment")
+if not isinstance(execution_environment, dict):
+    drift(f"chain state {state_path} lacks metadata.execution_environment")
+recorded_root = execution_environment.get("engine_root")
+if not isinstance(recorded_root, str) or not recorded_root.strip():
+    drift(f"chain state {state_path} lacks metadata.execution_environment.engine_root")
+recorded = pathlib.Path(recorded_root).expanduser().resolve()
+if not recorded.is_dir() or not (recorded / ".git").exists():
+    drift(f"recorded engine root {recorded_root} is missing or dangling")
+# T-0021 (G5): manifest equality is MANDATORY — the bash-side pin check
+# above guarantees a nonempty manifest_root, and a recorded root that
+# disagrees with the manifest is drift, never a fallback.
+if recorded != manifest:
+    drift(f"engine root mismatch: recorded={recorded} manifest={manifest}")
+if recorded != live:
+    drift(f"engine root mismatch: recorded={recorded} live={live}")
+print(recorded)
+PY
+}
+
 default_plan_relaunch_command() {
   local plan_name="$1"
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
+  local accepted_root
+  # T-0022: re-read the persisted engine root (bound chain, when this plan
+  # belongs to one) and fail closed on drift BEFORE building PYTHONPATH; only
+  # the accepted root goes on PYTHONPATH.
+  accepted_root="$(chain_engine_root_preflight "$workspace" "" "$ARNOLD_SRC" "$plan_name")" || return $?
+  [[ -n "$accepted_root" ]] || return 24
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PLAN_STATE_FILE=%q/.megaplan/plans/%q/state.json && PLAN_CMD=auto && if [[ -f "$PLAN_STATE_FILE" ]] && python3 - "$PLAN_STATE_FILE" <<'\''PY'\'' >/dev/null 2>&1
 import json
 import sys
@@ -1769,22 +1891,34 @@ except Exception:
 
 raise SystemExit(0 if str(payload.get("current_state") or "").strip() == "failed" else 1)
 PY
-  then PLAN_CMD=resume; fi && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan "$PLAN_CMD" --plan %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$workspace" "$plan_name" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+  then PLAN_CMD=resume; fi && PYTHONSAFEPATH=1 PYTHONPATH=%q MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan "$PLAN_CMD" --plan %q --project-dir %q >> %q 2>&1' \
+    "$workspace" "$workspace" "$plan_name" "$accepted_root" "$plan_name" "$workspace" "$log_path"
 }
 
 resume_plan_relaunch_command() {
   local plan_name="$1"
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
-  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan resume --plan %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+  local accepted_root
+  # T-0022: re-read the persisted engine root (bound chain, when this plan
+  # belongs to one) and fail closed on drift BEFORE building PYTHONPATH; only
+  # the accepted root goes on PYTHONPATH.
+  accepted_root="$(chain_engine_root_preflight "$workspace" "" "$ARNOLD_SRC" "$plan_name")" || return $?
+  [[ -n "$accepted_root" ]] || return 24
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan resume --plan %q --project-dir %q >> %q 2>&1' \
+    "$workspace" "$accepted_root" "$plan_name" "$workspace" "$log_path"
 }
 
 chain_resume_plan_relaunch_command_if_needed() {
   local workspace="$1"
   local plan_name="$2"
   local remote_spec="${3:-}"
+  # T-0021 (G5): the engine-root preflight runs BEFORE any chain/plan state
+  # read — no plan-name derivation from chain state, no plan state.json, no
+  # marker.  A missing/dangling/mismatched recorded engine_root (or a missing
+  # manifest pin) fails closed with typed drift exit 24 here, before any
+  # resume decision is made.
+  chain_engine_root_preflight "$workspace" "$remote_spec" "$ARNOLD_SRC" "$plan_name" >/dev/null || return $?
   if [[ -z "$plan_name" && -n "$remote_spec" ]]; then
     plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || authority_gap_continue "T29-BYPASS-061" "authority-risk bypass converted to typed evidence gap"
 import hashlib
@@ -1858,10 +1992,11 @@ PY
 
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
-  if PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:${PYTHONPATH:-}" python3 -P - "$relaunch_command" <<'PY'
+  local accepted_root="${2:-}"
+  if PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:${PYTHONPATH:-}" python3 -P - "$relaunch_command" "$accepted_root" <<'PY'
 import sys
 from arnold_pipelines.megaplan.cloud.relaunch_resolution import is_stale_marker_relaunch_command
-raise SystemExit(0 if is_stale_marker_relaunch_command(sys.argv[1]) else 1)
+raise SystemExit(0 if is_stale_marker_relaunch_command(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "") else 1)
 PY
   then
     return 0
@@ -1873,20 +2008,23 @@ default_chain_relaunch_command() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local log_relative runtime_src
+  local log_relative accepted_root
   if [[ "$session" == "megaplan-chain" ]]; then
     log_relative=".megaplan/cloud-chain.log"
   else
     log_relative=".megaplan/cloud-chain-${session}.log"
   fi
   # The runtime IS the code (P4): this safety fallback re-runs the chain start
-  # from the manifest runtime root (fixed /workspace/arnold for permit-admitted
-  # manifest-less sessions).  No editable-install refresh, no source checkout
-  # mutation, no env-selector re-resolution.
-  runtime_src="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"
+  # from the accepted (manifest) runtime root (fixed /workspace/arnold for
+  # permit-admitted manifest-less sessions).  T-0022: re-read the persisted
+  # engine root from the chain state and fail closed on drift BEFORE building
+  # PYTHONPATH; only the accepted root goes on PYTHONPATH.  No editable-install
+  # refresh, no source checkout mutation, no env-selector re-resolution.
+  accepted_root="$(chain_engine_root_preflight "$workspace" "$remote_spec" "$ARNOLD_SRC")" || return $?
+  [[ -n "$accepted_root" ]] || return 24
   printf 'unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START
-if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$runtime_src" "$remote_spec" "$workspace" "$workspace/$log_relative"
+if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    "$workspace" "$accepted_root" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
 _repair_loop_acceptance_gate() {
@@ -1953,6 +2091,16 @@ resolve_relaunch_command() {
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
 
+  # G5 (T-0021/T-0022): the engine-root preflight runs FIRST, before ANY
+  # state/acceptance work.  A missing manifest pin or recorded engine-root
+  # drift fails closed (typed drift, exit 24) here with zero side effects —
+  # no acceptance-gate read, no chain/plan state read, no marker read.
+  if [[ "$run_kind" == "plan" ]]; then
+    chain_engine_root_preflight "$workspace" "" "$ARNOLD_SRC" "$plan_name" >/dev/null || return $?
+  else
+    chain_engine_root_preflight "$workspace" "$remote_spec" "$ARNOLD_SRC" >/dev/null || return $?
+  fi
+
   # ── acceptance gate before relaunch ─────────────────────────────────
   # In atomic/enforce mode a completed chain with successors requiring
   # acceptance must carry a validated acceptance receipt before the
@@ -1967,10 +2115,27 @@ resolve_relaunch_command() {
   # A chain marker commonly preserves its original `chain start` command and
   # omits plan_name. Once the active plan records explicit resume authority,
   # that current state must outrank the stale launch-time marker command.
-  if [[ "$run_kind" != "plan" ]] && chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name" "$remote_spec"; then
-    return 0
+  if [[ "$run_kind" != "plan" ]]; then
+    local resume_rc
+    chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name" "$remote_spec" || resume_rc=$?
+    # G5 (T-0021): the engine-root preflight runs first inside the resume
+    # check; a typed drift (24) must fail closed here rather than fall
+    # through to the marker/default relaunch paths.
+    if [[ "${resume_rc:-0}" -eq 24 ]]; then
+      return 24
+    fi
+    if [[ "${resume_rc:-0}" -eq 0 ]]; then
+      return 0
+    fi
   fi
-  if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command"; then
+  # G5 (round-2 finding 2): the blacklist gate below (relaunch_resolution)
+  # also rejects shared-root PYTHONPATH=/workspace/arnold patterns, so a
+  # persisted builder-selection command is never returned verbatim — it is
+  # regenerated from the preflight-accepted manifest root or fails closed
+  # (typed drift 24) instead.  G5 (round-14 finding 1): the gate additionally
+  # passes the accepted manifest root so a persisted command referencing a
+  # DIFFERENT per-epic runtime path is regenerated, not returned verbatim.
+  if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command" "$ARNOLD_SRC"; then
     printf '%s' "$relaunch_command"
     return 0
   fi
@@ -7187,6 +7352,28 @@ repair_loop_emit_mechanical_launch_fallback_events() {
 }
 
 mechanical_launch_step() {
+  local iteration="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local run_kind="$5"
+  local plan_name="$6"
+  local relaunch_command="$7"
+  # G5 round-7 finding 1: the engine-root preflight is the FIRST
+  # mutation/subprocess-gating step on the mechanical-launch path — before
+  # the worker-authority gate, the goal-state snapshot, and the state-loading
+  # subprocess.  A missing/dangling/mismatched engine root fails closed
+  # (typed drift, exit 24) here with zero subprocess side effects.
+  if [[ "$run_kind" == "plan" ]]; then
+    chain_engine_root_preflight "$workspace" "" "$ARNOLD_SRC" "$plan_name" >/dev/null
+  else
+    chain_engine_root_preflight "$workspace" "$remote_spec" "$ARNOLD_SRC" >/dev/null
+  fi
+  local preflight_rc=$?
+  if [[ "$preflight_rc" != "0" ]]; then
+    echo "failed:chain_runtime_binding_drift"
+    return "$preflight_rc"
+  fi
   require_investigation_before_mutation "mechanical-launch"
   require_repair_lock_held
   ensure_repair_budget_available "mechanical-relaunch-$1"
@@ -7197,13 +7384,6 @@ mechanical_launch_step() {
       authority_fail_closed "T67-primary-worker-launch-forbidden" "primary worker launch authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
       ;;
   esac
-  local iteration="$1"
-  local session="$2"
-  local workspace="$3"
-  local remote_spec="$4"
-  local run_kind="$5"
-  local plan_name="$6"
-  local relaunch_command="$7"
   local quoted_command launch_script launch_log launch_receipt command_sha safe detail health
   local control_result control_status control_action control_blocker_cleared control_liveness_state control_liveness_permitted receipt_detail
   local post_result post_status receipt_wait

@@ -212,6 +212,16 @@ def _validate_record(record: Any, run_id: str, revision: str) -> AuthorityRecord
         raise InvalidAuthorityRecordError(
             "record run_revision does not match journal revision"
         )
+    if isinstance(record, ObservationEnvelope):
+        # Non-coherent observations are preservable evidence, never authority;
+        # every appended observation must carry an explicit typed coherence
+        # verdict and a coherent verdict requires the capture that backs it.
+        if record.coherence not in ("COHERENT", "UNKNOWN", "INCOHERENT"):
+            raise InvalidAuthorityRecordError("observation coherence is not typed")
+        if record.is_dispatchable and record.runtime_observation is None:
+            raise InvalidAuthorityRecordError(
+                "dispatchable observation requires a runtime observation"
+            )
     # Force canonical serialisation now.  This catches unsupported payloads
     # before the transaction starts and makes the persisted bytes the exact
     # contract bytes that reducers later replay.

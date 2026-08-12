@@ -75,6 +75,7 @@ class RunAuthorityView:
     evidence_set_digest: str
     evidence: tuple[EvidenceEnvelope, ...]
     observations: tuple[ObservationEnvelope, ...]
+    coherent_observations: tuple[ObservationEnvelope, ...]
     fences: tuple[CoordinatorFence, ...]
     grants: tuple[CapabilityGrant, ...]
     attempts: tuple[SubjectAttempt, ...]
@@ -93,6 +94,7 @@ class RunAuthorityView:
             "evidence_set_digest": self.evidence_set_digest,
             "evidence": _records_dict(self.evidence),
             "observations": _records_dict(self.observations),
+            "coherent_observations": _records_dict(self.coherent_observations),
             "fences": _records_dict(self.fences),
             "grants": _records_dict(self.grants),
             "attempts": _records_dict(self.attempts),
@@ -291,6 +293,29 @@ def _by_id(records: Iterable[Any], attribute: str) -> Mapping[str, Any]:
     return MappingProxyType({getattr(record, attribute): record for record in records})
 
 
+def _observation_is_current(
+    observation: ObservationEnvelope,
+    *,
+    run_revision: str,
+    journal_cursor: int,
+) -> bool:
+    """Fail-closed currency check for one capture in the view being reduced.
+
+    A capture is coherent in this view only when it belongs to the exact run
+    revision being reduced: an envelope recorded under an older revision is
+    stale evidence even when its own capture typed coherent.  Where the
+    envelope carries a source cursor, a capture claiming a source position
+    beyond the journal boundary the view was built at is stale as well.
+    """
+
+    if observation.run_revision != run_revision:
+        return False
+    return not (
+        observation.source_cursor is not None
+        and observation.source_cursor > journal_cursor
+    )
+
+
 def reduce_run_authority(
     inputs: Iterable[AuthorityInput],
     *,
@@ -352,9 +377,43 @@ def reduce_run_authority(
         (record.coordinator_attempt_id, record.token): record for record in fences_items
     })
 
+    coherent_observations = tuple(
+        record for record in observations
+        if _observation_is_current(
+            record, run_revision=run_revision, journal_cursor=cursor
+        )
+        and record.is_dispatchable
+    )
+
     accepted_claims: list[Claim] = []
     generated: list[QuarantineRecord] = []
     diagnostics = list(duplicate_diagnostics)
+    for observation in observations:
+        if not _observation_is_current(
+            observation, run_revision=run_revision, journal_cursor=cursor
+        ):
+            # Stale provenance: an envelope from an older run revision (or
+            # claiming a source position beyond this view's journal boundary)
+            # is never projected coherent here, even when its own capture is
+            # typed coherent.  This branch precedes the dispatchability check,
+            # so a legacy UNKNOWN label recorded under an older revision is
+            # stale (never merely unknown).  It is preserved as an observation
+            # for auditability but surfaced as a diagnostic and can never
+            # authorize dispatch.
+            diagnostics.append(AuthorityDiagnostic(
+                "non_coherent_observation", "observation", observation.observation_id,
+                "stale_observation_cannot_authorize_dispatch",
+                observation.source,
+            ))
+        elif not observation.is_dispatchable:
+            # Unknown/incoherent observations are preserved as observations
+            # but are never collapsed into accepted progress: the reducer
+            # records them as non-authoritative diagnostics instead.
+            diagnostics.append(AuthorityDiagnostic(
+                "non_coherent_observation", "observation", observation.observation_id,
+                f"{observation.coherence.lower()}_observation_cannot_authorize_dispatch",
+                observation.source,
+            ))
     for claim in (record for record in typed if isinstance(record, Claim)):
         reason = _claim_reason(
             claim,
@@ -423,6 +482,7 @@ def reduce_run_authority(
         "evidence_set_digest": evidence_set_digest,
         "evidence": tuple(sorted(evidence_items, key=_record_sort_key)),
         "observations": tuple(sorted(observations, key=_record_sort_key)),
+        "coherent_observations": tuple(sorted(coherent_observations, key=_record_sort_key)),
         "fences": tuple(sorted(fences_items, key=_record_sort_key)),
         "grants": tuple(sorted(grants_items, key=_record_sort_key)),
         "attempts": tuple(sorted(attempts_items, key=_record_sort_key)),

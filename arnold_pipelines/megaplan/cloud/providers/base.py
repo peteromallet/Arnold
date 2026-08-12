@@ -206,8 +206,26 @@ def _local_provider(spec: CloudSpec) -> Provider:
 
 def _ssh_provider(spec: CloudSpec) -> Provider:
     from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
+    from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+        SshEffectAdapterGateError,
+        open_ssh_effect_adapter,
+    )
 
-    return SshProvider(spec)
+    # Production construction installs the effect adapter so every SSH
+    # mutation is gated.  When the adapter wiring is unavailable (M10: SSH is
+    # action-off and no ledger-backed gate is installed), construction fails
+    # closed: an SshProvider without an adapter must never be built, because
+    # production-reachable transport paths would otherwise run ungated.
+    try:
+        adapter = open_ssh_effect_adapter()
+    except SshEffectAdapterGateError as exc:
+        raise CliError(
+            "ssh_effect_adapter_unavailable",
+            "SSH provider construction refused: no ssh_effect_adapter "
+            "installed; SSH mutations are action-off and must never run "
+            "ungated",
+        ) from exc
+    return SshProvider(spec, ssh_effect_adapter=adapter)
 
 
 _PROVIDER_FACTORIES: dict[str, ProviderFactory] = {

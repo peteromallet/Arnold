@@ -3048,6 +3048,44 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
         )
 
 
+def _reference_census(root: str) -> tuple[str, list[str]]:
+    """Run the canonical runtime reference census (T-0012/T-0027) for *root*.
+
+    Store paths are read from env at CALL time (not import time) so the
+    census is always fresh and injectable per environment.  A missing store
+    is not a reference; an unreadable/corrupt store makes the verdict UNKNOWN
+    (fail-closed — delete-on-unknown never happens).
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_references import run_census
+
+    return run_census(
+        root=root,
+        workspace=os.environ.get("ARNOLD_BASE_DIR", ""),
+        manifest_store=os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"),
+        current_manifest="",
+        chain_store=os.environ.get(
+            "ARNOLD_REFERENCE_CHAIN_STORE", "/workspace/.megaplan/plans/.chains"
+        ),
+        marker_store=os.environ.get(
+            "ARNOLD_REFERENCE_MARKER_STORE",
+            "/workspace/.megaplan/cloud-sessions:/workspace/watchdog-reports",
+        ),
+        schedule_store=os.environ.get(
+            "ARNOLD_REFERENCE_SCHEDULE_STORES",
+            "/workspace/arnold/.megaplan/resident/scheduled_jobs:"
+            "/workspace/arnold/.megaplan/resident/schedules/heads:"
+            "/workspace/.megaplan/ops/schedules",
+        ),
+        repair_queue=os.environ.get(
+            "ARNOLD_REFERENCE_REPAIR_QUEUE", "/workspace/.megaplan/repair-queue"
+        ),
+        lease_store=os.environ.get(
+            "ARNOLD_REFERENCE_LEASE_STORE",
+            os.path.expanduser("~/.megaplan/custody/leases"),
+        ),
+    )
+
+
 def _reset_chain_worktree_target(
     invoking_repo: Path,
     target: Path,
@@ -3074,6 +3112,22 @@ def _reset_chain_worktree_target(
             (
                 f"refusing --fresh worktree reset: target path exists but is not "
                 f"a git worktree registered to {invoking_repo}: {target}"
+            ),
+        )
+    # T-0027: the --fresh reset (git worktree remove --force + branch -D) is
+    # behind the canonical reference census.  The exact worktree root must
+    # have a fresh CLEAR verdict; REFERENCED/DANGLING/UNKNOWN refuse
+    # (fail-closed: a referenced runtime root is load-bearing, an unreadable
+    # store cannot attest completeness, and --fresh is NOT evidence of
+    # safety).
+    census_verdict, census_reasons = _reference_census(str(target))
+    if census_verdict != "CLEAR":
+        raise CliError(
+            "worktree_reset_refused",
+            (
+                f"refusing --fresh worktree reset: reference census "
+                f"{census_verdict} for {target} (only a fresh CLEAR verdict "
+                f"may remove the worktree; delete-on-unknown never happens)"
             ),
         )
     if registered:

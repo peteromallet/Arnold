@@ -38,6 +38,7 @@ from arnold.workflow.execution_attempt_ledger import (
 from arnold_pipelines.megaplan.custody.action_validator import (
     ActionBoundaryType,
     GateResult,
+    adapter_effect_authorized,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -99,11 +100,26 @@ class ExecuteOutcome:
 # ── Execute effect gate adapter ──────────────────────────────────────────────
 
 
+class ExecuteEffectGateError(RuntimeError):
+    """Raised when a production execute effect gate is opened without a gate.
+
+    Production construction without an explicit ``action_gate_check`` is a
+    wiring error, not a runtime denial: the constructor raises before any
+    dispatch so a missing gate can never be installed in production mode.
+    """
+
+
 class ExecuteEffectGate:
     """Single adapter routing execute batch mutations through WBC/action gate.
 
     Step 13C: this is the sole execute-to-gate adapter.
     Steps 13D2-13D3: at most three rows per shard are routed through it.
+
+    Production construction (``production_enabled=True``) without an explicit
+    ``action_gate_check`` is a wiring error: the constructor raises
+    :class:`ExecuteEffectGateError` before any dispatch.  Observation-only
+    construction (``production_enabled=False``) may omit the gate — every
+    dispatch then fails closed as a typed denial.
     """
 
     def __init__(
@@ -115,16 +131,48 @@ class ExecuteEffectGate:
         ] = None,
         production_enabled: bool = False,
     ) -> None:
+        if production_enabled and action_gate_check is None:
+            raise ExecuteEffectGateError(
+                "ExecuteEffectGate refuses production construction without "
+                "an explicit action_gate_check; pass a current gate (or an "
+                "equivalent denial gate) so production dispatch reflects "
+                "current policy, or open in observation mode "
+                "(production_enabled=False)"
+            )
         self._protocol = protocol
         self._action_gate_check = action_gate_check
         self._production_enabled = production_enabled
 
     # ── gate ────────────────────────────────────────────────────────────
 
-    def _gate(self, target: ExecuteTarget) -> GateResult:
+    def _gate(self, target: ExecuteTarget) -> GateResult | None:
+        """Run the installed action gate; ``None`` when none is installed.
+
+        A missing gate is a fail-closed condition, never a shadow pass: the
+        caller must convert it (and every non-AUTHORIZED verdict) into a
+        typed denial before any effect is dispatched.
+        """
         if self._action_gate_check is None:
-            return GateResult.SHADOW_PASS
+            return None
         return self._action_gate_check("dispatch", target.target_key)
+
+    @staticmethod
+    def _deny(
+        target: ExecuteTarget,
+        *,
+        verdict_label: str,
+        detail: str,
+    ) -> ExecuteOutcome:
+        """Typed pre-effect denial: no reservation, intent, or mutation."""
+        return ExecuteOutcome(
+            ok=False,
+            family=target.family.value,
+            action=target.action,
+            glek="",
+            outcome_kind=OUTCOME_FAILED,
+            error=f"Action gate denied: {detail}",
+            evidence={"gate_verdict": verdict_label},
+        )
 
     # ── GLEK ─────────────────────────────────────────────────────────────
 
@@ -191,19 +239,25 @@ class ExecuteEffectGate:
                 target.target_key,
             )
 
-        verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
-            return ExecuteOutcome(
-                ok=False,
-                family=target.family.value,
-                action=target.action,
-                glek="",
-                outcome_kind=OUTCOME_FAILED,
-                error=f"Action gate blocked: {verdict.value}",
-                evidence={"gate_verdict": verdict.value},
+        try:
+            verdict = self._gate(target)
+        except Exception as exc:
+            return self._deny(
+                target,
+                verdict_label="error",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        if not adapter_effect_authorized(verdict):
+            if isinstance(verdict, GateResult):
+                label = verdict.value
+            elif verdict is None:
+                label = "missing"
+            else:
+                label = type(verdict).__name__
+            return self._deny(
+                target,
+                verdict_label=label,
+                detail=label if verdict is not None else "no action gate installed",
             )
 
         aid = attempt_id or str(uuid.uuid4())

@@ -56,6 +56,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from arnold.workflow.effect_protocol import (
@@ -82,7 +83,9 @@ from arnold.workflow.execution_attempt_ledger import (
 from arnold_pipelines.megaplan.custody.action_validator import (
     ActionBoundaryType,
     GateResult,
+    adapter_effect_authorized,
 )
+from arnold_pipelines.megaplan.chain.git_ops import _reference_census
 
 LOGGER = logging.getLogger(__name__)
 
@@ -221,6 +224,11 @@ class GitEffectAdapter:
         ] = None,
         production_enabled: bool = False,
     ) -> None:
+        if production_enabled and action_gate_check is None:
+            raise ValueError(
+                "GitEffectAdapter requires an explicit action_gate_check "
+                "when production_enabled=True (no None-gate production path)"
+            )
         self._protocol = protocol
         self._action_gate_check = action_gate_check
         self._production_enabled = production_enabled
@@ -239,9 +247,23 @@ class GitEffectAdapter:
     # ── gate ────────────────────────────────────────────────────────────
 
     def _gate(self, target: GitTarget) -> GateResult:
+        """Return the action-gate verdict, failing closed on missing/error.
+
+        A missing gate is a hard denial (``ERROR``), never a shadow pass;
+        a raising gate check is converted to a typed ``ERROR`` denial so
+        dispatch sites see a verdict instead of an uncaught exception.
+        """
         if self._action_gate_check is None:
-            return GateResult.SHADOW_PASS
-        return self._action_gate_check("dispatch", target.target_key)
+            return GateResult.ERROR
+        try:
+            return self._action_gate_check("dispatch", target.target_key)
+        except Exception as exc:  # pragma: no cover - defensive boundary
+            LOGGER.error(
+                "Action gate check raised for %s: %s",
+                target.target_key,
+                exc,
+            )
+            return GateResult.ERROR
 
     # ── GLEK ─────────────────────────────────────────────────────────────
 
@@ -413,10 +435,7 @@ class GitEffectAdapter:
 
         # Action gate check
         verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
+        if not adapter_effect_authorized(verdict):
             return GitOutcome(
                 ok=False,
                 shard=target.shard.value,
@@ -518,7 +537,10 @@ class GitEffectAdapter:
         - ``stash``: optional ``paths`` and ``message``; empty stash is
           a no-op that returns ok without dispatch.
         - ``worktree``: requires ``path`` and ``action``
-          (add/remove; ``list`` is read-only and rejected).
+          (add/remove; ``list`` is read-only and rejected).  ``remove``
+          additionally consults the runtime reference census (T-0027):
+          REFERENCED / DANGLING / UNKNOWN refuse dispatch with a FAILED
+          outcome and zero deletion; only CLEAR proceeds.
 
         Crash-idempotent: re-routing the same target with the same
         ``attempt_id`` produces a duplicate-protected GLEK.
@@ -580,6 +602,31 @@ class GitEffectAdapter:
                     outcome_kind=OUTCOME_FAILED,
                     error=f"Intent-failure: unknown worktree action {action!r}",
                 )
+            if action == "remove":
+                # Reference census (T-0027): a worktree removal must never
+                # happen while a runtime store still references it.
+                # REFERENCED / DANGLING / UNKNOWN refuse dispatch before any
+                # reservation or subprocess (fail-closed — delete-on-reference
+                # or -unknown never happens); only CLEAR proceeds to the
+                # WBC/action-gate route with its normal authority.
+                census_verdict, census_reasons = _reference_census(Path(path))
+                if census_verdict != "CLEAR":
+                    detail = "; ".join(census_reasons) or census_verdict
+                    return GitOutcome(
+                        ok=False,
+                        shard=target.shard.value,
+                        glek="",
+                        outcome_kind=OUTCOME_FAILED,
+                        error=(
+                            f"Reference census refused worktree removal of "
+                            f"{path}: {census_verdict} ({detail})"
+                        ),
+                        evidence={
+                            "census_verdict": census_verdict,
+                            "census_reasons": census_reasons,
+                            "worktree_path": path,
+                        },
+                    )
 
         return self.route(
             target=target,
@@ -673,10 +720,7 @@ class GitEffectAdapter:
 
         # Action gate check
         verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
+        if not adapter_effect_authorized(verdict):
             return GitOutcome(
                 ok=False,
                 shard=target.shard.value,
@@ -883,10 +927,7 @@ class GitEffectAdapter:
 
         # Action gate check
         verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
+        if not adapter_effect_authorized(verdict):
             return GitOutcome(
                 ok=False,
                 shard=target.shard.value,

@@ -61,6 +61,37 @@ if any(not pathlib.Path(value).is_relative_to(runtime) for value in imports.valu
 PY
 }
 
+# ── Reference census (T-0027): fail-closed before EVERY deletion ─────────────
+# The venv rebuild rm -rf's any stale runtime under the exact fingerprint
+# root, so the rebuild is behind the canonical reference census (the same
+# runtime_references module arnold-gc-sweep consults).  It normalizes EXACT
+# runtime-root paths from runtime manifests, chain metadata
+# execution_environment.engine_root, cloud-session/chain-health markers,
+# resident/ops schedules, repair-queue requests/decisions/attempts/claims,
+# and custody leases.  Verdicts are fail-closed:
+#   REFERENCED  -> a store references the exact root: refuse the rebuild
+#   DANGLING    -> a store references a runtime root that no longer exists:
+#                  the census is incoherent -> NEEDS-RECONCILE, refuse
+#   UNKNOWN     -> unreadable/corrupt store: refuse (delete-on-unknown
+#                  never happens)
+#   CLEAR       -> no reference; the rebuild may proceed
+# --force-style flags and env overrides are NOT evidence of safety.  The
+# census CLI reads the same ARNOLD_REFERENCE_* / ARNOLD_BASE_DIR /
+# ARNOLD_RUNTIME_MANIFEST_DIR env overrides as arnold-gc-sweep; a failing
+# census is UNKNOWN (fail-closed).
+_reference_census() {
+  # $1 = exact runtime root under consideration for rm -rf.
+  local out rc=0
+  out="$(python3 -m arnold_pipelines.megaplan.cloud.runtime_references census \
+    --root "$1" 2>&1)" || rc=$?
+  CENSUS_REPORT="$out"
+  CENSUS_VERDICT="$(printf '%s\n' "$out" | awk '/^STATUS /{print $2; exit}')"
+  if [[ -z "$CENSUS_VERDICT" ]]; then
+    CENSUS_VERDICT="UNKNOWN"
+    CENSUS_REPORT="reference census unavailable (rc=$rc): $out"
+  fi
+}
+
 case "$ACTION" in
   --check)
     runtime_ready "$CURRENT/bin/python3"
@@ -93,6 +124,18 @@ fingerprint="$({
 source_revision="$(git -C "$SOURCE" rev-parse HEAD)"
 runtime="$ROOT/runtimes/$fingerprint"
 if ! runtime_ready "$runtime/bin/python3"; then
+  # T-0027: the rebuild rm -rf's any stale runtime under this exact root,
+  # so it is gated on a fresh readable zero-reference census verdict.
+  # Run the gate BEFORE the venv build so a refused rebuild never wastes
+  # a build, and never touch the stale runtime unless the census is CLEAR.
+  if [[ -e "$runtime" ]]; then
+    _reference_census "$runtime"
+    if [[ "$CENSUS_VERDICT" != "CLEAR" ]]; then
+      printf 'arnold-supervisor-runtime: refusing venv rebuild for %s — reference census %s (only CLEAR may rm -rf; delete-on-unknown never happens)\n' "$runtime" "$CENSUS_VERDICT" >&2
+      printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/arnold-supervisor-runtime:   /' >&2
+      exit 5
+    fi
+  fi
   stage="$(mktemp -d "$ROOT/.staging.XXXXXX")"
   cleanup() { rm -rf "$stage"; }
   trap cleanup EXIT
@@ -100,6 +143,7 @@ if ! runtime_ready "$runtime/bin/python3"; then
   "$stage/bin/python3" -m pip install --no-cache-dir "$SOURCE" >/dev/null
   runtime_ready "$stage/bin/python3"
   if [[ -e "$runtime" ]]; then
+    # The census gate above already returned CLEAR for this exact root.
     rm -rf "$runtime"
   fi
   mv "$stage" "$runtime"

@@ -5,8 +5,11 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import yaml
+
+from arnold.workflow.effect_protocol import EffectProtocol
 
 from arnold_pipelines.megaplan.chain.spec import ChainState, save_chain_state
 from arnold_pipelines.megaplan.cloud.providers.local import LocalProvider
@@ -21,9 +24,25 @@ from arnold_pipelines.megaplan.cloud.spec import (
     ResourcesSpec,
     SshSpec,
 )
+from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import SshEffectAdapter
 from arnold_pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
+from arnold_pipelines.megaplan.custody.action_validator import GateResult
 from arnold_pipelines.megaplan.custody.process_adapter_wbc import process_adapter_wbc_dir
+
+
+def _authorized_effect_adapter() -> SshEffectAdapter:
+    """Real adapter with an explicit authorized gate so the action-off
+    ssh_exec transport runs through the Step 13F gate in tests."""
+    protocol = MagicMock(spec=EffectProtocol)
+    reservation = MagicMock()
+    reservation.global_logical_effect_key = "glek-ssh-exec-test"
+    protocol.reserve_and_start.return_value = reservation
+    return SshEffectAdapter(
+        protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+        production_enabled=False,
+    )
 
 
 def _records(path: Path) -> list[dict[str, object]]:
@@ -132,7 +151,10 @@ def test_ssh_provider_ssh_exec_records_process_adapter_wbc(
         lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "ok\n", ""),
     )
 
-    provider = SshProvider(_cloud_spec(tmp_path, provider="ssh"))
+    provider = SshProvider(
+        _cloud_spec(tmp_path, provider="ssh"),
+        ssh_effect_adapter=_authorized_effect_adapter(),
+    )
     provider.ssh_exec("pwd")
 
     sidecar = process_adapter_wbc_dir(

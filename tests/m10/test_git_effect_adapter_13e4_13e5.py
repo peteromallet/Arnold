@@ -38,6 +38,10 @@ from arnold_pipelines.megaplan.chain.git_effect_adapter import (
     GitOutcome,
     GitEffectAdapter,
 )
+from arnold_pipelines.megaplan.custody.action_validator import (
+    ActionBoundaryType,
+    GateResult,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -55,9 +59,13 @@ def mock_protocol():
 
 @pytest.fixture
 def adapter(mock_protocol):
-    """Create a GitEffectAdapter with shadow gate."""
+    """Create a GitEffectAdapter with an explicit AUTHORIZED action gate."""
+    def authorizer(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.AUTHORIZED
+
     return GitEffectAdapter(
         mock_protocol,
+        action_gate_check=authorizer,
         production_enabled=False,
     )
 
@@ -964,3 +972,136 @@ def test_route_worktree_passes_payload_to_apply_fn(
     )
     assert captured["received"]["branch"] == "main"
     assert captured["received"]["onto"] == "develop"
+
+
+# ── Action gate default-deny negatives ──────────────────────────────────────
+
+_WORKTREE_FAMILY_SHARDS = (
+    (GitEffectShard.REBASE, {"branch": "develop"}),
+    (GitEffectShard.STASH, {"paths": ["a.py"]}),
+    (GitEffectShard.WORKTREE, {"path": "/tmp/wt", "action": "add"}),
+)
+
+_REMOTE_FAMILY_SHARDS = (
+    (GitEffectShard.PUSH, {"branch": "main", "remote": "origin"}),
+    (
+        GitEffectShard.FORCE_WITH_LEASE,
+        {"branch": "main", "remote": "origin", "expected_sha": "abc123"},
+    ),
+)
+
+
+def _worktree_target(shard):
+    return GitTarget(
+        shard=shard,
+        module="test/git_ops.py",
+        enclosing_function="test_fn",
+        repository="test-repo",
+        branch="main",
+    )
+
+
+def test_route_worktree_missing_gate_blocks_every_family(mock_protocol):
+    """Missing gate denies worktree-family effects before reservation."""
+    ungated = GitEffectAdapter(mock_protocol, production_enabled=False)
+    spies = []
+    for shard, payload in _WORKTREE_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True})
+        spies.append(apply_fn)
+        outcome = ungated.route_worktree(
+            target=_worktree_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "error"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()
+
+
+def test_route_worktree_shadow_pass_blocks_every_family(mock_protocol):
+    """SHADOW_PASS verdict denies worktree-family effects."""
+    def shadow(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.SHADOW_PASS
+
+    gated = GitEffectAdapter(
+        mock_protocol,
+        action_gate_check=shadow,
+        production_enabled=False,
+    )
+    spies = []
+    for shard, payload in _WORKTREE_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True})
+        spies.append(apply_fn)
+        outcome = gated.route_worktree(
+            target=_worktree_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "shadow_pass"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()
+
+
+def test_route_remote_missing_gate_blocks_every_family(mock_protocol):
+    """Missing gate denies push-family effects before reservation."""
+    ungated = GitEffectAdapter(mock_protocol, production_enabled=False)
+    spies = []
+    for shard, payload in _REMOTE_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True})
+        spies.append(apply_fn)
+        outcome = ungated.route_remote(
+            target=_worktree_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "error"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()
+
+
+def test_route_remote_shadow_pass_blocks_every_family(mock_protocol):
+    """SHADOW_PASS verdict denies push-family effects."""
+    def shadow(family: ActionBoundaryType, target_key: str) -> GateResult:
+        return GateResult.SHADOW_PASS
+
+    gated = GitEffectAdapter(
+        mock_protocol,
+        action_gate_check=shadow,
+        production_enabled=False,
+    )
+    spies = []
+    for shard, payload in _REMOTE_FAMILY_SHARDS:
+        apply_fn = MagicMock(return_value={"ok": True})
+        spies.append(apply_fn)
+        outcome = gated.route_remote(
+            target=_worktree_target(shard),
+            intent_payload=payload,
+            apply_fn=apply_fn,
+            fence_token=1,
+        )
+        assert outcome.ok is False
+        assert outcome.outcome_kind == OUTCOME_FAILED
+        assert "Action gate blocked" in outcome.error
+        assert outcome.evidence.get("gate_verdict") == "shadow_pass"
+        assert outcome.glek == ""
+    mock_protocol.reserve_and_start.assert_not_called()
+    for spy in spies:
+        spy.assert_not_called()

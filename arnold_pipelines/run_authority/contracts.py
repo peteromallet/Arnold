@@ -174,6 +174,146 @@ class EvidenceEnvelope(Contract):
         _initialize_payload(self)
 
 
+COHERENT = "COHERENT"
+UNKNOWN = "UNKNOWN"
+INCOHERENT = "INCOHERENT"
+
+# Canonical runtime-observation capture fields.  One capture must agree on
+# every dimension before the envelope may be typed coherent.
+RUNTIME_OBSERVATION_FIELDS: tuple[str, ...] = (
+    "recorded_engine_root",
+    "manifest_runtime_root",
+    "manifest_expected_head",
+    "live_import_root",
+    "wrapper_digest",
+    "dependency_generation",
+    "environment_identity",
+    "session_identity",
+)
+
+_RUNTIME_ROOT_FIELDS: tuple[str, ...] = (
+    "recorded_engine_root",
+    "manifest_runtime_root",
+    "live_import_root",
+)
+
+# Fields added by the coherence-aware schema; legacy records missing any of
+# them deserialize only as explicitly typed unknown evidence.
+_COHERENCE_AWARE_FIELDS: tuple[str, ...] = (
+    "source_identity",
+    "source_version",
+    "source_cursor",
+    "content_hash",
+    "coherence",
+    "coherence_reasons",
+    "runtime_observation",
+)
+
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
+
+def _is_content_hash(value: str) -> bool:
+    return len(value) == 64 and all(char in _HEX_DIGITS for char in value)
+
+
+def evaluate_runtime_observation(
+    capture: Mapping[str, JSONValue] | None,
+) -> tuple[str, tuple[str, ...]]:
+    """Pure fail-closed verdict for one runtime observation capture.
+
+    Returns ``(coherence, reasons)`` where ``coherence`` is one of
+    ``COHERENT``, ``UNKNOWN``, ``INCOHERENT``.  A capture types ``COHERENT``
+    only when every canonical field is present, the three engine roots agree,
+    and the environment/session identity agrees.  Incomplete, stale,
+    cross-environment, or contradictory captures stay ``UNKNOWN`` or
+    ``INCOHERENT`` and can never construct a dispatchable envelope.
+    """
+
+    if capture is None or not isinstance(capture, Mapping) or not capture:
+        return UNKNOWN, ("missing_runtime_observation",)
+    reasons: list[str] = []
+    missing = [
+        name
+        for name in RUNTIME_OBSERVATION_FIELDS
+        if capture.get(name) is None
+        or (isinstance(capture.get(name), str) and not capture[name].strip())
+    ]
+    if missing:
+        reasons.extend(f"missing_runtime_observation_field:{name}" for name in missing)
+    if capture.get("stale") is True:
+        reasons.append("stale_runtime_observation")
+    if reasons:
+        return UNKNOWN, tuple(reasons)
+    invalid = [
+        name
+        for name in RUNTIME_OBSERVATION_FIELDS
+        if not isinstance(capture[name], str)
+    ]
+    if invalid:
+        return UNKNOWN, tuple(f"invalid_runtime_observation_field:{name}" for name in invalid)
+    incoherent: list[str] = []
+    if len({capture[name] for name in _RUNTIME_ROOT_FIELDS}) > 1:
+        incoherent.append("engine_root_mismatch")
+    if capture["environment_identity"] != capture["session_identity"]:
+        incoherent.append("environment_session_identity_mismatch")
+    if incoherent:
+        return INCOHERENT, tuple(incoherent)
+    return COHERENT, ()
+
+
+def _missing_provenance_fields(
+    *,
+    source_identity: str | None,
+    source_version: str | None,
+    source_cursor: int | None,
+    content_hash: str | None,
+) -> list[str]:
+    """Names of provenance fields that are absent (None or blank)."""
+
+    return [
+        name
+        for name, value in (
+            ("source_identity", source_identity),
+            ("source_version", source_version),
+            ("source_cursor", source_cursor),
+            ("content_hash", content_hash),
+        )
+        if value is None or (isinstance(value, str) and not value.strip())
+    ]
+
+
+def _evaluate_envelope(
+    capture: Mapping[str, JSONValue] | None,
+    *,
+    source_identity: str | None,
+    source_version: str | None,
+    source_cursor: int | None,
+    content_hash: str | None,
+) -> tuple[str, tuple[str, ...]]:
+    """Combined fail-closed verdict for one capture envelope.
+
+    Returns ``(coherence, reasons)`` like :func:`evaluate_runtime_observation`
+    but additionally requires every provenance field to be present: an
+    otherwise-coherent capture whose source identity/version/cursor or content
+    hash is missing is typed ``UNKNOWN`` (``missing_provenance_field:*``) and
+    can never construct a dispatchable envelope.  A contradictory capture stays
+    ``INCOHERENT`` regardless of provenance.
+    """
+
+    verdict, computed = evaluate_runtime_observation(capture)
+    if verdict == COHERENT:
+        missing = _missing_provenance_fields(
+            source_identity=source_identity,
+            source_version=source_version,
+            source_cursor=source_cursor,
+            content_hash=content_hash,
+        )
+        if missing:
+            verdict = UNKNOWN
+            computed = tuple(f"missing_provenance_field:{name}" for name in missing)
+    return verdict, computed
+
+
 @dataclass(frozen=True)
 class ObservationEnvelope(Contract):
     contract_type: ClassVar[str] = "observation"
@@ -185,12 +325,141 @@ class ObservationEnvelope(Contract):
     evidence_ids: tuple[str, ...]
     payload: Mapping[str, JSONValue]
     payload_hash: str = field(init=False)
+    # Validated capture provenance: the source identity/version, the exact
+    # integer source cursor, and the content hash of the captured material.
+    source_identity: str | None = None
+    source_version: str | None = None
+    source_cursor: int | None = None
+    content_hash: str | None = None
+    # Typed coherence result for one capture.  ``coherence`` is enforced to
+    # equal ``_evaluate_envelope(...)``; it can never be set to ``COHERENT``
+    # from incomplete, unprovenanced, or contradictory input.
+    coherence: str = UNKNOWN
+    coherence_reasons: tuple[str, ...] = ()
+    runtime_observation: Mapping[str, JSONValue] | None = None
 
     def __post_init__(self) -> None:
         for name in ("observation_id", "run_id", "run_revision", "observation_type", "source"):
             _required(getattr(self, name), name)
         object.__setattr__(self, "evidence_ids", _string_tuple(self.evidence_ids, "evidence_ids"))
         _initialize_payload(self)
+        for name in ("source_identity", "source_version"):
+            value = getattr(self, name)
+            if value is not None:
+                _required(value, name)
+        if self.content_hash is not None and not (
+            isinstance(self.content_hash, str) and _is_content_hash(self.content_hash)
+        ):
+            raise ContractError("content_hash must be a sha256 hex digest or null")
+        if self.source_cursor is not None and (
+            not isinstance(self.source_cursor, int)
+            or isinstance(self.source_cursor, bool)
+            or self.source_cursor < 0
+        ):
+            raise ContractError("source_cursor must be a non-negative integer or null")
+        if self.coherence not in (COHERENT, UNKNOWN, INCOHERENT):
+            raise ContractError(f"unsupported coherence {self.coherence!r}")
+        object.__setattr__(
+            self, "coherence_reasons", _string_tuple(self.coherence_reasons, "coherence_reasons")
+        )
+        capture: Mapping[str, JSONValue] | None = None
+        if self.runtime_observation is not None:
+            frozen = _freeze_json(self.runtime_observation, "runtime_observation")
+            if not isinstance(frozen, Mapping):
+                raise ContractError("runtime_observation must be an object or null")
+            capture = frozen
+        object.__setattr__(self, "runtime_observation", capture)
+        verdict, computed = _evaluate_envelope(
+            capture,
+            source_identity=self.source_identity,
+            source_version=self.source_version,
+            source_cursor=self.source_cursor,
+            content_hash=self.content_hash,
+        )
+        if self.coherence != verdict:
+            raise ContractError(
+                f"coherence {self.coherence!r} does not match runtime observation verdict {verdict!r}"
+            )
+        combined = tuple(dict.fromkeys(computed + self.coherence_reasons))
+        object.__setattr__(self, "coherence_reasons", combined)
+
+    @property
+    def is_dispatchable(self) -> bool:
+        """Only a coherent capture may authorize dispatch."""
+
+        return self.coherence == COHERENT
+
+    @classmethod
+    def capture(
+        cls,
+        *,
+        observation_id: str,
+        run_id: str,
+        run_revision: str,
+        observation_type: str,
+        source: str,
+        evidence_ids: tuple[str, ...] = (),
+        payload: Mapping[str, JSONValue] | None = None,
+        runtime_observation: Mapping[str, JSONValue] | None = None,
+        source_identity: str | None = None,
+        source_version: str | None = None,
+        source_cursor: int | None = None,
+        content_hash: str | None = None,
+        coherence_reasons: tuple[str, ...] = (),
+    ) -> "ObservationEnvelope":
+        """Build one capture envelope; coherence is derived from capture + provenance."""
+
+        coherence, reasons = _evaluate_envelope(
+            runtime_observation,
+            source_identity=source_identity,
+            source_version=source_version,
+            source_cursor=source_cursor,
+            content_hash=content_hash,
+        )
+        return cls(
+            observation_id=observation_id,
+            run_id=run_id,
+            run_revision=run_revision,
+            observation_type=observation_type,
+            source=source,
+            evidence_ids=evidence_ids,
+            payload={} if payload is None else payload,
+            source_identity=source_identity,
+            source_version=source_version,
+            source_cursor=source_cursor,
+            content_hash=content_hash,
+            coherence=coherence,
+            coherence_reasons=reasons + tuple(coherence_reasons),
+            runtime_observation=runtime_observation,
+        )
+
+    @classmethod
+    def from_dict(cls: type[ContractT], value: Mapping[str, Any]) -> ContractT:
+        if isinstance(value, Mapping):
+            missing = [name for name in _COHERENCE_AWARE_FIELDS if name not in value]
+            if missing:
+                # A legacy record (no coherence-aware fields) is admitted only
+                # as explicitly typed unknown evidence; it is preserved for
+                # auditability and can never be dispatchable.
+                legacy = dict(value)
+                for name in missing:
+                    if name == "coherence_reasons":
+                        legacy[name] = ()
+                    elif name == "coherence":
+                        legacy[name] = UNKNOWN
+                    else:
+                        legacy[name] = None
+                if legacy.get("coherence") is None:
+                    legacy["coherence"] = UNKNOWN
+                reasons = legacy.get("coherence_reasons")
+                if not isinstance(reasons, (list, tuple)):
+                    reasons = ()
+                if "legacy_record_without_coherence_fields" not in reasons:
+                    legacy["coherence_reasons"] = tuple(reasons) + (
+                        "legacy_record_without_coherence_fields",
+                    )
+                value = legacy
+        return super().from_dict(value)
 
 
 @dataclass(frozen=True)
@@ -518,10 +787,11 @@ def validate_scope_binding(
 
 
 __all__ = [
-    "CASExpectation", "CapabilityGrant", "Claim", "Contract", "ContractError",
-    "CoordinatorFence", "Decision", "EvidenceEnvelope", "IdempotencyConflict",
+    "CASExpectation", "CapabilityGrant", "Claim", "COHERENT", "Contract", "ContractError",
+    "CoordinatorFence", "Decision", "EvidenceEnvelope", "INCOHERENT", "IdempotencyConflict",
     "IdempotencyKey", "IdentityConflict", "ObservationEnvelope", "PayloadConflict",
-    "ProjectionMetadata", "QuarantineRecord", "RevisionConflict", "SubjectAttempt",
-    "assert_idempotent", "canonical_json", "contract_from_dict", "payload_digest",
-    "validate_relationships", "validate_scope_binding",
+    "ProjectionMetadata", "QuarantineRecord", "RUNTIME_OBSERVATION_FIELDS", "RevisionConflict",
+    "SubjectAttempt", "UNKNOWN", "assert_idempotent", "canonical_json", "contract_from_dict",
+    "evaluate_runtime_observation", "payload_digest", "validate_relationships",
+    "validate_scope_binding",
 ]

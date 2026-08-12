@@ -6,7 +6,9 @@ Covers:
 - Provider-missing negatives (no host or container)
 - Stale-fence negatives
 - Fake-transport detection
-- Bypass behavior (no adapter = direct path)
+- Default-deny gate contract: only an explicit AUTHORIZED verdict dispatches;
+  a missing gate, SHADOW_PASS, or an exceptional gate makes zero protocol
+  reservation and zero transport (apply_fn) calls
 """
 
 from __future__ import annotations
@@ -28,6 +30,10 @@ from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
     SshOutcome,
     SshEffectAdapter,
 )
+from arnold_pipelines.megaplan.custody.action_validator import (
+    GateResult,
+    adapter_effect_authorized,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -45,11 +51,26 @@ def mock_protocol():
 
 @pytest.fixture
 def adapter(mock_protocol):
-    """Create an SshEffectAdapter with shadow gate."""
+    """Create an SshEffectAdapter with an explicit authorized gate."""
     return SshEffectAdapter(
         mock_protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
         production_enabled=False,
     )
+
+
+@pytest.fixture
+def gated_adapter_factory(mock_protocol):
+    """Factory to build adapters with a chosen gate verdict/callable."""
+
+    def build(gate_check):
+        return SshEffectAdapter(
+            mock_protocol,
+            action_gate_check=gate_check,
+            production_enabled=False,
+        )
+
+    return build
 
 
 @pytest.fixture
@@ -195,6 +216,314 @@ def test_destroy_succeeds_with_valid_target(adapter, destroy_target, mock_protoc
     assert result.ok
     assert result.glek != ""
     assert result.outcome_kind == OUTCOME_COMPLETED
+
+
+# ── Gate contract (default-deny) ────────────────────────────────────────────
+
+
+def test_missing_gate_blocks_dispatch_before_any_effect(
+    mock_protocol, build_target
+):
+    """A missing gate check is a typed denial with zero protocol/transport."""
+    no_gate = SshEffectAdapter(
+        mock_protocol,
+        production_enabled=False,
+    )
+    apply_calls: list[dict] = []
+
+    result = no_gate.route(
+        target=build_target,
+        intent_payload={"deploy_dir": "/tmp/deploy"},
+        apply_fn=lambda payload: apply_calls.append(payload),
+        fence_token=1,
+    )
+
+    assert not result.ok
+    assert "Action gate blocked" in result.error
+    assert result.evidence["gate_verdict"] == GateResult.BLOCKED_WBC_MISSING
+    mock_protocol.reserve_and_start.assert_not_called()
+    mock_protocol.persist_intent.assert_not_called()
+    assert apply_calls == []
+
+
+def test_shadow_pass_blocks_dispatch_before_any_effect(
+    gated_adapter_factory, mock_protocol, build_target
+):
+    """SHADOW_PASS is not authority: zero protocol/transport calls."""
+    shadow = gated_adapter_factory(
+        lambda _boundary, _target_key: GateResult.SHADOW_PASS
+    )
+    apply_calls: list[dict] = []
+
+    result = shadow.route(
+        target=build_target,
+        intent_payload={"deploy_dir": "/tmp/deploy"},
+        apply_fn=lambda payload: apply_calls.append(payload),
+        fence_token=1,
+    )
+
+    assert not result.ok
+    assert "Action gate blocked" in result.error
+    assert result.evidence["gate_verdict"] == GateResult.SHADOW_PASS
+    mock_protocol.reserve_and_start.assert_not_called()
+    mock_protocol.persist_intent.assert_not_called()
+    assert apply_calls == []
+
+
+def test_exceptional_gate_blocks_dispatch_before_any_effect(
+    gated_adapter_factory, mock_protocol, build_target
+):
+    """A gate that raises becomes a typed denial, never a dispatch."""
+    def exploding_gate(_boundary, _target_key):
+        raise RuntimeError("gate database unreachable")
+
+    failing = gated_adapter_factory(exploding_gate)
+    apply_calls: list[dict] = []
+
+    result = failing.route(
+        target=build_target,
+        intent_payload={"deploy_dir": "/tmp/deploy"},
+        apply_fn=lambda payload: apply_calls.append(payload),
+        fence_token=1,
+    )
+
+    assert not result.ok
+    assert "Action gate blocked" in result.error
+    assert result.evidence["gate_verdict"] == GateResult.ERROR
+    mock_protocol.reserve_and_start.assert_not_called()
+    mock_protocol.persist_intent.assert_not_called()
+    assert apply_calls == []
+
+
+def test_blocked_verdicts_never_dispatch(
+    gated_adapter_factory, mock_protocol, build_target
+):
+    """Every blocked/error enum verdict is denied before any effect."""
+    for verdict in (
+        GateResult.BLOCKED_MISSING_GRANT,
+        GateResult.BLOCKED_STALE_GRANT,
+        GateResult.BLOCKED_WBC_MISSING,
+        GateResult.BLOCKED_NO_LEASE,
+        GateResult.BLOCKED_NOT_OWNER,
+        GateResult.ERROR,
+    ):
+        mock_protocol.reset_mock()
+        gated = gated_adapter_factory(
+            lambda _b, _k, v=verdict: v
+        )
+        apply_calls: list[dict] = []
+
+        result = gated.route(
+            target=build_target,
+            intent_payload={"deploy_dir": "/tmp/deploy"},
+            apply_fn=lambda payload: apply_calls.append(payload),
+            fence_token=1,
+        )
+
+        assert not result.ok, verdict
+        assert "Action gate blocked" in result.error, verdict
+        mock_protocol.reserve_and_start.assert_not_called(), verdict
+        assert apply_calls == [], verdict
+
+
+def test_authorized_gate_dispatches_with_apply_fn_and_protocol(
+    mock_protocol, build_target
+):
+    """AUTHORIZED is the only verdict that reaches protocol + transport."""
+    authorized = SshEffectAdapter(
+        mock_protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+        production_enabled=False,
+    )
+    apply_calls: list[dict] = []
+
+    result = authorized.route(
+        target=build_target,
+        intent_payload={"deploy_dir": "/tmp/deploy"},
+        apply_fn=lambda payload: apply_calls.append(payload),
+        fence_token=1,
+    )
+
+    assert result.ok
+    assert result.outcome_kind == OUTCOME_COMPLETED
+    mock_protocol.reserve_and_start.assert_called_once()
+    mock_protocol.persist_intent.assert_called_once()
+    mock_protocol.accept_outcome.assert_called_once()
+    assert apply_calls == [{"deploy_dir": "/tmp/deploy"}]
+
+
+def test_adapter_effect_authorized_is_strict_authorized_only():
+    """The shared predicate admits only the canonical AUTHORIZED verdict."""
+    assert adapter_effect_authorized(GateResult.AUTHORIZED) is True
+    assert adapter_effect_authorized(GateResult.SHADOW_PASS) is False
+    assert adapter_effect_authorized(None) is False
+    assert adapter_effect_authorized("authorized") is False
+
+
+# ── Action-off gate dispatch ────────────────────────────────────────────────
+
+
+def test_gate_dispatch_production_is_action_off_even_when_authorized(
+    mock_protocol, build_target
+):
+    """Production mode is action-off: an AUTHORIZED gate still denies."""
+    production = SshEffectAdapter(
+        mock_protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+        production_enabled=True,
+    )
+
+    result = production.gate_dispatch(build_target)
+
+    assert not result.ok
+    assert "Production SSH dispatch is action-off" in result.error
+    assert result.evidence["gate_verdict"] == "production_action_off"
+    mock_protocol.reserve_and_start.assert_not_called()
+
+
+def test_gate_dispatch_missing_gate_denies(mock_protocol, build_target):
+    """A missing gate is a typed denial before any transport."""
+    no_gate = SshEffectAdapter(mock_protocol, production_enabled=False)
+
+    result = no_gate.gate_dispatch(build_target)
+
+    assert not result.ok
+    assert "Action gate blocked" in result.error
+    assert result.evidence["gate_verdict"] == GateResult.BLOCKED_WBC_MISSING.value
+
+
+def test_gate_dispatch_non_authorized_verdicts_deny(
+    gated_adapter_factory, build_target
+):
+    """Every non-AUTHORIZED verdict denies with zero transport."""
+    for verdict in (
+        GateResult.SHADOW_PASS,
+        GateResult.BLOCKED_MISSING_GRANT,
+        GateResult.BLOCKED_STALE_GRANT,
+        GateResult.BLOCKED_WBC_MISSING,
+        GateResult.BLOCKED_NO_LEASE,
+        GateResult.BLOCKED_NOT_OWNER,
+        GateResult.ERROR,
+    ):
+        gated = gated_adapter_factory(lambda _b, _k, v=verdict: v)
+
+        result = gated.gate_dispatch(build_target)
+
+        assert not result.ok, verdict
+        assert "Action gate blocked" in result.error, verdict
+        assert result.evidence["gate_verdict"] == verdict.value, verdict
+
+
+def test_gate_dispatch_authorized_outside_production_dispatches(
+    gated_adapter_factory, build_target
+):
+    """Explicit AUTHORIZED in a non-production adapter is the only dispatch."""
+    gated = gated_adapter_factory(
+        lambda _boundary, _target_key: GateResult.AUTHORIZED
+    )
+
+    result = gated.gate_dispatch(build_target)
+
+    assert result.ok
+    assert result.outcome_kind == OUTCOME_COMPLETED
+    assert result.evidence["gate_verdict"] == GateResult.AUTHORIZED.value
+
+
+def test_gate_dispatch_provider_missing_denies(adapter):
+    """Missing host/container is a provider-missing negative."""
+    missing_host = SshTarget(
+        shard=SshEffectShard.SSH_EXEC,
+        host="",
+        container="megaplan-cloud-agent",
+        operation="ssh_exec",
+    )
+    missing_container = SshTarget(
+        shard=SshEffectShard.UPLOAD_FILE,
+        host="example.com",
+        container="",
+        operation="upload_file",
+    )
+
+    for target in (missing_host, missing_container):
+        result = adapter.gate_dispatch(target)
+
+        assert not result.ok, target.target_key
+        assert "Provider missing" in result.error, target.target_key
+
+
+def test_gate_dispatch_supports_action_off_shard_identity():
+    """Action-off shard names resolve to stable enum identities."""
+    for name in ("ssh_exec", "upload_file", "upload_archive", "down"):
+        shard = SshEffectShard(name)
+        assert shard.value == name
+        assert shard.value in SSH_ACTION_OFF_SHARDS
+
+
+def test_open_ssh_effect_adapter_fails_closed_without_wiring(mock_protocol):
+    """Production construction without protocol or gate is refused."""
+    from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+        SshEffectAdapterGateError,
+        current_ssh_gate_check,
+        open_ssh_effect_adapter,
+    )
+
+    with pytest.raises(SshEffectAdapterGateError, match="EffectProtocol"):
+        open_ssh_effect_adapter()
+
+    with pytest.raises(SshEffectAdapterGateError, match="action_gate_check"):
+        open_ssh_effect_adapter(mock_protocol)
+
+    installed = open_ssh_effect_adapter(mock_protocol, production_enabled=False)
+    assert isinstance(installed, SshEffectAdapter)
+    assert installed._production_enabled is False
+
+    gated = open_ssh_effect_adapter(
+        mock_protocol, action_gate_check=current_ssh_gate_check()
+    )
+    assert isinstance(gated, SshEffectAdapter)
+    assert gated._production_enabled is True
+    assert adapter_effect_authorized(gated._gate(SshTarget(
+        shard=SshEffectShard.SSH_EXEC,
+        host="example.com",
+        container="megaplan-cloud-agent",
+    ))) is False
+
+
+def test_constructor_production_without_gate_raises(mock_protocol):
+    """T-0018: the public constructor itself refuses production construction
+    without an explicit action_gate_check, mirroring the factory."""
+    from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+        SshEffectAdapterGateError,
+    )
+
+    # production_enabled=True with no gate is a wiring error at construction
+    with pytest.raises(SshEffectAdapterGateError, match="action_gate_check"):
+        SshEffectAdapter(mock_protocol, production_enabled=True)
+
+    # observation-mode construction may omit the gate (fail closed per dispatch)
+    observed = SshEffectAdapter(mock_protocol, production_enabled=False)
+    assert observed._action_gate_check is None
+    assert observed._production_enabled is False
+
+    # production construction with an explicit gate is allowed
+    gated = SshEffectAdapter(
+        mock_protocol,
+        action_gate_check=lambda _boundary, _target_key: GateResult.AUTHORIZED,
+        production_enabled=True,
+    )
+    assert gated._production_enabled is True
+
+
+def test_current_ssh_gate_check_always_denies():
+    """The production SSH gate is a denial gate, re-read at dispatch time."""
+    from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+        current_ssh_gate_check,
+    )
+
+    gate = current_ssh_gate_check()
+    verdict = gate("dispatch", "ssh:ssh_exec:example.com:megaplan-cloud-agent")
+    assert verdict == GateResult.BLOCKED_MISSING_GRANT
+    assert adapter_effect_authorized(verdict) is False
 
 
 # ── Stale-fence negatives ────────────────────────────────────────────────────

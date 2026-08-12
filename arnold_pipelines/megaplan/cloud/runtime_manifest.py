@@ -88,6 +88,13 @@ _EPIC_REQUIRED = (
     "repair_bin",
     "deps_lockfile",
 )
+
+# Public aliases for the canonical required-key sets.  cloud.cli generates
+# the stdlib-only, fail-closed shell read of the pinned runtime manifest
+# from these (G6 round-2 finding 2), so the shell gate can never drift from
+# the canonical schema definition.
+TOP_LEVEL_REQUIRED = _TOP_LEVEL_REQUIRED
+EPIC_REQUIRED = _EPIC_REQUIRED
 _INDIRECTION_REQUIRED = (
     "host_path",
     "container_path",

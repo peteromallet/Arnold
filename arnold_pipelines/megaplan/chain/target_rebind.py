@@ -24,6 +24,7 @@ from typing import Any, Callable, Iterator, Mapping
 from arnold_pipelines.megaplan._core.io import find_plan_dir
 from arnold_pipelines.megaplan._core.state import driver_lock, plan_lock
 from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.chain.git_ops import _reference_census
 from arnold_pipelines.megaplan.chain.operator_pause import (
     AUTHORITY_KEY,
     AUTHORITY_SCHEMA,
@@ -517,6 +518,19 @@ def _restore_git(
             f"rollback restored branch {branch} at {restored}, expected {head}",
         )
     if created_branch:
+        # Reference census (T-0027): the rollback deletes the branch created
+        # by the failed cutover — never while a runtime store still
+        # references this project root.  REFERENCED / DANGLING / UNKNOWN
+        # refuse the delete (fail-closed — delete-on-reference or -unknown
+        # never happens); only CLEAR keeps the route authority.
+        census_verdict, census_reasons = _reference_census(project_root)
+        if census_verdict != "CLEAR":
+            detail = "; ".join(census_reasons) or census_verdict
+            raise CliError(
+                PROJECT_SOURCE_REBIND_ERROR,
+                f"rollback refused to delete created branch {created_branch}: "
+                f"reference census {census_verdict} for {project_root} ({detail})",
+            )
         _run_git(
             project_root,
             ["branch", "--delete", "--force", created_branch],

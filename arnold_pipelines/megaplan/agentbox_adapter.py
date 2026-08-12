@@ -1036,6 +1036,24 @@ def _credential_diagnostics(
     }
 
 
+def _agentbox_delivery_gate_check():
+    """Build the explicit current delivery gate for AgentBox notifications.
+
+    Discord delivery is only possible with a configured bot token; without
+    one, the durable owner must deny before any provider contact.  The
+    predicate is re-read on every delivery, so the verdict tracks the
+    current process configuration.
+    """
+
+    from arnold_pipelines.megaplan.resident.delivery_effects import (
+        current_delivery_gate_check,
+    )
+
+    return current_delivery_gate_check(
+        lambda: bool(str(os.environ.get("DISCORD_BOT_TOKEN") or "").strip())
+    )
+
+
 def _record_completion_dm(config: AgentBoxConfig, operation_id: str, run: Any) -> None:
     paths = run_dir_paths(config, operation_id)
     dm = _build_completion_dm(run)
@@ -1064,6 +1082,7 @@ def _record_completion_dm(config: AgentBoxConfig, operation_id: str, run: Any) -
         delivery_effects = open_resident_delivery_effects(
             resident_root / "delivery_effects",
             production_enabled=True,
+            action_gate_check=_agentbox_delivery_gate_check(),
         )
         result = _send_completion_dm(
             run,
@@ -1345,6 +1364,7 @@ def record_reconcile_pr_ready_dm(
         delivery_effects = open_resident_delivery_effects(
             resident_root / "delivery_effects",
             production_enabled=True,
+            action_gate_check=_agentbox_delivery_gate_check(),
         )
         result = _send_reconcile_pr_ready_dm(
             chain_label=chain_label,

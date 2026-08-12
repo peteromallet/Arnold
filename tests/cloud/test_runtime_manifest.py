@@ -1107,3 +1107,130 @@ def test_cli_add_deviation_rejects_bad_record(tmp_path: Path) -> None:
         env, "add_deviation", str(path), f"@{tmp_path / 'missing.json'}"
     ).returncode == 2
     assert load_manifest(path).deviations == []  # nothing was appended
+
+
+# ── T-0013 regression locks: per-session binding, lifecycle, attestation ────
+
+
+def test_per_session_manifest_binding_has_no_global_pointer_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-session manifest binding (``ARNOLD_RUNTIME_MANIFEST``) is the ONLY
+    resolver: the global active pointer at the default path is never
+    consulted or selected, and a bound-but-missing session path fails closed
+    instead of falling back to it (G1 correction 1/2)."""
+    global_path = Path("/workspace/.megaplan") / MANIFEST_FILENAME
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    # Unbound: the default path is only ever visible as the UNBOUND default —
+    # the moment a session binds, that path is the session path.
+    assert active_manifest_path() == global_path
+
+    session_a = tmp_path / "sessions" / "epic-a" / "runtime-manifest.json"
+    session_b = tmp_path / "sessions" / "epic-b" / "runtime-manifest.json"
+    manifest_a = _make_manifest_obj(runtime_id="runtime-a", epic_id="epic-a")
+    manifest_b = _make_manifest_obj(runtime_id="runtime-b", epic_id="epic-b")
+    write_active_pointer(manifest_a, session_a)
+    write_active_pointer(manifest_b, session_b)
+
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(session_a))
+    # Bound session A: the active pointer IS the session path — never the
+    # global default — and resolves exactly session A's manifest.
+    assert active_manifest_path() == session_a
+    assert bootstrap_manifest(active_manifest_path()) == manifest_a
+    assert bootstrap_manifest(active_manifest_path()).runtime_id == "runtime-a"
+
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(session_b))
+    # Session B binds independently: no cross-selection with session A.
+    assert bootstrap_manifest(active_manifest_path()) == manifest_b
+    assert bootstrap_manifest(active_manifest_path()).runtime_id == "runtime-b"
+
+    # A bound-but-missing path fails closed (ManifestError) — there is NO
+    # fallback to the global active pointer for per-session resolution.
+    missing = tmp_path / "sessions" / "epic-missing" / "runtime-manifest.json"
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(missing))
+    with pytest.raises(ManifestError, match="does not exist"):
+        bootstrap_manifest(active_manifest_path())
+    # The global default pointer was never created or written by any of the
+    # per-session operations above.
+    assert not global_path.exists()
+
+
+def test_compatibility_only_survives_create_promote_close_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runtime-create -> promote -> close lifecycle can never re-admit
+    the active pointer: the ``compatibility_only`` marker written at create
+    survives promote (``advance_generation``) and close (``set_state``)
+    through the real CLI pointer path, and the pointer stays
+    NON-AUTHORITATIVE at every step (G2 correction 1 + second re-run)."""
+    pointer = tmp_path / "runtime-manifest.json"
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+
+    # create: arnold-runtime-create writes the pointer as compatibility
+    # telemetry (compatibility_only=True).
+    created = _make_manifest_obj(generation=1, compatibility_only=True)
+    write_active_pointer(created, pointer)
+    assert is_compatibility_only_pointer(pointer) is True
+
+    # promote: advance_generation through the active pointer (CLI path) —
+    # generation bumps but the marker survives and admission stays absent.
+    assert (
+        main(["advance_generation", str(pointer), "newsha001", "--reason", "promote"])
+        == 0
+    )
+    promoted = load_manifest(pointer)
+    assert promoted.generation == 2
+    assert promoted.epic["expected_head"] == "newsha001"
+    assert promoted.compatibility_only is True
+    assert is_compatibility_only_pointer(pointer) is True
+    assert manifest_present(pointer) is False
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(pointer)
+
+    # close: set_state closed through the active pointer (CLI path) — the
+    # closed state is stamped but the pointer remains non-authoritative.
+    assert main(["set_state", str(pointer), "closed"]) == 0
+    closed = load_manifest(pointer)
+    assert closed.state == "closed"
+    assert closed.timestamps["closed"]
+    assert closed.compatibility_only is True
+    assert is_compatibility_only_pointer(pointer) is True
+    assert manifest_present(pointer) is False
+    with pytest.raises(ManifestError, match="compatibility_only"):
+        bootstrap_manifest(pointer)
+
+    # The serialized pointer on disk carries the marker after every step.
+    payload = json.loads(pointer.read_text(encoding="utf-8"))
+    assert payload[COMPATIBILITY_ONLY_KEY] is True
+    assert payload["state"] == "closed"
+    assert payload["generation"] == 2
+
+
+def test_missing_runtime_attestation_never_authorizes(tmp_path: Path) -> None:
+    """Content attestation of a manifest whose runtime root is missing is
+    NEVER green: ``declared_vs_observed_match`` is False with errors and no
+    module identity, so no dispatch path can treat the runtime as attested
+    (design rule 7 content attestation; T-0013 regression lock)."""
+    manifest = _make_manifest_obj(
+        epic={"runtime_root": str(tmp_path / "no-such-runtime")},
+    )
+    result = attest_runtime(manifest)
+    # Missing runtime root => NEVER a green attestation: the declared tree
+    # cannot match, so declared_vs_observed_match is False with errors.
+    assert result["declared_vs_observed_match"] is False
+    assert result["errors"]
+    # The probed module identity must NOT come from the declared (missing)
+    # runtime root — no attestation payload can select that tree.
+    assert result["module_file"] != str(
+        (tmp_path / "no-such-runtime" / "arnold_pipelines" / "__init__.py").resolve()
+    )
+    assert all(
+        key in result
+        for key in (
+            "module_file",
+            "module_digest",
+            "mount_id",
+            "declared_vs_observed_match",
+            "errors",
+        )
+    )

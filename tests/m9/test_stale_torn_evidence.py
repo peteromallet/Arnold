@@ -391,7 +391,10 @@ def test_stale_markers_and_runner_heartbeats_are_diagnostic_only() -> None:
     assert marker_gaps["needs_human_plan_ref"]["evidence_status"] == "stale"
     assert marker_gaps["active_step"]["evidence_status"] == "stale"
     assert runner.status == "stale"
-    assert {diagnostic.code for diagnostic in runner.diagnostics} == {"stale_heartbeat"}
+    # The raw heartbeat stays observable (soft gate) but carries no coherence
+    # claim: the diagnostic-only ``stale`` status is preserved alongside the
+    # non-coherence marker that blocks any green status.
+    assert {diagnostic.code for diagnostic in runner.diagnostics} == {"stale_heartbeat", "non_coherent_observation"}
     assert runner.to_dict()["read_only"] is True
     assert "authority" not in runner.to_dict()
 

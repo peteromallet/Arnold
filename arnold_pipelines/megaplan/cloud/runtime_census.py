@@ -49,6 +49,11 @@ _SRC_VAR_NAMES = (
     "ARNOLD_SRC",
     "MEGAPLAN_AUDIT_ARNOLD_SRC",
     "MEGAPLAN_META_ARNOLD_SRC",
+    # Retired selectors (T-0023/G5): kept so census redaction flags any
+    # re-introduced read; runtime identity now comes from the manifest only.
+    "KIMI_GOAL_ARNOLD_SRC",
+    "MEGAPLAN_DISCORD_DM_ARNOLD_SRC",
+    "MEGAPLAN_DISCOVER_ARNOLD_SRC",
 )
 
 # Key-like fragments: any variable/flag name containing one of these is secret

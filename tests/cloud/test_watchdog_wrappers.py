@@ -195,9 +195,12 @@ def test_superfixer_wrappers_prefer_manifest_runtime_root() -> None:
 
     assert 'SRC_DIR="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"' in watchdog
     assert 'ARNOLD_SRC="/workspace/arnold"' in repair_loop
-    assert 'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"' in repair_loop
+    assert 'ARNOLD_SRC="$MANIFEST_RUNTIME_ROOT"' in repair_loop
     assert 'ARNOLD_SRC="/workspace/arnold"' in meta_repair
-    assert 'AUDITOR_SOURCE_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root 2>/dev/null || true)"' in auditor
+    assert 'if declare -F arnold_runtime_manifest_epic_field >/dev/null 2>&1; then' in auditor
+    assert 'AUDITOR_SOURCE_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root 2>/dev/null)"' in auditor
+    assert 'if [[ "$AUDITOR_MANIFEST_FIELD_RC" -ne 0 ]]; then' in auditor
+    assert 'arnold-progress-auditor: runtime manifest present but invalid; failing closed' in auditor
     assert 'AUDITOR_SOURCE_ROOT="${AUDITOR_SOURCE_ROOT:-/workspace/arnold}"' in auditor
     # G4 correction 3: legacy selector reads were deleted with P4 — prove
     # none of the deleted fallback names appear in any fixer wrapper.
@@ -652,6 +655,7 @@ def _extract_relaunch_functions(wrapper_kind: str) -> list[str]:
         else _extract_repair_function
     )
     names = [
+        "chain_engine_root_preflight",
         "default_plan_relaunch_command",
         "resume_plan_relaunch_command",
         "chain_resume_plan_relaunch_command_if_needed",
@@ -936,10 +940,23 @@ def _run_discover(
     *,
     marker_dir: Path,
     src_dir: Path | None = None,
+    manifest_root: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
     env.setdefault("MEGAPLAN_DISCOVER_WORKSPACE_ROOT", str(tmp_path / "workspace-root"))
+    # G5 round-5 finding 1: the wrapper resolves the executed root from
+    # ARNOLD_RUNTIME_MANIFEST unconditionally (--src-dir is observation-only),
+    # so the harness always pins a manifest whose epic.runtime_root matches
+    # the runtime.  PYTHONPATH exposes the package to the wrapper's python3
+    # subprocesses (manifest resolution + plan binding lookup).
+    runtime_root = manifest_root or REPO_ROOT
+    manifest = _make_authoritative_manifest()
+    manifest["epic"]["runtime_root"] = str(runtime_root)
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     return subprocess.run(
         [
             "bash",
@@ -1019,11 +1036,15 @@ def test_host_resident_ensure_starts_from_pinned_runtime_source() -> None:
     text = _systemd_file("ensure-megaplan-resident")
 
     assert "tmux new-session -d -s megaplan-resident-discord -c /workspace" in text
-    assert "runtime_src=/workspace/arnold" in text
-    assert "export MEGAPLAN_RUNTIME_SRC=/workspace/arnold" in text
+    assert (
+        'runtime_src="$(arnold_runtime_manifest_epic_field epic.runtime_root'
+        in text
+    )
+    assert 'PYTHONPATH="$runtime_src:${PYTHONPATH:-}"' in text
     assert r'cd \"\$runtime_src\"' in text
-    # G4: the resident ensure script pins runtime_src to the fixed checkout;
-    # no env-selector fallback chain remains.
+    # G4: the resident ensure script pins runtime_src to the manifest
+    # epic.runtime_root; no env-selector fallback chain remains.
+    assert "runtime_src=/workspace/arnold" not in text
     assert r"\${MEGAPLAN_RUNTIME_SRC:-" not in text
     assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
     assert (
@@ -3429,6 +3450,9 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
+
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
     result = subprocess.run(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), str(spec_path)],
         capture_output=True,
@@ -4295,6 +4319,7 @@ def test_watchdog_skips_same_session_dispatch_when_repair_loop_is_already_runnin
             _extract_wrapper_function("repair_loop_pid_matches_session"),
             _extract_wrapper_function("repair_loop_busy_state"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             """
 report_item() {
@@ -4356,6 +4381,13 @@ def test_watchdog_allows_concurrent_repairs_for_different_sessions(tmp_path: Pat
             f"LOG={str(log_path)!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
+durable_operator_pause_active() { return 1; }
+child_agent_launch_authority_or_reject() { printf '%s\n' '{"gate_open": true, "reason": "test"}'; return 0; }
+watchdog_repair_state_authority_or_reject() { printf '%s\n' '{"outcome": "allowed"}'; return 0; }
+authority_fail_closed() { return 1; }
+authority_gap_record() { return 0; }
+authority_gap_continue() { return 0; }
+emit_runtime_transition_event() { return 0; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
 dispatch_kimi_repair demo-b /tmp/ws /tmp/spec
@@ -4913,6 +4945,7 @@ def test_launch_chain_tick_emits_incident_detection_outcomes(
         [
             _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -5011,6 +5044,8 @@ def test_repair_loop_missing_goal_custody_cleans_pidfile_on_term(
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
     env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
 
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     pidfile = marker_dir / "demo-session.repair-loop.pid"
@@ -5098,6 +5133,8 @@ def test_repair_loop_preserves_unbound_pidfile_and_uses_durable_lock(tmp_path: P
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
     env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
 
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
     proc = subprocess.Popen(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"],
         stdout=subprocess.PIPE,
@@ -5190,6 +5227,8 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
     env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
 
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     pidfile = marker_dir / "demo-session.repair-loop.pid"
     first = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -5275,6 +5314,8 @@ def test_repair_loop_busy_directory_lock_exits_without_mutating_repair_data(tmp_
 
         env = dict(os.environ)
         env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(REPO_ROOT)
+        env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+        env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
         env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
         env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
         env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
@@ -5581,6 +5622,129 @@ def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     assert "pr merge 42 --auto --squash --delete-branch" in gh_calls
 
 
+def test_watchdog_auto_merge_gates_delete_branch_on_reference_census(
+    tmp_path: Path,
+) -> None:
+    """G6 finding 4: the watchdog's gh-merge path must not delete the PR head
+    branch without reference-census proof for the branch's runtime root.
+
+    REFERENCED / UNKNOWN drop --delete-branch — the non-destructive merge
+    still proceeds, but the deletion is refused with a writer note.  CLEAR
+    keeps the existing route authority (merge + --delete-branch).
+    """
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+    (chain_dir / "demo-chain.json").write_text(
+        json.dumps({"last_state": "awaiting_pr_merge", "pr_number": 42}),
+        encoding="utf-8",
+    )
+
+    def run_scenario(
+        scenario: str, store_dir: Path, log_path: Path
+    ) -> list[str]:
+        gh_bin = tmp_path / f"bin-{scenario}"
+        gh_bin.mkdir()
+        gh_log = gh_bin / "gh.log"
+        merged_flag = gh_bin / "merged"
+        gh_path = gh_bin / "gh"
+        gh_path.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    f"printf '%s\\n' \"$*\" >> {str(gh_log)!r}",
+                    "if [[ \"$1 $2 $3\" == \"pr view 42\" ]]; then",
+                    f"  if [[ -f {str(merged_flag)!r} ]]; then",
+                    "    printf '%s\\n' '{\"state\":\"MERGED\"}'",
+                    "  else",
+                    "    printf '%s\\n' '{\"state\":\"OPEN\"}'",
+                    "  fi",
+                    "  exit 0",
+                    "fi",
+                    "if [[ \"$1 $2 $3\" == \"pr ready 42\" ]]; then",
+                    "  exit 0",
+                    "fi",
+                    "if [[ \"$1 $2 $3\" == \"pr merge 42\" ]]; then",
+                    f"  touch {str(merged_flag)!r}",
+                    "  exit 0",
+                    "fi",
+                    "exit 1",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+
+        if scenario == "referenced":
+            store_dir.mkdir(parents=True)
+            (store_dir / "chain-ref.json").write_text(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "execution_environment": {"engine_root": str(workspace)}
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+        elif scenario == "unknown":
+            store_dir.mkdir(parents=True)
+            (store_dir / "corrupt.json").write_text(
+                '{"metadata": {"execution_environment": ', encoding="utf-8"
+            )
+
+        script = "\n\n".join(
+            [
+                "\n".join(
+                    [
+                        "export ARNOLD_BASE_DIR=''",
+                        f"export ARNOLD_RUNTIME_MANIFEST_DIR={str(tmp_path / f'ref-manifests-{scenario}')!r}",
+                        f"export ARNOLD_REFERENCE_CHAIN_STORE={str(store_dir)!r}",
+                        f"export ARNOLD_REFERENCE_MARKER_STORE={str(tmp_path / f'ref-markers-{scenario}')!r}",
+                        f"export ARNOLD_REFERENCE_SCHEDULE_STORES={str(tmp_path / f'ref-schedules-{scenario}')!r}",
+                        f"export ARNOLD_REFERENCE_REPAIR_QUEUE={str(tmp_path / f'ref-repair-queue-{scenario}')!r}",
+                        f"export ARNOLD_REFERENCE_LEASE_STORE={str(tmp_path / f'ref-leases-{scenario}')!r}",
+                        f"export CLOUD_WATCHDOG_LOG={str(log_path)!r}",
+                        f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+                    ]
+                ),
+                _extract_wrapper_function("chain_wait_status"),
+                f"chain_wait_status {str(workspace)!r} {str(spec_path)!r}",
+            ]
+        )
+        result = _run_watchdog_shell(script, path_prefix=gh_bin)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "none"
+        return gh_log.read_text(encoding="utf-8").splitlines()
+
+    # REFERENCED: merge proceeds, --delete-branch refused with a writer note.
+    log_ref = tmp_path / "watchdog-referenced.log"
+    gh_calls = run_scenario(
+        "referenced", tmp_path / "ref-chains-referenced", log_ref
+    )
+    assert "pr merge 42 --auto --squash" in gh_calls
+    assert not any("--delete-branch" in call for call in gh_calls)
+    note = log_ref.read_text(encoding="utf-8")
+    assert "reference census REFERENCED" in note
+    assert "refusing --delete-branch" in note
+
+    # UNKNOWN (corrupt store): fail-closed, --delete-branch refused too.
+    log_unknown = tmp_path / "watchdog-unknown.log"
+    gh_calls = run_scenario("unknown", tmp_path / "ref-chains-unknown", log_unknown)
+    assert "pr merge 42 --auto --squash" in gh_calls
+    assert not any("--delete-branch" in call for call in gh_calls)
+    assert "reference census UNKNOWN" in log_unknown.read_text(encoding="utf-8")
+
+    # CLEAR (absent store): existing route authority keeps --delete-branch.
+    log_clear = tmp_path / "watchdog-clear.log"
+    gh_calls = run_scenario("clear", tmp_path / "ref-chains-clear", log_clear)
+    assert "pr merge 42 --auto --squash --delete-branch" in gh_calls
+
+
 def test_watchdog_finalized_plan_never_authorizes_pr_merge(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -5667,6 +5831,7 @@ def test_watchdog_auto_policy_merged_pr_fetches_origin_but_unknown_liveness_fenc
             _extract_wrapper_function("safe_name"),
             _extract_wrapper_function("reconcile_awaiting_pr_merge"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -5752,6 +5917,7 @@ def test_watchdog_auto_policy_open_pr_queues_evidence_and_preserves_wait(
         [
             _extract_wrapper_function("reconcile_awaiting_pr_merge"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -5841,6 +6007,12 @@ def test_cloud_discover_relaunch_materializers_are_non_authoritative(
     py_start = text.index("<<'PY'\n") + len("<<'PY'\n")
     py_end = text.index("\nPY\n", py_start)
     program = text[py_start:py_end]
+    # The relaunch generators re-read the per-epic runtime manifest as the
+    # admission pin (G5/T-0022); give the harness a valid one whose
+    # epic.runtime_root is the live import root, and bind the chain spec the
+    # chain generator preflights.
+    manifest_path = _write_runtime_manifest(tmp_path, runtime_root=REPO_ROOT)
+    _bound_chain_state(Path("/tmp/ws"), "origin/main", REPO_ROOT)
     # Build a harness that mocks subprocess, exec's the program to define the
     # relaunch generators and the gate, then classifies each command.
     harness_lines = [
@@ -5850,10 +6022,13 @@ def test_cloud_discover_relaunch_materializers_are_non_authoritative(
         + ", "
         + repr(str(REPO_ROOT))
         + "]",
+        "import os",
+        "os.environ['ARNOLD_RUNTIME_MANIFEST'] = "
+        + repr(str(manifest_path)),
         "_fake = types.SimpleNamespace("
         "returncode=0, stdout='', stderr='', pid=0, args=[])",
         "subprocess.run = lambda *a, **k: _fake",
-        "ns = {'os': __import__('os')}",
+        "ns = {'os': os}",
         "_saved = sys.stdout",
         "sys.stdout = io.StringIO()",
         "try:",
@@ -5899,6 +6074,10 @@ def test_watchdog_relaunch_materializers_are_non_authoritative() -> None:
     text = _wrapper("arnold-watchdog")
     assert "relaunch_materializer_authority_gate() {" in text
     assert 'relaunch_materializer_authority_gate "$quoted_command"' in text
+    # The preflight re-reads the recorded engine root for the chain command;
+    # bind /tmp/ws/origin/main to the live import root so the pin check and
+    # the recorded-root check both pass.
+    _bound_chain_state(Path("/tmp/ws"), "origin/main", REPO_ROOT)
     functions = "\n\n".join(_extract_relaunch_functions("watchdog"))
     gate = _extract_wrapper_function("relaunch_materializer_authority_gate")
     bash_lines = [
@@ -5927,6 +6106,8 @@ def test_watchdog_relaunch_materializers_are_non_authoritative() -> None:
             functions,
             gate,
             "SRC_DIR=" + repr(str(REPO_ROOT)),
+            "MANIFEST_RUNTIME_ROOT=" + repr(str(REPO_ROOT)),
+            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editable-install",
             "\n".join(bash_lines),
         ]
@@ -5946,6 +6127,314 @@ def test_watchdog_relaunch_materializers_are_non_authoritative() -> None:
             == "simple_fixer.singleton_claim.exact_f01_tuple"
         ), proof
         assert proof["forbidden_sources_present"] == [], proof
+
+
+def _bound_chain_state(workspace: Path, spec_path: str, engine_root: Path) -> Path:
+    """Write a runtime-bound chain state record at the canonical ``.chains``
+    path (digest over the resolved spec path), mirroring the wrapper-side
+    ``chain_engine_root_preflight`` state lookup."""
+    spec = Path(spec_path)
+    if not spec.is_absolute():
+        spec = Path(workspace) / spec
+    spec = spec.resolve()
+    digest = hashlib.sha1(str(spec).encode("utf-8")).hexdigest()[:12]
+    state = {
+        "current_plan_name": "",
+        "last_state": "blocked",
+        "metadata": {"execution_environment": {"engine_root": str(engine_root)}},
+    }
+    path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    _write_chain_state(path, state)
+    return path
+
+
+def test_cloud_discover_plan_relaunch_binds_only_accepted_root_on_pythonpath(
+    tmp_path: Path,
+) -> None:
+    """G5 round-7 finding 2: the arnold-cloud-discover ``_plan_relaunch_command``
+    puts the preflight-accepted manifest root on PYTHONPATH ONLY — no
+    ``:${PYTHONPATH:-}`` merge, so an ambient shared-root PYTHONPATH cannot
+    leak into the launched python process."""
+    text = _wrapper("arnold-cloud-discover")
+    py_start = text.index("<<'PY'\n") + len("<<'PY'\n")
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+    # The plan preflight reads the per-epic runtime manifest as its admission
+    # pin; give the harness a valid one whose epic.runtime_root is the live
+    # import root of the running python (G5 round-17 finding 1a: a standalone
+    # plan never accepts a manifest root that differs from the live import
+    # root), and bind the chain spec the chain generator preflights.  The
+    # --src-dir hint stays observation-only.
+    runtime_root = REPO_ROOT
+    src_hint = tmp_path / "src-hint"
+    manifest_path = _write_runtime_manifest(tmp_path, runtime_root=runtime_root)
+    _bound_chain_state(Path("/tmp/ws"), "origin/main", runtime_root)
+    harness_lines = [
+        "import json, subprocess, sys, types",
+        "sys.argv = ['_cloud_discover', "
+        + repr(str(tmp_path))
+        + ", "
+        + repr(str(src_hint))
+        + "]",
+        "import os",
+        "os.environ['ARNOLD_RUNTIME_MANIFEST'] = "
+        + repr(str(manifest_path)),
+        "_fake = types.SimpleNamespace("
+        "returncode=0, stdout='', stderr='', pid=0, args=[])",
+        "subprocess.run = lambda *a, **k: _fake",
+        "ns = {'os': os}",
+        "exec(compile("
+        + repr(program)
+        + ", 'cloud-discover', 'exec'), ns)",
+        "_plan = ns['_plan_relaunch_command']('demo-plan', '/tmp/ws', 'demo')",
+        "print(json.dumps({'plan': _plan}))",
+    ]
+    result = _run_embedded_python("\n".join(harness_lines))
+    assert result.returncode == 0, result.stderr
+    plan_cmd = json.loads(result.stdout.strip())["plan"]
+    assert ":${PYTHONPATH:-}" not in plan_cmd
+    assert f"PYTHONPATH={runtime_root}" in plan_cmd
+    # The accepted root is the ONLY PYTHONPATH entry: no colon-joined merge
+    # with any inherited value.
+    assert f"PYTHONPATH={runtime_root}:" not in plan_cmd
+    # The executed root is never the observation-only --src-dir.
+    assert f"PYTHONPATH={src_hint}" not in plan_cmd
+
+
+def test_cloud_discover_standalone_plan_manifest_live_drift_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """G5 (round-17 finding 1a): a STANDALONE plan (no bound chain) whose
+    manifest epic.runtime_root differs from the ACTUAL live import root of
+    the running python fails closed (typed drift, exit 24) — the manifest
+    root is never returned unchecked."""
+    text = _wrapper("arnold-cloud-discover")
+    py_start = text.index("<<'PY'\n") + len("<<'PY'\n")
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+    drifted_root = tmp_path / "drifted-runtime"
+    manifest_path = _write_runtime_manifest(tmp_path, runtime_root=drifted_root)
+    workspace = tmp_path / "ws"
+    harness_lines = [
+        "import subprocess, sys, types",
+        "sys.argv = ['_cloud_discover', "
+        + repr(str(tmp_path))
+        + ", "
+        + repr(str(drifted_root))
+        + "]",
+        "import os",
+        "os.environ['ARNOLD_RUNTIME_MANIFEST'] = "
+        + repr(str(manifest_path)),
+        "_fake = types.SimpleNamespace("
+        "returncode=0, stdout='', stderr='', pid=0, args=[])",
+        "subprocess.run = lambda *a, **k: _fake",
+        "ns = {'os': os}",
+        "exec(compile("
+        + repr(program)
+        + ", 'cloud-discover', 'exec'), ns)",
+        "ns['_plan_relaunch_command']('demo-plan', "
+        + repr(str(workspace))
+        + ", 'demo')",
+    ]
+    result = _run_embedded_python("\n".join(harness_lines))
+    assert result.returncode == 24, result.stderr
+    assert "chain_runtime_binding_drift" in result.stderr, result.stderr
+    assert (
+        f"engine root mismatch: manifest={drifted_root.resolve()} "
+        f"live={REPO_ROOT.resolve()}"
+    ) in result.stderr, result.stderr
+
+
+def test_cloud_discover_bound_chain_live_comparison_precedes_state_read(
+    tmp_path: Path,
+) -> None:
+    """G5 (round-17 finding 1b): the bound-chain live-root comparison runs
+    BEFORE the chain-state read — a live import root that disagrees with the
+    manifest pin drifts on the manifest/live arm with ZERO chain-state reads
+    (the missing state file is never even touched)."""
+    text = _wrapper("arnold-cloud-discover")
+    py_start = text.index("<<'PY'\n") + len("<<'PY'\n")
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+    drifted_root = tmp_path / "drifted-runtime"
+    manifest_path = _write_runtime_manifest(tmp_path, runtime_root=drifted_root)
+    workspace = tmp_path / "ws"
+    harness_lines = [
+        "import subprocess, sys, types",
+        "sys.argv = ['_cloud_discover', "
+        + repr(str(tmp_path))
+        + ", "
+        + repr(str(drifted_root))
+        + "]",
+        "import os",
+        "os.environ['ARNOLD_RUNTIME_MANIFEST'] = "
+        + repr(str(manifest_path)),
+        "_fake = types.SimpleNamespace("
+        "returncode=0, stdout='', stderr='', pid=0, args=[])",
+        "subprocess.run = lambda *a, **k: _fake",
+        "ns = {'os': os}",
+        "exec(compile("
+        + repr(program)
+        + ", 'cloud-discover', 'exec'), ns)",
+        "ns['_chain_relaunch_command']('origin/main', "
+        + repr(str(workspace))
+        + ", 'demo')",
+    ]
+    result = _run_embedded_python("\n".join(harness_lines))
+    assert result.returncode == 24, result.stderr
+    assert "chain_runtime_binding_drift" in result.stderr, result.stderr
+    assert (
+        f"engine root mismatch: manifest={drifted_root.resolve()} "
+        f"live={REPO_ROOT.resolve()}"
+    ) in result.stderr, result.stderr
+    # The drift is on the live arm, NOT a chain-state failure: the state
+    # read never ran.
+    assert "chain state" not in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_watchdog_relaunch_commands_bind_only_accepted_root_on_pythonpath(
+    tmp_path: Path,
+    wrapper_kind: str,
+) -> None:
+    """G5 round-6 finding 2 (watchdog) / round-7 finding 2 (repair-loop): every
+    generated relaunch command uses PYTHONPATH=<accepted root> ONLY.  The
+    inherited ``:${PYTHONPATH:-}`` append is gone, so an ambient shared-root
+    PYTHONPATH cannot leak into the launched python process."""
+    functions = "\n\n".join(_extract_relaunch_functions(wrapper_kind))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else (tmp_path / "runtime")
+    )
+    if wrapper_kind == "repair":
+        _init_git_repo(runtime_root)
+    _bound_chain_state(ws, "origin/main", runtime_root)
+    outputs = {
+        "default_plan_relaunch": tmp_path / "plan-auto.sh",
+        "resume_plan_relaunch": tmp_path / "plan-resume.sh",
+        "default_chain_relaunch": tmp_path / "chain-start.sh",
+    }
+    script = "\n\n".join(
+        [
+            functions,
+            "SRC_DIR=" + repr(str(runtime_root)),
+            *(
+                [f"ARNOLD_SRC={str(runtime_root)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "MANIFEST_RUNTIME_ROOT=" + repr(str(runtime_root)),
+            "LIVE_IMPORT_ROOT=" + repr(str(runtime_root)),
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editable-install",
+            (
+                f'default_plan_relaunch_command "demo-plan" {str(ws)!r} '
+                f"> {shlex.quote(str(outputs['default_plan_relaunch']))} || exit $?"
+            ),
+            (
+                f'resume_plan_relaunch_command "demo-plan" {str(ws)!r} '
+                f"> {shlex.quote(str(outputs['resume_plan_relaunch']))} || exit $?"
+            ),
+            (
+                f'default_chain_relaunch_command "demo-sess" {str(ws)!r} "origin/main" '
+                f"> {shlex.quote(str(outputs['default_chain_relaunch']))} || exit $?"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    for label, path in outputs.items():
+        generated = path.read_text(encoding="utf-8")
+        assert ":${PYTHONPATH:-}" not in generated, label
+        assert f"PYTHONPATH={runtime_root}" in generated, label
+        # The accepted root is the ONLY PYTHONPATH entry: no colon-joined
+        # merge with any inherited value.
+        assert f"PYTHONPATH={runtime_root}:" not in generated, label
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_watchdog_relaunch_launch_ignores_poisoned_shared_root_pythonpath(
+    tmp_path: Path,
+    wrapper_kind: str,
+) -> None:
+    """G5 round-6 finding 2 (watchdog) / round-7 finding 2 (repair-loop):
+    executing a generated relaunch command with a poisoned shared-root
+    PYTHONPATH still launches python with ONLY the accepted root on
+    PYTHONPATH — the generated assignment never merges the inherited value."""
+    functions = "\n\n".join(_extract_relaunch_functions(wrapper_kind))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / ".megaplan" / "cloud-logs").mkdir(parents=True, exist_ok=True)
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else (tmp_path / "runtime")
+    )
+    if wrapper_kind == "repair":
+        _init_git_repo(runtime_root)
+    _bound_chain_state(ws, "origin/main", runtime_root)
+    plan_out = tmp_path / "plan-auto.sh"
+    script = "\n\n".join(
+        [
+            functions,
+            "SRC_DIR=" + repr(str(runtime_root)),
+            *(
+                [f"ARNOLD_SRC={str(runtime_root)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "MANIFEST_RUNTIME_ROOT=" + repr(str(runtime_root)),
+            "LIVE_IMPORT_ROOT=" + repr(str(runtime_root)),
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editable-install",
+            (
+                f'default_plan_relaunch_command "demo-plan" {str(ws)!r} '
+                f"> {shlex.quote(str(plan_out))} || exit $?"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    relaunch = plan_out.read_text(encoding="utf-8")
+    assert ":${PYTHONPATH:-}" not in relaunch
+
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    capture = tmp_path / "capture.txt"
+    shim = shim_dir / "python3"
+    shim.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$PYTHONPATH" >> {shlex.quote(str(capture))}\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    launched = subprocess.run(
+        ["bash", "-c", relaunch],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim_dir}:{os.environ['PATH']}",
+            "PYTHONPATH": "/workspace/arnold",
+        },
+    )
+    assert launched.returncode == 0, launched.stderr
+    recorded = capture.read_text(encoding="utf-8").splitlines()
+    assert recorded, "no python launch was observed"
+    assert recorded == [str(runtime_root)] * len(recorded)
 
 
 # ── Step 55-58: child-agent launch authority gates ─────────────────────────
@@ -6273,7 +6762,7 @@ def test_repair_loop_accepts_explicit_scoped_attested_runtime() -> None:
     text = _wrapper("arnold-repair-loop")
 
     assert 'ARNOLD_SRC="/workspace/arnold"' in text
-    assert 'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"' in text
+    assert 'ARNOLD_SRC="$MANIFEST_RUNTIME_ROOT"' in text
     assert 'if [[ -n "$MANIFEST_RUNTIME_ROOT" ]]; then\n  ARNOLD_SRC="$MANIFEST_RUNTIME_ROOT"' in text
     # G4 correction 3: the generic env-selector fallback was deleted with P4.
     assert "MEGAPLAN_RUNTIME_SRC" not in text
@@ -6433,6 +6922,8 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
         [
             *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(REPO_ROOT)!r}",
+            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             "resolve_relaunch_command demo-session /tmp/workspace /tmp/not-a-chain.yaml plan demo-plan ''",
         ]
@@ -6443,7 +6934,9 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     assert "chain start" not in result.stdout
 
 
-def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command() -> None:
+def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command(
+    tmp_path: Path,
+) -> None:
     stale_command = (
         "{ set -e\n"
         "if [ -n \"$(git -C \"$SRC\" status --porcelain --untracked-files=no)\" ]; then\n"
@@ -6454,16 +6947,24 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
         "cd /workspace/progress-auditor-stage-metrics/Arnold && "
         "PYTHONPATH=/workspace/arnold:${PYTHONPATH:-} python -P -m arnold_pipelines.megaplan chain start"
     )
+    workspace = tmp_path / "Arnold"
+    spec = workspace / ".megaplan" / "initiatives" / "progress-auditor-stage-metrics" / "chain.yaml"
+    # G5 (round-17 finding 1c): the preflight compares against the real
+    # import root, so the manifest pin and recorded engine root must be the
+    # live import root itself.
+    runtime_root = REPO_ROOT
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("watchdog"),
-            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             (
-                "resolve_relaunch_command progress-auditor-stage-metrics "
-                "/workspace/progress-auditor-stage-metrics/Arnold "
-                "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml "
-                f"chain '' {shlex.quote(stale_command)}"
+                f"resolve_relaunch_command progress-auditor-stage-metrics {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(stale_command)}"
             ),
         ]
     )
@@ -6471,10 +6972,11 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
     assert result.returncode == 0, result.stderr
     # P4: the editable-install refresh machinery is deleted; a stale refresh-era
     # marker regenerates the manifest-runtime chain start (no source checkout
-    # mutation, no env-selector re-resolution).
+    # mutation, no env-selector re-resolution).  T-0022: the regenerated
+    # command puts ONLY the preflight-accepted engine root on PYTHONPATH.
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
     assert "chain start --spec" in result.stdout
-    assert "PYTHONPATH=/workspace/arnold" in result.stdout
+    assert f"PYTHONPATH={runtime_root}" in result.stdout
     assert "MEGAPLAN_RUNTIME_SRC" not in result.stdout
     assert "editable-engine" not in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
@@ -6482,10 +6984,15 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
 
 
 def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
+    workspace = Path("/tmp/workspace")
+    runtime_root = REPO_ROOT
+    _write_runtime_bound_chain_state(workspace, "/tmp/chain.yaml", runtime_root)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("watchdog"),
-            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            "LIVE_IMPORT_ROOT=" + repr(str(runtime_root)),
             "SYNC_BRANCH=editible-install",
             "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml chain '' 'echo marker-command'",
         ]
@@ -6523,12 +7030,11 @@ def test_chain_resume_authority_outranks_marker_command_and_discovers_plan(
         ),
         encoding="utf-8",
     )
-    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
-    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
-    chain_dir.mkdir(parents=True)
-    (chain_dir / f"chain-{digest}.json").write_text(
-        json.dumps({"current_plan_name": plan_name, "last_state": "blocked"}),
-        encoding="utf-8",
+    _write_runtime_bound_chain_state(
+        workspace,
+        spec_path,
+        REPO_ROOT,
+        plan_name=plan_name,
     )
 
     source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
@@ -6536,6 +7042,8 @@ def test_chain_resume_authority_outranks_marker_command_and_discovers_plan(
         [
             *_extract_relaunch_functions(wrapper_kind),
             f"{source_var}={str(REPO_ROOT)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(REPO_ROOT)!r}",
+            f"LIVE_IMPORT_ROOT={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             (
                 f"resolve_relaunch_command demo-session {str(workspace)!r} "
@@ -6549,7 +7057,9 @@ def test_chain_resume_authority_outranks_marker_command_and_discovers_plan(
     assert "marker-chain-start" not in result.stdout
 
 
-def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command() -> None:
+def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command(
+    tmp_path: Path,
+) -> None:
     stale_command = (
         "{ set -e\n"
         "if [ -n \"$(git -C \"$SRC\" status --porcelain --untracked-files=no)\" ]; then\n"
@@ -6560,16 +7070,20 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
         "cd /workspace/progress-auditor-stage-metrics/Arnold && "
         "PYTHONPATH=/workspace/arnold:${PYTHONPATH:-} python -P -m arnold_pipelines.megaplan chain start"
     )
+    workspace = tmp_path / "Arnold"
+    spec = workspace / ".megaplan" / "initiatives" / "progress-auditor-stage-metrics" / "chain.yaml"
+    runtime_root = _relaunch_runtime_root(tmp_path)
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("repair"),
-            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             (
-                "resolve_relaunch_command progress-auditor-stage-metrics "
-                "/workspace/progress-auditor-stage-metrics/Arnold "
-                "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml "
-                f"chain '' {shlex.quote(stale_command)}"
+                f"resolve_relaunch_command progress-auditor-stage-metrics {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(stale_command)}"
             ),
         ]
     )
@@ -6577,10 +7091,11 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     assert result.returncode == 0, result.stderr
     # P4: the editable-install refresh machinery is deleted; a stale refresh-era
     # marker regenerates the manifest-runtime chain start (no source checkout
-    # mutation, no env-selector re-resolution).
+    # mutation, no env-selector re-resolution).  T-0022: only the
+    # preflight-accepted engine root goes on PYTHONPATH.
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
     assert "chain start --spec" in result.stdout
-    assert "PYTHONPATH=/workspace/arnold" in result.stdout
+    assert f"PYTHONPATH={runtime_root}" in result.stdout
     assert "MEGAPLAN_RUNTIME_SRC" not in result.stdout
     assert "editable-engine" not in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
@@ -6589,6 +7104,7 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
 
 @pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
 def test_persisted_push_capable_marker_command_is_always_regenerated(
+    tmp_path: Path,
     wrapper_kind: str,
 ) -> None:
     stale_command = (
@@ -6598,6 +7114,18 @@ def test_persisted_push_capable_marker_command_is_always_regenerated(
         "git -C \"$SRC\" push origin \"$REF\"; "
         "git -C \"$MEGAPLAN_RUNTIME_SRC\" merge-base --is-ancestor HEAD \"origin/$REF\""
     )
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
     extract = (
         _extract_wrapper_function
         if wrapper_kind == "watchdog"
@@ -6606,17 +7134,26 @@ def test_persisted_push_capable_marker_command_is_always_regenerated(
     source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
     script = "\n\n".join(
         [
+            extract("chain_engine_root_preflight"),
             extract("default_plan_relaunch_command"),
             extract("resume_plan_relaunch_command"),
             extract("chain_resume_plan_relaunch_command_if_needed"),
             extract("stale_marker_relaunch_command"),
             extract("default_chain_relaunch_command"),
             extract("resolve_relaunch_command"),
-            f"{source_var}={str(REPO_ROOT)!r}",
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
             "SYNC_BRANCH=editible-install",
             (
-                "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml "
-                f"chain '' {shlex.quote(stale_command)}"
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(stale_command)}"
             ),
         ]
     )
@@ -6624,9 +7161,11 @@ def test_persisted_push_capable_marker_command_is_always_regenerated(
     assert result.returncode == 0, result.stderr
     # P4: a push-capable (refresh-era) marker is regenerated as the
     # manifest-runtime chain start; the stale selector/refresh machinery is
-    # gone from the emitted command.
+    # gone from the emitted command.  T-0022: only the preflight-accepted
+    # engine root goes on PYTHONPATH.
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
     assert "chain start --spec" in result.stdout
+    assert f"PYTHONPATH={runtime_root}" in result.stdout
     assert "MEGAPLAN_RUNTIME_SRC" not in result.stdout
     assert "source checkout dirty" not in result.stdout
     assert "attempting push" not in result.stdout
@@ -6635,11 +7174,161 @@ def test_persisted_push_capable_marker_command_is_always_regenerated(
 
 @pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
 def test_persisted_install_capable_marker_command_is_always_regenerated(
+    tmp_path: Path,
     wrapper_kind: str,
 ) -> None:
     persisted_command = (
         "pip install -e /tmp/unbound-runtime && "
         "touch /tmp/unbound-runtime-was-selected"
+    )
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("chain_engine_root_preflight"),
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(persisted_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert f"PYTHONPATH={runtime_root}" in result.stdout
+    assert "/tmp/unbound-runtime" not in result.stdout
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+@pytest.mark.parametrize(
+    "persisted_command",
+    (
+        "/workspace/arnold/bin/python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+        "env ARNOLD_SRC=/workspace/arnold /workspace/arnold/bin/python -P -m arnold_pipelines.megaplan chain start",
+    ),
+)
+def test_persisted_shared_root_invocation_marker_is_regenerated(
+    tmp_path: Path,
+    wrapper_kind: str,
+    persisted_command: str,
+) -> None:
+    """G5 round-10 finding 2: both relaunch wrappers reject a persisted
+    command that invokes a python/binary under the shared /workspace/arnold
+    checkout (bare or env-prefixed) and regenerate the clean manifest-runtime
+    chain start from the preflight-accepted root.
+    """
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("chain_engine_root_preflight"),
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(persisted_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    # The shared-root invocation is never returned verbatim; the accepted
+    # (manifest) root alone goes on PYTHONPATH in the regenerated command.
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "chain start --spec" in result.stdout
+    assert f"PYTHONPATH={runtime_root}" in result.stdout
+    assert "/workspace/arnold" not in result.stdout
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_persisted_per_epic_invocation_marker_is_preserved(
+    tmp_path: Path,
+    wrapper_kind: str,
+) -> None:
+    """G5 round-14 finding 1: a persisted command invoking a python from the
+    ACCEPTED manifest root (a per-epic runtime) stays admissible and is
+    returned unchanged by both relaunch wrappers.  (Rounds 10/11 admitted
+    ANY per-epic path; round 14 tightened admission to the accepted root —
+    a different per-epic runtime is regenerated, see
+    test_persisted_foreign_per_epic_marker_command_is_regenerated.)
+    """
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
+    persisted_command = (
+        f"{runtime_root}/bin/python -P -m "
+        "arnold_pipelines.megaplan chain start --spec chain.yaml"
     )
     extract = (
         _extract_wrapper_function
@@ -6649,24 +7338,315 @@ def test_persisted_install_capable_marker_command_is_always_regenerated(
     source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
     script = "\n\n".join(
         [
+            extract("chain_engine_root_preflight"),
             extract("default_plan_relaunch_command"),
             extract("resume_plan_relaunch_command"),
             extract("chain_resume_plan_relaunch_command_if_needed"),
             extract("stale_marker_relaunch_command"),
             extract("default_chain_relaunch_command"),
             extract("resolve_relaunch_command"),
-            f"{source_var}={str(REPO_ROOT)!r}",
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
             "SYNC_BRANCH=editible-install",
             (
-                "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml "
-                f"chain '' {shlex.quote(persisted_command)}"
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(persisted_command)}"
             ),
         ]
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
+    assert result.stdout == persisted_command
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+@pytest.mark.parametrize(
+    "persisted_command",
+    (
+        "MEGAPLAN_RUNTIME_SRC=${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold} "
+        "python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+        "cd ${MEGAPLAN_RUNTIME_SRC:=/workspace/arnold} && "
+        "python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+        "${MEGAPLAN_RUNTIME_SRC:+/workspace/arnold}/bin/python -P -m "
+        "arnold_pipelines.megaplan chain start --spec chain.yaml",
+    ),
+)
+def test_persisted_shared_root_param_expansion_marker_is_regenerated(
+    tmp_path: Path,
+    wrapper_kind: str,
+    persisted_command: str,
+) -> None:
+    """G5 round-11 finding 2: both relaunch wrappers reject a persisted
+    command that carries the shared /workspace/arnold root inside a shell
+    parameter-expansion default/alternate (${VAR:-...}, ${VAR:=...},
+    ${VAR:+...}) and regenerate the clean manifest-runtime chain start from
+    the preflight-accepted root.
+    """
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("chain_engine_root_preflight"),
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(persisted_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    # The param-expansion shared root is never returned verbatim; the
+    # accepted (manifest) root alone goes on PYTHONPATH in the regenerated
+    # command.
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
-    assert "/tmp/unbound-runtime" not in result.stdout
+    assert "chain start --spec" in result.stdout
+    assert f"PYTHONPATH={runtime_root}" in result.stdout
+    assert "/workspace/arnold" not in result.stdout
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_persisted_per_epic_param_expansion_marker_is_preserved(
+    tmp_path: Path,
+    wrapper_kind: str,
+) -> None:
+    """G5 round-14 finding 1: the ACCEPTED manifest root inside a parameter
+    expansion is a legitimate per-epic runtime — a persisted command naming
+    it stays admissible and is returned unchanged by both relaunch
+    wrappers.  (Rounds 10/11 admitted ANY per-epic path; round 14 tightened
+    admission to the accepted root.)
+    """
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
+    persisted_command = (
+        f"CHAIN_RUNTIME=${{CHAIN_RUNTIME:-{runtime_root}}} "
+        "python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml"
+    )
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("chain_engine_root_preflight"),
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(persisted_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == persisted_command
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+@pytest.mark.parametrize(
+    "persisted_command",
+    (
+        "PYTHONPATH=/workspace/runtime-candidates/arnold-old:${PYTHONPATH:-} "
+        "python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+        "cd /workspace/runtime-candidates/arnold-old && "
+        "python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+        "/workspace/runtime-candidates/arnold-old/bin/python -P -m "
+        "arnold_pipelines.megaplan chain start --spec chain.yaml",
+    ),
+)
+def test_persisted_foreign_per_epic_marker_command_is_regenerated(
+    tmp_path: Path,
+    wrapper_kind: str,
+    persisted_command: str,
+) -> None:
+    """G5 round-14 finding 1: a persisted command referencing a per-epic
+    runtime path OTHER than the accepted manifest root (here arnold-old
+    while the accepted root is the tmp runtime) is never returned verbatim
+    — both relaunch wrappers regenerate the clean manifest-runtime chain
+    start from the preflight-accepted root.
+    """
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("chain_engine_root_preflight"),
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(persisted_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    # The foreign per-epic runtime is never returned verbatim; the accepted
+    # (manifest) root alone goes on PYTHONPATH in the regenerated command.
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "chain start --spec" in result.stdout
+    assert f"PYTHONPATH={runtime_root}" in result.stdout
+    assert "/workspace/runtime-candidates/arnold-old" not in result.stdout
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+@pytest.mark.parametrize(
+    "persisted_command_fmt",
+    (
+        "cd {root} && python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+        "PYTHONPATH={root}:${{PYTHONPATH:-}} python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+        "{root}/bin/python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml",
+    ),
+)
+def test_persisted_accepted_root_marker_command_is_preserved(
+    tmp_path: Path,
+    wrapper_kind: str,
+    persisted_command_fmt: str,
+) -> None:
+    """G5 round-14 finding 1: a persisted command whose runtime-path
+    references are the ACCEPTED manifest root stays admissible and is
+    returned unchanged by both relaunch wrappers.
+    """
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    # G5 (round-17 finding 1c): the watchdog preflight compares against the
+    # real import root, so the watchdog half pins the manifest/recorded root
+    # to the live import root itself (REPO_ROOT); the repair half keeps its
+    # own tmp runtime.
+    runtime_root = (
+        REPO_ROOT
+        if wrapper_kind == "watchdog"
+        else _relaunch_runtime_root(tmp_path)
+    )
+    _write_runtime_bound_chain_state(workspace, spec, runtime_root)
+    persisted_command = persisted_command_fmt.format(root=runtime_root)
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("chain_engine_root_preflight"),
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            *(
+                [f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}"]
+                if wrapper_kind == "repair"
+                else []
+            ),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' {shlex.quote(persisted_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == persisted_command
 
 
 def _post_dev_quality_recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
@@ -7318,10 +8298,13 @@ def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_require
         ),
         encoding="utf-8",
     )
+    _write_runtime_bound_chain_state(workspace, "/tmp/chain.yaml", REPO_ROOT)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(REPO_ROOT)!r}",
+            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             (
                 f"resolve_relaunch_command demo-session {shlex.quote(str(workspace))} "
@@ -7353,10 +8336,12 @@ def test_repair_loop_chain_relaunch_prefers_plan_resume_for_external_resume_requ
         ),
         encoding="utf-8",
     )
+    _write_runtime_bound_chain_state(workspace, "/tmp/chain.yaml", REPO_ROOT)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("repair"),
             f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             (
                 f"resolve_relaunch_command demo-session {shlex.quote(str(workspace))} "
@@ -7375,6 +8360,10 @@ def test_extracted_repair_relaunch_resolver_preserves_rejected_acceptance_gate(
 ) -> None:
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text("milestones: []\n", encoding="utf-8")
+    # The hoisted G5 preflight runs before the acceptance gate; give it a
+    # valid manifest pin and recorded engine root so it passes and the gate
+    # rejection below is what decides the outcome.
+    _write_runtime_bound_chain_state(tmp_path, spec_path, REPO_ROOT)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("repair"),
@@ -7389,6 +8378,7 @@ def test_extracted_repair_relaunch_resolver_preserves_rejected_acceptance_gate(
             "}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(REPO_ROOT)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path)!r}",
             f"REPORT_PATH={str(tmp_path / 'report.tsv')!r}",
             "SYNC_BRANCH=editible-install",
@@ -7421,6 +8411,10 @@ def test_repair_acceptance_checker_indeterminate_fails_closed_without_child(
 ) -> None:
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text("milestones: []\n", encoding="utf-8")
+    # The hoisted G5 preflight runs before the acceptance gate; give it a
+    # valid manifest pin and recorded engine root so it passes and the gate
+    # rejection below is what decides the outcome.
+    _write_runtime_bound_chain_state(tmp_path, spec_path, REPO_ROOT)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("repair"),
@@ -7434,6 +8428,7 @@ def test_repair_acceptance_checker_indeterminate_fails_closed_without_child(
             "}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(REPO_ROOT)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path)!r}",
             f"REPORT_PATH={str(tmp_path / 'report.tsv')!r}",
             "SYNC_BRANCH=editible-install",
@@ -7511,6 +8506,7 @@ def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             """
 report_item() {
@@ -7579,6 +8575,7 @@ def test_watchdog_done_plan_without_marker_plan_name_uses_newest_plan_dir(tmp_pa
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             """
 report_item() {
@@ -7658,6 +8655,7 @@ def test_watchdog_manual_review_plan_state_reports_needs_human_not_complete(tmp_
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -7735,6 +8733,7 @@ def test_watchdog_blocked_recovery_manual_review_dispatches_repair_before_needs_
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -7808,6 +8807,7 @@ def test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human(
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -7882,6 +8882,7 @@ def test_watchdog_legacy_stalled_manual_review_dispatches_repair_before_needs_hu
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -7952,6 +8953,7 @@ def test_watchdog_awaiting_human_plan_state_routes_to_notification_not_repair(
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -8024,6 +9026,7 @@ def test_watchdog_awaiting_human_verify_prep_routes_to_notification_not_repair(
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -8087,6 +9090,7 @@ def test_watchdog_nonterminal_plan_state_mechanically_relaunches_before_kimi(tmp
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             """
 report_item() {
@@ -8165,6 +9169,7 @@ def _build_direct_relaunch_tick_script(
             _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
             _extract_wrapper_function("kimi_dispatch_failed_previously"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             emit_stub,
             f"MARKER_DIR={str(paths['marker_dir'])!r}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
@@ -8315,6 +9320,415 @@ def test_watchdog_direct_relaunch_ledger_failure_blocks_marker_and_launch(tmp_pa
     assert "\trestart\trestart_blocked\t" in report
 
 
+def test_watchdog_launch_tick_missing_manifest_pin_fails_closed_before_install_and_tmux(
+    tmp_path: Path,
+) -> None:
+    """G5 round-2 finding 1 / round-6 finding 1b: the watchdog's engine-root
+    preflight is the FIRST mutation-gating step in the tick — it runs BEFORE
+    the current-target subprocesses and before any marker/install-repair/tmux
+    side effect.  With no manifest pin the tick fails closed (typed drift,
+    exit 24) and the spies record ZERO python3 subprocesses, ZERO install-
+    repair calls, ZERO tmux calls, and no marker/relaunch/dispatch writes."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_live_session_marker(
+        marker_dir,
+        "demo-session",
+        workspace,
+        str(spec_path),
+        run_kind="chain",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    call_log = tmp_path / "call.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("chain_engine_root_preflight"),
+            _extract_wrapper_function("launch_chain_tick"),
+            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
+            "unset MANIFEST_RUNTIME_ROOT",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"LOG={str(log_path)!r}",
+            f"CALL_LOG={str(call_log)!r}",
+            """
+python3() {
+  printf 'python3:%s\\n' "$*" >> "$CALL_LOG"
+  return 0
+}
+report_item() {
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\\n' "$*" >> "$LOG"; }
+plan_attention_status_env() { return 0; }
+plan_terminal_status() { return 1; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+kimi_operator_running() { return 1; }
+emit_runtime_transition_event() { printf 'event:%s\\n' "$1" >> "$CALL_LOG"; return 0; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { echo INSTALL >&2; return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; }
+safe_name() { printf '%s\\n' "$1"; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 0
+  fi
+  printf 'tmux:%s\\n' "$*" >> "$CALL_LOG"
+  echo TMUX >&2
+  return 0
+}
+""".strip(),
+            (
+                f"launch_chain_tick demo-session {str(workspace)!r} "
+                f"{str(spec_path)!r} {str(report_path)!r} chain '' ''"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 24, result.stderr
+    assert "chain_runtime_binding_drift" in result.stderr
+    assert "missing manifest epic.runtime_root pin" in result.stderr
+    call_text = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
+    # ZERO current-target (or any) python3 subprocesses started.
+    assert "python3:" not in call_text, call_text.splitlines()
+    assert "tmux:kill-session" not in call_text, call_text.splitlines()
+    assert "tmux:new-session" not in call_text, call_text.splitlines()
+    assert "event:fallback_considered" not in call_text, call_text.splitlines()
+    assert "INSTALL" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    report = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
+    assert "\trestart\trestarted\t" not in report
+    # No marker/publication/repair side effects: no dispatch/needs-human/
+    # repair-data artifacts appear in the marker dir.
+    marker_files = sorted(p.name for p in marker_dir.iterdir())
+    assert not any(
+        name.endswith(
+            (".kimi-dispatch", ".meta-dispatch", ".needs-human.json", ".repair-data.json")
+        )
+        for name in marker_files
+    ), marker_files
+
+
+def test_watchdog_plan_resolver_persisted_command_requires_preflight(tmp_path: Path) -> None:
+    """G5 round-6 finding 1b: the default-plan preflight gates ANY persisted
+    plan command in the resolver — a persisted command cannot bypass the
+    engine-root preflight.  With no manifest pin the resolver fails closed
+    (typed drift, exit 24) and returns NOTHING; with a valid pin the
+    persisted command is returned only AFTER the preflight passes."""
+    workspace = tmp_path / "workspace"
+    # G5 (round-17 finding 1c): the preflight compares against the real
+    # import root, so the manifest pin and recorded engine root must be the
+    # live import root itself.
+    runtime_root = REPO_ROOT
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    _write_runtime_bound_chain_state(
+        workspace,
+        spec,
+        runtime_root,
+        plan_name="demo-plan",
+        metadata={
+            "execution_binding": {"spec": str(spec)},
+            "execution_environment": {"engine_root": str(runtime_root)},
+        },
+    )
+    persisted = "echo persisted-plan-command"
+
+    # Fail-closed half: no manifest pin -> typed drift 24, zero command output.
+    script = "\n\n".join(
+        [
+            *_extract_relaunch_functions("watchdog"),
+            f"SRC_DIR={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "unset MANIFEST_RUNTIME_ROOT",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} plan demo-plan {shlex.quote(persisted)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 24, result.stderr
+    assert "chain_runtime_binding_drift" in result.stderr
+    assert "missing manifest epic.runtime_root pin" in result.stderr
+    assert result.stdout.strip() == ""
+
+    # Passing half: valid pin + recorded engine root -> preflight passes and
+    # the non-stale persisted command is returned verbatim.
+    script = "\n\n".join(
+        [
+            *_extract_relaunch_functions("watchdog"),
+            f"SRC_DIR={str(runtime_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
+            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} plan demo-plan {shlex.quote(persisted)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == persisted
+
+
+def test_watchdog_plan_resolver_live_root_is_real_import_root(
+    tmp_path: Path,
+) -> None:
+    """G5 (round-17 finding 1c): the live root the watchdog preflight
+    compares against is the ACTUAL import root of the running python — NOT
+    the manifest-derived SRC_DIR.  A manifest==SRC_DIR pin that disagrees
+    with the real import root fails closed (typed drift, exit 24) instead of
+    passing the tautological recorded==manifest==live check."""
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    drifted_root = _relaunch_runtime_root(tmp_path, name="drifted-runtime")
+    persisted = "echo persisted-plan-command"
+    script = "\n\n".join(
+        [
+            *_extract_relaunch_functions("watchdog"),
+            f"SRC_DIR={str(drifted_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(drifted_root)!r}",
+            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} plan demo-plan {shlex.quote(persisted)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 24, result.stderr
+    assert "chain_runtime_binding_drift" in result.stderr, result.stderr
+    assert (
+        f"engine root mismatch: manifest={drifted_root.resolve()} "
+        f"live={REPO_ROOT.resolve()}"
+    ) in result.stderr, result.stderr
+    assert result.stdout.strip() == "", result.stdout
+
+
+def test_watchdog_chain_resolver_live_root_is_real_import_root(
+    tmp_path: Path,
+) -> None:
+    """G5 (round-17 finding 1c): the chain-resume preflight also compares
+    the recorded engine root against the REAL import root of the running
+    python — a manifest==SRC_DIR runtime (chain state records the manifest
+    root) that disagrees with the live import root fails closed (typed
+    drift, exit 24)."""
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    drifted_root = _relaunch_runtime_root(tmp_path, name="drifted-runtime")
+    _write_runtime_bound_chain_state(workspace, spec, drifted_root)
+    script = "\n\n".join(
+        [
+            *_extract_relaunch_functions("watchdog"),
+            f"SRC_DIR={str(drifted_root)!r}",
+            f"MANIFEST_RUNTIME_ROOT={str(drifted_root)!r}",
+            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
+            "PYTHONPATH=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec)!r} chain '' 'echo stale-marker-chain-start'"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 24, result.stderr
+    assert "chain_runtime_binding_drift" in result.stderr, result.stderr
+    assert (
+        f"engine root mismatch: recorded={drifted_root.resolve()} "
+        f"live={REPO_ROOT.resolve()}"
+    ) in result.stderr, result.stderr
+    assert result.stdout.strip() == "", result.stdout
+
+
+def _chain_engine_preflight_run(
+    function_text: str,
+    workspace: Path,
+    *,
+    manifest_root: str,
+    live_root: str,
+    remote_spec: str = "",
+    plan_name: str = "",
+) -> subprocess.CompletedProcess[str]:
+    """Run the REAL chain_engine_root_preflight with a valid manifest pin and
+    PYTHONPATH so find_bound_chain_spec resolves from the checked-out repo."""
+    script = "\n\n".join(
+        [
+            function_text,
+            f"export MANIFEST_RUNTIME_ROOT={shlex.quote(manifest_root)}",
+            f"export PYTHONPATH={shlex.quote(str(REPO_ROOT))}",
+            (
+                f"chain_engine_root_preflight {shlex.quote(str(workspace))} "
+                f"{shlex.quote(remote_spec)} {shlex.quote(live_root)} "
+                f"{shlex.quote(plan_name)}"
+            ),
+        ]
+    )
+    return _run_watchdog_shell(script)
+
+
+def _plan_bound_chain_workspace(
+    tmp_path: Path,
+    *,
+    plan_name: str,
+    engine_root: Path,
+) -> tuple[Path, Path]:
+    """Workspace with one initiative chain.yaml whose persisted state owns
+    ``plan_name`` and records ``engine_root``, so find_bound_chain_spec
+    resolves the plan's bound chain and the preflight re-reads the recorded
+    root from the canonical ``.chains`` state."""
+    workspace = tmp_path / "ws"
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    _write_runtime_bound_chain_state(
+        workspace,
+        spec,
+        engine_root,
+        plan_name=plan_name,
+        metadata={
+            "execution_binding": {"spec": str(spec)},
+            "execution_environment": {"engine_root": str(engine_root)},
+        },
+    )
+    return workspace, spec
+
+
+def test_chain_engine_root_preflight_bound_chain_drift_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """G5 round-8 finding 1: a BOUND chain whose recorded engine root
+    disagrees with the manifest pin or the live import root fails closed
+    (typed drift, exit 24) EVEN WHEN find_bound_chain_spec resolves the
+    chain — the recorded==manifest==live check is not gated on (or skipped
+    by) the bound-spec resolution."""
+    plan_name = "demo-plan"
+    recorded = _relaunch_runtime_root(tmp_path, name="recorded-runtime")
+    manifest = _relaunch_runtime_root(tmp_path, name="manifest-runtime")
+    other_live = _relaunch_runtime_root(tmp_path, name="other-live")
+    workspace, spec = _plan_bound_chain_workspace(
+        tmp_path, plan_name=plan_name, engine_root=recorded
+    )
+
+    for function_text, wrapper in (
+        (_extract_wrapper_function("chain_engine_root_preflight"), "watchdog"),
+        (_extract_repair_function("chain_engine_root_preflight"), "repair-loop"),
+    ):
+        # recorded != manifest (live == manifest): drift on the manifest arm.
+        _plan_bound_chain_workspace(
+            tmp_path, plan_name=plan_name, engine_root=recorded
+        )
+        result = _chain_engine_preflight_run(
+            function_text,
+            workspace,
+            manifest_root=str(manifest),
+            live_root=str(manifest),
+            plan_name=plan_name,
+        )
+        assert result.returncode == 24, (wrapper, result.stderr)
+        assert "chain_runtime_binding_drift" in result.stderr, (wrapper, result.stderr)
+        assert (
+            f"engine root mismatch: recorded={recorded.resolve()} "
+            f"manifest={manifest.resolve()}"
+        ) in result.stderr, (wrapper, result.stderr)
+        assert result.stdout == "", (wrapper, result.stdout)
+
+        # recorded == manifest but recorded != live: drift on the live arm.
+        _plan_bound_chain_workspace(
+            tmp_path, plan_name=plan_name, engine_root=manifest
+        )
+        result = _chain_engine_preflight_run(
+            function_text,
+            workspace,
+            manifest_root=str(manifest),
+            live_root=str(other_live),
+            plan_name=plan_name,
+        )
+        assert result.returncode == 24, (wrapper, result.stderr)
+        assert (
+            f"engine root mismatch: recorded={manifest.resolve()} "
+            f"live={other_live.resolve()}"
+        ) in result.stderr, (wrapper, result.stderr)
+        assert result.stdout == "", (wrapper, result.stdout)
+
+
+def test_chain_engine_root_preflight_standalone_plan_requires_manifest_equality(
+    tmp_path: Path,
+) -> None:
+    """G5 round-8 finding 1: a STANDALONE plan (no bound chain, so
+    find_bound_chain_spec returns nothing) must NOT have its live root
+    returned unchecked.  The preflight still requires the manifest pin and
+    verifies live_root == manifest_root: mismatch fails closed (typed drift,
+    exit 24), equality proceeds with the live root on stdout."""
+    plan_name = "demo-plan"
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    runtime_a = _relaunch_runtime_root(tmp_path, name="runtime-a")
+    runtime_b = _relaunch_runtime_root(tmp_path, name="runtime-b")
+
+    for function_text, wrapper in (
+        (_extract_wrapper_function("chain_engine_root_preflight"), "watchdog"),
+        (_extract_repair_function("chain_engine_root_preflight"), "repair-loop"),
+    ):
+        # live != manifest: drift, NOT an unchecked live_root return.
+        result = _chain_engine_preflight_run(
+            function_text,
+            workspace,
+            manifest_root=str(runtime_a),
+            live_root=str(runtime_b),
+            plan_name=plan_name,
+        )
+        assert result.returncode == 24, (wrapper, result.stderr)
+        assert "chain_runtime_binding_drift" in result.stderr, (wrapper, result.stderr)
+        assert (
+            f"engine root mismatch: manifest={runtime_a.resolve()} "
+            f"live={runtime_b.resolve()}"
+        ) in result.stderr, (wrapper, result.stderr)
+        assert result.stdout == "", (wrapper, result.stdout)
+
+        # live == manifest: proceed and return the live root.
+        result = _chain_engine_preflight_run(
+            function_text,
+            workspace,
+            manifest_root=str(runtime_a),
+            live_root=str(runtime_a),
+            plan_name=plan_name,
+        )
+        assert result.returncode == 0, (wrapper, result.stderr)
+        assert result.stdout.strip() == str(runtime_a), (wrapper, result.stdout)
+
+
 def test_watchdog_fences_mechanical_relaunch_for_phase_contract_failure(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
@@ -8354,6 +9768,7 @@ def test_watchdog_fences_mechanical_relaunch_for_phase_contract_failure(tmp_path
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -8910,6 +10325,7 @@ def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_pa
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             """
 report_item() {
@@ -8996,6 +10412,7 @@ def test_watchdog_unreadable_plan_state_falls_through_to_existing_stopped_path(t
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             """
 report_item() {
@@ -9066,6 +10483,7 @@ def test_watchdog_restopped_session_falls_back_to_kimi_after_mechanical_relaunch
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             """
 report_item() {
@@ -9330,6 +10748,7 @@ def test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -9422,6 +10841,7 @@ def test_watchdog_manual_review_repairable_fixture_dispatches_l1_without_needs_h
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -9514,6 +10934,7 @@ def test_watchdog_execution_blocked_manual_review_dispatches_l1_without_needs_hu
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -9627,6 +11048,7 @@ def test_watchdog_awaiting_human_chain_state_dispatches_repair_before_needs_huma
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -9715,6 +11137,7 @@ def test_watchdog_awaiting_human_verify_chain_state_routes_to_notification_befor
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -9786,6 +11209,7 @@ def test_watchdog_completed_chain_state_reports_complete_without_repair(tmp_path
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -9883,6 +11307,7 @@ def test_watchdog_partial_done_chain_state_relaunches_next_milestone(tmp_path: P
             _extract_wrapper_function("session_terminal_status"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -9952,6 +11377,7 @@ def test_watchdog_missing_chain_spec_uses_terminal_chain_state_without_repair(
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
             f"LOG={str(log_path)!r}",
@@ -10029,6 +11455,7 @@ def test_watchdog_missing_workspace_uses_completed_repair_history_without_repair
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -10081,6 +11508,7 @@ def _env_gone_script_blocks(*, marker_dir: Path, log_path: Path, report_path: Pa
         _extract_wrapper_function("persist_environment_gone_outcome"),
         _extract_wrapper_function("clear_session_tracking_artifacts"),
         _extract_wrapper_function("launch_chain_tick"),
+        "chain_engine_root_preflight() { return 0; }",
         f"MARKER_DIR={str(marker_dir)!r}",
         f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
         f"LOG={str(log_path)!r}",
@@ -10111,8 +11539,13 @@ def test_watchdog_env_gone_clears_artifacts_after_strikes_threshold(tmp_path: Pa
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     workspace = tmp_path / "wiped-ws"  # intentionally absent
-    marker_file = marker_dir / "demo-chain.json"
-    marker_file.write_text('{"run_kind":"chain"}', encoding="utf-8")
+    marker_file = _write_live_session_marker(
+        marker_dir,
+        "demo-chain",
+        workspace,
+        "/missing/demo-chain.yaml",
+        run_kind="chain",
+    )
     report_path = tmp_path / "report.tsv"
     log_path = tmp_path / "watchdog.log"
 
@@ -10149,8 +11582,13 @@ def test_watchdog_env_gone_below_threshold_does_not_clear(tmp_path: Path) -> Non
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     workspace = tmp_path / "wiped-ws"  # intentionally absent
-    marker_file = marker_dir / "demo-chain.json"
-    marker_file.write_text('{"run_kind":"chain"}', encoding="utf-8")
+    marker_file = _write_live_session_marker(
+        marker_dir,
+        "demo-chain",
+        workspace,
+        "/missing/demo-chain.yaml",
+        run_kind="chain",
+    )
     report_path = tmp_path / "report.tsv"
     log_path = tmp_path / "watchdog.log"
 
@@ -10298,6 +11736,8 @@ def test_repair_loop_env_gone_at_entry_exits_zero_without_iteration(tmp_path: Pa
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
     env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
     # Provide a stub discord binary so any accidental escalation would still
     # not silently pass the test (it is never invoked on the success path).
     result = subprocess.run(
@@ -10356,6 +11796,8 @@ def test_repair_loop_missing_spec_retires_stale_marker_as_complete(tmp_path: Pat
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
     env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
     result = subprocess.run(
         [
             "bash",
@@ -10410,6 +11852,8 @@ def test_repair_loop_missing_chain_spec_at_entry_retires_stale_marker_as_complet
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
     env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED"] = "0"
     result = subprocess.run(
         [
             "bash",
@@ -10649,6 +12093,7 @@ def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -10752,6 +12197,7 @@ def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: P
             _extract_wrapper_function("json_field"),
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             _extract_wrapper_function("scan_once_unlocked"),
             _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -11272,6 +12718,13 @@ def test_arnold_discord_dm_wrapper_redacts_payload_before_rendering(tmp_path: Pa
     )
 
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    # G5 round-17 finding 3: the wrapper resolves its runtime root from the
+    # manifest first, so the harness pins a valid manifest whose
+    # epic.runtime_root is this checkout.
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    # T-0015: the wrapper opens the gated resident delivery-effects owner, so
+    # point the store at a scratch dir instead of the checkout's .megaplan.
+    env["MEGAPLAN_RESIDENT_STORE_ROOT"] = str(tmp_path / "resident-store")
     env.pop("DISCORD_BOT_TOKEN", None)
     env.pop("DISCORD_DM_USER_ID", None)
     env.pop("PYTEST_CURRENT_TEST", None)
@@ -11293,6 +12746,284 @@ def test_arnold_discord_dm_wrapper_redacts_payload_before_rendering(tmp_path: Pa
     assert "supersecret" not in result.stderr
 
 
+def test_arnold_discord_dm_wrapper_never_enables_direct_transport() -> None:
+    """T-0015: the production wrapper must not pass allow_direct_transport.
+
+    The L4 opt-in design is reserved for explicit test/observation callers
+    (e.g. tests/arnold_pipelines/megaplan/test_discord_dm.py with fake
+    openers).  The packaged production wrapper must route delivery through the
+    gated delivery-effects adapter only.
+    """
+    source = _wrapper("arnold-discord-dm")
+
+    assert "allow_direct_transport" not in source
+    assert "delivery_effects=delivery_effects" in source
+
+
+def test_arnold_discord_dm_wrapper_fails_closed_without_gated_adapter(
+    tmp_path: Path,
+) -> None:
+    """T-0015: no usable gated adapter means a typed denial, never direct
+    Discord.  A real token is present so the wrapper must deny at the adapter
+    gate (delivery_adapter_unavailable) instead of attempting any provider
+    contact or reporting missing config."""
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "title": "Megaplan needs human review - demo-session",
+                "summary": "needs human review",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # The configured resident store root is an existing file, so the SQLite
+    # ledger cannot be created and adapter construction fails deterministically.
+    blocked_root = tmp_path / "blocked-store"
+    blocked_root.write_text("not a directory\n", encoding="utf-8")
+
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_write_runtime_manifest(tmp_path))
+    env["MEGAPLAN_RESIDENT_STORE_ROOT"] = str(blocked_root)
+    env["DISCORD_BOT_TOKEN"] = "fake-token-for-fail-closed-test"
+    env["DISCORD_DM_USER_ID"] = "fake-user-id"
+    env.pop("PYTEST_CURRENT_TEST", None)
+    with payload_path.open("r", encoding="utf-8") as payload_input:
+        result = subprocess.run(
+            ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
+            stdin=payload_input,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+    assert result.returncode == 0, result.stderr
+    wrapper_result = json.loads(result.stdout)
+    assert wrapper_result["ok"] is False
+    assert wrapper_result["reason"] == "delivery_adapter_unavailable"
+    assert wrapper_result["message_count"] == 0
+    assert wrapper_result["error"]
+    # A direct-transport attempt would surface as send_failed (or hang on the
+    # network); the typed adapter denial proves the wrapper never fell through.
+    assert wrapper_result["reason"] not in {"send_failed", "missing_config"}
+
+
+def _write_discord_dm_stub_root(stub_root: Path, marker_path: Path) -> None:
+    """Write a complete manifest-root stub whose delivery writes *marker_path*.
+
+    The stub is import-complete (redact + gated delivery-effects adapter), so
+    if the wrapper ever imports production code from a root it should have
+    rejected, ``send_discord_dm`` runs and the marker appears."""
+    pkg = stub_root / "arnold_pipelines" / "megaplan"
+    (pkg / "cloud").mkdir(parents=True, exist_ok=True)
+    (pkg / "resident").mkdir(parents=True, exist_ok=True)
+    (stub_root / "arnold_pipelines" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "cloud" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "cloud" / "redact.py").write_text(
+        "def redact_payload(payload):\n    return payload\n",
+        encoding="utf-8",
+    )
+    # T-0015: the wrapper opens a gated delivery-effects owner from the
+    # resolved root, so the stub root must provide one.  Its presence here
+    # also proves the delivery-effects import itself comes from the manifest
+    # root rather than this checkout.
+    (pkg / "resident" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "resident" / "delivery_effects.py").write_text(
+        "def current_delivery_gate_check(allow):\n"
+        "    return lambda _family, _key: None\n"
+        "\n"
+        "class _StubAdapter:\n"
+        "    def close(self):\n"
+        "        pass\n"
+        "\n"
+        "def open_resident_delivery_effects(state_root, *, production_enabled=True, action_gate_check=None):\n"
+        "    return _StubAdapter()\n",
+        encoding="utf-8",
+    )
+    (pkg / "discord_dm.py").write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "def send_discord_dm(payload, *, env=None, delivery_effects=None, allow_direct_transport=False):\n"
+        f"    Path({str(marker_path)!r}).write_text(json.dumps(payload), encoding='utf-8')\n"
+        '    return {"ok": True, "root": "manifest-declared-stub"}\n',
+        encoding="utf-8",
+    )
+
+
+def _write_discord_dm_manifest(tmp_path: Path, *, runtime_root: Path) -> Path:
+    """Write a canonically schema-valid runtime manifest whose
+    epic.runtime_root (and worktree_path) point at ``runtime_root``.
+
+    G6 round-2 finding 1: the wrapper validates manifests with the
+    supervisor-runtime-lib authority (runtime_manifest.load_manifest), so the
+    fixture must be schema-valid — the old schema-less ``{epic:
+    {runtime_root}}`` shape is rejected before any import."""
+    manifest = _make_authoritative_manifest()
+    root = Path(runtime_root)
+    manifest["epic"]["runtime_root"] = str(root)
+    manifest["epic"]["worktree_path"] = str(root)
+    manifest_path = tmp_path / "discord-dm-runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path
+
+
+def test_arnold_discord_dm_wrapper_resolves_root_from_manifest_not_own_checkout(
+    tmp_path: Path,
+) -> None:
+    """G5 round-17 finding 3: the runtime root comes from the manifest
+    (ARNOLD_RUNTIME_MANIFEST -> epic.runtime_root) FIRST — the wrapper's own
+    checkout path is never selected, even when it sits on PYTHONPATH."""
+    stub_root = tmp_path / "manifest-runtime"
+    marker_path = tmp_path / "stub-dm-called.json"
+    _write_discord_dm_stub_root(stub_root, marker_path)
+    manifest_path = _write_discord_dm_manifest(tmp_path, runtime_root=stub_root)
+
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    env.pop("DISCORD_BOT_TOKEN", None)
+    env.pop("DISCORD_DM_USER_ID", None)
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
+        input='{"title": "test"}',
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    # The stub under the manifest-declared root was imported and invoked: the
+    # wrapper's own checkout (REPO_ROOT, on PYTHONPATH) was NOT selected.
+    assert result.returncode == 0, result.stderr
+    assert marker_path.exists(), result.stderr
+    assert json.loads(result.stdout) == {"ok": True, "root": "manifest-declared-stub"}
+    assert marker_path.read_text(encoding="utf-8") == '{"title": "test"}'
+
+
+def test_arnold_discord_dm_wrapper_fails_closed_on_schema_less_manifest(
+    tmp_path: Path,
+) -> None:
+    """G6 round-2 finding 1: a schema-less {epic: {runtime_root}} manifest is
+    rejected by the canonical authority BEFORE any sys.path insert or
+    production import — the wrapper fails closed and the stub's discord_dm
+    never runs."""
+    stub_root = tmp_path / "schema-less-root"
+    marker_path = tmp_path / "schema-less-dm-called.json"
+    _write_discord_dm_stub_root(stub_root, marker_path)
+    manifest_path = tmp_path / "schema-less-manifest.json"
+    manifest_path.write_text(
+        json.dumps({"epic": {"runtime_root": str(stub_root)}}), encoding="utf-8"
+    )
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    env.pop("DISCORD_BOT_TOKEN", None)
+    env.pop("DISCORD_DM_USER_ID", None)
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
+        input='{"title": "test"}',
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "arnold-discord-dm: runtime manifest" in result.stderr
+    assert result.stdout.strip() == ""
+    # The stub root was never imported (its discord_dm would write the marker).
+    assert not marker_path.exists(), result.stderr
+
+
+def test_arnold_discord_dm_wrapper_fails_closed_on_compatibility_only_pointer(
+    tmp_path: Path,
+) -> None:
+    """G6 round-2 finding 1: a compatibility_only pointer is non-authoritative
+    telemetry that can never select a runtime — the wrapper fails closed
+    before any sys.path insert or production import."""
+    stub_root = tmp_path / "compat-only-root"
+    marker_path = tmp_path / "compat-only-dm-called.json"
+    _write_discord_dm_stub_root(stub_root, marker_path)
+    manifest = _make_authoritative_manifest()
+    manifest["epic"]["runtime_root"] = str(stub_root)
+    manifest["epic"]["worktree_path"] = str(stub_root)
+    manifest["compatibility_only"] = True
+    manifest_path = tmp_path / "compat-only-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    env.pop("DISCORD_BOT_TOKEN", None)
+    env.pop("DISCORD_DM_USER_ID", None)
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
+        input='{"title": "test"}',
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "arnold-discord-dm: runtime manifest" in result.stderr
+    assert result.stdout.strip() == ""
+    # The stub root was never imported (its discord_dm would write the marker).
+    assert not marker_path.exists(), result.stderr
+
+
+@pytest.mark.parametrize(
+    "manifest_body",
+    [
+        "not json at all",
+        "{}",
+        '{"epic": {}}',
+        '{"epic": {"runtime_root": ""}}',
+        '{"epic": {"runtime_root": 42}}',
+    ],
+)
+def test_arnold_discord_dm_wrapper_fails_closed_on_invalid_manifest(
+    tmp_path: Path, manifest_body: str
+) -> None:
+    manifest_path = tmp_path / "discord-dm-runtime-manifest.json"
+    manifest_path.write_text(manifest_body, encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
+        input='{"title": "test"}',
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "arnold-discord-dm: runtime manifest" in result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_arnold_discord_dm_wrapper_fails_closed_on_missing_manifest(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "does-not-exist-runtime-manifest.json"
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
+        input='{"title": "test"}',
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "arnold-discord-dm: runtime manifest" in result.stderr
+    assert result.stdout.strip() == ""
+
+
 def test_watchdog_resolves_relative_chain_specs_against_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
@@ -11303,6 +13034,7 @@ def test_watchdog_resolves_relative_chain_specs_against_workspace(tmp_path: Path
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             """
 report_item() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
@@ -11432,7 +13164,7 @@ def test_watchdog_syncs_extra_skills_to_agent_skill_dirs() -> None:
 def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     text = _wrapper("arnold-kimi-goal-operator")
 
-    assert 'ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"' in text
+    assert 'ARNOLD_SRC="/workspace/arnold"' in text
     assert 'SYNC_BRANCH="${_MANIFEST_EPIC_BRANCH:-}"' in text
     # G4 correction: P4 removed the env-selector fallback chain — SYNC_BRANCH
     # is manifest-only now, so prove the deleted selector reads are gone.
@@ -11805,6 +13537,7 @@ def test_watchdog_repair_loop_needs_human_sidecar_short_circuits_relaunch(tmp_pa
             _extract_wrapper_function("repair_needs_human_matches_current_plan"),
             _extract_wrapper_function("workspace_has_other_alive_session"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             """
@@ -12189,6 +13922,7 @@ def test_watchdog_clears_stale_parent_sidecar_when_child_session_alive(tmp_path:
             _extract_wrapper_function("repair_needs_human_matches_current_plan"),
             _extract_wrapper_function("workspace_has_other_alive_session"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -12314,6 +14048,7 @@ def test_watchdog_clears_stale_needs_human_sidecar_for_superseded_plan(tmp_path:
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -12430,6 +14165,7 @@ def test_watchdog_logs_needs_human_comparison_agreement(tmp_path: Path) -> None:
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -12547,6 +14283,7 @@ def test_watchdog_comparison_diagnostic_does_not_alter_stale_clear(tmp_path: Pat
             _extract_wrapper_function("compare_needs_human_to_resolver"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -12729,6 +14466,7 @@ def _run_launch_chain_tick_meta_repair_script(paths: dict[str, Path]) -> subproc
             _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
             _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(paths['marker_dir'])!r}",
             f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -12829,6 +14567,7 @@ def test_launch_chain_tick_dispatches_meta_repair_on_recurring_retry_when_stoppe
             _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
             _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(paths['marker_dir'])!r}",
             f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -13251,6 +14990,7 @@ def test_launch_chain_tick_dispatches_meta_repair_while_session_alive(tmp_path: 
                     _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
                     _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
                     _extract_wrapper_function("launch_chain_tick"),
+                    "chain_engine_root_preflight() { return 0; }",
                 f"MARKER_DIR={str(paths['marker_dir'])!r}",
                 f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
                 f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -13927,6 +15667,37 @@ def _write_chain_state(state_path: Path, state: dict) -> None:
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
+def _write_runtime_bound_chain_state(
+    workspace: Path,
+    spec_path: str | Path,
+    engine_root: str | Path,
+    *,
+    plan_name: str = "",
+    metadata: dict[str, object] | None = None,
+) -> Path:
+    """Write chain state at the canonical ``.chains`` path the wrappers
+    re-read on relaunch (digest over the resolved spec path, matching
+    chain.spec._state_path_for)."""
+    spec = Path(spec_path)
+    if not spec.is_absolute():
+        spec = Path(workspace) / spec
+    spec = spec.resolve()
+    digest = hashlib.sha1(str(spec).encode("utf-8")).hexdigest()[:12]
+    state: dict[str, object] = {"current_plan_name": plan_name, "last_state": "blocked"}
+    if metadata is None:
+        metadata = {"execution_environment": {"engine_root": str(engine_root)}}
+    state["metadata"] = metadata
+    path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    _write_chain_state(path, state)
+    return path
+
+
+def _relaunch_runtime_root(tmp_path: Path, name: str = "runtime") -> Path:
+    root = tmp_path / name
+    _init_git_repo(root)
+    return root
+
+
 def _init_git_repo(path: Path) -> str:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
@@ -14133,6 +15904,7 @@ def test_watchdog_chain_health_short_circuits_plan_repair_dispatch(tmp_path: Pat
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             _extract_wrapper_function("repair_unintended_stop"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_dir)!r}",
@@ -16927,6 +18699,7 @@ def test_watchdog_alive_by_process_prevents_relaunch(
         [
             _extract_wrapper_function("json_field"),
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
             f"LOG={str(log_path)!r}",
@@ -17020,6 +18793,7 @@ def test_watchdog_marker_only_live_worker_session_prevents_duplicate_repair(
                 _extract_wrapper_function("matching_runner_process_alive"),
                 _extract_wrapper_function("session_health_status"),
                 _extract_wrapper_function("launch_chain_tick"),
+                "chain_engine_root_preflight() { return 0; }",
                 f"MARKER_DIR={str(marker_dir)!r}",
                 f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
                 f"LOG={str(log_path)!r}",
@@ -17331,6 +19105,7 @@ def test_watchdog_observes_unowned_preserve_live_goal_without_dispatch(tmp_path:
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -17368,6 +19143,7 @@ def test_watchdog_suppresses_unowned_goal_redispatch_for_authoritative_live_work
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -17409,6 +19185,7 @@ def test_watchdog_suppresses_unowned_goal_while_runner_finishes_backstop(
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -17487,6 +19264,7 @@ def test_watchdog_unknown_canonical_liveness_fences_all_dispatch(tmp_path: Path)
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -17545,6 +19323,7 @@ def test_watchdog_unowned_genuinely_stuck_goal_still_dispatches_one_l1_owner(
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -17593,6 +19372,7 @@ def test_watchdog_routes_unowned_goal_with_l1_custody_failure_to_l2(
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
@@ -18158,6 +19938,8 @@ def _build_meta_dispatch_script(
         _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
         _extract_wrapper_function("confirm_managed_agent_dispatch"),
         _extract_wrapper_function("dispatch_meta_repair"),
+        _extract_wrapper_function("durable_operator_pause_active"),
+        _extract_wrapper_function("child_agent_launch_authority_or_reject"),
         _extract_wrapper_function("kimi_dispatch_marker_path"),
         _extract_wrapper_function("kimi_pgid_path"),
         _extract_wrapper_function("repair_pidfile_path"),
@@ -18170,6 +19952,17 @@ def _build_meta_dispatch_script(
             lines.index(_extract_wrapper_function("confirm_managed_agent_dispatch")) + 1,
             _extract_wrapper_function("emit_runtime_transition_event"),
         )
+    # The dispatch path polls for a managed-agent manifest that the fake
+    # meta-repair binary never produces; emit a minimal valid one so the
+    # dispatch succeeds and the marker/report assertions hold.
+    lines.append(
+        "confirm_managed_agent_dispatch() {"
+        "  local manifest_path=\"$(mktemp)\"; "
+        "  printf '{\"run_id\":\"run-1\",\"launch_provenance\":{\"origin_kind\":\"watchdog_meta_repair\"}}' > \"$manifest_path\"; "
+        "  printf 'run-1\\t%s\\n' \"$manifest_path\"; "
+        "  return 0; "
+        "}"
+    )
     if override_kimi_operator is not None:
         lines.append(override_kimi_operator)
     else:
@@ -18940,6 +20733,10 @@ def test_repair_loop_relaunch_materializers_are_non_authoritative() -> None:
     text = _repair_wrapper()
     assert "relaunch_materializer_authority_gate() {" in text
     assert 'relaunch_materializer_authority_gate "$quoted_command"' in text
+    # The preflight re-reads the recorded engine root for the chain command;
+    # bind /tmp/ws/origin/main to the live import root so the pin check and
+    # the recorded-root check both pass.
+    _bound_chain_state(Path("/tmp/ws"), "origin/main", REPO_ROOT)
     functions = "\n\n".join(_extract_relaunch_functions("repair"))
     gate = _extract_repair_function("relaunch_materializer_authority_gate")
     bash_lines = [
@@ -18971,6 +20768,7 @@ def test_repair_loop_relaunch_materializers_are_non_authoritative() -> None:
             "SRC_DIR=" + repr(str(REPO_ROOT)),
             "WRAPPER_REPO_ROOT=" + repr(str(REPO_ROOT)),
             "ARNOLD_SRC=" + repr(str(REPO_ROOT)),
+            "MANIFEST_RUNTIME_ROOT=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editable-install",
             "\n".join(bash_lines),
         ]
@@ -20264,6 +22062,7 @@ def _build_repair_loop_mechanical_launch_script(
             "MECHANICAL_VERIFY_INITIAL_SECS=1",
             "MECHANICAL_VERIFY_HOLD_SECS=1",
             """
+chain_engine_root_preflight() { printf '%s\\n' "$ARNOLD_SRC"; }
 require_investigation_before_mutation() { :; }
 require_repair_lock_held() { :; }
 ensure_repair_budget_available() { :; }
@@ -20396,6 +22195,156 @@ def test_repair_loop_mechanical_launch_ledger_failure_blocks_launch(
     )
 
 
+def _build_repair_loop_mechanical_launch_preflight_script(
+    paths: dict[str, Path],
+    *,
+    manifest_root: str,
+    arnold_src: str,
+    call_log: Path,
+    python_spy_log: Path,
+) -> str:
+    """Drive mechanical_launch_step with the REAL chain_engine_root_preflight
+    hoisted to the front of the mechanical-launch path (G5 round-7 finding 1).
+    Every downstream authority/state step is a recording stub; a fake python3
+    spy (via path_prefix) records every python invocation.  Missing pin must
+    fail closed (typed drift, exit 24) with ZERO python invocations and no
+    worker-authority / goal-state / state-load subprocess; a valid pin must
+    proceed into the worker-authority gate."""
+    return "\n\n".join(
+        [
+            _extract_repair_mechanical_launch_step(),
+            _extract_repair_function("chain_engine_root_preflight"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={arnold_src!r}",
+            f"MANIFEST_RUNTIME_ROOT={manifest_root!r}",
+            f"RUN_DIR={str(paths['run_dir'])!r}",
+            f"MARKER_DIR={str(paths['marker_dir'])!r}",
+            f"WORKSPACE={str(paths['workspace'])!r}",
+            f"CALL_LOG={str(call_log)!r}",
+            f"PYTHON_SPY_LOG={str(python_spy_log)!r}",
+            f"LOG={str(paths['log_path'])!r}",
+            "MECHANICAL_VERIFY_INITIAL_SECS=1",
+            "MECHANICAL_VERIFY_HOLD_SECS=1",
+            """
+require_investigation_before_mutation() { :; }
+require_repair_lock_held() { :; }
+ensure_repair_budget_available() { :; }
+repair_loop_worker_launch_authority_or_reject() {
+  printf 'worker_authority\\n' >> "$CALL_LOG"
+  printf '%s\\n' '{"outcome":"no_authority_claim"}'
+}
+authority_fail_closed() { echo "AUTHORITY_FAILED:$*" >&2; exit 78; }
+repair_goal_control_snapshot() {
+  printf 'goal_state\\n' >> "$CALL_LOG"
+  printf '%s\\n' '{"status":"stopped","evaluation":{"control_action":"investigate","blocker_cleared":false},"observation":{"current_target_liveness":{"schema":"arnold.megaplan.current_target_liveness.v1","state":"live","live":true,"dead":false,"known":true,"source":"test","reason":"test","identity":{},"lease":{},"diagnostics":[],"control_permitted":true,"mutation_permitted":true,"escalation_permitted":true,"retrigger_permitted":true}}}'
+}
+log() { printf 'LOG:%s\\n' "$*" >&2; }
+chain_process_is_alive() { return 1; }
+plan_process_is_alive() { return 1; }
+resolve_relaunch_command() {
+  printf 'resolve_relaunch\\n' >> "$CALL_LOG"
+  printf '%s\\n' 'python3 -m arnold_pipelines.megaplan chain start --spec chain.yaml --project-dir demo'
+}
+select_mechanical_relaunch_command() { printf '%s\\n' "$1"; }
+relaunch_materializer_authority_gate() { printf '%s\\n' '{"is_non_authoritative_family": true}'; }
+authority_gap_continue() { echo "AUTHORITY_GAP:$*" >&2; exit 76; }
+safe_name() { printf '%s\\n' "$1"; }
+verify_started_and_holding() { printf 'running\\n'; return 0; }
+repair_loop_emit_mechanical_launch_fallback_events() { :; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  if [[ "$1" == "new-session" ]]; then
+    printf 'launch:%s\\n' "$*" >> "$CALL_LOG"
+    return 0
+  fi
+  echo "TMUX_$1" >&2
+  return 0
+}
+""".strip(),
+            (
+                "result=\"$(mechanical_launch_step 1 demo-session "
+                + f"{shlex.quote(str(paths['workspace']))} "
+                + f"{shlex.quote(str(paths['spec_path']))} "
+                + "chain demo-plan 'relaunch-cmd')\"\n"
+                + "rc=$?\n"
+                + 'printf "STATUS=%s\\nRC=%s\\n" "$result" "$rc"'
+            ),
+        ]
+    )
+
+
+def test_repair_loop_mechanical_launch_preflights_engine_root_before_subprocesses(
+    tmp_path: Path,
+) -> None:
+    """G5 round-7 finding 1: the engine-root preflight runs FIRST on the
+    mechanical-launch path — before the worker-authority gate, the goal-state
+    snapshot, and the state-loading subprocess.  A missing pin fails closed
+    (typed drift, exit 24) with ZERO python invocations (spy) and no
+    authority/state subprocess; a valid pin proceeds into the
+    worker-authority gate."""
+    paths = _repair_loop_mechanical_launch_fixture(tmp_path)
+
+    # ── missing pin: fail closed before ANY subprocess ────────────────────
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    python_spy = fake_bin / "python3"
+    python_spy_log = tmp_path / "python-spy.log"
+    python_spy.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(python_spy_log))}\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    python_spy.chmod(0o755)
+    call_log = tmp_path / "call.log"
+    missing_pin_script = _build_repair_loop_mechanical_launch_preflight_script(
+        paths,
+        manifest_root="",
+        arnold_src=str(REPO_ROOT),
+        call_log=call_log,
+        python_spy_log=python_spy_log,
+    )
+    result = _run_watchdog_shell(missing_pin_script, path_prefix=fake_bin)
+    assert result.returncode == 0, result.stderr
+    assert "STATUS=failed:chain_runtime_binding_drift" in result.stdout, result.stdout
+    assert "RC=24" in result.stdout, result.stdout
+    assert "chain_runtime_binding_drift" in result.stderr, result.stderr
+    # Zero python invocations AND zero worker-authority/goal-state/state-load
+    # subprocess calls: the preflight is the first subprocess-gating step.
+    assert not python_spy_log.exists() or python_spy_log.read_text(
+        encoding="utf-8"
+    ) == "", python_spy_log.read_text(encoding="utf-8") if python_spy_log.exists() else ""
+    assert not call_log.exists() or call_log.read_text(encoding="utf-8") == "", (
+        call_log.read_text(encoding="utf-8") if call_log.exists() else ""
+    )
+
+    # ── valid pin: the path proceeds into the worker-authority gate ────────
+    runtime_root = _relaunch_runtime_root(tmp_path, name="valid-runtime")
+    _write_runtime_bound_chain_state(
+        paths["workspace"], paths["spec_path"], runtime_root
+    )
+    valid_call_log = tmp_path / "valid-call.log"
+    valid_script = _build_repair_loop_mechanical_launch_preflight_script(
+        paths,
+        manifest_root=str(runtime_root),
+        arnold_src=str(runtime_root),
+        call_log=valid_call_log,
+        python_spy_log=tmp_path / "valid-python-spy.log",
+    )
+    valid_result = _run_watchdog_shell(valid_script)
+    assert valid_result.returncode == 0, valid_result.stderr
+    assert valid_result.stdout.strip().startswith("STATUS=running"), valid_result.stdout
+    valid_calls = valid_call_log.read_text(encoding="utf-8").splitlines()
+    assert "worker_authority" in valid_calls, valid_calls
+    assert "goal_state" in valid_calls, valid_calls
+    assert "resolve_relaunch" in valid_calls, valid_calls
+    assert valid_calls.index("worker_authority") < valid_calls.index("goal_state"), (
+        valid_calls
+    )
+
+
 # ── G3 fourth re-run: arnold-run standalone launch primitive ────────────────
 # arnold-run is a standalone installed launch primitive executing
 # tmux new-session.  It must be admission-gated (absent manifest + no valid
@@ -20452,6 +22401,36 @@ def _make_authoritative_manifest(*, epic_id: str = "demo-epic") -> dict[str, obj
         "gc_policy": "keep",
         "commands": [],
     }
+
+
+def _write_runtime_manifest(
+    tmp_path: Path,
+    *,
+    runtime_root: str | Path = REPO_ROOT,
+    epic_id: str = "demo-epic",
+) -> Path:
+    """Write a schema-valid authoritative runtime manifest whose
+    epic.runtime_root (and worktree_path) point at ``runtime_root`` —
+    the admission shape the wrappers re-read as the manifest runtime pin."""
+    manifest = _make_authoritative_manifest(epic_id=epic_id)
+    root = Path(runtime_root)
+    if root.resolve() == REPO_ROOT.resolve():
+        expected_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        head = expected_head.stdout.strip() if expected_head.returncode == 0 else "0" * 40
+    else:
+        head = _init_git_repo(root)
+    manifest["epic"]["runtime_root"] = str(root)
+    manifest["epic"]["worktree_path"] = str(root)
+    manifest["epic"]["expected_head"] = head
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path
 
 
 def _run_arnold_run(

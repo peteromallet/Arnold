@@ -244,8 +244,13 @@ def audit_autofix_commit_enabled() -> bool:
 
     Controlled by ``ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED`` — defaults to ON (``"1"``).
 
-    Separated from ``ARNOLD_AUDIT_AUTOFIX_ENABLED`` so commits can be explicitly
-    disabled while autofix diagnosis remains active.
+    Retired as an auditor control (G5): the L3 audit reviewer is dispatched
+    with ``codex exec --sandbox read-only`` and an unconditionally
+    read-only evaluator policy, so there is no commit-capable effect in the
+    progress-auditor wrapper to gate.  The progress-auditor no longer reads
+    this flag, forwards it, or renders it into the reviewer brief.  The API
+    is retained for a future commit boundary (T-0208) and for the hot-env
+    deny-list; do not re-introduce an auditor-side reader that cannot gate.
     """
     return _is_enabled("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", True)
 

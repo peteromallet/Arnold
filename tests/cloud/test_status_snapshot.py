@@ -1445,7 +1445,9 @@ def test_snapshot_adds_separate_read_only_shadow_views_without_reclassification(
         and item["source"].endswith("/plan-a/state.json")
         for item in entry["execution_authority"]["diagnostics"]
     )
-    assert entry["runner"]["status"] == "live"
+    # Raw collector mappings can never authorize ``live``: the shadow runner
+    # view degrades to ``pending`` while legacy classification stays intact.
+    assert entry["runner"]["status"] == "pending"
     publication = {item["field"]: item for item in entry["publication"]["observations"]}
     assert publication["pull_request"]["value"] == "42"
     assert publication["branch"]["state"] == "unknown"

@@ -18,11 +18,17 @@ WORKSPACE="$2"
 REMOTE_SPEC="$3"
 
 ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
-ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"
-# Runtime-order invariant: the supervisor runtime lib must be sourced and
-# arnold_supervisor_runtime_init must run BEFORE any python3 invocation —
-# including the manifest read below.  Discovery follows the established
-# pattern: BASH_SOURCE origin dir -> ARNOLD_SRC -> /usr/local/bin.
+# The runtime source resolves from the per-epic manifest (epic.runtime_root)
+# via the authority helpers below; the fixed /workspace/arnold placeholder
+# here ONLY bootstraps lib discovery and is re-bound from the manifest right
+# after the admission authority runs (G5).  The supervisor runtime is
+# initialized from the MANIFEST root after authority — never from a fixed
+# /workspace/arnold before it — and the legacy env-selector read is retired.
+ARNOLD_SRC="/workspace/arnold"
+# The supervisor runtime lib is found by FILE discovery only (origin dir ->
+# ARNOLD_SRC -> /usr/local/bin); it must be sourced before the authority
+# runs.  The full runtime init (interpreter pin + import root) happens AFTER
+# the manifest field reads so it binds the authoritative ARNOLD_SRC.
 SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
@@ -32,7 +38,9 @@ if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
 fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
-arnold_supervisor_runtime_init kimi-goal-operator "$ARNOLD_SRC" || exit $?
+# Dependency-free stdlib interpreter pin so the admission gate's stdlib-only
+# checks never depend on ambient PATH.
+arnold_supervisor_stdlib_init kimi-goal-operator || exit $?
 # P1 admission authority (G2 correction 3): the shared lib gate is the SOLE
 # manifest resolver for wrapper entry — a present-but-invalid manifest exits
 # 78, and an absent manifest (including the compatibility_only global
@@ -47,7 +55,16 @@ arnold_runtime_manifest_authority kimi-goal-operator
 # env-selector fallback; manifest-less (permit-admitted) runs get an empty
 # branch and fail closed at the push gate.
 _MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
+_MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
 SYNC_BRANCH="${_MANIFEST_EPIC_BRANCH:-}"
+if [[ -n "$_MANIFEST_RUNTIME_ROOT" ]]; then
+  ARNOLD_SRC="$_MANIFEST_RUNTIME_ROOT"
+fi
+# G5: initialize the supervisor runtime from the AUTHORITATIVE ARNOLD_SRC
+# (manifest epic.runtime_root, else the fixed fallback for permit-admitted
+# manifestless runs) AFTER authority — never from a fixed /workspace/arnold
+# before it.
+arnold_supervisor_runtime_init kimi-goal-operator "$ARNOLD_SRC" || exit $?
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"

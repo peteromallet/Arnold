@@ -149,7 +149,11 @@ class PromotionGateDecision(StrEnum):
     """All checks passed; promotion is authorized."""
 
     SHADOW_PASS = "shadow_pass"
-    """All checks executed but enforcement is off; not authoritative."""
+    """Diagnostic-only: all checks executed but enforcement was off.
+
+    Never green.  ``SHADOW_PASS`` is treated as blocked by
+    :attr:`PromotionGateResult.blocked` and never authorizes promotion.
+    """
 
     BLOCKED_SOURCE_PROVENANCE = "blocked_source_provenance"
     """Installed source provenance could not be verified."""
@@ -306,10 +310,8 @@ class CanaryCheck:
 
     @property
     def blocked(self) -> bool:
-        """Return True when the check did not pass (not SATISFIED and not SHADOW)."""
-        return self.outcome not in {
-            CanaryOutcome.SATISFIED,
-        }
+        """Return True when the check did not pass (anything but SATISFIED)."""
+        return self.outcome != CanaryOutcome.SATISFIED
 
 
 # ── Promotion gate context ─────────────────────────────────────────────────
@@ -429,11 +431,13 @@ class PromotionGateResult:
 
     @property
     def blocked(self) -> bool:
-        """Return ``True`` when the gate is blocked (any non-pass result)."""
-        return self.gate_result not in {
-            PromotionGateDecision.AUTHORIZED,
-            PromotionGateDecision.SHADOW_PASS,
-        }
+        """Return ``True`` unless the gate result is exactly ``AUTHORIZED``.
+
+        ``SHADOW_PASS`` is diagnostic-only (enforcement was disabled) and is
+        treated as blocked — it must never read as a green canary or grant a
+        dispatch receipt.
+        """
+        return self.gate_result != PromotionGateDecision.AUTHORIZED
 
     @property
     def is_shadow(self) -> bool:
@@ -554,7 +558,7 @@ def _compute_promotion_gate(
     """Compute the overall promotion gate decision from per-source checks.
 
     Precedence order:
-      1. If enforcement is disabled → SHADOW_PASS (regardless of check outcomes)
+      1. If enforcement is disabled → SHADOW_PASS (diagnostic only; never green)
       2. If any check has ERROR → ERROR
       3. If source_provenance is PROVENANCE_UNVERIFIED → BLOCKED_SOURCE_PROVENANCE
       4. If run_authority is MISSING → BLOCKED_MISSING_GRANT
@@ -687,8 +691,9 @@ def validate_promotion_gate(
     -------
     PromotionGateResult
         The full promotion gate result.  When enforcement is disabled,
-        the gate result is always ``SHADOW_PASS`` (non-blocking), but
-        the per-source checks and diagnostics are fully populated.
+        the gate result is always ``SHADOW_PASS`` — diagnostic only,
+        never green, and treated as blocked — but the per-source checks
+        and diagnostics are fully populated.
 
         Callers must test ``result.authorized`` — NOT ``result.gate_result
         == PromotionGateDecision.SHADOW_PASS`` — before treating the result

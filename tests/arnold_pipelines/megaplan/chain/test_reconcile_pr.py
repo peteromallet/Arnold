@@ -228,6 +228,23 @@ def _delete_compat(run_command):
     return SimpleNamespace(_run_command=run_command)
 
 
+def _sandbox_census_stores(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Point the reference census at sandboxed (initially absent) stores."""
+    monkeypatch.setenv("ARNOLD_BASE_DIR", "")
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST_DIR", str(tmp_path / "ref-manifests"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_CHAIN_STORE", str(tmp_path / "ref-chains"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_MARKER_STORE", str(tmp_path / "ref-markers"))
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_SCHEDULE_STORES", str(tmp_path / "ref-schedules")
+    )
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_REPAIR_QUEUE", str(tmp_path / "ref-repair-queue")
+    )
+    monkeypatch.setenv("ARNOLD_REFERENCE_LEASE_STORE", str(tmp_path / "ref-leases"))
+
+
 def test_delete_reconcile_pr_branch_deletes_local_and_remote(monkeypatch) -> None:
     messages: list[str] = []
     calls: list[list[str]] = []
@@ -297,6 +314,104 @@ def test_delete_reconcile_pr_branch_raises_on_unexpected_failure(
 
     with pytest.raises(CliError):
         _delete_reconcile_pr_branch(Path.cwd(), "reconcile/x", writer=messages.append)
+
+
+def test_delete_reconcile_pr_branch_refuses_referenced_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reconcile branch whose checkout root is still referenced by a
+    runtime store (T-0027 reference census REFERENCED) is never deleted:
+    zero local ``git branch -D`` / origin ``push --delete`` calls."""
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    store = tmp_path / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "chain-ref.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "execution_environment": {"engine_root": str(Path.cwd())}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    calls: list[list[str]] = []
+
+    def run_command(_root, argv, **_kwargs):
+        calls.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: _delete_compat(run_command),
+    )
+
+    result = _delete_reconcile_pr_branch(
+        Path.cwd(), "reconcile/test-epic-20260811", writer=messages.append
+    )
+    assert result is False
+    assert calls == []
+    assert any("NOT deleting reconcile PR branch" in message for message in messages)
+    assert any("REFERENCED" in message for message in messages)
+
+
+def test_delete_reconcile_pr_branch_blocks_on_unknown_census(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A corrupt reference store makes the census UNKNOWN and BLOCKS the
+    branch deletion (fail-closed: delete-on-unknown never happens)."""
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    store = tmp_path / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "corrupt.json").write_text(
+        '{"metadata": {"execution_environment": ', encoding="utf-8"
+    )
+    messages: list[str] = []
+    calls: list[list[str]] = []
+
+    def run_command(_root, argv, **_kwargs):
+        calls.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: _delete_compat(run_command),
+    )
+
+    result = _delete_reconcile_pr_branch(
+        Path.cwd(), "reconcile/test-epic-20260811", writer=messages.append
+    )
+    assert result is False
+    assert calls == []
+    assert any("NOT deleting reconcile PR branch" in message for message in messages)
+    assert any("UNKNOWN" in message for message in messages)
+
+
+def test_delete_reconcile_pr_branch_proceeds_on_clear_census(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CLEAR reference census keeps the route authority: the reconcile
+    branch is deleted locally and on origin exactly as before."""
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    messages: list[str] = []
+    calls: list[list[str]] = []
+
+    def run_command(_root, argv, **_kwargs):
+        calls.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: _delete_compat(run_command),
+    )
+
+    assert _delete_reconcile_pr_branch(
+        Path.cwd(), "reconcile/test-epic-20260811", writer=messages.append
+    )
+    assert calls[0] == ["git", "branch", "-D", "reconcile/test-epic-20260811"]
+    assert calls[1] == ["git", "push", "origin", "--delete", "reconcile/test-epic-20260811"]
+    assert any("deleted reconcile PR branch" in message for message in messages)
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:

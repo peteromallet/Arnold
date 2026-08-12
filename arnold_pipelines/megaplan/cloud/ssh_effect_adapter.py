@@ -8,6 +8,13 @@ All real SSH mutations remain action-off (SD3).  The adapter uses
 fake transports to prove the protocol.  Bypass and fake-transport
 negatives guard against accidental production dispatch.
 
+Action-off operations (ssh_exec, upload_file, upload_archive, down) are
+not routed through the WBC protocol; they are gate-only
+(:meth:`SshEffectAdapter.gate_dispatch`): an explicitly AUTHORIZED verdict
+in a non-production adapter is required before any transport runs, and
+every other verdict — missing gate, SHADOW_PASS, blocked, error, or
+production mode — is a typed denial with zero transport calls.
+
 Mutating operations covered:
 - build: rsync/scp deploy + docker build
 - deploy: env write + docker rm/run
@@ -47,6 +54,7 @@ from arnold.workflow.execution_attempt_ledger import (
 from arnold_pipelines.megaplan.custody.action_validator import (
     ActionBoundaryType,
     GateResult,
+    adapter_effect_authorized,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -56,7 +64,11 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SshEffectShard(str, Enum):
-    """Step 13F bounded shard: SSH remote mutation operations."""
+    """Step 13F bounded shard: SSH remote mutation operations.
+
+    BUILD/DEPLOY/DESTROY are the at-most-three routed rows; the remaining
+    operations are action-off (gate-only dispatch, never WBC-routed).
+    """
 
     BUILD = "build"
     """rsync/scp deploy directory + docker build."""
@@ -66,6 +78,18 @@ class SshEffectShard(str, Enum):
 
     DESTROY = "destroy"
     """docker rm + workspace cleanup on remote."""
+
+    SSH_EXEC = "ssh_exec"
+    """docker exec commands on the remote container (action-off)."""
+
+    UPLOAD_FILE = "upload_file"
+    """remote file writes (action-off)."""
+
+    UPLOAD_ARCHIVE = "upload_archive"
+    """remote archive extraction (action-off)."""
+
+    DOWN = "down"
+    """docker stop on the remote (action-off)."""
 
 
 SSH_SHARD_13F: tuple[SshEffectShard, ...] = (
@@ -118,6 +142,12 @@ class SshEffectAdapter:
 
     Step 13F: at most three rows (build/deploy/destroy) are routed.
     All other operations remain action-off.
+
+    Production construction (``production_enabled=True``) without an explicit
+    ``action_gate_check`` is a wiring error: the constructor raises
+    :class:`SshEffectAdapterGateError` before any dispatch.  Observation-only
+    construction (``production_enabled=False``) may omit the gate — every
+    dispatch then fails closed as a typed denial.
     """
 
     _ROUTED_SHARDS: frozenset[SshEffectShard] = frozenset(SSH_SHARD_13F)
@@ -131,6 +161,14 @@ class SshEffectAdapter:
         ] = None,
         production_enabled: bool = False,
     ) -> None:
+        if production_enabled and action_gate_check is None:
+            raise SshEffectAdapterGateError(
+                "SshEffectAdapter refuses production construction without "
+                "an explicit action_gate_check; pass current_ssh_gate_check "
+                "(or an equivalent denial gate) so production dispatch "
+                "reflects current policy, or open in observation mode "
+                "(production_enabled=False)"
+            )
         self._protocol = protocol
         self._action_gate_check = action_gate_check
         self._production_enabled = production_enabled
@@ -150,8 +188,16 @@ class SshEffectAdapter:
 
     def _gate(self, target: SshTarget) -> GateResult:
         if self._action_gate_check is None:
-            return GateResult.SHADOW_PASS
-        return self._action_gate_check("dispatch", target.target_key)
+            # No gate installed: fail closed. A missing gate must never
+            # degrade to a shadow observation (adapter_effect_authorized
+            # rejects every non-AUTHORIZED verdict anyway).
+            return GateResult.BLOCKED_WBC_MISSING
+        try:
+            return self._action_gate_check("dispatch", target.target_key)
+        except Exception:
+            # An exceptional gate must not authorize a mutation.
+            LOGGER.exception("Action gate raised for %s", target.target_key)
+            return GateResult.ERROR
 
     # ── provider-missing negative ─────────────────────────────────────────
 
@@ -271,19 +317,19 @@ class SshEffectAdapter:
                 evidence={"fence_token": fence_token},
             )
 
-        # Action gate check
+        # Action gate check: only an explicit AUTHORIZED verdict may dispatch.
+        # A missing gate, SHADOW_PASS, gate exception, or any other verdict
+        # returns a typed denial before protocol reservation or apply_fn.
         verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
+        if not adapter_effect_authorized(verdict):
+            verdict_label = getattr(verdict, "value", repr(verdict))
             return SshOutcome(
                 ok=False,
                 shard=target.shard.value,
                 glek="",
                 outcome_kind=OUTCOME_FAILED,
-                error=f"Action gate blocked: {verdict.value}",
-                evidence={"gate_verdict": verdict.value},
+                error=f"Action gate blocked: {verdict_label}",
+                evidence={"gate_verdict": verdict_label},
             )
 
         # Intent-failure negative
@@ -359,6 +405,56 @@ class SshEffectAdapter:
                 error=f"Protocol error: {type(exc).__name__}: {exc}",
             )
 
+    # ── action-off gate dispatch ──────────────────────────────────────────
+
+    def gate_dispatch(self, target: SshTarget) -> SshOutcome:
+        """Gate-only dispatch for action-off SSH operations.
+
+        ssh_exec, upload_file, upload_archive, and down are action-off in M10:
+        they are not routed through the WBC protocol (Step 13F routes at most
+        build/deploy/destroy).  They may run only when an explicitly
+        AUTHORIZED gate verdict is re-read at dispatch time AND the adapter is
+        not in production mode (production SSH is action-off).  Every other
+        verdict — missing gate, SHADOW_PASS, blocked, error, or production
+        action-off — is a typed denial before any transport call.
+        """
+        if self._production_enabled:
+            return SshOutcome(
+                ok=False,
+                shard=target.shard.value,
+                glek="",
+                outcome_kind=OUTCOME_FAILED,
+                error="Production SSH dispatch is action-off in M10",
+                evidence={"gate_verdict": "production_action_off"},
+            )
+        if not self._check_provider_available(target):
+            return SshOutcome(
+                ok=False,
+                shard=target.shard.value,
+                glek="",
+                outcome_kind=OUTCOME_FAILED,
+                error="Provider missing: no host or container configured",
+                evidence={"host": target.host, "container": target.container},
+            )
+        verdict = self._gate(target)
+        if not adapter_effect_authorized(verdict):
+            verdict_label = getattr(verdict, "value", repr(verdict))
+            return SshOutcome(
+                ok=False,
+                shard=target.shard.value,
+                glek="",
+                outcome_kind=OUTCOME_FAILED,
+                error=f"Action gate blocked: {verdict_label}",
+                evidence={"gate_verdict": verdict_label},
+            )
+        return SshOutcome(
+            ok=True,
+            shard=target.shard.value,
+            glek="",
+            outcome_kind=OUTCOME_COMPLETED,
+            evidence={"gate_verdict": getattr(verdict, "value", repr(verdict))},
+        )
+
     # ── fake-transport negative ───────────────────────────────────────────
 
     def check_fake_transport(
@@ -392,6 +488,62 @@ class SshEffectAdapter:
         return True
 
 
+class SshEffectAdapterGateError(RuntimeError):
+    """Production SSH effect adapter construction refused: wiring missing."""
+
+
+def current_ssh_gate_check() -> Callable[[ActionBoundaryType, str], GateResult]:
+    """Build the production SSH gate: SSH mutations are action-off in M10.
+
+    The verdict is re-read at dispatch time and always denies.  The gate is
+    installed so the adapter is always consulted and production dispatch is a
+    typed denial, never an ungated direct transport.
+    """
+
+    def gate_check(_boundary: ActionBoundaryType, _key: str) -> GateResult:
+        return GateResult.BLOCKED_MISSING_GRANT
+
+    return gate_check
+
+
+def open_ssh_effect_adapter(
+    protocol: Optional[EffectProtocol] = None,
+    *,
+    production_enabled: bool = True,
+    action_gate_check: Optional[
+        Callable[[ActionBoundaryType, str], GateResult]
+    ] = None,
+) -> SshEffectAdapter:
+    """Open the canonical production SSH effect adapter.
+
+    Production SSH is action-off in M10: an installed adapter must always
+    deny.  Missing wiring (no protocol, or no explicit gate in production
+    mode) is a construction error — the factory raises instead of returning
+    an adapter that could dispatch (the constructor enforces the same
+    invariant for direct construction).  Observation-only constructors
+    (``production_enabled=False``) may omit the gate; a missing protocol is
+    still refused so the adapter can never be installed ungated.
+    """
+    if protocol is None:
+        raise SshEffectAdapterGateError(
+            "open_ssh_effect_adapter refuses construction without an "
+            "EffectProtocol; SSH mutations are action-off in M10 and must "
+            "never degrade to an ungated direct transport"
+        )
+    if production_enabled and action_gate_check is None:
+        raise SshEffectAdapterGateError(
+            "open_ssh_effect_adapter refuses production construction without "
+            "an explicit action_gate_check; pass current_ssh_gate_check (or "
+            "an equivalent denial gate) so production dispatch reflects "
+            "current policy"
+        )
+    return SshEffectAdapter(
+        protocol,
+        action_gate_check=action_gate_check,
+        production_enabled=production_enabled,
+    )
+
+
 __all__ = [
     "SshEffectShard",
     "SSH_SHARD_13F",
@@ -399,4 +551,7 @@ __all__ = [
     "SshTarget",
     "SshOutcome",
     "SshEffectAdapter",
+    "SshEffectAdapterGateError",
+    "current_ssh_gate_check",
+    "open_ssh_effect_adapter",
 ]

@@ -11,6 +11,7 @@ whether or not the runtime_manifest module is present.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -76,6 +77,17 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
             "ARNOLD_ORIGIN_URL": str(origin),
             "ARNOLD_PROMOTION_JOURNAL": str(manifest_dir / "promotion-journal.jsonl"),
             "ARNOLD_SCHEDULE_STORE": str(schedule_store),
+            # Reference-census stores (T-0012): sandbox-scoped so the sweep's
+            # census never reads host stores.  These dirs are absent unless a
+            # fixture populates them (a missing store is not a reference).
+            "ARNOLD_REFERENCE_CHAIN_STORE": str(tmp_path / "ref-chains"),
+            "ARNOLD_REFERENCE_MARKER_STORE": str(tmp_path / "ref-markers"),
+            "ARNOLD_REFERENCE_REPAIR_QUEUE": str(tmp_path / "ref-repair-queue"),
+            "ARNOLD_REFERENCE_LEASE_STORE": str(tmp_path / "ref-leases"),
+            "ARNOLD_REFERENCE_PLAN_LEASE_ROOT": str(tmp_path / "ref-plan-leases"),
+            "ARNOLD_REFERENCE_MANAGED_RUN_STORE": str(tmp_path / "ref-managed-runs"),
+            "ARNOLD_REFERENCE_STATUS_DIR": str(tmp_path / "ref-status"),
+            "ARNOLD_REFERENCE_OPS_STORE": str(tmp_path / "ref-ops"),
             "PYTHONPATH": str(REPO_ROOT),
         }
     )
@@ -118,6 +130,39 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
         "create": create,
         "seed_sha": seed_sha,
     }
+
+
+@pytest.fixture
+def git_spy(tmp_path: Path) -> dict[str, object]:
+    """PATH shim: fake `git` AND `rm` binaries that log every invocation then
+    pass through to the real ones.  Lets the GC tests prove destructive calls
+    (worktree remove, branch -D, push --delete, AND the epic-venv `rm -rf`)
+    are never issued on a referenced or unknown runtime root / venv."""
+    spy_dir = tmp_path / "git-spy"
+    spy_dir.mkdir()
+    real_git = subprocess.run(
+        ["bash", "-lc", "command -v git"], capture_output=True, text=True
+    ).stdout.strip()
+    assert real_git, "real git not resolvable for the spy shim"
+    (spy_dir / "git").write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"${GIT_SPY_LOG:?}\"\n"
+        f'exec "{real_git}" "$@"\n'
+    )
+    (spy_dir / "git").chmod(0o755)
+    real_rm = subprocess.run(
+        ["bash", "-lc", "command -v rm"], capture_output=True, text=True
+    ).stdout.strip()
+    assert real_rm, "real rm not resolvable for the spy shim"
+    (spy_dir / "rm").write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"${RM_SPY_LOG:?}\"\n"
+        f'exec "{real_rm}" "$@"\n'
+    )
+    (spy_dir / "rm").chmod(0o755)
+    log = tmp_path / "git-spy.log"
+    rm_log = tmp_path / "rm-spy.log"
+    return {"dir": spy_dir, "log": log, "rm_log": rm_log, "real_git": real_git}
 
 
 def manifest_path(sandbox: dict[str, object], slug: str) -> Path:
@@ -467,6 +512,26 @@ def test_close_fails_loud_when_backstop_tag_push_fails(sandbox: dict[str, object
     assert read_manifest(sandbox, "epic-tagfail")["state"] == "active"
 
 
+def test_close_refuses_present_but_corrupt_manifest(sandbox: dict[str, object]) -> None:
+    """T-0024: arnold-close reads the manifest with raw field reads but fails
+    closed on a PRESENT-but-corrupt manifest — it must refuse (non-zero)
+    before touching state, never treat the corrupt manifest as empty/absent
+    and proceed with a close."""
+    worktree = sandbox["create"]("epic-closecorrupt")
+    manifest = manifest_path(sandbox, "epic-closecorrupt")
+    original = manifest.read_text(encoding="utf-8")
+    manifest.write_text("{not valid json", encoding="utf-8")
+    proc = sandbox["run"](
+        CLOSE, "epic-closecorrupt", str(manifest)
+    )
+    assert proc.returncode != 0
+    assert worktree.is_dir()
+    # the on-disk manifest is untouched: close neither rewrote nor archived it
+    assert manifest.read_text(encoding="utf-8") == "{not valid json"
+    manifest.write_text(original, encoding="utf-8")
+    assert read_manifest(sandbox, "epic-closecorrupt")["state"] == "active"
+
+
 # ── arnold-gc-sweep ──────────────────────────────────────────────────────────
 
 
@@ -528,6 +593,131 @@ def test_gc_sweep_lists_manifestless_tree_as_needs_reconcile(
     assert stray.is_dir()  # never deleted
 
 
+def test_gc_sweep_corrupt_manifest_needs_reconcile_never_deletes(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """T-0024: a PRESENT-but-corrupt manifest is not an empty state and not
+    absent — the tree it names must be listed NEEDS-RECONCILE (never
+    deletable) and the sweep must keep going instead of aborting or
+    collapsing to an empty STATE that could look sweepable."""
+    worktree = sandbox["create"]("epic-corruptmanifest")
+    corrupt = manifest_path(sandbox, "epic-corruptmanifest")
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE" in proc.stdout
+    assert "corrupt" in proc.stdout.lower()
+    assert "SWEPT" not in proc.stdout
+    assert worktree.is_dir()  # the corrupt-manifest tree is never deleted
+    assert corrupt.exists()
+    _assert_no_destructive(git_spy)
+    # dry-run reports the same NEEDS-RECONCILE verdict for the same tree
+    dry = _sweep_with_spy(
+        sandbox, git_spy, "--dry-run", "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert "NEEDS-RECONCILE" in dry.stdout
+    assert worktree.is_dir()
+
+
+def test_gc_sweep_schema_invalid_manifest_needs_reconcile_never_deletes(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G5 round-2 finding 4: a PRESENT manifest that is valid JSON but
+    schema-invalid (missing required fields) must fail closed EXACTLY like a
+    corrupt manifest — NEEDS-RECONCILE, never deletable.  The payload keeps
+    all four fields the old raw json.load read (epic_id / state /
+    epic.runtime_root / epic.branch, with a real origin-resolvable branch and
+    an existing worktree) so the old code would have swept it; only the
+    canonical load_manifest gate stands between it and deletion."""
+    worktree = sandbox["create"]("epic-schemainvalid")
+    real = read_manifest(sandbox, "epic-schemainvalid")
+    schema_invalid = manifest_path(sandbox, "epic-schemainvalid")
+    # valid JSON, wrong structure: field-bearing but missing the required
+    # top-level fields (runtime_id, schema, generation, owner, base, ...)
+    schema_invalid.write_text(
+        json.dumps(
+            {
+                "epic_id": "epic-schemainvalid",
+                "state": "closed",
+                "epic": {
+                    "runtime_root": str(worktree),
+                    "branch": real["epic"]["branch"],
+                },
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE" in proc.stdout
+    assert "SWEPT" not in proc.stdout
+    assert worktree.is_dir()  # the schema-invalid manifest's tree is never deleted
+    assert schema_invalid.exists()
+    _assert_no_destructive(git_spy)
+    # dry-run reports the same NEEDS-RECONCILE verdict for the same tree
+    dry = _sweep_with_spy(
+        sandbox, git_spy, "--dry-run", "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert "NEEDS-RECONCILE" in dry.stdout
+    assert worktree.is_dir()
+
+
+def test_gc_sweep_dangling_manifest_symlink_needs_reconcile(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G5 round-5 finding 3(b): a DANGLING manifest symlink is PRESENT but
+    unreadable.  ``[[ -f ]]``/``[[ -e ]]`` follow the link to its missing
+    target and report false, so the old ``[[ -f ]] || continue`` guard
+    silently skipped the manifest (and its tree was never accounted).  The
+    sweep must report NEEDS-RECONCILE for the manifest — only a GENUINELY
+    absent manifest (ENOENT) may be skipped."""
+    worktree = sandbox["create"]("epic-symmanifest")
+    dangling = manifest_path(sandbox, "epic-symmanifest")
+    dangling.unlink()
+    dangling.symlink_to(dangling.parent / "missing-target.json")
+    assert dangling.is_symlink()
+    assert not dangling.exists()  # -f / -e follow the link: false
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE manifest" in proc.stdout
+    assert "SWEPT" not in proc.stdout
+    assert worktree.is_dir()  # the dangling manifest's tree is never deleted
+    assert dangling.is_symlink()
+    _assert_no_destructive(git_spy)
+    # dry-run reports the same NEEDS-RECONCILE verdict for the same tree
+    dry = _sweep_with_spy(
+        sandbox, git_spy, "--dry-run", "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert "NEEDS-RECONCILE manifest" in dry.stdout
+    assert worktree.is_dir()
+
+
+def test_gc_sweep_absent_manifests_are_not_needs_reconcile(
+    sandbox: dict[str, object],
+) -> None:
+    """G5 round-5 finding 3(b) absent side: a manifest dir with no *.json
+    files (nothing ever created, or all archived by previous sweeps) is NOT
+    a needs-reconcile signal — the sweep completes cleanly.  Only a
+    PRESENT-but-unreadable entry is NEEDS-RECONCILE."""
+    proc = sandbox["run"](
+        GC_SWEEP, "--dry-run", "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE" not in proc.stdout
+    assert "done" in proc.stdout
+
+
 def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
     sandbox: dict[str, object],
 ) -> None:
@@ -555,6 +745,869 @@ def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
     assert dry.returncode == 0, dry.stderr
     assert "WOULD-SKIP" in dry.stdout
     assert "schedule-store-referenced" in dry.stdout
+
+
+# ── reference census (T-0012): fail-closed before every deletion ────────────
+
+
+def _close_epic_and_prove(sandbox: dict[str, object], slug: str) -> Path:
+    worktree = sandbox["create"](slug)
+    close = sandbox["run"](CLOSE, slug, str(manifest_path(sandbox, slug)))
+    assert close.returncode == 0, close.stderr
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
+    return worktree
+
+
+def _sweep_with_spy(
+    sandbox: dict[str, object],
+    git_spy: dict[str, object],
+    *args: str,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = {
+        "PATH": str(git_spy["dir"]) + os.pathsep + os.environ.get("PATH", ""),
+        "GIT_SPY_LOG": str(git_spy["log"]),
+        "RM_SPY_LOG": str(git_spy["rm_log"]),
+    }
+    if extra_env:
+        env.update(extra_env)
+    return sandbox["run"](GC_SWEEP, *args, extra_env=env)
+
+
+def _spy_log(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return path.read_text().splitlines()
+
+
+def _assert_no_destructive(git_spy: dict[str, object]) -> None:
+    """No destructive call of any kind was issued: no git worktree remove /
+    branch -D / push --delete AND no venv `rm -rf` (a referenced or unknown
+    runtime root OR venv is never deleted)."""
+    log = _spy_log(Path(git_spy["log"]))
+    assert not any("worktree remove" in line for line in log), log
+    assert not any("branch -D" in line for line in log), log
+    assert not any("--delete" in line for line in log), log
+    rm_log = _spy_log(Path(git_spy["rm_log"]))
+    assert not any("-rf" in line for line in rm_log), rm_log
+
+
+def _assert_no_venv_rm(git_spy: dict[str, object], venv: Path) -> None:
+    """The rm spy must never have been pointed at *venv*: a referenced venv
+    is not deleted even when the sweep proceeds with the worktree itself."""
+    rm_log = _spy_log(Path(git_spy["rm_log"]))
+    assert not any(str(venv) in line for line in rm_log), rm_log
+
+
+def _write_reference(root: Path, relpath: str, payload: object) -> Path:
+    path = root / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_gc_sweep_referenced_by_other_manifest_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class: runtime manifests.  A second (active) manifest
+    referencing the SAME exact runtime root makes the root load-bearing —
+    the sweep must hard-skip and never call git worktree remove."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refmf")
+    holder = manifest_path(sandbox, "epic-holder")
+    holder.write_text(
+        json.dumps(
+            {
+                "epic_id": "epic-holder",
+                "state": "active",
+                "epic": {"runtime_root": str(worktree)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refmf").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_chain_engine_root_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class: active/paused/blocked chain metadata
+    metadata.execution_environment.engine_root — an exact path reference
+    hard-skips deletion."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refchain")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-chains/chain-ref.json",
+        {
+            "metadata": {"execution_environment": {"engine_root": str(worktree)}},
+            "state": "active",
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refchain").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_marker_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class: cloud-session / chain-health markers."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refmarker")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-markers/session-ref.json",
+        {"session": "s1", "engine_root": str(worktree)},
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refmarker").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_schedule_job_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class: resident/ops schedules and jobs — an exact
+    runtime-root path in the schedule store hard-skips (on top of the legacy
+    slug/sha grep gate)."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refsched")
+    store = Path(str(sandbox["env"]["ARNOLD_SCHEDULE_STORE"]))
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "jobs.json").write_text(
+        json.dumps({"job": "probe-4", "runtime_root": str(worktree)}), encoding="utf-8"
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refsched").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_repair_queue_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class: occurrence requests, decisions, active claims, and
+    attempts — any one of the queue sub-stores referencing the exact root
+    hard-skips deletion."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refqueue")
+    queue = Path(sandbox["tmp_path"]) / "ref-repair-queue"
+    for sub in ("requests", "decisions", "attempts", "active-claims", "occurrence-claims"):
+        _write_reference(
+            queue, f"{sub}/ref-{sub}.json", {"runtime_root": str(worktree)}
+        )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refqueue").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_lease_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class: custody leases.  Uses the REAL lease suffix —
+    <lease_id>.history.jsonl, the append-only custody event stream (G2: the
+    census previously scanned only *.json and silently missed every lease
+    history; <lease_id>.state.json is covered by the *.json glob)."""
+    worktree = _close_epic_and_prove(sandbox, "epic-reflease")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-leases/lease-ref.history.jsonl",
+        {
+            "lease_id": "lease-ref",
+            "event_type": "acquire",
+            "payload": {"engine_root": str(worktree)},
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-reflease").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_venv_referenced_by_lease_history_keeps_venv(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 (a)+(b): the epic venv path goes through the SAME reference census
+    as the worktree.  A custody lease history (.history.jsonl — the real
+    append-only lease suffix) referencing the exact external venv path must
+    block the venv's rm -rf even though the worktree itself is swept."""
+    worktree = _close_epic_and_prove(sandbox, "epic-venvref")
+    # external venv: lives OUTSIDE the tree (and outside runtime-candidates),
+    # so the sweep would rm -rf it
+    venv = Path(sandbox["tmp_path"]) / "venvs" / "epic-venvref"
+    venv.mkdir(parents=True, exist_ok=True)
+    m = read_manifest(sandbox, "epic-venvref")
+    m["epic"]["venv_path"] = str(venv)
+    manifest_path(sandbox, "epic-venvref").write_text(json.dumps(m), encoding="utf-8")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-leases/lease-venv.history.jsonl",
+        {
+            "lease_id": "lease-venv",
+            "event_type": "acquire",
+            "payload": {"engine_root": str(venv)},
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "SWEPT" in proc.stdout
+    assert "SKIP venv" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert not worktree.exists()  # the worktree itself was swept
+    assert venv.is_dir()  # the referenced venv was never deleted
+    _assert_no_venv_rm(git_spy, venv)
+
+
+def test_gc_sweep_corrupt_lease_history_blocks_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 (b) fail-closed on the REAL lease suffix: a corrupt .history.jsonl
+    in the lease store makes the census UNKNOWN and BLOCKS deletion (exit 5).
+    Previously *.jsonl lease histories were never scanned at all, so a
+    corrupt lease history could not block anything."""
+    worktree = _close_epic_and_prove(sandbox, "epic-corruptlease")
+    lease_store = Path(sandbox["tmp_path"]) / "ref-leases"
+    lease_store.mkdir(parents=True, exist_ok=True)
+    (lease_store / "lease-corrupt.history.jsonl").write_text(
+        '{"lease_id": "lease-corrupt", "event_type": "acquire", '
+        '"payload": {"engine_root": "',
+        encoding="utf-8",
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, proc.stdout
+    assert "UNKNOWN" in proc.stderr
+    assert "BLOCKED" in proc.stderr
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-corruptlease").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_plan_lease_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class (T-0027): per-plan custody lease stores
+    (<workspace>/.megaplan/plans/<plan>/custody/leases — the paths
+    worker_dispatch_wbc.py:613 and phase_wbc.py:937 open).  Uses the REAL
+    lease suffix <lease_id>.history.jsonl; an exact runtime root in any
+    per-plan lease store hard-skips deletion."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refplanlease")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-plan-leases/plan-ref/custody/leases/lease-ref.history.jsonl",
+        {
+            "lease_id": "lease-ref",
+            "event_type": "acquire",
+            "payload": {"engine_root": str(worktree)},
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refplanlease").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_managed_run_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class (T-0027): managed-subagent run manifests
+    (<project>/.megaplan/plans/resident-subagents/<run_id>/manifest.json —
+    resident/subagent.py DEFAULT_MANAGED_RUN_ROOT).  Run manifests are ONE
+    level deep, so the store scan recurses into run dirs.  G6: the REAL
+    manifest carries the runtime root NESTED at
+    context_directory.resident_runtime_source (resident/subagent.py
+    _delegated_context_directory) — an exact-path reference that hard-skips
+    deletion even though project_dir/project_worktree point at a different
+    (project) checkout."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refmanaged")
+    project_dir = Path(sandbox["tmp_path"]) / "managed-project"
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-managed-runs/run-ref/manifest.json",
+        {
+            "run_id": "run-ref",
+            "schema_version": "arnold-resident-managed-run-v1",
+            "project_dir": str(project_dir),
+            "context_directory": {
+                "project_worktree": str(project_dir),
+                "resident_runtime_source": str(worktree),
+                "resident_runtime_revision": "abc1234",
+                "project_equals_runtime_source": False,
+                "resident_conversation_id": "rconv_run-ref",
+                "routes": {
+                    "context_root": "python -P -m arnold_pipelines.megaplan resident context --node root",
+                    "context_search": (
+                        "python -P -m arnold_pipelines.megaplan resident "
+                        "context-search --scope '<scope>' --query '<query>'"
+                    ),
+                },
+            },
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refmanaged").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_managed_run_without_runtime_source_is_not_reference(
+    sandbox: dict[str, object],
+) -> None:
+    """G6 absent side: a managed-run manifest that does NOT carry
+    context_directory.resident_runtime_source (or any other path equal to the
+    swept root) is not a reference — the census stays CLEAR and the closed
+    tree is swept."""
+    worktree = _close_epic_and_prove(sandbox, "epic-norefmanaged")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-managed-runs/run-noref/manifest.json",
+        {
+            "run_id": "run-noref",
+            "schema_version": "arnold-resident-managed-run-v1",
+            "project_dir": str(Path(sandbox["tmp_path"]) / "managed-project"),
+            "context_directory": {
+                "project_worktree": str(Path(sandbox["tmp_path"]) / "managed-project"),
+                "resident_conversation_id": "rconv_run-noref",
+                "routes": {
+                    "context_root": "python -P -m arnold_pipelines.megaplan resident context --node root"
+                },
+            },
+        },
+    )
+    proc = sandbox["run"](GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"]))
+    assert proc.returncode == 0, proc.stderr
+    assert "REFERENCED" not in proc.stdout
+    assert "SWEPT" in proc.stdout
+    assert not worktree.exists()
+    assert not manifest_path(sandbox, "epic-norefmanaged").exists()
+
+
+def test_gc_sweep_referenced_by_status_snapshot_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class (T-0027): the canonical status snapshot
+    (/workspace/.megaplan/status/cloud-status.json — status_snapshot.py).  A
+    runtime root inside the snapshot is load-bearing and hard-skips
+    deletion."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refstatus")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-status/cloud-status.json",
+        {
+            "generated_at": "2026-08-12T00:00:00Z",
+            "snapshot": {"runtime_root": str(worktree)},
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refstatus").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_ops_schedule_input_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Reference class (T-0027): ops schedule-inputs
+    (/workspace/.megaplan/ops/schedules + schedule-inputs —
+    probe_records.py).  schedule-inputs holds one nested dir per input, so
+    the store scan recurses one level; an exact runtime root inside an input
+    hard-skips deletion."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refops")
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-ops/schedule-inputs/input-ref/payload.json",
+        {"engine_root": str(worktree)},
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refops").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_corrupt_plan_lease_store_blocks_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """T-0027 fail-closed on the per-plan custody lease store: a corrupt
+    .history.jsonl under .megaplan/plans/<plan>/custody/leases makes the
+    census UNKNOWN and BLOCKS deletion (exit 5) — delete-on-unknown never
+    happens."""
+    worktree = _close_epic_and_prove(sandbox, "epic-corruptplanlease")
+    lease_store = (
+        Path(sandbox["tmp_path"]) / "ref-plan-leases" / "plan-x" / "custody" / "leases"
+    )
+    lease_store.mkdir(parents=True, exist_ok=True)
+    (lease_store / "lease-corrupt.history.jsonl").write_text(
+        '{"lease_id": "lease-corrupt", "event_type": "acquire", '
+        '"payload": {"engine_root": "',
+        encoding="utf-8",
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, proc.stdout
+    assert "UNKNOWN" in proc.stderr
+    assert "BLOCKED" in proc.stderr
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-corruptplanlease").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_dangling_reference_needs_reconcile(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """A store referencing a runtime root that no longer exists is incoherent:
+    the sweep reports NEEDS-RECONCILE and never deletes."""
+    worktree = _close_epic_and_prove(sandbox, "epic-dangle")
+    missing = Path(sandbox["tmp_path"]) / "missing-runtime-candidates" / "vanished-tree"
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-chains/chain-dangling.json",
+        {
+            "metadata": {"execution_environment": {"engine_root": str(missing)}},
+            "state": "active",
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE" in proc.stdout
+    assert "dangling" in proc.stdout.lower()
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-dangle").exists()
+    _assert_no_destructive(git_spy)
+
+
+# ── SWEPT= outcome protocol (G6 round-3 finding 1) ──────────────────────────
+
+
+def test_gc_sweep_referenced_skip_emits_swept_no_marker(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G6 round-3 finding 1: a REFERENCED skip must be observable as
+    skipped-but-alive — the sweep prints a per-slug SWEPT=NO:REFERENCED
+    marker inside the decision line so callers never infer deletion from
+    the exit-0 sweep.  Exit stays 0 (a multi-manifest sweep may reclaim
+    OTHER trees); the marker, not the exit code, is the swept:false signal."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refmark")
+    holder = manifest_path(sandbox, "epic-holder2")
+    holder.write_text(
+        json.dumps(
+            {
+                "epic_id": "epic-holder2",
+                "state": "active",
+                "epic": {"runtime_root": str(worktree)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "SKIP 'epic-refmark'" in proc.stdout
+    assert "SWEPT=NO:REFERENCED" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()  # skipped-but-alive: never deleted
+    assert manifest_path(sandbox, "epic-refmark").exists()
+    _assert_no_destructive(git_spy)
+    # dry-run previews the same gate without any swept marker (nothing was
+    # attempted, so nothing is skipped-but-alive for real)
+    dry = _sweep_with_spy(
+        sandbox,
+        git_spy,
+        "--dry-run",
+        "--restore-proven",
+        str(sandbox["manifest_dir"]),
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert "WOULD-SKIP" in dry.stdout
+    assert "SWEPT=" not in dry.stdout
+
+
+def test_gc_sweep_dangling_skip_emits_swept_no_marker(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G6 round-3 finding 1: a DANGLING skip emits SWEPT=NO:DANGLING — the
+    tree is never deleted and the exit-0 sweep is observable as
+    skipped-but-alive (the NEEDS-RECONCILE verdict wording is preserved)."""
+    worktree = _close_epic_and_prove(sandbox, "epic-dangmark")
+    missing = Path(sandbox["tmp_path"]) / "missing-runtime-candidates" / "vanished-tree"
+    _write_reference(
+        Path(sandbox["tmp_path"]),
+        "ref-chains/chain-dangling-mark.json",
+        {
+            "metadata": {"execution_environment": {"engine_root": str(missing)}},
+            "state": "active",
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE 'epic-dangmark'" in proc.stdout
+    assert "SWEPT=NO:DANGLING" in proc.stdout
+    assert "NEEDS-RECONCILE" in proc.stdout
+    assert "dangling" in proc.stdout.lower()
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-dangmark").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_clear_sweep_emits_swept_yes(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G6 round-3 finding 1: a CLEAR deletion exits 0 AND prints the
+    per-slug SWEPT=YES marker — 'swept' is recorded true only here, and a
+    clean sweep never emits a SWEPT=NO: marker."""
+    worktree = _close_epic_and_prove(sandbox, "epic-clearmark")
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "SWEPT=YES 'epic-clearmark'" in proc.stdout
+    assert "SWEPT=NO:" not in proc.stdout
+    assert not worktree.exists()
+    assert (Path(sandbox["manifest_dir"]) / "archived" / "epic-clearmark.json").exists()
+
+
+def test_gc_sweep_corrupt_reference_store_blocks_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """An unreadable/corrupt reference store makes the census UNKNOWN and
+    BLOCKS deletion (exit 5, fail-closed — delete-on-unknown never happens);
+    dry-run previews the block without failing."""
+    worktree = _close_epic_and_prove(sandbox, "epic-corrupt")
+    corrupt = Path(sandbox["tmp_path"]) / "ref-chains" / "chain-corrupt.json"
+    corrupt.parent.mkdir(parents=True, exist_ok=True)
+    corrupt.write_text('{"metadata": {"execution_environment": {"engine_root": "', encoding="utf-8")
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, proc.stdout
+    assert "UNKNOWN" in proc.stderr
+    assert "BLOCKED" in proc.stderr
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-corrupt").exists()
+    _assert_no_destructive(git_spy)
+    dry = _sweep_with_spy(
+        sandbox, git_spy, "--dry-run", "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert "WOULD-BLOCK" in dry.stdout
+    assert worktree.is_dir()
+
+
+def test_gc_sweep_referenced_by_nested_owner_claim_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 finding 4(a): real repair claims live under NESTED
+    ``<queue>/active-claims/<token>.lock/owner.json`` (repair_requests
+    ``active_repair_claim_lock_dir`` / repair_lock ``owner_metadata_path``),
+    not top-level JSON.  The census must recurse into ``*.lock/`` dirs — a
+    claim whose owner.json references the exact root hard-skips deletion."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refclaim")
+    for sub, token in (
+        ("active-claims", "claim-ref"),
+        ("occurrence-claims", "occ-ref"),
+    ):
+        _write_reference(
+            Path(sandbox["tmp_path"]),
+            f"ref-repair-queue/{sub}/{token}.lock/owner.json",
+            {"session": "s1", "cwd": str(worktree)},
+        )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refclaim").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_workspace_chain_state_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 finding 4(b): chains store per-workspace state at
+    ``<workspace>/.megaplan/plans/.chains/chain-*.json`` (spec.py chain-state
+    layout) — NOT only the fixed default store.  A workspace-relative chain
+    state referencing the exact engine_root hard-skips deletion."""
+    worktree = _close_epic_and_prove(sandbox, "epic-refwschain")
+    _write_reference(
+        Path(sandbox["base_dir"]),
+        ".megaplan/plans/.chains/chain-ws.json",
+        {
+            "metadata": {"execution_environment": {"engine_root": str(worktree)}},
+            "state": "active",
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-refwschain").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_referenced_by_per_project_chain_state_skips_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 round-3 (criterion 4) + round-5 finding 4(a): the canonical
+    chain-state layout is PER-PROJECT — ``<workspace>/<project>/Arnold/
+    .megaplan/plans/.chains/chain-*.json`` (the box keeps one workspace dir
+    per chain with the repo checkout — the ``Arnold`` SUBDIR — under it; the
+    flat ``<workspace>/.megaplan/plans/.chains`` holds nothing).  A
+    per-project chain state referencing the exact engine_root hard-skips
+    deletion — the census must glob the per-project chain dirs at TWO
+    depths (``<workspace>/*/.megaplan`` and
+    ``<workspace>/*/*/.megaplan``) against the REAL
+    ``ARNOLD_BASE_DIR=<base>`` workspace, not a masked per-project root."""
+    worktree = _close_epic_and_prove(sandbox, "epic-projchain")
+    _write_reference(
+        Path(sandbox["base_dir"]) / "proj" / "Arnold",
+        ".megaplan/plans/.chains/chain-ws.json",
+        {
+            "metadata": {"execution_environment": {"engine_root": str(worktree)}},
+            "state": "active",
+        },
+    )
+    # The sweep runs with the DEFAULT workspace (<base>, ARNOLD_BASE_DIR
+    # from the sandbox env — no per-project masking); the census's two-level
+    # per-project glob must find <base>/proj/Arnold/.megaplan/plans/.chains.
+    proc = _sweep_with_spy(
+        sandbox,
+        git_spy,
+        "--restore-proven",
+        str(sandbox["manifest_dir"]),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "reference census" in proc.stdout
+    assert "REFERENCED" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-projchain").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_dangling_per_project_chain_reference_needs_reconcile(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 round-3 (criterion 4) fail-closed: a per-project chain state whose
+    engine_root no longer exists is DANGLING — the census cannot attest
+    completeness, so the sweep reports NEEDS-RECONCILE and never deletes.
+    The two-level per-project glob (round-5 finding 4(a)) must find the
+    store at <base>/proj/Arnold/.megaplan/plans/.chains for the dangling
+    verdict just like it does for a live reference — with the default
+    workspace (<base>), no ARNOLD_BASE_DIR masking."""
+    worktree = _close_epic_and_prove(sandbox, "epic-projchain-dangling")
+    _write_reference(
+        Path(sandbox["base_dir"]) / "proj" / "Arnold",
+        ".megaplan/plans/.chains/chain-ws.json",
+        {
+            "metadata": {
+                "execution_environment": {"engine_root": f"{worktree}-gone"}
+            },
+            "state": "active",
+        },
+    )
+    proc = _sweep_with_spy(
+        sandbox,
+        git_spy,
+        "--restore-proven",
+        str(sandbox["manifest_dir"]),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE" in proc.stdout
+    assert "DANGLING" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-projchain-dangling").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_present_but_inaccessible_store_blocks_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 round-5 finding 4(b) fail-closed: a reference store PATH that
+    EXISTS but cannot be read as a store directory (here: a file squatting
+    on the configured chain store path) makes the census UNKNOWN and BLOCKS
+    deletion (exit 5).  A GENUINELY missing store is not a reference
+    (existing semantics — every other fixture relies on it); only
+    present-but-inaccessible is UNKNOWN, so delete-on-unknown never
+    happens."""
+    worktree = _close_epic_and_prove(sandbox, "epic-blocked-store")
+    # The configured chain store (<tmp>/ref-chains) is absent by default;
+    # plant a FILE there: present, but not a readable store directory.
+    chain_store = Path(sandbox["tmp_path"]) / "ref-chains"
+    chain_store.write_text("not a directory\n", encoding="utf-8")
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, proc.stdout
+    assert "UNKNOWN" in proc.stderr
+    assert "BLOCKED" in proc.stderr
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-blocked-store").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_dangling_store_symlink_blocks_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G6 finding 5 fail-closed: a DANGLING SYMLINK squatting on a reference
+    store path is PRESENT but broken — stat() follows the link to its
+    missing target and raises ENOENT, so the old
+    ``except FileNotFoundError: continue`` collapsed it to CLEAR absence and
+    the sweep could delete.  The census must treat the dangling store path
+    as UNKNOWN (fail-closed) and BLOCK deletion (exit 5)."""
+    worktree = _close_epic_and_prove(sandbox, "epic-dangle-store")
+    store = Path(sandbox["tmp_path"]) / "ref-chains"
+    store.symlink_to(store.parent / "ref-chains-target-missing")
+    assert store.is_symlink()
+    assert not store.exists()  # stat follows the link: ENOENT
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, proc.stdout + proc.stderr
+    assert "UNKNOWN" in proc.stderr
+    assert "BLOCKED" in proc.stderr
+    assert "dangling symlink" in proc.stderr
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-dangle-store").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_dangling_plan_lease_root_symlink_blocks_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G6 finding 5 fail-closed: the CONFIGURED plan-lease root
+    (<workspace>/.megaplan/plans) is validated BEFORE globbing beneath it.
+    A dangling root symlink makes the per-plan lease glob return an empty
+    list, so the old code collapsed the broken root to CLEAR absence and
+    the sweep could delete.  The dangling root must be UNKNOWN (fail-closed)
+    and BLOCK deletion (exit 5)."""
+    worktree = _close_epic_and_prove(sandbox, "epic-dangle-planroot")
+    root = Path(sandbox["tmp_path"]) / "ref-plan-leases"
+    root.symlink_to(root.parent / "ref-plan-leases-target-missing")
+    assert root.is_symlink()
+    assert not root.exists()  # glob beneath it would silently return []
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, proc.stdout + proc.stderr
+    assert "UNKNOWN" in proc.stderr
+    assert "BLOCKED" in proc.stderr
+    assert "dangling symlink" in proc.stderr
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-dangle-planroot").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_genuinely_missing_store_is_not_reference(
+    sandbox: dict[str, object],
+) -> None:
+    """G6 finding 5 absent side: a GENUINELY missing store dir is not a
+    reference (existing semantics — every sandbox fixture relies on it).
+    The dangling-vs-absent triage must NOT turn plain absence into UNKNOWN:
+    with every reference store absent the census is CLEAR and the closed,
+    restore-proven tree is swept."""
+    worktree = _close_epic_and_prove(sandbox, "epic-nomissing-store")
+    # No ref store exists anywhere under <tmp> (sandbox env points every
+    # ARNOLD_REFERENCE_* at absent dirs).
+    proc = sandbox["run"](GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"]))
+    assert proc.returncode == 0, proc.stderr
+    assert "SWEPT" in proc.stdout
+    assert "UNKNOWN" not in proc.stdout
+    assert not worktree.exists()
+    assert not manifest_path(sandbox, "epic-nomissing-store").exists()
+
+
+def test_gc_sweep_corrupt_nested_owner_json_blocks_deletion(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G2 finding 4(a) fail-closed on the REAL claim layout: a corrupt
+    owner.json inside a nested ``*.lock/`` claim dir makes the census
+    UNKNOWN and BLOCKS deletion (exit 5).  A top-level-only scan never saw
+    nested claim locks at all, so a corrupt claim could not block anything."""
+    worktree = _close_epic_and_prove(sandbox, "epic-corruptclaim")
+    owner = (
+        Path(sandbox["tmp_path"])
+        / "ref-repair-queue"
+        / "active-claims"
+        / "claim-corrupt.lock"
+        / "owner.json"
+    )
+    owner.parent.mkdir(parents=True, exist_ok=True)
+    owner.write_text('{"cwd": "', encoding="utf-8")
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, proc.stdout
+    assert "UNKNOWN" in proc.stderr
+    assert "BLOCKED" in proc.stderr
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-corruptclaim").exists()
+    _assert_no_destructive(git_spy)
 
 
 # ── P6 terminal finalizer: fixer-branch deletion ────────────────────────────
@@ -721,6 +1774,22 @@ def test_promote_gate_blocks_without_marker_or_flag(sandbox: dict[str, object]) 
     assert sandbox["origin_heads"]("base/editable-install")  # base untouched
 
 
+def test_promote_refuses_present_but_corrupt_manifest(sandbox: dict[str, object]) -> None:
+    """T-0024: arnold-promote reads the manifest with raw field reads but
+    fails closed on a PRESENT-but-corrupt manifest — it must refuse
+    (non-zero) before touching state, never promote an epic whose manifest
+    cannot be read."""
+    worktree = sandbox["create"]("epic-promocorrupt")
+    manifest = manifest_path(sandbox, "epic-promocorrupt")
+    manifest.write_text("{not valid json", encoding="utf-8")
+    proc = sandbox["run"](PROMOTE, "--force-gate", "epic-promocorrupt", str(manifest))
+    assert proc.returncode != 0
+    assert worktree.is_dir()
+    # promote neither rewrote nor advanced the corrupt manifest
+    assert manifest.read_text(encoding="utf-8") == "{not valid json"
+    assert sandbox["origin_heads"]("base/editable-install")  # base untouched
+
+
 def test_promote_cas_push_journal_warning(sandbox: dict[str, object]) -> None:
     worktree = sandbox["create"]("epic-promo")
     branch = git(worktree, "branch", "--show-current")
@@ -856,3 +1925,963 @@ def test_promote_with_canary_flag_advances_pointer(sandbox: dict[str, object]) -
     assert m["promotions"][-1]["previous_generation"] == 1
     assert m["promotions"][-1]["previous_commit"] != head
     assert m["promotions"][-1]["reason"]
+
+
+# ── T-0027 destructive-route census (wrapper + cli routes) ───────────────────
+
+
+SUPERVISOR_RUNTIME = WRAPPER_DIR / "arnold-supervisor-runtime"
+
+
+def _census_tmp_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point every reference-census store at (absent) sandbox dirs so the
+    census is hermetic and injectable per test."""
+    for var, sub in (
+        ("ARNOLD_BASE_DIR", "base"),
+        ("ARNOLD_RUNTIME_MANIFEST_DIR", "manifests"),
+        ("ARNOLD_REFERENCE_CHAIN_STORE", "ref-chains"),
+        ("ARNOLD_REFERENCE_MARKER_STORE", "ref-markers"),
+        ("ARNOLD_REFERENCE_SCHEDULE_STORES", "ref-schedules"),
+        ("ARNOLD_REFERENCE_REPAIR_QUEUE", "ref-repair-queue"),
+        ("ARNOLD_REFERENCE_LEASE_STORE", "ref-leases"),
+    ):
+        monkeypatch.setenv(var, str(tmp_path / sub))
+
+
+def _supervisor_source(tmp_path: Path) -> Path:
+    """Sandbox 'Arnold source' for the supervisor wrapper.  The wrapper's
+    SOURCE is the fixed literal /workspace/arnold (G4: no env selector may
+    re-select it), which does not exist on developer machines, so the tests
+    substitute that literal with a sandbox path via text rewrite and run the
+    REAL wrapper logic.  The source must be a real git repo: the fingerprint
+    pipeline runs ``git diff HEAD`` under ``pipefail`` (production source is
+    always a repo)."""
+    src = tmp_path / "arnold-source"
+    src.mkdir()
+    (src / "pyproject.toml").write_text(
+        "[build-system]\nrequires = ['setuptools>=61']\nbuild-backend = 'setuptools.build_meta'\n\n"
+        "[project]\nname = 'arnold'\nversion = '0.0.0'\n",
+        encoding="utf-8",
+    )
+    git(None, "init", str(src))
+    git(src, "config", "user.email", "lifecycle@example.invalid")
+    git(src, "config", "user.name", "Lifecycle Tests")
+    git(src, "config", "commit.gpgsign", "false")
+    git(src, "add", "-A")
+    git(src, "commit", "-m", "seed source")
+    return src
+
+
+def _supervisor_fake_python(tmp_path: Path) -> Path:
+    """Fake python3 that satisfies the wrapper's venv plumbing (venv
+    creation, pip install, readiness probes, receipt write) without a real
+    pip install.  The reference census itself runs on the REAL python3 from
+    PATH (same as arnold-gc-sweep)."""
+    fake = tmp_path / "fake-python3"
+    fake.write_text(
+        "#!/usr/bin/env bash\n"
+        'args=("$@")\n'
+        'if [[ "${args[0]}" == "-P" ]]; then\n'
+        '  args=("${args[@]:1}")\n'
+        "fi\n"
+        'case "${args[0]}" in\n'
+        "  -m)\n"
+        '    if [[ "${args[1]}" == "venv" ]]; then\n'
+        '      stage="${args[3]}"\n'
+        '      mkdir -p "$stage/bin"\n'
+        '      cp "$0" "$stage/bin/python3"\n'
+        '      chmod +x "$stage/bin/python3"\n'
+        "    fi\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "  -c)\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "  -)\n"
+        "    printf '%s\\n' '{\"schema_version\":\"arnold-supervisor-runtime-receipt-v1\",\"status\":\"ready\"}' > \"${args[1]}\"\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "  *)\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    return fake
+
+
+def _supervisor_wrapper(tmp_path: Path, source: Path) -> Path:
+    """The supervisor wrapper with its fixed source literal rewritten to a
+    sandbox path (see _supervisor_source)."""
+    text = SUPERVISOR_RUNTIME.read_text(encoding="utf-8")
+    rewritten = text.replace('SOURCE="/workspace/arnold"', f'SOURCE="{source}"')
+    assert rewritten != text, "supervisor wrapper source literal not found"
+    wrapper = tmp_path / "arnold-supervisor-runtime"
+    wrapper.write_text(rewritten, encoding="utf-8")
+    wrapper.chmod(0o755)
+    return wrapper
+
+
+def _supervisor_env(
+    tmp: Path, git_spy: dict[str, object], root: Path, fake: Path
+) -> dict[str, str]:
+    """PATH shims (git/rm spies, a no-op flock, and a GNU-style mv: BSD
+    macOS ships no flock and its mv has no -T) plus supervisor env overrides
+    for one wrapper run."""
+    shims = tmp / "supervisor-shims"
+    shims.mkdir(exist_ok=True)
+    flock = shims / "flock"
+    if not flock.exists():
+        flock.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        flock.chmod(0o755)
+    mv = shims / "mv"
+    if not mv.exists():
+        mv.write_text(
+            "#!/usr/bin/env bash\n"
+            "# GNU-style mv for BSD: strip -T/-Tf and unlink a symlink\n"
+            "# destination first so the rename replaces it (GNU -T\n"
+            "# --no-target-directory semantics).\n"
+            'while [[ "$1" == -T* ]]; do shift; done\n'
+            'args=("$@")\n'
+            'if [[ "${#args[@]}" -ge 2 ]]; then\n'
+            '  dest="${args[${#args[@]}-1]}"\n'
+            '  if [[ -L "$dest" ]]; then unlink -- "$dest"; fi\n'
+            "fi\n"
+            'exec /bin/mv "$@"\n',
+            encoding="utf-8",
+        )
+        mv.chmod(0o755)
+    return {
+        "PATH": (
+            str(git_spy["dir"])
+            + os.pathsep
+            + str(shims)
+            + os.pathsep
+            + os.environ.get("PATH", "")
+        ),
+        "GIT_SPY_LOG": str(git_spy["log"]),
+        "RM_SPY_LOG": str(git_spy["rm_log"]),
+        "MEGAPLAN_SUPERVISOR_RUNTIME_ROOT": str(root),
+        "MEGAPLAN_SUPERVISOR_BASE_PYTHON": str(fake),
+        "ARNOLD_REFERENCE_SCHEDULE_STORES": str(tmp / "ref-schedules"),
+    }
+
+
+def test_supervisor_runtime_refuses_rebuild_when_runtime_referenced(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """T-0027: the venv-rebuild rm -rf is behind the reference census.  A
+    custody lease referencing the exact fingerprint runtime root refuses the
+    rebuild (exit 5) BEFORE the rm -rf — the rm spy sees zero -rf calls and
+    the stale runtime stays on disk."""
+    tmp = Path(sandbox["tmp_path"])
+    wrapper = _supervisor_wrapper(tmp, _supervisor_source(tmp))
+    fake = _supervisor_fake_python(tmp)
+    root = tmp / "supervisor-root"
+    env = _supervisor_env(tmp, git_spy, root, fake)
+
+    # First build (no references yet) so the fingerprint runtime dir exists.
+    proc = sandbox["run"](wrapper, extra_env=env)
+    assert proc.returncode == 0, proc.stderr
+    runtimes = list((root / "runtimes").iterdir())
+    assert len(runtimes) == 1, runtimes
+    runtime = runtimes[0]
+    # Break the runtime so the rebuild path (and its rm -rf) is reached.
+    (runtime / "bin" / "python3").chmod(0o644)
+
+    # A custody lease references the exact runtime root.
+    lease_store = tmp / "ref-leases"
+    lease_store.mkdir(parents=True)
+    (lease_store / "lease-1.history.jsonl").write_text(
+        json.dumps({"cwd": str(runtime)}) + "\n", encoding="utf-8"
+    )
+
+    proc = sandbox["run"](wrapper, extra_env=env)
+    assert proc.returncode == 5, proc.stdout + proc.stderr
+    assert "REFERENCED" in proc.stderr
+    assert runtime.is_dir()
+    rm_log = _spy_log(Path(git_spy["rm_log"]))
+    assert not any("-rf" in line for line in rm_log), rm_log
+
+
+def test_supervisor_runtime_refuses_rebuild_when_census_unknown(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """T-0027 fail-closed: an unreadable/corrupt reference store makes the
+    census UNKNOWN and the rebuild (rm -rf) is refused (exit 5) — delete-on-
+    unknown never happens."""
+    tmp = Path(sandbox["tmp_path"])
+    wrapper = _supervisor_wrapper(tmp, _supervisor_source(tmp))
+    fake = _supervisor_fake_python(tmp)
+    root = tmp / "supervisor-root"
+    env = _supervisor_env(tmp, git_spy, root, fake)
+
+    proc = sandbox["run"](wrapper, extra_env=env)
+    assert proc.returncode == 0, proc.stderr
+    runtime = list((root / "runtimes").iterdir())[0]
+    (runtime / "bin" / "python3").chmod(0o644)
+
+    # A file squatting on the configured chain store path => UNKNOWN.
+    chain_store = tmp / "ref-chains"
+    chain_store.write_text("not a directory\n", encoding="utf-8")
+
+    proc = sandbox["run"](wrapper, extra_env=env)
+    assert proc.returncode == 5, proc.stdout + proc.stderr
+    assert "UNKNOWN" in proc.stderr
+    assert runtime.is_dir()
+    rm_log = _spy_log(Path(git_spy["rm_log"]))
+    assert not any("-rf" in line for line in rm_log), rm_log
+
+
+def test_supervisor_runtime_rebuilds_stale_runtime_on_clear_census(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """T-0027: with a CLEAR census verdict the stale runtime IS rm -rf'd and
+    rebuilt (the rm spy sees the exact runtime path) and the wrapper
+    completes successfully."""
+    tmp = Path(sandbox["tmp_path"])
+    wrapper = _supervisor_wrapper(tmp, _supervisor_source(tmp))
+    fake = _supervisor_fake_python(tmp)
+    root = tmp / "supervisor-root"
+    env = _supervisor_env(tmp, git_spy, root, fake)
+
+    proc = sandbox["run"](wrapper, extra_env=env)
+    assert proc.returncode == 0, proc.stderr
+    runtime = list((root / "runtimes").iterdir())[0]
+    (runtime / "bin" / "python3").chmod(0o644)
+
+    proc = sandbox["run"](wrapper, extra_env=env)
+    assert proc.returncode == 0, proc.stderr
+    rm_log = _spy_log(Path(git_spy["rm_log"]))
+    assert any(str(runtime) in line for line in rm_log), rm_log
+    assert runtime.is_dir()  # rebuilt in place
+
+
+# ── T-0027: cli --fresh worktree reset behind the census ─────────────────────
+
+
+def _fresh_worktree_registered(repo: Path, target: Path) -> bool:
+    proc = _git(repo, "worktree", "list", "--porcelain")
+    return any(
+        line.removeprefix("worktree ").strip() == str(target)
+        for line in proc.stdout.splitlines()
+        if line.startswith("worktree ")
+    )
+
+
+def _fresh_reset_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "fresh-app"
+    git(None, "init", str(repo))
+    git(repo, "config", "user.email", "lifecycle@example.invalid")
+    git(repo, "config", "user.name", "Lifecycle Tests")
+    git(repo, "config", "commit.gpgsign", "false")
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    git(repo, "add", "README.md")
+    git(repo, "commit", "-m", "seed")
+    git(repo, "branch", "-M", "main")
+    target = tmp_path / "chain-worktree"
+    git(repo, "worktree", "add", "-b", "chain-fresh", str(target), "HEAD")
+    return repo, target
+
+
+def test_fresh_reset_refuses_when_worktree_referenced_by_lease(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T-0027: --fresh worktree remove --force + branch -D are behind the
+    reference census.  A lease referencing the exact worktree root refuses
+    the reset with the worktree and branch intact (--fresh is NOT evidence)."""
+    from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
+    from arnold_pipelines.megaplan.types import CliError
+
+    repo, target = _fresh_reset_repo(tmp_path)
+    _census_tmp_env(monkeypatch, tmp_path)
+    lease_store = tmp_path / "ref-leases"
+    lease_store.mkdir(parents=True)
+    (lease_store / "lease-1.history.jsonl").write_text(
+        json.dumps({"cwd": str(target)}) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        _reset_chain_worktree_target(
+            repo, target, "chain-fresh", worktree_registered=_fresh_worktree_registered
+        )
+
+    assert exc_info.value.code == "worktree_reset_refused"
+    assert "reference census" in str(exc_info.value)
+    assert _fresh_worktree_registered(repo, target)
+    assert target.exists()
+
+
+def test_fresh_reset_refuses_when_census_store_corrupt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T-0027 fail-closed: an unreadable/corrupt reference store makes the
+    census UNKNOWN and the --fresh reset refuses — delete-on-unknown never
+    happens."""
+    from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
+    from arnold_pipelines.megaplan.types import CliError
+
+    repo, target = _fresh_reset_repo(tmp_path)
+    _census_tmp_env(monkeypatch, tmp_path)
+    chain_store = tmp_path / "ref-chains"
+    chain_store.write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(CliError) as exc_info:
+        _reset_chain_worktree_target(
+            repo, target, "chain-fresh", worktree_registered=_fresh_worktree_registered
+        )
+
+    assert exc_info.value.code == "worktree_reset_refused"
+    assert "UNKNOWN" in str(exc_info.value)
+    assert _fresh_worktree_registered(repo, target)
+    assert target.exists()
+
+
+def test_fresh_reset_proceeds_on_clear_census(tmp_path: Path) -> None:
+    """T-0027: with a CLEAR census verdict the --fresh reset proceeds: the
+    registered worktree is removed and the branch is deleted."""
+    from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
+
+    repo, target = _fresh_reset_repo(tmp_path)
+    _reset_chain_worktree_target(
+        repo, target, "chain-fresh", worktree_registered=_fresh_worktree_registered
+    )
+
+    assert not _fresh_worktree_registered(repo, target)
+    assert not target.exists()
+    show = _git(repo, "show-ref", "--verify", "--quiet", "refs/heads/chain-fresh")
+    assert show.returncode != 0
+
+
+def test_fresh_reset_refuses_when_active_manifest_references_worktree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """G6 round-4: the --fresh census must NOT exclude the ACTIVE manifest
+    (ARNOLD_RUNTIME_MANIFEST) from its scan.  An active manifest whose
+    epic.runtime_root IS the worktree refuses the reset (REFERENCED; the
+    worktree and branch stay intact — --fresh is NOT evidence of safety)."""
+    from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
+    from arnold_pipelines.megaplan.types import CliError
+
+    repo, target = _fresh_reset_repo(tmp_path)
+    _census_tmp_env(monkeypatch, tmp_path)
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True)
+    active = manifest_dir / "epic-live.json"
+    active.write_text(
+        json.dumps({"epic": {"runtime_root": str(target)}}), encoding="utf-8"
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(active))
+
+    with pytest.raises(CliError) as exc_info:
+        _reset_chain_worktree_target(
+            repo, target, "chain-fresh", worktree_registered=_fresh_worktree_registered
+        )
+
+    assert exc_info.value.code == "worktree_reset_refused"
+    assert "REFERENCED" in str(exc_info.value)
+    assert _fresh_worktree_registered(repo, target)
+    assert target.exists()
+
+
+def test_fresh_reset_refuses_when_active_manifest_corrupt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """G6 round-4: a corrupt ACTIVE manifest makes the --fresh census UNKNOWN
+    and the reset refuses — delete-on-unknown never happens (previously the
+    active manifest was excluded as ``current_manifest``, collapsing UNKNOWN
+    to CLEAR)."""
+    from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
+    from arnold_pipelines.megaplan.types import CliError
+
+    repo, target = _fresh_reset_repo(tmp_path)
+    _census_tmp_env(monkeypatch, tmp_path)
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True)
+    active = manifest_dir / "epic-live.json"
+    active.write_text("{not valid json\n", encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(active))
+
+    with pytest.raises(CliError) as exc_info:
+        _reset_chain_worktree_target(
+            repo, target, "chain-fresh", worktree_registered=_fresh_worktree_registered
+        )
+
+    assert exc_info.value.code == "worktree_reset_refused"
+    assert "UNKNOWN" in str(exc_info.value)
+    assert _fresh_worktree_registered(repo, target)
+    assert target.exists()
+
+
+# ── T-0027: chain-reset plan-dir removal behind the census ───────────────────
+
+
+def _chain_reset_env(tmp_path: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHONPATH": str(REPO_ROOT),
+            "ARNOLD_BASE_DIR": str(tmp_path / "base"),
+            "ARNOLD_RUNTIME_MANIFEST_DIR": str(tmp_path / "manifests"),
+            # No active manifest (equivalent to env unset): the census scans
+            # every manifest in the (sandbox) store and an absent/corrupt
+            # store is not a reference.  Tests that need an active manifest
+            # override this key with the sandbox manifest path.
+            "ARNOLD_RUNTIME_MANIFEST": "",
+            "ARNOLD_REFERENCE_CHAIN_STORE": str(tmp_path / "ref-chains"),
+            "ARNOLD_REFERENCE_MARKER_STORE": str(tmp_path / "ref-markers"),
+            "ARNOLD_REFERENCE_SCHEDULE_STORES": str(tmp_path / "ref-schedules"),
+            "ARNOLD_REFERENCE_REPAIR_QUEUE": str(tmp_path / "ref-repair-queue"),
+            "ARNOLD_REFERENCE_LEASE_STORE": str(tmp_path / "ref-leases"),
+            # Per-plan custody lease stores live under the reset's own plan
+            # root: <ws>/.megaplan/plans/<plan>/custody/leases (mirrors
+            # DEFAULT_PLAN_LEASE_ROOT on the box).
+            "ARNOLD_REFERENCE_PLAN_LEASE_ROOT": str(
+                tmp_path / "ws" / ".megaplan" / "plans"
+            ),
+        }
+    )
+    return env
+
+
+def _chain_reset_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    from arnold_pipelines.megaplan.cloud.cli import _chain_state_reset_command
+
+    workspace = tmp_path / "ws"
+    plan_dir = workspace / ".megaplan" / "plans" / "epic-a"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "chain.yaml").write_text("milestones: []\n", encoding="utf-8")
+    state_path = workspace / ".megaplan" / "plans" / ".epic_chains" / "epic-a.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "completed": [],
+                "last_state": "stalled",
+                "current_plan_name": "epic-a",
+                "current_milestone_index": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    cmd = _chain_state_reset_command(
+        workspace=str(workspace),
+        state_path=str(state_path),
+        log_relative="reset.log",
+        force=False,
+    )
+    return workspace, plan_dir, state_path, cmd
+
+
+def test_chain_state_reset_blocks_plan_dir_removal_when_referenced(
+    tmp_path: Path,
+) -> None:
+    """T-0027: chain-reset's rmtree(plan_dir) is behind the reference census.
+    A plan dir holding referenced custody/leases is not removed and the chain
+    state is preserved; the reset reports a blocked status."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+
+    lease_store = tmp_path / "ref-leases"
+    lease_store.mkdir(parents=True)
+    (lease_store / "lease-1.history.jsonl").write_text(
+        json.dumps({"cwd": str(plan_dir)}) + "\n", encoding="utf-8"
+    )
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-REFERENCED"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_chain_state_reset_blocks_plan_dir_removal_when_census_corrupt(
+    tmp_path: Path,
+) -> None:
+    """T-0027 fail-closed: an unreadable/corrupt reference store makes the
+    census UNKNOWN and the plan dir is not removed — delete-on-unknown never
+    happens."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+    chain_store = tmp_path / "ref-chains"
+    chain_store.write_text("not a directory\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-UNKNOWN"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_chain_state_reset_removes_plan_dir_on_clear_census(tmp_path: Path) -> None:
+    """T-0027: with a CLEAR census verdict the chain-reset proceeds: the
+    state file and the plan dir are removed and the reset reports success."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "reset"
+    assert str(state_path) in out["removed"]
+    assert str(plan_dir) in out["removed"]
+    assert not plan_dir.exists()
+    assert not state_path.exists()
+
+
+def test_chain_state_reset_blocks_when_active_manifest_references_plan_dir(
+    tmp_path: Path,
+) -> None:
+    """G6 round-4: the chain-reset census must NOT exclude the ACTIVE
+    manifest (ARNOLD_RUNTIME_MANIFEST) from its scan.  An active manifest
+    whose epic.runtime_root IS the plan dir makes the reset refuse
+    (REFERENCED — zero rmtree/unlink)."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True)
+    active = manifest_dir / "epic-live.json"
+    active.write_text(
+        json.dumps({"epic": {"runtime_root": str(plan_dir)}}), encoding="utf-8"
+    )
+
+    env = _chain_reset_env(tmp_path)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(active)
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-REFERENCED"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_chain_state_reset_blocks_when_active_manifest_corrupt(
+    tmp_path: Path,
+) -> None:
+    """G6 round-4: a corrupt ACTIVE manifest makes the census UNKNOWN — it
+    was previously excluded as ``current_manifest`` so the corruption
+    collapsed to CLEAR and the reset removed the plan dir (delete-on-unknown
+    violated)."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True)
+    active = manifest_dir / "epic-live.json"
+    active.write_text("{not valid json\n", encoding="utf-8")
+
+    env = _chain_reset_env(tmp_path)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(active)
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-UNKNOWN"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_chain_state_reset_blocks_when_state_file_corrupt(tmp_path: Path) -> None:
+    """G6 round-6: a corrupt/unreadable chain state file means the true
+    plan/target is UNKNOWN — the reset BLOCKS and preserves the state file
+    and plan dir (zero unlink/rmtree) instead of collapsing to CLEAR and
+    deleting the state."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+    state_path.write_text("{not valid json\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "blocked"
+    assert out["reason"].startswith("state_unreadable:")
+    assert out["plan_dir"] is None
+    assert "removed" not in out
+    assert plan_dir.exists()
+    assert state_path.exists()
+    assert state_path.read_text(encoding="utf-8") == "{not valid json\n"
+
+
+# ── G6: epic-chain --fresh reset behind the reference census ─────────────────
+
+
+def _epic_chain_reset_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    from arnold_pipelines.megaplan.cloud.cli import _epic_chain_state_reset_command
+
+    workspace = tmp_path / "ws"
+    child_spec = workspace / "epic-chain" / "child-a.yaml"
+    child_spec.parent.mkdir(parents=True)
+    child_spec.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = workspace / ".megaplan" / "plans" / "epic-a"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "chain.yaml").write_text("milestones: []\n", encoding="utf-8")
+    child_digest = hashlib.sha1(str(child_spec.resolve()).encode("utf-8")).hexdigest()[:12]
+    child_state_path = (
+        child_spec.parent
+        / ".megaplan"
+        / "plans"
+        / ".chains"
+        / f"child-a-{child_digest}.json"
+    )
+    child_state_path.parent.mkdir(parents=True)
+    child_state_path.write_text(
+        json.dumps({"current_plan_name": "epic-a"}), encoding="utf-8"
+    )
+    state_path = (
+        child_spec.parent / ".megaplan" / "plans" / ".epic_chains" / "epic-chain.json"
+    )
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps({"current_spec_path": str(child_spec), "last_state": "stalled"}),
+        encoding="utf-8",
+    )
+    cmd = _epic_chain_state_reset_command(
+        workspace=str(workspace),
+        state_path=str(state_path),
+        force=True,
+    )
+    return workspace, plan_dir, state_path, cmd
+
+
+def test_epic_chain_state_reset_blocks_when_child_plan_referenced(
+    tmp_path: Path,
+) -> None:
+    """G6: epic-chain --fresh's state unlink / plan-dir rmtree is behind the
+    reference census.  A plan dir holding referenced custody/leases is not
+    removed and the epic-chain state file is preserved (zero unlink/rmtree)."""
+    workspace, plan_dir, state_path, cmd = _epic_chain_reset_fixture(tmp_path)
+
+    lease_store = tmp_path / "ref-leases"
+    lease_store.mkdir(parents=True)
+    (lease_store / "lease-1.history.jsonl").write_text(
+        json.dumps({"cwd": str(plan_dir)}) + "\n", encoding="utf-8"
+    )
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-REFERENCED"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_epic_chain_state_reset_blocks_when_census_corrupt(tmp_path: Path) -> None:
+    """G6 fail-closed: an unreadable/corrupt reference store makes the census
+    UNKNOWN and the epic-chain state unlink / plan-dir rmtree never happens —
+    delete-on-unknown never happens."""
+    workspace, plan_dir, state_path, cmd = _epic_chain_reset_fixture(tmp_path)
+    chain_store = tmp_path / "ref-chains"
+    chain_store.write_text("not a directory\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-UNKNOWN"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_epic_chain_state_reset_removes_state_and_plan_on_clear_census(
+    tmp_path: Path,
+) -> None:
+    """G6: with a CLEAR census verdict the epic-chain --fresh reset proceeds:
+    the state file and the current child's plan dir are removed."""
+    workspace, plan_dir, state_path, cmd = _epic_chain_reset_fixture(tmp_path)
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "reset"
+    assert str(state_path) in out["removed"]
+    assert str(plan_dir) in out["removed"]
+    assert not plan_dir.exists()
+    assert not state_path.exists()
+
+
+def test_epic_chain_state_reset_blocks_when_active_manifest_references_plan_dir(
+    tmp_path: Path,
+) -> None:
+    """G6 round-4: the epic-chain --fresh census must NOT exclude the ACTIVE
+    manifest (ARNOLD_RUNTIME_MANIFEST) from its scan.  An active manifest
+    whose epic.runtime_root IS the child plan dir makes the reset refuse
+    (REFERENCED — zero rmtree/unlink)."""
+    workspace, plan_dir, state_path, cmd = _epic_chain_reset_fixture(tmp_path)
+
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True)
+    active = manifest_dir / "epic-live.json"
+    active.write_text(
+        json.dumps({"epic": {"runtime_root": str(plan_dir)}}), encoding="utf-8"
+    )
+
+    env = _chain_reset_env(tmp_path)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(active)
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-REFERENCED"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_epic_chain_state_reset_blocks_when_active_manifest_corrupt(
+    tmp_path: Path,
+) -> None:
+    """G6 round-4: a corrupt ACTIVE manifest makes the epic-chain census
+    UNKNOWN and the --fresh reset refuses — delete-on-unknown never happens
+    (previously the active manifest was excluded as ``current_manifest``,
+    collapsing UNKNOWN to CLEAR)."""
+    workspace, plan_dir, state_path, cmd = _epic_chain_reset_fixture(tmp_path)
+
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True)
+    active = manifest_dir / "epic-live.json"
+    active.write_text("{not valid json\n", encoding="utf-8")
+
+    env = _chain_reset_env(tmp_path)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(active)
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-UNKNOWN"
+    assert plan_dir.exists()
+    assert state_path.exists()
+
+
+def test_epic_chain_state_reset_blocks_when_state_file_corrupt(
+    tmp_path: Path,
+) -> None:
+    """G6 round-6: a corrupt epic-chain state file makes the --fresh reset
+    BLOCK — the state file and child plan dir are preserved (zero
+    unlink/rmtree) instead of an empty-derived CLEAR deleting them."""
+    workspace, plan_dir, state_path, cmd = _epic_chain_reset_fixture(tmp_path)
+    state_path.write_text("{not valid json\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "blocked"
+    assert out["reason"].startswith("state_unreadable:")
+    assert out["plan_dir"] is None
+    assert "removed" not in out
+    assert plan_dir.exists()
+    assert state_path.exists()
+    assert state_path.read_text(encoding="utf-8") == "{not valid json\n"
+
+
+def test_epic_chain_state_reset_blocks_when_child_state_file_corrupt(
+    tmp_path: Path,
+) -> None:
+    """G6 round-8: a corrupt/unreadable CHILD chain state file makes the
+    --fresh reset BLOCK — the parent epic-chain state and the child plan dir
+    are preserved (zero unlink/rmtree) instead of child_raw={} degrading to
+    plan_dir=None -> CLEAR -> parent state unlink.  Covers both corrupt JSON
+    and a non-object JSON root (mirrors the parent-state P4 handling)."""
+    workspace, plan_dir, state_path, cmd = _epic_chain_reset_fixture(tmp_path)
+
+    child_spec = workspace / "epic-chain" / "child-a.yaml"
+    child_digest = hashlib.sha1(str(child_spec.resolve()).encode("utf-8")).hexdigest()[:12]
+    child_state_path = (
+        child_spec.parent
+        / ".megaplan"
+        / "plans"
+        / ".chains"
+        / f"child-a-{child_digest}.json"
+    )
+    original_parent_state = state_path.read_text(encoding="utf-8")
+
+    for payload in ("{not valid json\n", "[]"):
+        child_state_path.write_text(payload, encoding="utf-8")
+        proc = subprocess.run(
+            ["bash", "-c", cmd],
+            env=_chain_reset_env(tmp_path),
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        out = json.loads(proc.stdout)
+        assert out["status"] == "blocked"
+        assert out["reason"].startswith("child_state_unreadable:")
+        assert out["plan_dir"] is None
+        assert "removed" not in out
+        assert plan_dir.exists()
+        assert state_path.read_text(encoding="utf-8") == original_parent_state
+
+
+def _plan_lease_event() -> dict:
+    """A REAL dispatch custody-lease acquire event (worker_dispatch_wbc.py
+    open_lease_store(plan_dir / "custody" / "leases") -> acquire): owner
+    identity triple + grant refs, NO path field of any kind."""
+    return {
+        "event_id": "acquire-custody-lease-abc123",
+        "lease_id": "custody-lease-abc123",
+        "sequence": 1,
+        "event_type": "acquire",
+        "occurred_at": "2026-08-12T00:00:00+00:00",
+        "custody_epoch": 1,
+        "owner_host": "agentbox",
+        "owner_pid": "4242",
+        "owner_boot_id": "boot-1",
+        "run_authority_grant_id": "attempt-1",
+        "coordinator_fence_token": 0,
+        "wbc_attempt_reference": "attempt-1",
+        "occurrence_digest": "sha256:abc123",
+        "idempotency_key": "attempt-1:start",
+        "payload": {"expires_at": "2026-08-12T01:00:00+00:00"},
+    }
+
+
+def test_chain_state_reset_blocks_plan_dir_removal_when_plan_lease_store_present(
+    tmp_path: Path,
+) -> None:
+    """G6: the per-plan custody lease STORE is the reference.  A plan dir
+    whose <plan>/custody/leases store holds a lease file is REFERENCED even
+    though the real lease records carry NO path field — the census previously
+    matched only JSON path values, so chain reset could rmtree(plan_dir) with
+    a live lease.  The reset must refuse (zero rmtree) and preserve the plan
+    dir and chain state."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+
+    lease_store = plan_dir / "custody" / "leases"
+    lease_store.mkdir(parents=True)
+    (lease_store / "custody-lease-abc123.history.jsonl").write_text(
+        json.dumps(_plan_lease_event()) + "\n", encoding="utf-8"
+    )
+    # Prove the record carries NO curated path-bearing key: the reference
+    # comes from STORE PRESENCE, not from any JSON path value.
+    from arnold_pipelines.megaplan.cloud.runtime_references import _PATH_KEYS
+
+    assert _PATH_KEYS.isdisjoint(_plan_lease_event().keys())
+    assert _PATH_KEYS.isdisjoint(_plan_lease_event()["payload"].keys())
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-REFERENCED"
+    assert plan_dir.exists()  # zero rmtree
+    assert lease_store.exists()
+    assert state_path.exists()
+
+
+def test_chain_state_reset_proceeds_when_plan_lease_store_empty(
+    tmp_path: Path,
+) -> None:
+    """G6 empty side: a plan dir whose custody/leases store exists but holds
+    no lease files is NOT referenced — the reset proceeds and removes the
+    plan dir."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+    (plan_dir / "custody" / "leases").mkdir(parents=True)
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "reset"
+    assert str(plan_dir) in out["removed"]
+    assert not plan_dir.exists()
+    assert not state_path.exists()
+
+
+def test_chain_state_reset_blocks_plan_dir_removal_when_plan_lease_store_corrupt(
+    tmp_path: Path,
+) -> None:
+    """G6 fail-closed: a corrupt lease file in the plan's OWN custody/leases
+    store makes the census UNKNOWN and the reset is blocked — the plan dir is
+    never removed (delete-on-unknown never happens)."""
+    workspace, plan_dir, state_path, cmd = _chain_reset_fixture(tmp_path)
+
+    lease_store = plan_dir / "custody" / "leases"
+    lease_store.mkdir(parents=True)
+    (lease_store / "lease-corrupt.history.jsonl").write_text(
+        '{"lease_id": "lease-corrupt", "event_type": "acquire", '
+        '"payload": {"expires_at": "',
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        ["bash", "-c", cmd],
+        env=_chain_reset_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads((workspace / "reset.log").read_text(encoding="utf-8"))
+    assert out["status"] == "blocked"
+    assert out["reason"] == "reference-census-UNKNOWN"
+    assert plan_dir.exists()
+    assert state_path.exists()

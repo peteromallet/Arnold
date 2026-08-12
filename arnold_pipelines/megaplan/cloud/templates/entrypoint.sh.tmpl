@@ -172,13 +172,11 @@ mp_install_megaplan
 # Supervisors never execute from the mutable environment being refreshed
 # above. Build a versioned venv, verify its imports, then atomically swap the
 # stable `current` symlink before watchdog/repair/auditor sessions can start.
-# The supervisor source is the fixed /workspace/arnold checkout (per-epic
-# manifest worktrees share its frozen venv); hot env is credentials-only and
-# can never re-point the supervisor runtime.
-export MEGAPLAN_SUPERVISOR_SOURCE=/workspace/arnold
-if [[ ! -f "$MEGAPLAN_SUPERVISOR_SOURCE/pyproject.toml" ]]; then
-  export MEGAPLAN_SUPERVISOR_SOURCE="$$WORKSPACE_PATH"
-fi
+# The supervisor venv is prepared from the fixed /workspace/arnold checkout by
+# arnold-supervisor-runtime itself (per-epic manifest worktrees share its
+# frozen venv); hot env is credentials-only and can never re-point the
+# supervisor runtime.  There is no supervisor-source export from the
+# entrypoint: that retired selector name has no reader (G5).
 /usr/local/bin/arnold-supervisor-runtime --prepare
 export MEGAPLAN_SUPERVISOR_PYTHON=/workspace/.megaplan/supervisor-python/current/bin/python3
 export MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED=1
@@ -210,18 +208,32 @@ path.write_text(json.dumps({
 PY
 fi
 
-# Launch heartbeat in its own tmux session.
-if ! tmux has-session -t heartbeat 2>/dev/null; then
+# Launch heartbeat in its own tmux session.  Runtime identity for every
+# supervisor session below resolves from the per-session manifest
+# (ARNOLD_RUNTIME_MANIFEST -> epic.runtime_root).  There is no shared-root
+# literal and no env-selector read (G5): when the pin is absent the
+# supervisor sessions are not started, so a missing/corrupt manifest never
+# launches a supervisor from /workspace/arnold.
+if [[ -f /usr/local/bin/arnold-supervisor-runtime-lib ]]; then
+  . /usr/local/bin/arnold-supervisor-runtime-lib
+fi
+ENTRYPOINT_RUNTIME_ROOT="$$(arnold_runtime_manifest_epic_field epic.runtime_root 2>/dev/null || true)"
+export ENTRYPOINT_RUNTIME_ROOT
+if [[ -z "$$ENTRYPOINT_RUNTIME_ROOT" || ! -d "$$ENTRYPOINT_RUNTIME_ROOT" ]]; then
+  echo "supervisor runtime root unbound (ARNOLD_RUNTIME_MANIFEST missing or invalid); heartbeat/watchdog/resident not started"
+fi
+
+if [[ -n "$$ENTRYPOINT_RUNTIME_ROOT" ]] && ! tmux has-session -t heartbeat 2>/dev/null; then
   tmux new-session -d -s heartbeat -c /workspace \
-    "bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=/workspace/arnold; cd \"\$runtime_src\"; exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat\"'"
+    "bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=\"\$$ENTRYPOINT_RUNTIME_ROOT\"; cd \"\$runtime_src\"; exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat\"'"
   echo "heartbeat watchdog running in tmux session 'heartbeat'"
 fi
 
 # Launch cloud chain watchdog in its own tmux session. It scans cloud-session
 # markers hourly and wakes stopped chain runners without disturbing live ones.
-if ! tmux has-session -t watchdog 2>/dev/null; then
+if [[ -n "$$ENTRYPOINT_RUNTIME_ROOT" ]] && ! tmux has-session -t watchdog 2>/dev/null; then
   tmux new-session -d -s watchdog -c /workspace \
-    "bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=/workspace/arnold; cd \"\$runtime_src\"; exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog\"'"
+    "bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=\"\$$ENTRYPOINT_RUNTIME_ROOT\"; cd \"\$runtime_src\"; exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog\"'"
   echo "cloud watchdog running in tmux session 'watchdog'"
 fi
 
@@ -231,7 +243,7 @@ fi
 if [[ -f /workspace/.secrets/megaplan-resident-discord.env ]]; then
   if ! tmux has-session -t megaplan-resident-discord 2>/dev/null; then
     tmux new-session -d -s megaplan-resident-discord -c /workspace \
-      "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; [[ ! -f /workspace/.megaplan/resident-runtime.env ]] || . /workspace/.megaplan/resident-runtime.env; set +a; runtime_src=/workspace/arnold; export MEGAPLAN_RUNTIME_SRC=/workspace/arnold; runtime_python=\${MEGAPLAN_RUNTIME_PYTHON:-python}; store_root=\${MEGAPLAN_RESIDENT_STORE_ROOT:-/workspace/arnold/.megaplan/resident}; cd \"\$runtime_src\"; export PYTHONPATH=\$runtime_src:\${PYTHONPATH:-}; export MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=\${MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE:-production}; echo [resident-start] \$(date -Iseconds) provider=\$MEGAPLAN_RESIDENT_MODEL_PROVIDER model=\$MEGAPLAN_RESIDENT_MODEL trusted=\${MEGAPLAN_TRUSTED_CONTAINER:-0} markers=\$([ -d /workspace/.megaplan/cloud-sessions ] && echo yes || echo no) store_root=\$store_root >> /workspace/megaplan-resident-discord.log; exec \"\$runtime_python\" -P -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-production} --store-root \"\$store_root\" >> /workspace/megaplan-resident-discord.log 2>&1'"
+      "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; [[ ! -f /workspace/.megaplan/resident-runtime.env ]] || . /workspace/.megaplan/resident-runtime.env; set +a; runtime_src=\"\$$ENTRYPOINT_RUNTIME_ROOT\"; [[ -n \"\$runtime_src\" && -d \"\$runtime_src\" ]] || { echo resident_runtime_unbound; exit 78; }; runtime_python=\${MEGAPLAN_RUNTIME_PYTHON:-python}; store_root=\${MEGAPLAN_RESIDENT_STORE_ROOT:-\$runtime_src/.megaplan/resident}; cd \"\$runtime_src\"; export PYTHONPATH=\$runtime_src:\${PYTHONPATH:-}; export MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=\${MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE:-production}; echo [resident-start] \$(date -Iseconds) provider=\$MEGAPLAN_RESIDENT_MODEL_PROVIDER model=\$MEGAPLAN_RESIDENT_MODEL trusted=\${MEGAPLAN_TRUSTED_CONTAINER:-0} markers=\$([ -d /workspace/.megaplan/cloud-sessions ] && echo yes || echo no) store_root=\$store_root >> /workspace/megaplan-resident-discord.log; exec \"\$runtime_python\" -P -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-production} --store-root \"\$store_root\" >> /workspace/megaplan-resident-discord.log 2>&1'"
     echo "Discord resident running in tmux session 'megaplan-resident-discord'"
   fi
 else

@@ -32,6 +32,12 @@ RUNTIME_SELECTOR_NAMES = (
     "MEGAPLAN_META_ARNOLD_SRC",
     "MEGAPLAN_AUDIT_ARNOLD_SRC",
     "MEGAPLAN_SUPERVISOR_PYTHON",
+    # Retired selectors (T-0023/G5): kept on the deny-list so any
+    # re-introduced read is flagged; production derives these from the
+    # per-session manifest (ARNOLD_RUNTIME_MANIFEST -> epic.runtime_root).
+    "KIMI_GOAL_ARNOLD_SRC",
+    "MEGAPLAN_DISCORD_DM_ARNOLD_SRC",
+    "MEGAPLAN_DISCOVER_ARNOLD_SRC",
 )
 _ARNOLD_MODULE_PREFIXES = ("arnold", "arnold_pipelines", "agentbox")
 _SUPERVISOR_COMPONENTS = {

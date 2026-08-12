@@ -404,6 +404,165 @@ def test_enable_auto_merge_ignores_internal_run_telemetry(
     assert calls[0][:4] == ["gh", "pr", "merge", "77"]
 
 
+def _sandbox_census_stores(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Point the reference census at sandboxed (initially absent) stores."""
+    monkeypatch.setenv("ARNOLD_BASE_DIR", "")
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST_DIR", str(tmp_path / "ref-manifests"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_CHAIN_STORE", str(tmp_path / "ref-chains"))
+    monkeypatch.setenv("ARNOLD_REFERENCE_MARKER_STORE", str(tmp_path / "ref-markers"))
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_SCHEDULE_STORES", str(tmp_path / "ref-schedules")
+    )
+    monkeypatch.setenv(
+        "ARNOLD_REFERENCE_REPAIR_QUEUE", str(tmp_path / "ref-repair-queue")
+    )
+    monkeypatch.setenv("ARNOLD_REFERENCE_LEASE_STORE", str(tmp_path / "ref-leases"))
+
+
+def _seed_chain_reference(store_root: Path, target: Path) -> None:
+    store = store_root / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "chain-ref.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "execution_environment": {"engine_root": str(target)}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_enable_auto_merge_skips_delete_branch_on_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout still referenced by a runtime store never gets its PR head
+    branch deleted: the census REFERENCED verdict drops --delete-branch from
+    the merge (the non-destructive merge itself still proceeds)."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    _seed_chain_reference(tmp_path, repo)
+
+    calls: list[list[str]] = []
+    messages: list[str] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=subprocess,
+            _run_command=lambda _root, argv, **_kwargs: calls.append(list(argv)),
+            _pr_state=lambda *_args, **_kwargs: "open",
+        ),
+    )
+
+    result = _enable_auto_merge(repo, 77, writer=messages.append)
+
+    assert result == "open"
+    assert calls
+    assert calls[0][:4] == ["gh", "pr", "merge", "77"]
+    assert "--delete-branch" not in calls[0]
+    assert any("refusing --delete-branch" in message for message in messages)
+
+
+def test_enable_auto_merge_skips_delete_branch_on_unknown_census(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A corrupt reference store makes the census UNKNOWN: --delete-branch is
+    refused (fail-closed — delete-on-unknown never happens)."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    store = tmp_path / "ref-chains"
+    store.mkdir(parents=True)
+    (store / "corrupt.json").write_text(
+        '{"metadata": {"execution_environment": ', encoding="utf-8"
+    )
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=subprocess,
+            _run_command=lambda _root, argv, **_kwargs: calls.append(list(argv)),
+            _pr_state=lambda *_args, **_kwargs: "open",
+        ),
+    )
+
+    _enable_auto_merge(repo, 77, writer=lambda _message: None)
+
+    assert calls
+    assert calls[0][:4] == ["gh", "pr", "merge", "77"]
+    assert "--delete-branch" not in calls[0]
+
+
+def test_enable_auto_merge_fallback_skips_delete_branch_on_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The immediate-squash fallback also refuses --delete-branch when the
+    census is REFERENCED (the flag is dropped from every merge path)."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _sandbox_census_stores(monkeypatch, tmp_path)
+    _seed_chain_reference(tmp_path, repo)
+
+    calls: list[list[str]] = []
+
+    def run_command(_root, argv, **_kwargs):
+        calls.append(list(argv))
+        if "--auto" in argv:
+            raise CliError(
+                "gh_pr_merge_failed",
+                "Auto merge is not allowed for PR 77",
+                extra={"stderr": "Auto merge is not allowed"},
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=subprocess,
+            _run_command=run_command,
+            _pr_state=lambda *_args, **_kwargs: "open",
+        ),
+    )
+
+    result = _enable_auto_merge(repo, 77, writer=lambda _message: None)
+
+    assert result == "merged"
+    assert len(calls) == 2
+    assert "--delete-branch" not in calls[0]
+    assert "--delete-branch" not in calls[1]
+
+
+def test_enable_auto_merge_keeps_delete_branch_on_clear_census(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CLEAR reference census keeps the route authority: the auto-merge
+    still passes --delete-branch exactly as before."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _sandbox_census_stores(monkeypatch, tmp_path)
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=subprocess,
+            _run_command=lambda _root, argv, **_kwargs: calls.append(list(argv)),
+            _pr_state=lambda *_args, **_kwargs: "open",
+        ),
+    )
+
+    _enable_auto_merge(repo, 77, writer=lambda _message: None)
+
+    assert calls
+    assert calls[0][:4] == ["gh", "pr", "merge", "77"]
+    assert "--delete-branch" in calls[0]
+
+
 def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
     messages: list[str] = []
     milestone = MilestoneSpec(

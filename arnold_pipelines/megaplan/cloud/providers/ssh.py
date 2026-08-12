@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
@@ -2791,16 +2791,20 @@ class SshProvider(Provider):
         intent_payload: dict[str, Any],
         apply_fn: Any,
     ) -> int:
-        """Route an SSH mutation through the WBC adapter if configured.
+        """Route an SSH mutation through the WBC adapter.
 
-        Step 13F: When the ssh_effect_adapter is provided, route build/deploy/
-        destroy through the WBC protocol.  Returns 0 on success, raises on
-        failure (matching existing SshProvider semantics).
+        Step 13F: build/deploy/destroy always route through the WBC protocol.
+        A missing adapter is a typed denial — SSH mutations are action-off in
+        M10 and must never fall back to direct transport execution.  Returns 0
+        on success, raises on failure (matching existing SshProvider semantics).
         """
         adapter = self._ssh_effect_adapter
         if adapter is None:
-            # No adapter configured — run directly (backward compat)
-            return apply_fn(intent_payload) or 0
+            raise CliError(
+                "ssh_effect_adapter_unavailable",
+                f"SSH {shard} effect denied: no ssh_effect_adapter installed; "
+                "SSH mutations are action-off",
+            )
 
         from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
             SshEffectShard,
@@ -2827,15 +2831,54 @@ class SshProvider(Provider):
             )
         return 0
 
-    def build(self, deploy_dir: Path) -> int:
-        # Step 13F: route through WBC when adapter is configured
-        if self._ssh_effect_adapter is not None:
-            return self._maybe_route_through_wbc(
-                "build",
-                {"deploy_dir": str(deploy_dir), "container": self._ssh.container},
-                lambda _: self._build_direct(deploy_dir),
+    def _gate_action_off_transport(
+        self,
+        shard: str,
+        transport: Callable[[], Any],
+    ) -> Any:
+        """Gate-only dispatch for action-off SSH operations.
+
+        ssh_exec / upload_file / upload_archive / down are action-off in M10:
+        they are not routed through the WBC protocol, but they must never run
+        ungated.  A missing adapter is a typed denial; a non-AUTHORIZED gate
+        verdict (or a production adapter) denies before any transport call.
+        """
+        adapter = self._ssh_effect_adapter
+        if adapter is None:
+            raise CliError(
+                "ssh_effect_adapter_unavailable",
+                f"SSH {shard} effect denied: no ssh_effect_adapter installed; "
+                "SSH mutations are action-off",
             )
-        return self._build_direct(deploy_dir)
+
+        from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+            SshEffectShard,
+            SshTarget,
+        )
+
+        target = SshTarget(
+            shard=SshEffectShard(shard),
+            host=self._ssh.host,
+            container=self._ssh.container,
+            operation=shard,
+        )
+
+        outcome = adapter.gate_dispatch(target)
+        if not outcome.ok:
+            raise CliError(
+                "provider_failed",
+                outcome.error or f"WBC gate blocked SSH {shard}",
+            )
+        return transport()
+
+    def build(self, deploy_dir: Path) -> int:
+        # Step 13F: every SSH mutation routes through the WBC effect adapter;
+        # a missing adapter is a typed denial, never a direct-transport fallback.
+        return self._maybe_route_through_wbc(
+            "build",
+            {"deploy_dir": str(deploy_dir), "container": self._ssh.container},
+            lambda _: self._build_direct(deploy_dir),
+        )
 
     def _build_direct(self, deploy_dir: Path) -> int:
         self._sync_deploy_dir(deploy_dir)
@@ -2852,25 +2895,20 @@ class SshProvider(Provider):
         secrets: dict[str, str],
         predeploy_transaction: Mapping[str, Any] | None = None,
     ) -> int:
-        # Step 13F: route through WBC when adapter is configured
-        if self._ssh_effect_adapter is not None:
-            return self._maybe_route_through_wbc(
-                "deploy",
-                {
-                    "deploy_dir": str(deploy_dir),
-                    "container": self._ssh.container,
-                    "port": self._spec.resources.port,
-                },
-                lambda _: self._deploy_direct(
-                    deploy_dir,
-                    secrets=secrets,
-                    predeploy_transaction=predeploy_transaction,
-                ),
-            )
-        return self._deploy_direct(
-            deploy_dir,
-            secrets=secrets,
-            predeploy_transaction=predeploy_transaction,
+        # Step 13F: every SSH mutation routes through the WBC effect adapter;
+        # a missing adapter is a typed denial, never a direct-transport fallback.
+        return self._maybe_route_through_wbc(
+            "deploy",
+            {
+                "deploy_dir": str(deploy_dir),
+                "container": self._ssh.container,
+                "port": self._spec.resources.port,
+            },
+            lambda _: self._deploy_direct(
+                deploy_dir,
+                secrets=secrets,
+                predeploy_transaction=predeploy_transaction,
+            ),
         )
 
     def _deploy_direct(
@@ -3167,34 +3205,56 @@ class SshProvider(Provider):
         return container_id
 
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        # Step 13F: ssh_exec is action-off — every dispatch routes through the
+        # adapter gate; a missing adapter or non-AUTHORIZED verdict is a typed
+        # denial with zero transport calls.
         target = self._container_io_target()
-        return self._remote_run(
-            f"docker exec {shlex.quote(target)} bash -lc {shlex.quote(command)}",
-            surface="ssh_exec",
+        return self._gate_action_off_transport(
+            "ssh_exec",
+            lambda: self._remote_run(
+                f"docker exec {shlex.quote(target)} bash -lc {shlex.quote(command)}",
+                surface="ssh_exec",
+            ),
         )
 
     def upload_file(self, src: Path, dest: str) -> None:
+        # Step 13F: upload_file is action-off — gate before any transport or
+        # local file IO.
         target = self._container_io_target()
-        payload = base64.b64encode(src.read_bytes()).decode("ascii")
         parent = Path(dest).parent.as_posix()
         inner = f"mkdir -p {shlex.quote(parent)} && base64 -d > {shlex.quote(dest)}"
-        self._remote_run(
-            f"docker exec -i {shlex.quote(target)} bash -lc {shlex.quote(inner)}",
-            input=payload,
-            surface="upload_file",
-        )
+
+        def _transport() -> None:
+            payload = base64.b64encode(src.read_bytes()).decode("ascii")
+            self._remote_run(
+                f"docker exec -i {shlex.quote(target)} bash -lc {shlex.quote(inner)}",
+                input=payload,
+                surface="upload_file",
+            )
+
+        self._gate_action_off_transport("upload_file", _transport)
 
     def upload_archive(self, src: Path, dest_dir: str) -> None:
+        # Step 13F: upload_archive is action-off — gate before any transport
+        # or local file IO.
         target = self._container_io_target()
-        payload = base64.b64encode(src.read_bytes()).decode("ascii")
         inner = f"mkdir -p {shlex.quote(dest_dir)} && base64 -d | tar -xzf - -C {shlex.quote(dest_dir)}"
-        self._remote_run(
-            f"docker exec -i {shlex.quote(target)} bash -lc {shlex.quote(inner)}",
-            input=payload,
-            surface="upload_archive",
-        )
+
+        def _transport() -> None:
+            payload = base64.b64encode(src.read_bytes()).decode("ascii")
+            self._remote_run(
+                f"docker exec -i {shlex.quote(target)} bash -lc {shlex.quote(inner)}",
+                input=payload,
+                surface="upload_archive",
+            )
+
+        self._gate_action_off_transport("upload_archive", _transport)
 
     def read_remote_file(self, path: str) -> str:
+        # Observation-only transport (Step 13F): `cat` of a remote file is a
+        # read-only inspection and is intentionally ungated — it must keep
+        # working without an effect adapter, exactly like the status read.
+        # It never mutates the remote.
         target = self._container_io_target()
         result = self._remote_run(
             f"docker exec {shlex.quote(target)} bash -lc {shlex.quote(f'cat {shlex.quote(path)}')}",
@@ -3203,6 +3263,12 @@ class SshProvider(Provider):
         return result.stdout
 
     def attach(self) -> int:
+        # Interactive transport (Step 13F): attach opens a raw PTY stream to
+        # the live tmux session — NOT observation-only and NOT a programmatic
+        # mutation API.  The attach command itself is non-mutating (a tmux
+        # client attach); all subsequent input is human-driven at an
+        # interactive TTY, so it is intentionally ungated like the
+        # observation transports.
         target = self._container_io_target()
         self._remote_run(
             f"docker exec -it {shlex.quote(target)} tmux attach -t agent",
@@ -3212,6 +3278,9 @@ class SshProvider(Provider):
         return 0
 
     def logs(self, *, follow: bool = True) -> int:
+        # Observation-only transport (Step 13F): `docker logs` is a read-only
+        # stream and is intentionally ungated — it must keep working without
+        # an effect adapter.  It never mutates the remote.
         target = self._container_io_target()
         argv = f"docker logs {'-f ' if follow else '--tail 200 '}{shlex.quote(target)}"
         if follow:
@@ -3265,7 +3334,14 @@ class SshProvider(Provider):
             runtime_revision=runtime_revision,
             session=session,
         )
-        result = self.ssh_exec(command)
+        # Observation-only path: status reads must keep working without an
+        # effect adapter, so they use the ungated observation transport
+        # instead of the action-off ssh_exec gate (Step 13F).
+        target = self._container_io_target()
+        result = self._remote_run(
+            f"docker exec {shlex.quote(target)} bash -lc {shlex.quote(command)}",
+            surface="status_observation",
+        )
         payload = json.loads(result.stdout)
         if not isinstance(payload, dict):
             raise CliError("provider_failed", "Megaplan status did not return a JSON object")
@@ -3278,18 +3354,23 @@ class SshProvider(Provider):
         return payload
 
     def down(self) -> int:
-        self._remote_run(f"docker stop {shlex.quote(self._ssh.container)}", surface="down")
+        # Step 13F: down is action-off — gate before any transport.
+        self._gate_action_off_transport(
+            "down",
+            lambda: self._remote_run(
+                f"docker stop {shlex.quote(self._ssh.container)}", surface="down"
+            ),
+        )
         return 0
 
     def destroy(self, *, volume: str | None = None) -> int:
-        # Step 13F: route through WBC when adapter is configured
-        if self._ssh_effect_adapter is not None:
-            return self._maybe_route_through_wbc(
-                "destroy",
-                {"container": self._ssh.container, "remote_dir": self._ssh.remote_dir},
-                lambda _: self._destroy_direct(volume=volume),
-            )
-        return self._destroy_direct(volume=volume)
+        # Step 13F: every SSH mutation routes through the WBC effect adapter;
+        # a missing adapter is a typed denial, never a direct-transport fallback.
+        return self._maybe_route_through_wbc(
+            "destroy",
+            {"container": self._ssh.container, "remote_dir": self._ssh.remote_dir},
+            lambda _: self._destroy_direct(volume=volume),
+        )
 
     def _destroy_direct(self, *, volume: str | None = None) -> int:
         del volume

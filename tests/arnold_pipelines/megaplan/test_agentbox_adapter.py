@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.agentbox_adapter import (
     _send_completion_dm,
     record_reconcile_pr_ready_dm,
 )
+from arnold_pipelines.megaplan.custody.action_validator import GateResult
 from arnold_pipelines.megaplan.custody.process_adapter_wbc import process_adapter_wbc_dir
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, save_chain_state
 
@@ -1215,6 +1216,8 @@ def test_record_completion_dm_emits_event_and_sends_discord_dm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The production delivery gate requires a configured bot token.
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "test-agentbox-token")
     config = _config_with_repo(tmp_path, "app")
     create_agentbox_operation(
         config,
@@ -1262,6 +1265,8 @@ def test_record_completion_dm_never_raises_when_discord_send_crashes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The production delivery gate requires a configured bot token.
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "test-agentbox-token")
     config = _config_with_repo(tmp_path, "app")
     create_agentbox_operation(
         config,
@@ -1353,11 +1358,22 @@ def test_agentbox_completion_delivery_is_once_across_concurrent_restart(
         finally:
             owner.close()
 
-    first_owner = open_resident_delivery_effects(effects_root)
-    second_owner = open_resident_delivery_effects(effects_root)
+    first_owner = open_resident_delivery_effects(
+        effects_root,
+        action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+    )
+    second_owner = open_resident_delivery_effects(
+        effects_root,
+        action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+    )
     with ThreadPoolExecutor(max_workers=2) as pool:
         first, second = list(pool.map(tick, (first_owner, second_owner)))
-    restarted = tick(open_resident_delivery_effects(effects_root))
+    restarted = tick(
+        open_resident_delivery_effects(
+            effects_root,
+            action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+        )
+    )
 
     assert provider_calls == 1
     assert sum(bool(item["ok"]) for item in (first, second, restarted)) >= 1
@@ -1413,7 +1429,10 @@ def test_agentbox_completion_ambiguous_provider_outcome_is_not_retried(
     effects_root = tmp_path / "shared-effects"
     outcomes = []
     for _ in range(2):
-        owner = open_resident_delivery_effects(effects_root)
+        owner = open_resident_delivery_effects(
+            effects_root,
+            action_gate_check=lambda _family, _key: GateResult.AUTHORIZED,
+        )
         try:
             outcomes.append(
                 _send_completion_dm(
@@ -1453,6 +1472,8 @@ def test_record_reconcile_pr_ready_dm_emits_event_and_sends_dm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The production delivery gate requires a configured bot token.
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "test-agentbox-token")
     config = _config_with_repo(tmp_path, "app")
     create_agentbox_operation(
         config,

@@ -2648,6 +2648,12 @@ def require_runtime_manifest_permit(spec_path: Path) -> None:
     - A present-but-invalid bound manifest => block (CliError). The permit
       only ever authorizes MANIFESTLESS operation — it never rescues a broken
       manifest (fail-closed, mirroring the box-side ``exit 78`` authority).
+    - A bound manifest entry that is PRESENT but unreadable — a dangling
+      symlink (the link entry exists, its target is gone) or a
+      stat-inaccessible path (EACCES) — fails closed with
+      ``runtime_manifest_invalid`` exactly like a present-but-invalid
+      manifest: the manifestless permit authorizes only a genuinely absent
+      file and never rescues a broken entry.
     - A bound manifest that is absent on disk => manifestless: pass only with
       a valid unexpired ``allow_manifestless`` permit on the
       ``.runtime_policy.json`` sidecar; else block.
@@ -2667,9 +2673,34 @@ def require_runtime_manifest_permit(spec_path: Path) -> None:
                 "production launch before any state load or identity binding.",
             )
         return
-    if not manifest_path.exists():
-        _require_valid_allow_manifestless_permit(spec_path)
-        return
+    def _block_unreadable(exc: Exception | None = None) -> None:
+        """Fail closed: the manifest entry is PRESENT but unusable."""
+        detail = f": {exc}" if exc is not None else " (dangling symlink)"
+        raise CliError(
+            "runtime_manifest_invalid",
+            "chain runtime admission denied: bound runtime manifest is "
+            f"present but unreadable (dangling symlink/stat failed){detail}",
+        ) from exc
+
+    try:
+        manifest_path.stat()
+    except FileNotFoundError:
+        # stat() FOLLOWS symlinks, so a dangling symlink (target missing)
+        # reports ENOENT even though the link entry itself exists.  lstat()
+        # sees the entry itself: only a genuinely never-existing path (lstat
+        # ENOENT too) is absent-for-admission and reaches the manifestless
+        # permit; a PRESENT-but-unreadable entry fails closed — a permit
+        # never rescues a broken manifest (G5 round-12).
+        try:
+            manifest_path.lstat()
+        except FileNotFoundError:
+            _require_valid_allow_manifestless_permit(spec_path)
+            return
+        except OSError as exc:  # noqa: BLE001 - lstat itself inaccessible
+            _block_unreadable(exc)
+        _block_unreadable()
+    except OSError as exc:  # noqa: BLE001 - EACCES: absence unprovable
+        _block_unreadable(exc)
     if is_compatibility_only_pointer(manifest_path):
         # Non-authoritative compatibility telemetry: treated as ABSENT for
         # admission (G2 correction 1) — the permit check applies.

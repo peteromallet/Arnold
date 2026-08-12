@@ -39,6 +39,7 @@ from arnold.workflow.execution_attempt_ledger import (
 from arnold_pipelines.megaplan.custody.action_validator import (
     ActionBoundaryType,
     GateResult,
+    adapter_effect_authorized,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -108,6 +109,18 @@ class DeliveryOutcome:
 # ── Resident delivery effects adapter ────────────────────────────────────────
 
 
+class ResidentDeliveryGateError(RuntimeError):
+    """Raised when a production delivery effects owner is opened without a gate.
+
+    Production construction (``DeliveryEffects(production_enabled=True)`` or
+    :func:`open_resident_delivery_effects`) without an explicit
+    ``action_gate_check`` is a wiring error, not a runtime denial: the
+    constructor raises before any dispatch, and the factory raises before
+    creating the state directory, SQLite ledger, or protocol so a missing gate
+    can never partially initialize durable state.
+    """
+
+
 class DeliveryEffects:
     """Resident delivery adapter over the WBC protocol.
 
@@ -128,6 +141,13 @@ class DeliveryEffects:
         ] = None,
         production_enabled: bool = False,
     ) -> None:
+        if production_enabled and action_gate_check is None:
+            raise ResidentDeliveryGateError(
+                "DeliveryEffects refuses production construction without an "
+                "explicit action_gate_check; pass current_delivery_gate_check "
+                "(or an equivalent gate) or construct in observation mode "
+                "(production_enabled=False)"
+            )
         self._protocol = protocol
         self._action_gate_check = action_gate_check
         self._production_enabled = production_enabled
@@ -154,9 +174,23 @@ class DeliveryEffects:
     # ── gate ────────────────────────────────────────────────────────────
 
     def _gate(self, target: DeliveryTarget) -> GateResult:
+        """Return the current delivery gate verdict, default-deny.
+
+        A missing gate is a typed denial (``BLOCKED_MISSING_GRANT``) and a
+        gate that raises is ``ERROR`` — neither may ever admit a delivery.
+        """
         if self._action_gate_check is None:
-            return GateResult.SHADOW_PASS
-        return self._action_gate_check("delivery", target.target_key)
+            return GateResult.BLOCKED_MISSING_GRANT
+        try:
+            return self._action_gate_check("delivery", target.target_key)
+        except Exception as exc:
+            LOGGER.error(
+                "Delivery action gate check raised for %s: %s: %s",
+                target.target_key,
+                type(exc).__name__,
+                exc,
+            )
+            return GateResult.ERROR
 
     # ── GLEK ─────────────────────────────────────────────────────────────
 
@@ -218,18 +252,16 @@ class DeliveryEffects:
             LOGGER.info("Production delivery effect selected for %s", target.target_key)
 
         verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
+        if not adapter_effect_authorized(verdict):
+            verdict_label = getattr(verdict, "value", None) or str(verdict)
             return DeliveryOutcome(
                 ok=False,
                 channel=target.channel.value,
                 action=target.action,
                 glek="",
                 outcome_kind=OUTCOME_FAILED,
-                error=f"Action gate blocked: {verdict.value}",
-                evidence={"gate_verdict": verdict.value},
+                error=f"Action gate blocked: {verdict_label}",
+                evidence={"gate_verdict": verdict_label},
             )
 
         ei = self._build_effect_identity(target)
@@ -367,18 +399,16 @@ class DeliveryEffects:
         as INDETERMINATE and can never be automatically redriven.
         """
         verdict = self._gate(target)
-        if verdict not in (
-            GateResult.AUTHORIZED,
-            GateResult.SHADOW_PASS,
-        ):
+        if not adapter_effect_authorized(verdict):
+            verdict_label = getattr(verdict, "value", None) or str(verdict)
             return DeliveryOutcome(
                 ok=False,
                 channel=target.channel.value,
                 action=target.action,
                 glek="",
                 outcome_kind=OUTCOME_FAILED,
-                error=f"Action gate blocked: {verdict.value}",
-                evidence={"gate_verdict": verdict.value},
+                error=f"Action gate blocked: {verdict_label}",
+                evidence={"gate_verdict": verdict_label},
             )
 
         ei = self._build_effect_identity(target)
@@ -552,10 +582,33 @@ class DeliveryEffects:
         )
 
 
+def current_delivery_gate_check(
+    allow: Callable[[], bool],
+) -> Callable[[ActionBoundaryType, str], GateResult]:
+    """Build an explicit delivery gate whose verdict is re-read on every call.
+
+    The predicate *allow* is evaluated at dispatch time, so the verdict tracks
+    the current configuration instead of a construction-time snapshot.  Only a
+    currently-true predicate yields ``AUTHORIZED``; anything else is the typed
+    ``BLOCKED_MISSING_GRANT`` denial, which the adapter honors before any
+    protocol reservation or provider contact.
+    """
+
+    def gate_check(_family: ActionBoundaryType, _key: str) -> GateResult:
+        if allow():
+            return GateResult.AUTHORIZED
+        return GateResult.BLOCKED_MISSING_GRANT
+
+    return gate_check
+
+
 def open_resident_delivery_effects(
     state_root: str | Path,
     *,
     production_enabled: bool = True,
+    action_gate_check: Optional[
+        Callable[[ActionBoundaryType, str], GateResult]
+    ] = None,
 ) -> DeliveryEffects:
     """Open the canonical resident notification effect owner.
 
@@ -563,7 +616,23 @@ def open_resident_delivery_effects(
     database and one connection.  Reopening this factory after a resident
     restart therefore adopts the accepted GLEK outcome instead of dispatching
     the provider again.
+
+    Production delivery requires an installed current gate.  Missing wiring
+    (``action_gate_check=None``) is a construction error: the factory raises
+    :class:`ResidentDeliveryGateError` before creating the state directory,
+    SQLite ledger, or protocol, so a missing gate can never initialize durable
+    state.  Production constructors should pass
+    :func:`current_delivery_gate_check` (or an equivalent explicit gate) so an
+    ``AUTHORIZED`` verdict reflects current policy.  Observation-only
+    constructors (``production_enabled=False``) may omit the gate.
     """
+    if production_enabled and action_gate_check is None:
+        raise ResidentDeliveryGateError(
+            "open_resident_delivery_effects refuses production construction "
+            "without an explicit action_gate_check; pass "
+            "current_delivery_gate_check (or an equivalent gate) or open in "
+            "observation mode (production_enabled=False)"
+        )
 
     from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
     from arnold.workflow.ledger_outbox import SqliteLedgerOutbox
@@ -574,6 +643,7 @@ def open_resident_delivery_effects(
     outbox = SqliteLedgerOutbox(store)
     return DeliveryEffects(
         EffectProtocol(store, outbox),
+        action_gate_check=action_gate_check,
         production_enabled=production_enabled,
     )
 
@@ -583,5 +653,7 @@ __all__ = [
     "DeliveryTarget",
     "DeliveryOutcome",
     "DeliveryEffects",
+    "ResidentDeliveryGateError",
+    "current_delivery_gate_check",
     "open_resident_delivery_effects",
 ]

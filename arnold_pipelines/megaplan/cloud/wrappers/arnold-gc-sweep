@@ -24,11 +24,44 @@
 #     (c) restore-proven    — --restore-proven flag OR a restore-proven.txt
 #                             marker file in the manifest dir
 #   and only then runs `git worktree remove --force` + archives the manifest to
-#   <manifest-dir>/archived/. Anything else is SKIPped with the reason printed.
+#   <manifest-dir>/archived/.
+#
+#   Before EVERY deletion (worktree, fixer branch, or epic venv) the sweep
+#   additionally consults the reference census (runtime_references module,
+#   T-0012): exact runtime-root paths normalized from runtime manifests, chain
+#   metadata.execution_environment.engine_root, cloud-session/chain-health
+#   markers, resident/ops schedules, repair-queue requests/decisions/
+#   claims/attempts/leases, per-plan custody lease stores, managed-subagent
+#   run manifests + fixer-session stores, the status snapshot, and ops
+#   schedule-inputs.  REFERENCED hard-skips; DANGLING is NEEDS-RECONCILE; an
+#   unreadable/corrupt store is UNKNOWN and BLOCKS with exit 5 —
+#   delete-on-unknown never happens.  slug/SHA substring matching is never
+#   the only deletion predicate (the schedule-store grep gate above is
+#   preserved on top of the exact-path census).
+#
+#   Per-manifest outcome protocol (G6 round-3 finding 1): every processed
+#   manifest yields exactly one decision line on stdout —
+#   'gc-sweep: <TOKEN> '<slug>' ...'.  TOKEN is SWEPT=YES (runtime actually
+#   removed, manifest archived), SKIP / NEEDS-RECONCILE (runtime left in
+#   place — never a deletion), or UNKNOWN / REFUSE (fail-closed aborts on
+#   stderr; exit 5 / 3).  Skips that leave a surviving runtime alive carry
+#   an explicit per-slug swept:false marker inside the line:
+#   'SWEPT=NO:REFERENCED' (census says the root is still load-bearing) or
+#   'SWEPT=NO:DANGLING' (census incoherent).  Callers MUST key 'swept' on
+#   this line, never on the exit status alone: a skip still exits 0 (a
+#   multi-manifest sweep may reclaim OTHER trees), so an exit-0 sweep never
+#   implies deletion — 'swept' is true ONLY for the SWEPT=YES token.
+#
+#   Anything else is SKIPped with the reason printed.
 #
 #   This sweep NEVER infers "stale": a runner death mid-epic leaves a tree
-#   neither-live-neither-closed. Such trees (and manifests in an unknown state)
-#   are listed as NEEDS-RECONCILE and are never deleted.
+#   neither-live-neither-closed. Such trees (and manifests in an unknown
+#   state) are listed as NEEDS-RECONCILE and are never deleted.  A present
+#   manifest that fails canonical validation (corrupt OR schema-invalid —
+#   valid JSON missing required fields) is the same NEEDS-RECONCILE class:
+#   its fields are only ever read through runtime_manifest.load_manifest
+#   (G5 round-2 finding 4), so a field-bearing but schema-invalid manifest
+#   can never reach the deletion gates.
 #
 #   --dry-run previews what would be swept (closed + origin-resolvable) without
 #   deleting anything and still reports the restore-proven requirement.
@@ -43,7 +76,7 @@
 #   ARNOLD_BASE_DIR             dir that contains runtime-candidates/ (default: /workspace)
 #   ARNOLD_BASE_REPO            repo that owns the worktrees          (default: $ARNOLD_BASE_DIR/arnold)
 #   ARNOLD_ORIGIN_URL           origin URL/remote used to resolve     (default: origin)
-#   ARNOLD_SCHEDULE_STORE       schedule store dir to reconcile        (default: /workspace/arnold/.megaplan/resident/scheduled_jobs + /workspace/.megaplan/ops/schedules)
+#   ARNOLD_SCHEDULE_STORE       schedule store dir to reconcile        (default: /workspace/arnold/.megaplan/resident/scheduled_jobs + /workspace/arnold/.megaplan/resident/schedules/heads + /workspace/.megaplan/ops/schedules)
 #
 set -euo pipefail
 
@@ -94,7 +127,7 @@ mkdir -p "$ARCHIVE_DIR"
 if [[ -n "${ARNOLD_SCHEDULE_STORE:-}" ]]; then
   SCHEDULE_STORES=("$ARNOLD_SCHEDULE_STORE")
 else
-  SCHEDULE_STORES=("/workspace/arnold/.megaplan/resident/scheduled_jobs" "/workspace/.megaplan/ops/schedules")
+  SCHEDULE_STORES=("/workspace/arnold/.megaplan/resident/scheduled_jobs" "/workspace/arnold/.megaplan/resident/schedules/heads" "/workspace/.megaplan/ops/schedules")
 fi
 
 _schedule_store_references() {
@@ -112,30 +145,145 @@ _schedule_store_references() {
   return 1
 }
 
-_json_get() {
-  python3 -c '
-import json, sys
-d = json.load(open(sys.argv[1]))
-for key in sys.argv[2].split("."):
-    if not isinstance(d, dict) or key not in d:
-        print("")
-        sys.exit(0)
-    d = d[key]
-if d is None:
-    print("")
-elif isinstance(d, (dict, list)):
-    print(json.dumps(d))
-else:
-    print(str(d))
-' "$1" "$2"
+_manifest_fields() {
+  # Canonical manifest read (G5 round-2 finding 4): sweep-decision fields
+  # come from runtime_manifest.load_manifest — the SAME fail-closed
+  # validation bootstrap_manifest uses — never raw json.load + dotted-field
+  # reads.  Corrupt JSON, valid JSON with the wrong structure (schema-
+  # invalid, missing required fields while still carrying state/
+  # epic.runtime_root/epic.branch), and unreadable files all raise
+  # ManifestError and exit 1 here, so such a manifest is NEEDS-RECONCILE and
+  # can never reach the deletion gates.  Prints the five sweep fields
+  # (epic_id, state, epic.runtime_root, epic.branch, epic.venv_path)
+  # tab-separated on stdout; a schema-valid manifest is guaranteed to carry
+  # every one of them.
+  python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        load_manifest,
+    )
+except Exception as exc:  # noqa: BLE001 - the canonical validator is unavailable
+    sys.stderr.write(
+        "gc-sweep: canonical manifest validation unavailable for %s: %s\n"
+        % (sys.argv[1], exc)
+    )
+    sys.exit(1)
+try:
+    manifest = load_manifest(Path(sys.argv[1]))
+except ManifestError as exc:
+    sys.stderr.write(
+        "gc-sweep: invalid manifest %s (corrupt or schema-mismatched): %s\n"
+        % (sys.argv[1], exc)
+    )
+    sys.exit(1)
+epic = manifest.epic
+print(
+    "\t".join(
+        (
+            manifest.epic_id,
+            manifest.state,
+            epic["runtime_root"],
+            epic["branch"],
+            epic["venv_path"],
+        )
+    )
+)
+PY
+}
+
+# ── Reference census (T-0012): fail-closed before EVERY deletion ─────────────
+# One canonical, injectable reference census (runtime_references module),
+# consulted before every worktree/branch/dependency deletion.  It normalizes
+# EXACT runtime-root paths from: runtime manifests; active/paused/blocked
+# chain metadata.execution_environment.engine_root (fixed store AND the
+# workspace-relative <workspace>/.megaplan/plans/.chains chain-state layout,
+# spec.py); cloud-session and chain-health markers; resident/ops schedules
+# and jobs; occurrence requests, decisions, active claims (including the
+# nested <token>.lock/owner.json claim metadata), attempts, and leases;
+# per-plan custody lease stores (<workspace>/.megaplan/plans/<plan>/
+# custody/leases — worker_dispatch_wbc.py / phase_wbc.py); managed-subagent
+# run manifests and fixer-session stores (resident/subagent.py
+# DEFAULT_MANAGED_RUN_ROOT); the status snapshot
+# (/workspace/.megaplan/status — status_snapshot.py); and ops schedule-inputs
+# (/workspace/.megaplan/ops/schedules + schedule-inputs — probe_records.py).
+# All new stores follow the module env defaults (ARNOLD_REFERENCE_*), so the
+# sweep's census inherits sandbox/test redirection like the existing stores.
+# Verdicts are fail-closed:
+#   REFERENCED  -> a store references the exact root: HARD-SKIP deletion
+#   DANGLING    -> a store references a runtime root that no longer exists:
+#                  the census is incoherent -> NEEDS-RECONCILE, never deleted
+#   UNKNOWN     -> a store is unreadable/corrupt: deletion BLOCKED (exit 5)
+#   CLEAR       -> no reference; the other gates still apply
+# slug/SHA substring matching is never the only predicate here: the legacy
+# schedule-store grep gate above still applies on top of the exact-path census.
+# The schedule stores fed to the census are exactly the SCHEDULE_STORES above
+# so the two gates share ONE configuration.
+CENSUS_SCHEDULE_STORES="$(IFS=:; echo "${SCHEDULE_STORES[*]}")"
+
+_reference_census() {
+  # $1 = runtime root being considered for deletion; $2 = manifest being swept.
+  # Prints the census report (STATUS line + REASON lines) and sets
+  # CENSUS_VERDICT to CLEAR|REFERENCED|DANGLING|UNKNOWN.  A failing census
+  # is UNKNOWN (fail-closed).
+  local out rc=0
+  out="$(python3 -m arnold_pipelines.megaplan.cloud.runtime_references census \
+    --root "$1" \
+    --workspace "$BASE_DIR" \
+    --manifest-store "$MANIFEST_DIR" \
+    --current-manifest "$2" \
+    --schedule-store "$CENSUS_SCHEDULE_STORES" 2>&1)" || rc=$?
+  CENSUS_REPORT="$out"
+  CENSUS_VERDICT="$(printf '%s\n' "$out" | awk '/^STATUS /{print $2; exit}')"
+  if [[ -z "$CENSUS_VERDICT" ]]; then
+    CENSUS_VERDICT="UNKNOWN"
+    CENSUS_REPORT="reference census unavailable (rc=$rc): $out"
+  fi
 }
 
 for mf in "$MANIFEST_DIR"/*.json; do
-  [[ -f "$mf" ]] || continue
-  SLUG="$(_json_get "$mf" epic_id)"
-  STATE="$(_json_get "$mf" state)"
-  ROOT="$(_json_get "$mf" epic.runtime_root)"
-  BRANCH="$(_json_get "$mf" epic.branch)"
+  # G5 round-5 finding 3(b): only a GENUINELY absent manifest (ENOENT — never
+  # created, or archived/removed by a previous sweep) may be skipped.  A
+  # PRESENT-but-unreadable entry — a DANGLING symlink (`[[ -f ]]`/`[[ -e ]]`
+  # follow the link to its missing target and report false, hiding the entry)
+  # or a stat-inaccessible path (EACCES on the file or a parent dir) — is
+  # never silently skipped: it reaches the canonical validator below and
+  # fails closed with NEEDS-RECONCILE.  `stat` without `-L` reports on the
+  # ENTRY itself (lstat semantics), so the link entry stays visible even
+  # when its target is gone; the error message is the only reliable
+  # absent-vs-inaccessible signal (an EACCES parent fails the -e/-L probes
+  # too, exactly like ENOENT).
+  if ! stat "$mf" >/dev/null 2>&1; then
+    # stat failed on the entry: only ENOENT (genuinely absent) may be
+    # skipped.  EACCES and friends (unreadable file or parent dir) fail the
+    # -e/-L probes exactly like ENOENT, so the error text is the only
+    # reliable absent-vs-inaccessible signal.  Captured in a variable and
+    # matched with [[ ]] — a bare `stat ... | grep` pipeline would be
+    # defeated by `set -o pipefail` (stat's exit code wins over grep's).
+    if ! STAT_ERR="$(stat "$mf" 2>&1)"; then
+      if [[ "$STAT_ERR" == *"No such file"* ]]; then
+        continue  # genuinely absent (ENOENT)
+      fi
+    fi
+    echo "gc-sweep: NEEDS-RECONCILE manifest '$mf' — present but stat-inaccessible; never deleted automatically"
+    continue
+  fi
+  # G5 round-2 finding 4: the manifest is read ONCE through the canonical
+  # fail-closed validator (runtime_manifest.load_manifest, same as
+  # bootstrap_manifest) — NOT raw json.load + dotted-field reads.  A
+  # schema-invalid manifest (valid JSON, wrong structure — e.g. missing
+  # required fields while still carrying state/epic.runtime_root/epic.branch)
+  # is treated EXACTLY like a corrupt one: NEEDS-RECONCILE for that tree,
+  # never deletable, and never a whole-sweep abort.  Only a fully
+  # schema-valid manifest yields sweep-decision fields.
+  if ! FIELDS="$(_manifest_fields "$mf")"; then
+    echo "gc-sweep: NEEDS-RECONCILE manifest '$mf' — present but unreadable, corrupt, or schema-invalid (a dangling symlink fails the canonical read the same way); never deleted automatically"
+    continue
+  fi
+  IFS=$'\t' read -r SLUG STATE ROOT BRANCH VENV <<<"$FIELDS"
 
   if [[ "$STATE" != "active" && "$STATE" != "closed" ]]; then
     echo "gc-sweep: NEEDS-RECONCILE manifest '$mf' (state='${STATE:-<missing>}') — neither live nor closed; never deleted automatically"
@@ -198,6 +346,38 @@ for mf in "$MANIFEST_DIR"/*.json; do
       PR_REFERENCED=1
     fi
   fi
+
+  # (e) reference census (T-0012): consulted before EVERY deletion (worktree,
+  #     branch, and venv/dependency).  REFERENCED hard-skips; DANGLING is
+  #     NEEDS-RECONCILE (never deleted); UNKNOWN (unreadable/corrupt store)
+  #     BLOCKS the sweep with exit 5 — delete-on-unknown never happens.  The
+  #     gate runs in dry-run too so the preview reports it.
+  _reference_census "$ROOT" "$mf"
+  if [[ "$CENSUS_VERDICT" == "REFERENCED" ]]; then
+    if [[ "$DRY" == "1" ]]; then
+      echo "gc-sweep: WOULD-SKIP '$SLUG' — REFERENCED: runtime root '$ROOT' is still referenced by the reference census; sweep would be skipped (referenced runtime roots are never deleted, design rule 6):"
+    else
+      echo "gc-sweep: SKIP '$SLUG' — SWEPT=NO:REFERENCED: runtime root '$ROOT' is still referenced by the reference census; never deleted (design rule 6):"
+    fi
+    printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/gc-sweep:   /'
+    continue
+  fi
+  if [[ "$CENSUS_VERDICT" == "DANGLING" ]]; then
+    echo "gc-sweep: NEEDS-RECONCILE '$SLUG' — SWEPT=NO:DANGLING: reference census found a dangling runtime-root reference; never deleted automatically:"
+    printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/gc-sweep:   /'
+    continue
+  fi
+  if [[ "$CENSUS_VERDICT" == "UNKNOWN" ]]; then
+    if [[ "$DRY" == "1" ]]; then
+      echo "gc-sweep: WOULD-BLOCK '$SLUG' — UNKNOWN: reference census unreadable/corrupt; the sweep would be blocked:"
+      printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/gc-sweep:   /'
+      continue
+    fi
+    echo "gc-sweep: UNKNOWN '$SLUG' — reference census unreadable/corrupt; deletion BLOCKED (fail-closed: delete-on-unknown never happens, exit 5):" >&2
+    printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/gc-sweep:   /' >&2
+    exit 5
+  fi
+
   if [[ "$DRY" == "1" ]]; then
     if [[ "$PR_REFERENCED" == "1" ]]; then
       echo "gc-sweep: WOULD-REFUSE '$SLUG' — fixer branch '$FIXER_BRANCH' head is still referenced by an open pull ref on '$REMOTE'; sweep would be refused (P6 terminal-state rules never sweep with a PR open)"
@@ -238,9 +418,35 @@ for mf in "$MANIFEST_DIR"/*.json; do
   fi
 
   # Epic venv that lives OUTSIDE the removed tree (per-epic venvs inside the
-  # tree die with it).
-  VENV="$(_json_get "$mf" epic.venv_path)"
+  # tree die with it).  The venv path goes through the SAME reference census
+  # (T-0012) as the worktree, BEFORE any deletion: a lease/schedule/queue
+  # referencing the exact venv path is load-bearing and the venv must never
+  # be rm -rf'd without a CLEAR verdict (G2 hardening — venv deletion was
+  # previously uncensused; only the worktree root was checked).  VENV came
+  # from the canonical manifest read above (epic.venv_path is a required
+  # schema field, present for every validated manifest).
+  VENV_OK=1
   if [[ -n "$VENV" && -e "$VENV" && "$VENV" != "$ROOT" && "$VENV" != "$ROOT/"* ]]; then
+    _reference_census "$VENV" "$mf"
+    if [[ "$CENSUS_VERDICT" == "REFERENCED" ]]; then
+      VENV_OK=0
+      echo "gc-sweep: SKIP venv '$VENV' — REFERENCED: exact venv path still referenced by the reference census; never deleted (design rule 6):"
+      printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/gc-sweep:   /'
+    elif [[ "$CENSUS_VERDICT" == "DANGLING" ]]; then
+      VENV_OK=0
+      echo "gc-sweep: NEEDS-RECONCILE venv '$VENV' — DANGLING: reference census found a dangling runtime-root reference; venv never deleted automatically:"
+      printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/gc-sweep:   /'
+    elif [[ "$CENSUS_VERDICT" == "UNKNOWN" ]]; then
+      echo "gc-sweep: UNKNOWN venv '$VENV' — reference census unreadable/corrupt; venv deletion BLOCKED (fail-closed: delete-on-unknown never happens, exit 5):" >&2
+      printf '%s\n' "$CENSUS_REPORT" | awk '!/^STATUS /' | sed 's/^/gc-sweep:   /' >&2
+      exit 5
+    fi
+  fi
+
+  # Epic venv that lives OUTSIDE the removed tree: deleted only when the
+  # census above returned CLEAR (a REFERENCED/DANGLING venv was already
+  # reported and is never rm -rf'd; UNKNOWN blocked the sweep pre-deletion).
+  if [[ "$VENV_OK" == "1" && -n "$VENV" && -e "$VENV" && "$VENV" != "$ROOT" && "$VENV" != "$ROOT/"* ]]; then
     rm -rf "$VENV"
     echo "gc-sweep: removed epic venv '$VENV'"
   fi
@@ -264,7 +470,7 @@ for mf in "$MANIFEST_DIR"/*.json; do
   fi
 
   mv "$mf" "$ARCHIVE_DIR/"
-  echo "gc-sweep: SWEPT '$SLUG' — worktree '$ROOT' removed; manifest archived to '$ARCHIVE_DIR/$(basename "$mf")'"
+  echo "gc-sweep: SWEPT=YES '$SLUG' — worktree '$ROOT' removed; manifest archived to '$ARCHIVE_DIR/$(basename "$mf")'"
 done
 
 # Runner death mid-epic leaves a tree without a manifest: never delete, list it.
