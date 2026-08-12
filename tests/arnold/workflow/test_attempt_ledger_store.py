@@ -32,6 +32,7 @@ from arnold.workflow.attempt_ledger_store import (
     GateStatus,
     MissingStartEventError,
     MonotonicSequenceError,
+    OccurrenceClaimAdmissionConflict,
     PostTerminalAppendError,
     SequenceGapError,
     SqliteAttemptLedgerStore,
@@ -3305,6 +3306,186 @@ class TestStep8AppendFailureRaisesWithDiagnostic:
             with pytest.raises(PostTerminalAppendError):
                 store.append_event(aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
             assert store.query_persistence_diagnostics(aid) == []
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+
+# ── Occurrence-claim admission CAS (T-0101e) ────────────────────────────────
+
+
+def _make_claim_started(
+    attempt_id: str | None = None,
+    *,
+    occurrence_id: str = "occurrence-admission-1",
+    claim_id: str = "claim-a",
+    kind: str = "occurrence_join",
+) -> LedgerEvent:
+    """Build a STARTED event carrying an occurrence-claim payload."""
+    return replace(
+        _make_event(attempt_id=attempt_id, idempotency_key=f"{claim_id}:started"),
+        payload={
+            "kind": kind,
+            "occurrence_id": occurrence_id,
+            "claim_id": claim_id,
+        },
+    )
+
+
+class TestOccurrenceClaimAdmissionCas:
+    """Cross-attempt occurrence exclusivity: exactly ONE STARTED claim per
+    occurrence; the second contender's append rolls back (zero mutation)."""
+
+    def test_first_claim_wins_second_denied_with_zero_mutation(self) -> None:
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            aid1 = _aid()
+            occ = "occurrence-admission-cas"
+            store.admit_occurrence_claim(
+                attempt_id=aid1, occurrence_id=occ, claim_id="claim-a"
+            )
+            store.append_started(
+                aid1, _make_claim_started(aid1, occurrence_id=occ, claim_id="claim-a")
+            )
+            assert store.event_count(aid1) == 1
+
+            # The second contender is denied at the admission pre-check...
+            aid2 = _aid()
+            with pytest.raises(OccurrenceClaimAdmissionConflict):
+                store.admit_occurrence_claim(
+                    attempt_id=aid2, occurrence_id=occ, claim_id="claim-b"
+                )
+            # ...and the STARTED append is denied atomically as well: the
+            # whole transaction rolls back, so zero events are persisted.
+            with pytest.raises(OccurrenceClaimAdmissionConflict):
+                store.append_started(
+                    aid2, _make_claim_started(aid2, occurrence_id=occ, claim_id="claim-b")
+                )
+            assert store.event_count(aid2) == 0
+            assert store.get_reservation(aid2) is None
+            rows = store.conn.execute(
+                "SELECT attempt_id, claim_id FROM occurrence_claim_admissions"
+            ).fetchall()
+            assert rows == [(aid1, "claim-a")]
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_admission_is_idempotent_for_same_attempt(self) -> None:
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            aid = _aid()
+            occ = "occurrence-admission-idem"
+            store.admit_occurrence_claim(attempt_id=aid, occurrence_id=occ, claim_id="claim-a")
+            # Re-admission for the same attempt is a no-op (no conflict).
+            store.admit_occurrence_claim(attempt_id=aid, occurrence_id=occ, claim_id="claim-a")
+            started = _make_claim_started(aid, occurrence_id=occ, claim_id="claim-a")
+            store.append_started(aid, started)
+            assert store.event_count(aid) == 1
+            # A duplicate append of the same event is an idempotent no-op.
+            result = store.append_started(aid, started)
+            assert result.is_duplicate is True
+            assert store.event_count(aid) == 1
+            rows = store.conn.execute(
+                "SELECT attempt_id FROM occurrence_claim_admissions"
+            ).fetchall()
+            assert rows == [(aid,)]
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_admission_scoped_to_occurrence_join_claims(self) -> None:
+        """STARTED events that are NOT occurrence-join claims never create
+        admission rows and never conflict on a shared occurrence_id."""
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            aid1 = _aid()
+            aid2 = _aid()
+            store.append_started(
+                aid1,
+                _make_claim_started(
+                    aid1, occurrence_id="shared-occ", claim_id="phase-a", kind="phase_transition"
+                ),
+            )
+            store.append_started(
+                aid2,
+                _make_claim_started(
+                    aid2, occurrence_id="shared-occ", claim_id="dispatch-a", kind="worker_dispatch"
+                ),
+            )
+            assert store.event_count(aid1) == 1
+            assert store.event_count(aid2) == 1
+            count = store.conn.execute(
+                "SELECT COUNT(1) FROM occurrence_claim_admissions"
+            ).fetchone()[0]
+            assert count == 0
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_crash_at_commit_boundary_leaves_no_stranded_admission(self) -> None:
+        """T-0101h round-4 blocker 3: admission is atomic with STARTED.
+
+        Inject a failure exactly at the append transaction's COMMIT boundary
+        (after the admission INSERT, before anything becomes durable): the
+        whole transaction must roll back — no STARTED event, no occurrence
+        admission row, no reservation.  A crash "between admission and
+        STARTED" can therefore never leave a permanent admission row.
+        """
+        import sqlite3
+
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            real_conn = store.conn  # force lazy open + schema init
+
+            class _BoomCommitConnection:
+                """Delegate to the real connection but fail every COMMIT."""
+
+                def __init__(self, real: sqlite3.Connection) -> None:
+                    self._real = real
+
+                def __getattr__(self, name: str):
+                    return getattr(self._real, name)
+
+                def execute(self, sql, *args, **kwargs):
+                    if str(sql).strip().upper() == "COMMIT":
+                        raise sqlite3.OperationalError("injected crash at commit boundary")
+                    return self._real.execute(sql, *args, **kwargs)
+
+            store._conn = _BoomCommitConnection(real_conn)
+            aid = _aid()
+            occ = "occurrence-admission-atomic"
+            with pytest.raises(sqlite3.OperationalError):
+                store.append_started(
+                    aid, _make_claim_started(aid, occurrence_id=occ, claim_id="claim-a")
+                )
+            # Nothing was committed: no event, no admission row, no reservation.
+            assert store.event_count(aid) == 0
+            assert store.get_reservation(aid) is None
+            rows = store.conn.execute(
+                "SELECT attempt_id FROM occurrence_claim_admissions"
+            ).fetchall()
+            assert rows == []
+            # Recovery: once the crash is gone, the identical claim append
+            # succeeds — no stranded admission row blocks it.
+            store._conn = real_conn
+            result = store.append_started(
+                aid, _make_claim_started(aid, occurrence_id=occ, claim_id="claim-a")
+            )
+            assert result.is_duplicate is False
+            assert store.event_count(aid) == 1
+            rows = store.conn.execute(
+                "SELECT attempt_id FROM occurrence_claim_admissions"
+            ).fetchall()
+            assert rows == [(aid,)]
             store.close()
         finally:
             if os.path.exists(path):

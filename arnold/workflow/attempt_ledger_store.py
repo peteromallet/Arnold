@@ -211,6 +211,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_global_effect_outcome_glek
     ON global_effect_outcomes(global_logical_effect_key);
 """
 
+# ── Occurrence claim admission table (T-0101e occurrence exclusivity) ────────
+#
+# Stores the single admitted claim per repair occurrence.  The PK on
+# ``occurrence_id`` is the cross-attempt CAS (mirrors the
+# ``global_effect_outcomes`` UNIQUE(global_logical_effect_key) precedent):
+# once any attempt's STARTED append admits the occurrence, no other attempt
+# may admit a claim for it.  The second contender's admission raises
+# ``OccurrenceClaimAdmissionConflict`` and rolls back its whole append
+# transaction (zero mutation).
+#
+# The row is written in the SAME transaction as the admitting STARTED event
+# so a claim is either fully admitted or not at all.  Applies only to
+# occurrence-join claims (STARTED payload ``kind == "occurrence_join"``);
+# phase/worker-dispatch attempts are keyed by their own targets and are not
+# occurrence-exclusive.
+_OCCURRENCE_CLAIM_KIND: str = "occurrence_join"
+
+_OCCURRENCE_CLAIM_ADMISSIONS_TABLE_DDL: str = """\
+CREATE TABLE IF NOT EXISTS occurrence_claim_admissions (
+    occurrence_id   TEXT    PRIMARY KEY,
+    attempt_id      TEXT    NOT NULL,
+    claim_id        TEXT    NOT NULL,
+    admitted_at_ns  INTEGER NOT NULL
+);
+"""
+
 # ── Global effect conflict quarantine (Step 8B2) ────────────────────────────
 #
 # Quarantined conflicts are evidence-only: a cross-attempt outcome conflict,
@@ -413,6 +439,29 @@ class GlobalEffectConflictError(AttemptLedgerError):
             f"Global-effect conflict for attempt_id={attempt_id!r}, "
             f"glek={global_logical_effect_key!r}: {conflict_kind}"
         )
+
+
+class OccurrenceClaimAdmissionConflict(AttemptLedgerError):
+    """Raised when a second claim attempts STARTED admission for an occurrence.
+
+    Cross-attempt occurrence exclusivity CAS (T-0101e): exactly ONE claim may
+    be admitted per occurrence across ALL attempt streams.  The occurrence is
+    keyed by the STARTED payload's ``occurrence_id`` for occurrence-join
+    claims (``kind == "occurrence_join"``).  A second contender's admission
+    INSERT violates the ``occurrence_claim_admissions`` UNIQUE(occurrence_id)
+    constraint (mirroring the ``global_effect_outcomes`` UNIQUE-GLEK
+    precedent) and the whole append transaction rolls back — zero mutation
+    beyond nothing.
+
+    The admission row is written in the SAME transaction as the STARTED event
+    append, so a claim is either fully admitted (event + admission row) or not
+    admitted at all.  Callers must escalate with a typed ``claim_denied``; the
+    conflict cannot be cleared by retrying the same occurrence with a new
+    claim id.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 class CutoverInProgressError(AttemptLedgerError):
@@ -1380,6 +1429,7 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
                 _GLOBAL_EFFECT_CONFLICT_QUARANTINE_TABLE_DDL,
                 _GLOBAL_EFFECT_CONFLICT_ATTEMPT_INDEX_DDL,
                 _CUTOVER_INDETERMINATE_MARKS_TABLE_DDL,
+                _OCCURRENCE_CLAIM_ADMISSIONS_TABLE_DDL,
             ):
                 for stmt in ddl.split(";"):
                     s = stmt.strip()
@@ -1531,6 +1581,40 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
             last_reserved_ns=now_ns,
             reservation_count=reservation_count,
         )
+
+    def admit_occurrence_claim(
+        self,
+        *,
+        attempt_id: str,
+        occurrence_id: str,
+        claim_id: str,
+    ) -> None:
+        """Read-only pre-flight probe: refuse when the occurrence is admitted.
+
+        T-0101h round-4 blocker 3: the durable admission row is NO LONGER
+        committed here.  The occurrence admission, the attempt reservation
+        and the STARTED event are all written inside the SINGLE
+        ``_append_tx`` transaction of :meth:`append_started`, so a crash
+        between admission and STARTED is impossible and a second contender's
+        STARTED append rolls back as a whole — zero mutation.  This method
+        only mirrors that CAS as a zero-mutation early-exit probe for callers
+        that want to fail before any other work: it raises
+        :class:`OccurrenceClaimAdmissionConflict` when a DIFFERENT attempt
+        already holds the occurrence and never writes or commits anything.
+        """
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT attempt_id FROM occurrence_claim_admissions"
+            " WHERE occurrence_id = ?",
+            (occurrence_id,),
+        )
+        holder = cur.fetchone()
+        if holder is not None and holder[0] != attempt_id:
+            raise OccurrenceClaimAdmissionConflict(
+                f"occurrence {occurrence_id[:16]}… is already admitted by "
+                f"claim attempt {holder[0]!r}; this claim attempt "
+                f"{attempt_id!r} is denied"
+            )
 
     def get_reservation(
         self, attempt_id: str
@@ -2288,6 +2372,63 @@ VALUES (?, ?, ?, ?, ?, ?)
                     time.time_ns(),
                 ),
             )
+
+            # (7) Occurrence-claim admission CAS (T-0101e): exactly ONE
+            #     STARTED claim per occurrence across ALL attempt streams.
+            #     Applies only to occurrence-join claims (payload kind
+            #     "occurrence_join").  T-0101h round-4 blocker 3: the
+            #     admission row AND the attempt reservation are folded into
+            #     THIS single transaction together with the STARTED insert —
+            #     a crash before STARTED can never leave a stranded admission
+            #     row, and the UNIQUE(occurrence_id) PK is the final backstop
+            #     for a concurrent second contender whose append rolls back
+            #     as a whole (zero mutation).
+            payload = event.payload if isinstance(event.payload, Mapping) else {}
+            if (
+                event.event_type.value == AttemptEventType.STARTED.value
+                and str(payload.get("kind") or "").strip() == _OCCURRENCE_CLAIM_KIND
+            ):
+                occurrence_id = str(payload.get("occurrence_id") or "").strip()
+                if occurrence_id:
+                    claim_id = str(payload.get("claim_id") or "").strip()
+                    cur.execute(
+                        "SELECT attempt_id FROM occurrence_claim_admissions"
+                        " WHERE occurrence_id = ?",
+                        (occurrence_id,),
+                    )
+                    holder = cur.fetchone()
+                    if holder is not None and holder[0] != attempt_id:
+                        conn.execute("ROLLBACK")
+                        raise OccurrenceClaimAdmissionConflict(
+                            f"occurrence {occurrence_id[:16]}… is already admitted by "
+                            f"claim attempt {holder[0]!r}; this claim attempt "
+                            f"{attempt_id!r} is denied"
+                        )
+                    if holder is None:
+                        try:
+                            cur.execute(
+                                "INSERT INTO occurrence_claim_admissions"
+                                "  (occurrence_id, attempt_id, claim_id, admitted_at_ns)"
+                                "  VALUES (?, ?, ?, ?)",
+                                (occurrence_id, attempt_id, claim_id, time.time_ns()),
+                            )
+                        except sqlite3.IntegrityError as exc:
+                            conn.execute("ROLLBACK")
+                            raise OccurrenceClaimAdmissionConflict(
+                                f"occurrence {occurrence_id[:16]}… is already admitted by "
+                                f"a different claim attempt; this claim attempt "
+                                f"{attempt_id!r} is denied"
+                            ) from exc
+                        # Fold the attempt reservation into the same
+                        # transaction (it previously committed separately via
+                        # ``reserve_attempt`` before the admission, which
+                        # could strand a reservation on crash).
+                        cur.execute(
+                            "INSERT OR IGNORE INTO attempt_reservations"
+                            "  (attempt_id, first_reserved_ns, last_reserved_ns,"
+                            "   reservation_count) VALUES (?, ?, ?, 1)",
+                            (attempt_id, time.time_ns(), time.time_ns()),
+                        )
             conn.execute("COMMIT")
         except (
             CausalPredecessorError,
@@ -2295,6 +2436,7 @@ VALUES (?, ?, ?, ?, ?, ?)
             DivergentDuplicateError,
             DuplicateTerminalError,
             MissingStartEventError,
+            OccurrenceClaimAdmissionConflict,
             PostTerminalAppendError,
             MonotonicSequenceError,
             SequenceGapError,

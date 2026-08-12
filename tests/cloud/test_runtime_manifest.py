@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -1234,3 +1235,1242 @@ def test_missing_runtime_attestation_never_authorizes(tmp_path: Path) -> None:
             "errors",
         )
     )
+
+
+# ── CAS runtime cutover (T-0101d) ───────────────────────────────────────────
+
+
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (  # noqa: E402
+    CUTOVER_RECEIPT_SUFFIX,
+    RECEIPT_ALIASES_PROTECTED_STATE,
+    RECEIPT_POST_VERIFY_FAILED,
+    apply_runtime_manifest_cutover,
+    cutover_runtime_manifest,
+)
+from arnold_pipelines.megaplan.cloud.runtime_provenance import (  # noqa: E402
+    RUNTIME_MANIFEST_CUTOVER_ROLLBACK_SCHEMA,
+    RUNTIME_PROVENANCE_RECEIPT_SCHEMA,
+    emit_runtime_manifest_cutover_rollback_receipt,
+    verify_runtime_manifest_cutover_rollback_receipt,
+)
+from arnold_pipelines.megaplan.types import CliError  # noqa: E402
+
+_FROM_RUNTIME_ROOT = "/opt/arnold/runtime-candidates/epic-demo/runtime"
+_FROM_EXPECTED_HEAD = "abc123def"
+_TO_RUNTIME_ROOT = "/opt/arnold/runtime-candidates/epic-demo/runtime-2"
+_TO_EXPECTED_HEAD = "def456789"
+_TO_VENV_PATH = "/opt/arnold/runtime-candidates/epic-demo/runtime-2/venv"
+_TO_REPAIR_BIN = (
+    "/opt/arnold/runtime-candidates/epic-demo/runtime-2/venv/bin/arnold-repair-loop"
+)
+
+
+def _verified_identity(
+    to_runtime_root: str = _TO_RUNTIME_ROOT,
+    source_revision: str = _TO_EXPECTED_HEAD,
+) -> dict[str, object]:
+    """Identity payload returned by a mocked (already-passed) external
+    verification — mirrors the shape ``verify_external_runtime_identity``
+    returns.  The receipted source revision defaults to ``_TO_EXPECTED_HEAD``:
+    the cutover REQUIRES ``verified.source_revision == --to-expected-head``,
+    so a coherent happy-path identity must resolve to the very head it stamps
+    (tests that need a mismatch pass an explicit different revision)."""
+    return {
+        "import_root": to_runtime_root,
+        "source_revision": source_revision,
+        "editable_root": to_runtime_root,
+        "editable_revision": source_revision,
+        "direct_url": {},
+        "pth": [],
+        "imports": {},
+        "content_sha256": "c" * 64,
+    }
+
+
+def _fake_identity_files(tmp_path: Path) -> tuple[Path, Path]:
+    identity = tmp_path / "identity.json"
+    receipt = tmp_path / "receipt.json"
+    identity.write_text(json.dumps(_verified_identity()), encoding="utf-8")
+    receipt.write_text(
+        json.dumps({"schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA}),
+        encoding="utf-8",
+    )
+    return identity, receipt
+
+
+def _make_cutover_runtime_tree(tmp_path: Path) -> tuple[str, str, str]:
+    """Build the REAL staging-shaped TO-runtime tree the path-coherence gates
+    require: a ``.venv`` DIRECTORY and an EXECUTABLE repair wrapper, both
+    resolving INSIDE the runtime root (the layout arnold-runtime-create
+    writes: ``{root}/.venv`` and ``{root}/arnold_pipelines/megaplan/cloud/
+    wrappers/arnold-repair-loop``).  Returns ``(to_root, venv, repair)``."""
+    to_root = tmp_path / "runtime-candidates" / "epic-demo" / "runtime-2"
+    venv = to_root / ".venv"
+    venv.mkdir(parents=True, exist_ok=True)
+    repair = (
+        to_root
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    )
+    repair.parent.mkdir(parents=True, exist_ok=True)
+    repair.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    repair.chmod(0o755)
+    return str(to_root), str(venv), str(repair)
+
+
+def _cutover_cli_args(
+    path: Path,
+    *,
+    expect_manifest_sha256: str,
+    expect_generation: int = 3,
+    identity: Path,
+    receipt: Path,
+    receipt_out: Path | None = None,
+    to_runtime_root: str = _TO_RUNTIME_ROOT,
+    to_venv_path: str = _TO_VENV_PATH,
+    to_repair_bin: str = _TO_REPAIR_BIN,
+) -> list[str]:
+    args = [
+        "cutover",
+        str(path),
+        "--expect-manifest-sha256",
+        expect_manifest_sha256,
+        "--expect-generation",
+        str(expect_generation),
+        "--from-runtime-root",
+        _FROM_RUNTIME_ROOT,
+        "--from-expected-head",
+        _FROM_EXPECTED_HEAD,
+        "--to-runtime-root",
+        to_runtime_root,
+        "--to-expected-head",
+        _TO_EXPECTED_HEAD,
+        "--to-venv-path",
+        to_venv_path,
+        "--to-repair-bin",
+        to_repair_bin,
+        "--runtime-identity",
+        str(identity),
+        "--runtime-provenance-receipt",
+        str(receipt),
+        "--reason",
+        "T-0101d cutover test",
+        "--actor",
+        "operator",
+    ]
+    if receipt_out is not None:
+        args += ["--receipt-out", str(receipt_out)]
+    return args
+
+
+def _self_asserting_identity_and_receipt(
+    tmp_path: Path,
+) -> tuple[Path, Path]:
+    """Identity + provenance receipt whose interpreter IS the control
+    interpreter — the real verifier refuses it at the independence check
+    (before any subprocess re-run), proving the cutover wires the genuine
+    chain verifier, without needing a second venv."""
+    control = Path(sys.executable).resolve()
+    identity = {
+        "import_root": str(REPO_ROOT),
+        "source_revision": "a" * 40,
+        "editable_root": str(REPO_ROOT),
+        "editable_revision": "a" * 40,
+        "direct_url": {},
+        "pth": [],
+        "imports": {},
+    }
+    identity["content_sha256"] = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    receipt = {
+        "schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA,
+        "interpreter": {
+            "executable": str(control),
+            "sha256": hashlib.sha256(control.read_bytes()).hexdigest(),
+            "prefix": str(Path(sys.prefix).resolve()),
+            "base_prefix": str(Path(sys.base_prefix).resolve()),
+        },
+        "provenance": {},
+        "runtime_identity": identity,
+    }
+    receipt["content_sha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                key: receipt[key]
+                for key in ("schema", "interpreter", "provenance", "runtime_identity")
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    identity_path = tmp_path / "self-asserting-identity.json"
+    receipt_path = tmp_path / "self-asserting-receipt.json"
+    identity_path.write_text(json.dumps(identity), encoding="utf-8")
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    return identity_path, receipt_path
+
+
+def test_cutover_runtime_manifest_moves_runtime_facts_and_bumps_generation() -> None:
+    manifest = _make_manifest_obj(
+        generation=2,
+        base={"commit": _FROM_EXPECTED_HEAD},  # schema-consistent base pin
+    )
+    updated = cutover_runtime_manifest(
+        manifest,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=_TO_RUNTIME_ROOT,
+        to_expected_head=_TO_EXPECTED_HEAD,
+        to_venv_path=_TO_VENV_PATH,
+        to_repair_bin=_TO_REPAIR_BIN,
+        reason="cutover to receipted runtime",
+    )
+    assert updated is not manifest
+    assert updated.generation == 3
+    assert updated.epic["runtime_root"] == _TO_RUNTIME_ROOT
+    assert updated.epic["worktree_path"] == _TO_RUNTIME_ROOT
+    assert updated.epic["expected_head"] == _TO_EXPECTED_HEAD
+    assert updated.epic["venv_path"] == _TO_VENV_PATH
+    assert updated.epic["repair_bin"] == _TO_REPAIR_BIN
+    # base.commit tracks the head when it pinned the from-head; the ref is a
+    # branch name and is never rewritten by a cutover.
+    assert updated.base["commit"] == _TO_EXPECTED_HEAD
+    assert updated.base["ref"] == manifest.base["ref"]
+    assert updated.indirection["verified_head"] == _TO_EXPECTED_HEAD
+    assert updated.indirection["host_path"] == _TO_RUNTIME_ROOT
+    assert updated.timestamps["updated"]
+    assert len(updated.promotions) == 1
+    record = updated.promotions[0]
+    assert record["previous_generation"] == 2
+    assert record["previous_commit"] == _FROM_EXPECTED_HEAD
+    assert record["previous_runtime_root"] == _FROM_RUNTIME_ROOT
+    assert record["previous_venv_path"] == manifest.epic["venv_path"]
+    assert record["previous_repair_bin"] == manifest.epic["repair_bin"]
+    assert record["reason"] == "cutover to receipted runtime"
+    assert record["at"]
+    # original untouched (the rollback source is retained on the new one)
+    assert manifest.generation == 2
+    assert manifest.epic["runtime_root"] == _FROM_RUNTIME_ROOT
+    assert manifest.promotions == []
+
+
+def test_cutover_runtime_manifest_preserves_base_pin_and_markers() -> None:
+    manifest = _make_manifest_obj(
+        base={"commit": "87a912beb"},  # NOT the from-head — a foreign pin
+        deviations=[_make_deviation()],
+        compatibility_only=True,
+    )
+    updated = cutover_runtime_manifest(
+        manifest,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=_TO_RUNTIME_ROOT,
+        to_expected_head=_TO_EXPECTED_HEAD,
+        to_venv_path=_TO_VENV_PATH,
+        to_repair_bin=_TO_REPAIR_BIN,
+        reason="preserve foreign base pin",
+    )
+    # a base pinned to something else is never silently rewritten
+    assert updated.base["commit"] == "87a912beb"
+    # compatibility_only demotion + deviations survive the transition
+    assert updated.compatibility_only is True
+    assert updated.deviations == manifest.deviations
+    assert updated.to_dict()[COMPATIBILITY_ONLY_KEY] is True
+
+
+def test_cutover_runtime_manifest_rejects_guard_mismatch() -> None:
+    manifest = _make_manifest_obj()
+    with pytest.raises(ManifestError, match="from-runtime-root"):
+        cutover_runtime_manifest(
+            manifest,
+            from_runtime_root="/opt/elsewhere",
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=_TO_RUNTIME_ROOT,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            reason="bad from-root",
+        )
+    with pytest.raises(ManifestError, match="from-expected-head"):
+        cutover_runtime_manifest(
+            manifest,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head="wronghead",
+            to_runtime_root=_TO_RUNTIME_ROOT,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            reason="bad from-head",
+        )
+    with pytest.raises(ManifestError, match="cutover requires"):
+        cutover_runtime_manifest(
+            manifest,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root="",
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            reason="empty to-root",
+        )
+    assert manifest.epic["runtime_root"] == _FROM_RUNTIME_ROOT
+    assert manifest.generation == 3
+
+
+def test_cli_cutover_happy_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_path / "m.json"
+    manifest = _make_manifest_obj(
+        generation=3,
+        base={"commit": _FROM_EXPECTED_HEAD},
+        deviations=[_make_deviation()],
+    )
+    write_manifest(manifest, path)
+    before = manifest.to_dict()
+    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    ) == 0
+
+    updated = load_manifest(path)
+    assert updated.generation == 4
+    assert updated.epic["runtime_root"] == to_root
+    assert updated.epic["worktree_path"] == to_root
+    assert updated.epic["expected_head"] == _TO_EXPECTED_HEAD
+    assert updated.epic["venv_path"] == to_venv
+    assert updated.epic["repair_bin"] == to_repair
+    assert updated.base["commit"] == _TO_EXPECTED_HEAD
+    assert updated.indirection["verified_head"] == _TO_EXPECTED_HEAD
+    assert updated.indirection["host_path"] == to_root
+    # deviations preserved end-to-end through the disk round trip
+    assert updated.deviations == before["deviations"]
+
+    # default rollback receipt: old manifest SHA-256 + FULL old field set
+    receipt_path = tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}"
+    assert receipt_path.exists()
+    receipt_payload = verify_runtime_manifest_cutover_rollback_receipt(
+        receipt_path, expected_manifest_before_sha256=expected_sha
+    )
+    assert receipt_payload["schema"] == RUNTIME_MANIFEST_CUTOVER_ROLLBACK_SCHEMA
+    assert receipt_payload["generation_before"] == 3
+    assert receipt_payload["generation_after"] == 4
+    assert receipt_payload["manifest_after_sha256"] == hashlib.sha256(
+        path.read_bytes()
+    ).hexdigest()
+    assert receipt_payload["from"] == {
+        "runtime_root": _FROM_RUNTIME_ROOT,
+        "expected_head": _FROM_EXPECTED_HEAD,
+    }
+    assert receipt_payload["to"] == {
+        "runtime_root": to_root,
+        "expected_head": _TO_EXPECTED_HEAD,
+        "venv_path": to_venv,
+        "repair_bin": to_repair,
+    }
+    assert receipt_payload["previous_manifest"] == before
+    assert receipt_payload["runtime_identity_sha256"] == "c" * 64
+    assert receipt_payload["actor"] == "operator"
+
+    # the CLI payload carries the same facts
+    out = json.loads(capsys.readouterr().out)
+    assert out["generation_before"] == 3
+    assert out["generation_after"] == 4
+    assert out["rollback_receipt_path"] == str(receipt_path)
+
+
+def test_cli_cutover_honors_custom_receipt_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(generation=3), path)
+    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    receipt_out = tmp_path / "receipts" / "cutover-receipt.json"
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            receipt_out=receipt_out,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    ) == 0
+    assert receipt_out.exists()
+    # default sibling receipt is NOT created when a custom path is supplied
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+    assert verify_runtime_manifest_cutover_rollback_receipt(
+        receipt_out, expected_manifest_before_sha256=expected_sha
+    )["generation_after"] == 4
+
+
+def test_cli_cutover_rejects_receipt_out_aliasing_manifest_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-5 blocker 3: ``--receipt-out`` realpathing onto the
+    manifest itself is refused (typed, ZERO mutation) — the final manifest
+    write would otherwise clobber the just-written receipt, letting the
+    command "succeed" without a durable rollback receipt."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("verifier must not run on an alias refusal")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        _boom,
+    )
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            receipt_out=path,  # direct alias of the manifest
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    ) == 2
+    assert "resolves onto protected transaction state" in capsys.readouterr().err
+    # zero mutation: manifest bytes unchanged, no receipt anywhere
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_receipt_out_aliasing_guard_inputs_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-5 blocker 3: ``--receipt-out`` realpathing onto either
+    identity/provenance guard input (--runtime-identity or
+    --runtime-provenance-receipt) is refused with zero mutation."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("verifier must not run on an alias refusal")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        _boom,
+    )
+    for aliased in (identity, receipt):
+        assert main(
+            _cutover_cli_args(
+                path,
+                expect_manifest_sha256=expected_sha,
+                identity=identity,
+                receipt=receipt,
+                receipt_out=aliased,
+                to_runtime_root=to_root,
+                to_venv_path=to_venv,
+                to_repair_bin=to_repair,
+            )
+        ) == 2
+        assert "resolves onto protected transaction state" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_apply_cutover_receipt_out_alias_refuses_typed_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-0101h round-5 blocker 3: the alias refusal is TYPED
+    (``receipt_aliases_protected_state``) at the API level and happens before
+    any verifier/lock/mkdir work."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("verifier must not run on an alias refusal")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        _boom,
+    )
+    with pytest.raises(CliError) as exc_info:
+        apply_runtime_manifest_cutover(
+            path,
+            expect_manifest_sha256=expected_sha,
+            expect_generation=3,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=_TO_RUNTIME_ROOT,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            runtime_identity_path=identity,
+            runtime_provenance_receipt_path=receipt,
+            reason="receipt alias refusal",
+            receipt_path=path,
+        )
+    assert exc_info.value.code == RECEIPT_ALIASES_PROTECTED_STATE
+    assert path.read_bytes() == before
+
+
+def test_cli_cutover_receipt_symlink_not_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-0101h round-5 blocker 3: a pre-seeded symlink AT the receipt path is
+    NOT followed — the hardened write replaces the link entry with a real
+    receipt file at the literal path, and the link's former target stays
+    byte-identical."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    decoy = tmp_path / "decoy-target.json"
+    decoy.write_text('{"decoy": true}\n', encoding="utf-8")
+    decoy_before = decoy.read_bytes()
+    receipt_out = tmp_path / "receipt-link.json"
+    receipt_out.symlink_to(decoy)
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            receipt_out=receipt_out,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    ) == 0
+    # the link was replaced by a REAL receipt file at the literal path
+    assert not receipt_out.is_symlink()
+    assert receipt_out.is_file()
+    verify_runtime_manifest_cutover_rollback_receipt(
+        receipt_out, expected_manifest_before_sha256=expected_sha
+    )
+    # the link's former target is untouched
+    assert decoy.read_bytes() == decoy_before
+
+
+def test_cli_cutover_receipt_post_verify_failed_when_receipt_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-5 blocker 3: when the receipt write silently fails
+    (injected no-op emitter) the manifest write still happens, but the
+    post-verify refuses instead of reporting success without durable
+    rollback evidence — a typed post-condition check."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    # the receipt write "fails" by doing nothing — the manifest write below
+    # proceeds, so the post-verify is the only thing that can refuse.
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        ".emit_runtime_manifest_cutover_rollback_receipt",
+        lambda *args, **kwargs: {},
+    )
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    ) == 2
+    assert "post-write verification" in capsys.readouterr().err
+    # the manifest itself was already rewritten (post-condition refusal)...
+    assert json.loads(path.read_text(encoding="utf-8"))["generation"] == 4
+    # ...and no rollback receipt exists anywhere
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_apply_cutover_receipt_post_verify_failed_typed_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-0101h round-5 blocker 3: the post-verify refusal is TYPED
+    (``receipt_post_verify_failed``) at the API level."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        ".emit_runtime_manifest_cutover_rollback_receipt",
+        lambda *args, **kwargs: {},
+    )
+    with pytest.raises(CliError) as exc_info:
+        apply_runtime_manifest_cutover(
+            path,
+            expect_manifest_sha256=expected_sha,
+            expect_generation=3,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=to_root,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+            runtime_identity_path=identity,
+            runtime_provenance_receipt_path=receipt,
+            reason="receipt post-verify refusal",
+        )
+    assert exc_info.value.code == RECEIPT_POST_VERIFY_FAILED
+
+
+def test_cli_cutover_happy_path_receipt_post_verify_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-0101h round-5 blocker 3 happy path: after a successful cutover the
+    durable rollback receipt exists at the literal ``--receipt-out`` path, is
+    parseable, and carries the exact pre-cutover manifest SHA-256 (the
+    internal post-verify passes and the command reports success)."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    receipt_out = tmp_path / "rcpt.json"
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            receipt_out=receipt_out,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    ) == 0
+    payload = verify_runtime_manifest_cutover_rollback_receipt(
+        receipt_out, expected_manifest_before_sha256=expected_sha
+    )
+    assert payload["manifest_before_sha256"] == expected_sha
+    assert payload["generation_before"] == 3
+    assert payload["generation_after"] == 4
+
+
+def _write_cutover_manifest(
+    tmp_path: Path, **manifest_overrides: object
+) -> tuple[Path, str]:
+    path = tmp_path / "m.json"
+    manifest = _make_manifest_obj(generation=3, **manifest_overrides)
+    write_manifest(manifest, path)
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _cutover_argv_with_tree(
+    path: Path,
+    expected_sha: str,
+    identity: Path,
+    receipt: Path,
+    to_root: str,
+    to_venv: str,
+    to_repair: str,
+) -> list[str]:
+    return _cutover_cli_args(
+        path,
+        expect_manifest_sha256=expected_sha,
+        identity=identity,
+        receipt=receipt,
+        to_runtime_root=to_root,
+        to_venv_path=to_venv,
+        to_repair_bin=to_repair,
+    )
+
+
+def test_cli_cutover_rejects_nonexistent_venv_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-2: the cutover refuses (typed, ZERO mutation, no rollback
+    receipt) when --to-venv-path does not exist as a directory."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    missing_venv = str(Path(to_venv) / "does-not-exist")
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    assert main(
+        _cutover_argv_with_tree(
+            path, expected_sha, identity, receipt, to_root, missing_venv, to_repair
+        )
+    ) == 2
+    assert "existing directory" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_non_executable_repair_bin_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-2: the cutover refuses when --to-repair-bin exists but is
+    NOT executable (a wrapper that cannot be invoked would strand repair)."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    Path(to_repair).chmod(0o644)  # strip the executable bit
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    assert main(
+        _cutover_argv_with_tree(
+            path, expected_sha, identity, receipt, to_root, to_venv, to_repair
+        )
+    ) == 2
+    assert "existing executable" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_venv_escaping_root_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-2: a --to-venv-path that resolves OUTSIDE the receipted
+    runtime root (a ``..`` escape) is refused — the manifest must never point
+    at a venv the receipt did not cover."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, _to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    escaped_venv = tmp_path / "escaped-venv"
+    escaped_venv.mkdir()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    assert main(
+        _cutover_argv_with_tree(
+            path,
+            expected_sha,
+            identity,
+            receipt,
+            to_root,
+            str(escaped_venv),
+            to_repair,
+        )
+    ) == 2
+    assert "inside --to-runtime-root" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_repair_bin_escaping_root_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-2: a --to-repair-bin that resolves OUTSIDE the receipted
+    runtime root is refused (same containment class as the venv escape)."""
+    path, expected_sha = _write_cutover_manifest(tmp_path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, _to_repair = _make_cutover_runtime_tree(tmp_path)
+    escaped_repair = tmp_path / "escaped-repair-loop"
+    escaped_repair.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    escaped_repair.chmod(0o755)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    assert main(
+        _cutover_argv_with_tree(
+            path,
+            expected_sha,
+            identity,
+            receipt,
+            to_root,
+            to_venv,
+            str(escaped_repair),
+        )
+    ) == 2
+    assert "inside --to-runtime-root" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_stale_editable_install_path_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0101h round-2: ``base.editable_install_path == ''`` (the staging
+    default) survives the cutover ONLY when the receipted identity proves a
+    single-root runtime.  An identity with editable markers OUTSIDE its
+    import_root proves a split editable install — keeping '' would silently
+    leave a stale field, so the cutover refuses with a typed error."""
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path, base={"commit": _FROM_EXPECTED_HEAD, "editable_install_path": ""}
+    )
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    split_identity = dict(_verified_identity(to_runtime_root=to_root))
+    split_identity["editable_root"] = "/opt/elsewhere-editable"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: split_identity,
+    )
+    assert main(
+        _cutover_argv_with_tree(
+            path, expected_sha, identity, receipt, to_root, to_venv, to_repair
+        )
+    ) == 2
+    assert "editable markers" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cutover_relocates_root_relative_fields() -> None:
+    """T-0101h round-2: root-relative fields (deps_lockfile, base.venv_path,
+    base.editable_install_path) are RELOCATED to the same relative offset
+    under the new root; shared paths outside the runtime root and the
+    source-based base.ref are untouched."""
+    manifest = _make_manifest_obj(
+        base={
+            "commit": _FROM_EXPECTED_HEAD,
+            "venv_path": f"{_FROM_RUNTIME_ROOT}/.venv",
+            "editable_install_path": _FROM_RUNTIME_ROOT,
+        },
+        epic={"deps_lockfile": f"{_FROM_RUNTIME_ROOT}/uv.lock"},
+    )
+    updated = cutover_runtime_manifest(
+        manifest,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=_TO_RUNTIME_ROOT,
+        to_expected_head=_TO_EXPECTED_HEAD,
+        to_venv_path=f"{_TO_RUNTIME_ROOT}/.venv",
+        to_repair_bin=(
+            f"{_TO_RUNTIME_ROOT}/arnold_pipelines/megaplan/cloud/wrappers/"
+            "arnold-repair-loop"
+        ),
+        reason="cutover relocates root-relative fields",
+    )
+    assert updated.epic["deps_lockfile"] == f"{_TO_RUNTIME_ROOT}/uv.lock"
+    assert updated.base["venv_path"] == f"{_TO_RUNTIME_ROOT}/.venv"
+    assert updated.base["editable_install_path"] == _TO_RUNTIME_ROOT
+    # base.ref is a git ref NAME (source-based), never rewritten by a root move
+    assert updated.base["ref"] == manifest.base["ref"]
+
+
+def test_cutover_preserves_shared_non_root_relative_fields() -> None:
+    """Shared paths OUTSIDE the runtime root (a base checkout) do not go stale
+    when the root moves: the cutover leaves them byte-identical."""
+    manifest = _make_manifest_obj()  # factory: base/venv/editable under /opt/arnold/base
+    updated = cutover_runtime_manifest(
+        manifest,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=_TO_RUNTIME_ROOT,
+        to_expected_head=_TO_EXPECTED_HEAD,
+        to_venv_path=_TO_VENV_PATH,
+        to_repair_bin=_TO_REPAIR_BIN,
+        reason="cutover preserves shared base fields",
+    )
+    assert updated.base["venv_path"] == manifest.base["venv_path"]
+    assert updated.base["editable_install_path"] == manifest.base["editable_install_path"]
+    assert updated.epic["deps_lockfile"] == manifest.epic["deps_lockfile"]
+    assert updated.base["ref"] == manifest.base["ref"]
+
+
+def test_cli_cutover_rewrites_root_relative_fields_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-0101h round-2 end-to-end: a staging-shaped manifest (root-relative
+    deps_lockfile / base.venv_path, empty editable_install_path) is rewritten
+    coherently through the REAL CLI cutover — no stale root-relative field
+    survives the root move."""
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path,
+        base={
+            "commit": _FROM_EXPECTED_HEAD,
+            "venv_path": f"{_FROM_RUNTIME_ROOT}/.venv",
+            "editable_install_path": "",
+        },
+        epic={"deps_lockfile": f"{_FROM_RUNTIME_ROOT}/pyproject.toml"},
+    )
+    before_base_ref = load_manifest(path).base["ref"]
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    assert main(
+        _cutover_argv_with_tree(
+            path, expected_sha, identity, receipt, to_root, to_venv, to_repair
+        )
+    ) == 0
+    updated = load_manifest(path)
+    assert updated.epic["runtime_root"] == to_root
+    assert updated.epic["venv_path"] == to_venv
+    # root-relative fields were REWRITTEN to the new root
+    assert updated.epic["deps_lockfile"] == f"{to_root}/pyproject.toml"
+    assert updated.base["venv_path"] == f"{to_root}/.venv"
+    # '' survives only because the receipted identity is single-root here
+    assert updated.base["editable_install_path"] == ""
+    # base.ref stays source-based across the root move
+    assert updated.base["ref"] == before_base_ref
+
+
+def test_cli_cutover_rejects_manifest_sha_mismatch_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(generation=3), path)
+    before = path.read_bytes()
+    identity, receipt = _fake_identity_files(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(),
+    )
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256="0" * 64,  # wrong SHA
+            identity=identity,
+            receipt=receipt,
+        )
+    ) == 2
+    assert path.read_bytes() == before  # byte-for-byte unchanged
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_generation_mismatch_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(generation=3), path)
+    before = path.read_bytes()
+    expected_sha = hashlib.sha256(before).hexdigest()
+    identity, receipt = _fake_identity_files(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(),
+    )
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            expect_generation=7,  # wrong generation
+            identity=identity,
+            receipt=receipt,
+        )
+    ) == 2
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_from_guard_mismatch_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(generation=3), path)
+    before = path.read_bytes()
+    expected_sha = hashlib.sha256(before).hexdigest()
+    identity, receipt = _fake_identity_files(tmp_path)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(),
+    )
+    # wrong from-runtime-root guard (file SHA + generation both pass)
+    args = _cutover_cli_args(
+        path,
+        expect_manifest_sha256=expected_sha,
+        identity=identity,
+        receipt=receipt,
+    )
+    args[args.index("--from-runtime-root") + 1] = "/opt/elsewhere"
+    assert main(args) == 2
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_identity_root_mismatch_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(generation=3), path)
+    before = path.read_bytes()
+    expected_sha = hashlib.sha256(before).hexdigest()
+    identity, receipt = _fake_identity_files(tmp_path)
+    # verifier "passes" but for a DIFFERENT root than --to-runtime-root
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root="/opt/unreceipted-runtime"
+        ),
+    )
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+        )
+    ) == 2
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_receipt_head_mismatch_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The manifest head is BOUND to the receipt: a receipted source revision
+    that differs from --to-expected-head refuses with zero mutation — the
+    manifest cannot stamp a head the independently verified runtime did not
+    resolve to (T-0101h finding 2)."""
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(generation=3), path)
+    before = path.read_bytes()
+    expected_sha = hashlib.sha256(before).hexdigest()
+    identity, receipt = _fake_identity_files(tmp_path)
+    # verifier "passes" but for a DIFFERENT source revision than
+    # --to-expected-head (the receipt is for a different commit)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            source_revision="b" * 40
+        ),
+    )
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+        )
+    ) == 2
+    assert path.read_bytes() == before  # byte-for-byte unchanged
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_self_asserting_identity_receipt_zero_mutation(
+    tmp_path: Path,
+) -> None:
+    """The cutover wires the REAL chain verifier: an identity receipt whose
+    interpreter is the control interpreter is refused at the independence
+    check — before any write, byte-for-byte zero mutation (the T-0101d
+    'mismatched old identity receipt -> refuse' acceptance case)."""
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(generation=3), path)
+    before = path.read_bytes()
+    expected_sha = hashlib.sha256(before).hexdigest()
+    identity, receipt = _self_asserting_identity_and_receipt(tmp_path)
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+        )
+    ) == 2
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_rejects_missing_manifest(tmp_path: Path) -> None:
+    identity, receipt = _fake_identity_files(tmp_path)
+    missing = tmp_path / "missing.json"
+    assert main(
+        _cutover_cli_args(
+            missing,
+            expect_manifest_sha256="0" * 64,
+            identity=identity,
+            receipt=receipt,
+        )
+    ) == 2
+
+
+def test_cli_cutover_requires_reason(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity, receipt = _fake_identity_files(tmp_path)
+    args = _cutover_cli_args(
+        path, expect_manifest_sha256=expected_sha, identity=identity, receipt=receipt
+    )
+    args.remove("--reason")
+    args.remove("T-0101d cutover test")
+    with pytest.raises(SystemExit):
+        main(args)
+
+
+def test_apply_runtime_manifest_cutover_rejects_malformed_guards(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    identity, receipt = _fake_identity_files(tmp_path)
+    with pytest.raises(CliError, match="64-char"):
+        apply_runtime_manifest_cutover(
+            path,
+            expect_manifest_sha256="short",
+            expect_generation=3,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=_TO_RUNTIME_ROOT,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            runtime_identity_path=identity,
+            runtime_provenance_receipt_path=receipt,
+            reason="bad sha guard",
+        )
+    with pytest.raises(CliError, match="int >= 1"):
+        apply_runtime_manifest_cutover(
+            path,
+            expect_manifest_sha256="0" * 64,
+            expect_generation=0,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=_TO_RUNTIME_ROOT,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            runtime_identity_path=identity,
+            runtime_provenance_receipt_path=receipt,
+            reason="bad generation guard",
+        )
+    with pytest.raises(CliError, match="to-repair-bin is required"):
+        apply_runtime_manifest_cutover(
+            path,
+            expect_manifest_sha256="0" * 64,
+            expect_generation=3,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=_TO_RUNTIME_ROOT,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin="",
+            runtime_identity_path=identity,
+            runtime_provenance_receipt_path=receipt,
+            reason="empty to-repair-bin",
+        )
+    assert path.read_bytes() == path.read_bytes()  # untouched (no write reached)
+
+
+def test_verify_rollback_receipt_rejects_bad_schema_and_digest(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "receipt.json"
+    with pytest.raises(ValueError, match="invalid JSON"):
+        verify_runtime_manifest_cutover_rollback_receipt(path)
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid JSON"):
+        verify_runtime_manifest_cutover_rollback_receipt(path)
+    path.write_text(json.dumps({"schema": "other"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema mismatch"):
+        verify_runtime_manifest_cutover_rollback_receipt(path)
+    receipt = emit_runtime_manifest_cutover_rollback_receipt(
+        path,
+        manifest_path=Path("/opt/m.json"),
+        manifest_before_sha256="a" * 64,
+        manifest_after_sha256="b" * 64,
+        generation_before=3,
+        generation_after=4,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=_TO_RUNTIME_ROOT,
+        to_expected_head=_TO_EXPECTED_HEAD,
+        to_venv_path=_TO_VENV_PATH,
+        to_repair_bin=_TO_REPAIR_BIN,
+        previous_manifest={"runtime_id": "old"},
+        runtime_identity_sha256="c" * 64,
+        actor="operator",
+        reason="test",
+    )
+    assert verify_runtime_manifest_cutover_rollback_receipt(path) == receipt
+    # wrong expected pre-cutover SHA (valid receipt, mismatched expectation)
+    with pytest.raises(ValueError, match="expected pre-cutover"):
+        verify_runtime_manifest_cutover_rollback_receipt(
+            path, expected_manifest_before_sha256="d" * 64
+        )
+    # tampered digest
+    tampered = dict(receipt)
+    tampered["content_sha256"] = "0" * 64
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(ValueError, match="digest is invalid"):
+        verify_runtime_manifest_cutover_rollback_receipt(path)

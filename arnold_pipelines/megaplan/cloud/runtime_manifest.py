@@ -31,16 +31,24 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
+import urllib.parse
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.cloud.shadow_attestation import attest_target_content
+from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+    emit_runtime_manifest_cutover_rollback_receipt,
+    verify_runtime_manifest_cutover_rollback_receipt,
+)
+from arnold_pipelines.megaplan.types import CliError
 
 MANIFEST_SCHEMA_VERSION = "1"
 
@@ -58,6 +66,31 @@ MANIFEST_FILENAME = "runtime-manifest.json"
 # because it is per-pointer telemetry, not part of a per-slug authoritative
 # manifest.
 COMPATIBILITY_ONLY_KEY = "compatibility_only"
+
+# Typed refusal code for the CAS-guarded ``cutover`` command.
+CUTOVER_ERROR = "runtime_manifest_cutover_refused"
+
+# Default rollback-receipt path for ``cutover``: ``<manifest-path>`` with this
+# suffix appended (callers may override with ``--receipt-out``).
+CUTOVER_RECEIPT_SUFFIX = ".cutover-rollback.json"
+
+# Typed refusal code when ``--receipt-out`` realpaths onto protected
+# transaction state — the manifest itself, either identity/provenance guard
+# input, or the cutover's own transaction lock file (T-0101h round-5
+# blocker 3). Without this guard the final manifest write would clobber the
+# just-written receipt, letting the cutover "succeed" with no durable
+# rollback evidence.
+RECEIPT_ALIASES_PROTECTED_STATE = "receipt_aliases_protected_state"
+
+# Typed refusal code when the durable rollback receipt fails post-write
+# verification (missing, corrupt, or wrong pre-cutover manifest SHA-256).
+# The manifest may already be rewritten at that point — the refusal is a loud
+# POST-CONDITION check that the cutover never reports success without durable
+# rollback evidence (the receipt write is attempted FIRST, so an operator can
+# still recover from the attempted receipt path).
+RECEIPT_POST_VERIFY_FAILED = "receipt_post_verify_failed"
+
+_FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 _VALID_STATES = frozenset({"active", "closed"})
 
@@ -659,6 +692,135 @@ def advance_generation(
     )
 
 
+def cutover_runtime_manifest(
+    manifest: RuntimeManifest,
+    *,
+    from_runtime_root: str,
+    from_expected_head: str,
+    to_runtime_root: str,
+    to_expected_head: str,
+    to_venv_path: str,
+    to_repair_bin: str,
+    reason: str,
+) -> RuntimeManifest:
+    """Return a NEW manifest cut over to a receipted runtime at ``generation + 1``.
+
+    Guards (CAS): *from_runtime_root* / *from_expected_head* must equal the
+    manifest's current ``epic.runtime_root`` / ``epic.expected_head`` — any
+    mismatch raises :class:`ManifestError` and leaves *manifest* untouched.
+    On success the manifest moves, atomically as one new instance:
+
+    - ``epic.runtime_root`` / ``epic.worktree_path`` -> *to_runtime_root*
+      (the worktree IS the runtime root by schema convention)
+    - ``epic.expected_head`` -> *to_expected_head*
+    - ``epic.venv_path`` -> *to_venv_path*, ``epic.repair_bin`` -> *to_repair_bin*
+    - root-relative fields follow the root: ``epic.deps_lockfile``,
+      ``base.venv_path``, and ``base.editable_install_path`` are RELOCATED to
+      the same relative offset under *to_runtime_root* when they resolve
+      inside the from-root (the staging layout writes ``{root}/pyproject.toml``,
+      ``{root}/.venv``, ``{root}/``), so a moved root never leaves them
+      stale.  Shared paths OUTSIDE the runtime root (e.g. a base checkout)
+      are untouched — they do not go stale.  ``base.ref`` is a git ref NAME,
+      not a path: it names the source branch the runtime was created from
+      and is source-based, so a cutover deliberately leaves it in place
+      (the receipted identity is source-based; only the root moves).
+      ``base.editable_install_path == ''`` is preserved as-is ONLY when the
+      calling cutover has proven the receipted identity is single-root /
+      non-editable (``apply_runtime_manifest_cutover`` refuses otherwise).
+    - ``base.commit`` -> *to_expected_head* when it currently pins
+      *from_expected_head* (schema-consistent manifests keep the base commit
+      in sync with the head; a base pinned to something else is left alone —
+      the cutover never silently rewrites a foreign pin)
+    - ``indirection.verified_head`` -> *to_expected_head* and
+      ``indirection.host_path`` -> *to_runtime_root* (the host side of the
+      runtime root follows the epic root, mirroring how
+      :func:`advance_generation` moves ``verified_head`` with the head)
+
+    ``generation`` is incremented and a promotion/rollback record is appended
+    (see :func:`advance_generation`; the record additionally carries the
+    previous runtime root / venv / repair bin for an in-manifest rollback
+    trail). ``timestamps.updated`` is stamped. ``compatibility_only`` and
+    ``deviations`` are preserved verbatim via :func:`_reconstruct`.
+    """
+    if not all(
+        str(value or "").strip()
+        for value in (
+            from_runtime_root,
+            from_expected_head,
+            to_runtime_root,
+            to_expected_head,
+            to_venv_path,
+            to_repair_bin,
+            reason,
+        )
+    ):
+        raise ManifestError("cutover requires every from/to field and a reason")
+    epic = dict(manifest.epic)
+    if str(epic.get("runtime_root") or "") != from_runtime_root:
+        raise ManifestError(
+            "cutover refused: from-runtime-root does not match "
+            "manifest epic.runtime_root"
+        )
+    if str(epic.get("expected_head") or "") != from_expected_head:
+        raise ManifestError(
+            "cutover refused: from-expected-head does not match "
+            "manifest epic.expected_head"
+        )
+    now = _utc_now()
+    promotions = list(manifest.promotions) + [
+        {
+            "previous_generation": manifest.generation,
+            "previous_commit": str(epic.get("expected_head") or ""),
+            "previous_runtime_root": str(epic.get("runtime_root") or ""),
+            "previous_venv_path": str(epic.get("venv_path") or ""),
+            "previous_repair_bin": str(epic.get("repair_bin") or ""),
+            "reason": reason,
+            "at": now,
+        }
+    ]
+    base = dict(manifest.base)
+    if str(base.get("commit") or "") == from_expected_head:
+        base["commit"] = to_expected_head
+    indirection = dict(manifest.indirection)
+    indirection["verified_head"] = to_expected_head
+    indirection["host_path"] = to_runtime_root
+    # Root-relative field coherence (T-0101h round-2): the staging layout
+    # writes base.venv_path / epic.deps_lockfile / base.editable_install_path
+    # as paths INSIDE the runtime root, so they go STALE when the root moves.
+    # Relocate any root-relative path to the same relative offset under the
+    # new root; shared paths (a base checkout outside the runtime) are
+    # untouched. base.ref is a git ref name — source-based, never rewritten
+    # by a root move (documented in the docstring above).
+    resolved_from_root = Path(from_runtime_root).expanduser().resolve(strict=False)
+    resolved_to_root = Path(to_runtime_root).expanduser().resolve(strict=False)
+    base["venv_path"] = _relocate_root_relative(
+        base.get("venv_path"), resolved_from_root, resolved_to_root
+    )
+    base["editable_install_path"] = _relocate_root_relative(
+        base.get("editable_install_path"), resolved_from_root, resolved_to_root
+    )
+    relocated_deps_lockfile = _relocate_root_relative(
+        epic.get("deps_lockfile"), resolved_from_root, resolved_to_root
+    )
+    return _reconstruct(
+        manifest,
+        generation=manifest.generation + 1,
+        base=base,
+        epic={
+            **epic,
+            "runtime_root": to_runtime_root,
+            "worktree_path": to_runtime_root,
+            "expected_head": to_expected_head,
+            "venv_path": to_venv_path,
+            "repair_bin": to_repair_bin,
+            "deps_lockfile": relocated_deps_lockfile,
+        },
+        indirection=indirection,
+        promotions=promotions,
+        timestamps=dict(manifest.timestamps, updated=now),
+    )
+
+
 def set_state(manifest: RuntimeManifest, state: str) -> RuntimeManifest:
     """Return a NEW manifest with ``state`` changed to *state*.
 
@@ -837,6 +999,439 @@ def _write_manifest_or_pointer(manifest: RuntimeManifest, path: Path) -> None:
         write_manifest(manifest, path)
 
 
+# ── CAS runtime cutover (T-0101d) ───────────────────────────────────────────
+
+
+def _relocate_root_relative(
+    value: Any, from_root: Path, to_root: Path
+) -> str:
+    """Relocate a root-relative path to the new runtime root.
+
+    A path that resolves INSIDE *from_root* (the staging layout's
+    ``{root}/.venv``, ``{root}/pyproject.toml``, ``{root}/uv.lock``, or the
+    root itself) moves WITH the root: the cutover re-roots it at the same
+    relative offset under *to_root* — the exact layout a created worktree
+    has.  Empty values and paths that resolve OUTSIDE the runtime root (a
+    shared base checkout like ``/opt/arnold/base``) are NOT root-relative:
+    they return unchanged, because they do not go stale when the runtime
+    root moves.  ``resolve(strict=False)`` makes the containment check
+    immune to ``..`` escapes.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return str(value or "")
+    candidate = Path(text).expanduser().resolve(strict=False)
+    if not candidate.is_relative_to(from_root):
+        return text
+    relative = candidate.relative_to(from_root)
+    return str(to_root.joinpath(relative).resolve(strict=False))
+
+
+def _editable_markers_outside_import_root(
+    identity: Mapping[str, Any],
+) -> list[str]:
+    """Editable-install markers in a receipted runtime identity that point
+    OUTSIDE its ``import_root``.
+
+    A single-root runtime (the staging layout: a source worktree imported via
+    PYTHONPATH / the runtime root itself) collapses every editable marker
+    onto ``import_root``.  A marker resolving OUTSIDE it — a distinct
+    ``editable_root``, a ``file://`` ``direct_url`` outside the root, or a
+    ``.pth`` entry outside it — proves the runtime is editable-installed
+    from a SEPARATE location, so a cutover that keeps (or relocates) a
+    ``base.editable_install_path`` that disagrees with that identity would
+    silently split the runtime.  Returns the offending marker kinds (``[]``
+    when the identity proves single-root / non-editable).
+    """
+    problems: list[str] = []
+    import_root_text = str(identity.get("import_root") or "")
+    if not import_root_text:
+        return ["import_root"]
+    import_root = Path(import_root_text).expanduser().resolve(strict=False)
+    editable_root = str(identity.get("editable_root") or "")
+    if editable_root and (
+        Path(editable_root).expanduser().resolve(strict=False) != import_root
+    ):
+        problems.append("editable_root")
+    direct_url = identity.get("direct_url")
+    if isinstance(direct_url, Mapping):
+        url = str(direct_url.get("url") or "")
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme == "file":
+            direct = (
+                Path(urllib.parse.unquote(parsed.path))
+                .expanduser()
+                .resolve(strict=False)
+            )
+            if not direct.is_relative_to(import_root):
+                problems.append("direct_url")
+    pth = identity.get("pth")
+    if isinstance(pth, list):
+        for record in pth:
+            if not isinstance(record, Mapping):
+                continue
+            entries = record.get("entries")
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if isinstance(entry, str) and entry and not (
+                    Path(entry)
+                    .expanduser()
+                    .resolve(strict=False)
+                    .is_relative_to(import_root)
+                ):
+                    problems.append("pth")
+                    break
+    return sorted(set(problems))
+
+
+def _verify_external_runtime_identity(
+    identity_path: Path, receipt_path: Path
+) -> dict[str, Any]:
+    """Verify an offline runtime against its independently emitted provenance
+    receipt. Lazy import keeps the manifest CLI dependency-light; the verifier
+    itself is the accepted chain verifier
+    (``execution_binding.verify_external_runtime_identity``), which re-runs the
+    receipted interpreter and raises :class:`CliError` on any mismatch."""
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        verify_external_runtime_identity,
+    )
+
+    return verify_external_runtime_identity(identity_path, receipt_path)
+
+
+def _validate_receipt_target(
+    receipt_path: Path | None,
+    *,
+    manifest_path: Path,
+    runtime_identity_path: Path,
+    runtime_provenance_receipt_path: Path,
+    lock_path: Path,
+) -> Path:
+    """Constrain the rollback-receipt destination (T-0101h round-5 blocker 3).
+
+    Returns the LITERAL (unresolved) receipt path — symlink protection
+    happens at write time in :func:`emit_runtime_manifest_cutover_rollback_
+    receipt`, which replaces a pre-seeded symlink ENTRY at the final path
+    rather than following it.  This guard refuses, with a typed
+    ``receipt_aliases_protected_state`` error and ZERO mutation, a receipt
+    whose REALPATH collides with protected transaction state: the manifest
+    itself, either identity/provenance guard input (``--runtime-identity`` /
+    ``--runtime-provenance-receipt``), or the cutover's own transaction lock
+    file.  Without it a ``--receipt-out`` aliasing the manifest is overwritten
+    by the final manifest write and the command "succeeds" without a durable
+    rollback receipt.
+    """
+    receipt = (
+        Path(receipt_path).expanduser()
+        if receipt_path is not None
+        else manifest_path.with_name(manifest_path.name + CUTOVER_RECEIPT_SUFFIX)
+    )
+    protected = (
+        manifest_path,
+        Path(runtime_identity_path).expanduser().resolve(strict=False),
+        Path(runtime_provenance_receipt_path).expanduser().resolve(strict=False),
+        lock_path,
+    )
+    try:
+        resolved = receipt.resolve(strict=False)
+    except OSError:
+        resolved = None
+    if resolved is not None:
+        for protected_path in protected:
+            if resolved == protected_path:
+                raise CliError(
+                    RECEIPT_ALIASES_PROTECTED_STATE,
+                    f"receipt path {receipt} resolves onto protected "
+                    f"transaction state {protected_path}",
+                    extra={
+                        "receipt_path": str(receipt),
+                        "protected_path": str(protected_path),
+                    },
+                )
+    return receipt
+
+
+def apply_runtime_manifest_cutover(
+    manifest_path: Path,
+    *,
+    expect_manifest_sha256: str,
+    expect_generation: int,
+    from_runtime_root: str,
+    from_expected_head: str,
+    to_runtime_root: str,
+    to_expected_head: str,
+    to_venv_path: str,
+    to_repair_bin: str,
+    runtime_identity_path: Path,
+    runtime_provenance_receipt_path: Path,
+    reason: str,
+    actor: str = "operator",
+    receipt_path: Path | None = None,
+) -> dict[str, Any]:
+    """CAS-guarded, fail-closed runtime cutover of the manifest at *manifest_path*.
+
+    Refuses (typed :class:`CliError`, ZERO mutation — the manifest file, and
+    any rollback receipt, are untouched) on ANY of:
+
+    - malformed guards (non-64-hex ``expect_manifest_sha256``,
+      ``expect_generation < 1``, empty from/to fields, reason or actor)
+    - manifest file bytes not equal to ``expect_manifest_sha256``
+    - parsed manifest ``generation`` != ``expect_generation``
+    - ``epic.runtime_root``/``epic.expected_head`` != the from-guards
+      (enforced by :func:`cutover_runtime_manifest`)
+    - the runtime identity/provenance receipt failing
+      :func:`_verify_external_runtime_identity`, or the receipted identity's
+      ``import_root`` not resolving to *to_runtime_root*
+    - the receipted identity's ``source_revision`` != *to_expected_head* (the
+      manifest head is bound to the receipt)
+    - *to_venv_path* not existing as a DIRECTORY, *to_repair_bin* not existing
+      as an EXECUTABLE, or either resolving OUTSIDE *to_runtime_root* (a
+      ``..`` escape would point the manifest at a runtime the receipt never
+      verified)
+    - the receipted identity carrying editable markers (``editable_root``,
+      ``direct_url``, ``.pth`` entries) that resolve OUTSIDE its
+      ``import_root`` while the manifest's ``base.editable_install_path`` is
+      ``''`` — keeping ``''`` is only coherent for a proven single-root
+      (non-editable) runtime; refusing here prevents a cutover from silently
+      leaving a stale ``editable_install_path`` that splits the runtime
+      identity
+    - *receipt_path* realpathing onto protected transaction state — the
+      manifest itself, either identity/provenance guard input, or the
+      cutover's transaction lock file (typed
+      ``receipt_aliases_protected_state``, ZERO mutation — checked before any
+      mkdir/lock/verifier work)
+    - the durable rollback receipt failing post-write verification (missing,
+      corrupt, or wrong pre-cutover SHA-256) — typed
+      ``receipt_post_verify_failed`` AFTER the manifest write, so the command
+      never reports success without durable rollback evidence
+
+    On success, under one exclusive flock covering the whole read-CAS-write:
+    the receipted TO-runtime facts are moved into the manifest
+    (:func:`cutover_runtime_manifest` — generation + 1, promotion record,
+    root-relative field relocation, ``timestamps.updated``), a rollback
+    receipt capturing the old manifest SHA-256 + FULL old field set is
+    written first to *receipt_path* (default
+    ``<manifest-path>.cutover-rollback.json``) through a hardened atomic
+    write that never follows a pre-seeded symlink, then the manifest is
+    written atomically through the shared payload builder (so a demoted
+    ``compatibility_only`` active pointer can never be re-admitted), and the
+    receipt is post-verified before success is reported.
+    """
+    if not _FULL_SHA256.fullmatch(str(expect_manifest_sha256 or "")):
+        raise CliError(
+            CUTOVER_ERROR, "expect-manifest-sha256 must be a 64-char hex SHA-256"
+        )
+    if not isinstance(expect_generation, int) or expect_generation < 1:
+        raise CliError(CUTOVER_ERROR, "expect-generation must be an int >= 1")
+    required = {
+        "from-runtime-root": from_runtime_root,
+        "from-expected-head": from_expected_head,
+        "to-runtime-root": to_runtime_root,
+        "to-expected-head": to_expected_head,
+        "to-venv-path": to_venv_path,
+        "to-repair-bin": to_repair_bin,
+        "reason": reason,
+        "actor": actor,
+    }
+    for label, value in required.items():
+        if not str(value or "").strip():
+            raise CliError(CUTOVER_ERROR, f"{label} is required")
+
+    target = Path(manifest_path).expanduser().resolve(strict=False)
+    lock_path = target.with_name(target.name + ".lock")
+    # Rollback-receipt destination is validated BEFORE any mutation: a
+    # ``--receipt-out`` realpathing onto the manifest, an identity/provenance
+    # guard input, or the transaction lock file is refused (typed, zero
+    # mutation — no mkdir, no lock file, no receipt) — the final manifest
+    # write would otherwise clobber the just-written receipt and the cutover
+    # would "succeed" without durable rollback evidence (T-0101h round-5
+    # blocker 3).
+    receipt_target = _validate_receipt_target(
+        receipt_path,
+        manifest_path=target,
+        runtime_identity_path=runtime_identity_path,
+        runtime_provenance_receipt_path=runtime_provenance_receipt_path,
+        lock_path=lock_path,
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            before_bytes = target.read_bytes()
+        except OSError as exc:
+            raise CliError(CUTOVER_ERROR, f"cannot read manifest: {target}") from exc
+        observed_sha = hashlib.sha256(before_bytes).hexdigest()
+        if observed_sha != expect_manifest_sha256:
+            raise CliError(
+                CUTOVER_ERROR,
+                f"manifest changed: expected {expect_manifest_sha256}, "
+                f"observed {observed_sha}",
+            )
+        try:
+            manifest = load_manifest(target)
+        except ManifestError as exc:
+            raise CliError(CUTOVER_ERROR, str(exc)) from exc
+        if manifest.generation != expect_generation:
+            raise CliError(
+                CUTOVER_ERROR,
+                f"generation mismatch: expected {expect_generation}, "
+                f"observed {manifest.generation}",
+            )
+        # The runtime identity/provenance receipt is verified BEFORE any write
+        # (the verifier re-runs the receipted interpreter; a stale or forged
+        # receipt refuses here with zero mutation).
+        verified = _verify_external_runtime_identity(
+            Path(runtime_identity_path), Path(runtime_provenance_receipt_path)
+        )
+        verified_root = str(verified.get("import_root") or "").strip()
+        to_root = Path(to_runtime_root).expanduser().resolve(strict=False)
+        if not verified_root or Path(verified_root).expanduser().resolve(strict=False) != to_root:
+            raise CliError(
+                CUTOVER_ERROR,
+                "receipted runtime identity does not match --to-runtime-root",
+            )
+        # The manifest's new expected_head is bound to the RECEIPT: the
+        # receipted source revision must equal --to-expected-head, so the
+        # cutover can never stamp a head the independently verified runtime
+        # did not actually resolve to (zero mutation on mismatch).
+        verified_source = str(verified.get("source_revision") or "").strip()
+        if not verified_source or verified_source != to_expected_head:
+            raise CliError(
+                CUTOVER_ERROR,
+                "receipted runtime source revision does not match "
+                "--to-expected-head",
+            )
+        # ── TO-path coherence (T-0101h round-2) ──────────────────────────
+        # The cutover may only move the manifest onto a runtime that actually
+        # EXISTS at the to-paths: the venv must be a real directory, the
+        # repair wrapper a real executable, and BOTH must resolve INSIDE the
+        # receipted runtime root (a ``..`` escape would point the manifest at
+        # a runtime outside the verified root).  Any failure is a typed
+        # refusal with zero mutation and no rollback receipt.
+        venv_resolved = Path(to_venv_path).expanduser().resolve(strict=False)
+        repair_resolved = Path(to_repair_bin).expanduser().resolve(strict=False)
+        if not venv_resolved.is_dir():
+            raise CliError(
+                CUTOVER_ERROR,
+                f"--to-venv-path is not an existing directory: {to_venv_path}",
+            )
+        if not repair_resolved.is_file() or not os.access(repair_resolved, os.X_OK):
+            raise CliError(
+                CUTOVER_ERROR,
+                f"--to-repair-bin is not an existing executable: {to_repair_bin}",
+            )
+        if not venv_resolved.is_relative_to(to_root):
+            raise CliError(
+                CUTOVER_ERROR,
+                "--to-venv-path must resolve inside --to-runtime-root",
+            )
+        if not repair_resolved.is_relative_to(to_root):
+            raise CliError(
+                CUTOVER_ERROR,
+                "--to-repair-bin must resolve inside --to-runtime-root",
+            )
+        # ── base.editable_install_path coherence ─────────────────────────
+        # An EMPTY editable_install_path (the staging default) survives the
+        # cutover ONLY when the receipted identity proves a single-root
+        # runtime — every editable marker collapses onto import_root.  A
+        # runtime with editable markers OUTSIDE its import_root is
+        # editable-installed from a separate location; keeping '' (or a
+        # relocated stale path) would silently split the runtime identity, so
+        # the cutover refuses with a typed error.
+        outside_markers = _editable_markers_outside_import_root(verified)
+        if outside_markers:
+            raise CliError(
+                CUTOVER_ERROR,
+                "receipted runtime identity carries editable markers outside "
+                "import_root; refusing a cutover that cannot keep "
+                "base.editable_install_path coherent: "
+                + ", ".join(outside_markers),
+            )
+        try:
+            updated = cutover_runtime_manifest(
+                manifest,
+                from_runtime_root=from_runtime_root,
+                from_expected_head=from_expected_head,
+                to_runtime_root=to_runtime_root,
+                to_expected_head=to_expected_head,
+                to_venv_path=to_venv_path,
+                to_repair_bin=to_repair_bin,
+                reason=reason,
+            )
+        except ManifestError as exc:
+            raise CliError(CUTOVER_ERROR, str(exc)) from exc
+
+        # Deterministic after-image (the exact bytes _atomic_write will emit:
+        # sort_keys JSON + trailing newline) so the rollback receipt can carry
+        # both the before and after manifest SHA-256.
+        payload = _write_payload(updated, target)
+        encoded = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
+        after_sha = hashlib.sha256(encoded).hexdigest()
+
+        # Rollback receipt FIRST: it captures only pre-cutover facts (old
+        # manifest SHA-256 + full old field set), so it stays accurate even if
+        # the manifest write below fails — and a guard failure above already
+        # refused with no receipt at all (zero mutation).
+        receipt = emit_runtime_manifest_cutover_rollback_receipt(
+            receipt_target,
+            manifest_path=target,
+            manifest_before_sha256=observed_sha,
+            manifest_after_sha256=after_sha,
+            generation_before=manifest.generation,
+            generation_after=updated.generation,
+            from_runtime_root=from_runtime_root,
+            from_expected_head=from_expected_head,
+            to_runtime_root=to_runtime_root,
+            to_expected_head=to_expected_head,
+            to_venv_path=to_venv_path,
+            to_repair_bin=to_repair_bin,
+            previous_manifest=manifest.to_dict(),
+            runtime_identity_sha256=str(verified.get("content_sha256") or ""),
+            actor=actor,
+            reason=reason,
+        )
+        _atomic_write(target, payload)
+        # Post-verify the DURABLE rollback receipt (T-0101h round-5 blocker
+        # 3): the manifest is already rewritten at this point, but the cutover
+        # must NOT report success without durable rollback evidence.  A
+        # missing, corrupt, or SHA-mismatched receipt refuses with a typed
+        # error — the receipt write was attempted FIRST, so an operator can
+        # still recover the pre-cutover state from the attempted receipt
+        # path.
+        try:
+            verify_runtime_manifest_cutover_rollback_receipt(
+                receipt_target, expected_manifest_before_sha256=observed_sha
+            )
+        except ValueError as exc:
+            raise CliError(
+                RECEIPT_POST_VERIFY_FAILED,
+                "durable rollback receipt failed post-write verification at "
+                f"{receipt_target}: {exc}",
+                extra={
+                    "receipt_path": str(receipt_target),
+                    "expected_manifest_before_sha256": observed_sha,
+                },
+            ) from exc
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+    return {
+        "manifest_path": str(target),
+        "generation_before": manifest.generation,
+        "generation_after": updated.generation,
+        "manifest_before_sha256": observed_sha,
+        "manifest_after_sha256": after_sha,
+        "runtime_identity_sha256": str(verified.get("content_sha256") or ""),
+        "rollback_receipt_path": str(receipt_target),
+        "rollback_receipt": receipt,
+        "promotion": updated.promotions[-1],
+    }
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -892,6 +1487,37 @@ def main(argv: list[str] | None = None) -> int:
     adv_p.add_argument(
         "--reason", required=True, help="reason recorded in the rollback record"
     )
+    cut_p = sub.add_parser(
+        "cutover",
+        help=(
+            "CAS-guarded runtime cutover of the manifest at <path>: verify the "
+            "receipted TO-runtime identity, move epic/base/indirection runtime "
+            "facts to the to-values, bump the generation atomically, and emit a "
+            "rollback receipt (old manifest SHA-256 + full old field set)"
+        ),
+    )
+    cut_p.add_argument("path", type=Path)
+    cut_p.add_argument("--expect-manifest-sha256", required=True)
+    cut_p.add_argument("--expect-generation", type=int, required=True)
+    cut_p.add_argument("--from-runtime-root", required=True)
+    cut_p.add_argument("--from-expected-head", required=True)
+    cut_p.add_argument("--to-runtime-root", required=True)
+    cut_p.add_argument("--to-expected-head", required=True)
+    cut_p.add_argument("--to-venv-path", required=True)
+    cut_p.add_argument("--to-repair-bin", required=True)
+    cut_p.add_argument("--runtime-identity", type=Path, required=True)
+    cut_p.add_argument(
+        "--runtime-provenance-receipt", type=Path, required=True
+    )
+    cut_p.add_argument("--reason", required=True)
+    cut_p.add_argument("--actor", default="operator")
+    cut_p.add_argument(
+        "--receipt-out",
+        type=Path,
+        help=(
+            f"rollback receipt path (default: <path>{CUTOVER_RECEIPT_SUFFIX})"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         if args.action == "write":
@@ -941,7 +1567,28 @@ def main(argv: list[str] | None = None) -> int:
                 write_active_pointer(advanced, pointer)
                 write_manifest(advanced, args.path)
             print(json.dumps(advanced.to_dict(), sort_keys=True))
+        elif args.action == "cutover":
+            result = apply_runtime_manifest_cutover(
+                args.path,
+                expect_manifest_sha256=args.expect_manifest_sha256,
+                expect_generation=args.expect_generation,
+                from_runtime_root=args.from_runtime_root,
+                from_expected_head=args.from_expected_head,
+                to_runtime_root=args.to_runtime_root,
+                to_expected_head=args.to_expected_head,
+                to_venv_path=args.to_venv_path,
+                to_repair_bin=args.to_repair_bin,
+                runtime_identity_path=args.runtime_identity,
+                runtime_provenance_receipt_path=args.runtime_provenance_receipt,
+                reason=args.reason,
+                actor=args.actor,
+                receipt_path=args.receipt_out,
+            )
+            print(json.dumps(result, sort_keys=True))
     except ManifestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except CliError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except (OSError, json.JSONDecodeError) as exc:

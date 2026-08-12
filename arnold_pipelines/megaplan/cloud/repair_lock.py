@@ -943,6 +943,70 @@ def _job_record_flock(path: Path) -> Iterator[None]:
         os.close(fd)
 
 
+def decision_admission_lock_dir(queue_root: str | Path) -> Path:
+    """Return the lock directory for request-scoped decision/admission flocks.
+
+    The directory lives under the repair-queue root (beside the immutable
+    ``requests/`` and ``decisions/`` record directories) so BOTH decision
+    writers (:func:`arnold_pipelines.megaplan.cloud.repair_requests.write_decision`)
+    and claim admission (``occurrence_join.join_exact_occurrence``) can
+    derive the same per-request flock path from the queue root + request id
+    alone.  Only ``*.lock`` sidecars live here; the ``*.json`` scans over
+    ``requests/``/``decisions/`` never match them.
+    """
+    return Path(queue_root) / "decision-admission-locks"
+
+
+@contextmanager
+def decision_admission_lock(
+    queue_root: str | Path, request_id: str
+) -> Iterator[None]:
+    """Serialize decision writes and claim admission for ONE repair request.
+
+    T-0101h blocker 1: ``write_decision`` and occurrence-join claim
+    admission share ONE request-scoped advisory flock, held by the join from
+    its AUTHORITATIVE latest-decision check through the atomic WBC STARTED
+    commit and by ``write_decision`` across its record write, so a
+    superseding decision can never land between the check and the admission.
+
+    Mirrors the per-record flock pattern of :func:`_job_record_flock`: the
+    sidecar ``<sha256(request_id)>.lock`` is intentionally never removed
+    (unlinking a lock file while another waiter blocks on the same inode
+    lets a third opener create a fresh inode and split the fence), and on
+    hosts without ``fcntl`` (non-POSIX) the O_EXCL fallback fails closed
+    instead of silently skipping.  Under the occurrence-join zero-mutation
+    refusal contract (T-0101h) this lock file is ALLOWED provisioning: a
+    refusal may leave it behind, exactly like the occurrence flock file.
+    """
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        raise ValueError("request_id is required")
+    lock_dir = decision_admission_lock_dir(queue_root)
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    token = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+    lock_path = lock_dir / f"{token}.lock"
+    if _fcntl is None:  # pragma: no cover - non-POSIX fallback
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            yield
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+        return
+    fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def _record_past_ttl(record: JobLockRecord, *, now: datetime) -> bool:
     """Return ``True`` when *record* is past its TTL at *now*.
 
@@ -1446,6 +1510,8 @@ __all__ = [
     "acquire_repair_lock",
     "advance_job_state",
     "build_owner_metadata",
+    "decision_admission_lock",
+    "decision_admission_lock_dir",
     "inspect_repair_lock",
     "job_is_quarantined",
     "occurrence_scoped_lock_dir",

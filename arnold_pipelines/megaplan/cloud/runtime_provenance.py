@@ -10,12 +10,22 @@ import os
 import subprocess
 import sys
 import tempfile
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import unquote, urlparse
 
 
 RUNTIME_PROVENANCE_RECEIPT_SCHEMA = "arnold.megaplan.runtime_provenance_receipt.v1"
+
+# Rollback receipt emitted by ``runtime_manifest cutover`` (T-0101d): captures
+# the pre-cutover manifest SHA-256 + FULL old field set so an operator can
+# re-assert the previous runtime after a failed cutover. Independent from the
+# (weaker) supervisor-runtime ``last-prepare.json`` receipt.
+RUNTIME_MANIFEST_CUTOVER_ROLLBACK_SCHEMA = (
+    "arnold.megaplan.runtime_manifest_cutover_rollback.v1"
+)
 _RUNTIME_IDENTITY_KEYS = (
     "import_root",
     "source_revision",
@@ -682,6 +692,137 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
         except OSError:
             pass
         raise
+
+
+def _write_receipt_durably(receipt_path: Path, receipt: Mapping[str, Any]) -> None:
+    """Atomically create *receipt_path* with hardened durability semantics.
+
+    Mirrors the occurrence-join receipt write (T-0101h round-5 blocker 3):
+    the payload goes to an UNPREDICTABLE sibling temp name
+    (``.<name>.<random-hex>.tmp``) opened with
+    ``O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW`` — a pre-seeded symlink at the temp
+    name can never be followed into protected state (a collision fails closed
+    with ``EEXIST`` instead of writing through the link) — the file is
+    ``os.fsync``-ed BEFORE ``os.replace`` to the final path, and the parent
+    directory is ``os.fsync``-ed AFTER the rename, so the receipt is durable
+    across power loss.  ``os.replace`` replaces the final directory entry
+    itself, so a pre-seeded symlink AT the receipt path is replaced, never
+    followed: the receipt lands at the literal path and whatever the link
+    pointed at is untouched.  The final path is deliberately NOT resolved
+    first (resolving would follow a pre-seeded link into its target).
+    """
+    parent = receipt_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    tmp = parent / f".{receipt_path.name}.{uuid.uuid4().hex}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, receipt_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    dir_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def emit_runtime_manifest_cutover_rollback_receipt(
+    receipt_path: Path,
+    *,
+    manifest_path: Path,
+    manifest_before_sha256: str,
+    manifest_after_sha256: str,
+    generation_before: int,
+    generation_after: int,
+    from_runtime_root: str,
+    from_expected_head: str,
+    to_runtime_root: str,
+    to_expected_head: str,
+    to_venv_path: str,
+    to_repair_bin: str,
+    previous_manifest: Mapping[str, Any],
+    runtime_identity_sha256: str,
+    actor: str,
+    reason: str,
+    at: str | None = None,
+) -> dict[str, Any]:
+    """Atomically write a ``runtime_manifest cutover`` rollback receipt.
+
+    The receipt binds the pre-cutover manifest (old file SHA-256 + FULL old
+    field set in ``previous_manifest``) with the to-values and a
+    ``content_sha256`` self-digest, so a rollback can re-assert the exact
+    previous bytes. Returns the written payload.
+    """
+    core = {
+        "schema": RUNTIME_MANIFEST_CUTOVER_ROLLBACK_SCHEMA,
+        "at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "actor": actor,
+        "reason": reason,
+        "manifest_path": str(manifest_path),
+        "manifest_before_sha256": manifest_before_sha256,
+        "manifest_after_sha256": manifest_after_sha256,
+        "generation_before": generation_before,
+        "generation_after": generation_after,
+        "from": {
+            "runtime_root": from_runtime_root,
+            "expected_head": from_expected_head,
+        },
+        "to": {
+            "runtime_root": to_runtime_root,
+            "expected_head": to_expected_head,
+            "venv_path": to_venv_path,
+            "repair_bin": to_repair_bin,
+        },
+        "runtime_identity_sha256": runtime_identity_sha256,
+        "previous_manifest": dict(previous_manifest),
+    }
+    receipt = {**core, "content_sha256": _canonical_sha256(core)}
+    _write_receipt_durably(receipt_path, receipt)
+    return receipt
+
+
+def verify_runtime_manifest_cutover_rollback_receipt(
+    path: Path,
+    *,
+    expected_manifest_before_sha256: str = "",
+) -> dict[str, Any]:
+    """Validate a ``runtime_manifest cutover`` rollback receipt on disk.
+
+    Raises :class:`ValueError` on any mismatch: unreadable/invalid JSON,
+    non-object payload, schema mismatch, or a ``content_sha256`` that does not
+    cover the payload. When *expected_manifest_before_sha256* is given it must
+    equal the recorded pre-cutover manifest SHA-256. Returns the receipt
+    payload on success.
+    """
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"rollback receipt is unreadable or invalid JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("rollback receipt must be a JSON object")
+    if payload.get("schema") != RUNTIME_MANIFEST_CUTOVER_ROLLBACK_SCHEMA:
+        raise ValueError(
+            f"rollback receipt schema mismatch: {payload.get('schema')!r}"
+        )
+    digest = str(payload.get("content_sha256") or "")
+    core = {key: payload[key] for key in payload if key != "content_sha256"}
+    if not digest or _canonical_sha256(core) != digest:
+        raise ValueError("rollback receipt digest is invalid")
+    expected = expected_manifest_before_sha256.strip()
+    if expected and str(payload.get("manifest_before_sha256") or "") != expected:
+        raise ValueError(
+            "rollback receipt does not match the expected pre-cutover "
+            "manifest SHA-256"
+        )
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:

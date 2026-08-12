@@ -17,21 +17,30 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     assert_execution_binding,
     bind_execution_identity,
     binding_policy,
+    cutover_runtime_identity,
     execution_binding_report,
     expected_worker_launch_values,
     find_bound_chain_spec,
+    migrate_execution_binding,
     require_bound_chain_spec,
     rebind_execution_identity,
     rebind_runtime_identity,
     verify_external_runtime_identity,
 )
+from arnold_pipelines.megaplan.chain.operator_pause import AUTHORITY_SCHEMA
 from arnold_pipelines.megaplan.chain.spec import (
     ChainState,
+    _state_path_for,
     load_chain_state,
     load_spec,
     save_chain_state,
 )
 from arnold_pipelines.megaplan.cloud.runtime_cutover import normalize_runtime_identity
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    MANIFEST_SCHEMA_VERSION,
+    RuntimeManifest,
+    write_manifest,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -181,6 +190,7 @@ def _pinned_chain(
     labels: tuple[str, ...] = ("c1", "c2", "c3"),
     *,
     require_runtime_match: bool = False,
+    execution_binding: str = "required",
 ) -> Path:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "tests@example.com")
@@ -192,6 +202,7 @@ def _pinned_chain(
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["intended_initiative_revision"] = revision
     raw["driver"]["require_editable_runtime_match"] = require_runtime_match
+    raw["driver"]["execution_binding"] = execution_binding
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     return spec_path
 
@@ -730,6 +741,315 @@ def test_runtime_cutover_is_separate_from_spec_binding(
             assert state.to_dict()[field] == before[field]
 
 
+def _engine_root_drift_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, ChainState, dict, dict, str]:
+    """Bound chain with a drift successor AND an initialized engine_root.
+
+    Mirrors the T-0101b migrate output: metadata.execution_binding +
+    metadata.execution_environment.engine_root (== old runtime root) both
+    present, cursor progressed, successor runtime drifted in.
+    """
+    spec_path = _pinned_chain(tmp_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["require_editable_runtime_match"] = True
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "require runtime binding")
+    raw["driver"]["intended_initiative_revision"] = _git(
+        tmp_path, "rev-parse", "HEAD"
+    )
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    initial_active = active_execution_identity(spec_path)
+    initial_active["runtime"]["editable_root"] = initial_active["runtime"][
+        "import_root"
+    ]
+    initial_active["runtime"]["editable_revision"] = initial_active["runtime"][
+        "source_revision"
+    ]
+    initial_active["ready"] = True
+    initial_active["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: initial_active,
+    )
+    state = _bound_state(spec_path)
+    state.current_milestone_index = 0
+    state.current_plan_name = "c1-plan"
+    original_runtime = json.loads(
+        json.dumps(
+            state.metadata["execution_binding"]["runtime_binding"][
+                "current_identity"
+            ]
+        )
+    )
+    successor_root = str((tmp_path / "runtime-b").resolve())
+    successor = json.loads(json.dumps(initial_active))
+    successor["runtime"].update(
+        {
+            "import_root": successor_root,
+            "editable_root": successor_root,
+            "source_revision": "b" * 40,
+            "editable_revision": "b" * 40,
+        }
+    )
+    successor["runtime"]["content_sha256"] = "ignored-and-recomputed"
+    successor["ready"] = True
+    successor["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: successor,
+    )
+    state.metadata["execution_environment"] = {
+        "engine_root": original_runtime["import_root"]
+    }
+    drift = execution_binding_report(spec_path, state)
+    assert drift["status"] == "match"
+    assert drift["runtime_binding"]["status"] == "drift"
+    return spec_path, state, original_runtime, drift, successor_root
+
+
+def test_runtime_cutover_command_moves_engine_root_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift, successor_root = (
+        _engine_root_drift_case(tmp_path, monkeypatch)
+    )
+    before = state.to_dict()
+
+    cutover = cutover_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=original_runtime["content_sha256"],
+        expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+            "content_sha256"
+        ],
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        reason="cut over to verified runtime b",
+    )
+
+    assert cutover["runtime_binding"]["status"] == "match"
+    assert cutover["verification_mode"] == "active_control_runtime"
+    assert cutover["event"]["from_engine_root"] == str(
+        Path(original_runtime["import_root"]).resolve()
+    )
+    assert cutover["event"]["to_engine_root"] == successor_root
+    assert cutover["engine_root_transition"] == {
+        "from_engine_root": str(Path(original_runtime["import_root"]).resolve()),
+        "to_engine_root": successor_root,
+    }
+    assert (
+        state.metadata["execution_environment"]["engine_root"] == successor_root
+    )
+    assert (
+        state.metadata["execution_binding"]["runtime_binding"]["current_identity"][
+            "content_sha256"
+        ]
+        == drift["runtime_binding"]["active"]["content_sha256"]
+    )
+    for field in before:
+        if field != "metadata":
+            assert state.to_dict()[field] == before[field]
+    # The only metadata change is the binding + engine_root; cursor fields are
+    # preserved byte-for-byte.
+    assert state.current_milestone_index == 0
+    assert state.current_plan_name == "c1-plan"
+
+
+def test_runtime_cutover_rollback_direction_moves_engine_root_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift, successor_root = (
+        _engine_root_drift_case(tmp_path, monkeypatch)
+    )
+    # Model a PRIOR cutover: the chain now persists runtime B with the B
+    # engine root; the control runtime is still B (active), so the receipted
+    # A runtime is the restore target supplied externally.
+    successor_identity = json.loads(
+        json.dumps(drift["runtime_binding"]["active"])
+    )
+    state.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ] = successor_identity
+    state.metadata["execution_binding"]["runtime_binding"]["rebind_events"] = [
+        {
+            "schema": "arnold.megaplan.chain_runtime_rebind.v1",
+            "direction": "cutover",
+            "from_runtime_sha256": original_runtime["content_sha256"],
+            "to_runtime_sha256": successor_identity["content_sha256"],
+        }
+    ]
+    state.metadata["execution_environment"] = {"engine_root": successor_root}
+    before = state.to_dict()
+
+    cutover = cutover_runtime_identity(
+        spec_path,
+        state,
+        # Swapped guards: X is the current (successor) runtime, Y is the
+        # runtime being restored via its independently receipted identity.
+        expected_previous_runtime_sha256=successor_identity["content_sha256"],
+        expected_active_runtime_sha256=original_runtime["content_sha256"],
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        direction="rollback",
+        reason="roll the engine root back to runtime a",
+        verified_external_runtime_identity=original_runtime,
+    )
+
+    assert cutover["runtime_binding"]["status"] == "match"
+    assert cutover["event"]["direction"] == "rollback"
+    assert cutover["verification_mode"] == "external_interpreter_receipt"
+    assert cutover["event"]["from_engine_root"] == successor_root
+    assert cutover["event"]["to_engine_root"] == str(
+        Path(original_runtime["import_root"]).resolve()
+    )
+    assert (
+        state.metadata["execution_environment"]["engine_root"]
+        == str(Path(original_runtime["import_root"]).resolve())
+    )
+    assert (
+        state.metadata["execution_binding"]["runtime_binding"]["current_identity"][
+            "content_sha256"
+        ]
+        == original_runtime["content_sha256"]
+    )
+    for field in before:
+        if field != "metadata":
+            assert state.to_dict()[field] == before[field]
+
+
+def test_runtime_cutover_refuses_missing_engine_root_before_any_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift, _successor_root = (
+        _engine_root_drift_case(tmp_path, monkeypatch)
+    )
+    state.metadata.pop("execution_environment", None)
+    before = json.loads(json.dumps(state.to_dict()))
+
+    with pytest.raises(CliError, match="engine_root is missing"):
+        cutover_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=original_runtime["content_sha256"],
+            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+                "content_sha256"
+            ],
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            reason="must fail closed without a recorded engine root",
+        )
+    assert state.to_dict() == before
+
+
+def test_runtime_cutover_refuses_engine_root_mismatch_before_any_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift, successor_root = (
+        _engine_root_drift_case(tmp_path, monkeypatch)
+    )
+    state.metadata["execution_environment"] = {
+        "engine_root": str(tmp_path / "unrelated-root")
+    }
+    before = json.loads(json.dumps(state.to_dict()))
+
+    with pytest.raises(CliError, match="recorded engine root does not match"):
+        cutover_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=original_runtime["content_sha256"],
+            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+                "content_sha256"
+            ],
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            reason="must refuse split engine root custody",
+        )
+    assert state.to_dict() == before
+    assert state.metadata["execution_environment"]["engine_root"] != successor_root
+
+
+def test_runtime_cutover_refuses_unbound_chain_before_any_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cutover requires the T-0101b migrate output: an unbound progressed
+    chain is refused exactly like a runtime rebind."""
+    spec_path = _pinned_chain(tmp_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["require_editable_runtime_match"] = True
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "require runtime binding")
+    raw["driver"]["intended_initiative_revision"] = _git(
+        tmp_path, "rev-parse", "HEAD"
+    )
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    state = _bound_state(spec_path)
+    state.current_milestone_index = 0
+    state.current_plan_name = "c1-plan"
+    state.metadata.pop("execution_binding", None)
+    state.metadata["execution_environment"] = {
+        "engine_root": str(tmp_path / "runtime")
+    }
+    before = json.loads(json.dumps(state.to_dict()))
+
+    with pytest.raises(CliError, match="persisted runtime identity is missing"):
+        cutover_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256="a" * 64,
+            expected_active_runtime_sha256="b" * 64,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            reason="migrate must run before any cutover",
+        )
+    assert state.to_dict() == before
+
+
+def test_runtime_cutover_inherits_runtime_sha_cas_guards(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift, _successor_root = (
+        _engine_root_drift_case(tmp_path, monkeypatch)
+    )
+    before = json.loads(json.dumps(state.to_dict()))
+
+    with pytest.raises(CliError, match="previous runtime SHA-256 does not match"):
+        cutover_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256="0" * 64,
+            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+                "content_sha256"
+            ],
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            reason="wrong from-guard must refuse",
+        )
+    assert state.to_dict() == before
+
+    with pytest.raises(CliError, match="active runtime SHA-256 does not match"):
+        cutover_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=original_runtime["content_sha256"],
+            expected_active_runtime_sha256="f" * 64,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            reason="wrong to-guard must refuse",
+        )
+    assert state.to_dict() == before
+
+
 def _terminal_runtime_drift_case(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1105,6 +1425,241 @@ def test_b_cli_rolls_back_to_independently_receipted_a_runtime(
     assert after.completed == before.completed
 
 
+def test_b_cli_runtime_cutover_moves_engine_root_to_receipted_a(
+    tmp_path: Path,
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["require_editable_runtime_match"] = True
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "require runtime binding")
+    raw["driver"]["intended_initiative_revision"] = _git(
+        tmp_path, "rev-parse", "HEAD"
+    )
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    python_b = Path(offline_rollback_runtime["python_b"])
+    env_b = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "PYTHONHOME"}
+    }
+    env_b["PYTHONPATH"] = str(REPO_ROOT)
+    setup = subprocess.run(
+        [
+            str(python_b),
+            "-P",
+            "-c",
+            (
+                "from pathlib import Path;"
+                "from arnold_pipelines.megaplan.chain.execution_binding import bind_execution_identity;"
+                "from arnold_pipelines.megaplan.chain.spec import ChainState,save_chain_state;"
+                f"p=Path({str(spec_path)!r});"
+                "s=ChainState();"
+                "r=bind_execution_identity(p,s);"
+                "assert r['runtime_binding']['status']=='match',r;"
+                "s.current_milestone_index=0;"
+                "s.current_plan_name='c1-plan';"
+                "s.metadata['execution_environment']={'engine_root': "
+                "s.metadata['execution_binding']['runtime_binding']"
+                "['current_identity']['import_root']};"
+                "save_chain_state(p,s)"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env_b,
+    )
+    assert setup.returncode == 0, setup.stderr
+    before = load_chain_state(spec_path, verify_execution_binding=False)
+    runtime_b = before.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ]
+    recorded_root = before.metadata["execution_environment"]["engine_root"]
+    assert str(Path(recorded_root).resolve()) == str(
+        Path(runtime_b["import_root"]).resolve()
+    )
+    identity_a = json.loads(
+        Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8")
+    )
+
+    command = subprocess.run(
+        [
+            str(python_b),
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "chain",
+            "runtime-cutover",
+            "--spec",
+            str(spec_path),
+            "--project-dir",
+            str(tmp_path),
+            "--from-runtime-sha256",
+            runtime_b["content_sha256"],
+            "--to-runtime-sha256",
+            identity_a["content_sha256"],
+            "--expected-current-milestone",
+            "c1",
+            "--expected-current-plan",
+            "c1-plan",
+            "--direction",
+            "rollback",
+            "--reason",
+            "real B CLI cutover to independently observed A runtime",
+            "--actor",
+            "test-operator",
+            "--runtime-identity",
+            str(offline_rollback_runtime["identity"]),
+            "--runtime-provenance-receipt",
+            str(offline_rollback_runtime["receipt"]),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env_b,
+    )
+    assert command.returncode == 0, command.stderr
+    payload = json.loads(command.stdout)
+    assert payload["action"] == "runtime-cutover"
+    assert payload["verification_mode"] == "external_interpreter_receipt"
+    assert payload["event"]["direction"] == "rollback"
+    assert payload["runtime_binding"]["status"] == "match"
+    assert payload["engine_root_transition"]["to_engine_root"] == str(
+        Path(identity_a["import_root"]).resolve()
+    )
+    after = load_chain_state(spec_path, verify_execution_binding=False)
+    assert (
+        after.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+        == identity_a
+    )
+    assert after.metadata["execution_environment"]["engine_root"] == str(
+        Path(identity_a["import_root"]).resolve()
+    )
+    assert after.current_milestone_index == before.current_milestone_index
+    assert after.current_plan_name == before.current_plan_name
+    assert after.completed == before.completed
+
+
+def test_cli_runtime_cutover_refuses_engine_root_drift_without_writing(
+    tmp_path: Path,
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    """CLI-level fail-closed proof: a mismatched recorded engine_root refuses
+    with a typed drift error and the persisted chain state is untouched."""
+    spec_path = _pinned_chain(tmp_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["require_editable_runtime_match"] = True
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "require runtime binding")
+    raw["driver"]["intended_initiative_revision"] = _git(
+        tmp_path, "rev-parse", "HEAD"
+    )
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    python_b = Path(offline_rollback_runtime["python_b"])
+    env_b = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "PYTHONHOME"}
+    }
+    env_b["PYTHONPATH"] = str(REPO_ROOT)
+    setup = subprocess.run(
+        [
+            str(python_b),
+            "-P",
+            "-c",
+            (
+                "from pathlib import Path;"
+                "from arnold_pipelines.megaplan.chain.execution_binding import bind_execution_identity;"
+                "from arnold_pipelines.megaplan.chain.spec import ChainState,save_chain_state;"
+                f"p=Path({str(spec_path)!r});"
+                "s=ChainState();"
+                "r=bind_execution_identity(p,s);"
+                "assert r['runtime_binding']['status']=='match',r;"
+                "s.current_milestone_index=0;"
+                "s.current_plan_name='c1-plan';"
+                "s.metadata['execution_environment']={'engine_root': '/unrelated/recorded-root'};"
+                "save_chain_state(p,s)"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env_b,
+    )
+    assert setup.returncode == 0, setup.stderr
+    persisted = load_chain_state(spec_path, verify_execution_binding=False)
+    runtime_b = persisted.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ]
+    identity_a = json.loads(
+        Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8")
+    )
+    state_path = (
+        tmp_path
+        / ".megaplan"
+        / "plans"
+        / ".chains"
+        / (
+            "chain-"
+            + hashlib.sha1(
+                str(spec_path.resolve(strict=False)).encode("utf-8")
+            ).hexdigest()[:12]
+            + ".json"
+        )
+    )
+    assert state_path.is_file()
+    before_bytes = state_path.read_bytes()
+
+    command = subprocess.run(
+        [
+            str(python_b),
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "chain",
+            "runtime-cutover",
+            "--spec",
+            str(spec_path),
+            "--project-dir",
+            str(tmp_path),
+            "--from-runtime-sha256",
+            runtime_b["content_sha256"],
+            "--to-runtime-sha256",
+            identity_a["content_sha256"],
+            "--expected-current-milestone",
+            "c1",
+            "--expected-current-plan",
+            "c1-plan",
+            "--direction",
+            "rollback",
+            "--reason",
+            "must refuse split engine root custody",
+            "--actor",
+            "test-operator",
+            "--runtime-identity",
+            str(offline_rollback_runtime["identity"]),
+            "--runtime-provenance-receipt",
+            str(offline_rollback_runtime["receipt"]),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env_b,
+    )
+    assert command.returncode != 0
+    payload = json.loads(command.stdout)
+    assert payload["success"] is False
+    assert payload["error"] == "chain_runtime_binding_drift"
+    assert "recorded engine root does not match" in payload["message"]
+    assert state_path.read_bytes() == before_bytes
+
+
 def test_external_runtime_receipt_rejects_b_self_asserting_a(
     tmp_path: Path,
     offline_rollback_runtime: dict[str, Path | str],
@@ -1322,3 +1877,976 @@ def test_worker_expectations_reject_incomplete_bound_runtime(
 
     with pytest.raises(CliError, match="incomplete worker runtime expectations"):
         expected_worker_launch_values(spec_path, root=tmp_path)
+
+
+# ── T-0101b: guarded legacy execution-binding migration ─────────────────────
+# The one-time migrate command initializes metadata.execution_binding +
+# metadata.execution_environment.engine_root for a durably-paused, progressed,
+# UNBOUND chain from its independently verified legacy runtime.  Every guard
+# (spec hash, chain-state/plan-state CAS, cursor, branch, marker, per-epic
+# manifest) must pass or the transaction refuses with zero mutation.
+
+
+def _legacy_runtime_identity(root: Path, revision: str = "a" * 40) -> dict:
+    identity = {
+        "import_root": str(root),
+        "source_revision": revision,
+        "editable_root": str(root),
+        "editable_revision": revision,
+        "direct_url": {
+            "dir_info": {"editable": True},
+            "url": f"file://{root}",
+        },
+        "pth": [
+            {
+                "path": "/venv/site-packages/_editable_impl_arnold.pth",
+                "entries": [str(root)],
+                "readable": True,
+            }
+        ],
+        "imports": {
+            "arnold": f"{root}/arnold/__init__.py",
+            "arnold_pipelines": f"{root}/arnold_pipelines/__init__.py",
+            "megaplan": f"{root}/arnold_pipelines/megaplan/__init__.py",
+        },
+    }
+    identity["content_sha256"] = _canonical_sha256(identity)
+    return identity
+
+
+def _write_plan_state(root: Path, plan: str) -> Path:
+    plan_dir = root / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = plan_dir / "state.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": plan,
+                "idea": "# c1\n",
+                "idea_snapshot_path": "idea_snapshot.md",
+                "current_state": "paused",
+                "iteration": 0,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return plan_path
+
+
+def _write_cloud_marker(
+    root: Path,
+    spec_path: Path,
+    *,
+    session: str,
+    plan: str,
+    runtime: dict,
+    head: str | None = None,
+    form: str = "legacy",
+) -> Path:
+    """Write a cloud-session marker; ``form`` selects the runtime identity
+    evidence it carries (T-0101h finding 3):
+
+    - ``"legacy"`` (default): ``editable_source_head`` +
+      ``editable_install_sync.source`` — the full legacy evidence pair
+    - ``"legacy-head"``: only ``editable_source_head``
+    - ``"binding"``: only ``runtime_binding.current_identity``
+    - ``"identity-less"``: the exact paused r5 shape (``editable_source_head``
+      =None, ``editable_install_sync.status=skipped``, no source) with a
+      relaunch naming exactly one ``/workspace/runtime-candidates``-style root
+    - ``"none"``: no runtime identity evidence at all (real-root relaunch)
+    """
+    marker_dir = root / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = marker_dir / f"{session}.json"
+    marker = {
+        "session": session,
+        "workspace": str(root),
+        "remote_spec": str(spec_path.resolve(strict=False)),
+        "run_kind": "chain",
+        "should_run": False,
+        "operator_pause": {"active": True, "plan": plan},
+        "editable_source_branch": "legacy",
+        "relaunch_command": (
+            f"PYTHONPATH={runtime['import_root']} python -P -m "
+            f"arnold_pipelines.megaplan chain start --spec "
+            f"{spec_path.resolve(strict=False)}"
+        ),
+    }
+    if form == "binding":
+        marker["runtime_binding"] = {
+            "schema": "arnold.megaplan.chain_runtime_binding.v1",
+            "current_identity": dict(runtime),
+        }
+    elif form in {"legacy", "legacy-head"}:
+        marker["editable_source_head"] = (
+            head if head is not None else runtime["source_revision"]
+        )
+        if form == "legacy":
+            marker["editable_install_sync"] = {
+                "status": "private-venv-editable",
+                "source": runtime["import_root"],
+            }
+    elif form == "identity-less":
+        marker["editable_source_branch"] = "editible-install"
+        marker["editable_source_head"] = None
+        marker["editable_install_sync"] = {
+            "status": "skipped",
+            "reason": "disabled_by_flag",
+        }
+        marker["relaunch_command"] = (
+            f"SRC={runtime['import_root']}; PYTHONPATH={runtime['import_root']} "
+            f"python -P -m arnold_pipelines.megaplan chain start --spec "
+            f"{spec_path.resolve(strict=False)}"
+        )
+    elif form != "none":
+        raise AssertionError(f"unknown marker form {form!r}")
+    marker_path.write_text(
+        json.dumps(marker, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return marker_path
+
+
+def _write_runtime_manifest(
+    manifest_path: Path,
+    *,
+    epic_id: str,
+    runtime_root: Path,
+    expected_head: str,
+) -> Path:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = RuntimeManifest.from_dict(
+        {
+            "runtime_id": "runtime-canary-1",
+            "schema": MANIFEST_SCHEMA_VERSION,
+            "generation": 1,
+            "epic_id": epic_id,
+            "state": "active",
+            "owner": "operator",
+            "base": {
+                "ref": "refs/heads/main",
+                "commit": expected_head,
+                "editable_install_path": str(runtime_root),
+                "venv_path": str(runtime_root / "venv"),
+            },
+            "epic": {
+                "branch": "canary-work",
+                "worktree_path": str(runtime_root),
+                "venv_path": str(runtime_root / "venv"),
+                "runtime_root": str(runtime_root),
+                "expected_head": expected_head,
+                "repair_bin": str(runtime_root / "venv" / "bin" / "arnold-repair-loop"),
+                "deps_lockfile": str(runtime_root / "uv.lock"),
+            },
+            "indirection": {
+                "host_path": str(runtime_root),
+                "container_path": "/workspace/demo",
+                "mount_table": [],
+                "execution_namespace": "demo-ns",
+                "verified_head": expected_head,
+                "last_verified_at": "2026-08-12T00:00:00+00:00",
+                "attestation": {
+                    "module_file": str(runtime_root / "arnold_pipelines" / "__init__.py"),
+                    "module_digest": "0" * 64,
+                    "mount_id": "0:0",
+                },
+            },
+            "policy": {
+                "policy_sha": "policy-1",
+                "model_policy_sha": "model-1",
+                "sync_policy": "push-on-promote",
+            },
+            "promotions": [],
+            "timestamps": {
+                "created": "2026-08-12T00:00:00+00:00",
+                "updated": "2026-08-12T00:00:00+00:00",
+                "closed": "",
+            },
+            "gc_policy": "closed-only",
+            "commands": ["megaplan chain"],
+        }
+    )
+    write_manifest(manifest, manifest_path)
+    return manifest_path
+
+
+def _paused_unbound_state(
+    spec_path: Path,
+    *,
+    plan: str,
+    session: str,
+    milestone_index: int = 0,
+    paused: bool = True,
+) -> ChainState:
+    state = ChainState()
+    state.current_milestone_index = milestone_index
+    state.current_plan_name = plan
+    state.last_state = "paused" if paused else "planned"
+    state.chain_session = session
+    if paused:
+        state.metadata["operator_pause"] = {
+            "schema_version": AUTHORITY_SCHEMA,
+            "active": True,
+            "paused_at": "2026-08-12T00:00:00+00:00",
+            "actor": "test-operator",
+            "reason": "pause for migration",
+            "previous_chain_last_state": "planned",
+            "previous_plan_state": "planned",
+            "plan": plan,
+        }
+    save_chain_state(spec_path, state)
+    return state
+
+
+def _migrate_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    runtime: dict | None = None,
+    branch: str = "canary-work",
+    plan: str = "c1-plan",
+    session: str = "canary-session",
+    paused: bool = True,
+    marker_head: str | None = None,
+    marker_form: str = "legacy",
+    manifest_root: Path | None = None,
+    manifest_head: str | None = None,
+    spec_tamper: bool = False,
+    execution_binding: str = "required",
+) -> dict:
+    spec_path = _pinned_chain(
+        tmp_path, ("c1", "c2", "c3"), execution_binding=execution_binding
+    )
+    _git(tmp_path, "checkout", "-b", branch)
+    runtime = runtime or _legacy_runtime_identity(tmp_path / "runtime-old")
+    _paused_unbound_state(
+        spec_path,
+        plan=plan,
+        session=session,
+        paused=paused,
+    )
+    plan_path = _write_plan_state(tmp_path, plan)
+    marker_path = _write_cloud_marker(
+        tmp_path,
+        spec_path,
+        session=session,
+        plan=plan,
+        runtime=runtime,
+        head=marker_head,
+        form=marker_form,
+    )
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=manifest_root or Path(runtime["import_root"]),
+        expected_head=manifest_head or runtime["source_revision"],
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+    if spec_tamper:
+        spec_path.write_text(
+            spec_path.read_text(encoding="utf-8") + "# tampered\n",
+            encoding="utf-8",
+        )
+    return {
+        "spec_path": spec_path,
+        "plan_path": plan_path,
+        "marker_path": marker_path,
+        "manifest_path": manifest_path,
+        "runtime": runtime,
+        "branch": branch,
+        "plan": plan,
+        "session": session,
+    }
+
+
+def test_execution_binding_migrate_initializes_binding_on_paused_progressed_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # T-0101h finding 1: the migration IS the transition that creates the
+    # binding — it must run against the paused PRE-required (optional) legacy
+    # spec; the required bundle + chain rebind harden the chain afterwards.
+    fixture = _migrate_fixture(
+        tmp_path, monkeypatch, execution_binding="optional"
+    )
+    spec_path = fixture["spec_path"]
+    runtime = fixture["runtime"]
+    before = load_chain_state(spec_path, verify_execution_binding=False)
+
+    result = migrate_execution_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        expected_branch="canary-work",
+        reason="bind legacy runtime before cutover",
+        actor="test-operator",
+        verified_external_runtime_identity=runtime,
+    )
+
+    assert result["old_runtime_sha256"] == runtime["content_sha256"]
+    assert result["old_runtime_root"] == str(Path(runtime["import_root"]).resolve())
+    assert result["engine_root"] == str(Path(runtime["import_root"]).resolve())
+    assert result["runtime_binding"]["expected"]["content_sha256"] == runtime[
+        "content_sha256"
+    ]
+    assert result["runtime_binding"]["active"]["content_sha256"] == runtime[
+        "content_sha256"
+    ]
+
+    # The migrated chain must load with full binding verification enabled.
+    after = load_chain_state(spec_path)
+    binding = after.metadata["execution_binding"]
+    assert binding["schema"] == "arnold.megaplan.chain_execution_binding.v1"
+    assert binding["bound_at"]
+    assert binding["launched_identity"]["runtime"] == runtime
+    assert binding["launched_identity"]["ready"] is True
+    runtime_binding = binding["runtime_binding"]
+    assert runtime_binding["schema"] == "arnold.megaplan.chain_runtime_binding.v1"
+    assert runtime_binding["current_identity"] == runtime
+    assert runtime_binding["rebind_events"] == []
+    assert (
+        after.metadata["execution_environment"]["engine_root"]
+        == str(Path(runtime["import_root"]).resolve())
+    )
+    for field in before.to_dict():
+        if field != "metadata":
+            assert before.to_dict()[field] == after.to_dict()[field]
+
+
+def test_execution_binding_migrate_refuses_wrong_milestone_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(tmp_path, monkeypatch)
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+    marker_bytes = fixture["marker_path"].read_bytes()
+    manifest_bytes = fixture["manifest_path"].read_bytes()
+    plan_bytes = fixture["plan_path"].read_bytes()
+
+    with pytest.raises(CliError, match="current milestone does not match"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c2",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="wrong milestone guard",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+    assert fixture["marker_path"].read_bytes() == marker_bytes
+    assert fixture["manifest_path"].read_bytes() == manifest_bytes
+    assert fixture["plan_path"].read_bytes() == plan_bytes
+
+
+def test_execution_binding_migrate_refuses_wrong_plan_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(tmp_path, monkeypatch)
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="current plan"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="other-plan",
+            expected_branch="canary-work",
+            reason="wrong plan guard",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_refuses_wrong_branch_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(tmp_path, monkeypatch)
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="branch does not match"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="other-branch",
+            reason="wrong branch guard",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_refuses_unpaused_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(tmp_path, monkeypatch, paused=False)
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="not durably paused"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="unpaused migrate",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_refuses_spec_sha_change_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(tmp_path, monkeypatch, spec_tamper=True)
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="chain spec SHA-256 does not match"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="tampered spec",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_refuses_marker_runtime_sha_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        marker_head="b" * 40,
+    )
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="marker source head does not match"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="marker disagrees",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_accepts_marker_legacy_source_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-0101h finding 3: the legacy ``editable_source_head`` matching the
+    verified legacy runtime IS accepted marker identity evidence (the migrate
+    happy path on the real chain's marker form)."""
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        execution_binding="optional",
+        marker_form="legacy-head",
+    )
+    spec_path = fixture["spec_path"]
+    runtime = fixture["runtime"]
+
+    result = migrate_execution_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        expected_branch="canary-work",
+        reason="legacy head marker agrees",
+        actor="test-operator",
+        verified_external_runtime_identity=runtime,
+    )
+    assert result["old_runtime_sha256"] == runtime["content_sha256"]
+    after = load_chain_state(spec_path)
+    assert after.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ] == runtime
+
+
+def test_execution_binding_migrate_accepts_marker_runtime_binding_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-0101h finding 3: a ``runtime_binding.current_identity`` whose digest
+    matches the verified legacy runtime is accepted marker identity
+    evidence."""
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        execution_binding="optional",
+        marker_form="binding",
+    )
+    spec_path = fixture["spec_path"]
+    runtime = fixture["runtime"]
+
+    result = migrate_execution_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        expected_branch="canary-work",
+        reason="runtime-binding marker agrees",
+        actor="test-operator",
+        verified_external_runtime_identity=runtime,
+    )
+    assert result["old_runtime_sha256"] == runtime["content_sha256"]
+    after = load_chain_state(spec_path)
+    assert after.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ] == runtime
+
+
+def test_execution_binding_migrate_refuses_identity_less_marker_without_sha_guard_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-0101h round-3 blocker 1: an identity-less marker is accepted ONLY
+    under the explicit marker-SHA guard — a bare identity-less marker with no
+    ``expected_marker_sha256`` must refuse with zero mutation (fail-closed —
+    absence never "agrees" by itself)."""
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        execution_binding="optional",
+        marker_form="none",
+    )
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+    marker_bytes = fixture["marker_path"].read_bytes()
+    manifest_bytes = fixture["manifest_path"].read_bytes()
+    plan_bytes = fixture["plan_path"].read_bytes()
+
+    with pytest.raises(CliError, match="marker SHA-256 guard is required"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="identity-less marker without sha guard",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+    assert fixture["marker_path"].read_bytes() == marker_bytes
+    assert fixture["manifest_path"].read_bytes() == manifest_bytes
+    assert fixture["plan_path"].read_bytes() == plan_bytes
+
+
+def test_execution_binding_migrate_accepts_identity_less_marker_with_matching_relaunch_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-0101h round-3 blocker 1: the EXACT paused identity-less legacy
+    marker (no runtime identity fields) is an accepted marker identity form
+    when its exact sha256 is expected AND its relaunch command names exactly
+    one /workspace/runtime-candidates-style root equal to the verified legacy
+    runtime root.  Migrate only VERIFIES agreement — the strong binding is
+    created by the FOLLOWING legacy-marker migration."""
+    runtime = _legacy_runtime_identity(
+        Path("/workspace/runtime-candidates/arnold-unit-legacy")
+    )
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        execution_binding="optional",
+        marker_form="identity-less",
+        runtime=runtime,
+    )
+    spec_path = fixture["spec_path"]
+    marker_sha256 = hashlib.sha256(fixture["marker_path"].read_bytes()).hexdigest()
+    marker_before = fixture["marker_path"].read_bytes()
+
+    result = migrate_execution_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        expected_branch="canary-work",
+        reason="identity-less marker agrees under the explicit guards",
+        actor="test-operator",
+        expected_marker_sha256=marker_sha256,
+        verified_external_runtime_identity=runtime,
+    )
+    assert result["old_runtime_sha256"] == runtime["content_sha256"]
+    assert result["engine_root"] == str(Path(runtime["import_root"]).resolve())
+    after = load_chain_state(spec_path)
+    assert after.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ] == runtime
+    # The marker itself is NOT bound by migrate: the identity-less form is
+    # consumed byte-unchanged (the strong binding lands in the FOLLOWING
+    # legacy-marker migration step).
+    assert fixture["marker_path"].read_bytes() == marker_before
+    marker = json.loads(fixture["marker_path"].read_text(encoding="utf-8"))
+    assert "runtime_binding" not in marker
+    assert marker["editable_source_head"] is None
+
+
+def test_execution_binding_migrate_refuses_identity_less_marker_wrong_relaunch_root_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-0101h round-3 blocker 1: an identity-less marker whose relaunch
+    command names a DIFFERENT /workspace/runtime-candidates root than the
+    verified legacy runtime root must refuse with zero mutation."""
+    runtime = _legacy_runtime_identity(
+        Path("/workspace/runtime-candidates/arnold-unit-legacy")
+    )
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        execution_binding="optional",
+        marker_form="identity-less",
+        runtime=runtime,
+    )
+    spec_path = fixture["spec_path"]
+    marker = json.loads(fixture["marker_path"].read_text(encoding="utf-8"))
+    marker["relaunch_command"] = marker["relaunch_command"].replace(
+        "/workspace/runtime-candidates/arnold-unit-legacy",
+        "/workspace/runtime-candidates/arnold-other-legacy",
+    )
+    fixture["marker_path"].write_text(
+        json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    marker_sha256 = hashlib.sha256(fixture["marker_path"].read_bytes()).hexdigest()
+    state_bytes = _state_path_for(spec_path).read_bytes()
+    marker_bytes = fixture["marker_path"].read_bytes()
+    manifest_bytes = fixture["manifest_path"].read_bytes()
+    plan_bytes = fixture["plan_path"].read_bytes()
+
+    with pytest.raises(CliError, match="relaunch command does not name exactly"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="identity-less marker relaunches a different root",
+            actor="test-operator",
+            expected_marker_sha256=marker_sha256,
+            verified_external_runtime_identity=runtime,
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+    assert fixture["marker_path"].read_bytes() == marker_bytes
+    assert fixture["manifest_path"].read_bytes() == manifest_bytes
+    assert fixture["plan_path"].read_bytes() == plan_bytes
+
+
+def test_execution_binding_migrate_refuses_manifest_root_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        manifest_root=tmp_path / "other-runtime",
+    )
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="epic.runtime_root does not match"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="manifest disagrees",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_refuses_manifest_head_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(
+        tmp_path,
+        monkeypatch,
+        manifest_head="c" * 40,
+    )
+    spec_path = fixture["spec_path"]
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="epic.expected_head does not match"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="manifest head disagrees",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_refuses_already_bound_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(tmp_path, monkeypatch)
+    spec_path = fixture["spec_path"]
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    state.metadata["execution_binding"] = {"schema": "already-bound"}
+    save_chain_state(spec_path, state)
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="execution binding already exists"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="double migrate",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_migrate_refuses_unprogressed_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _migrate_fixture(tmp_path, monkeypatch)
+    spec_path = fixture["spec_path"]
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    state.current_milestone_index = -1
+    state.current_plan_name = None
+    state.last_state = None
+    state.chain_session = None
+    # Keep the durable pause authority: the progress guard must fire, not the
+    # pause guard.
+    state.metadata = {"operator_pause": state.metadata["operator_pause"]}
+    save_chain_state(spec_path, state)
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    with pytest.raises(CliError, match="chain has not progressed"):
+        migrate_execution_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="fresh chain migrate",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_b_cli_execution_binding_migrate_initializes_binding_via_command(
+    tmp_path: Path,
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    spec_path = _pinned_chain(tmp_path, ("c1", "c2", "c3"))
+    _git(tmp_path, "checkout", "-b", "canary-work")
+    identity = json.loads(
+        Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8")
+    )
+    runtime_root = Path(identity["import_root"]).resolve()
+    revision = identity["source_revision"]
+
+    _paused_unbound_state(
+        spec_path,
+        plan="c1-plan",
+        session="canary-session",
+    )
+    plan_path = _write_plan_state(tmp_path, "c1-plan")
+    marker_path = _write_cloud_marker(
+        tmp_path,
+        spec_path,
+        session="canary-session",
+        plan="c1-plan",
+        runtime=identity,
+    )
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=runtime_root,
+        expected_head=revision,
+    )
+    state_bytes = _state_path_for(spec_path).read_bytes()
+    marker_bytes = marker_path.read_bytes()
+    manifest_bytes = manifest_path.read_bytes()
+    plan_bytes = plan_path.read_bytes()
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "PYTHONHOME"}
+    }
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    command = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "chain",
+            "execution-binding-migrate",
+            "--spec",
+            str(spec_path),
+            "--project-dir",
+            str(tmp_path),
+            "--old-runtime-identity",
+            str(offline_rollback_runtime["identity"]),
+            "--old-runtime-provenance-receipt",
+            str(offline_rollback_runtime["receipt"]),
+            "--expected-current-milestone",
+            "c1",
+            "--expected-current-plan",
+            "c1-plan",
+            "--expected-branch",
+            "canary-work",
+            "--reason",
+            "bind independently receipted legacy runtime",
+            "--actor",
+            "test-operator",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert command.returncode == 0, command.stderr
+    payload = json.loads(command.stdout)
+    assert payload["success"] is True
+    assert payload["action"] == "execution-binding-migrate"
+    assert payload["old_runtime_sha256"] == identity["content_sha256"]
+    assert payload["engine_root"] == str(runtime_root)
+    assert payload["verification_mode"] == "external_interpreter_receipt"
+    assert payload["runtime_binding"]["status"] in {"match", "not_required"}
+    assert (
+        payload["runtime_binding"]["expected"]["content_sha256"]
+        == identity["content_sha256"]
+    )
+
+    after = load_chain_state(spec_path)
+    binding = after.metadata["execution_binding"]
+    assert binding["runtime_binding"]["current_identity"] == identity
+    assert binding["launched_identity"]["runtime"] == identity
+    assert binding["runtime_binding"]["rebind_events"] == []
+    assert after.metadata["execution_environment"]["engine_root"] == str(
+        runtime_root
+    )
+    assert _state_path_for(spec_path).read_bytes() != state_bytes
+    assert marker_path.read_bytes() == marker_bytes
+    assert manifest_path.read_bytes() == manifest_bytes
+    assert plan_path.read_bytes() == plan_bytes
+
+
+def test_b_cli_execution_binding_migrate_refuses_forged_receipt_zero_mutation(
+    tmp_path: Path,
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    spec_path = _pinned_chain(tmp_path, ("c1", "c2", "c3"))
+    _git(tmp_path, "checkout", "-b", "canary-work")
+    identity = json.loads(
+        Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8")
+    )
+    _paused_unbound_state(
+        spec_path,
+        plan="c1-plan",
+        session="canary-session",
+    )
+    _write_plan_state(tmp_path, "c1-plan")
+    _write_cloud_marker(
+        tmp_path,
+        spec_path,
+        session="canary-session",
+        plan="c1-plan",
+        runtime=identity,
+    )
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=Path(identity["import_root"]).resolve(),
+        expected_head=identity["source_revision"],
+    )
+    forged_receipt = tmp_path / "forged-receipt.json"
+    receipt = json.loads(
+        Path(offline_rollback_runtime["receipt"]).read_text(encoding="utf-8")
+    )
+    receipt["content_sha256"] = "f" * 64
+    forged_receipt.write_text(json.dumps(receipt), encoding="utf-8")
+    state_bytes = _state_path_for(spec_path).read_bytes()
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "PYTHONHOME"}
+    }
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
+    command = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "chain",
+            "execution-binding-migrate",
+            "--spec",
+            str(spec_path),
+            "--project-dir",
+            str(tmp_path),
+            "--old-runtime-identity",
+            str(offline_rollback_runtime["identity"]),
+            "--old-runtime-provenance-receipt",
+            str(forged_receipt),
+            "--expected-current-milestone",
+            "c1",
+            "--expected-current-plan",
+            "c1-plan",
+            "--expected-branch",
+            "canary-work",
+            "--reason",
+            "forged receipt",
+            "--actor",
+            "test-operator",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert command.returncode != 0
+    payload = json.loads(command.stdout)
+    assert payload["success"] is False
+    assert payload["error"] == "chain_runtime_binding_drift"
+    assert _state_path_for(spec_path).read_bytes() == state_bytes

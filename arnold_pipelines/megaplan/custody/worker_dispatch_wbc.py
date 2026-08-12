@@ -29,7 +29,11 @@ from arnold_pipelines.megaplan.types import PlanState
 from .action_validator import ActionBoundaryContext
 from .common_worker_dispatch import CommonWorkerDispatchSpec
 from .controlled_writer_registry import Cohort, ControlledWriter, register_writer
-from .contracts import CustodyTargetKey, process_birth_identity
+from .contracts import (
+    CustodyTargetKey,
+    normalize_repair_occurrence_key,
+    process_birth_identity,
+)
 from .lease_store import (
     CustodyLeaseStore,
     LeaseStoreError,
@@ -219,6 +223,11 @@ def build_worker_dispatch_spec(
     if normalized_dispatch_key is not None:
         metadata["dispatch_key"] = normalized_dispatch_key
     owner_host, owner_pid, owner_boot_id = _runtime_owner()
+    # Fence + custody-epoch carry (T-0101e): when the plan runs inside a
+    # repair occurrence, its authoritative identity fence/epoch stamp every
+    # dispatch lease + outbox record (and the action-boundary contexts)
+    # instead of a fabricated 0/1.
+    fence_token, dispatch_custody_epoch = _repair_identity_carry(state)
     start_action_context = _shadow_action_context(
         phase_step=phase_name,
         worker_step=step,
@@ -230,6 +239,7 @@ def build_worker_dispatch_spec(
         owner_host=owner_host,
         owner_pid=owner_pid,
         owner_boot_id=owner_boot_id,
+        coordinator_fence_token=fence_token,
     )
     success_action_context = _shadow_action_context(
         phase_step=phase_name,
@@ -242,6 +252,7 @@ def build_worker_dispatch_spec(
         owner_host=owner_host,
         owner_pid=owner_pid,
         owner_boot_id=owner_boot_id,
+        coordinator_fence_token=fence_token,
     )
     failure_action_context = _shadow_action_context(
         phase_step=phase_name,
@@ -254,6 +265,7 @@ def build_worker_dispatch_spec(
         owner_host=owner_host,
         owner_pid=owner_pid,
         owner_boot_id=owner_boot_id,
+        coordinator_fence_token=fence_token,
     )
     lease_store, outbox = _ensure_dispatch_leases(
         plan_dir=plan_dir,
@@ -263,6 +275,8 @@ def build_worker_dispatch_spec(
             failure_action_context,
         ),
         attempt_id=attempt_id,
+        fence_token=fence_token,
+        custody_epoch=dispatch_custody_epoch,
     )
     facade = WbcRuntimeProducerFacade(
         SqliteAttemptLedgerStore(plan_dir / WORKER_DISPATCH_WBC_LEDGER_FILENAME),
@@ -529,6 +543,7 @@ def _shadow_action_context(
     owner_host: str,
     owner_pid: str,
     owner_boot_id: str,
+    coordinator_fence_token: int = 0,
 ) -> ActionBoundaryContext:
     return ActionBoundaryContext(
         action_type=action_type,  # type: ignore[arg-type]
@@ -541,7 +556,7 @@ def _shadow_action_context(
             selected_spec,
         ),
         run_authority_grant_id=attempt_id,
-        coordinator_fence_token=0,
+        coordinator_fence_token=coordinator_fence_token,
         wbc_attempt_reference=attempt_id,
         owner_host=owner_host,
         owner_pid=owner_pid,
@@ -549,6 +564,34 @@ def _shadow_action_context(
         required_capability=route_kind,
         required_wbc_evidence_version=expected_source_version,
     )
+
+
+def _repair_identity_carry(state: Any) -> tuple[int, int]:
+    """Return ``(fence_token, custody_epoch)`` carried from the plan's
+    repair identity.
+
+    When the plan runs inside a T-0101 repair occurrence, its
+    ``meta.repair_identity`` carries the AUTHORITATIVE fence token and
+    custody epoch (the recorded store authority); the dispatch leases and
+    outbox records MUST carry those same values instead of fabricating
+    fence=0 / epoch=1 per dispatch.  Plans without a repair identity
+    (normal operation) keep the neutral ``(0, 1)`` defaults.
+    """
+    meta = state.get("meta") if isinstance(state, Mapping) else {}
+    from arnold_pipelines.megaplan.cloud import repair_requests
+
+    normalized = repair_requests.normalize_repair_identity(meta.get("repair_identity"))
+    if normalized is None:
+        return 0, 1
+    occurrence_raw = normalized.get("occurrence")
+    occurrence_key = (
+        normalize_repair_occurrence_key(occurrence_raw)
+        if isinstance(occurrence_raw, Mapping)
+        else None
+    )
+    fence = int(occurrence_key.fence_token or 0) if occurrence_key is not None else 0
+    epoch = int(normalized.get("custody_epoch") or 0)
+    return fence, max(epoch, 1)
 
 
 def _runtime_owner() -> tuple[str, str, str]:
@@ -583,6 +626,8 @@ def _ensure_dispatch_leases(
     plan_dir: Path,
     action_contexts: Iterable[ActionBoundaryContext],
     attempt_id: str,
+    fence_token: int = 0,
+    custody_epoch: int = 1,
 ) -> tuple[CustodyLeaseStore, CustodyOutbox]:
     """Acquire idempotent custody leases + outbox records for every dispatch
     action boundary (start/success/failure) before the facade is built.
@@ -631,10 +676,10 @@ def _ensure_dispatch_leases(
                     owner_pid=owner_pid,
                     owner_boot_id=owner_boot_id,
                     run_authority_grant_id=attempt_id,
-                    coordinator_fence_token=0,
+                    coordinator_fence_token=fence_token,
                     wbc_attempt_reference=attempt_id,
                     occurrence_digest=digest,
-                    custody_epoch=1,
+                    custody_epoch=custody_epoch,
                     expires_at=expires_at,
                 )
             except LeaseStoreError:
@@ -674,10 +719,12 @@ def _ensure_dispatch_leases(
                             owner_pid=owner_pid,
                             owner_boot_id=owner_boot_id,
                             run_authority_grant_id=attempt_id,
-                            coordinator_fence_token=0,
+                            coordinator_fence_token=fence_token,
                             wbc_attempt_reference=attempt_id,
                             occurrence_digest=digest,
-                            custody_epoch=current.custody_epoch + 1,
+                            custody_epoch=max(
+                                custody_epoch, current.custody_epoch + 1
+                            ),
                             expires_at=expires_at,
                         )
                 # else: idempotent retry of the same dispatch — lease is ours.
@@ -696,10 +743,10 @@ def _ensure_dispatch_leases(
                     owner_pid=owner_pid,
                     owner_boot_id=owner_boot_id,
                     run_authority_grant_id=attempt_id,
-                    coordinator_fence_token=0,
+                    coordinator_fence_token=fence_token,
                     wbc_attempt_reference=attempt_id,
                     occurrence_digest=digest,
-                    custody_epoch=current.custody_epoch + 1,
+                    custody_epoch=max(custody_epoch, current.custody_epoch + 1),
                     expires_at=expires_at,
                 )
             else:
@@ -712,10 +759,12 @@ def _ensure_dispatch_leases(
                         owner_pid=owner_pid,
                         owner_boot_id=owner_boot_id,
                         run_authority_grant_id=attempt_id,
-                        coordinator_fence_token=0,
+                        coordinator_fence_token=fence_token,
                         wbc_attempt_reference=attempt_id,
                         occurrence_digest=digest,
-                        custody_epoch=current.custody_epoch + 1,
+                        custody_epoch=max(
+                            custody_epoch, current.custody_epoch + 1
+                        ),
                         expires_at=expires_at,
                     )
                 except LeaseStoreError:
@@ -739,6 +788,21 @@ def _ensure_dispatch_leases(
             for record in existing_records
         )
         if not has_record:
+            # The outbox record mirrors the ACTUAL recorded lease state
+            # (fence + epoch carried from the plan's repair identity when
+            # present, and the post-adjudication epoch) instead of a
+            # fabricated 0/1.
+            final_lease = lease_store.current_lease(lease_id)
+            recorded_fence = (
+                int(getattr(final_lease, "coordinator_fence_token", fence_token) or fence_token)
+                if final_lease is not None
+                else fence_token
+            )
+            recorded_epoch = (
+                int(getattr(final_lease, "custody_epoch", custody_epoch) or custody_epoch)
+                if final_lease is not None
+                else custody_epoch
+            )
             outbox.write_record(
                 OutboxRecord(
                     outbox_id=f"dispatch-{attempt_id}-{digest[:16]}",
@@ -749,9 +813,9 @@ def _ensure_dispatch_leases(
                     idempotency_key=f"dispatch-{attempt_id}-{digest[:16]}",
                     wbc_attempt_reference=attempt_id,
                     run_authority_grant_id=attempt_id,
-                    coordinator_fence_token=0,
+                    coordinator_fence_token=recorded_fence,
                     occurrence_digest=digest,
-                    custody_epoch=1,
+                    custody_epoch=recorded_epoch,
                     payload={
                         "target_digest": digest,
                         "action_type": str(ctx.action_type),

@@ -8,6 +8,7 @@ chain, anchor, brief, source, or runtime inputs.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -15,8 +16,9 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 from urllib.parse import unquote, urlparse
 
 import yaml
@@ -36,6 +38,10 @@ DRIFT_ERROR = "chain_execution_binding_drift"
 RUNTIME_DRIFT_ERROR = "chain_runtime_binding_drift"
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# Mirrors ``legacy_marker_runtime_migration._RUNTIME_ROOT``: the live-box
+# runtime-candidates layout an identity-less marker's relaunch command must
+# name — exactly once, equal to the verified legacy runtime root.
+_LEGACY_RELAUNCH_ROOT = re.compile(r"/workspace/runtime-candidates/[A-Za-z0-9._-]+")
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -1379,8 +1385,18 @@ def rebind_runtime_identity(
     actor: str = "operator",
     direction: str = "cutover",
     verified_external_runtime_identity: Mapping[str, Any] | None = None,
+    update_engine_root: bool = False,
 ) -> dict[str, Any]:
-    """Adopt or roll back an exact runtime without rewriting the spec binding."""
+    """Adopt or roll back an exact runtime without rewriting the spec binding.
+
+    When ``update_engine_root`` is set (the ``chain runtime-cutover`` path),
+    ``metadata.execution_environment.engine_root`` is moved old->new in the
+    same in-memory transaction: the recorded root must CAS-match the previous
+    runtime identity's ``import_root`` before ANY mutation, and the new root
+    is taken from the adopted runtime identity's ``import_root``.  Non-metadata
+    chain fields are untouched, so the CLI's post-mutation operational-field
+    check keeps the write fail-closed.
+    """
 
     if direction not in {"cutover", "rollback"}:
         raise CliError(
@@ -1531,6 +1547,45 @@ def rebind_runtime_identity(
             raise CliError(RUNTIME_DRIFT_ERROR, "current plan does not match the guard")
 
     rebound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    execution_environment = dict(metadata.get("execution_environment") or {})
+    from_engine_root = ""
+    to_engine_root = ""
+    if update_engine_root:
+        previous_root_text = str(
+            persisted_identity.get("import_root") or ""
+        ).strip()
+        if not previous_root_text:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime cutover refused: previous runtime identity has no import_root",
+            )
+        recorded_root_text = str(
+            execution_environment.get("engine_root") or ""
+        ).strip()
+        if not recorded_root_text:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime cutover refused: "
+                "metadata.execution_environment.engine_root is missing",
+            )
+        if (
+            Path(recorded_root_text).expanduser().resolve()
+            != Path(previous_root_text).expanduser().resolve()
+        ):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime cutover refused: recorded engine root does not match "
+                "the previous runtime root",
+            )
+        active_root_text = str(active.get("import_root") or "").strip()
+        if not active_root_text:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime cutover refused: active runtime identity has no import_root",
+            )
+        from_engine_root = str(Path(recorded_root_text).expanduser().resolve())
+        to_engine_root = str(Path(active_root_text).expanduser().resolve())
     event_core = {
         "schema": RUNTIME_REBIND_SCHEMA,
         "rebound_at": rebound_at,
@@ -1543,6 +1598,9 @@ def rebind_runtime_identity(
         "current_milestone": expected_current_milestone,
         "current_plan": guarded_plan,
     }
+    if update_engine_root:
+        event_core["from_engine_root"] = from_engine_root
+        event_core["to_engine_root"] = to_engine_root
     event = {
         **event_core,
         "content_sha256": _sha256_bytes(
@@ -1551,7 +1609,6 @@ def rebind_runtime_identity(
             )
         ),
     }
-    metadata = dict(getattr(state, "metadata", {}) or {})
     binding = dict(metadata.get("execution_binding") or {})
     runtime_binding = dict(binding.get("runtime_binding") or {})
     events = runtime_binding.get("rebind_events")
@@ -1567,6 +1624,9 @@ def rebind_runtime_identity(
     )
     binding["runtime_binding"] = runtime_binding
     metadata["execution_binding"] = binding
+    if update_engine_root:
+        execution_environment["engine_root"] = to_engine_root
+        metadata["execution_environment"] = execution_environment
     state.metadata = metadata
     if external_identity is None:
         rebound_runtime = execution_binding_report(spec_path, state)["runtime_binding"]
@@ -1584,7 +1644,24 @@ def rebind_runtime_identity(
         raise CliError(
             RUNTIME_DRIFT_ERROR, "rebound runtime did not verify as an exact match"
         )
-    return {
+    if update_engine_root:
+        recorded = (
+            (state.metadata.get("execution_environment") or {}).get(
+                "engine_root"
+            )
+            or ""
+        )
+        if (
+            not recorded
+            or Path(str(recorded)).expanduser().resolve()
+            != Path(to_engine_root).expanduser().resolve()
+        ):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime cutover refused: recorded engine root did not follow "
+                "the active runtime",
+            )
+    result = {
         "event": event,
         "runtime_binding": rebound_runtime,
         "verification_mode": (
@@ -1593,6 +1670,52 @@ def rebind_runtime_identity(
             else "active_control_runtime"
         ),
     }
+    if update_engine_root:
+        result["engine_root_transition"] = {
+            "from_engine_root": from_engine_root,
+            "to_engine_root": to_engine_root,
+        }
+    return result
+
+
+def cutover_runtime_identity(
+    spec_path: Path,
+    state: Any,
+    *,
+    expected_previous_runtime_sha256: str,
+    expected_active_runtime_sha256: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    reason: str,
+    actor: str = "operator",
+    direction: str = "cutover",
+    verified_external_runtime_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Chain runtime cutover: rebind the runtime AND move engine_root atomically.
+
+    T-0101c: like :func:`rebind_runtime_identity` but additionally moves
+    ``metadata.execution_environment.engine_root`` old->new inside the same
+    CAS-guarded transaction.  The recorded root must match the previous
+    runtime identity's ``import_root`` (fail-closed, zero mutation otherwise),
+    and the new root is derived from the adopted runtime identity's
+    ``import_root`` — the root the relaunch preflight (``epic_chain.py``) will
+    subsequently require.  Runs only on chains whose runtime binding already
+    exists (post T-0101b migration); a missing persisted identity is refused.
+    """
+
+    return rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=expected_previous_runtime_sha256,
+        expected_active_runtime_sha256=expected_active_runtime_sha256,
+        expected_current_milestone=expected_current_milestone,
+        expected_current_plan=expected_current_plan,
+        reason=reason,
+        actor=actor,
+        direction=direction,
+        verified_external_runtime_identity=verified_external_runtime_identity,
+        update_engine_root=True,
+    )
 
 
 def bound_chain_spec_candidates(root: Path, *, plan_name: str = "") -> list[Path]:
@@ -1870,3 +1993,669 @@ def adopt_existing_tree_identity(
         pass
 
     return {"receipt": receipt, "adopted_commit": adopted_commit, "tree_sha256": adopted_tree_sha256}
+
+
+# --- Guarded legacy execution-binding migration (T-0101b) --------------------
+# One-time operator migration for a durably-paused, progressed, UNBOUND chain.
+# The legacy runtime is independently reverified via its provenance receipt,
+# then the spec/state/plan hashes plus the cloud-session marker and the
+# per-epic runtime manifest are CAS-guarded before a SINGLE atomic write that
+# initializes ``metadata.execution_binding`` AND
+# ``metadata.execution_environment.engine_root``.  Any guard mismatch or
+# partial failure refuses with zero mutation (the plan/state files are never
+# touched until every guard passes).
+
+EXECUTION_BINDING_MIGRATE_ERROR = "chain_execution_binding_migrate_refused"
+MIGRATE_EVENT_SCHEMA = "arnold.megaplan.chain_execution_binding_migrate.v1"
+
+
+@contextmanager
+def _migrate_transaction_lock(state_path: Path) -> Iterator[None]:
+    """Exclusive advisory lock serializing migrate transactions on one chain."""
+
+    lock_path = state_path.with_suffix(".execution-binding-migrate.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _chain_epic_slug(spec_path: Path) -> str:
+    """Derive the per-epic manifest slug for a chain spec (cloud.cli parity).
+
+    Mirrors ``cloud.cli._epic_slug_for_spec_path``: a canonical
+    ``<initiative>/chain.yaml`` spec is keyed by its initiative directory
+    name; anything else by its stem.
+    """
+
+    if spec_path.name == "chain.yaml" and spec_path.parent.name:
+        source = spec_path.parent.name
+    else:
+        source = spec_path.stem
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(source).strip().lower()).strip(".-")
+    return slug[:48] or "chain"
+
+
+def _assert_marker_agrees_with_runtime(
+    marker: Mapping[str, Any],
+    *,
+    session: str,
+    spec_path: Path,
+    guarded_plan: str,
+    external: Mapping[str, Any],
+    old_root: Path,
+    expected_marker_sha256: str | None = None,
+    marker_sha256: str = "",
+) -> None:
+    """CAS the cloud-session marker against the verified legacy runtime.
+
+    The marker must name this chain/session and must agree that the verified
+    legacy runtime is the current content-addressed runtime — either through a
+    ``runtime_binding.current_identity`` digest, the legacy
+    ``editable_source_head`` / ``editable_install_sync.source`` fields, or the
+    EXACT paused identity-less form (T-0101h round-3): no runtime identity
+    fields at all, accepted only when the marker's exact sha256 is expected
+    (``expected_marker_sha256``) and its relaunch command names exactly one
+    ``/workspace/runtime-candidates``-style root equal to the verified legacy
+    runtime root.  At least ONE accepted identity form must be present and
+    exact; any present-but-mismatching field refuses with zero mutation.
+    """
+
+    marker_session = str(marker.get("session") or "").strip()
+    if marker_session and marker_session != session:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            f"marker session {marker_session!r} does not match chain session "
+            f"{session!r}",
+        )
+    marker_spec = str(marker.get("remote_spec") or "").strip()
+    if marker_spec and (
+        Path(marker_spec).expanduser().resolve(strict=False)
+        != spec_path.resolve(strict=False)
+    ):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "marker remote_spec does not match the migrated chain spec",
+        )
+    marker_pause = marker.get("operator_pause")
+    if isinstance(marker_pause, Mapping) and "active" in marker_pause:
+        if marker_pause.get("active") is not True:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "marker operator_pause is not active",
+            )
+        recorded_plan = str(marker_pause.get("plan") or "").strip()
+        if recorded_plan and recorded_plan != guarded_plan:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "marker operator_pause plan does not match the current plan guard",
+            )
+    # Marker-SHA guard: when expected, the on-disk marker bytes must match
+    # exactly (mandatory for the identity-less acceptance below).
+    if expected_marker_sha256 is not None and (
+        not _FULL_SHA256.fullmatch(expected_marker_sha256)
+        or marker_sha256 != expected_marker_sha256
+    ):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "marker SHA-256 does not match the guard",
+        )
+    # Exactly one accepted marker identity form must be present and exact: the
+    # ``runtime_binding.current_identity`` digest, or the legacy
+    # ``editable_source_head`` / ``editable_install_sync.source`` fields.  Any
+    # present-but-mismatching field refuses; a marker carrying NO runtime
+    # evidence at all is accepted ONLY through the explicit identity-less
+    # guards below (fail-closed — absence never "agrees" by itself).
+    forms_found = 0
+    binding = marker.get("runtime_binding")
+    if isinstance(binding, Mapping):
+        identity = binding.get("current_identity")
+        if not isinstance(identity, Mapping):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "marker runtime binding carries no current identity",
+            )
+        observed = _normalized_runtime_identity(identity)
+        if observed.get("content_sha256") != external.get("content_sha256"):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "marker runtime SHA-256 does not match the verified legacy runtime",
+            )
+        forms_found += 1
+    head = str(marker.get("editable_source_head") or "").strip()
+    if head:
+        if head != str(external.get("source_revision") or ""):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "marker source head does not match the verified legacy runtime",
+            )
+        forms_found += 1
+    sync = marker.get("editable_install_sync")
+    if isinstance(sync, Mapping):
+        source = str(sync.get("source") or "").strip()
+        if source:
+            if Path(source).expanduser().resolve(strict=False) != old_root:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "marker install source does not match the verified legacy "
+                    "runtime root",
+                )
+            forms_found += 1
+    if forms_found == 0:
+        # T-0101h round-3 blocker 1: the EXACT paused identity-less legacy
+        # marker (no runtime_binding, no editable_source_head, no
+        # editable_install_sync.source) is an accepted marker identity form
+        # ONLY under the explicit marker-SHA + relaunch-root guards — the
+        # strong runtime_binding is created by the FOLLOWING
+        # legacy-marker migration, so migrate only VERIFIES that the marker
+        # agrees with the verified legacy runtime (never binds it).
+        if expected_marker_sha256 is None:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "an exact marker SHA-256 guard is required for an identity-less "
+                "marker",
+            )
+        relaunch = str(marker.get("relaunch_command") or "").strip()
+        observed_roots = {
+            str(Path(item).resolve(strict=False))
+            for item in _LEGACY_RELAUNCH_ROOT.findall(relaunch)
+        }
+        if observed_roots != {str(old_root)}:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "marker relaunch command does not name exactly the verified "
+                "legacy runtime root",
+            )
+        forms_found = 1
+
+
+def migrate_execution_binding(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    expected_branch: str,
+    reason: str,
+    actor: str = "operator",
+    expected_marker_sha256: str | None = None,
+    verified_external_runtime_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Initialize the execution binding for a paused, progressed, unbound chain.
+
+    T-0101b: the one-time legacy migration.  The chain must be durably paused
+    (``metadata.operator_pause`` present via :func:`pause_record`), progressed
+    past launch, and still UNBOUND (no ``metadata.execution_binding``).  The
+    migration IS the transition that creates the binding: it operates on the
+    paused PRE-required (``driver.execution_binding: optional``) legacy spec —
+    the old policy never demanded a binding, so requiring the new policy here
+    would make the transition unrunnable on the very state it exists to move
+    off.  Installing the full required bundle and ``chain rebind`` afterwards
+    harden the chain.  The OLD runtime is independently reverified by the
+    caller through :func:`verify_external_runtime_identity`; this transaction
+    then CAS-guards the spec hash (against the hash the chain state recorded
+    at last save), the chain-state and plan-state file bytes (stable across
+    the transaction), the cloud-session marker (runtime agreement), the
+    per-epic runtime manifest (``epic.runtime_root`` / ``epic.expected_head``
+    / ``epic_id``), the cursor (milestone + plan), and the project checkout
+    branch.
+
+    On success a single atomic ``save_chain_state`` initializes
+    ``metadata.execution_binding`` (schema, bound_at, launched_identity from
+    the verified identity, runtime_binding with an empty rebind history) and
+    ``metadata.execution_environment.engine_root`` = the verified runtime
+    root.  Every non-metadata chain field is preserved; ANY guard mismatch
+    refuses with zero mutation.
+
+    When the marker is identity-less (no ``runtime_binding``, no
+    ``editable_source_head``, no ``editable_install_sync.source``) it is
+    accepted ONLY when ``expected_marker_sha256`` names the exact on-disk
+    marker bytes and the marker's relaunch command names exactly one
+    ``/workspace/runtime-candidates``-style root equal to the verified legacy
+    runtime root — the strong ``runtime_binding`` is then created by the
+    FOLLOWING legacy-marker migration, so migrate only verifies agreement.
+    """
+
+    if not all(
+        str(value or "").strip()
+        for value in (
+            expected_current_milestone,
+            expected_current_plan,
+            expected_branch,
+            reason,
+            actor,
+        )
+    ):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "every execution-binding-migrate guard is required",
+        )
+    if not isinstance(verified_external_runtime_identity, Mapping) or not bool(
+        verified_external_runtime_identity
+    ):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "a verified external runtime identity is required",
+        )
+
+    from arnold_pipelines.megaplan._core.io import find_plan_dir
+    from arnold_pipelines.megaplan._core.state import driver_lock, plan_lock
+    from arnold_pipelines.megaplan.chain import spec as chain_spec
+    from arnold_pipelines.megaplan.chain.operator_pause import pause_record
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        active_manifest_path,
+        bootstrap_manifest,
+    )
+
+    spec_path = spec_path.resolve(strict=False)
+    project_root = project_root.resolve(strict=False)
+    try:
+        spec_path.relative_to(project_root)
+    except ValueError as exc:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "chain spec must be inside the guarded project/session root",
+        ) from exc
+
+    external = _normalized_runtime_identity(verified_external_runtime_identity)
+    old_root_text = str(external.get("import_root") or "").strip()
+    if not old_root_text:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "verified runtime identity has no import_root",
+        )
+    old_root = Path(old_root_text).expanduser().resolve()
+
+    guarded_plan = "" if expected_current_plan == "@none" else expected_current_plan
+    plan_dir = (
+        find_plan_dir(project_root, guarded_plan) if guarded_plan else None
+    )
+    if guarded_plan and plan_dir is None:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "current plan directory is unavailable",
+        )
+    state_path = chain_spec._state_path_for(spec_path)
+    if not state_path.exists():
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            f"chain state file is missing: {state_path}",
+        )
+
+    with _migrate_transaction_lock(state_path), (
+        driver_lock(plan_dir) if plan_dir is not None else nullcontext()
+    ), (plan_lock(plan_dir, step="chain execution-binding-migrate") if plan_dir is not None else nullcontext()):
+        try:
+            chain_raw = state_path.read_bytes()
+        except OSError as exc:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                f"cannot read chain state: {state_path}",
+            ) from exc
+        try:
+            chain = json.loads(chain_raw)
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "chain state is not valid JSON",
+            ) from exc
+        if not isinstance(chain, dict):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "chain state must be a JSON object",
+            )
+        chain_state = chain_spec.ChainState.from_dict(chain)
+        before = chain_state.to_dict()
+
+        # ── spec hash CAS: the on-disk spec must be the one the chain state
+        # recorded when it last saved progress (zero-mutation otherwise).
+        metadata = dict(chain_state.metadata or {})
+        recorded_spec_sha = str(metadata.get("chain_spec_sha256") or "").strip()
+        observed_spec_sha = _sha256_file(spec_path)
+        if (
+            not _FULL_SHA256.fullmatch(recorded_spec_sha)
+            or recorded_spec_sha != observed_spec_sha
+        ):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "chain spec SHA-256 does not match the hash the persisted chain "
+                "state recorded at last save",
+            )
+
+        # ── durable pause ──────────────────────────────────────────────────
+        pause = pause_record(chain_state)
+        if pause is None:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "migration refused: chain session is not durably paused",
+            )
+        paused_plan = str(pause.get("plan") or "").strip()
+        if paused_plan and paused_plan != guarded_plan:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "migration refused: pause authority names a different plan than "
+                "the current plan guard",
+            )
+
+        # ── progressed + unbound ───────────────────────────────────────────
+        if not _state_has_progress(chain_state):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "migration refused: chain has not progressed",
+            )
+        if "execution_binding" in metadata:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "migration refused: execution binding already exists",
+            )
+        execution_environment = metadata.get("execution_environment")
+        if execution_environment is None:
+            execution_environment = {}
+        elif isinstance(execution_environment, Mapping):
+            execution_environment = dict(execution_environment)
+        else:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "chain metadata.execution_environment is malformed",
+            )
+        recorded_root = str(
+            execution_environment.get("engine_root") or ""
+        ).strip()
+        if recorded_root and (
+            Path(recorded_root).expanduser().resolve() != old_root
+        ):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "migration refused: recorded engine root disagrees with the "
+                "verified legacy runtime root",
+            )
+
+        # ── cursor: milestone + plan ───────────────────────────────────────
+        active_identity = active_execution_identity(spec_path)
+        labels = _identity_labels(active_identity)
+        current_index = int(getattr(chain_state, "current_milestone_index", -1))
+        terminal_cursor = current_index == len(labels)
+        if current_index < 0 or current_index > len(labels):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "current milestone index is outside the bound sequence",
+            )
+        if terminal_cursor:
+            if expected_current_milestone != "@terminal":
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "terminal migration requires the @terminal milestone guard",
+                )
+            if expected_current_plan != "@none":
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "terminal migration requires the @none plan guard",
+                )
+            if str(getattr(chain_state, "current_plan_name", "") or ""):
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "terminal migration refused while a current plan remains",
+                )
+            if str(getattr(chain_state, "last_state", "") or "") != "done":
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "terminal migration requires canonical last_state 'done'",
+                )
+            completed = list(getattr(chain_state, "completed", []) or [])
+            completed_labels = [
+                str(record.get("label") or "")
+                for record in completed
+                if isinstance(record, Mapping)
+            ]
+            completed_statuses = [
+                str(record.get("status") or "")
+                for record in completed
+                if isinstance(record, Mapping)
+            ]
+            if (
+                len(completed) != len(labels)
+                or len(completed_labels) != len(labels)
+                or completed_labels != labels
+                or completed_statuses != ["done"] * len(labels)
+            ):
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "terminal migration requires the exact ordered milestone "
+                    "set with status 'done'",
+                )
+        else:
+            if labels[current_index] != expected_current_milestone:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "current milestone does not match the guard",
+                )
+            if str(
+                getattr(chain_state, "current_plan_name", "") or ""
+            ) != guarded_plan:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "current plan does not match the guard",
+                )
+
+        # ── plan state hash CAS (stable across the transaction) ────────────
+        plan_raw: bytes | None = None
+        if guarded_plan and plan_dir is not None:
+            plan_path = plan_dir / "state.json"
+            if not plan_path.exists():
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "current plan state file is missing",
+                )
+            try:
+                plan_raw = plan_path.read_bytes()
+            except OSError as exc:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    f"cannot read plan state: {plan_path}",
+                ) from exc
+            try:
+                plan_payload = json.loads(plan_raw)
+            except json.JSONDecodeError as exc:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "plan state is not valid JSON",
+                ) from exc
+            if isinstance(plan_payload, dict) and plan_payload.get("name") not in {
+                None,
+                guarded_plan,
+            }:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "plan state name does not match the guard",
+                )
+
+        # ── branch guard: the project checkout's current git branch ────────
+        current_branch = _git(project_root, "branch", "--show-current")
+        if not current_branch or current_branch != expected_branch:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "project checkout branch does not match the guard",
+                extra={
+                    "observed_branch": current_branch,
+                    "expected_branch": expected_branch,
+                },
+            )
+
+        # ── marker CAS ─────────────────────────────────────────────────────
+        session = str(getattr(chain_state, "chain_session", "") or "").strip()
+        if not session:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "migration refused: chain session is unresolved",
+            )
+        marker_path = project_root / ".megaplan" / "cloud-sessions" / (
+            session + ".json"
+        )
+        if not marker_path.exists():
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                f"cloud-session marker is missing: {marker_path}",
+            )
+        try:
+            marker_raw = marker_path.read_bytes()
+            marker = json.loads(marker_raw)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "cloud-session marker is unreadable or invalid JSON",
+            ) from exc
+        if not isinstance(marker, dict):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "cloud-session marker must be a JSON object",
+            )
+        marker_sha256 = _sha256_bytes(marker_raw)
+        _assert_marker_agrees_with_runtime(
+            marker,
+            session=session,
+            spec_path=spec_path,
+            guarded_plan=guarded_plan,
+            external=external,
+            old_root=old_root,
+            expected_marker_sha256=expected_marker_sha256,
+            marker_sha256=marker_sha256,
+        )
+
+        # ── per-epic manifest CAS (via the runtime_manifest reader) ────────
+        try:
+            manifest = bootstrap_manifest(active_manifest_path())
+        except ManifestError as exc:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                f"runtime manifest is unavailable: {exc}",
+            ) from exc
+        declared_root = str(manifest.epic.get("runtime_root") or "").strip()
+        if not declared_root or (
+            Path(declared_root).expanduser().resolve() != old_root
+        ):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "runtime manifest epic.runtime_root does not match the verified "
+                "legacy runtime root",
+            )
+        declared_head = str(manifest.epic.get("expected_head") or "").strip()
+        if declared_head != str(external.get("source_revision") or ""):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "runtime manifest epic.expected_head does not match the verified "
+                "legacy runtime revision",
+            )
+        if str(manifest.epic_id or "") != _chain_epic_slug(spec_path):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                f"runtime manifest epic_id {manifest.epic_id!r} does not match "
+                f"chain slug {_chain_epic_slug(spec_path)!r}",
+            )
+
+        # ── build the initialized binding (single atomic write) ────────────
+        bound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        launched = dict(active_identity)
+        launched["runtime"] = dict(external)
+        launched["ready"] = True
+        launched["errors"] = []
+        metadata["execution_binding"] = {
+            "schema": BINDING_SCHEMA,
+            "bound_at": bound_at,
+            "launched_identity": launched,
+            "runtime_binding": {
+                "schema": RUNTIME_BINDING_SCHEMA,
+                "bound_at": bound_at,
+                "current_identity": dict(external),
+                "rebind_events": [],
+            },
+        }
+        execution_environment["engine_root"] = str(old_root)
+        metadata["execution_environment"] = execution_environment
+        chain_state.metadata = metadata
+
+        # ── preserve every non-metadata field ──────────────────────────────
+        after = chain_state.to_dict()
+        for field in before:
+            if field != "metadata" and before[field] != after[field]:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    f"migration refused: operational field {field!r} changed",
+                )
+
+        # ── file-byte CAS: nothing may have changed since the guard read ───
+        try:
+            if state_path.read_bytes() != chain_raw:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "chain state changed during migration",
+                )
+            if (
+                guarded_plan
+                and plan_dir is not None
+                and (plan_dir / "state.json").read_bytes() != plan_raw
+            ):
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "plan state changed during migration",
+                )
+        except OSError as exc:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                f"migration CAS re-read failed: {exc}",
+            ) from exc
+
+        chain_spec.save_chain_state(spec_path, chain_state)
+
+    # ── post-condition: the initialized binding must be internally exact ──
+    migrated_report = execution_binding_report(spec_path, chain_state)
+    external_active = dict(migrated_report.get("active") or {})
+    external_active["runtime"] = dict(external)
+    external_active["ready"] = True
+    external_active["errors"] = []
+    runtime_report = runtime_binding_report(
+        spec_path,
+        chain_state,
+        active_identity=external_active,
+    )
+    if runtime_report["status"] not in {"match", "not_required"}:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "migrated runtime binding did not verify as an exact match",
+        )
+    if (runtime_report.get("expected") or {}).get("content_sha256") != (
+        runtime_report.get("active") or {}
+    ).get("content_sha256"):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "migrated runtime binding expected/active identities diverged",
+        )
+    recorded = (
+        (chain_state.metadata.get("execution_environment") or {}).get(
+            "engine_root"
+        )
+        or ""
+    )
+    if not recorded or Path(str(recorded)).expanduser().resolve() != old_root:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "migrated engine_root does not match the verified legacy runtime root",
+        )
+    return {
+        "schema": MIGRATE_EVENT_SCHEMA,
+        "migrated_at": bound_at,
+        "actor": actor,
+        "reason": reason,
+        "expected_current_milestone": expected_current_milestone,
+        "expected_current_plan": guarded_plan,
+        "expected_branch": expected_branch,
+        "old_runtime_sha256": external["content_sha256"],
+        "old_runtime_root": str(old_root),
+        "engine_root": str(old_root),
+        "verification_mode": "external_interpreter_receipt",
+        "execution_binding": migrated_report,
+        "runtime_binding": runtime_report,
+    }

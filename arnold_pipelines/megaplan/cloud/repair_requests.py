@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.cloud.repair_lock import (
     RepairLockResult,
     acquire_repair_lock,
+    decision_admission_lock,
     inspect_repair_lock,
     occurrence_scoped_lock_dir,
     owner_metadata_path,
@@ -1457,46 +1458,56 @@ def write_decision(
     created_at: str | None = None,
     evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Write an immutable decision record separate from request markers."""
+    """Write an immutable decision record separate from request markers.
 
-    if decision == "accepted":
-        request_path = requests_dir(queue_dir) / f"{str(request_id or '').strip()}.json"
-        try:
-            request = json.loads(request_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError(
-                "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
-            ) from exc
-        if not isinstance(request, Mapping) or not has_claimable_repair_request_contract(request):
-            raise ValueError(
-                "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
-            )
+    T-0101h blocker 1: the write is serialized per request with the shared
+    decision/admission flock (:func:`repair_lock.decision_admission_lock`),
+    the SAME lock occurrence-join holds from its authoritative latest-decision
+    check through the atomic WBC commit, so a claim admission can never
+    interleave between its check and the admission — a decision appended here
+    is always observed before the next admission, never between an
+    admission's check and its commit.
+    """
 
-    when = created_at or utc_now()
-    decision_identity: dict[str, Any] = {
-        "request_id": request_id,
-        "decision": decision,
-        "reason": reason,
-        "related_request_id": related_request_id,
-        "created_at": when,
-    }
-    if evidence is not None:
-        decision_identity["evidence"] = dict(evidence)
-    record = {
-        "schema_version": CURRENT_SCHEMA_VERSION,
-        "kind": "repair_request_decision",
-        "decision_id": _sha256_json(decision_identity),
-        "request_id": str(request_id or "").strip(),
-        "decision": decision,
-        "reason": str(reason or "").strip(),
-        "related_request_id": str(related_request_id or "").strip(),
-        "created_at": when,
-    }
-    if evidence is not None:
-        record["evidence"] = dict(evidence)
-    path = decisions_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['decision_id']}.json"
-    _write_once_json(path, record)
-    return {**record, "_path": str(path)}
+    with decision_admission_lock(queue_dir, str(request_id or "").strip()):
+        if decision == "accepted":
+            request_path = requests_dir(queue_dir) / f"{str(request_id or '').strip()}.json"
+            try:
+                request = json.loads(request_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
+                ) from exc
+            if not isinstance(request, Mapping) or not has_claimable_repair_request_contract(request):
+                raise ValueError(
+                    "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
+                )
+
+        when = created_at or utc_now()
+        decision_identity: dict[str, Any] = {
+            "request_id": request_id,
+            "decision": decision,
+            "reason": reason,
+            "related_request_id": related_request_id,
+            "created_at": when,
+        }
+        if evidence is not None:
+            decision_identity["evidence"] = dict(evidence)
+        record = {
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "kind": "repair_request_decision",
+            "decision_id": _sha256_json(decision_identity),
+            "request_id": str(request_id or "").strip(),
+            "decision": decision,
+            "reason": str(reason or "").strip(),
+            "related_request_id": str(related_request_id or "").strip(),
+            "created_at": when,
+        }
+        if evidence is not None:
+            record["evidence"] = dict(evidence)
+        path = decisions_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['decision_id']}.json"
+        _write_once_json(path, record)
+        return {**record, "_path": str(path)}
 
 
 def write_dispatch_attempt(
