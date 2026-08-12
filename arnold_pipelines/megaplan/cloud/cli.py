@@ -848,6 +848,12 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Explicit remote chain spec path for supervision",
     )
+    supervise_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Run the supervisor tick against the local agentbox control plane "
+        "instead of using SSH transport",
+    )
 
     destroy_parser = cloud_sub.add_parser(
         "destroy",
@@ -1508,10 +1514,11 @@ def _status_should_use_chain(root: Path, args: argparse.Namespace, spec: CloudSp
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
     if bool(getattr(args, "on_box", False)):
         action = getattr(args, "cloud_action", None)
-        if action not in {"chain", "exec", "launch-epic", "sync-megaplan"}:
+        if action not in {"chain", "exec", "launch-epic", "sync-megaplan", "supervise"}:
             raise CliError(
                 "invalid_args",
-                "--on-box is supported only for cloud chain, exec, launch-epic, and sync-megaplan",
+                "--on-box is supported only for cloud chain, exec, launch-epic, "
+                "sync-megaplan, and supervise",
             )
         from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
 

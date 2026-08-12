@@ -10728,6 +10728,88 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Durable receipt JSON output path (written only on success)",
     )
 
+    occurrence_adopt_parser = chain_sub.add_parser(
+        "occurrence-adopt",
+        help=(
+            "Operator-only: adopt the SINGULAR identity-less blocked "
+            "occurrence of the current plan with an occurrence-exact "
+            "owner-boundary adoption identity, enqueue its exact repair "
+            "request, and record ONE accepted decision (T-0101e')"
+        ),
+    )
+    occurrence_adopt_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    occurrence_adopt_parser.add_argument("--project-dir", required=False)
+    occurrence_adopt_parser.add_argument(
+        "--session", required=True, help="Chain session of the blocked occurrence"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-current-plan", required=True, help="Exact current plan name"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-phase", required=True, help="Exact blocked phase"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-failure-kind", required=True, help="Exact latest failure kind"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-failure-code", required=True, help="Exact latest failure code"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-failure-recorded-at", required=True, help="Exact failure recorded_at"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-resume-phase", required=True, help="Exact resume cursor phase"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-retry-strategy", required=True, help="Exact resume cursor retry strategy"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-chain-state-sha256", required=True, help="Exact sha256 of the chain state file"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-plan-state-sha256", required=True, help="Exact sha256 of the plan state.json"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-latest-failure-sha256", required=True, help="Exact canonical sha256 of latest_failure"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-resume-cursor-sha256", required=True, help="Exact canonical sha256 of resume_cursor"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-pause-authority-sha256", required=True, help="Exact canonical sha256 of the pause authority"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--runtime-manifest", required=True, help="Path to the runtime manifest JSON"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-runtime-manifest-sha256", required=True, help="Exact sha256 of the runtime manifest file"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--marker", required=True, help="Path to the cloud-session marker JSON"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-marker-sha256", required=True, help="Exact sha256 of the marker file"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--runtime-identity", required=True, help="Verified runtime identity JSON (independently receipted)"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--runtime-provenance-receipt", required=True, help="Runtime provenance receipt paired with --runtime-identity"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--candidate-root", required=True, help="The candidate runtime root (one of the six equal roots)"
+    )
+    occurrence_adopt_parser.add_argument(
+        "--expected-runtime-roots-sha256", required=True, help="Exact canonical sha256 of the six-root payload"
+    )
+    occurrence_adopt_parser.add_argument("--reason", required=True)
+    occurrence_adopt_parser.add_argument("--actor", default="operator")
+    occurrence_adopt_parser.add_argument(
+        "--receipt",
+        required=True,
+        help="Durable receipt JSON output path (written only on success)",
+    )
+
     verify_parser = chain_sub.add_parser(
         "verify", help="Replay landed-diff completion evidence for completed milestones"
     )
@@ -10968,6 +11050,54 @@ def run_chain_cli(
                 claim_id=args.claim,
                 reason=args.reason,
                 actor=args.actor,
+                receipt_path=Path(receipt_arg).expanduser(),
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps({"success": True, "spec": str(spec_path), **payload}, indent=2) + "\n"
+        )
+        return 0
+
+    if action == "occurrence-adopt":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        receipt_arg = getattr(args, "receipt", None)
+        if not isinstance(receipt_arg, str) or not receipt_arg.strip():
+            return _emit_error(CliError("invalid_args", "--receipt is required"))
+        try:
+            from arnold_pipelines.megaplan.chain.occurrence_adopt import (
+                adopt_occurrence,
+            )
+
+            payload = adopt_occurrence(
+                spec_path=spec_path,
+                project_dir=project_root,
+                session=args.session,
+                expected_current_plan=args.expected_current_plan,
+                expected_phase=args.expected_phase,
+                expected_failure_kind=args.expected_failure_kind,
+                expected_failure_code=args.expected_failure_code,
+                expected_failure_recorded_at=args.expected_failure_recorded_at,
+                expected_resume_phase=args.expected_resume_phase,
+                expected_retry_strategy=args.expected_retry_strategy,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                expected_latest_failure_sha256=args.expected_latest_failure_sha256,
+                expected_resume_cursor_sha256=args.expected_resume_cursor_sha256,
+                expected_pause_authority_sha256=args.expected_pause_authority_sha256,
+                runtime_manifest_path=args.runtime_manifest,
+                expected_runtime_manifest_sha256=args.expected_runtime_manifest_sha256,
+                marker_path=args.marker,
+                expected_marker_sha256=args.expected_marker_sha256,
+                runtime_identity_path=args.runtime_identity,
+                runtime_provenance_receipt_path=args.runtime_provenance_receipt,
+                candidate_root=args.candidate_root,
+                expected_runtime_roots_sha256=args.expected_runtime_roots_sha256,
+                actor=args.actor,
+                reason=args.reason,
                 receipt_path=Path(receipt_arg).expanduser(),
             )
         except CliError as exc:

@@ -7,10 +7,11 @@ import json
 import os
 import socket
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Iterator, Literal, Mapping
 
 from arnold_pipelines.megaplan.cloud import repair_contract
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
@@ -18,6 +19,7 @@ from arnold_pipelines.megaplan.cloud.repair_lock import (
     RepairLockResult,
     acquire_repair_lock,
     decision_admission_lock,
+    decision_admission_lock_dir,
     inspect_repair_lock,
     occurrence_scoped_lock_dir,
     owner_metadata_path,
@@ -45,6 +47,7 @@ from arnold_pipelines.megaplan.custody.lease_store import (
     LeaseIdempotencyConflict,
 )
 from arnold_pipelines.megaplan.run_state.model import NormalizedFailureToken
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.run_authority.contracts import ContractError
 
 QUEUE_DIR_NAME = "repair-queue"
@@ -55,6 +58,76 @@ ACTIVE_CLAIMS_DIR_NAME = "active-claims"
 OCCURRENCE_CLAIMS_DIR_NAME = "occurrence-claims"
 CURRENT_SCHEMA_VERSION = 1
 REPAIR_IDENTITY_SCHEMA_VERSION = "megaplan-repair-identity-v1"
+# T-0101e': the scoped owner-boundary adoption identity subtype.  It is a
+# SEPARATE envelope from v1: it carries the occurrence facts + full CAS
+# vector + six runtime roots + the deterministic adoption authority block,
+# and it must NEVER carry historical v1 fields (run_incarnation_id,
+# coordinator_attempt_id, lease_id, custody_epoch).
+OWNER_ADOPTION_IDENTITY_SCHEMA = "megaplan-repair-identity-owner-adoption-v1"
+OWNER_ADOPTION_IDENTITY_KIND = "owner_boundary_adoption"
+OWNER_ADOPTED_OCCURRENCE_CONTRACT = "owner_adopted_blocked_occurrence"
+OWNER_ADOPTION_SOURCE = "owner_boundary_occurrence_adoption"
+#: Restricted authority scope: the v2 adoption identity is claimable ONLY by
+#: the exact-occurrence join; generic repair dispatch/effects must reject it.
+OWNER_ADOPTION_SCOPE = frozenset({"enqueue_exact_occurrence", "occurrence_join"})
+ADOPTION_RUN_PREFIX = "repair-adoption:"
+ADOPTION_ATTEMPT_PREFIX = "owner-adoption-attempt:"
+OWNER_ADOPTION_OCCURRENCE_FIELDS = (
+    "contract_type",
+    "schema_version",
+    "chain_session",
+    "plan_name",
+    "phase",
+    "failure_kind",
+    "failure_code",
+    "failure_recorded_at",
+    "resume_phase",
+    "retry_strategy",
+    "subject_occurrence_digest",
+)
+OWNER_ADOPTION_CAS_FIELDS = (
+    "chain_spec_sha256",
+    "chain_state_sha256",
+    "plan_state_sha256",
+    "latest_failure_sha256",
+    "resume_cursor_sha256",
+    "pause_authority_sha256",
+    "runtime_manifest_sha256",
+    "marker_sha256",
+    "runtime_provenance_receipt_sha256",
+    "runtime_roots_sha256",
+)
+OWNER_ADOPTION_ROOT_FIELDS = (
+    "chain_execution_root",
+    "recorded_engine_root",
+    "manifest_runtime_root",
+    "marker_runtime_root",
+    "independent_import_root",
+    "candidate_root",
+)
+OWNER_ADOPTION_AUTHORITY_FIELDS = (
+    "kind",
+    "owner",
+    "actor",
+    "scope",
+    "historical_authority_status",
+    "adoption_record_id",
+    "adoption_run_id",
+    "adoption_run_revision",
+    "adoption_run_incarnation_id",
+    "adoption_attempt_id",
+    "adoption_fence_token",
+    "adoption_grant_id",
+    "wbc_attempt_reference",
+)
+#: Historical v1 fields that are FORBIDDEN inside the adoption envelope —
+#: their absence is part of the identity contract (no fabricated history).
+OWNER_ADOPTION_FORBIDDEN_FIELDS = (
+    "run_incarnation_id",
+    "coordinator_attempt_id",
+    "lease_id",
+    "custody_epoch",
+)
 
 
 def build_normalized_repair_identity(
@@ -179,6 +252,309 @@ def repair_identity_key(payload: Mapping[str, Any] | None) -> str:
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _sha256_digest_text(value: str) -> bool:
+    return (
+        len(value) == 71
+        and value.startswith("sha256:")
+        and all(char in "0123456789abcdef" for char in value[7:])
+    )
+
+
+def _owner_adoption_scope_valid(scope: Any) -> bool:
+    if not isinstance(scope, (list, tuple, set)):
+        return False
+    values = {str(item).strip() for item in scope if isinstance(item, str)}
+    if not values:
+        return False
+    if "occurrence_join" not in values:
+        return False
+    return values.issubset(OWNER_ADOPTION_SCOPE)
+
+
+def normalize_owner_adoption_identity(
+    payload: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the canonical owner-boundary adoption identity envelope.
+
+    Strictly validates the v2 shape: the scoped schema/identity_kind, the
+    owner-adopted occurrence contract with its subject digest, the complete
+    ten-field CAS vector, the six runtime roots, and the deterministic
+    adoption authority block (kind/owner/actor/scope/absent history + the
+    adoption_record_id/run/revision/incarnation/attempt/fence/grant/WBC
+    references).  Historical v1 fields (run_incarnation_id,
+    coordinator_attempt_id, lease_id, custody_epoch) are FORBIDDEN — their
+    absence is part of the identity contract.
+
+    Returns ``None`` for anything that does not satisfy the exact shape, so
+    generic v1 machinery (``normalize_repair_identity``, enqueue, claim,
+    dispatch) can never mistake an adoption identity for ordinary v1
+    authority.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    if str(payload.get("schema_version") or "") != OWNER_ADOPTION_IDENTITY_SCHEMA:
+        return None
+    if str(payload.get("identity_kind") or "") != OWNER_ADOPTION_IDENTITY_KIND:
+        return None
+    for forbidden in OWNER_ADOPTION_FORBIDDEN_FIELDS:
+        if payload.get(forbidden) is not None:
+            return None
+
+    occurrence = payload.get("occurrence")
+    if not isinstance(occurrence, Mapping):
+        return None
+    if str(occurrence.get("contract_type") or "") != OWNER_ADOPTED_OCCURRENCE_CONTRACT:
+        return None
+    if any(
+        not str(occurrence.get(field) or "").strip()
+        for field in OWNER_ADOPTION_OCCURRENCE_FIELDS
+    ):
+        return None
+    if not _sha256_digest_text(
+        str(occurrence.get("subject_occurrence_digest") or "").strip()
+    ):
+        return None
+
+    cas = payload.get("cas")
+    if not isinstance(cas, Mapping):
+        return None
+    if any(
+        not _sha256_digest_text(str(cas.get(field) or "").strip())
+        for field in OWNER_ADOPTION_CAS_FIELDS
+    ):
+        return None
+
+    runtime_roots = payload.get("runtime_roots")
+    if not isinstance(runtime_roots, Mapping):
+        return None
+    if any(
+        not str(runtime_roots.get(field) or "").strip()
+        for field in OWNER_ADOPTION_ROOT_FIELDS
+    ):
+        return None
+
+    authority = payload.get("authority")
+    if not isinstance(authority, Mapping):
+        return None
+    if any(field not in authority for field in OWNER_ADOPTION_AUTHORITY_FIELDS):
+        return None
+    if str(authority.get("kind") or "") != "operator_owner_boundary_adoption":
+        return None
+    if str(authority.get("owner") or "") != "megaplan.chain":
+        return None
+    if not str(authority.get("actor") or "").strip():
+        return None
+    if str(authority.get("historical_authority_status") or "") != "absent":
+        return None
+    if not _owner_adoption_scope_valid(authority.get("scope")):
+        return None
+    if not _sha256_digest_text(
+        str(authority.get("adoption_record_id") or "").strip()
+    ):
+        return None
+    if not str(authority.get("adoption_run_id") or "").startswith(
+        ADOPTION_RUN_PREFIX
+    ):
+        return None
+    for field in (
+        "adoption_run_revision",
+        "adoption_run_incarnation_id",
+        "adoption_grant_id",
+    ):
+        if not _sha256_digest_text(str(authority.get(field) or "").strip()):
+            return None
+    if not str(authority.get("adoption_attempt_id") or "").startswith(
+        ADOPTION_ATTEMPT_PREFIX
+    ):
+        return None
+    if (
+        str(authority.get("wbc_attempt_reference") or "").strip()
+        != str(authority.get("adoption_attempt_id") or "").strip()
+    ):
+        return None
+    try:
+        fence_token = int(authority.get("adoption_fence_token"))
+    except (TypeError, ValueError):
+        return None
+    if fence_token != 1:
+        return None
+
+    # Canonical rebuild: identical shapes normalize to identical dicts.
+    return {
+        "schema_version": OWNER_ADOPTION_IDENTITY_SCHEMA,
+        "identity_kind": OWNER_ADOPTION_IDENTITY_KIND,
+        "occurrence": {
+            field: occurrence.get(field) for field in OWNER_ADOPTION_OCCURRENCE_FIELDS
+        },
+        "cas": {field: str(cas.get(field)) for field in OWNER_ADOPTION_CAS_FIELDS},
+        "runtime_roots": {
+            field: str(runtime_roots.get(field))
+            for field in OWNER_ADOPTION_ROOT_FIELDS
+        },
+        "authority": {
+            "kind": str(authority.get("kind")),
+            "owner": str(authority.get("owner")),
+            "actor": str(authority.get("actor")),
+            "scope": sorted(
+                str(item) for item in authority.get("scope", []) if isinstance(item, str)
+            ),
+            "historical_authority_status": str(
+                authority.get("historical_authority_status")
+            ),
+            "adoption_record_id": str(authority.get("adoption_record_id")),
+            "adoption_run_id": str(authority.get("adoption_run_id")),
+            "adoption_run_revision": str(authority.get("adoption_run_revision")),
+            "adoption_run_incarnation_id": str(
+                authority.get("adoption_run_incarnation_id")
+            ),
+            "adoption_attempt_id": str(authority.get("adoption_attempt_id")),
+            "adoption_fence_token": fence_token,
+            "adoption_grant_id": str(authority.get("adoption_grant_id")),
+            "wbc_attempt_reference": str(authority.get("wbc_attempt_reference")),
+        },
+    }
+
+
+def owner_adoption_identity_key(payload: Mapping[str, Any] | None) -> str:
+    """Return the deterministic key for a normalized adoption identity."""
+    normalized = normalize_owner_adoption_identity(payload)
+    if normalized is None:
+        return ""
+    return "sha256:" + _sha256_json(normalized)
+
+
+def _identity_for_request_key(
+    repair_identity: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Return whichever normalized identity binds a request id (v1 or v2)."""
+    normalized = normalize_repair_identity(repair_identity)
+    if normalized is not None:
+        return normalized
+    return normalize_owner_adoption_identity(repair_identity)
+
+
+def plan_state_has_repair_identity(plan_state: Mapping[str, Any] | None) -> bool:
+    """Return True when an authoritative plan-side identity location is filled.
+
+    Mirrors ``derive_repair_identity``'s candidate locations (plan state,
+    plan meta, current target, current refs) plus the recorded
+    ``repair_identity_key`` spellings.  Used by the owner-adoption join to
+    prove the adopted occurrence is STILL identity-less.
+    """
+    if not isinstance(plan_state, Mapping):
+        return False
+    meta = _mapping(plan_state.get("meta"))
+    current_target = _mapping(plan_state.get("current_target"))
+    current_refs = _mapping(current_target.get("current_refs"))
+    candidates = (
+        plan_state.get("repair_identity"),
+        plan_state.get("repair_identity_key"),
+        meta.get("repair_identity"),
+        meta.get("repair_identity_key"),
+        current_target.get("repair_identity"),
+        current_refs.get("repair_identity"),
+    )
+    for value in candidates:
+        if str(value or "").strip():
+            return True
+    return derive_repair_identity(plan_state=plan_state) is not None
+
+
+def owner_adopted_repair_request_contract_violations(
+    request: Mapping[str, Any],
+) -> list[str]:
+    """Return typed reasons an immutable adoption request is unsafe to claim.
+
+    The v2 request carries the owner-boundary adoption identity; only the
+    exact-occurrence join (``chain occurrence-join``) may consume it.  The
+    generic claimable contract deliberately does NOT accept it, so generic
+    repair dispatch/effects keep rejecting it.
+    """
+    violations: list[str] = []
+    identity = normalize_owner_adoption_identity(request.get("repair_identity"))
+    if identity is None:
+        violations.append("invalid_owner_adoption_identity")
+    else:
+        if str(request.get("repair_identity_key") or "") != owner_adoption_identity_key(
+            identity
+        ):
+            violations.append("invalid_owner_adoption_identity_key")
+        authority = identity.get("authority") or {}
+        adoption_record_id = str(authority.get("adoption_record_id") or "").strip()
+        target = request.get("target")
+        if not isinstance(target, Mapping) or str(
+            target.get("adoption_record_id") or ""
+        ).strip() != adoption_record_id:
+            violations.append("missing_adoption_record_id")
+    source = str(request.get("source") or "").strip()
+    session = str(request.get("session") or "").strip()
+    provenance = request.get("provenance")
+    if (
+        not source
+        or not session
+        or source != OWNER_ADOPTION_SOURCE
+        or not isinstance(provenance, Mapping)
+        or str(provenance.get("producer") or "").strip() != source
+        or str(provenance.get("session") or "").strip() != session
+    ):
+        violations.append("invalid_provenance")
+    return violations
+
+
+def has_owner_adopted_repair_request_contract(request: Mapping[str, Any]) -> bool:
+    """Return whether an immutable adoption request is safe to join."""
+    return not owner_adopted_repair_request_contract_violations(request)
+
+
+def _find_accepted_decision(
+    queue_dir: str | Path, request_id: str
+) -> dict[str, Any] | None:
+    """Return the recorded 'accepted' decision for *request_id*, if any."""
+    for candidate in iter_repair_decisions(queue_dir):
+        if (
+            str(candidate.get("request_id") or "").strip() == str(request_id or "").strip()
+            and str(candidate.get("decision") or "").strip() == "accepted"
+        ):
+            return dict(candidate)
+    return None
+
+
+@contextmanager
+def _owner_adoption_enqueue_lock(
+    queue_root: str | Path, request_id: str
+) -> Iterator[None]:
+    """Serialize owner-adoption read→verify→write→accept for ONE request.
+
+    A SEPARATE request-scoped flock from
+    :func:`repair_lock.decision_admission_lock`: the adoption wrapper holds
+    it across its whole cycle (including the request marker write and the
+    ``write_decision`` accept, which takes the decision/admission flock
+    itself).  The lock ORDER is always owner-adoption lock OUTER, decision/
+    admission lock INNER, so the join (which takes only the decision/
+    admission lock) can never deadlock against an adopter.  The sidecar is
+    intentionally never removed (unlinking it while another waiter blocks on
+    the same inode would split the fence).
+    """
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        raise ValueError("request_id is required")
+    lock_dir = decision_admission_lock_dir(queue_root)
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    token = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+    lock_path = lock_dir / f"{token}.owner-adoption.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -741,7 +1117,7 @@ def request_id_for(
                 problem_signature, extra_fields=extra_signature_fields
             ),
             "root_cause_hint_hash": redacted_hint_hash(root_cause_hint),
-            "repair_identity": normalize_repair_identity(repair_identity),
+            "repair_identity": _identity_for_request_key(repair_identity),
         }
     )
 
@@ -952,6 +1328,24 @@ def enqueue_repair_request(
     source_identity = str(source or "").strip()
     if not source_identity:
         raise ValueError("repair request provenance source is required")
+    if normalize_owner_adoption_identity(repair_identity) is not None:
+        # T-0101e' scope restriction: the v2 adoption identity is claimable
+        # ONLY by the exact-occurrence join.  Generic enqueue can neither
+        # coalesce nor dispatch it.
+        return {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "evidence": {
+                "reason": (
+                    "owner_boundary_adoption identities have restricted scope "
+                    "(enqueue_exact_occurrence, occurrence_join); generic "
+                    "enqueue cannot claim or dispatch them — use "
+                    "enqueue_owner_adopted_repair_request"
+                ),
+                "source": source_identity,
+                "identity_kind": OWNER_ADOPTION_IDENTITY_KIND,
+            },
+        }
     normalized_identity = normalize_repair_identity(repair_identity)
     if normalized_identity is None:
         return {
@@ -1478,7 +1872,16 @@ def write_decision(
                 raise ValueError(
                     "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
                 ) from exc
-            if not isinstance(request, Mapping) or not has_claimable_repair_request_contract(request):
+            # T-0101e': the accepted decision for an owner-boundary adoption
+            # request is written through the SAME shared decision/admission
+            # flock the join holds, so admission-vs-decision serialization is
+            # unchanged.  The v2 adoption request contract is accepted here
+            # ONLY by the narrow adoption wrapper (the request carries the
+            # restricted-scope adoption identity).
+            if not isinstance(request, Mapping) or not (
+                has_claimable_repair_request_contract(request)
+                or has_owner_adopted_repair_request_contract(request)
+            ):
                 raise ValueError(
                     "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
                 )
@@ -1526,6 +1929,14 @@ def write_dispatch_attempt(
 ) -> dict[str, Any]:
     """Write immutable proof that a claimed request launched a managed child."""
 
+    if normalize_owner_adoption_identity(repair_identity) is not None:
+        # T-0101e' scope restriction: adoption identities cannot authorize
+        # generic managed dispatch.
+        raise ValueError(
+            "owner_boundary_adoption identities have restricted scope "
+            "(enqueue_exact_occurrence, occurrence_join); generic dispatch "
+            "attempts are refused"
+        )
     normalized_identity = normalize_repair_identity(repair_identity)
     if normalized_identity is None:
         raise ValueError("dispatch attempt requires current normalized repair identity")
@@ -1667,6 +2078,25 @@ def claim_active_repair_request(
     normalized_request_id = _normalize_claim_identity(request_id, "request_id")
     normalized_actor = _normalize_claim_identity(actor, "actor")
     normalized_session = _normalize_claim_identity(session, "session")
+    if normalize_owner_adoption_identity(repair_identity) is not None:
+        # T-0101e' scope restriction: the v2 adoption identity is claimable
+        # ONLY by the exact-occurrence join; generic active-claim dispatch
+        # must reject it (zero mutation — no lock acquired, no owner written).
+        return ActiveRepairClaimResult(
+            status="stale",
+            lock_dir=active_repair_claim_lock_dir(
+                queue_dir, normalized_blocker_id
+            ),
+            evidence={
+                "reason": (
+                    "owner_boundary_adoption identities have restricted scope "
+                    "(enqueue_exact_occurrence, occurrence_join); generic "
+                    "active-claim dispatch cannot claim them"
+                ),
+                "identity_kind": OWNER_ADOPTION_IDENTITY_KIND,
+                "request_id": normalized_request_id,
+            },
+        )
     normalized_repair_identity = normalize_repair_identity(repair_identity)
     normalized_repair_identity_key = repair_identity_key(
         normalized_repair_identity
@@ -1817,6 +2247,10 @@ def bind_managed_run_to_active_claim(
     normalized_blocker_id = _normalize_claim_identity(blocker_id, "blocker_id")
     normalized_request_id = _normalize_claim_identity(request_id, "request_id")
     normalized_run_id = _normalize_claim_identity(managed_run_id, "managed_run_id")
+    if normalize_owner_adoption_identity(repair_identity) is not None:
+        # T-0101e' scope restriction: adoption identities cannot authorize
+        # generic managed-run binding.
+        return False
     normalized_repair_identity_key = (
         str(expected_repair_identity_key or "").strip()
         or repair_identity_key(repair_identity)
@@ -2528,6 +2962,28 @@ def enqueue_occurrence_bound_repair_request(
         emit_zero_authority_rejection,
     )
 
+    if normalize_owner_adoption_identity(occurrence_identity) is not None:
+        # T-0101e' scope restriction: adoption identities are claimable only
+        # by occurrence-join; the occurrence-bound enqueue (a generic
+        # lifecycle producer path) must reject them.
+        rejection = emit_zero_authority_rejection(
+            "enqueue_producer",
+            source,
+            reason=(
+                "owner_boundary_adoption identities have restricted scope "
+                "(enqueue_exact_occurrence, occurrence_join); the generic "
+                "occurrence-bound enqueue cannot claim or dispatch them — "
+                "use enqueue_owner_adopted_repair_request"
+            ),
+        )
+        return {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "evidence": {
+                **(rejection.evidence or {}),
+                "identity_kind": OWNER_ADOPTION_IDENTITY_KIND,
+            },
+        }
     normalized_identity = normalize_repair_identity(occurrence_identity)
     if normalized_identity is None:
         rejection = emit_zero_authority_rejection(
@@ -2566,10 +3022,220 @@ def enqueue_occurrence_bound_repair_request(
     )
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# T-0101e' — Owner-boundary adoption enqueue (narrow wrapper)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def enqueue_owner_adopted_repair_request(
+    *,
+    queue_root: str | Path,
+    session: str,
+    problem_signature: Mapping[str, Any],
+    root_cause_hint: Any = "",
+    source: str = OWNER_ADOPTION_SOURCE,
+    marker_dir: str | Path | None = None,
+    target: Mapping[str, Any] | None = None,
+    workspace: str | Path | None = None,
+    run_kind: str = "",
+    created_at: str | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Enqueue ONE deterministic owner-adoption request + ONE accepted decision.
+
+    Unlike ordinary :func:`enqueue_repair_request`, an exact retry NEVER
+    appends a ``coalesced`` decision that invalidates the accepted decision:
+
+    * the request id is deterministic (the normalized v2 identity binds it);
+    * the request marker is written once (claim-locked, atomic);
+    * exactly one ``accepted`` decision is recorded, under the shared
+      decision/admission flock — the SAME lock ``occurrence-join`` holds
+      across its authoritative latest-decision check and the WBC commit;
+    * an EXACT retry returns the SAME persisted request + accepted decision
+      (idempotent, zero new writes);
+    * a byte-divergent existing record at the same request id REFUSES with
+      zero mutation (typed ``adoption_request_mismatch`` CliError);
+    * the v2 adoption identity is never routed through the generic
+      coalesce-on-retry path.
+    """
+    normalized_identity = normalize_owner_adoption_identity(repair_identity)
+    if normalized_identity is None:
+        return {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "evidence": {
+                "reason": (
+                    "owner-adoption enqueue requires the normalized "
+                    "owner_boundary_adoption identity envelope"
+                ),
+                "source": str(source or "").strip(),
+            },
+        }
+    queue_root = validate_queue_root(queue_root)
+    source_identity = str(source or "").strip()
+    if source_identity != OWNER_ADOPTION_SOURCE:
+        raise ValueError(
+            "owner-adoption enqueue provenance source is fixed to "
+            "owner_boundary_occurrence_adoption"
+        )
+
+    extended_signature = dict(problem_signature)
+    _canonicalize_blocked_task_id(extended_signature)
+    normalized_signature = normalize_problem_signature(extended_signature)
+    signature_key = problem_signature_key(normalized_signature)
+    stable_target = _stable_mapping(target or {})
+    blocker_fingerprint, blocker_id = _canonical_request_blocker_identity(
+        session=session,
+        workspace=workspace,
+        target=stable_target,
+        problem_signature=extended_signature,
+        signature_key=signature_key,
+    )
+    hint_hash = redacted_hint_hash(root_cause_hint)
+    request_id = request_id_for(
+        session=session,
+        problem_signature=extended_signature,
+        root_cause_hint=root_cause_hint,
+        repair_identity=normalized_identity,
+    )
+    record = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "kind": "repair_request",
+        "request_id": request_id,
+        "created_at": created_at or utc_now(),
+        "source": source_identity,
+        "session": str(session or "").strip(),
+        "workspace": str(workspace or ""),
+        "run_kind": str(run_kind or "").strip(),
+        "marker_dir": str(Path(marker_dir)) if marker_dir is not None else "",
+        "queue_dir": str(queue_root),
+        "target": stable_target,
+        "problem_signature": normalized_signature,
+        "problem_signature_key": signature_key,
+        "blocker_fingerprint": blocker_fingerprint,
+        "blocker_id": blocker_id,
+        "predecessor_request_id": "",
+        "provenance": {
+            "producer": source_identity,
+            "session": str(session or "").strip(),
+            "run_kind": str(run_kind or "").strip(),
+        },
+        "evidence_refs": [
+            {
+                "kind": "problem_signature_digest",
+                "sha256": _sha256_json(normalized_signature),
+            },
+            {
+                "kind": "redacted_root_cause_hint_digest",
+                "sha256": hint_hash,
+            },
+        ],
+        "root_cause_hint_hash": hint_hash,
+        "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+        "repair_identity": normalized_identity,
+        "repair_identity_key": owner_adoption_identity_key(normalized_identity),
+    }
+    request_path = requests_dir(queue_root) / f"{request_id}.json"
+
+    def _matches(existing: Mapping[str, Any], fresh: Mapping[str, Any]) -> bool:
+        # ``created_at`` is the only time-dependent field in the immutable
+        # record; an exact retry at a later wall-clock time must still be
+        # byte-equivalent on every AUTHORITATIVE field (identity, signature,
+        # target, provenance, evidence).  Any other divergence — a tampered
+        # signature, a different adoption identity, a different target — is a
+        # hard refusal.
+        existing_cmp = {key: value for key, value in existing.items() if key != "created_at"}
+        fresh_cmp = {key: value for key, value in fresh.items() if key != "created_at"}
+        return existing_cmp == fresh_cmp
+
+    # The whole read → verify → write → accept cycle is serialized under a
+    # dedicated request-scoped owner-adoption flock (a SEPARATE file from the
+    # decision/admission flock write_decision takes internally, so there is
+    # no self-deadlock; the adoption lock is always acquired first, so a
+    # concurrent occurrence-join holding the decision/admission lock can
+    # never deadlock against an adopter).  Exactly one request marker and
+    # exactly one accepted decision can ever be recorded.
+    with _owner_adoption_enqueue_lock(queue_root, request_id):
+        existing: dict[str, Any] | None = None
+        if request_path.exists():
+            try:
+                existing = json.loads(request_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise CliError(
+                    "adoption_request_corrupt",
+                    f"persisted owner-adoption request {request_id} is corrupt: {exc}",
+                ) from exc
+            if not isinstance(existing, Mapping):
+                raise CliError(
+                    "adoption_request_mismatch",
+                    f"persisted owner-adoption request {request_id} is not an "
+                    "object; refusing instead of overwriting",
+                )
+            if not _matches(existing, record):
+                raise CliError(
+                    "adoption_request_mismatch",
+                    f"a byte-divergent request already exists at the "
+                    f"deterministic id {request_id}; refusing with zero "
+                    "mutation instead of overwriting",
+                )
+            accepted = _find_accepted_decision(queue_root, request_id)
+            if accepted is not None:
+                return {
+                    "status": "already_accepted",
+                    "request": existing,
+                    "decision": accepted,
+                }
+        else:
+            wrote = _write_once_json(request_path, record)
+            if not wrote:
+                # A concurrent identical adopter won the request write race:
+                # re-read, verify byte equality, and continue to the accept.
+                try:
+                    existing = json.loads(request_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise CliError(
+                        "adoption_request_corrupt",
+                        f"persisted owner-adoption request {request_id} is corrupt: {exc}",
+                    ) from exc
+                if not isinstance(existing, Mapping) or not _matches(existing, record):
+                    raise CliError(
+                        "adoption_request_mismatch",
+                        f"a byte-divergent request won the race at the "
+                        f"deterministic id {request_id}; refusing with zero "
+                        "mutation",
+                    )
+                accepted = _find_accepted_decision(queue_root, request_id)
+                if accepted is not None:
+                    return {
+                        "status": "already_accepted",
+                        "request": existing,
+                        "decision": accepted,
+                    }
+        decision = write_decision(
+            queue_root,
+            request_id=request_id,
+            decision="accepted",
+            reason="owner boundary adoption queued",
+        )
+        return {"status": "queued", "request": record, "decision": decision}
+
+
 __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
+    "ADOPTION_ATTEMPT_PREFIX",
+    "ADOPTION_RUN_PREFIX",
     "ATTEMPTS_DIR_NAME",
     "CURRENT_SCHEMA_VERSION",
+    "OWNER_ADOPTED_OCCURRENCE_CONTRACT",
+    "OWNER_ADOPTION_AUTHORITY_FIELDS",
+    "OWNER_ADOPTION_CAS_FIELDS",
+    "OWNER_ADOPTION_FORBIDDEN_FIELDS",
+    "OWNER_ADOPTION_IDENTITY_KIND",
+    "OWNER_ADOPTION_IDENTITY_SCHEMA",
+    "OWNER_ADOPTION_OCCURRENCE_FIELDS",
+    "OWNER_ADOPTION_ROOT_FIELDS",
+    "OWNER_ADOPTION_SCOPE",
+    "OWNER_ADOPTION_SOURCE",
     "REPAIR_IDENTITY_SCHEMA_VERSION",
     "DECISIONS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
@@ -2588,15 +3254,21 @@ __all__ = [
     "derive_repair_identity",
     "enqueue_human_gate_repair_request",
     "enqueue_occurrence_bound_repair_request",
+    "enqueue_owner_adopted_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
     "has_claimable_repair_request_contract",
+    "has_owner_adopted_repair_request_contract",
     "iter_repair_decisions",
     "iter_repair_attempts",
     "iter_repair_requests",
+    "normalize_owner_adoption_identity",
     "normalize_problem_signature",
     "normalize_repair_identity",
+    "owner_adopted_repair_request_contract_violations",
+    "owner_adoption_identity_key",
     "persist_failure_occurrence",
+    "plan_state_has_repair_identity",
     "problem_signature_key",
     "occurrence_claims_dir",
     "record_malformed_file",

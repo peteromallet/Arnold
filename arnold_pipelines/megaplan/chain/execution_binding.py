@@ -2492,13 +2492,30 @@ def migrate_execution_binding(
                 EXECUTION_BINDING_MIGRATE_ERROR,
                 "migration refused: chain session is unresolved",
             )
-        marker_path = project_root / ".megaplan" / "cloud-sessions" / (
-            session + ".json"
-        )
-        if not marker_path.exists():
+        # T-0101 live-run fix: the cloud-session marker lives in the CANONICAL
+        # workspace marker dir (/workspace/.megaplan/cloud-sessions — the same
+        # default the cloud CLI uses, cli.py:2633), NOT under the epic
+        # project_root. The rehearsal's tmp layout had project_root ==
+        # workspace, so a project-relative resolution never exercised the live
+        # box layout. Resolve: env override -> canonical workspace marker dir
+        # -> project-relative fallback (keeps the rehearsal layout working).
+        marker_path = None
+        env_marker_dir = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "")
+        candidate_dirs = []
+        if env_marker_dir.strip():
+            candidate_dirs.append(Path(env_marker_dir.strip()).expanduser())
+        candidate_dirs.append(Path("/workspace/.megaplan/cloud-sessions"))
+        candidate_dirs.append(project_root / ".megaplan" / "cloud-sessions")
+        for candidate_dir in candidate_dirs:
+            probe = candidate_dir / (session + ".json")
+            if probe.exists():
+                marker_path = probe
+                break
+        if marker_path is None:
             raise CliError(
                 EXECUTION_BINDING_MIGRATE_ERROR,
-                f"cloud-session marker is missing: {marker_path}",
+                f"cloud-session marker is missing for session {session!r} "
+                f"(searched {candidate_dirs})",
             )
         try:
             marker_raw = marker_path.read_bytes()
