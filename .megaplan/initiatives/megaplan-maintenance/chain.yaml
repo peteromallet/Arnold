@@ -89,7 +89,7 @@ driver:
   max_iterations: 60
   poll_sleep: 8.0
   execution_binding: required
-  intended_initiative_revision: 1390efd64f3589ff4314840771915735e664493a
+  intended_initiative_revision: 67f0eb35d815d0572f687122e940a0a982f3c281
   initiative_path: .megaplan/initiatives/megaplan-maintenance
   require_editable_runtime_match: true
   execution_binding_assets:
