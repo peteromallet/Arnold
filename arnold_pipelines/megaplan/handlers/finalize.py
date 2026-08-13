@@ -1768,6 +1768,138 @@ def _route_finalize_baseline_selection_failure_to_revise(
     return response
 
 
+def _finalize_repair_identity_route(
+    plan_dir: Path,
+    state: PlanState,
+    repair: Mapping[str, Any],
+) -> tuple[str, str, str]:
+    """Resolve the dispatcher-owned repair route for the finalize mint.
+
+    Mirrors the auto driver's lifecycle route (``_lifecycle_repair_request_route``
+    + ``_derive_chain_path``) without importing it: the finalize handler runs
+    inside the chain worker and the driver is a consumer of this same persisted
+    envelope, so importing auto.py here would be circular.
+    """
+    workspace_path = plan_dir
+    if (
+        plan_dir.parent.name == "plans"
+        and plan_dir.parent.parent.name == ".megaplan"
+    ):
+        workspace_path = plan_dir.parent.parent.parent
+    session = os.environ.get("ARNOLD_REPAIR_SESSION") or plan_dir.name
+    chain = ""
+    meta_source = (
+        state.get("meta") if isinstance(state.get("meta"), Mapping) else {}
+    )
+    for source in (repair, meta_source):
+        for key in ("chain_path", "chain", "chain_spec"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                chain = value.strip()
+                break
+        if chain:
+            break
+    if not chain:
+        chain = os.environ.get("ARNOLD_CHAIN_SPEC") or str(plan_dir)
+    return str(workspace_path), session, chain
+
+
+def _persist_finalize_repair_identity(
+    plan_dir: Path,
+    state: PlanState,
+    repair: Mapping[str, Any],
+    *,
+    message: str,
+) -> bool:
+    """Mint and persist the v1 repair-identity envelope for the open circuit.
+
+    The finalize phase is a real lifecycle owner while it holds the plan lock:
+    ``set_active_step`` persisted the run incarnation, orphan fence, and runner
+    lease at phase entry, and this process is the live runner.  Mirror
+    ``auto._record_lifecycle_failure``: reread the exact runner lease and mint
+    authority only from the persisted active step.  The persisted envelope is
+    exactly what ``derive_repair_identity`` (watchdog dispatch) accepts, so the
+    repair loop can claim this occurrence without a mechanical relaunch.
+
+    Fail closed: any exception or missing authority returns ``False`` and the
+    caller's failure records are written regardless.
+    """
+    try:
+        import hashlib
+        import json
+
+        from arnold_pipelines.megaplan._core.phase_runtime import (
+            current_runner_lease_binding,
+        )
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            build_owned_lifecycle_repair_identity,
+            normalize_repair_identity,
+        )
+
+        active_step = state.get("active_step")
+        active = active_step if isinstance(active_step, Mapping) else {}
+        meta = state.setdefault("meta", {})
+        coordinator_attempt_id = str(meta.get("current_invocation_id") or "").strip()
+        revision = str(state.get("plan_revision") or "").strip()
+        if not revision:
+            revision = "sha256:" + hashlib.sha256(
+                json.dumps(
+                    state,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+        workspace, session, chain = _finalize_repair_identity_route(
+            plan_dir,
+            state,
+            repair,
+        )
+        latest_failure = state.get("latest_failure")
+        failure_kind = str(
+            latest_failure.get("kind") if isinstance(latest_failure, Mapping) else ""
+        ).strip() or "deterministic_phase_failure"
+        blocker_payload = {
+            "kind": failure_kind,
+            "phase": "finalize",
+            "message": message,
+            "metadata": dict(repair),
+        }
+        blocker_digest = "sha256:" + hashlib.sha256(
+            json.dumps(
+                blocker_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        identity = build_owned_lifecycle_repair_identity(
+            environment=workspace,
+            session=session,
+            chain=chain,
+            plan_revision=revision,
+            phase="finalize",
+            task="phase:finalize",
+            attempt=str(active.get("attempt") or ""),
+            normalized_failure_kind=failure_kind,
+            blocker_or_phase_result_hash=blocker_digest,
+            active_step=active,
+            live_runner_lease=current_runner_lease_binding(),
+            coordinator_attempt_id=coordinator_attempt_id,
+        )
+        if identity is None or normalize_repair_identity(identity) is None:
+            return False
+        meta["repair_identity"] = identity
+        meta["repair_identity_provenance"] = {
+            "authority_source": "finalize_planner_repair_circuit_open_owner",
+            "phase": "finalize",
+            "positive_source_reread": True,
+        }
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _route_finalize_task_feasibility_failure_to_revise(
     plan_dir: Path,
     state: PlanState,
@@ -1845,6 +1977,19 @@ def _route_finalize_task_feasibility_failure_to_revise(
             STATE_BLOCKED,
             route_signal="planner_repair_circuit_open",
         )
+        # Mint the v1 repair-identity envelope from the lifecycle active step
+        # and the live runner lease while this process still owns the finalize
+        # occurrence (mirrors auto._record_lifecycle_failure).  The watchdog
+        # dispatch path derives repair identity from meta.repair_identity, so
+        # this is what lets it enqueue the repair loop for the rejected graph.
+        # Fail closed: latest_failure/resume_cursor/planner_repair stay written
+        # even when no identity can be minted (no active step / no live lease).
+        repair_identity_persisted = _persist_finalize_repair_identity(
+            plan_dir,
+            state,
+            repair,
+            message=message,
+        )
         next_step = "override recover-blocked"
         result = "planner_repair_blocked"
     else:
@@ -1852,6 +1997,7 @@ def _route_finalize_task_feasibility_failure_to_revise(
         # receives structured diagnostics without broad critique/revise.
         next_step = "finalize"
         result = "planner_repair_required"
+        repair_identity_persisted = False
     atomic_write_json(
         plan_dir / "finalize_revise_feedback.json",
         {
@@ -1865,6 +2011,7 @@ def _route_finalize_task_feasibility_failure_to_revise(
             "circuit_open": circuit_open,
             "report_artifact": "planner_repair.json",
             "implementation_dispatch_allowed": False,
+            "repair_identity_persisted": repair_identity_persisted,
         },
     )
     artifacts = [
@@ -1903,6 +2050,7 @@ def _route_finalize_task_feasibility_failure_to_revise(
                 "occurrences": repair.get("occurrences"),
                 "accepted_authority_preserved": True,
                 "implementation_dispatch_allowed": False,
+                "repair_identity_persisted": repair_identity_persisted,
             },
         },
     )
