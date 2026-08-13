@@ -7068,6 +7068,13 @@ def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
     """
     session = str(getattr(state, "chain_session", "") or "").strip()
     if not session:
+        # Direct `chain start` (non-cloud) does not carry a launch_ctx, so
+        # chain_session is unset even though a cloud-session marker exists.
+        # Fall back to the watchdog's session env (the cloud chain launch
+        # sets ARNOLD_CHAIN_SESSION via the marker), then to the canonical
+        # marker dir scan keyed on the marker's own chain_slug.
+        session = os.environ.get("ARNOLD_CHAIN_SESSION", "").strip()
+    if not session:
         raise CliError(
             "runtime_launch_attestation_mismatch",
             "chain launch-seed build refused: chain session is unresolved",
@@ -7086,6 +7093,23 @@ def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
         probe = candidate_dir / (session + ".json")
         if probe.exists():
             return probe
+    # Last resort: scan the canonical marker dir for the marker whose
+    # chain_slug matches the project's initiative slug, so a direct
+    # (non-cloud) chain start can still bind its launch seed.
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        CLOUD_SESSION_MARKER_DIR_DEFAULT,
+    )
+
+    try:
+        for marker_file in CLOUD_SESSION_MARKER_DIR_DEFAULT.glob("*.json"):
+            try:
+                payload = json.loads(marker_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if str(payload.get("chain_slug") or "").strip() == session:
+                return marker_file
+    except OSError:
+        pass
     raise CliError(
         "runtime_launch_attestation_mismatch",
         f"cloud-session marker is missing for session {session!r} "
