@@ -23078,3 +23078,931 @@ def test_arnold_run_in_tmux_ledger_failure_blocks_exec(tmp_path: Path) -> None:
     assert not tmux_calls.exists() or "new-session" not in tmux_calls.read_text(
         encoding="utf-8"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T-0640 D2 — owner-adoption custody fence (the actual handoff)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# An owner-boundary-adoption request is claimable ONLY by the exact
+# occurrence-join (T-0101e' scope); generic watchdog claim/dispatch must
+# reject it (repair_unavailable).  The fence authorizes the watchdog to
+# launch the exact-occurrence consumer WITHOUT calling
+# claim_active_repair_request ONLY when the session holds a live
+# occurrence-join claim + an accepted owner-adoption request + a matching
+# repair_identity_key.  A missing/expired join claim fails closed.
+
+
+def _adoption_request_envelope(
+    tmp_path: Path, *, session: str
+) -> dict[str, object]:
+    """Enqueue ONE owner-adoption request with an accepted decision."""
+    from arnold_pipelines.megaplan.chain.occurrence_adopt import (
+        build_adoption_identity,
+    )
+
+    built = build_adoption_identity(
+        session=session,
+        plan_name="adopt-plan",
+        phase="gate",
+        failure_kind="deterministic_phase_failure",
+        failure_code="blocked_no_lease",
+        failure_recorded_at="2026-08-11T07:35:34Z",
+        resume_phase="gate",
+        retry_strategy="repair_phase_contract",
+        cas={
+            field: "sha256:" + "a" * 64
+            for field in repair_requests.OWNER_ADOPTION_CAS_FIELDS
+        },
+        runtime_roots={
+            field: "/workspace/runtime-candidates/arnold-test"
+            for field in repair_requests.OWNER_ADOPTION_ROOT_FIELDS
+        },
+    )
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    enqueued = repair_requests.enqueue_owner_adopted_repair_request(
+        queue_root=queue_root,
+        session=session,
+        source="owner_boundary_occurrence_adoption",
+        marker_dir=tmp_path,
+        target={
+            "plan_dir": str(tmp_path),
+            "plan_name": "adopt-plan",
+            "retry_strategy": "repair_phase_contract",
+            "adoption_record_id": built["adoption_record_id"],
+        },
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "gate",
+            "milestone_or_plan": "adopt-plan",
+            "gate_recommendation": "repair gate contract",
+            "blocked_task_id": "phase:gate",
+        },
+        root_cause_hint="owner adoption of identity-less blocked occurrence",
+        repair_identity=built["identity"],
+        workspace=str(tmp_path),
+        run_kind="chain",
+    )
+    assert enqueued["status"] == "queued", enqueued
+    return {
+        "built": built,
+        "request": enqueued["request"],
+        "decision": enqueued["decision"],
+        "queue_root": queue_root,
+        "repair_identity_key": built["repair_identity_key"],
+        "request_id": str(enqueued["request"]["request_id"]),
+        "decision_id": str(enqueued["decision"]["decision_id"]),
+    }
+
+
+def _write_live_join_claim(
+    plan_dir: Path,
+    *,
+    occurrence_id: str,
+    request_id: str,
+    decision_id: str,
+    expires_in_seconds: int = 3600,
+    kind: str = "occurrence_join",
+) -> None:
+    """Write a REAL live occurrence-join claim (WBC STARTED + custody lease).
+
+    Mirrors the durable claim occurrence_join writes: an in-flight WBC
+    attempt (kind=occurrence_join, occurrence_id=the repair identity key)
+    plus an unexpired custody lease whose acquire payload records the exact
+    occurrence id.
+    """
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+    from arnold.workflow.execution_attempt_ledger import (
+        AdapterKind,
+        AttemptEventType,
+        AttemptIdentity,
+        AttemptProvenance,
+        GrantRef,
+        LedgerEvent,
+        RuntimeAdapter,
+        VersionSet,
+    )
+    from arnold_pipelines.megaplan.custody.lease_store import open_lease_store
+
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    attempt_id = str(uuid4())
+    claim_id = "t0101-owner-adoption:fence-test"
+    lease_id = (
+        "occurrence-join-"
+        + hashlib.sha256(claim_id.encode("utf-8")).hexdigest()[:16]
+    )
+    occurred_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    started = LedgerEvent(
+        idempotency_key=f"{attempt_id}:started",
+        event_type=AttemptEventType.STARTED,
+        identity=AttemptIdentity(
+            workflow_id="megaplan-occurrence-join",
+            run_id="watchdog-fence-test",
+            graph_revision=occurrence_id[:32] or "0",
+            step_id="occurrence-join",
+            invocation_id=claim_id,
+            attempt_ordinal=1,
+            attempt_id=attempt_id,
+        ),
+        provenance=AttemptProvenance(
+            actor_id="operator", tool_id="megaplan.occurrence_join"
+        ),
+        adapter=RuntimeAdapter(
+            adapter_kind=AdapterKind.MEGAPLAN_PHASE, adapter_version="1"
+        ),
+        versions=VersionSet(code_version="occurrence-join.v1"),
+        grant_ref=GrantRef(grant_id=request_id, decision_id=decision_id),
+        sequence=1,
+        causal_predecessor_sequence=0,
+        append_position=1,
+        occurred_at=occurred_at,
+        observed_at=occurred_at,
+        payload={
+            "kind": kind,
+            "occurrence_id": occurrence_id,
+            "occurrence_digest": "sha256:" + "b" * 64,
+            "claim_id": claim_id,
+            "request_id": request_id,
+            "decision_id": decision_id,
+            "lease_id": lease_id,
+            "session": "watchdog-fence-test",
+            "actor": "operator",
+            "reason": "T-0640 D2 fence test",
+        },
+    )
+    wbc_path = plan_dir / ".phase_wbc_attempts.sqlite3"
+    store = SqliteAttemptLedgerStore(wbc_path)
+    store.append_started(attempt_id, started)
+
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lease_store = open_lease_store(plan_dir / "custody" / "leases")
+    lease_store.acquire(
+        lease_id=lease_id,
+        owner_host="test-host",
+        owner_pid="1234",
+        owner_boot_id="test-boot",
+        run_authority_grant_id=request_id,
+        coordinator_fence_token=1,
+        wbc_attempt_reference=attempt_id,
+        occurrence_digest="sha256:" + "b" * 64,
+        custody_epoch=1,
+        expires_at=expires_at,
+        payload={
+            "kind": kind,
+            "occurrence_id": occurrence_id,
+            "claim_id": claim_id,
+            "request_id": request_id,
+            "decision_id": decision_id,
+            "session": "watchdog-fence-test",
+            "actor": "operator",
+            "reason": "T-0640 D2 fence test",
+        },
+    )
+
+
+def _fence_script(
+    *,
+    marker_dir: Path,
+    session: str,
+    workspace: Path,
+    remote_spec: str,
+    queue_root: Path,
+    plan_name: str = "adopt-plan",
+) -> str:
+    function_text = _extract_wrapper_function("owner_adoption_custody_env")
+    return "\n\n".join(
+        [
+            function_text,
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"export ARNOLD_REPAIR_QUEUE_ROOT={shlex.quote(str(queue_root))}",
+            f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}",
+            f"PLAN_STATUS_PLAN_NAME={shlex.quote(plan_name)}",
+            (
+                "owner_adoption_custody_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} {shlex.quote(remote_spec)}"
+            ),
+        ]
+    )
+
+
+def test_owner_adoption_fence_authorizes_live_join_claim(tmp_path: Path) -> None:
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+
+    script = _fence_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=".megaplan/initiatives/demo/chain.yaml",
+        queue_root=Path(str(envelope["queue_root"])),
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert "OWNER_ADOPTION_CUSTODY_AUTHORIZED=1" in result.stdout, result.stdout
+    assert f"OWNER_ADOPTION_REQUEST_ID={envelope['request_id']}" in result.stdout
+    assert f"OWNER_ADOPTION_DECISION_ID={envelope['decision_id']}" in result.stdout
+    assert (
+        f"OWNER_ADOPTION_REPAIR_IDENTITY_KEY={envelope['repair_identity_key']}"
+        in result.stdout
+    )
+    assert "OWNER_ADOPTION_PLAN_NAME=adopt-plan" in result.stdout
+
+
+def test_owner_adoption_fence_fails_closed_without_join_claim(tmp_path: Path) -> None:
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+
+    script = _fence_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=".megaplan/initiatives/demo/chain.yaml",
+        queue_root=Path(str(envelope["queue_root"])),
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    # No claim → no authorization: the generic claim path must still run and
+    # fail closed for the owner-boundary-adoption identity (no blind relaunch).
+    assert result.stdout.strip() == "", result.stdout
+
+
+def test_owner_adoption_fence_fails_closed_on_expired_lease(tmp_path: Path) -> None:
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+        expires_in_seconds=1,
+    )
+    # Let the TTL lapse: the lease must be expired by fence time (no blind
+    # relaunch on an expired claim).
+    time.sleep(2)
+
+    script = _fence_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=".megaplan/initiatives/demo/chain.yaml",
+        queue_root=Path(str(envelope["queue_root"])),
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", result.stdout
+
+
+def test_owner_adoption_fence_fails_closed_without_accepted_decision(
+    tmp_path: Path,
+) -> None:
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    # Supersede the accepted decision: the fence must fail closed (only the
+    # LATEST 'accepted' decision authorizes; a newer non-accepted decision
+    # makes the acceptance stale).
+    repair_requests.write_decision(
+        Path(str(envelope["queue_root"])),
+        request_id=str(envelope["request_id"]),
+        decision="superseded",
+        reason="test supersession",
+        created_at="2099-01-01T00:00:00Z",
+    )
+
+    script = _fence_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=".megaplan/initiatives/demo/chain.yaml",
+        queue_root=Path(str(envelope["queue_root"])),
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", result.stdout
+
+
+def test_owner_adoption_fence_fails_closed_on_same_second_decision_tie(
+    tmp_path: Path,
+) -> None:
+    """A same-second tie between two decisions is ambiguous and must fail
+    closed (exactly like occurrence-join): the fence never authorizes a stale
+    acceptance on a tie (arnold-watchdog advisory negative)."""
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    # Record the accepted decision's created_at, then append a SECOND decision
+    # with the SAME second-resolution timestamp so the latest decision is a tie.
+    accepted_created_at = str(envelope["decision"].get("created_at") or "")
+    assert accepted_created_at, "envelope decision must carry created_at"
+    repair_requests.write_decision(
+        Path(str(envelope["queue_root"])),
+        request_id=str(envelope["request_id"]),
+        decision="accepted",
+        reason="test same-second tie",
+        created_at=accepted_created_at,
+    )
+
+    script = _fence_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=".megaplan/initiatives/demo/chain.yaml",
+        queue_root=Path(str(envelope["queue_root"])),
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", result.stdout
+
+
+def test_owner_adoption_fence_fails_closed_on_repair_identity_key_mismatch(
+    tmp_path: Path,
+) -> None:
+    """A request whose repair_identity_key does not match the normalized
+    adoption identity must fail closed: the fence only authorizes the exact
+    recorded identity key (arnold-watchdog advisory negative)."""
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id="sha256:" + "e" * 64,
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    # The join claim covers a DIFFERENT occurrence than the request's recorded
+    # repair identity key: the fence must fail closed on the mismatch.
+    script = _fence_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=".megaplan/initiatives/demo/chain.yaml",
+        queue_root=Path(str(envelope["queue_root"])),
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", result.stdout
+
+
+def test_owner_adoption_fence_fails_closed_on_non_join_wbc_kind(
+    tmp_path: Path,
+) -> None:
+    """A WBC claim attempt whose kind is NOT occurrence_join must fail closed:
+    only a genuine occurrence-join claim authorizes the exact-occurrence
+    consumer (arnold-watchdog advisory negative)."""
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+        kind="generic_repair_claim",
+    )
+    # The WBC claim attempt kind is NOT occurrence_join: the live-join liveness
+    # check must fail closed.
+
+    script = _fence_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=".megaplan/initiatives/demo/chain.yaml",
+        queue_root=Path(str(envelope["queue_root"])),
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", result.stdout
+
+
+def _dispatch_script(
+    *,
+    marker_dir: Path,
+    session: str,
+    workspace: Path,
+    remote_spec: str,
+    queue_root: Path,
+    log_path: Path,
+    claim_log: Path,
+    fake_py_log: Path,
+    fake_repair_bin: Path,
+    fake_repair_log: Path,
+) -> str:
+    function_text = _extract_wrapper_function("owner_adoption_custody_env")
+    delegate_text = _extract_wrapper_function("owner_adoption_exact_occurrence_delegate")
+    confirm_text = _extract_wrapper_function("confirm_managed_agent_dispatch")
+    dispatch_text = _extract_wrapper_function("dispatch_kimi_repair")
+    return "\n\n".join(
+        [
+            function_text,
+            delegate_text,
+            confirm_text,
+            dispatch_text,
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"PRIMARY_REPAIR_BIN={str(fake_repair_bin)!r}",
+            f"FAKE_REPAIR_LOG={str(fake_repair_log)!r}",
+            f"export ARNOLD_REPAIR_QUEUE_ROOT={shlex.quote(str(queue_root))}",
+            f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}",
+            "export ARNOLD_REPAIR_RUN_KIND=chain",
+            "PLAN_STATUS_PLAN_NAME=adopt-plan",
+            """
+log() { printf '%s\\n' "$*" >> "$LOG"; }
+emit_runtime_transition_event() { return 0; }
+watchdog_repair_state_authority_or_reject() { printf '%s\\n' '{"outcome":"no_authority_claim"}'; }
+child_agent_launch_authority_or_reject() { printf '%s\\n' '{"outcome":"no_authority_claim"}'; }
+authority_fail_closed() { :; }
+authority_gap_continue() { :; }
+repair_loop_busy_state() { echo none; }
+claim_active_repair_launch() {
+  printf '%s\\n' "CLAIM_CALLED:$*" >> "$CLAIM_LOG"
+  echo stale
+}
+kimi_pgid_path() { printf '%s\\n' "$MARKER_DIR/$1.pgid"; }
+safe_name() { printf '%s\\n' "$1"; }
+json_field() { echo inc-demo; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+release_failed_repair_launch_claim() { :; }
+emit_watchdog_incident_bridge_event() { :; }
+report_item() { :; }
+""".strip(),
+            f"CLAIM_LOG={str(claim_log)!r}",
+            (
+                f"dispatch_kimi_repair {shlex.quote(session)} "
+                f"{shlex.quote(str(workspace))} {shlex.quote(remote_spec)}"
+            ),
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ]
+    )
+
+
+def test_watchdog_owner_adoption_custody_dispatches_exact_occurrence_consumer(
+    tmp_path: Path,
+) -> None:
+    """A live join claim + accepted owner-adoption request + matching key is
+    ALREADY-AUTHORIZED custody: dispatch launches the exact-occurrence
+    consumer WITHOUT calling claim_active_repair_request and WITHOUT ever
+    taking the managed-agent path.  Uses the REAL confirm_managed_agent_dispatch
+    and the REAL delegation shim (no python3 shim, no confirm stub): if the
+    code wrongly fell through to the managed-agent path, the real bind would
+    fail closed (launch_failed), not dispatched/unavailable-by-delegation."""
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    log_path = tmp_path / "watchdog.log"
+    claim_log = tmp_path / "claim.log"
+    fake_py_log = tmp_path / "fake-python.log"
+    fake_repair_log = tmp_path / "fake-repair.log"
+    fake_repair_bin = tmp_path / "fake-repair-bin"
+    fake_repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf \'%s\\n\' "FAKE-REPAIR $*" >> {str(fake_repair_log)!r}\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_repair_bin.chmod(fake_repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    script = _dispatch_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=str(tmp_path / "no-such-spec.yaml"),
+        queue_root=Path(str(envelope["queue_root"])),
+        log_path=log_path,
+        claim_log=claim_log,
+        fake_py_log=fake_py_log,
+        fake_repair_bin=fake_repair_bin,
+        fake_repair_log=fake_repair_log,
+    )
+    # No python3 shim and no confirm stub: the REAL confirm_managed_agent_dispatch
+    # is in the script.  A regression to the managed-agent path would make the
+    # real bind fail closed instead of dispatching.
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    # The authorized path must NOT reach the managed-agent dispatch (a real
+    # managed run would fail at bind and produce launch_failed).  The exact-
+    # occurrence consumer delegation either dispatches or fails closed with
+    # the delegation outcome recorded — never launch_failed.
+    assert "RESULT=launch_failed" not in result.stdout, result.stdout
+    # The generic active claim was NEVER called on this identity.
+    assert not claim_log.exists() or claim_log.read_text(encoding="utf-8") == ""
+    # The managed-agent child was NEVER launched.
+    assert not fake_py_log.exists(), fake_py_log.read_text(encoding="utf-8") if fake_py_log.exists() else ""
+    # The exact-occurrence consumer was invoked and recorded its outcome.
+    deadline = time.monotonic() + 10
+    while not log_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    log_text = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+    assert "owner-adoption exact-occurrence" in log_text, log_text
+    assert "session=" in log_text, log_text
+
+
+def test_watchdog_owner_adoption_without_live_claim_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """No live join claim: the fence emits nothing and the generic claim path
+    still runs and rejects the owner-boundary-adoption identity
+    (repair_unavailable, no blind relaunch)."""
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    log_path = tmp_path / "watchdog.log"
+    claim_log = tmp_path / "claim.log"
+    fake_py_log = tmp_path / "fake-python.log"
+    fake_repair_log = tmp_path / "fake-repair.log"
+    fake_repair_bin = tmp_path / "fake-repair-bin"
+    fake_repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf \'%s\\n\' "FAKE-REPAIR $*" >> {str(fake_repair_log)!r}\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_repair_bin.chmod(fake_repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    fake_python = shim_dir / "python3"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'case " $* " in\n'
+        '  *" -m arnold_pipelines.megaplan.managed_agent "*)\n'
+        f'    printf \'%s\\n\' "FAKE-PYTHON $*" >> {str(fake_py_log)!r}\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        f'exec {sys.executable} "$@"\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
+
+    script = _dispatch_script(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=tmp_path,
+        remote_spec=str(tmp_path / "no-such-spec.yaml"),
+        queue_root=Path(str(envelope["queue_root"])),
+        log_path=log_path,
+        claim_log=claim_log,
+        fake_py_log=fake_py_log,
+        fake_repair_bin=fake_repair_bin,
+        fake_repair_log=fake_repair_log,
+    )
+    result = _run_watchdog_shell(script, path_prefix=shim_dir)
+
+    assert result.returncode == 0, result.stderr
+    # The generic claim path ran (claim_active_repair_launch was reached) and
+    # its rejection left REPAIR_DISPATCH_RESULT unavailable.
+    assert "RESULT=unavailable" in result.stdout, result.stdout
+    assert claim_log.exists()
+    assert "CLAIM_CALLED:" in claim_log.read_text(encoding="utf-8")
+    # No consumer was launched.
+    assert not fake_py_log.exists(), fake_py_log.read_text(encoding="utf-8")
+
+
+def _phase_contract_script(
+    *,
+    marker_dir: Path,
+    workspace: Path,
+    plan_name: str,
+    session: str,
+    report_path: Path,
+    log_path: Path,
+    queue_root: Path,
+    claim_log: Path,
+    fake_py_log: Path,
+    fake_repair_bin: Path,
+    fake_repair_log: Path,
+) -> str:
+    """Full phase-contract path: launch_chain_tick → plan_attention_status_env
+    → manual_review_dispatch_status_env (stubbed identity projection) → the
+    REAL dispatch_kimi_repair + REAL owner_adoption_custody_env."""
+    return "\n\n".join(
+        [
+            _extract_wrapper_function("owner_adoption_custody_env"),
+            _extract_wrapper_function("owner_adoption_exact_occurrence_delegate"),
+            _extract_wrapper_function("confirm_managed_agent_dispatch"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            "chain_engine_root_preflight() { return 0; }",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"PRIMARY_REPAIR_BIN={str(fake_repair_bin)!r}",
+            f"FAKE_REPAIR_LOG={str(fake_repair_log)!r}",
+            f"export ARNOLD_REPAIR_QUEUE_ROOT={shlex.quote(str(queue_root))}",
+            f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}",
+            "export ARNOLD_REPAIR_RUN_KIND=plan",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+manual_review_dispatch_status_env() {
+  # The REAL identity projection cannot bind claimable ids for an
+  # owner-adoption request (restricted scope); the fence discovers the
+  # request itself from the aligned queue root.
+  printf '%s\n' 'PLAN_STATUS_PLAN_NAME=adopt-plan'
+}
+emit_runtime_transition_event() { return 0; }
+watchdog_repair_state_authority_or_reject() { printf '%s\n' '{"outcome":"no_authority_claim"}'; }
+child_agent_launch_authority_or_reject() { printf '%s\n' '{"outcome":"no_authority_claim"}'; }
+authority_fail_closed() { :; }
+authority_gap_continue() { :; }
+claim_active_repair_launch() {
+  printf '%s\n' "CLAIM_CALLED:$*" >> "$CLAIM_LOG"
+  echo stale
+}
+kimi_pgid_path() { printf '%s\n' "$MARKER_DIR/$1.pgid"; }
+safe_name() { printf '%s\n' "$1"; }
+json_field() { echo inc-demo; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+release_failed_repair_launch_claim() { :; }
+emit_watchdog_incident_bridge_event() { :; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { echo INSTALL >&2; return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 0; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"CLAIM_LOG={str(claim_log)!r}",
+            (
+                f"launch_chain_tick {shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f".megaplan/initiatives/demo/briefs/demo.md {shlex.quote(str(report_path))} "
+                f"plan {shlex.quote(plan_name)} ''"
+            ),
+        ]
+    )
+
+
+def test_watchdog_phase_contract_path_launches_owner_adoption_exact_occurrence_consumer(
+    tmp_path: Path,
+) -> None:
+    """The phase-contract path launches the exact-occurrence consumer when a
+    live occurrence-join claim + accepted owner-adoption request + matching
+    repair_identity_key exist — WITHOUT calling claim_active_repair_request."""
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    workspace = tmp_path / "ws"
+    plan_name = "adopt-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_live_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    _write_live_session_marker(
+        marker_dir,
+        session,
+        workspace,
+        ".megaplan/initiatives/demo/briefs/demo.md",
+        run_kind="plan",
+        plan_name=plan_name,
+    )
+    _write_plan(
+        plan_dir,
+        {
+            "iteration": 5,
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "gate",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "gate",
+                "message": "gate contract failed",
+            },
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    claim_log = tmp_path / "claim.log"
+    fake_py_log = tmp_path / "fake-python.log"
+    fake_repair_log = tmp_path / "fake-repair.log"
+    fake_repair_bin = tmp_path / "fake-repair-bin"
+    fake_repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf \'%s\\n\' "FAKE-REPAIR $*" >> {str(fake_repair_log)!r}\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_repair_bin.chmod(fake_repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    script = _phase_contract_script(
+        marker_dir=marker_dir,
+        workspace=workspace,
+        plan_name=plan_name,
+        session=session,
+        report_path=report_path,
+        log_path=log_path,
+        queue_root=Path(str(envelope["queue_root"])),
+        claim_log=claim_log,
+        fake_py_log=fake_py_log,
+        fake_repair_bin=fake_repair_bin,
+        fake_repair_log=fake_repair_log,
+    )
+    # No python3 shim and no confirm stub: the REAL confirm_managed_agent_dispatch
+    # is in the script.  A regression to the managed-agent path would make the
+    # real bind fail closed (launch_failed) instead of dispatching.
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    # The fence-authorized path delegates to the exact-occurrence consumer,
+    # which fails closed with a typed outcome for the owner-adoption identity
+    # (the exact F01 tuple cannot be constructed) — NEVER the managed-agent
+    # path (which would bind and fail as launch_failed).
+    assert (
+        "\trepair\trepair_unavailable\tdeterministic phase-contract failure requires a claimed repair request before relaunch\t"
+        in report
+    ), report
+    # The generic active claim was never called on the adoption identity.
+    assert not claim_log.exists() or claim_log.read_text(encoding="utf-8") == ""
+    # The managed-agent child was NEVER launched.
+    assert not fake_py_log.exists(), (
+        fake_py_log.read_text(encoding="utf-8") if fake_py_log.exists() else ""
+    )
+    # The exact-occurrence consumer was invoked and recorded its outcome.
+    deadline = time.monotonic() + 10
+    while not log_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    log_text = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+    assert "owner-adoption exact-occurrence" in log_text, log_text
+    assert "session=" in log_text, log_text
+
+
+def test_watchdog_phase_contract_owner_adoption_without_live_claim_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """A missing join claim in the phase-contract path still yields
+    repair_unavailable: the generic claim runs and rejects the
+    owner-boundary-adoption identity (no blind relaunch)."""
+    session = "fence-session"
+    envelope = _adoption_request_envelope(tmp_path, session=session)
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    workspace = tmp_path / "ws"
+    plan_name = "adopt-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_live_session_marker(
+        marker_dir,
+        session,
+        workspace,
+        ".megaplan/initiatives/demo/briefs/demo.md",
+        run_kind="plan",
+        plan_name=plan_name,
+    )
+    _write_plan(
+        plan_dir,
+        {
+            "iteration": 5,
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "gate",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "gate",
+                "message": "gate contract failed",
+            },
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    claim_log = tmp_path / "claim.log"
+    fake_py_log = tmp_path / "fake-python.log"
+    fake_repair_log = tmp_path / "fake-repair.log"
+    fake_repair_bin = tmp_path / "fake-repair-bin"
+    fake_repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf \'%s\\n\' "FAKE-REPAIR $*" >> {str(fake_repair_log)!r}\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_repair_bin.chmod(fake_repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    fake_python = shim_dir / "python3"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'case " $* " in\n'
+        '  *" -m arnold_pipelines.megaplan.managed_agent "*)\n'
+        f'    printf \'%s\\n\' "FAKE-PYTHON $*" >> {str(fake_py_log)!r}\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        f'exec {sys.executable} "$@"\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
+
+    script = _phase_contract_script(
+        marker_dir=marker_dir,
+        workspace=workspace,
+        plan_name=plan_name,
+        session=session,
+        report_path=report_path,
+        log_path=log_path,
+        queue_root=Path(str(envelope["queue_root"])),
+        claim_log=claim_log,
+        fake_py_log=fake_py_log,
+        fake_repair_bin=fake_repair_bin,
+        fake_repair_log=fake_repair_log,
+    )
+    result = _run_watchdog_shell(script, path_prefix=shim_dir)
+
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert (
+        "\trepair\trepair_unavailable\tdeterministic phase-contract failure requires a claimed repair request before relaunch\t"
+        in report
+    ), report
+    # The generic claim path ran and rejected the identity.
+    assert claim_log.exists()
+    assert "CLAIM_CALLED:" in claim_log.read_text(encoding="utf-8")
+    # No consumer was launched.
+    time.sleep(0.3)
+    assert not fake_py_log.exists(), fake_py_log.read_text(encoding="utf-8")

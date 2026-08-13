@@ -1014,6 +1014,37 @@ def repair_queue_dir(marker_dir: str | Path) -> Path:
     return validate_queue_root(megaplan_root / QUEUE_DIR_NAME)
 
 
+def resolve_aligned_repair_queue_root(
+    *,
+    default_marker_dir: str | Path = "/workspace/.megaplan/cloud-sessions",
+) -> Path:
+    """Resolve the ONE repair queue root all owner-adoption flows share.
+
+    T-0640 D1: ``occurrence_adopt`` / ``occurrence_join`` and the watchdog's
+    owner-adoption custody fence must read (and, for the supported write-once,
+    write) the SAME box-central queue the watchdog actually claims/launches
+    from — ``/workspace/.megaplan/repair-queue`` on the box.  Mirrors
+    auto.py's ``_lifecycle_repair_request_route`` env-first resolver:
+
+    * ``$ARNOLD_REPAIR_QUEUE_ROOT`` wins when set (the cloud launchers always
+      inject it, defaulting to the box-central queue); otherwise
+    * the queue adjacent to ``$ARNOLD_REPAIR_MARKER_DIR`` is used, falling
+      back to *default_marker_dir* (the box marker directory).
+
+    The fallback NEVER derives from ``project_dir``: a per-epic checkout
+    queue (``<epic>/.megaplan/repair-queue``) is invisible to the box-central
+    G14/watchdog paths, and any root under ``.megaplan/plans`` is rejected by
+    :func:`validate_queue_root`.
+    """
+    env_root = os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+    if env_root:
+        return validate_queue_root(env_root)
+    marker_dir = os.environ.get("ARNOLD_REPAIR_MARKER_DIR") or str(
+        default_marker_dir
+    )
+    return repair_queue_dir(marker_dir)
+
+
 def requests_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / REQUESTS_DIR_NAME
 

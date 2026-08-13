@@ -122,6 +122,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -197,6 +198,27 @@ ASSET_REL = (
 #: macOS host (``/workspace`` requires root); the rehearsal mirrors the
 #: migration's own fixture pattern instead (see the module docstring).
 LEGACY_CANDIDATE = "/workspace/runtime-candidates/arnold-canary-legacy"
+
+
+@pytest.fixture(autouse=True)
+def _align_repair_queue_root(tmp_path: Path) -> Iterator[None]:
+    """T-0640 D1: the real ``chain occurrence-join`` / ``occurrence-adopt``
+    CLI paths resolve the queue root from ARNOLD_REPAIR_QUEUE_ROOT (else the
+    marker-adjacent box-central queue — never project_dir).  Pin it to this
+    test's tmp queue where the rehearsal enqueues.  Set directly on
+    os.environ (restored in teardown) so monkeypatch.undo() cannot silently
+    reset it."""
+    prior = os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+    os.environ["ARNOLD_REPAIR_QUEUE_ROOT"] = str(
+        tmp_path / ".megaplan" / "repair-queue"
+    )
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop("ARNOLD_REPAIR_QUEUE_ROOT", None)
+        else:
+            os.environ["ARNOLD_REPAIR_QUEUE_ROOT"] = prior
 
 
 def _git(root: Path, *args: str) -> str:

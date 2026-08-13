@@ -5434,6 +5434,332 @@ PY
   return 0
 }
 
+# T-0640 D2: owner-adoption custody fence (the actual handoff).
+#
+# An owner-boundary-adoption request is claimable ONLY by the exact
+# occurrence-join (T-0101e' scope): generic watchdog enqueue/claim/dispatch
+# must reject it (repair_requests.claim_active_repair_request returns
+# ``stale`` for this identity — T-0203).  This fence answers one question:
+# does this session currently hold ALREADY-AUTHORIZED custody for an
+# accepted owner-adoption request?  It emits shell assignments
+#
+#   OWNER_ADOPTION_CUSTODY_AUTHORIZED=1
+#   OWNER_ADOPTION_REQUEST_ID=<request id>
+#   OWNER_ADOPTION_DECISION_ID=<accepted decision id>
+#   OWNER_ADOPTION_REPAIR_IDENTITY_KEY=<recorded identity key>
+#   OWNER_ADOPTION_BLOCKER_ID=<blocker id>
+#   OWNER_ADOPTION_PLAN_NAME=<plan name>
+#
+# only when ALL of the following hold (verified read-only, fail closed):
+#   1. the ALIGNED repair queue root (ARNOLD_REPAIR_QUEUE_ROOT else the
+#      marker-adjacent box-central queue — the same root occurrence-adopt /
+#      occurrence-join now write, T-0640 D1) holds an owner-adoption request
+#      for this session whose owner-adopted request contract is valid;
+#   2. the request's LATEST repair decision is 'accepted' (a same-second tie
+#      is ambiguous and fails closed, exactly like occurrence-join);
+#   3. the request carries a non-empty repair_identity_key that matches the
+#      normalized adoption identity;
+#   4. a LIVE occurrence-join claim covers that occurrence: an in-flight WBC
+#      claim attempt (STARTED, no terminal, kind=occurrence_join) AND an
+#      unexpired custody lease whose acquire payload records the exact
+#      occurrence id.
+#
+# Any failure prints NOTHING: the generic claim path then runs and still
+# fails closed for owner-boundary-adoption identities (repair_unavailable —
+# a missing/expired join claim never relaunches blind).  The fence NEVER
+# calls claim_active_repair_request.
+owner_adoption_custody_env() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  PYTHONSAFEPATH=1 \
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+  "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$session" "$workspace" "$remote_spec" \
+    "$MARKER_DIR" "${PLAN_STATUS_PLAN_NAME:-}" <<'PY'
+import json
+import os
+import pathlib
+import shlex
+import sys
+from collections.abc import Mapping
+
+from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+from arnold.workflow.execution_attempt_ledger import AttemptEventType
+from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.custody.lease_store import open_lease_store
+from arnold_pipelines.megaplan.custody.phase_wbc import PHASE_WBC_LEDGER_FILENAME
+
+session, workspace_raw, remote_spec_raw, marker_dir_raw, plan_name = sys.argv[1:6]
+
+
+def emit(name: str, value: str) -> None:
+    print(f"{name}={shlex.quote(value)}")
+
+
+def aligned_queue_root() -> pathlib.Path:
+    return repair_requests.resolve_aligned_repair_queue_root()
+
+
+def latest_decision(queue_root: pathlib.Path, request_id: str) -> dict | None:
+    """Return the latest decision, or None on absence/ambiguity (fail closed).
+
+    Mirrors occurrence_join._latest_decision_for_request: decisions carry
+    second-resolution created_at with no monotonic sequence, so a same-second
+    tie is ambiguous and must never authorize a stale acceptance.
+    """
+    candidates = [
+        dict(record)
+        for record in repair_requests.iter_repair_decisions(queue_root)
+        if str(record.get("request_id") or "").strip() == request_id
+    ]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda record: (
+            str(record.get("created_at") or ""),
+            str(record.get("decision_id") or ""),
+        )
+    )
+    latest_created_at = str(candidates[-1].get("created_at") or "").strip()
+    tied = [
+        candidate
+        for candidate in candidates
+        if str(candidate.get("created_at") or "").strip() == latest_created_at
+    ]
+    if len(tied) > 1:
+        return None
+    return tied[0]
+
+
+def live_join_claim(
+    workspace: pathlib.Path,
+    plan: str,
+    occurrence_id: str,
+) -> bool:
+    """Return whether a LIVE occurrence-join claim covers the occurrence.
+
+    Mirrors occurrence_join's own liveness semantics: an in-flight WBC claim
+    attempt (STARTED, no terminal, kind=occurrence_join) AND an unexpired
+    custody lease whose acquire payload records the exact occurrence id.
+    Any unreadable/missing store fails closed (False).
+    """
+    if not plan:
+        return False
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+
+    wbc_live = False
+    wbc_path = plan_dir / PHASE_WBC_LEDGER_FILENAME
+    if wbc_path.is_file():
+        try:
+            store = SqliteAttemptLedgerStore(wbc_path)
+            for attempt_id in store.list_in_flight_attempts():
+                events = store.read_events(attempt_id)
+                started = next(
+                    (
+                        event
+                        for event in events
+                        if event.event_type == AttemptEventType.STARTED
+                    ),
+                    None,
+                )
+                if started is None:
+                    continue
+                payload = (
+                    started.payload if isinstance(started.payload, Mapping) else {}
+                )
+                if str(payload.get("kind") or "").strip() != "occurrence_join":
+                    continue
+                if str(payload.get("occurrence_id") or "").strip() != occurrence_id:
+                    continue
+                wbc_live = True
+                break
+        except Exception:
+            wbc_live = False
+
+    lease_live = False
+    lease_dir = plan_dir / "custody" / "leases"
+    if lease_dir.is_dir():
+        try:
+            store = open_lease_store(lease_dir)
+            for history in sorted(lease_dir.glob("*.history.jsonl")):
+                lease_id = history.name.removesuffix(".history.jsonl")
+                lease = store.current_lease(lease_id)
+                if lease is None or lease.is_expired:
+                    continue
+                covered = False
+                for event in store.load_history(lease_id):
+                    payload = (
+                        event.payload if isinstance(event.payload, Mapping) else {}
+                    )
+                    if str(payload.get("occurrence_id") or "").strip() == occurrence_id:
+                        covered = True
+                        break
+                if covered:
+                    lease_live = True
+                    break
+        except Exception:
+            lease_live = False
+
+    return wbc_live and lease_live
+
+
+try:
+    queue_root = aligned_queue_root()
+    request = None
+    for record in repair_requests.iter_repair_requests(queue_root):
+        if str(record.get("session") or "").strip() != session:
+            continue
+        if not repair_requests.has_owner_adopted_repair_request_contract(record):
+            continue
+        request = record
+        break
+    if request is None:
+        raise SystemExit(0)
+    request_id = str(request.get("request_id") or "").strip()
+    identity_key = str(request.get("repair_identity_key") or "").strip()
+    blocker_id = str(request.get("blocker_id") or "").strip()
+    if not request_id or not identity_key or not blocker_id:
+        raise SystemExit(0)
+    latest = latest_decision(queue_root, request_id)
+    if latest is None or str(latest.get("decision") or "").strip() != "accepted":
+        raise SystemExit(0)
+    decision_id = str(latest.get("decision_id") or "").strip()
+    if not decision_id:
+        raise SystemExit(0)
+    normalized = repair_requests.normalize_owner_adoption_identity(
+        request.get("repair_identity")
+    )
+    if normalized is None:
+        raise SystemExit(0)
+    if repair_requests.owner_adoption_identity_key(normalized) != identity_key:
+        raise SystemExit(0)
+    plan = plan_name
+    if not plan:
+        target = request.get("target")
+        if isinstance(target, dict):
+            plan = str(target.get("plan_name") or "").strip()
+    if not live_join_claim(pathlib.Path(workspace_raw), plan, identity_key):
+        raise SystemExit(0)
+except SystemExit:
+    raise
+except Exception:
+    # Fail closed: print nothing.  The generic claim path below still rejects
+    # owner-boundary-adoption identities (repair_unavailable, no blind
+    # relaunch); the fence never invokes claim_active_repair_request.
+    raise SystemExit(0)
+
+emit("OWNER_ADOPTION_CUSTODY_AUTHORIZED", "1")
+emit("OWNER_ADOPTION_REQUEST_ID", request_id)
+emit("OWNER_ADOPTION_DECISION_ID", decision_id)
+emit("OWNER_ADOPTION_REPAIR_IDENTITY_KEY", identity_key)
+emit("OWNER_ADOPTION_BLOCKER_ID", blocker_id)
+emit("OWNER_ADOPTION_PLAN_NAME", plan)
+PY
+}
+
+# T-0640 D2: the exact-occurrence consumer for an AUTHORIZED owner-adoption
+# dispatch.  The owner-boundary-adoption identity is claimable ONLY by the
+# exact occurrence-join (T-0101e' scope); when the fence has already verified
+# a LIVE join claim + an accepted owner-adoption request + a matching
+# repair_identity_key, the join IS the already-authorized custody and the
+# exact-occurrence consumer (simple_fixer / operator_trigger) is launched
+# UNDER that live join claim — never the generic managed_agent repair-loop
+# (whose _bind_repair_claim is forbidden for this identity).  Prints a JSON
+# delegation result on stdout with an ``outcome`` key in the
+# repair_delegation vocabulary (delegated | zero_authority_rejected | ...).
+owner_adoption_exact_occurrence_delegate() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local request_id="$4"
+  local decision_id="$5"
+  local repair_identity_key="$6"
+  local blocker_id="$7"
+  PYTHONSAFEPATH=1 \
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+  "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$session" "$workspace" "$remote_spec" \
+    "$request_id" "$decision_id" "$repair_identity_key" "$blocker_id" <<'OWNER_ADOPTION_DELEGATE_PY'
+import json
+import os
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    build_repair_delegation,
+    delegate_to_simple_fixer,
+)
+
+session, workspace_raw, remote_spec_raw, request_id, decision_id, repair_identity_key, blocker_id = sys.argv[1:8]
+
+
+def emit_result(outcome: str, **evidence: object) -> None:
+    payload = {"outcome": outcome, "evidence": evidence}
+    print(json.dumps(payload, sort_keys=True))
+
+
+try:
+    queue_root = repair_requests.resolve_aligned_repair_queue_root()
+    request = None
+    for record in repair_requests.iter_repair_requests(queue_root):
+        if str(record.get("request_id") or "").strip() != request_id:
+            continue
+        if not repair_requests.has_owner_adopted_repair_request_contract(record):
+            continue
+        request = record
+        break
+    if request is None:
+        emit_result(
+            "zero_authority_rejected",
+            reason="owner-adoption request not found in aligned queue root",
+            request_id=request_id,
+            blocker_id=blocker_id,
+        )
+        raise SystemExit(0)
+    delegation = build_repair_delegation(
+        "operator_trigger",
+        request_id,
+        request.get("repair_identity"),
+    )
+    if delegation is None:
+        emit_result(
+            "zero_authority_rejected",
+            reason=(
+                "owner-boundary-adoption identity cannot construct the exact "
+                "F01 occurrence tuple; the occurrence-join claim is the only "
+                "authorized custody"
+            ),
+            request_id=request_id,
+            decision_id=decision_id,
+            repair_identity_key=repair_identity_key,
+            blocker_id=blocker_id,
+        )
+        raise SystemExit(0)
+    result = delegate_to_simple_fixer(
+        delegation,
+        queue_dir=str(queue_root),
+        mutate=lambda occ: occ.occurrence_fingerprint + ":owner-adoption-watchdog-dispatched",
+        actor="arnold-watchdog",
+        request_id=request_id,
+        session_id=session,
+        kind="owner_adoption_dispatch",
+    )
+    emit_result(
+        result.outcome,
+        simple_fixer_outcome=result.simple_fixer_outcome,
+        occurrence_fingerprint=result.occurrence_fingerprint,
+        request_id=request_id,
+        decision_id=decision_id,
+        repair_identity_key=repair_identity_key,
+        blocker_id=blocker_id,
+    )
+except SystemExit:
+    raise
+except Exception as exc:
+    emit_result("delegation_failed", error=f"{type(exc).__name__}: {exc}")
+OWNER_ADOPTION_DELEGATE_PY
+}
+
 # Background-dispatch the bounded repair loop so it never blocks the tick. The
 # loop owns dev-fix -> mechanical-launch -> Kimi-launch escalation and returns
 # immediately so the watchdog can scan the next session and write its report.
@@ -5448,6 +5774,7 @@ dispatch_kimi_repair() {
   local inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence
   local gate_json gate_open reason repair_run_kind
   local -a managed_cmd
+  local owner_adoption_env_out owner_adoption_authorized owner_adoption_dispatch_phase
   REPAIR_DISPATCH_RESULT="unavailable"
   REPAIR_DISPATCH_RUN_ID=""
   REPAIR_DISPATCH_MANIFEST=""
@@ -5631,7 +5958,65 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop already active" "busy" "immediate_repair"
     return 0
   fi
-  if declare -F claim_active_repair_launch >/dev/null 2>&1; then
+  # T-0640 D2: owner-adoption launch fence (the actual handoff).  An
+  # owner-boundary-adoption request is claimable ONLY by the exact
+  # occurrence-join (T-0101e' scope); generic active-claim dispatch must
+  # reject it.  When this session holds a LIVE occurrence-join claim + an
+  # accepted owner-adoption request + a matching repair_identity_key, the
+  # join IS the already-authorized custody: launch the exact-occurrence
+  # consumer WITHOUT calling claim_active_repair_request on this identity.
+  # A missing/expired join claim emits nothing and the generic claim path
+  # below still fails closed (repair_unavailable — no blind relaunch).
+  owner_adoption_env_out=""
+  owner_adoption_authorized=0
+  owner_adoption_dispatch_phase="watchdog_dispatch"
+  if declare -F owner_adoption_custody_env >/dev/null 2>&1; then
+    owner_adoption_env_out="$(owner_adoption_custody_env "$session" "$workspace" "$remote_spec" 2>>"${LOG:-/dev/null}" || true)"
+  fi
+  if [[ -n "$owner_adoption_env_out" ]]; then
+    eval "$owner_adoption_env_out"
+    if [[ "${OWNER_ADOPTION_CUSTODY_AUTHORIZED:-0}" == "1" ]]; then
+      owner_adoption_authorized=1
+      owner_adoption_dispatch_phase="owner_adoption_dispatch"
+    fi
+  fi
+  if [[ "$owner_adoption_authorized" == "1" ]]; then
+    log "owner-adoption custody fence authorized exact-occurrence dispatch session=$session request=${OWNER_ADOPTION_REQUEST_ID:-unknown} key=${OWNER_ADOPTION_REPAIR_IDENTITY_KEY:-unknown}"
+    request_id="${OWNER_ADOPTION_REQUEST_ID:-$request_id}"
+    decision_id="${OWNER_ADOPTION_DECISION_ID:-$decision_id}"
+    repair_identity_key="${OWNER_ADOPTION_REPAIR_IDENTITY_KEY:-$repair_identity_key}"
+    blocker_id="${OWNER_ADOPTION_BLOCKER_ID:-$blocker_id}"
+    if [[ -z "${PLAN_STATUS_PLAN_NAME:-}" ]]; then
+      PLAN_STATUS_PLAN_NAME="${OWNER_ADOPTION_PLAN_NAME:-}"
+    fi
+    # T-0640 D2 fix: the authorized owner-adoption dispatch launches the
+    # EXACT-OCCURRENCE consumer (simple_fixer / operator_trigger) under the
+    # LIVE join claim — NEVER the generic managed_agent repair-loop (bind is
+    # forbidden for this identity).  claim_active_repair_request is not called.
+    if ! declare -F owner_adoption_exact_occurrence_delegate >/dev/null 2>&1; then
+      log "owner-adoption exact-occurrence delegate unavailable; failing closed session=$session"
+      REPAIR_DISPATCH_RESULT="unavailable"
+      emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "owner-adoption exact-occurrence delegate unavailable" "unavailable" "immediate_repair"
+      return 1
+    fi
+    owner_adoption_delegation_out="$(
+      owner_adoption_exact_occurrence_delegate \
+        "$session" "$workspace" "$remote_spec" \
+        "$request_id" "$decision_id" "$repair_identity_key" "$blocker_id" \
+        2>>"${LOG:-/dev/null}" || true
+    )"
+    owner_adoption_outcome="$(printf '%s' "$owner_adoption_delegation_out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("outcome",""))' 2>/dev/null || true)"
+    if [[ "$owner_adoption_outcome" == "delegated" ]]; then
+      REPAIR_DISPATCH_RESULT="dispatched"
+      log "owner-adoption exact-occurrence consumer delegated session=$session request=$request_id outcome=$owner_adoption_outcome"
+      emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "owner-adoption exact-occurrence consumer dispatched" "dispatched" "immediate_repair"
+      return 0
+    fi
+    REPAIR_DISPATCH_RESULT="unavailable"
+    log "owner-adoption exact-occurrence consumer not delegated session=$session request=$request_id outcome=${owner_adoption_outcome:-unknown} evidence=$owner_adoption_delegation_out"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "owner-adoption exact-occurrence consumer unavailable" "unavailable" "immediate_repair"
+    return 1
+  elif declare -F claim_active_repair_launch >/dev/null 2>&1; then
     claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec" "$blocker_id" "$request_id" "$decision_id" "$repair_identity_key")"
   else
     claim_status=""
@@ -5693,7 +6078,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --link "cloud_session=$session"
     --link "chain=$remote_spec"
     --link "plan=${PLAN_STATUS_PLAN_NAME:-}"
-    --link "phase=watchdog_dispatch"
+    --link "phase=$owner_adoption_dispatch_phase"
     --link "repair_goal_id=$inherited_goal_id"
     --link "repair_goal_path=$inherited_goal_path"
     --link "repair_checkpoint_digest=$inherited_checkpoint_digest"
