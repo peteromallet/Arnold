@@ -7071,9 +7071,40 @@ def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
         # Direct `chain start` (non-cloud) does not carry a launch_ctx, so
         # chain_session is unset even though a cloud-session marker exists.
         # Fall back to the watchdog's session env (the cloud chain launch
-        # sets ARNOLD_CHAIN_SESSION via the marker), then to the canonical
-        # marker dir scan keyed on the marker's own chain_slug.
+        # sets ARNOLD_CHAIN_SESSION), then to the canonical marker dir scan:
+        # with no session name at all, adopt the marker whose chain_slug
+        # matches the project's initiative (the marker filename encodes the
+        # session).  A single-marker canonical dir is unambiguous.
         session = os.environ.get("ARNOLD_CHAIN_SESSION", "").strip()
+        if not session:
+            from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+                CLOUD_SESSION_MARKER_DIR_DEFAULT,
+            )
+
+            try:
+                markers = sorted(CLOUD_SESSION_MARKER_DIR_DEFAULT.glob("*.json"))
+            except OSError:
+                markers = []
+            if len(markers) == 1:
+                session = markers[0].stem
+            elif markers:
+                # Multiple markers: prefer the one whose chain_slug matches
+                # the project dir name or whose marker references this spec.
+                for marker_file in markers:
+                    try:
+                        payload = json.loads(
+                            marker_file.read_text(encoding="utf-8")
+                        )
+                    except Exception:
+                        continue
+                    remote_spec = str(
+                        payload.get("remote_spec") or payload.get("spec") or ""
+                    )
+                    if remote_spec and str(remote_spec).startswith(
+                        str(project_root)
+                    ):
+                        session = marker_file.stem
+                        break
     if not session:
         raise CliError(
             "runtime_launch_attestation_mismatch",
