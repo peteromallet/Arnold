@@ -8824,7 +8824,7 @@ repair_unhealthy_session() {
       tmux kill-session -t "$session" 2>/dev/null || true
       return 0
     fi
-    log "session unhealthy after mechanical relaunch; repair loop missing -> direct relaunch session=$session reason=$reason"
+    log "session unhealthy after mechanical relaunch; repair loop dispatch failed -> no relaunch; chain stays stalled session=$session reason=$reason"
     return 1
   fi
   if kimi_dispatch_failed_previously "$session"; then
@@ -8841,7 +8841,7 @@ repair_unhealthy_session() {
         tmux kill-session -t "$session" 2>/dev/null || true
         return 0
       fi
-      log "retryable repair outcome found but repair loop missing -> direct relaunch session=$session reason=$reason outcome=${previous_repair_outcome:-unknown}"
+      log "retryable repair outcome found but repair loop dispatch failed -> no relaunch; chain stays stalled session=$session reason=$reason outcome=${previous_repair_outcome:-unknown}"
       return 1
     fi
     log "session unhealthy; repair loop tried and exited without recovery -> direct relaunch session=$session reason=$reason"
@@ -8857,7 +8857,7 @@ repair_unhealthy_session() {
     tmux kill-session -t "$session" 2>/dev/null || true
     return 0
   fi
-  log "session unhealthy; repair loop missing -> direct relaunch session=$session reason=$reason"
+  log "session unhealthy; repair loop dispatch failed -> no relaunch; chain stays stalled session=$session reason=$reason"
   return 1
 }
 
@@ -10372,7 +10372,7 @@ PY
         fi
         return 0
       fi
-      log "session stopped after mechanical relaunch; repair loop missing -> direct relaunch session=$session"
+      log "session stopped after mechanical relaunch; repair loop dispatch failed -> no relaunch; chain stays stalled session=$session"
       if ! emit_mechanical_relaunch_fallback_events; then
         report_item "$report_items" "$session" "restart" "restart_blocked" "direct mechanical relaunch blocked: runtime transition ledger write failed" "$workspace" "$remote_spec"
         return 0
