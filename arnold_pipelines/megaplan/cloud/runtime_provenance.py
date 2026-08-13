@@ -169,7 +169,15 @@ def runtime_provenance(
     errors: list[str] = []
     if expected is not None and import_root != expected:
         errors.append("import_root_mismatch")
-    if expected is not None and editable_root != expected:
+    # T-0301 generation: no pip editable install exists (worktree-first
+    # PYTHONPATH). `editable_root` is only meaningful when a direct-url
+    # editable distribution is actually present; otherwise the import-root
+    # check above is the authoritative provenance gate.
+    if (
+        expected is not None
+        and editable_root is not None
+        and editable_root != expected
+    ):
         errors.append("editable_metadata_mismatch")
     if expected is not None:
         mismatched_imports = [
@@ -185,9 +193,14 @@ def runtime_provenance(
             for entry in record.get("entries", [])
             if isinstance(entry, str)
         ]
-        if not pth or not pth_entries:
+        # T-0301 generation: the executing runtime is a worktree-first
+        # PYTHONPATH root, not a pip editable install. When imports already
+        # resolve to the expected root, the legacy .pth requirement does not
+        # apply. A .pth that DOES exist must still point at the expected root.
+        imports_match = not mismatched_imports
+        if not imports_match and (not pth or not pth_entries):
             errors.append("editable_pth_missing")
-        elif any(
+        elif pth_entries and any(
             Path(entry).resolve(strict=False) != expected for entry in pth_entries
         ):
             errors.append("editable_pth_mismatch")

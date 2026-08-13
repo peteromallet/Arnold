@@ -531,6 +531,45 @@ def test_cherry_pick_reconcile_selection_rejects_unreachable_commit(
     assert excinfo.value.code == "reconcile_unreachable_commit"
 
 
+def test_cherry_pick_reconcile_selection_accepts_off_main_source_commit(
+    tmp_path: Path,
+) -> None:
+    # P6 land path: the reconcile executor computes {base}..HEAD in the
+    # ENGINE worktree (the fixer branch).  Selected engine commits are
+    # off-main by construction; they must be reachable from the SOURCE
+    # lineage, not from base_branch (main).  Previously this failed closed
+    # (reconcile_unreachable_commit) because the check required ancestor
+    # of main — the inverted bug grok flagged at git_ops.py:2825-2832.
+    _init_repo_with_origin(tmp_path)
+    fixer_sha = _commit(
+        tmp_path,
+        "arnold_pipelines/fixer.py",
+        "def fix():\n    pass\n",
+        "fix(engine): off-main fixer commit",
+        committer_date="2020-01-01T00:00:00Z",
+    )
+    # The fixer branch (source lineage) carries the commit; main never does.
+    _git(tmp_path, "checkout", "-q", "-b", "fixer/test-epic-20260813")
+    _git(tmp_path, "checkout", "-q", "main")
+    _git(tmp_path, "push", "-q", "origin", "main")
+    _git(tmp_path, "checkout", "-q", "fixer/test-epic-20260813")
+
+    milestone = _reconcile_milestone()
+    messages: list[str] = []
+    head = git_ops._cherry_pick_reconcile_selection(
+        tmp_path,
+        milestone,
+        base_branch="main",
+        selected_shas=[fixer_sha],
+        writer=messages.append,
+    )
+
+    assert head != fixer_sha
+    assert head == _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    assert (tmp_path / "arnold_pipelines" / "fixer.py").exists()
+    assert not any("excluding chain-control" in message for message in messages)
+
+
 def test_cherry_pick_reconcile_selection_unresolvable_target_fails_closed(
     tmp_path: Path,
 ) -> None:
