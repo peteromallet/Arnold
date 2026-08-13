@@ -472,6 +472,17 @@ def _parse_hot_env(path: Path) -> dict[str, str]:
     return values
 
 
+def _chain_binding_runtime_identity(spec_path: Path) -> dict[str, Any]:
+    """Extract the immutable runtime identity from the live chain binding.
+
+    The seed pins the RUNTIME (import_root/source_revision), not the mutable
+    milestone/plan fields — those legitimately advance while a chain runs, so
+    comparing the full binding would false-drift after the first plan is
+    created after seed build.
+    """
+    return dict(_chain_binding(spec_path).get("runtime_identity") or {})
+
+
 def _chain_binding(spec_path: Path) -> dict[str, Any]:
     from arnold_pipelines.megaplan.chain.spec import load_chain_state
 
@@ -1121,8 +1132,9 @@ def validate_runtime_launch_seed(
             RUNTIME_ATTESTATION_ERROR,
             "cloud marker launch binding drifted",
         )
-    if _chain_binding(Path(str(paths.get("chain_spec") or ""))) != seed.get(
-        "chain_runtime_binding"
+    if (
+        _chain_binding_runtime_identity(Path(str(paths.get("chain_spec") or "")))
+        != (seed.get("chain_runtime_binding") or {}).get("runtime_identity")
     ):
         raise CliError(RUNTIME_ATTESTATION_ERROR, "chain runtime binding drifted")
     return {
