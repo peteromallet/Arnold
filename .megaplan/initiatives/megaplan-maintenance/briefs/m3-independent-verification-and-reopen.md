@@ -1,3 +1,5 @@
+> **DEPRECATED — NON-CANONICAL BRIEF.** Superseded by [`m3-independent-verification.md`](m3-independent-verification.md). This July reopen/rank/model-pin copy predates the Custody M7/M10/M11 and Native Parity C1/C2/S1/S2R ownership split; it is not executable scope.
+
 # M3 — Independent verification and reopen
 
 ## Outcome
@@ -29,4 +31,3 @@ Separate repair attempt, provisional handoff, independent verification, closure,
 - Only blocker-cleared cases close; regressions reopen and link causally.
 - One controlled canary proves install → retrigger → 5m/1h/6h verification, and a forced failure proves rollback.
 - All model-backed repair receipts identify `gpt-5.6-sol`.
-

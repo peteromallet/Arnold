@@ -7317,6 +7317,57 @@ PY
       ;;
   esac
 
+resolver_needs_human_verdict() {
+  # Consult the canonical resolver to decide whether a watchdog needs-human
+  # escalation should be suppressed in favor of the machine repair/replan path.
+  local session="$1"
+  local current_target_observation="${2:-}"
+  if [[ -z "$current_target_observation" ]]; then
+    return 0
+  fi
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$current_target_observation" <<'PY' 2>>"${LOG:-/dev/null}" || authority_gap_continue "T29-BYPASS-182" "authority-risk bypass converted to typed evidence gap"
+import json
+import os
+import sys
+
+from arnold_pipelines.megaplan.cloud.feature_flags import resolver_enforcement_enabled
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+
+MACHINE_ACTIONABLE_STATES = {
+    "REAL_IMPLEMENTATION_BLOCK",
+    "RETRYABLE_EXECUTION_BLOCK",
+    "BROKEN_STATE_MACHINE",
+}
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    evidence = json.loads(raw) if raw else {}
+except Exception:
+    evidence = {}
+
+provider_retry_enabled = os.environ.get("CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+if not resolver_enforcement_enabled() and not provider_retry_enabled:
+    sys.exit(0)
+
+try:
+    result = resolve_run_state(evidence)
+except Exception:
+    sys.exit(0)
+
+state = result.canonical_state.name
+human_gate = result.human_gate.name if result.human_gate is not None else None
+if provider_retry_enabled and state == "HUMAN_ACTION_REQUIRED" and human_gate in {
+    "QUOTA", "CREDENTIAL_ACCOUNT",
+}:
+    print("provider_retry:{}".format(human_gate))
+    sys.exit(0)
+if state in MACHINE_ACTIONABLE_STATES and human_gate is None:
+    print("suppress:{}".format(state))
+PY
+}
+
   local resolver_human_verdict
   resolver_human_verdict="$(resolver_needs_human_verdict "$session" "$current_target_observation")"
 

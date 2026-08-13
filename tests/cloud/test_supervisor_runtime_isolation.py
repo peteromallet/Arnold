@@ -25,6 +25,8 @@ def _text(name: str) -> str:
 def test_shell_supervisors_pin_validated_absolute_interpreter() -> None:
     expected = {
         "arnold-watchdog": "watchdog",
+        "arnold-repair-loop": "repair-loop",
+        "arnold-meta-repair-loop": "meta-repair-loop",
         "arnold-progress-auditor": "progress-auditor",
     }
     for wrapper, component in expected.items():
@@ -224,6 +226,22 @@ def test_watchdog_never_reinstalls_the_interpreter_it_runs_under() -> None:
     section = text[text.index("refresh_editable_install() {") : text.index("\nensure_editable_source_checkout() {")]
     assert "pip install" not in section
     assert "without mutating interpreter" in section
+
+
+def test_repair_trigger_and_systemd_use_absolute_supervisor_python() -> None:
+    trigger = _text("arnold-repair-trigger")
+    unit = (
+        REPO_ROOT
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "systemd"
+        / "megaplan-repair-trigger.service"
+    ).read_text(encoding="utf-8")
+    assert trigger.startswith("#!/workspace/.megaplan/supervisor-python/current/bin/python3")
+    assert "_select_supervisor_interpreter()" in trigger
+    assert "readiness_import_failed" in trigger
+    assert "ExecStart=/workspace/.megaplan/supervisor-python/current/bin/python3 " in unit
 
 
 def test_dependency_independent_gap_scan_flags_stopped_marker_without_custody(
@@ -428,18 +446,25 @@ def test_dependency_independent_gap_scan_flags_execution_binding_drift(
     assert payload["findings"][0]["expected_milestone_count"] == 2
 
 
-def test_l3_auditor_runs_dependency_independent_gap_detection_before_model_work() -> None:
+def test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work() -> None:
+    meta = _text("arnold-meta-repair-loop")
     auditor = _text("arnold-progress-auditor")
+    assert "SUPERVISOR_GAP_EVIDENCE" in meta
+    assert "--session \"$SESSION\"" in meta
+    assert "Dependency-independent launch-gap evidence" in meta
     assert "SUPERVISOR_GAP_EVIDENCE" in auditor
     assert "_dependency_independent_launch_gap_reason" in auditor
-    scan = auditor.index('"$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN"')
-    readiness = auditor.index("arnold_supervisor_runtime_init progress-auditor ")
-    assert scan < readiness
+    for text, component in ((meta, "meta-repair-loop"), (auditor, "progress-auditor")):
+        scan = text.index('"$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN"')
+        readiness = text.index(f'arnold_supervisor_runtime_init {component} ')
+        assert scan < readiness
 
 
 def test_supervisor_wrappers_do_not_launch_python_before_runtime_init() -> None:
     expected = {
         "arnold-watchdog": "watchdog",
+        "arnold-repair-loop": "repair-loop",
+        "arnold-meta-repair-loop": "meta-repair-loop",
         "arnold-progress-auditor": "progress-auditor",
     }
     python_re = re.compile(r"(?m)^[^#\n]*\bpython3\b")
@@ -449,6 +474,13 @@ def test_supervisor_wrappers_do_not_launch_python_before_runtime_init() -> None:
         first_python = python_re.search(text)
         assert first_python is not None
         assert first_python.start() > readiness
+
+
+def test_timeout_bypasses_use_absolute_safe_supervisor_interpreter() -> None:
+    repair = _text("arnold-repair-loop")
+    meta = _text("arnold-meta-repair-loop")
+    assert 'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent' in repair
+    assert 'PYTHONSAFEPATH=1 timeout "$SUBAGENT_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c ' in meta
 
 
 def test_runtime_prepare_uses_staging_and_atomic_symlink_swap() -> None:
