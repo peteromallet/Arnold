@@ -2777,8 +2777,11 @@ def _cherry_pick_reconcile_selection(
 
     Controller-side validation per the P6 contract, executed after the
     reconcile executor returns its JSON selection:
-    - every selected SHA must resolve and be reachable from ``base_branch``
-      (fail-closed on uncertainty);
+    - every selected SHA must resolve and be reachable from the source
+      lineage (the engine worktree's current branch — the fixer branch the
+      executor computed ``{base}..HEAD`` against), NOT from ``base_branch``
+      (main), because the selected engine commits are off-main fixer commits
+      that only exist on the fixer lineage (fail-closed on uncertainty);
     - SHAs already on the reconcile branch are skipped idempotently;
     - SHAs touching only chain-control paths (no engine source) are excluded;
     - the remaining SHAs are cherry-picked onto ``milestone.branch`` in the
@@ -2813,6 +2816,19 @@ def _cherry_pick_reconcile_selection(
             "missing_branch_ref",
             f"reconcile branch {branch} does not exist locally",
         )
+    # Source lineage: the engine worktree's current branch (the fixer branch
+    # the reconcile executor computed its scope against).  Selected engine
+    # commits are off-main; they must be reachable from HERE, not from main.
+    source_head = _branch_head(root)
+    if source_head is None:
+        source_head = branch_head
+    source_ref = _resolve_commitish(root, source_head, writer=writer)
+    if source_ref is None:
+        raise CliError(
+            "reconcile_source_unresolvable",
+            f"source lineage {source_head} is unresolvable; "
+            "reachability cannot be verified (fail-closed)",
+        )
 
     to_cherry_pick: list[str] = []
     for sha in selected_shas:
@@ -2822,13 +2838,14 @@ def _cherry_pick_reconcile_selection(
                 "reconcile_unreachable_commit",
                 f"selected SHA {sha} does not resolve in the repository",
             )
-        if target_head is not None and not _commit_is_ancestor(
-            root, normalized, target_head, writer=writer
+        if not _commit_is_ancestor(
+            root, normalized, source_ref, writer=writer
         ):
             raise CliError(
                 "reconcile_unreachable_commit",
-                f"selected SHA {sha[:12]} is not reachable from {base_branch}; "
-                "cannot cherry-pick it onto the reconcile branch",
+                f"selected SHA {sha[:12]} is not reachable from the source "
+                f"lineage {source_head}; cannot cherry-pick it onto the "
+                "reconcile branch",
             )
         if _commit_is_ancestor(root, normalized, branch_head, writer=writer):
             writer(
