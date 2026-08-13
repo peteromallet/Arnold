@@ -7059,6 +7059,40 @@ def ensure_reconcile_milestone(
     return chain_spec.load_spec(spec_path)
 
 
+def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
+    """Resolve the cloud-session marker for the chain's session.
+
+    Mirrors the canonical cloud resolution (execution_binding.py): env override
+    ``ARNOLD_CHAIN_SESSION_MARKER_DIR`` -> canonical workspace marker dir
+    (``/workspace/.megaplan/cloud-sessions``) -> project-relative fallback.
+    """
+    session = str(getattr(state, "chain_session", "") or "").strip()
+    if not session:
+        raise CliError(
+            "runtime_launch_attestation_mismatch",
+            "chain launch-seed build refused: chain session is unresolved",
+        )
+    env_marker_dir = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "")
+    candidate_dirs: list[Path] = []
+    if env_marker_dir.strip():
+        candidate_dirs.append(Path(env_marker_dir.strip()).expanduser())
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        CLOUD_SESSION_MARKER_DIR_DEFAULT,
+    )
+
+    candidate_dirs.append(CLOUD_SESSION_MARKER_DIR_DEFAULT)
+    candidate_dirs.append(project_root / ".megaplan" / "cloud-sessions")
+    for candidate_dir in candidate_dirs:
+        probe = candidate_dir / (session + ".json")
+        if probe.exists():
+            return probe
+    raise CliError(
+        "runtime_launch_attestation_mismatch",
+        f"cloud-session marker is missing for session {session!r} "
+        f"(searched {candidate_dirs})",
+    )
+
+
 def run_chain(
     spec_path: Path,
     root: Path,
@@ -7107,6 +7141,42 @@ def run_chain(
     # Bind before the first state save or milestone initialization. Existing
     # progressed state without a launch binding is refused by the loader.
     bind_execution_identity(spec_path, state)
+    # Runtime-launch seed (G14): build/refresh the content-addressed launch
+    # seed for the per-epic runtime and export it so every child worker and
+    # watchdog relaunch finds MEGAPLAN_RUNTIME_LAUNCH_SEED.  The manifest pin
+    # is the runtime selector; local/dev runs without a bound manifest skip
+    # the seed (no per-epic runtime to attest).
+    _manifest_pin = chain_spec.session_runtime_manifest_path()
+    if _manifest_pin is not None:
+        from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+            ensure_runtime_launch_seed as _ensure_runtime_launch_seed,
+        )
+
+        _chain_binding_metadata = (getattr(state, "metadata", {}) or {}).get(
+            "execution_binding"
+        )
+        _chain_binding_metadata = (
+            _chain_binding_metadata
+            if isinstance(_chain_binding_metadata, Mapping)
+            else {}
+        )
+        _chain_runtime_binding = _chain_binding_metadata.get("runtime_binding")
+        _chain_runtime_binding = (
+            _chain_runtime_binding
+            if isinstance(_chain_runtime_binding, Mapping)
+            else {}
+        )
+        _bound_identity = _chain_runtime_binding.get("current_identity")
+        _bound_identity = (
+            dict(_bound_identity) if isinstance(_bound_identity, Mapping) else None
+        )
+        _launch_seed_path = _ensure_runtime_launch_seed(
+            manifest_path=_manifest_pin,
+            chain_spec_path=spec_path,
+            marker_path=_chain_session_marker_path(state, root),
+            chain_runtime_identity=_bound_identity,
+        )
+        os.environ["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = str(_launch_seed_path)
     from arnold_pipelines.megaplan.chain.operator_pause import is_paused
 
     if is_paused(state):

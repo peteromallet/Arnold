@@ -24,6 +24,12 @@ from arnold_pipelines.megaplan.types import CliError
 RUNTIME_LAUNCH_SEED_SCHEMA = "arnold.megaplan.runtime_launch_seed.v1"
 RUNTIME_PROCESS_ATTESTATION_SCHEMA = "arnold.megaplan.runtime_process_attestation.v1"
 RUNTIME_ATTESTATION_ERROR = "runtime_launch_attestation_mismatch"
+# Canonical box-side paths for the per-epic launch-seed build (G14): the
+# supervisor prepare receipt, the box hot-env file, and the launch-seed store
+# (mirrors ARNOLD_RUNTIME_MANIFEST_DIR, which defaults to /workspace/.megaplan).
+SUPERVISOR_RECEIPT_DEFAULT_PATH = Path("/workspace/.megaplan/supervisor-python/last-prepare.json")
+CLOUD_HOT_ENV_DEFAULT_PATH = Path("/workspace/.cloud-hot-env")
+CLOUD_SESSION_MARKER_DIR_DEFAULT = Path("/workspace/.megaplan/cloud-sessions")
 RUNTIME_SELECTOR_NAMES = (
     "MEGAPLAN_RUNTIME_SRC",
     "MEGAPLAN_LAUNCH_RUNTIME_SRC",
@@ -530,6 +536,8 @@ def build_runtime_launch_seed(
     seed_doc_paths: Iterable[Path] = (),
     expected_branch: str | None = None,
     expected_ancestry_base: str | None = None,
+    manifest_path: Path | None = None,
+    chain_runtime_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one strict release seed from current runtime and durable inputs.
 
@@ -537,6 +545,20 @@ def build_runtime_launch_seed(
     When *expected_ancestry_base* is provided, the current HEAD must descend
     from it (ancestry check).  Mixed-revision modules — where any loaded
     Arnold module originates from a different root — are always blocked.
+
+    The supervisor receipt is attested INDEPENDENTLY of the per-epic runtime:
+    the receipt's ``source`` / ``source_revision`` legitimately differ from
+    *expected_root* / *expected_revision* (the supervisor wheel is prepared
+    from its own consolidated source), so only the probe-ready state,
+    fingerprint, import-receipt self-consistency, and runtime-prefix checks
+    gate it.
+
+    *manifest_path*, when provided, is the per-session runtime-manifest pin
+    that SELECTS this runtime (G4); the six retired SRC selectors in hot-env
+    are then recorded but not enforced.  *chain_runtime_identity*, when
+    provided, is the freshly bound execution identity (already in memory by
+    the time a chain start seeds the runtime); it replaces the persisted
+    chain-state read, which is not yet saved on a first launch.
     """
 
     root = expected_root.resolve(strict=False)
@@ -574,10 +596,13 @@ def build_runtime_launch_seed(
     for path in document_paths:
         if not _file_identity(path).get("exists"):
             errors.append(f"seed_document_missing:{path}")
-    if str(supervisor_receipt.get("source") or "") != str(root):
-        errors.append("supervisor_source_mismatch")
-    if str(supervisor_receipt.get("source_revision") or "") != expected_revision:
-        errors.append("supervisor_revision_mismatch")
+    # Independent supervisor attestation: the receipt's source/revision need
+    # NOT equal the per-epic worker root (the Jul-31 supervisor wheel is
+    # prepared from its own consolidated source).  What IS required: the
+    # receipt carries a fingerprint, the probe of the dedicated supervisor
+    # runtime is ready (runtime prefix + noneditable direct-url source checks
+    # live inside the probe vector), and the receipt's import list is
+    # self-consistent with the probed loaded modules.
     if not str(supervisor_receipt.get("fingerprint") or ""):
         errors.append("supervisor_fingerprint_missing")
     if not supervisor_vector.get("ready"):
@@ -598,10 +623,16 @@ def build_runtime_launch_seed(
     }
     if receipt_imports != expected_imports:
         errors.append("supervisor_import_receipt_mismatch")
-    for name in RUNTIME_SELECTOR_NAMES[:6]:
-        value = hot_selectors.get(name)
-        if value and Path(value).resolve(strict=False) != root:
-            errors.append(f"hot_env_selector_mismatch:{name}")
+    # The per-session runtime manifest is the runtime selector (G4); the six
+    # retired SRC selectors in hot-env are inert documentation.  A manifest-
+    # pinned build (production path) records them but does not enforce them;
+    # the manifestless CLI build still fails closed on a selector that
+    # disagrees with the expected root.
+    if manifest_path is None:
+        for name in RUNTIME_SELECTOR_NAMES[:6]:
+            value = hot_selectors.get(name)
+            if value and Path(value).resolve(strict=False) != root:
+                errors.append(f"hot_env_selector_mismatch:{name}")
     marker_runtime = marker.get("runtime_binding")
     marker_runtime = marker_runtime if isinstance(marker_runtime, Mapping) else {}
     marker_identity = marker_runtime.get("current_identity")
@@ -610,8 +641,23 @@ def build_runtime_launch_seed(
         errors.append("marker_runtime_root_mismatch")
     if str(marker_identity.get("source_revision") or "") != expected_revision:
         errors.append("marker_runtime_revision_mismatch")
-    chain_identity = chain_binding.get("runtime_identity")
-    chain_identity = chain_identity if isinstance(chain_identity, Mapping) else {}
+    if chain_runtime_identity is not None:
+        chain_identity = dict(chain_runtime_identity)
+        chain_binding_record = {
+            **chain_binding,
+            "runtime_identity": dict(chain_identity),
+        }
+        chain_binding_record["content_sha256"] = _canonical_sha256(
+            {
+                key: value
+                for key, value in chain_binding_record.items()
+                if key != "content_sha256"
+            }
+        )
+    else:
+        chain_identity = chain_binding.get("runtime_identity")
+        chain_identity = chain_identity if isinstance(chain_identity, Mapping) else {}
+        chain_binding_record = chain_binding
     if str(chain_identity.get("import_root") or "") != str(root):
         errors.append("chain_runtime_root_mismatch")
     if str(chain_identity.get("source_revision") or "") != expected_revision:
@@ -673,13 +719,18 @@ def build_runtime_launch_seed(
             "launch_binding": _marker_launch_binding(marker),
             "runtime_identity": dict(marker_identity),
         },
-        "chain_runtime_binding": chain_binding,
+        "chain_runtime_binding": chain_binding_record,
         "seed_document_manifest": seed_manifest,
         "input_paths": {
             "supervisor_receipt": str(supervisor_receipt_path.resolve(strict=False)),
             "hot_env": str(hot_env_path.resolve(strict=False)),
             "marker": str(marker_path.resolve(strict=False)),
             "chain_spec": str(chain_spec_path.resolve(strict=False)),
+            "manifest": (
+                str(manifest_path.resolve(strict=False))
+                if manifest_path is not None
+                else ""
+            ),
             "seed_docs": [
                 str(path.resolve(strict=False)) for path in sorted(set(seed_doc_paths))
             ],
@@ -688,6 +739,206 @@ def build_runtime_launch_seed(
         "ready": not errors,
     }
     return {**core, "content_sha256": _canonical_sha256(core)}
+
+
+def _launch_seed_store_dir() -> Path:
+    return (
+        Path(os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"))
+        / "runtime-launch-seeds"
+    )
+
+
+def _live_runtime_identity(*, root: Path, expected_revision: str) -> dict[str, Any]:
+    """Content-addressed identity of the live runtime at the pinned revision."""
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+        normalized_runtime_identity,
+    )
+
+    provenance = runtime_provenance(
+        expected_root=root,
+        expected_revision=expected_revision,
+    )
+    if not provenance.get("ok"):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "live runtime does not satisfy the manifest pin: "
+            + ", ".join(str(item) for item in provenance.get("errors") or []),
+        )
+    return normalized_runtime_identity(provenance)
+
+
+def _rebind_marker_if_stale(
+    marker_path: Path,
+    marker: Mapping[str, Any],
+    *,
+    live_identity: Mapping[str, Any],
+    source_branch: str,
+) -> None:
+    """CAS-rebind the cloud-session marker when its runtime identity is stale.
+
+    Uses the CAS-protected marker/runtime cutover helper (never hand-edited
+    JSON): the marker file SHA-256 and the previous runtime identity SHA-256
+    are both guarded, and any concurrent change fails the CAS with a typed
+    error instead of being overwritten.
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_cutover import (
+        marker_runtime_identity,
+        update_marker_runtime,
+    )
+
+    marker_identity = marker_runtime_identity(marker)
+    if marker_identity is None:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "cloud session marker has no content-addressable runtime identity",
+        )
+    if marker_identity == live_identity:
+        return
+    relaunch_command = str(
+        marker.get("relaunch_command") or marker.get("launch_command") or ""
+    ).strip()
+    if not relaunch_command:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "cloud session marker drift requires a relaunch command for rebinding",
+        )
+    update_marker_runtime(
+        marker_path,
+        expected_marker_sha256=_sha256_file(marker_path),
+        expected_previous_runtime_sha256=str(marker_identity["content_sha256"]),
+        active_runtime_identity=live_identity,
+        relaunch_command=relaunch_command,
+        reason="chain-start launch-seed marker rebind",
+        actor="chain",
+        direction="cutover",
+        source_branch=source_branch,
+    )
+
+
+def _launch_seed_current(
+    seed_path: Path,
+    *,
+    root: Path,
+    expected_revision: str,
+) -> bool:
+    """True when the on-disk seed is release-ready and still pinned to root/revision."""
+    try:
+        seed = _json_file(seed_path, label="runtime launch seed")
+        _verify_seed_digest(seed)
+    except CliError:
+        return False
+    return (
+        bool(seed.get("ready"))
+        and str(seed.get("expected_root") or "") == str(root)
+        and str(seed.get("expected_revision") or "") == expected_revision
+    )
+
+
+def ensure_runtime_launch_seed(
+    *,
+    manifest_path: Path,
+    chain_spec_path: Path,
+    marker_path: Path,
+    chain_runtime_identity: Mapping[str, Any] | None = None,
+    seed_dir: Path | None = None,
+    supervisor_receipt_path: Path | None = None,
+    hot_env_path: Path | None = None,
+    expected_branch: str | None = None,
+    expected_ancestry_base: str | None = None,
+) -> Path:
+    """Build or refresh the canonical runtime launch seed for one per-epic runtime.
+
+    The per-session runtime manifest (``ARNOLD_RUNTIME_MANIFEST``) is the
+    runtime selector (G4): ``epic.runtime_root`` and ``epic.expected_head``
+    pin the seeded runtime, and the live checkout HEAD MUST equal the pin
+    (else :class:`CliError`).  The marker's
+    ``runtime_binding.current_identity`` must agree with the live provenance
+    at the expected revision and with the chain execution binding; a stale
+    marker is rebound through the CAS-protected marker/runtime cutover helper
+    (never hand-edited).  The seed is rebuilt whenever it is missing, not
+    release-ready, content-digest-invalid, or pinned to a different
+    root/revision.  On success returns the seed path; the caller exports it
+    as ``MEGAPLAN_RUNTIME_LAUNCH_SEED`` for every child worker/watchdog.
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        load_manifest,
+    )
+
+    try:
+        manifest = load_manifest(manifest_path)
+    except ManifestError as exc:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            f"runtime manifest {manifest_path} is invalid: {exc}",
+        ) from exc
+    epic = manifest.epic
+    runtime_root = str(epic.get("runtime_root") or "").strip()
+    expected_revision = str(epic.get("expected_head") or "").strip()
+    if not runtime_root or not expected_revision:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "runtime manifest lacks nonempty epic.runtime_root and epic.expected_head",
+        )
+    root = Path(runtime_root).expanduser().resolve()
+    live_head = _git_revision(root)
+    if not live_head or live_head != expected_revision:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            f"runtime root HEAD does not match the manifest pin: "
+            f"expected {expected_revision}, live {live_head or '<unreadable>'}",
+        )
+    live_identity = _live_runtime_identity(
+        root=root,
+        expected_revision=expected_revision,
+    )
+    if chain_runtime_identity is not None:
+        from arnold_pipelines.megaplan.cloud.runtime_cutover import (
+            normalize_runtime_identity,
+        )
+
+        chain_identity = normalize_runtime_identity(chain_runtime_identity)
+        if chain_identity != live_identity:
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                "chain execution binding does not match the live manifest-pinned runtime",
+            )
+        bound_identity = chain_identity
+    else:
+        bound_identity = live_identity
+    marker = _json_file(marker_path, label="cloud session marker")
+    _rebind_marker_if_stale(
+        marker_path,
+        marker,
+        live_identity=live_identity,
+        source_branch=str(epic.get("branch") or ""),
+    )
+    seed_path = (seed_dir or _launch_seed_store_dir()) / f"{manifest.runtime_id}.json"
+    seed_path = seed_path.resolve(strict=False)
+    if _launch_seed_current(seed_path, root=root, expected_revision=expected_revision):
+        return seed_path
+    payload = build_runtime_launch_seed(
+        expected_root=root,
+        expected_revision=expected_revision,
+        supervisor_receipt_path=supervisor_receipt_path
+        or SUPERVISOR_RECEIPT_DEFAULT_PATH,
+        hot_env_path=hot_env_path or CLOUD_HOT_ENV_DEFAULT_PATH,
+        marker_path=marker_path,
+        chain_spec_path=chain_spec_path,
+        seed_doc_paths=(),
+        expected_branch=expected_branch,
+        expected_ancestry_base=expected_ancestry_base,
+        manifest_path=manifest_path,
+        chain_runtime_identity=bound_identity,
+    )
+    if not bool(payload.get("ready")):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "runtime launch seed is not release-ready: "
+            + ", ".join(str(item) for item in payload.get("errors") or []),
+        )
+    _atomic_write(seed_path, payload)
+    return seed_path
 
 
 def _verify_seed_digest(seed: Mapping[str, Any]) -> None:

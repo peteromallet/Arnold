@@ -838,6 +838,64 @@ def test_run_chain_unbound_production_blocks_before_load_or_binding(
     assert eb_module.bind_execution_identity is not real_bind
 
 
+def test_run_chain_exports_runtime_launch_seed_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """G14: run_chain builds the per-epic launch seed immediately after
+    bind_execution_identity and exports MEGAPLAN_RUNTIME_LAUNCH_SEED so every
+    child worker/watchdog relaunch finds it."""
+    from unittest.mock import Mock
+
+    import arnold_pipelines.megaplan.chain as chain_module
+    from arnold_pipelines.megaplan.chain import execution_binding as eb_module
+    from arnold_pipelines.megaplan.chain import operator_pause
+    from arnold_pipelines.megaplan.chain import spec as chain_spec_module
+    from arnold_pipelines.megaplan.cloud import runtime_attestation as ra_module
+
+    spec = _chain(tmp_path)
+    _git_repo(tmp_path)
+    monkeypatch.delenv(RUNTIME_MANIFEST_BINDING_ENV, raising=False)
+    monkeypatch.delenv("ARNOLD_RUNTIME_POLICY", raising=False)
+
+    manifest_path = _write_manifest(tmp_path / "runtime-manifest.json", _valid_manifest())
+    monkeypatch.setenv(RUNTIME_MANIFEST_BINDING_ENV, str(manifest_path))
+    state = chain_spec_module.ChainState()
+    state.chain_session = "demo"
+    monkeypatch.setattr(chain_module, "_require_active_initiative_chain", Mock())
+    monkeypatch.setattr(chain_module, "_preflight_agent_backends", Mock())
+    monkeypatch.setattr(
+        chain_module,
+        "ensure_reconcile_milestone",
+        Mock(return_value=chain_spec_module.load_spec(spec)),
+    )
+    monkeypatch.setattr(chain_module.chain_spec, "require_runtime_manifest_permit", Mock())
+    monkeypatch.setattr(chain_spec_module, "load_chain_state", Mock(return_value=state))
+    monkeypatch.setattr(eb_module, "bind_execution_identity", Mock())
+    monkeypatch.setattr(operator_pause, "is_paused", Mock(return_value=True))
+    marker_path = tmp_path / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        chain_module,
+        "_chain_session_marker_path",
+        Mock(return_value=marker_path),
+    )
+    seed_path = tmp_path / "launch-seeds" / "runtime-test-1.json"
+    ensure = Mock(return_value=seed_path)
+    monkeypatch.setattr(ra_module, "ensure_runtime_launch_seed", ensure)
+
+    result = chain_module.run_chain(spec, tmp_path, writer=lambda _msg: None)
+
+    assert result["status"] == "paused"
+    ensure.assert_called_once()
+    kwargs = ensure.call_args.kwargs
+    assert kwargs["manifest_path"] == manifest_path
+    assert kwargs["chain_spec_path"] == spec
+    assert kwargs["marker_path"] == marker_path
+    assert kwargs["chain_runtime_identity"] is None
+    assert os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED") == str(seed_path)
+
+
 def test_supervisor_run_chain_gate_rejects_before_state_load(
     tmp_path: Path, monkeypatch
 ) -> None:
