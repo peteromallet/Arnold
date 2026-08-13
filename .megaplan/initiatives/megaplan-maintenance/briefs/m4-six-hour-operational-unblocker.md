@@ -1,12 +1,12 @@
-# M4 — Six-hour operational unblocker
+# M4 — Next-three-hour backstop / six-hour operational unblocker
 
 ## Outcome
 
-Deliver a deterministic six-hour operational loop that detects concrete loss of forward progress, joins or requests bounded repair through canonical custody, and independently verifies resumed progress. It never directly writes plan/chain truth.
+Deliver the Maintenance operational unblocker over the existing event-triggered repair path, resident occurrence scheduler, central repair queue, and canonical `next_three_hour` reconciliation backstop. “Six-hour” remains the product/legacy VP name; the current operational auditor cadence is three hours. The legacy `sched_vp_todo_six_hour` occurrence remains a distinct ledger-owned compatibility recurrence and is not a second auditor or repair authority. The loop detects concrete loss of forward progress, joins or requests bounded repair through canonical custody, and independently verifies resumed progress. It never directly writes plan/chain truth or creates a second scheduler, watchdog, queue, or fixer authority.
 
 ## Scope (about one sprint; no more than two weeks)
 
-In scope: a roughly six-hour schedule with jitter and persistent catch-up; half-open event-time windows; stored watermarks and late correction events; coherent observation intake; run/stage/profile/model/environment cohort context; cold-start static thresholds; false-positive suppressors; operational classifiers; occurrence dedupe; fenced request handoff; already-approved allowlisted retry/relaunch policies; exact-window report; immutable input/event lists and content hash; action/receipt reconciliation; audit-the-auditor controls; independent immediate/5m/1h/6h verification; shadow/report-only and canary runbooks.
+In scope: integrate the existing `SixHourAuditor` compatibility module, event-triggered repair request path, central queue, the existing ledger-owned resident occurrence, and the `next_three_hour` timer; add the missing half-open event-time windows, stored watermarks, late correction events, and coherent observation intake; run/stage/profile/model/environment cohort context; cold-start static thresholds; false-positive suppressors; operational classifiers; occurrence dedupe; fenced request handoff; already-approved allowlisted retry/relaunch policies through the unified fixer seam; exact-window report; immutable input/event lists and content hash; action/receipt reconciliation; audit-the-auditor controls; independent immediate/5m/1h/next-three-hour verification; and shadow/report-only and canary runbooks. The existing six-hour VP-todo occurrence is consumed as a compatibility input, not duplicated or promoted into a second authority. Repair actions remain bounded integrations with M7/M10/M11, not new repair infrastructure.
 
 Out of scope: changing profiles/budgets; force-proceed/waiver; destructive Git/provider actions; protected publication; new repair classes; daily root-cause clustering; editing active chain specs; enabling production autonomy in this milestone.
 
@@ -22,7 +22,7 @@ Out of scope: changing profiles/budgets; force-proceed/waiver; destructive Git/p
 ## Scheduling, leases, and replay
 
 - Window: `[window_start, window_end)` in UTC event time. Persist the input watermark and allowed lateness; late evidence appends a correction referencing the prior report.
-- Schedule lease key: `(six_hour, environment, scope, window_end)` with monotonic fence. Action idempotency key: `(schema, occurrence, action_type, policy_version, target)`.
+- Auditor schedule lease key: `(next_three_hour, environment, scope, window_end)` with the canonical resident occurrence/fence; `six_hour` is a legacy compatibility label and must not mint a second auditor recurrence. The existing `sched_vp_todo_six_hour` occurrence remains its own ledger-owned compatibility target. Action idempotency key: `(schema, occurrence, action_type, policy_version, target)` through the accepted Custody/WBC APIs.
 - Replay rebuilds deterministic projections and appends only absent outputs. If the daily loop overlaps, it may reference custody but cannot claim it; the unblocker joins an existing request instead of duplicating repair.
 
 ## WBC gate/finalize example
@@ -39,9 +39,9 @@ Approve numeric stage SLOs, schedule timezone/offset, allowed lateness, minimum 
 
 - Golden/property timelines cover exact boundaries, skew, late/out-of-order/duplicate events, censoring, unmatched calls, long legitimate phases, human gates, overlap, crash/replay, and stale fences.
 - Same immutable inputs reproduce the same hash and included event IDs; every metric exposes numerator, denominator, unknown count, and coverage.
-- Zero unauthorized plan/chain mutations, duplicate repairs, or self-verifications; 100% action/receipt reconciliation in test/canary evidence.
+- Zero unauthorized plan/chain mutations, duplicate repairs, or self-verifications; 100% action/receipt reconciliation in test/canary evidence, including the known `finalize_audit_dispatch_receipt` and repair-runner sidecar false-success paths.
 - Shadow mode measures false-positive and missed-blocker rates. Canary requires demonstrated kill switch/rollback and explicit human approval; this milestone does not grant it.
-- Handoff to M5: closed watermarks, operational occurrence history, censored durations, cost/outcome facts, and immutable report references suitable for read-only daily analysis.
+- Handoff to M5: closed watermarks, operational occurrence history, censored durations, cost/outcome facts, and immutable report references suitable for read-only daily analysis. M4 does not create the daily schedule, ticket store, or efficiency ledger.
 
 ## Players and authority
 

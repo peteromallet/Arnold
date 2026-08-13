@@ -1,13 +1,13 @@
 # Maintenance Control Plane North Star
 
-Megaplan maintenance must restore forward progress safely and make systemic waste visible without becoming a second execution authority. The six-hour operational unblocker and 24-hour efficiency auditor consume the same append-only incident/maintenance ledger but serve different products: the unblocker may request bounded action through canonical repair custody and prove recovery; the daily auditor may analyze and recommend but never claim a repair or reshape an active chain.
+Megaplan maintenance must restore forward progress safely and make systemic waste visible without becoming a second execution authority. The six-hour operational unblocker and 24-hour efficiency auditor consume the same existing Maintenance-owned append-only incident ledger but serve different products: the unblocker may request bounded action through canonical repair custody and prove recovery; the daily auditor may analyze and recommend but never claim a repair or reshape an active chain. This shared ledger is not an omnibus replacement for Run Authority, WBC, Custody, or Native proof stores.
 
 ## End-state invariants
 
 - Run Authority remains authoritative for grants, accepted attempts, decisions, fences, and quarantine. Canonical transition/repair custody remains authoritative for plan and chain mutations.
 - Neither loop directly edits plan/chain truth. Repair actors propose or claim through canonical custody; the lifecycle TransitionWriter is the only state writer.
 - The six-hour loop owns operational detection-to-verification for a concrete occurrence. The daily loop owns read-only efficiency analysis across completed and censored histories.
-- One append-only, versioned ledger preserves observation, finding, custody, action, verification, recurrence, and analytical events. Operational custody, verification, and efficiency-analysis projections advance independently.
+- One Maintenance-owned append-only, versioned ledger preserves maintenance observations, findings, custody references, actions, verification, recurrence, and analytical events. It stores immutable references/digests/cursors to owner-specific Run Authority, WBC, Custody, and Native records rather than copying their authority; operational custody, verification, and efficiency-analysis projections advance independently.
 - Every decision reads a coherent `ObservationEnvelope`: source identities and versions are captured together; torn, stale, cross-environment, or incomplete evidence yields typed `UNKNOWN`/`INCOHERENT`, never green or dispatchable state.
 - Deduplication is occurrence-scoped. A verified recurrence creates a new occurrence with causal links and a fresh bounded budget; it is not suppressed forever by an old fingerprint.
 - Claims and scheduled windows use renewable leases with monotonically increasing fencing tokens. Stale workers cannot install, retrigger, transition, verify, or materialize tickets.

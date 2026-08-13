@@ -968,14 +968,30 @@ def _run_managed_command_locked(
             ]
             if not engine_roots:
                 engine_roots = [Path(str(spec.project_dir)).resolve()]
-            bwrap_cmd = ["bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
-            for root in engine_roots:
-                bwrap_cmd += ["--bind", str(root), str(root)]
-            for root in read_only_roots:
-                bwrap_cmd += ["--ro-bind", str(root), str(root)]
-            bwrap_cmd += ["--"]
-            bwrap_cmd += launch_argv
-            launch_argv = bwrap_cmd
+            # bwrap needs user-namespace support; inside a docker container
+            # (no CAP_SYS_ADMIN / user namespaces) it fails with "Creating
+            # new namespace failed: Operation not permitted". Probe once with
+            # a no-op and fall back to the direct launch (the container IS
+            # the isolation boundary) when bwrap cannot create a namespace.
+            bwrap_usable = False
+            try:
+                probe = subprocess.run(
+                    ["bwrap", "--ro-bind", "/", "/", "--", "true"],
+                    capture_output=True,
+                    timeout=15,
+                )
+                bwrap_usable = probe.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                bwrap_usable = False
+            if bwrap_usable:
+                bwrap_cmd = ["bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
+                for root in engine_roots:
+                    bwrap_cmd += ["--bind", str(root), str(root)]
+                for root in read_only_roots:
+                    bwrap_cmd += ["--ro-bind", str(root), str(root)]
+                bwrap_cmd += ["--"]
+                bwrap_cmd += launch_argv
+                launch_argv = bwrap_cmd
         child = subprocess.Popen(
             launch_argv,
 

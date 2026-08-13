@@ -1,3 +1,5 @@
+> **DEPRECATED — NON-CANONICAL BRIEF.** Superseded by [`m2-coherent-authority.md`](m2-coherent-authority.md). This July copy retains stale audit-rank/schema-name requirements and assumes a ledger substrate that current Custody M6A–M11 and Native Parity own; use it only as historical evidence.
+
 # M2 — Coherent evidence and transition authority
 
 ## Outcome
@@ -30,4 +32,3 @@ Introduce versioned operational contracts, a read-coherent `ObservationEnvelope`
 - Projection lag/digest mismatch is explicit and cannot support green status.
 - Journal failure produces a replayable dead letter and alerting signal.
 - Runtime model receipts remain exactly `gpt-5.6-sol` for automatic repair and six-hour checks.
-
