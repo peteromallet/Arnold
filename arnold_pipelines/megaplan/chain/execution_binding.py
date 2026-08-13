@@ -394,8 +394,16 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
         errors.extend(
             f"runtime_provenance:{error}" for error in runtime.get("errors") or []
         )
+        # T-0301 generation: the executing runtime is a worktree-first
+        # PYTHONPATH root with a shared immutable dependency generation, NOT
+        # a pip editable install. When provenance is clean (imports resolve
+        # to the expected root at the pinned revision), the runtime IS the
+        # worktree and the legacy editable_* checks do not apply. The
+        # editable requirements only bind when an editable install actually
+        # exists (legacy pre-T-0301 runtime).
         if not editable_root_text:
-            errors.append("editable_runtime_missing")
+            if runtime.get("errors"):
+                errors.append("editable_runtime_missing")
         elif Path(runtime_identity["import_root"]).resolve(
             strict=False
         ) != editable_root.resolve(strict=False):
