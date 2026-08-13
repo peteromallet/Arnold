@@ -227,9 +227,12 @@ def normalized_runtime_identity(provenance: Mapping[str, Any]) -> dict[str, Any]
     """Project strict provenance into the content-addressed runtime identity."""
 
     identity = {key: provenance.get(key) for key in _RUNTIME_IDENTITY_KEYS}
-    identity["editable_revision"] = str(
-        provenance.get("editable_revision") or provenance.get("source_revision") or ""
-    )
+    # T-0301 worktree-first runtime has no pip editable install, so
+    # editable_revision must stay EMPTY (matching active_execution_identity,
+    # which derives it from the editable root only). Falling back to
+    # source_revision here made the seed identity disagree with the chain
+    # binding identity and broke ensure_runtime_launch_seed's equality check.
+    identity["editable_revision"] = str(provenance.get("editable_revision") or "")
     identity["content_sha256"] = _canonical_sha256(identity)
     return identity
 
