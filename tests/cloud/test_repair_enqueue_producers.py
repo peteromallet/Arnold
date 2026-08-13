@@ -308,6 +308,64 @@ def test_f01_fields_are_normalized_on_request_record(tmp_path):
     assert id1 == id2
 
 
+def test_occurrence_bound_enqueue_carries_watchdog_binding_contract(tmp_path):
+    """The occurrence-bound enqueue result carries the canonical watchdog
+    binding shape — {request_id, decision_id, repair_identity_key,
+    blocker_id} — so the wrapper can bind returned ids into the claim/attempt
+    path (T-0203 cross-task contract)."""
+    queue_dir = _queue_dir(tmp_path)
+    occurrence = _occurrence_identity()
+
+    result = enqueue_occurrence_bound_repair_request(
+        queue_root=queue_dir,
+        session="test-session",
+        problem_signature=_problem_sig(),
+        root_cause_hint="test failure",
+        source="lifecycle_failure",
+        workspace="/workspace/test",
+        run_kind="plan",
+        target={
+            "plan_dir": "/workspace/test/plans/test-plan",
+            "plan_name": "test-plan",
+        },
+        occurrence_identity=occurrence,
+    )
+
+    assert result["status"] == "queued", f"Expected queued, got {result.get('status')}"
+    request = result["request"]
+    decision = result["decision"]
+    assert isinstance(request, dict)
+    assert isinstance(decision, dict)
+
+    request_id = str(request.get("request_id") or "").strip()
+    decision_id = str(decision.get("decision_id") or "").strip()
+    repair_identity_key = str(request.get("repair_identity_key") or "").strip()
+    blocker_id = str(request.get("blocker_id") or "").strip()
+    assert request_id, "enqueue result must carry request_id"
+    assert decision_id, "enqueue result must carry decision_id"
+    assert repair_identity_key, "enqueue result must carry repair_identity_key"
+    assert blocker_id, "enqueue result must carry blocker_id"
+    assert decision.get("decision") == "accepted", decision
+
+    # A zero-authority-rejected enqueue carries NO claimable binding (absent
+    # ids) so the watchdog never dispatches on an identity-free result.
+    rejected = enqueue_occurrence_bound_repair_request(
+        queue_root=queue_dir,
+        session="test-session",
+        problem_signature=_problem_sig(failure_kind="partial_identity"),
+        root_cause_hint="no identity",
+        source="lifecycle_failure",
+        workspace="/workspace/test",
+        run_kind="plan",
+        target={"plan_name": "test-plan"},
+        occurrence_identity=None,
+    )
+    assert rejected["status"] == "zero_authority_rejected", rejected
+    # A typed rejection carries NO request/decision binding at all.
+    assert "request" not in rejected, rejected
+    assert "decision" not in rejected, rejected
+
+
 def test_terminal_receipt_expectations_default_to_none(tmp_path):
     """When terminal_receipt_expectations is not provided, it is absent
     from the repair_identity block (not defaulted to a guess).

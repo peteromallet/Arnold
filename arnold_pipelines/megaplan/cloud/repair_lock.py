@@ -1501,7 +1501,799 @@ def occurrence_scoped_lock_dir(
     return Path(claims_dir) / f"{token}.lock"
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Canonical claim alias index + cross-namespace fence (T-0204)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Two claim namespaces live under one repair queue root:
+#
+#   * **active claims** — blocker-keyed (``active-claims/<sha256(blocker)>.lock``,
+#     :func:`arnold_pipelines.megaplan.cloud.repair_requests.claim_active_repair_request`);
+#   * **occurrence claims** — occurrence-fingerprint-keyed
+#     (``occurrence-claims/<sha256(fingerprint)>.lock``,
+#     :func:`arnold_pipelines.megaplan.cloud.simple_fixer.claim_singleton_occurrence`).
+#
+# They must converge on ONE owner for one repair, so each namespace consults
+# the OTHER **before** acquiring its own lock, through ONE canonical alias
+# index (:func:`claim_alias_index_dir`) plus the current fencing fence
+# (``(custody_epoch, fence_token)`` from the normalized repair identity).
+# The index deterministically maps ``blocker_id <-> occurrence_fingerprint``
+# and records the newest fence seen; liveness is always re-derived from the
+# live lock directories, never trusted from the index alone.  A live foreign
+# owner in the other namespace is ``busy`` (never displaced); a STALE foreign
+# claim may be reclaimed ONLY with a newer fence, and the reclaim re-acquires
+# the other namespace's lock under the caller's own owner so both namespaces
+# converge on one owner (no double launch).  The alias files are advisory and
+# intentionally never removed: a lingering mapping is harmless because every
+# decision re-inspects the live lock directories, and removing it while the
+# other namespace still holds a live claim would hide that claim.
+
+CLAIM_ALIAS_SCHEMA = "claim-alias/v1"
+ClaimNamespace = Literal["active", "occurrence"]
+CLAIM_NAMESPACES: frozenset[str] = frozenset({"active", "occurrence"})
+
+
+@dataclass(frozen=True)
+class ClaimAliasRecord:
+    """One canonical alias record binding blocker and occurrence namespaces.
+
+    The SAME record is written under both deterministic keys (blocker id and
+    occurrence fingerprint) inside :func:`claim_alias_index_dir`.  It is the
+    canonical mapping through which one namespace finds the other: the
+    occurrence side resolves its blocker, the active side resolves the
+    occurrence claims mapped to its blocker.  ``fence_epoch`` /
+    ``fence_token`` carry the newest fencing fence observed, so a stale
+    reclaim requires a strictly newer fence than any record claims.
+    """
+
+    occurrence_fingerprint: str
+    request_id: str
+    repair_identity_key: str
+    fence_epoch: int
+    fence_token: int
+    blocker_id: str = ""
+    holder_namespaces: tuple[str, ...] = ()
+    updated_at: str = ""
+
+
+def _alias_to_payload(record: ClaimAliasRecord) -> dict[str, Any]:
+    """Serialize a :class:`ClaimAliasRecord` to its canonical JSON payload."""
+
+    return {
+        "schema": CLAIM_ALIAS_SCHEMA,
+        "blocker_id": record.blocker_id,
+        "occurrence_fingerprint": record.occurrence_fingerprint,
+        "request_id": record.request_id,
+        "repair_identity_key": record.repair_identity_key,
+        "fence_epoch": record.fence_epoch,
+        "fence_token": record.fence_token,
+        "holder_namespaces": list(record.holder_namespaces),
+        "updated_at": record.updated_at,
+    }
+
+
+def _alias_from_payload(payload: Mapping[str, Any]) -> ClaimAliasRecord | None:
+    """Strictly validate an alias payload; ``None`` when corrupt."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    if str(payload.get("schema") or "") != CLAIM_ALIAS_SCHEMA:
+        return None
+    occurrence_fingerprint = str(payload.get("occurrence_fingerprint") or "").strip()
+    request_id = str(payload.get("request_id") or "").strip()
+    repair_identity_key = str(payload.get("repair_identity_key") or "").strip()
+    if not occurrence_fingerprint or not request_id or not repair_identity_key:
+        return None
+    fence_epoch = payload.get("fence_epoch")
+    fence_token = payload.get("fence_token")
+    if (
+        not isinstance(fence_epoch, int)
+        or isinstance(fence_epoch, bool)
+        or fence_epoch < 0
+    ):
+        return None
+    if (
+        not isinstance(fence_token, int)
+        or isinstance(fence_token, bool)
+        or fence_token < 0
+    ):
+        return None
+    holders = payload.get("holder_namespaces")
+    holder_namespaces: tuple[str, ...] = ()
+    if isinstance(holders, list):
+        if not all(isinstance(item, str) and item in CLAIM_NAMESPACES for item in holders):
+            return None
+        holder_namespaces = tuple(holders)
+    elif holders is not None:
+        return None
+    return ClaimAliasRecord(
+        occurrence_fingerprint=occurrence_fingerprint,
+        request_id=request_id,
+        repair_identity_key=repair_identity_key,
+        fence_epoch=fence_epoch,
+        fence_token=fence_token,
+        blocker_id=str(payload.get("blocker_id") or "").strip(),
+        holder_namespaces=holder_namespaces,
+        updated_at=str(payload.get("updated_at") or "").strip(),
+    )
+
+
+def claim_alias_index_dir(queue_root: str | Path) -> Path:
+    """Return the canonical claim alias index directory for *queue_root*."""
+
+    return Path(queue_root) / "claims-index"
+
+
+def _claim_alias_path(queue_root: str | Path, key: str) -> Path:
+    """Return the deterministic alias file path for one canonical key."""
+
+    token = hashlib.sha256(str(key).strip().encode("utf-8")).hexdigest()
+    return claim_alias_index_dir(queue_root) / f"{token}.json"
+
+
+def claim_alias_record(
+    queue_root: str | Path,
+    *,
+    blocker_id: str = "",
+    occurrence_fingerprint: str = "",
+) -> ClaimAliasRecord | None:
+    """Read the canonical alias record for one namespace key, or ``None``.
+
+    ``None`` means the index has no record for that key.  A present-but-
+    corrupt record also yields ``None``; callers that must fail closed can
+    distinguish by checking whether the alias file exists
+    (:func:`claim_alias_file_exists`).
+    """
+
+    key = occurrence_fingerprint or blocker_id
+    if not key:
+        return None
+    payload = load_json(_claim_alias_path(queue_root, key), default="__missing__")
+    if not isinstance(payload, dict):
+        return None
+    return _alias_from_payload(payload)
+
+
+def claim_alias_file_exists(
+    queue_root: str | Path,
+    *,
+    blocker_id: str = "",
+    occurrence_fingerprint: str = "",
+) -> bool:
+    """Return whether an alias file exists for the given key (corrupt or not)."""
+
+    key = occurrence_fingerprint or blocker_id
+    if not key:
+        return False
+    return _claim_alias_path(queue_root, key).exists()
+
+
+def write_claim_alias(
+    queue_root: str | Path,
+    record: ClaimAliasRecord,
+    *,
+    updated_at: str | None = None,
+) -> ClaimAliasRecord:
+    """Write the canonical alias record under BOTH deterministic keys.
+
+    The pair is written under one directory-level flock so concurrent
+    claimers serialize their blocker/fingerprint alias pair instead of
+    interleaving two half-pairs.  Each file is individually atomic
+    (tmp+rename).  The blocker-keyed file is written only when
+    ``blocker_id`` is known — an occurrence-side claim that has not yet
+    resolved its blocker writes only the fingerprint key, which the
+    active side completes on its next claim.
+    """
+
+    queue_root_path = Path(queue_root)
+    index_dir = claim_alias_index_dir(queue_root_path)
+    index_dir.mkdir(parents=True, exist_ok=True)
+    stamp = updated_at or _utc_now()
+    record = ClaimAliasRecord(
+        occurrence_fingerprint=record.occurrence_fingerprint,
+        request_id=record.request_id,
+        repair_identity_key=record.repair_identity_key,
+        fence_epoch=record.fence_epoch,
+        fence_token=record.fence_token,
+        blocker_id=record.blocker_id,
+        holder_namespaces=tuple(
+            ns for ns in record.holder_namespaces if ns in CLAIM_NAMESPACES
+        ),
+        updated_at=stamp,
+    )
+    payload = _alias_to_payload(record)
+    paths = [_claim_alias_path(queue_root_path, record.occurrence_fingerprint)]
+    if record.blocker_id:
+        paths.append(_claim_alias_path(queue_root_path, record.blocker_id))
+    with _job_record_flock(index_dir / "index.lock"):
+        for path in sorted(paths):
+            atomic_write_json(
+                path,
+                payload,
+                include_resident_provenance=False,
+            )
+    return record
+
+
+def _aliases_for_blocker(
+    queue_root: str | Path,
+    blocker_id: str,
+) -> list[ClaimAliasRecord]:
+    """Return every valid alias record mapped to *blocker_id*.
+
+    The blocker-keyed alias file holds only the most recent record; a scan
+    of the whole index catches OLDER occurrence claims for the same blocker
+    that are still live, so the active side can refuse foreign owners that
+    the single blocker-keyed file would miss.
+    """
+
+    index_dir = claim_alias_index_dir(queue_root)
+    records: list[ClaimAliasRecord] = []
+    seen: set[str] = set()
+    if not index_dir.is_dir():
+        return records
+    for path in sorted(index_dir.glob("*.json")):
+        payload = load_json(path, default="__missing__")
+        if not isinstance(payload, dict):
+            continue
+        record = _alias_from_payload(payload)
+        if record is None:
+            continue
+        if record.blocker_id != blocker_id:
+            continue
+        if record.occurrence_fingerprint in seen:
+            continue
+        seen.add(record.occurrence_fingerprint)
+        records.append(record)
+    return records
+
+
+def blocker_id_for_occurrence(
+    queue_root: str | Path,
+    occurrence_fingerprint: str,
+) -> str:
+    """Resolve the canonical blocker id for one occurrence fingerprint.
+
+    The alias index is the fast path; the immutable request records are the
+    authoritative source (every claimable occurrence has an enqueued request
+    carrying the same ``repair_identity_key`` and its ``blocker_id``), so a
+    missing/stale alias can never hide an active claim behind an unresolvable
+    blocker.  Returns ``""`` when nothing binds the occurrence to a blocker.
+    """
+
+    record = claim_alias_record(
+        queue_root, occurrence_fingerprint=occurrence_fingerprint
+    )
+    if record is not None and record.blocker_id:
+        return record.blocker_id
+    from arnold_pipelines.megaplan.cloud.repair_requests import iter_repair_requests
+
+    for request in iter_repair_requests(queue_root):
+        if str(request.get("repair_identity_key") or "") != occurrence_fingerprint:
+            continue
+        blocker_id = str(request.get("blocker_id") or "").strip()
+        if blocker_id:
+            return blocker_id
+    return ""
+
+
+def claim_fence(repair_identity: Mapping[str, Any] | None) -> tuple[int, int]:
+    """Return the ``(custody_epoch, fence_token)`` fence for an identity.
+
+    The fence is the monotonic custody epoch from the normalized repair
+    identity, seconded by the coordinator fence token.  ``(0, 0)`` is the
+    lowest fence: an identity-less caller can never reclaim a stale claim,
+    and any recorded claim fences it out.
+    """
+
+    if not isinstance(repair_identity, Mapping):
+        return (0, 0)
+    custody_epoch = repair_identity.get("custody_epoch")
+    if (
+        not isinstance(custody_epoch, int)
+        or isinstance(custody_epoch, bool)
+        or custody_epoch < 0
+    ):
+        custody_epoch = 0
+    fence_token = 0
+    occurrence = repair_identity.get("occurrence")
+    if isinstance(occurrence, Mapping):
+        try:
+            token = int(occurrence.get("fence_token") or 0)
+        except (TypeError, ValueError):
+            token = 0
+        fence_token = max(0, token)
+    return (int(custody_epoch), int(fence_token))
+
+
+def _fence_newer(candidate: tuple[int, int], current: tuple[int, int]) -> bool:
+    """Return whether *candidate* is strictly newer than *current*."""
+
+    return (candidate[0], candidate[1]) > (current[0], current[1])
+
+
+def _owner_identity_key(owner: Mapping[str, Any] | None) -> str:
+    """Return the canonical owner identity key from lock owner metadata."""
+
+    if not isinstance(owner, Mapping):
+        return ""
+    return str(
+        owner.get("repair_identity_key")
+        or owner.get("occurrence_fingerprint")
+        or ""
+    ).strip()
+
+
+@dataclass(frozen=True)
+class CrossNamespaceConsultation:
+    """Typed result of consulting the OTHER claim namespace before claiming.
+
+    :attr:`may_proceed` is ``True`` only when acquiring the caller's own
+    namespace lock cannot create a second owner for the same repair.  When
+    ``False``, ``outcome`` names the reason (``busy_other_owner`` or
+    ``fenced_stale_refused``) and :attr:`evidence` carries the observed
+    foreign claim.  When ``True`` with ``stale_reclaim_allowed``,
+    :attr:`reclaim_targets` lists the stale other-namespace claims the
+    caller may reclaim (release + re-acquire under its own owner) AFTER
+    acquiring its own lock.
+    """
+
+    may_proceed: bool
+    outcome: str
+    other_namespace: str = ""
+    blocker_id: str = ""
+    other_lock_dirs: tuple[Path, ...] = ()
+    reclaim_targets: tuple[dict[str, Any], ...] = ()
+    alias: ClaimAliasRecord | None = None
+    evidence: dict[str, Any] | None = None
+
+
+def consult_claim_namespace(
+    queue_root: str | Path,
+    *,
+    own_namespace: str,
+    occurrence_fingerprint: str,
+    repair_identity_key: str,
+    request_id: str,
+    fence: tuple[int, int],
+    blocker_id: str = "",
+    now: datetime | None = None,
+    is_pid_live: PidLivenessProbe | None = None,
+) -> CrossNamespaceConsultation:
+    """Consult the other claim namespace BEFORE acquiring our own lock.
+
+    This is the ONE canonical cross-namespace check.  Rules:
+
+    * other namespace has no live claim -> proceed (``no_other_claim``);
+    * other namespace has a LIVE owner with the SAME repair identity key
+      (or the same request id) -> same-owner join, proceed;
+    * other namespace has a LIVE foreign owner -> ``busy_other_owner``,
+      never displaced regardless of fence;
+    * other namespace has a STALE claim -> reclaimable ONLY when our fence
+      is strictly newer than the recorded fence
+      (``stale_reclaim_allowed``); otherwise ``fenced_stale_refused``.
+
+    A present-but-corrupt alias file fails closed (``alias_invalid``): a
+    mapping we cannot read must never be silently bypassed.
+    """
+
+    if own_namespace not in CLAIM_NAMESPACES:
+        raise ValueError(f"own_namespace must be one of {sorted(CLAIM_NAMESPACES)}")
+    if not occurrence_fingerprint or not repair_identity_key or not request_id:
+        raise ValueError(
+            "cross-namespace consultation requires occurrence_fingerprint, "
+            "repair_identity_key, and request_id"
+        )
+    queue_root_path = Path(queue_root)
+
+    # ── Resolve the other namespace's lock directories ────────────────────
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        active_repair_claim_lock_dir,
+        singleton_occurrence_claim_lock_dir,
+    )
+
+    alias = claim_alias_record(
+        queue_root_path, occurrence_fingerprint=occurrence_fingerprint
+    )
+    # Fail closed on a present-but-corrupt mapping: an alias we cannot read
+    # must never be silently bypassed (it could hide a live foreign claim).
+    if (
+        alias is None
+        and claim_alias_file_exists(
+            queue_root_path, occurrence_fingerprint=occurrence_fingerprint
+        )
+    ):
+        return CrossNamespaceConsultation(
+            may_proceed=False,
+            outcome="alias_invalid",
+            other_namespace="",
+            blocker_id=blocker_id,
+            other_lock_dirs=(),
+            alias=None,
+            evidence={
+                "kind": "cross_namespace_claim_consultation",
+                "own_namespace": own_namespace,
+                "outcome": "alias_invalid",
+                "reason": "fingerprint-keyed alias present but unreadable",
+                "occurrence_fingerprint": occurrence_fingerprint,
+                "request_id": request_id,
+            },
+        )
+    other_namespace = "active" if own_namespace == "occurrence" else "occurrence"
+    #: (occurrence_fingerprint, lock_dir) pairs — the fingerprint lets the
+    #: reclaimed claim's alias be refreshed under the new owner+fence.
+    other_dirs: list[tuple[str, Path]] = []
+    seen_dirs: set[str] = set()
+    resolved_blocker_id = blocker_id
+    if own_namespace == "occurrence":
+        if not resolved_blocker_id and alias is not None:
+            resolved_blocker_id = alias.blocker_id
+        if not resolved_blocker_id:
+            resolved_blocker_id = blocker_id_for_occurrence(
+                queue_root_path, occurrence_fingerprint
+            )
+        if alias is None and resolved_blocker_id:
+            # Fall back to the blocker-keyed alias: it carries the newest
+            # fence observed for this blocker even when the caller's own
+            # fingerprint has never claimed.
+            alias = claim_alias_record(
+                queue_root_path, blocker_id=resolved_blocker_id
+            )
+            if (
+                alias is None
+                and claim_alias_file_exists(
+                    queue_root_path, blocker_id=resolved_blocker_id
+                )
+            ):
+                return CrossNamespaceConsultation(
+                    may_proceed=False,
+                    outcome="alias_invalid",
+                    other_namespace=other_namespace,
+                    blocker_id=resolved_blocker_id,
+                    other_lock_dirs=(),
+                    alias=None,
+                    evidence={
+                        "kind": "cross_namespace_claim_consultation",
+                        "own_namespace": own_namespace,
+                        "outcome": "alias_invalid",
+                        "reason": "blocker-keyed alias present but unreadable",
+                        "blocker_id": resolved_blocker_id,
+                        "occurrence_fingerprint": occurrence_fingerprint,
+                        "request_id": request_id,
+                    },
+                )
+        if not resolved_blocker_id:
+            # No mapping to the active namespace at all — nothing to consult.
+            return CrossNamespaceConsultation(
+                may_proceed=True,
+                outcome="no_other_claim",
+                other_namespace=other_namespace,
+                blocker_id="",
+                other_lock_dirs=(),
+                alias=alias,
+                evidence={
+                    "kind": "cross_namespace_claim_consultation",
+                    "own_namespace": own_namespace,
+                    "outcome": "no_other_claim",
+                    "reason": "no blocker mapping for occurrence",
+                    "occurrence_fingerprint": occurrence_fingerprint,
+                    "request_id": request_id,
+                },
+            )
+        other_dirs = [
+            (
+                alias.occurrence_fingerprint if alias is not None else "",
+                active_repair_claim_lock_dir(queue_root_path, resolved_blocker_id),
+            )
+        ]
+    else:
+        blocker_alias = claim_alias_record(
+            queue_root_path, blocker_id=blocker_id
+        )
+        if (
+            blocker_alias is None
+            and claim_alias_file_exists(queue_root_path, blocker_id=blocker_id)
+        ):
+            return CrossNamespaceConsultation(
+                may_proceed=False,
+                outcome="alias_invalid",
+                other_namespace=other_namespace,
+                blocker_id=blocker_id,
+                other_lock_dirs=(),
+                alias=None,
+                evidence={
+                    "kind": "cross_namespace_claim_consultation",
+                    "own_namespace": own_namespace,
+                    "outcome": "alias_invalid",
+                    "reason": "blocker-keyed alias present but unreadable",
+                    "blocker_id": blocker_id,
+                    "occurrence_fingerprint": occurrence_fingerprint,
+                    "request_id": request_id,
+                },
+            )
+        candidates = {occurrence_fingerprint}
+        if blocker_alias is not None and blocker_alias.occurrence_fingerprint:
+            candidates.add(blocker_alias.occurrence_fingerprint)
+        for record in _aliases_for_blocker(queue_root_path, blocker_id):
+            candidates.add(record.occurrence_fingerprint)
+        for fingerprint in sorted(candidates):
+            other_dirs.append(
+                (
+                    fingerprint,
+                    singleton_occurrence_claim_lock_dir(queue_root_path, fingerprint),
+                )
+            )
+
+    inspections: list[dict[str, Any]] = []
+    busy: list[dict[str, Any]] = []
+    fenced: list[dict[str, Any]] = []
+    reclaim_targets: list[dict[str, Any]] = []
+    same_owner_seen = False
+    for fingerprint, lock_dir in other_dirs:
+        if str(lock_dir) in seen_dirs:
+            continue
+        seen_dirs.add(str(lock_dir))
+        inspection = inspect_repair_lock(
+            lock_dir,
+            now=now,
+            is_pid_live=is_pid_live,
+        )
+        # The fence floor comes from the candidate's own alias record when
+        # available, else the caller's fingerprint-keyed alias; the live
+        # owner metadata (which carries the full normalized identity) is the
+        # authoritative newest fence and always takes the maximum.
+        candidate_alias = (
+            alias
+            if fingerprint == occurrence_fingerprint
+            else claim_alias_record(
+                queue_root_path, occurrence_fingerprint=fingerprint
+            )
+        )
+        record_fence = (0, 0)
+        if candidate_alias is not None:
+            record_fence = (candidate_alias.fence_epoch, candidate_alias.fence_token)
+        elif alias is not None:
+            record_fence = (alias.fence_epoch, alias.fence_token)
+        owner = inspection.owner
+        if isinstance(owner, Mapping):
+            owner_fence = claim_fence(owner.get("repair_identity"))
+            record_fence = max(record_fence, owner_fence)
+        owner_key = _owner_identity_key(owner)
+        entry: dict[str, Any] = {
+            "lock_dir": str(lock_dir),
+            "status": inspection.status,
+            "owner_identity_key": owner_key,
+            "owner_request_id": str(
+                (owner or {}).get("request_id") or ""
+            ),
+            "record_fence": list(record_fence),
+        }
+        if inspection.status == "missing":
+            inspections.append(entry)
+            continue
+        if inspection.status in {"busy", "unknown"}:
+            same_owner = bool(
+                owner_key
+                and owner_key == repair_identity_key
+            ) or str((owner or {}).get("request_id") or "") == request_id
+            entry["same_owner"] = same_owner
+            inspections.append(entry)
+            if same_owner:
+                same_owner_seen = True
+            else:
+                busy.append(entry)
+            continue
+        if inspection.status == "stale":
+            entry["stale_evidence"] = inspection.stale_evidence
+            inspections.append(entry)
+            if _fence_newer(fence, record_fence):
+                reclaim_targets.append(
+                    {
+                        "lock_dir": lock_dir,
+                        "owner": dict(owner) if isinstance(owner, Mapping) else None,
+                        "occurrence_fingerprint": fingerprint,
+                    }
+                )
+            else:
+                fenced.append(entry)
+            continue
+        inspections.append(entry)
+
+    evidence: dict[str, Any] = {
+        "kind": "cross_namespace_claim_consultation",
+        "own_namespace": own_namespace,
+        "other_namespace": other_namespace,
+        "outcome": "",
+        "blocker_id": resolved_blocker_id,
+        "occurrence_fingerprint": occurrence_fingerprint,
+        "request_id": request_id,
+        "repair_identity_key": repair_identity_key,
+        "fence": list(fence),
+        "other_lock_dirs": [str(path) for _fp, path in other_dirs],
+        "inspections": inspections,
+    }
+
+    if busy:
+        evidence["outcome"] = "busy_other_owner"
+        evidence["busy_claims"] = busy
+        return CrossNamespaceConsultation(
+            may_proceed=False,
+            outcome="busy_other_owner",
+            other_namespace=other_namespace,
+            blocker_id=resolved_blocker_id,
+            other_lock_dirs=tuple(path for _fp, path in other_dirs),
+            alias=alias,
+            evidence=evidence,
+        )
+    if fenced:
+        evidence["outcome"] = "fenced_stale_refused"
+        evidence["fenced_claims"] = fenced
+        return CrossNamespaceConsultation(
+            may_proceed=False,
+            outcome="fenced_stale_refused",
+            other_namespace=other_namespace,
+            blocker_id=resolved_blocker_id,
+            other_lock_dirs=tuple(path for _fp, path in other_dirs),
+            alias=alias,
+            evidence=evidence,
+        )
+    if reclaim_targets:
+        evidence["outcome"] = "stale_reclaim_allowed"
+        evidence["reclaim_targets"] = [
+            {"lock_dir": str(item["lock_dir"])} for item in reclaim_targets
+        ]
+        return CrossNamespaceConsultation(
+            may_proceed=True,
+            outcome="stale_reclaim_allowed",
+            other_namespace=other_namespace,
+            blocker_id=resolved_blocker_id,
+            other_lock_dirs=tuple(path for _fp, path in other_dirs),
+            reclaim_targets=tuple(reclaim_targets),
+            alias=alias,
+            evidence=evidence,
+        )
+    evidence["outcome"] = (
+        "same_owner_join" if same_owner_seen else "no_other_claim"
+    )
+    return CrossNamespaceConsultation(
+        may_proceed=True,
+        outcome=evidence["outcome"],
+        other_namespace=other_namespace,
+        blocker_id=resolved_blocker_id,
+        other_lock_dirs=tuple(path for _fp, path in other_dirs),
+        alias=alias,
+        evidence=evidence,
+    )
+
+
+def finalize_cross_namespace_claim(
+    queue_root: str | Path,
+    *,
+    own_namespace: str,
+    occurrence_fingerprint: str,
+    repair_identity_key: str,
+    request_id: str,
+    fence: tuple[int, int],
+    blocker_id: str = "",
+    claim_lock_dir: Path,
+    claim_owner: Mapping[str, Any],
+    claim_metadata: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+    is_pid_live: PidLivenessProbe | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Post-acquisition cross-namespace backstop + fenced stale reclaim.
+
+    Called AFTER the caller acquired its own namespace lock.  Re-consults
+    the other namespace to close the consult -> acquire race window: if a
+    live foreign owner appeared meanwhile, returns ``(False, ...)`` and the
+    caller MUST release its own claim (fail closed — no double launch).
+    Stale foreign claims are reclaimed (release + re-acquire under the
+    caller's own owner) so both namespaces converge on one owner; a failed
+    or out-fenced reclaim also returns ``(False, ...)``.
+
+    Returns ``(True, evidence)`` when the caller's claim may stand.
+    """
+
+    consultation = consult_claim_namespace(
+        queue_root,
+        own_namespace=own_namespace,
+        occurrence_fingerprint=occurrence_fingerprint,
+        repair_identity_key=repair_identity_key,
+        request_id=request_id,
+        fence=fence,
+        blocker_id=blocker_id,
+        now=now,
+        is_pid_live=is_pid_live,
+    )
+    evidence: dict[str, Any] = {
+        "kind": "cross_namespace_claim_backstop",
+        "own_namespace": own_namespace,
+        "consultation": consultation.evidence,
+    }
+    if not consultation.may_proceed:
+        evidence["reason"] = consultation.outcome
+        return False, evidence
+    for target in consultation.reclaim_targets:
+        lock_dir = target["lock_dir"]
+        stale_owner = target.get("owner")
+        stale_pid = (
+            stale_owner.get("pid")
+            if isinstance(stale_owner, Mapping)
+            and isinstance(stale_owner.get("pid"), int)
+            else None
+        )
+        if not release_repair_lock(
+            lock_dir,
+            owner=stale_owner,
+            expected_pid=stale_pid,
+        ):
+            evidence["reason"] = "stale_reclaim_release_failed"
+            evidence["lock_dir"] = str(lock_dir)
+            return False, evidence
+        # The reclaimed claim must carry the OTHER namespace's canonical
+        # shape (kind + blocker_id / occurrence_fingerprint) so dispatcher
+        # bind paths and later inspectors read it correctly, with OUR
+        # request/identity/fence stamped in.
+        reclaim_extra = dict(claim_metadata or {})
+        if own_namespace == "occurrence":
+            reclaim_extra["kind"] = "active_repair_request_claim"
+            if blocker_id:
+                reclaim_extra["blocker_id"] = blocker_id
+        else:
+            reclaim_extra["kind"] = "singleton_occurrence_claim"
+            reclaim_extra["occurrence_fingerprint"] = occurrence_fingerprint
+        reacquired = acquire_repair_lock(
+            lock_dir,
+            session=str(claim_owner.get("session") or ""),
+            target_id=str(claim_owner.get("target_id") or ""),
+            repair_identity=claim_owner.get("repair_identity"),
+            pid=(
+                claim_owner.get("pid")
+                if isinstance(claim_owner.get("pid"), int)
+                else None
+            ),
+            command=claim_owner.get("command"),
+            started_at=claim_owner.get("started_at"),
+            cwd=claim_owner.get("cwd"),
+            timeout_seconds=claim_owner.get("timeout_seconds"),
+            hostname=claim_owner.get("hostname"),
+            extra=reclaim_extra,
+            now=now,
+            is_pid_live=is_pid_live,
+        )
+        if not reacquired.acquired:
+            evidence["reason"] = "stale_reclaim_reacquire_failed"
+            evidence["lock_dir"] = str(lock_dir)
+            evidence["reacquire_status"] = reacquired.status
+            return False, evidence
+        evidence.setdefault("reclaimed", []).append(str(lock_dir))
+        # Refresh the alias for the reclaimed claim under OUR owner and fence
+        # so the canonical index records the newest fence immediately.
+        reclaimed_fingerprint = str(
+            target.get("occurrence_fingerprint") or ""
+        ).strip()
+        if reclaimed_fingerprint:
+            write_claim_alias(
+                queue_root,
+                ClaimAliasRecord(
+                    blocker_id=blocker_id,
+                    occurrence_fingerprint=reclaimed_fingerprint,
+                    request_id=request_id,
+                    repair_identity_key=repair_identity_key,
+                    fence_epoch=fence[0],
+                    fence_token=fence[1],
+                    holder_namespaces=(consultation.other_namespace,),
+                ),
+            )
+    evidence["reason"] = "ok"
+    return True, evidence
+
+
 __all__ = [
+    "CLAIM_ALIAS_SCHEMA",
+    "ClaimAliasRecord",
+    "ClaimNamespace",
+    "CrossNamespaceConsultation",
     "JobLockRecord",
     "JobState",
     "RepairLockResult",
@@ -1509,9 +2301,16 @@ __all__ = [
     "acquire_job_lock",
     "acquire_repair_lock",
     "advance_job_state",
+    "blocker_id_for_occurrence",
     "build_owner_metadata",
+    "claim_alias_file_exists",
+    "claim_alias_index_dir",
+    "claim_alias_record",
+    "claim_fence",
+    "consult_claim_namespace",
     "decision_admission_lock",
     "decision_admission_lock_dir",
+    "finalize_cross_namespace_claim",
     "inspect_repair_lock",
     "job_is_quarantined",
     "occurrence_scoped_lock_dir",
@@ -1522,4 +2321,5 @@ __all__ = [
     "renew_repair_lock",
     "repair_lock",
     "validate_lease_authority",
+    "write_claim_alias",
 ]

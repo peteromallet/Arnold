@@ -502,6 +502,7 @@ def _synthetic_occurrence_key_from_event(
         blocker_or_phase_result_hash=event.payload_hash,
         fence=str(event.coordinator_fence_token),
         chain_identity=event.occurrence_digest,
+        dispatch_key=payload.get("dispatch_key", ""),
     )
     return RepairOccurrenceKey(
         target=synthetic_target,
@@ -595,10 +596,31 @@ class CustodyLeaseStore:
         return self._record_event(event)
 
     def _record_event(self, event: CustodyLeaseEvent) -> CustodyLeaseEvent:
-        """Internal append primitive shared by ``record_event`` and helpers."""
+        """Internal append primitive shared by ``record_event`` and helpers.
+
+        Atomicity (T-0205): the load → sequence/idempotency check → append →
+        cache window runs under ONE exclusive lease-scoped flock, so a
+        concurrent lifecycle caller can never interleave between the
+        read-check and the append.  Contenders serialize; the loser re-reads
+        inside the lock and either idempotently repeats or refuses with a
+        typed error and zero mutation.
+        """
         if not isinstance(event, CustodyLeaseEvent):
             raise LeaseStoreError("event must be a CustodyLeaseEvent")
+        if self.flock:
+            with self._lease_lock(event.lease_id):
+                return self._record_event_unlocked(event)
+        return self._record_event_unlocked(event)
 
+    def _record_event_unlocked(self, event: CustodyLeaseEvent) -> CustodyLeaseEvent:
+        """Append *event*, assuming the caller already holds the lease-scoped
+        serialization (or ``flock`` is disabled).
+
+        This is the single-writer body: load, sequence/idempotency check,
+        inline append, cache rewrite.  It must NEVER be called while the same
+        lease flock is held twice (that would self-deadlock) — callers are
+        either inside :meth:`_lease_lock` or running with ``flock=False``.
+        """
         lease_id = event.lease_id
         existing_events = self.load_history(lease_id)
 
@@ -625,11 +647,11 @@ class CustodyLeaseStore:
                     f"different idempotency key for lease {lease_id!r}"
                 )
 
-        # --- Append ---
-        if self.flock:
-            self._append_flock(lease_id, event)
-        else:
-            self._append_inproc(lease_id, event)
+        # --- Append (the lease flock is already held by the caller) ---
+        _atomic_append(
+            _history_path(self.base_dir, lease_id),
+            event.to_json() + "\n",
+        )
 
         # --- Recompute and cache state ---
         all_events = self.load_history(lease_id)
@@ -666,46 +688,75 @@ class CustodyLeaseStore:
         a prior lease in a terminal state may be superseded by a fresh
         acquisition.  The requested TTL is clamped to
         ``MAXIMUM_LEASE_TTL_SECONDS`` (Step 11C TTL ceiling).
+
+        Atomicity (T-0205): the load → active-lease check → append window
+        runs under ONE exclusive lease-scoped flock.  Concurrent contenders
+        for the same lease therefore serialize: exactly one wins, and every
+        loser re-reads inside the lock, sees the winner's lease, and refuses
+        with a typed ``LeaseStoreError`` and zero mutation (no conflict
+        quarantine, no stray events).
         """
         resolved_idem = idempotency_key or f"acquire-{lease_id}"
-        events = self.load_history(lease_id)
-        if events:
-            last = events[-1]
-            # A legitimate retry with the same idempotency key must remain a
-            # no-op — do not fence it; let ``_record_event`` handle the
-            # idempotent repeat.  Only fence genuine collisions where a
-            # different identity holds an active lease.
-            if last.idempotency_key != resolved_idem:
-                last_type = _last_lifecycle_event_type(events)
-                if last_type != "release" and last_type != "expire" and last_type != "fence":
-                    # An active lease exists — acquiring again is a collision.
-                    raise LeaseStoreError(
-                        f"cannot acquire lease {lease_id!r}: an active lease "
-                        f"already exists (last event {last_type!r})"
-                    )
-        ts = occurred_at or utc_now()
-        pl: dict[str, Any] = dict(payload or {})
-        if expires_at:
-            pl["expires_at"] = _clamp_ttl(ts, expires_at)
-        event = CustodyLeaseEvent(
-            event_id=f"acquire-{lease_id[:32]}",
-            lease_id=lease_id,
-            sequence=sequence,
-            event_type="acquire",
-            occurred_at=ts,
-            custody_epoch=custody_epoch,
-            owner_host=owner_host,
-            owner_pid=owner_pid,
-            owner_boot_id=owner_boot_id,
-            run_authority_grant_id=run_authority_grant_id,
-            coordinator_fence_token=coordinator_fence_token,
-            wbc_attempt_reference=wbc_attempt_reference,
-            occurrence_digest=occurrence_digest,
-            idempotency_key=idempotency_key or f"acquire-{lease_id}",
-            causal_predecessor=causal_predecessor,
-            payload=pl,
-        )
-        return self._record_event(event)
+
+        def _run() -> CustodyLeaseEvent:
+            events = self.load_history(lease_id)
+            if events:
+                last = events[-1]
+                # A legitimate retry with the same idempotency key must remain a
+                # no-op — do not fence it; let the idempotent repeat in
+                # ``_record_event_unlocked`` handle it.  Only fence genuine
+                # collisions where a different identity holds an active lease.
+                if last.idempotency_key != resolved_idem:
+                    last_type = _last_lifecycle_event_type(events)
+                    if last_type != "release" and last_type != "expire" and last_type != "fence":
+                        # An active lease exists — acquiring again is a collision.
+                        raise LeaseStoreError(
+                            f"cannot acquire lease {lease_id!r}: an active lease "
+                            f"already exists (last event {last_type!r})"
+                        )
+                elif last.owner_identity != (owner_host, owner_pid, owner_boot_id):
+                    # Same idempotency key but a DIFFERENT owner holds the
+                    # lease: a genuine collision between distinct acquire
+                    # attempts (e.g. two runtimes racing for the same target),
+                    # NOT a retry of this acquire.  Under the held lock the
+                    # loser re-reads the winner's committed lease and refuses
+                    # cleanly with zero mutation instead of falling through to
+                    # the payload-conflict quarantine.
+                    last_type = _last_lifecycle_event_type(events)
+                    if last_type != "release" and last_type != "expire" and last_type != "fence":
+                        raise LeaseStoreError(
+                            f"cannot acquire lease {lease_id!r}: an active lease "
+                            f"already exists (last event {last_type!r}, held by "
+                            f"a different owner)"
+                        )
+            ts = occurred_at or utc_now()
+            pl: dict[str, Any] = dict(payload or {})
+            if expires_at:
+                pl["expires_at"] = _clamp_ttl(ts, expires_at)
+            event = CustodyLeaseEvent(
+                event_id=f"acquire-{lease_id[:32]}",
+                lease_id=lease_id,
+                sequence=sequence,
+                event_type="acquire",
+                occurred_at=ts,
+                custody_epoch=custody_epoch,
+                owner_host=owner_host,
+                owner_pid=owner_pid,
+                owner_boot_id=owner_boot_id,
+                run_authority_grant_id=run_authority_grant_id,
+                coordinator_fence_token=coordinator_fence_token,
+                wbc_attempt_reference=wbc_attempt_reference,
+                occurrence_digest=occurrence_digest,
+                idempotency_key=idempotency_key or f"acquire-{lease_id}",
+                causal_predecessor=causal_predecessor,
+                payload=pl,
+            )
+            return self._record_event_unlocked(event)
+
+        if self.flock:
+            with self._lease_lock(lease_id):
+                return _run()
+        return _run()
 
     def renew(
         self,
@@ -909,48 +960,60 @@ class CustodyLeaseStore:
         last lifecycle event is ``release``, ``expire``, or ``fence`` may be
         reclaimed, and the new epoch must be strictly greater than the prior
         epoch (old-epoch fencing, Step 11C).
+
+        Atomicity (T-0205): like :meth:`acquire`, the load → terminal/epoch
+        check → append window runs under ONE exclusive lease-scoped flock, so
+        concurrent reclaimers serialize on the same lease instead of racing
+        their check-then-append.
         """
         resolved_idem = idempotency_key or f"reclaim-{lease_id}-{custody_epoch}"
-        events = self.load_history(lease_id)
-        if not events:
-            raise LeaseNotFoundError(f"cannot reclaim non-existent lease {lease_id!r}")
-        last = events[-1]
-        # A retry of the same reclaim must remain idempotent.
-        if last.idempotency_key != resolved_idem:
-            last_type = _last_lifecycle_event_type(events)
-            if last_type != "release" and last_type != "expire" and last_type != "fence":
-                raise LeaseStoreError(
-                    f"cannot reclaim active lease {lease_id!r} (last event {last_type!r})"
-                )
-        prior = replay_events(events)
-        prior_epoch = prior.custody_epoch if prior is not None else 0
-        if last.idempotency_key != resolved_idem:
-            _enforce_monotonic_epoch(prior_epoch, custody_epoch, lease_id, "reclaim")
-        seq = sequence if sequence is not None else self._next_sequence(lease_id)
-        ts = occurred_at or utc_now()
-        pl: dict[str, Any] = dict(payload or {})
-        pl["reclaim"] = True
-        if expires_at:
-            pl["expires_at"] = _clamp_ttl(ts, expires_at)
-        event = CustodyLeaseEvent(
-            event_id=f"reclaim-{lease_id[:32]}-{seq}",
-            lease_id=lease_id,
-            sequence=seq,
-            event_type="acquire",
-            occurred_at=ts,
-            custody_epoch=custody_epoch,
-            owner_host=owner_host,
-            owner_pid=owner_pid,
-            owner_boot_id=owner_boot_id,
-            run_authority_grant_id=run_authority_grant_id,
-            coordinator_fence_token=coordinator_fence_token,
-            wbc_attempt_reference=wbc_attempt_reference,
-            occurrence_digest=occurrence_digest,
-            idempotency_key=idempotency_key or f"reclaim-{lease_id}-{custody_epoch}",
-            causal_predecessor=causal_predecessor,
-            payload=pl,
-        )
-        return self._record_event(event)
+
+        def _run() -> CustodyLeaseEvent:
+            events = self.load_history(lease_id)
+            if not events:
+                raise LeaseNotFoundError(f"cannot reclaim non-existent lease {lease_id!r}")
+            last = events[-1]
+            # A retry of the same reclaim must remain idempotent.
+            if last.idempotency_key != resolved_idem:
+                last_type = _last_lifecycle_event_type(events)
+                if last_type != "release" and last_type != "expire" and last_type != "fence":
+                    raise LeaseStoreError(
+                        f"cannot reclaim active lease {lease_id!r} (last event {last_type!r})"
+                    )
+            prior = replay_events(events)
+            prior_epoch = prior.custody_epoch if prior is not None else 0
+            if last.idempotency_key != resolved_idem:
+                _enforce_monotonic_epoch(prior_epoch, custody_epoch, lease_id, "reclaim")
+            seq = sequence if sequence is not None else self._next_sequence(lease_id)
+            ts = occurred_at or utc_now()
+            pl: dict[str, Any] = dict(payload or {})
+            pl["reclaim"] = True
+            if expires_at:
+                pl["expires_at"] = _clamp_ttl(ts, expires_at)
+            event = CustodyLeaseEvent(
+                event_id=f"reclaim-{lease_id[:32]}-{seq}",
+                lease_id=lease_id,
+                sequence=seq,
+                event_type="acquire",
+                occurred_at=ts,
+                custody_epoch=custody_epoch,
+                owner_host=owner_host,
+                owner_pid=owner_pid,
+                owner_boot_id=owner_boot_id,
+                run_authority_grant_id=run_authority_grant_id,
+                coordinator_fence_token=coordinator_fence_token,
+                wbc_attempt_reference=wbc_attempt_reference,
+                occurrence_digest=occurrence_digest,
+                idempotency_key=idempotency_key or f"reclaim-{lease_id}-{custody_epoch}",
+                causal_predecessor=causal_predecessor,
+                payload=pl,
+            )
+            return self._record_event_unlocked(event)
+
+        if self.flock:
+            with self._lease_lock(lease_id):
+                return _run()
+        return _run()
 
     # -- invariant helpers (Step 11C) ----------------------------------------
 
@@ -1112,8 +1175,23 @@ class CustodyLeaseStore:
 
     # -- internal helpers ----------------------------------------------------
 
-    def _append_flock(self, lease_id: str, event: CustodyLeaseEvent) -> None:
-        """Append under flock serialization."""
+    @contextmanager
+    def _lease_lock(self, lease_id: str) -> Iterator[None]:
+        """Serialize ALL lifecycle mutations for ONE lease across the
+        load → check → append window (not just the append).
+
+        This is the lease-scoped flock (``<lease_id>.lock``).  Every
+        lifecycle write (acquire, reclaim, renew, transfer, release, expire,
+        fence, and the low-level ``record_event``) runs its read-check and
+        its append inside this single exclusive section, so a concurrent
+        contender can never interleave between the two.  The
+        occurrence-scoped lock (:meth:`occurrence_claim_lock`) additionally
+        serializes DISTINCT claims for the SAME occurrence.
+
+        The sidecar ``<lease_id>.lock`` is intentionally never removed —
+        unlinking a lock file while another waiter blocks on the same inode
+        lets a third opener create a fresh inode and split the fence.
+        """
         import fcntl
 
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -1121,15 +1199,12 @@ class CustodyLeaseStore:
         fd = os.open(lock_p, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            _atomic_append(
-                _history_path(self.base_dir, lease_id),
-                event.to_json() + "\n",
-            )
-        finally:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                yield
             finally:
-                os.close(fd)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     @contextmanager
     def occurrence_claim_lock(self, occurrence_key: str) -> Iterator[None]:
@@ -1170,13 +1245,6 @@ class CustodyLeaseStore:
                 fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
-
-    def _append_inproc(self, lease_id: str, event: CustodyLeaseEvent) -> None:
-        """Append without flock (single-process fallback)."""
-        _atomic_append(
-            _history_path(self.base_dir, lease_id),
-            event.to_json() + "\n",
-        )
 
     def _write_cached_state(self, lease_id: str, lease: CustodyLease) -> None:
         """Write the cached state atomically."""
@@ -1232,10 +1300,13 @@ class CustodyLeaseStore:
             },
         )
 
-        if self.flock:
-            self._append_flock(lease_id, conflict_event)
-        else:
-            self._append_inproc(lease_id, conflict_event)
+        # Append the conflict event inline: the caller already holds the
+        # lease-scoped flock (or flock is disabled), so re-entering the lock
+        # through a flocked append helper would self-deadlock.
+        _atomic_append(
+            _history_path(self.base_dir, lease_id),
+            conflict_event.to_json() + "\n",
+        )
 
         # Record both payloads in quarantine
         qpath = _quarantine_path(self.base_dir, lease_id)

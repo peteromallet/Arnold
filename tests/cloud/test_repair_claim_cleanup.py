@@ -8,7 +8,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.cloud import repair_lock, repair_requests
+from arnold_pipelines.megaplan.cloud.simple_fixer import (
+    build_simple_fixer_occurrence,
+    claim_singleton_occurrence,
+    release_singleton_occurrence_claim,
+)
 from tests.cloud.repair_identity_fixtures import repair_identity
 
 
@@ -215,3 +220,166 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
         decoy_queue_root, decoy_blocker_id
     ).exists()
     assert not list(snapshot_dir.glob("arnold-repair-loop.*"))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T-0204 — claim cleanup is namespace-scoped: releasing one namespace's
+# claim must never disturb the other namespace's live claim.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _identity(
+    *,
+    custody_epoch: int,
+    incarnation: str,
+) -> dict[str, object]:
+    return repair_identity(
+        session="demo-session",
+        plan="demo-plan",
+        failure_kind="phase_failed",
+        phase="execute",
+        task="T1",
+        custody_epoch=custody_epoch,
+        run_incarnation_id=f"incarnation-{incarnation}",
+        coordinator_attempt_id=f"attempt-{incarnation}",
+        run_authority_grant_id=f"grant-{incarnation}",
+        lease_id=f"lease-{incarnation}",
+    )
+
+
+def _enqueue(queue_root: Path, *, identity: dict[str, object]) -> tuple[str, str]:
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="cleanup-test",
+        problem_signature={
+            "failure_kind": "phase_failed",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "demo-plan",
+            "blocked_task_id": "T1",
+        },
+        repair_identity=identity,
+    )
+    return (
+        str(queued["request"]["blocker_id"]),
+        str(queued["request"]["request_id"]),
+    )
+
+
+def test_releasing_active_claim_preserves_foreign_occurrence_claim(
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    queue_root.mkdir(parents=True)
+    identity_a = _identity(custody_epoch=1, incarnation="a")
+    blocker_a, request_a = _enqueue(queue_root, identity=identity_a)
+    occurrence_a = build_simple_fixer_occurrence(identity_a)
+    assert occurrence_a is not None and occurrence_a.authoritative
+    first = claim_singleton_occurrence(
+        str(queue_root),
+        occurrence_a,
+        actor="fixer-a",
+        request_id=request_a,
+        session="demo-session",
+        pid=os.getpid(),
+        is_pid_live=lambda _pid: True,
+    )
+    assert first.claimed
+
+    # A DIFFERENT exact occurrence of the same blocker is refused, and the
+    # foreign active claim is never created — nothing for cleanup to touch.
+    identity_b = _identity(custody_epoch=2, incarnation="b")
+    blocker_b, request_b = _enqueue(queue_root, identity=identity_b)
+    assert blocker_b == blocker_a
+    refused = repair_requests.claim_active_repair_request(
+        queue_root,
+        blocker_id=blocker_b,
+        request_id=request_b,
+        actor="dispatcher-b",
+        session="demo-session",
+        repair_identity=identity_b,
+        pid=os.getpid(),
+        is_pid_live=lambda _pid: True,
+    )
+    assert not refused.claimed
+    active_dir = repair_requests.active_repair_claim_lock_dir(
+        queue_root, blocker_b
+    )
+    assert not active_dir.exists()
+
+    # Releasing the refused claim's namespace is a no-op and must not touch
+    # the live occurrence claim.
+    assert not repair_requests.release_active_repair_request_claim(
+        queue_root, blocker_id=blocker_b
+    )
+    occurrence_dir = repair_requests.singleton_occurrence_claim_lock_dir(
+        queue_root, occurrence_a.occurrence_fingerprint
+    )
+    assert occurrence_dir.is_dir()
+    occ_owner = json.loads((occurrence_dir / "owner.json").read_text(encoding="utf-8"))
+    assert occ_owner["request_id"] == request_a
+
+
+def test_releasing_one_namespace_claim_leaves_same_owner_other_namespace_intact(
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    queue_root.mkdir(parents=True)
+    identity = _identity(custody_epoch=1, incarnation="a")
+    blocker_id, request_id = _enqueue(queue_root, identity=identity)
+
+    active_claim = repair_requests.claim_active_repair_request(
+        queue_root,
+        blocker_id=blocker_id,
+        request_id=request_id,
+        actor="dispatcher",
+        session="demo-session",
+        repair_identity=identity,
+        pid=os.getpid(),
+        is_pid_live=lambda _pid: True,
+    )
+    assert active_claim.claimed
+    occurrence = build_simple_fixer_occurrence(identity)
+    assert occurrence is not None and occurrence.authoritative
+    occ_claim = claim_singleton_occurrence(
+        str(queue_root),
+        occurrence,
+        actor="fixer",
+        request_id=request_id,
+        session="demo-session",
+        pid=os.getpid(),
+        is_pid_live=lambda _pid: True,
+    )
+    assert occ_claim.claimed
+
+    active_dir = repair_requests.active_repair_claim_lock_dir(
+        queue_root, blocker_id
+    )
+    occurrence_dir = repair_requests.singleton_occurrence_claim_lock_dir(
+        queue_root, occurrence.occurrence_fingerprint
+    )
+    assert active_dir.is_dir() and occurrence_dir.is_dir()
+
+    # Releasing the ACTIVE claim leaves the same-owner occurrence claim
+    # fully intact (namespace-scoped cleanup).
+    released = repair_requests.release_active_repair_request_claim(
+        queue_root, blocker_id=blocker_id, owner=active_claim.owner
+    )
+    assert released
+    assert not active_dir.exists()
+    assert occurrence_dir.is_dir()
+    occ_owner = json.loads((occurrence_dir / "owner.json").read_text(encoding="utf-8"))
+    assert occ_owner["request_id"] == request_id
+
+    # And releasing the occurrence claim cleans the last namespace.
+    assert release_singleton_occurrence_claim(
+        queue_root, occurrence, owner=occ_claim.owner
+    )
+    assert not occurrence_dir.exists()
+    # The canonical alias remains readable (advisory; liveness is always
+    # re-derived from the live lock directories).
+    alias = repair_lock.claim_alias_record(
+        queue_root, occurrence_fingerprint=occurrence.occurrence_fingerprint
+    )
+    assert alias is not None and alias.blocker_id == blocker_id

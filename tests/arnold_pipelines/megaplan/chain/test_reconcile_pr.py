@@ -11,6 +11,7 @@ closed PR is recorded as a rejection and proceeds to terminal close (never
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -414,7 +415,12 @@ def test_delete_reconcile_pr_branch_proceeds_on_clear_census(
     assert any("deleted reconcile PR branch" in message for message in messages)
 
 
-def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(
+    repo: Path,
+    *args: str,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         ["git", *args],
         cwd=repo,
@@ -422,18 +428,34 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
         text=True,
         check=False,
         timeout=30,
+        env=env,
     )
     if check:
         assert proc.returncode == 0, proc.stderr or proc.stdout
     return proc
 
 
-def _commit(repo: Path, path: str, content: str, message: str) -> str:
+def _commit(
+    repo: Path,
+    path: str,
+    content: str,
+    message: str,
+    *,
+    committer_date: str | None = None,
+) -> str:
     full = repo / path
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
     _git(repo, "add", path)
-    _git(repo, "commit", "-m", message)
+    env = None
+    if committer_date is not None:
+        # Backdate so a cherry-picked twin can never share the commit
+        # metadata (identical tree/parent/message plus a same-second
+        # committer timestamp would otherwise reproduce the SAME sha).
+        env = dict(os.environ)
+        env["GIT_AUTHOR_DATE"] = committer_date
+        env["GIT_COMMITTER_DATE"] = committer_date
+    _git(repo, "commit", "-m", message, env=env)
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
@@ -457,7 +479,13 @@ def test_cherry_pick_reconcile_selection_applies_engine_commits(
 ) -> None:
     _init_repo_with_origin(tmp_path)
     engine_sha = _commit(
-        tmp_path, "arnold_pipelines/engine.py", "def run():\n    pass\n", "feat(engine): add run"
+        tmp_path,
+        "arnold_pipelines/engine.py",
+        "def run():\n    pass\n",
+        "feat(engine): add run",
+        # Backdated so the cherry-picked twin (committer date = now) can
+        # never reproduce the identical commit SHA within the same second.
+        committer_date="2020-01-01T00:00:00Z",
     )
     doc_sha = _commit(tmp_path, "docs/note.md", "note\n", "docs: note")
     _git(tmp_path, "push", "-q", "origin", "main")
@@ -677,6 +705,217 @@ def test_publish_reconcile_selection_no_evidence_fails_closed(
     assert state.pr_number is None
 
 
+def test_publish_reconcile_selection_interrupted_on_pr_create_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Publication interrupted AFTER the reconcile branch push: ``gh pr
+    create`` fails (auth). The controller must fail closed — the push
+    already happened, but no open-PR state may be recorded, the persisted PR
+    identity stays absent, and the reconcile branch is never deleted
+    (interrupted publication is not a terminal merged/rejected outcome)."""
+    _init_repo(tmp_path)
+    spec_path = _write_reconcile_spec(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-reconcile"
+    plan_dir.mkdir(parents=True)
+    _batch_artifact_with_selection(plan_dir)
+    spec = load_spec(spec_path)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-reconcile",
+        last_state="executed",
+        completed=[],
+    )
+    milestone = spec.milestones[0]
+    save_chain_state(spec_path, state)
+    messages: list[str] = []
+    pushed: list[list[str]] = []
+    delete_calls: list[list[str]] = []
+
+    def fake_push(root, cmd, **kwargs):
+        pushed.append(list(cmd))
+
+    def fail_pr_create(*_args, **_kwargs):
+        raise CliError(
+            "gh_reconcile_pr_create_failed",
+            "gh pr create failed",
+            extra={"stderr": "HTTP 401: authentication failed (Bad credentials)"},
+        )
+
+    def fake_delete(root, branch, *, writer):
+        delete_calls.append([str(root), branch])
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._cherry_pick_reconcile_selection",
+            return_value="c" * 40,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._run_git_push_command",
+            side_effect=fake_push,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._ensure_reconcile_pr",
+            side_effect=fail_pr_create,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._delete_reconcile_pr_branch",
+            side_effect=fake_delete,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._record_reconcile_pr_ready_dm_best_effort",
+        ),
+    ):
+        with pytest.raises(CliError) as excinfo:
+            chain_module._publish_reconcile_selection(
+                tmp_path,
+                spec_path,
+                spec,
+                state,
+                milestone,
+                plan_dir=plan_dir,
+                writer=messages.append,
+                log=messages.append,
+            )
+
+    assert excinfo.value.code == "gh_reconcile_pr_create_failed"
+    # The reconcile branch was pushed (publication interrupted mid-flight)...
+    assert pushed == [["git", "push", "origin", "reconcile/test-epic-20260811"]]
+    # ...but nothing is recorded as published and nothing is deleted.
+    assert state.pr_number is None
+    assert state.pr_state is None
+    assert "reconcile_outcome" not in state.metadata
+    assert delete_calls == []
+    saved = chain_module.load_chain_state(spec_path)
+    assert saved.pr_number is None
+    assert saved.pr_state is None
+    assert saved.completed == []
+
+
+def test_publish_reconcile_selection_interrupted_on_push_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Publication interrupted BEFORE the branch push: ``git push`` fails.
+    The reconcile branch was never published, so PR creation must never be
+    attempted and no publication state may be recorded; the failure
+    propagates (fail-closed)."""
+    _init_repo(tmp_path)
+    spec_path = _write_reconcile_spec(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-reconcile"
+    plan_dir.mkdir(parents=True)
+    _batch_artifact_with_selection(plan_dir)
+    spec = load_spec(spec_path)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-reconcile",
+        last_state="executed",
+        completed=[],
+    )
+    milestone = spec.milestones[0]
+    messages: list[str] = []
+    pr_create_calls: list[list[str]] = []
+
+    def fail_push(root, cmd, **kwargs):
+        raise CliError(
+            "git_push_reconcile_branch_failed",
+            "git push origin reconcile/test-epic-20260811 exited 1",
+            extra={"stderr": "fatal: unable to access: Could not resolve host"},
+        )
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._cherry_pick_reconcile_selection",
+            return_value="c" * 40,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._run_git_push_command",
+            side_effect=fail_push,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._ensure_reconcile_pr",
+            side_effect=lambda *_args, **_kwargs: pr_create_calls.append(_args) or 99,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._record_reconcile_pr_ready_dm_best_effort",
+        ),
+    ):
+        with pytest.raises(CliError) as excinfo:
+            chain_module._publish_reconcile_selection(
+                tmp_path,
+                spec_path,
+                spec,
+                state,
+                milestone,
+                plan_dir=plan_dir,
+                writer=messages.append,
+                log=messages.append,
+            )
+
+    assert excinfo.value.code == "git_push_reconcile_branch_failed"
+    assert pr_create_calls == []  # PR creation must never be attempted
+    assert state.pr_number is None
+    assert state.pr_state is None
+
+
+def test_publish_reconcile_selection_rerun_after_interrupt_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    """A re-run after an interrupted publication must be a no-op once the PR
+    identity is persisted: no re-cherry-pick, no re-push, no re-opened PR —
+    the recorded target and persisted branch identity stay untouched."""
+    _init_repo(tmp_path)
+    spec_path = _write_reconcile_spec(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-reconcile"
+    plan_dir.mkdir(parents=True)
+    _batch_artifact_with_selection(plan_dir)
+    spec = load_spec(spec_path)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-reconcile",
+        last_state=STATE_AWAITING_PR_MERGE,
+        pr_number=99,
+        pr_state="open",
+        completed=[],
+    )
+    milestone = spec.milestones[0]
+    messages: list[str] = []
+
+    def must_not(*_args, **_kwargs):
+        raise AssertionError("re-run after interrupt must not re-publish")
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._cherry_pick_reconcile_selection",
+            side_effect=must_not,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._run_git_push_command",
+            side_effect=must_not,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._ensure_reconcile_pr",
+            side_effect=must_not,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._record_reconcile_pr_ready_dm_best_effort",
+            side_effect=must_not,
+        ),
+    ):
+        reason = chain_module._publish_reconcile_selection(
+            tmp_path,
+            spec_path,
+            spec,
+            state,
+            milestone,
+            plan_dir=plan_dir,
+            writer=messages.append,
+            log=messages.append,
+        )
+
+    assert reason is None
+    assert state.pr_number == 99
+    assert state.pr_state == "open"
+
+
 
 def _init_repo(repo: Path) -> None:
     repo.mkdir(exist_ok=True)
@@ -810,13 +1049,134 @@ def test_reconcile_await_merge_rejected_records_and_proceeds_to_close(
 
 
 def test_reconcile_await_merge_open_keeps_parked(tmp_path: Path) -> None:
-    result, spec_path, messages = _run_awaiting_tick(tmp_path, ["open", "open"])
+    delete_calls: list[list[str]] = []
+
+    def fake_delete(root, branch, *, writer):
+        delete_calls.append([str(root), branch])
+
+    result, spec_path, messages = _run_awaiting_tick(
+        tmp_path,
+        ["open", "open"],
+        extra_patches=[
+            patch(
+                "arnold_pipelines.megaplan.chain._delete_reconcile_pr_branch",
+                side_effect=fake_delete,
+            )
+        ],
+    )
 
     saved = chain_module.load_chain_state(spec_path)
     assert result["status"] == STATE_AWAITING_PR_MERGE
     assert saved.pr_number == 77
     assert saved.last_state == STATE_AWAITING_PR_MERGE
     assert saved.completed == []
+    assert delete_calls == []
+    assert any("awaiting human review/merge" in message for message in messages)
+
+
+def test_reconcile_await_merge_auth_failure_blocks_without_delete(
+    tmp_path: Path,
+) -> None:
+    """A gh auth failure while polling an open reconcile PR must fail closed:
+    the persisted PR identity is preserved, the chain never advances to
+    close, and the reconcile branch is never deleted (an auth failure is not
+    a rejection — only merged/rejected are branch-delete eligible)."""
+    delete_calls: list[list[str]] = []
+
+    def fake_delete(root, branch, *, writer):
+        delete_calls.append([str(root), branch])
+
+    auth_error = CliError(
+        "gh_pr_view_failed",
+        "gh pr view 77 failed",
+        extra={"stderr": "HTTP 401: authentication failed (Bad credentials)"},
+    )
+    with pytest.raises(CliError) as excinfo:
+        _run_awaiting_tick(
+            tmp_path,
+            [auth_error, auth_error],
+            extra_patches=[
+                patch(
+                    "arnold_pipelines.megaplan.chain._delete_reconcile_pr_branch",
+                    side_effect=fake_delete,
+                )
+            ],
+        )
+    assert excinfo.value.code == "gh_pr_view_failed"
+    assert "authentication" in (excinfo.value.extra.get("stderr") or "")
+
+    saved = chain_module.load_chain_state(tmp_path / "chain.yaml")
+    assert saved.pr_number == 77
+    assert saved.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.completed == []
+    assert delete_calls == []
+
+
+def test_reconcile_await_merge_indeterminate_state_blocks_without_delete(
+    tmp_path: Path,
+) -> None:
+    """gh returning no usable PR state is an unknown — never a rejection: the
+    chain stays parked at awaiting_pr_merge with the PR identity intact and
+    the reconcile branch untouched."""
+    delete_calls: list[list[str]] = []
+
+    def fake_delete(root, branch, *, writer):
+        delete_calls.append([str(root), branch])
+
+    indeterminate_error = CliError(
+        "gh_pr_view_failed",
+        "gh pr view did not return a string state",
+        extra={"stderr": '{"data": {"repository": {"pullRequest": {"state": null}}}}'},
+    )
+    with pytest.raises(CliError) as excinfo:
+        _run_awaiting_tick(
+            tmp_path,
+            [indeterminate_error, indeterminate_error],
+            extra_patches=[
+                patch(
+                    "arnold_pipelines.megaplan.chain._delete_reconcile_pr_branch",
+                    side_effect=fake_delete,
+                )
+            ],
+        )
+    assert excinfo.value.code == "gh_pr_view_failed"
+
+    saved = chain_module.load_chain_state(tmp_path / "chain.yaml")
+    assert saved.pr_number == 77
+    assert saved.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.completed == []
+    assert delete_calls == []
+
+
+def test_reconcile_await_merge_unrecognized_state_parks_without_delete(
+    tmp_path: Path,
+) -> None:
+    """A PR state the controller does not recognize (``unknown``) keeps the
+    chain parked: it is neither merged (advance) nor an intentional closed
+    rejection (record + close), so no branch deletion may occur."""
+    delete_calls: list[list[str]] = []
+
+    def fake_delete(root, branch, *, writer):
+        delete_calls.append([str(root), branch])
+
+    result, spec_path, messages = _run_awaiting_tick(
+        tmp_path,
+        ["unknown", "unknown"],
+        extra_patches=[
+            patch(
+                "arnold_pipelines.megaplan.chain._delete_reconcile_pr_branch",
+                side_effect=fake_delete,
+            )
+        ],
+    )
+
+    saved = chain_module.load_chain_state(spec_path)
+    assert result["status"] == STATE_AWAITING_PR_MERGE
+    assert saved.pr_number == 77
+    assert saved.pr_state == "unknown"
+    assert saved.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.completed == []
+    assert delete_calls == []
     assert any("awaiting human review/merge" in message for message in messages)
 
 

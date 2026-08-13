@@ -183,6 +183,11 @@ ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-g
 DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
+# T-0207: freshness window for cursor-validated status observations.  The
+# watchdog writes cloud-status.json once per sweep (default 3600s), so an
+# observation older than one sweep is stale and can never authorize repair or
+# completion (diagnostic-only).
+STATUS_OBSERVATION_MAX_AGE_S="${CLOUD_WATCHDOG_STATUS_OBSERVATION_MAX_AGE_S:-3600}"
 FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
 FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
 # The runtime source resolves from the per-epic manifest (epic.runtime_root)
@@ -5792,11 +5797,15 @@ repair_save_verdict_evidence() {
   # data file is missing or unreadable, skip quietly.
   local verdict_path="${DATA_FILE%.repair-data.json}.repair-verdict.json"
   local repair_goal_status_override="${1:-}"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$verdict_path" "$SESSION" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "$repair_goal_status_override" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$verdict_path" "$SESSION" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "$repair_goal_status_override" "$SNAPSHOT_PATH" "$MARKER_DIR" "$DATA_DIR" "$STATUS_OBSERVATION_MAX_AGE_S" <<'PY'
 import pathlib
 import sys
 
-data_path_raw, verdict_path_raw, session, blocker_id, request_id, repair_goal_status_override = sys.argv[1:]
+data_path_raw, verdict_path_raw, session, blocker_id, request_id, repair_goal_status_override = sys.argv[1:7]
+snapshot_path_raw = sys.argv[7] if len(sys.argv) > 7 else ""
+marker_dir_raw = sys.argv[8] if len(sys.argv) > 8 else ""
+data_dir_raw = sys.argv[9] if len(sys.argv) > 9 else ""
+max_age_raw = sys.argv[10] if len(sys.argv) > 10 else ""
 data_path = pathlib.Path(data_path_raw)
 verdict_path = pathlib.Path(verdict_path_raw)
 
@@ -5826,55 +5835,68 @@ verdict = build_ordinary_repair_verdict(
 )
 save_repair_verdict(verdict_path, verdict)
 
-# --- repair success without custody check ---
-# When the repair verdict indicates success (cleared), verify that custody
-# evidence exists for this session.  If custody is missing or shows an
-# unmanaged/blocked state, the repair success cannot be fully trusted and
-# should be flagged.
+# --- repair success custody check (T-0207: cursor-validated observation) ---
+# When the repair verdict indicates success (cleared), verify custody through
+# a FRESH cursor-validated status observation tied to
+# session/environment/revision/cursor (resolve_status_observation).  A stale,
+# unreadable, missing, mixed (torn/tampered), or unvalidated snapshot is
+# DIAGNOSTIC ONLY: it can never authorize the custody-gap sidecar write
+# (zero effect calls).  Only a fresh observation may flag a missing or
+# unmanaged custody state.
 if verdict.verdict_kind == "cleared":
     import json as _json
-    _snapshot_path = pathlib.Path("/workspace/.megaplan/status/cloud-status.json")
+    _custody_kind = ""
+    _effect_eligible = False
     try:
-        _snapshot = _json.loads(_snapshot_path.read_text(encoding="utf-8"))
+        from arnold_pipelines.megaplan.cloud.current_target import (
+            resolve_status_observation,
+        )
+        try:
+            _max_age = float(max_age_raw) if max_age_raw else None
+        except (TypeError, ValueError):
+            _max_age = None
+        _envelope = resolve_status_observation(
+            session,
+            marker_dir=marker_dir_raw,
+            repair_data_dir=data_dir_raw,
+            snapshot_path=snapshot_path_raw or None,
+            max_age_s=_max_age,
+        )
     except Exception:
-        _snapshot = None
-    if isinstance(_snapshot, dict):
-        _sessions = _snapshot.get("sessions")
-        if isinstance(_sessions, list):
-            _custody_kind = ""
-            for _entry in _sessions:
-                if isinstance(_entry, dict) and _entry.get("session") == session:
-                    _cc = _entry.get("cloud_custody")
-                    if isinstance(_cc, dict):
-                        _custody_kind = _cc.get("custody_kind", "")
-                    break
-            # Managed-running or complete custody backs the repair success.
-            # Any other custody state (unmanaged-warning, blocked-relaunch,
-            # escalated-unchanged, or missing) indicates the repair success
-            # should not be fully trusted without custody evidence.
-            if _custody_kind not in ("managed-running", "complete", ""):
-                # Write a custody-gap sidecar so S4 consumers can find it.
-                _gap_path = pathlib.Path(
-                    "/workspace/.megaplan/cloud-sessions/repair-data"
-                ) / f"{session}.repair-custody-gap.json"
-                try:
-                    _gap_path.parent.mkdir(parents=True, exist_ok=True)
-                    _gap_payload = {
-                        "session": session,
-                        "verdict_kind": verdict.verdict_kind,
-                        "custody_kind": _custody_kind,
-                        "evidence_timestamp": verdict.evidence_timestamp,
-                        "message": (
-                            f"repair verdict cleared but custody is {_custody_kind or 'missing'}; "
-                            f"repair success not backed by managed custody evidence"
-                        ),
-                    }
-                    _gap_path.write_text(
-                        _json.dumps(_gap_payload, indent=2, sort_keys=True) + "\n",
-                        encoding="utf-8",
-                    )
-                except Exception:
-                    pass
+        _envelope = None
+    if isinstance(_envelope, dict) and _envelope.get("effect_eligible") is True:
+        _effect_eligible = True
+        _canonical = _envelope.get("canonical")
+        if isinstance(_canonical, dict):
+            _cc = _canonical.get("cloud_custody")
+            if isinstance(_cc, dict):
+                _custody_kind = str(_cc.get("custody_kind") or "")
+        # Managed-running or complete custody backs the repair success.
+        # Any other custody state (unmanaged-warning, blocked-relaunch,
+        # escalated-unchanged, or missing) indicates the repair success
+        # should not be fully trusted without custody evidence.
+        if _custody_kind not in ("managed-running", "complete", ""):
+            # Write a custody-gap sidecar so S4 consumers can find it.
+            _gap_root = pathlib.Path(data_dir_raw) if data_dir_raw else pathlib.Path("/workspace/.megaplan/cloud-sessions/repair-data")
+            _gap_path = _gap_root / f"{session}.repair-custody-gap.json"
+            try:
+                _gap_path.parent.mkdir(parents=True, exist_ok=True)
+                _gap_payload = {
+                    "session": session,
+                    "verdict_kind": verdict.verdict_kind,
+                    "custody_kind": _custody_kind,
+                    "evidence_timestamp": verdict.evidence_timestamp,
+                    "message": (
+                        f"repair verdict cleared but custody is {_custody_kind or 'missing'}; "
+                        f"repair success not backed by managed custody evidence"
+                    ),
+                }
+                _gap_path.write_text(
+                    _json.dumps(_gap_payload, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
 PY
 }
 
@@ -7854,42 +7876,66 @@ PY
 }
 
 render_canonical_block() {
-  # Read the status snapshot and extract canonical resolver fields for this
-  # session. Returns empty when observe mode is off or no canonical data exists.
-  python3 - "$SNAPSHOT_PATH" "$SESSION" "$ARNOLD_SRC" <<'PY'
-import json
+  # Read the status snapshot through a FRESH cursor-validated observation
+  # envelope (T-0207) and extract canonical resolver fields for this session.
+  # Returns empty when observe mode is off or no canonical data exists.  A
+  # stale, unreadable, missing, mixed (torn/tampered), or unvalidated
+  # snapshot is DIAGNOSTIC ONLY: the block renders a diagnostic notice and
+  # never claims resolver authority (zero effect calls).
+  python3 - "$SNAPSHOT_PATH" "$SESSION" "$MARKER_DIR" "$DATA_DIR" "$STATUS_OBSERVATION_MAX_AGE_S" "$ARNOLD_SRC" <<'PY'
 import os
-import pathlib
 import sys
 
-snapshot_path = pathlib.Path(sys.argv[1])
-session = sys.argv[2]
+snapshot_path_raw = sys.argv[1] if len(sys.argv) > 1 else ""
+session = sys.argv[2] if len(sys.argv) > 2 else ""
+marker_dir_raw = sys.argv[3] if len(sys.argv) > 3 else ""
+data_dir_raw = sys.argv[4] if len(sys.argv) > 4 else ""
+max_age_raw = sys.argv[5] if len(sys.argv) > 5 else ""
 
 observe = os.environ.get("ARNOLD_RESOLVER_OBSERVE", "1").strip().lower()
 if observe in ("0", "false", "no", "off"):
     sys.exit(0)
 
-if not snapshot_path.exists():
+try:
+    from arnold_pipelines.megaplan.cloud.current_target import (
+        resolve_status_observation,
+    )
+except Exception:
     sys.exit(0)
 
 try:
-    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError):
+    _max_age = float(max_age_raw) if max_age_raw else None
+except (TypeError, ValueError):
+    _max_age = None
+
+try:
+    envelope = resolve_status_observation(
+        session,
+        marker_dir=marker_dir_raw,
+        repair_data_dir=data_dir_raw,
+        snapshot_path=snapshot_path_raw or None,
+        max_age_s=_max_age,
+    )
+except Exception:
     sys.exit(0)
 
-sessions = snapshot.get("sessions") if isinstance(snapshot.get("sessions"), list) else []
-entry = None
-for item in sessions:
-    if isinstance(item, dict) and item.get("session") == session:
-        entry = item
-        break
-
-if entry is None:
+if not isinstance(envelope, dict):
+    sys.exit(0)
+observation = str(envelope.get("observation") or "").strip()
+reason = str(envelope.get("reason") or "").strip()
+if envelope.get("effect_eligible") is not True:
+    print("## CANONICAL STATE (DIAGNOSTIC ONLY)")
+    print(f"- observation: {observation or 'unavailable'}")
+    if reason:
+        print(f"- reason: {reason}")
+    print("- The status snapshot is not fresh/cursor-validated; it cannot authorize repair or completion.")
     sys.exit(0)
 
-canonical_state = entry.get("canonical_state")
-canonical_reason = entry.get("canonical_reason")
-canonical_resolver = entry.get("canonical_resolver") if isinstance(entry.get("canonical_resolver"), dict) else {}
+canonical = envelope.get("canonical") if isinstance(envelope.get("canonical"), dict) else {}
+canonical_state = canonical.get("canonical_state")
+canonical_reason = canonical.get("canonical_reason")
+canonical_resolver = canonical.get("canonical_resolver") if isinstance(canonical.get("canonical_resolver"), dict) else {}
+session_entry = envelope.get("session_entry") if isinstance(envelope.get("session_entry"), dict) else {}
 
 if not canonical_state and not canonical_resolver:
     sys.exit(0)
@@ -7911,8 +7957,8 @@ for item in canonical_resolver.get("evidence") or []:
         break
 running = canonical_resolver.get("running", False)
 repairable = canonical_resolver.get("repairable", False)
-human_required = entry.get("canonical_human_required") or canonical_resolver.get("human_required", False)
-human_gate = entry.get("canonical_human_gate") or canonical_resolver.get("human_gate")
+human_required = canonical.get("canonical_human_required") or canonical_resolver.get("human_required", False)
+human_gate = canonical.get("canonical_human_gate") or canonical_resolver.get("human_gate")
 
 print("## CANONICAL STATE (observe-only resolver)")
 print(f"- canonical_state: {canonical_state}")
@@ -7936,7 +7982,7 @@ if human_required:
     gate_label = f" (gate: {human_gate})" if human_gate else ""
     print(f"- human_required: true{gate_label} - resolver believes human intervention is required")
 
-plan_state = entry.get("plan_state") if isinstance(entry.get("plan_state"), dict) else {}
+plan_state = session_entry.get("plan_state") if isinstance(session_entry.get("plan_state"), dict) else {}
 active_step = bool(plan_state.get("active_step"))
 deferred_tasks = plan_state.get("deferred") if isinstance(plan_state.get("deferred"), list) else []
 pending_tasks = plan_state.get("pending") if isinstance(plan_state.get("pending"), list) else []

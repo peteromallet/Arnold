@@ -21,8 +21,16 @@
 #                             any schedule store (probe-4 trees are
 #                             load-bearing for scheduled work and must never
 #                             be swept; see ARNOLD_SCHEDULE_STORE below)
-#     (c) restore-proven    — --restore-proven flag OR a restore-proven.txt
-#                             marker file in the manifest dir
+#     (c) restore-proven    — a CONTENT-ADDDRESSED restore receipt
+#                             (<manifest-dir>/restore-receipts/<slug>.json)
+#                             that binds the manifest's content-addressed
+#                             identities (runtime_id, dependency_generation.id)
+#                             to the live closed HEAD and self-verifies its
+#                             content_sha256.  A CLI flag (--restore-proven)
+#                             or restore-proven.txt marker is NOT evidence —
+#                             either alone is a SKIP (T-0027 discipline:
+#                             the restore must have a content-addressed
+#                             receipt, never a flag)
 #   and only then runs `git worktree remove --force` + archives the manifest to
 #   <manifest-dir>/archived/.
 #
@@ -119,6 +127,12 @@ BASE_REPO="${ARNOLD_BASE_REPO:-$BASE_DIR/arnold}"
 REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
 ARCHIVE_DIR="$MANIFEST_DIR/archived"
 mkdir -p "$ARCHIVE_DIR"
+# T-0301: the shared content-addressed dependency-generation store.  The
+# sweep feeds it to the reference census (--generation-root) so a corrupt
+# generation blocks deletion (UNKNOWN) and a referenced generation is never
+# rm -rf'd; the generation itself is deleted only when the census proves
+# zero references to it.
+GEN_ROOT="${ARNOLD_RUNTIME_VENVS_DIR:-$BASE_DIR/runtime-venvs}"
 
 # Schedule store reconciliation (design rule 6 / Phase 5): probe-4 trees are
 # referenced by the schedule store and must NEVER be swept. Default stores are
@@ -153,10 +167,11 @@ _manifest_fields() {
   # invalid, missing required fields while still carrying state/
   # epic.runtime_root/epic.branch), and unreadable files all raise
   # ManifestError and exit 1 here, so such a manifest is NEEDS-RECONCILE and
-  # can never reach the deletion gates.  Prints the five sweep fields
-  # (epic_id, state, epic.runtime_root, epic.branch, epic.venv_path)
-  # tab-separated on stdout; a schema-valid manifest is guaranteed to carry
-  # every one of them.
+  # can never reach the deletion gates.  Prints the eight sweep fields
+  # (epic_id, state, epic.runtime_root, epic.branch, epic.venv_path,
+  # dependency-generation-proof-complete, runtime_id,
+  # dependency_generation.id) tab-separated on stdout; a schema-valid
+  # manifest is guaranteed to carry every one of them.
   python3 - "$1" <<'PY'
 import sys
 from pathlib import Path
@@ -164,6 +179,7 @@ from pathlib import Path
 try:
     from arnold_pipelines.megaplan.cloud.runtime_manifest import (
         ManifestError,
+        dependency_generation_proof,
         load_manifest,
     )
 except Exception as exc:  # noqa: BLE001 - the canonical validator is unavailable
@@ -181,6 +197,11 @@ except ManifestError as exc:
     )
     sys.exit(1)
 epic = manifest.epic
+# T-0301 GC gate: a manifest whose dependency-generation proof is missing or
+# incomplete cannot attest its dependency state — the sweep must not delete
+# the runtime (or its shared generation) under unknown dependency state.
+depgen = "1" if dependency_generation_proof(manifest) is not None else "0"
+depgen_id = str((epic.get("dependency_generation") or {}).get("id") or "")
 print(
     "\t".join(
         (
@@ -189,6 +210,9 @@ print(
             epic["runtime_root"],
             epic["branch"],
             epic["venv_path"],
+            depgen,
+            manifest.runtime_id,
+            depgen_id,
         )
     )
 )
@@ -235,13 +259,135 @@ _reference_census() {
     --workspace "$BASE_DIR" \
     --manifest-store "$MANIFEST_DIR" \
     --current-manifest "$2" \
-    --schedule-store "$CENSUS_SCHEDULE_STORES" 2>&1)" || rc=$?
+    --schedule-store "$CENSUS_SCHEDULE_STORES" \
+    --generation-root "$GEN_ROOT" 2>&1)" || rc=$?
   CENSUS_REPORT="$out"
   CENSUS_VERDICT="$(printf '%s\n' "$out" | awk '/^STATUS /{print $2; exit}')"
   if [[ -z "$CENSUS_VERDICT" ]]; then
     CENSUS_VERDICT="UNKNOWN"
     CENSUS_REPORT="reference census unavailable (rc=$rc): $out"
   fi
+}
+
+_restore_receipt_python() {
+  # Validate a restore receipt ($1 = receipt path, $2 = slug, $3 = canonical
+  # manifest path, $4 = live worktree HEAD, $5 = runtime root).  Prints a
+  # single line: "OK" or "FAIL <reason>".
+  python3 - "$@" <<'PY'
+import hashlib
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+receipt_path, slug, mf_path, live_head, runtime_root = sys.argv[1:6]
+
+
+def fail(reason: str) -> None:
+    print("FAIL " + reason)
+
+
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
+
+    manifest = load_manifest(Path(mf_path))
+except Exception as exc:  # noqa: BLE001 - fail closed on unreadable manifest
+    fail("manifest unreadable: %s" % exc)
+    sys.exit(1)
+try:
+    raw = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+except Exception as exc:  # noqa: BLE001 - unreadable/torn JSON is not evidence
+    fail("receipt is not valid JSON: %s" % exc)
+    sys.exit(1)
+if not isinstance(raw, dict):
+    fail("receipt is not an object")
+    sys.exit(1)
+if raw.get("schema") != "restore-receipt/v1":
+    fail("receipt schema is not restore-receipt/v1")
+    sys.exit(1)
+if str(raw.get("epic_id") or "") != slug:
+    fail("receipt epic_id %r does not match slug %r" % (raw.get("epic_id"), slug))
+    sys.exit(1)
+digest = str(raw.get("content_sha256") or "")
+if not digest or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+    fail("receipt content_sha256 is not a 64-char hex SHA-256")
+    sys.exit(1)
+body = {key: value for key, value in raw.items() if key != "content_sha256"}
+if (
+    hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    != digest
+):
+    fail("receipt content_sha256 does not self-verify (torn or forged receipt)")
+    sys.exit(1)
+if str(raw.get("runtime_id") or "") != str(manifest.runtime_id or ""):
+    fail("receipt runtime_id does not match the manifest's runtime_id")
+    sys.exit(1)
+depgen_id = str((manifest.epic.get("dependency_generation") or {}).get("id") or "")
+if str(raw.get("dependency_generation_id") or "") != depgen_id:
+    fail("receipt dependency_generation_id does not match the manifest's dependency_generation.id")
+    sys.exit(1)
+receipt_root = str(raw.get("runtime_root") or "")
+try:
+    if str(Path(receipt_root).expanduser().resolve(strict=False)) != str(
+        Path(runtime_root).expanduser().resolve(strict=False)
+    ):
+        fail("receipt runtime_root does not match the manifest's runtime_root")
+        sys.exit(1)
+except Exception as exc:  # noqa: BLE001 - unresolvable root is not evidence
+    fail("receipt runtime_root unresolvable: %s" % exc)
+    sys.exit(1)
+if str(raw.get("closed_head") or "") != str(live_head or ""):
+    fail("receipt closed_head does not match the live worktree HEAD")
+    sys.exit(1)
+if not isinstance(raw.get("restore_drill"), str) or not raw["restore_drill"].strip():
+    fail("receipt restore_drill is missing")
+    sys.exit(1)
+try:
+    datetime.fromisoformat(str(raw.get("restored_at") or ""))
+except Exception:  # noqa: BLE001 - non-ISO timestamp is not evidence
+    fail("receipt restored_at is not an ISO timestamp")
+    sys.exit(1)
+print("OK")
+PY
+}
+
+_restore_receipt_check() {
+  # $1 = slug; $2 = canonical manifest path; $3 = live worktree HEAD.
+  # Content-addressed restore-evidence gate (T-0027 discipline): deletion
+  # requires a valid per-slug receipt at
+  # <manifest-dir>/restore-receipts/<slug>.json.  A CLI flag
+  # (--restore-proven) or a restore-proven.txt marker is NOT evidence —
+  # either alone is a SKIP.  The receipt validates only when:
+  #   - schema == "restore-receipt/v1", epic_id == slug
+  #   - content_sha256 self-verifies over the canonical JSON body
+  #   - runtime_id and dependency_generation_id match the manifest's
+  #     canonical read (the receipt binds the manifest's content-addressed
+  #     identities)
+  #   - runtime_root resolves to the manifest's runtime_root and
+  #     closed_head equals the live worktree HEAD (the receipt is bound to
+  #     THIS runtime's current closed content)
+  #   - restored_at is ISO and restore_drill is non-empty
+  # Any failure -> the receipt is not restore evidence: SKIP (never delete).
+  # Sets RESTORE_RECEIPT_REASON; returns 0 only on a fully valid receipt.
+  local slug="$1" mf="$2" live_head="$3"
+  local receipt="$MANIFEST_DIR/restore-receipts/$slug.json"
+  if [[ ! -f "$receipt" ]]; then
+    RESTORE_RECEIPT_REASON="no content-addressed restore receipt at '$receipt' (a CLI flag or restore-proven.txt is NOT restore evidence)"
+    return 1
+  fi
+  local verdict
+  verdict="$(_restore_receipt_python "$receipt" "$slug" "$mf" "$live_head" "$ROOT" 2>&1 || true)"
+  if [[ "$verdict" == "OK" ]]; then
+    RESTORE_RECEIPT_REASON=""
+    return 0
+  fi
+  RESTORE_RECEIPT_REASON="${verdict#FAIL }"
+  if [[ -z "$RESTORE_RECEIPT_REASON" ]]; then
+    RESTORE_RECEIPT_REASON="restore receipt validation failed (unreadable validator?)"
+  fi
+  return 1
 }
 
 for mf in "$MANIFEST_DIR"/*.json; do
@@ -283,10 +429,18 @@ for mf in "$MANIFEST_DIR"/*.json; do
     echo "gc-sweep: NEEDS-RECONCILE manifest '$mf' — present but unreadable, corrupt, or schema-invalid (a dangling symlink fails the canonical read the same way); never deleted automatically"
     continue
   fi
-  IFS=$'\t' read -r SLUG STATE ROOT BRANCH VENV <<<"$FIELDS"
+  IFS=$'\t' read -r SLUG STATE ROOT BRANCH VENV DEPGEN RUNTIME_ID DEPGEN_ID <<<"$FIELDS"
 
   if [[ "$STATE" != "active" && "$STATE" != "closed" ]]; then
     echo "gc-sweep: NEEDS-RECONCILE manifest '$mf' (state='${STATE:-<missing>}') — neither live nor closed; never deleted automatically"
+    continue
+  fi
+  # T-0301 GC gate: a manifest whose dependency-generation proof is missing
+  # or incomplete cannot attest its dependency state.  Unknown dependency
+  # state blocks GC: the runtime (and its shared generation) is never
+  # deleted while the proof is unverifiable (fail-closed, G10).
+  if [[ "$DEPGEN" != "1" ]]; then
+    echo "gc-sweep: NEEDS-RECONCILE manifest '$mf' — dependency generation proof missing or incomplete; GC cannot attest the runtime's dependency state (T-0301); never deleted automatically"
     continue
   fi
   if [[ -z "$ROOT" || ! -d "$ROOT" ]]; then
@@ -323,10 +477,18 @@ for mf in "$MANIFEST_DIR"/*.json; do
     SCHEDULE_REFERENCED=1
   fi
 
-  # (c) restore-proven: deletion is gated on the restore proof, NOT on
-  #     origin==local (design rule 6 / Phase 5).
+  # (c) restore-proven: deletion is gated on a CONTENT-ADDRESSED restore
+  #     receipt, NOT on a CLI flag (T-0027 discipline: --restore-proven is
+  #     never evidence — the restore must have a verifiable receipt) and NOT
+  #     on origin==local (design rule 6 / Phase 5).  The per-slug receipt at
+  #     <manifest-dir>/restore-receipts/<slug>.json must exist and validate
+  #     (schema, epic_id, runtime_id + dependency_generation.id bound to the
+  #     manifest's canonical read, runtime_root/closed_head bound to the live
+  #     tree, content_sha256 self-verifies).  A CLI flag alone or a
+  #     restore-proven.txt marker alone is a SKIP — never a deletion.
   RESTORE_OK=0
-  if [[ "$RESTORE_PROVEN" == "1" || -f "$MANIFEST_DIR/restore-proven.txt" ]]; then
+  RESTORE_RECEIPT_REASON=""
+  if _restore_receipt_check "$SLUG" "$mf" "$LOCAL_HEAD"; then
     RESTORE_OK=1
   fi
 
@@ -392,7 +554,7 @@ for mf in "$MANIFEST_DIR"/*.json; do
       fi
       echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable, restore-proven, schedule-store-clear); manifest would archive to '$ARCHIVE_DIR'$note"
     else
-      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable; restore-proven STILL REQUIRED before actual deletion — pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR')"
+      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable; content-addressed restore receipt STILL REQUIRED before actual deletion: $RESTORE_RECEIPT_REASON)"
     fi
     continue
   fi
@@ -401,7 +563,7 @@ for mf in "$MANIFEST_DIR"/*.json; do
     exit 3
   fi
   if [[ "$RESTORE_OK" != "1" ]]; then
-    echo "gc-sweep: SKIP '$SLUG' — not restore-proven: pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR' (a clean-room restore of the tree's runtime must be proven before deletion)"
+    echo "gc-sweep: SKIP '$SLUG' — not restore-proven: $RESTORE_RECEIPT_REASON (a content-addressed restore receipt must validate before deletion)"
     continue
   fi
   if [[ "$SCHEDULE_REFERENCED" == "1" ]]; then

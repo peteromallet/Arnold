@@ -21,6 +21,7 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     audit_autofix_commit_enabled,
     audit_autofix_commit_on,
     audit_autofix_enabled,
+    audit_autofix_mutation_authorized,
     audit_autofix_on,
     autonomy_enabled,
     autonomy_on,
@@ -731,3 +732,84 @@ class TestT0014AdapterEffectAuthorization:
         assert adapter_effect_authorized(GateResult.AUTHORIZED) is True
         assert adapter_effect_authorized(GateResult.SHADOW_PASS) is False
         assert adapter_effect_authorized(None) is False
+
+
+# ---------------------------------------------------------------------------
+# T-0208 ghost controls: report filters are never authority; the audit
+# commit flag is a live effect-boundary gate
+# ---------------------------------------------------------------------------
+
+
+class TestT0208ReportFiltersNeverAuthorize:
+    """MEGAPLAN_AUDIT_SESSION_ALLOWLIST / MEGAPLAN_AUDIT_PLAN_ALLOWLIST are
+    REPORT-ONLY row filters.  Setting them must never authorize (or block)
+    mutation, dispatch, commit, or push — the authorization surface is
+    autonomy + path gates only."""
+
+    def test_allowlists_never_authorize_mutation_without_autonomy(self) -> None:
+        with _set_env(
+            MEGAPLAN_AUDIT_SESSION_ALLOWLIST="any-session",
+            MEGAPLAN_AUDIT_PLAN_ALLOWLIST="any-plan",
+        ):
+            for path in (MUTATION_PATH_L1, MUTATION_PATH_L2, MUTATION_PATH_L3):
+                assert mutation_authorized(path) is False
+
+    def test_allowlists_never_authorize_when_path_gate_closed(self) -> None:
+        with _set_env(
+            ARNOLD_AUTONOMY="1",
+            ARNOLD_AUDIT_AUTOFIX_ENABLED="0",
+            MEGAPLAN_AUDIT_SESSION_ALLOWLIST="any-session",
+            MEGAPLAN_AUDIT_PLAN_ALLOWLIST="any-plan",
+        ):
+            assert mutation_authorized(MUTATION_PATH_L3) is False
+
+    def test_allowlists_are_not_consulted_by_the_mutation_gate(self) -> None:
+        # Even when autonomy + path are granted, the allowlists neither add
+        # nor remove authority: they are report filters, so the mutation gate
+        # result is identical with or without them.
+        with _set_env(
+            ARNOLD_AUTONOMY="1",
+            ARNOLD_AUDIT_AUTOFIX_ENABLED="1",
+            MEGAPLAN_AUDIT_SESSION_ALLOWLIST="any-session",
+            MEGAPLAN_AUDIT_PLAN_ALLOWLIST="any-plan",
+        ):
+            with_allowlists = mutation_authorized(MUTATION_PATH_L3)
+        with _set_env(ARNOLD_AUTONOMY="1", ARNOLD_AUDIT_AUTOFIX_ENABLED="1"):
+            without_allowlists = mutation_authorized(MUTATION_PATH_L3)
+        assert with_allowlists is True
+        assert with_allowlists == without_allowlists
+
+    def test_mutation_and_push_remain_separately_default_off(self) -> None:
+        # Report filters cannot flip the default-off mutation/push posture.
+        with _set_env(
+            MEGAPLAN_AUDIT_SESSION_ALLOWLIST="any-session",
+            MEGAPLAN_AUDIT_PLAN_ALLOWLIST="any-plan",
+        ):
+            assert autonomy_enabled() is False
+            assert meta_repair_push_enabled() is False
+
+
+class TestT0208AuditCommitFlagIsEffectBoundaryGate:
+    """ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED is a live control enforced at the
+    auditor's commit-capable effect boundary (T-0208).  It gates commit-
+    capable dispatch, NOT the read-only L3 reviewer dispatch, which stays on
+    the master-plus-path mutation gate alone."""
+
+    def test_commit_flag_off_blocks_commit_authority_but_not_reviewer_gate(self) -> None:
+        # autonomy + L3 path granted, commit gate closed: the read-only
+        # reviewer dispatch is still authorized (it cannot commit), while the
+        # commit-capable effect authority is denied.
+        with _set_env(
+            ARNOLD_AUTONOMY="1",
+            ARNOLD_AUDIT_AUTOFIX_ENABLED="1",
+            ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="0",
+        ):
+            assert audit_autofix_mutation_authorized() is True
+            assert audit_autofix_commit_enabled() is False
+            assert audit_autofix_commit_on() is False
+
+    def test_commit_flag_never_adds_authority_by_itself(self) -> None:
+        # The commit flag is a gate, never an authority source: without
+        # autonomy the L3 mutation gate stays closed no matter the commit flag.
+        with _set_env(ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="1"):
+            assert audit_autofix_mutation_authorized() is False

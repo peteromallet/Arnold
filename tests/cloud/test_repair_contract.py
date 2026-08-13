@@ -2491,3 +2491,29 @@ def test_admit_repair_effect_class_all_known_rejected() -> None:
     for ec in ("write", "mutate", "delete", "publish", "deliver", "compensate", "revert"):
         admitted, _ = repair_contract.admit_repair_effect_class(ec)
         assert not admitted, f"Effect class {ec!r} should be rejected in M10"
+
+
+def test_request_status_pending_decision_is_registered_contract_status() -> None:
+    """Request-without-decision is a typed pending/blocked status."""
+    assert repair_contract.REQUEST_STATUS_PENDING_DECISION == "pending_decision"
+    assert repair_contract.REQUEST_STATUS_PENDING_DECISION in (
+        repair_contract.REPAIR_REQUEST_STATUSES
+    )
+    # Absent decision is never part of the dispatchable active set.
+    assert repair_contract.REQUEST_STATUS_PENDING_DECISION not in {
+        repair_contract.REQUEST_STATUS_ACCEPTED,
+        repair_contract.REQUEST_STATUS_DISPATCHED,
+    }
+
+
+def test_dispatch_decision_kind_pending_decision_is_registered() -> None:
+    """The classifier emits a typed pending_decision kind that never dispatches."""
+    assert repair_contract.DISPATCH_DECISION_PENDING_DECISION == "pending_decision"
+    assert repair_contract.DISPATCH_DECISION_PENDING_DECISION in (
+        repair_contract.REPAIR_DISPATCH_DECISION_KINDS
+    )
+    # No watchdog/trigger consumer treats pending_decision as actionable.
+    assert repair_contract.DISPATCH_DECISION_PENDING_DECISION not in {
+        "dispatch_l1_repair",
+        "broken_superfixer",
+    }

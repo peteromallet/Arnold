@@ -122,12 +122,34 @@ _EPIC_REQUIRED = (
     "deps_lockfile",
 )
 
+# Required keys of the content-addressed dependency-generation proof bound
+# into ``epic.dependency_generation`` (T-0301).  The generation is ONE
+# immutable venv per frozen dependency spec (the ``pyproject.toml`` +
+# ``uv.lock`` pair named by ``epic.deps_lockfile``'s sibling files), shared
+# by every runtime that resolves to the same spec.  ``id`` IS the content
+# address — the sha256 of the frozen spec — and equals ``frozen_spec_sha256``
+# by construction (recorded separately so a reader can verify the binding
+# without recomputing the address).  ``interpreter_path`` names the
+# generation venv's python (``<venv>/bin/python``), ``venv_digest`` is the
+# sha256 of the BUILT venv (the deterministic pip-list freeze of the
+# installed set — it changes when the venv content changes), and ``created``
+# is the UTC ISO timestamp of the build.  A missing or incomplete proof
+# blocks publication (advance/cutover), launch, and GC — fail-closed.
+DEPENDENCY_GENERATION_REQUIRED = (
+    "id",
+    "frozen_spec_sha256",
+    "interpreter_path",
+    "venv_digest",
+    "created",
+)
+
 # Public aliases for the canonical required-key sets.  cloud.cli generates
 # the stdlib-only, fail-closed shell read of the pinned runtime manifest
 # from these (G6 round-2 finding 2), so the shell gate can never drift from
 # the canonical schema definition.
 TOP_LEVEL_REQUIRED = _TOP_LEVEL_REQUIRED
 EPIC_REQUIRED = _EPIC_REQUIRED
+DEPENDENCY_GENERATION_KEYS = DEPENDENCY_GENERATION_REQUIRED
 _INDIRECTION_REQUIRED = (
     "host_path",
     "container_path",
@@ -152,6 +174,84 @@ def _require_keys(label: str, mapping: Any, required: tuple[str, ...]) -> None:
     missing = [key for key in required if key not in mapping]
     if missing:
         raise ManifestError(f"{label} missing required keys: {', '.join(missing)}")
+
+
+def _parse_utc_timestamp(value: Any, label: str) -> datetime:
+    """Parse *value* as a UTC ISO8601 timestamp (shared by deviation records
+    and dependency-generation proofs)."""
+    if not isinstance(value, str) or not value:
+        raise ManifestError(f"{label} must be a non-empty ISO8601 string")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ManifestError(f"{label} is not ISO8601: {value!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise ManifestError(f"{label} must be UTC: {value!r}")
+    return parsed
+
+
+def validate_dependency_generation(record: Any) -> dict[str, Any]:
+    """Validate a content-addressed dependency-generation proof (T-0301).
+
+    Refuses (raises :class:`ManifestError`): non-object records; missing
+    keys; ``id`` / ``frozen_spec_sha256`` / ``venv_digest`` that are not
+    64-char hex SHA-256 strings; ``id != frozen_spec_sha256`` (the content
+    address IS the frozen-spec digest by construction — a mismatch is an
+    incoherent binding); a non-absolute / empty ``interpreter_path``; or a
+    non-UTC, unparsable ``created`` timestamp.  Returns the record unchanged
+    on success (unknown extra keys are tolerated and preserved).
+    """
+    if not isinstance(record, dict):
+        raise ManifestError("dependency_generation must be an object")
+    missing = [key for key in DEPENDENCY_GENERATION_REQUIRED if key not in record]
+    if missing:
+        raise ManifestError(
+            "dependency_generation missing required keys: " + ", ".join(missing)
+        )
+    for field_name in ("id", "frozen_spec_sha256", "venv_digest"):
+        value = record[field_name]
+        if not isinstance(value, str) or not _FULL_SHA256.fullmatch(value):
+            raise ManifestError(
+                f"dependency_generation.{field_name} must be a 64-char hex "
+                f"SHA-256, got {value!r}"
+            )
+    if record["id"] != record["frozen_spec_sha256"]:
+        raise ManifestError(
+            "dependency_generation.id must equal frozen_spec_sha256 (the "
+            "content address IS the frozen-spec digest), got "
+            f"{record['id']!r} vs {record['frozen_spec_sha256']!r}"
+        )
+    interpreter = record["interpreter_path"]
+    if (
+        not isinstance(interpreter, str)
+        or not interpreter.strip()
+        or not Path(interpreter).expanduser().is_absolute()
+    ):
+        raise ManifestError(
+            "dependency_generation.interpreter_path must be a non-empty "
+            f"absolute path, got {interpreter!r}"
+        )
+    _parse_utc_timestamp(record["created"], "dependency_generation.created")
+    return record
+
+
+def dependency_generation_proof(
+    manifest: "RuntimeManifest",
+) -> dict[str, Any] | None:
+    """Return the manifest's dependency-generation proof when present AND
+    complete; ``None`` when absent (legacy manifests load without one).
+
+    An INCOMPLETE proof never yields a partial record: a manifest carrying a
+    malformed ``epic.dependency_generation`` fails load validation (see
+    ``RuntimeManifest.__post_init__``), and this helper returns ``None``
+    only for a genuinely absent proof.  Publication (advance/cutover), the
+    launch gate, and GC all treat ``None`` as unknown dependency state and
+    fail closed.
+    """
+    record = manifest.epic.get("dependency_generation")
+    if record is None:
+        return None
+    return validate_dependency_generation(record)
 
 
 @dataclass(frozen=True)
@@ -213,6 +313,12 @@ class RuntimeManifest:
             )
         _require_keys("base", self.base, _BASE_REQUIRED)
         _require_keys("epic", self.epic, _EPIC_REQUIRED)
+        # T-0301: a PRESENT but malformed dependency-generation proof is
+        # schema-invalid (fail-closed — a partial proof is never partially
+        # trusted); a genuinely absent proof is legal for legacy manifests
+        # and is enforced at the publication/launch/GC gates instead.
+        if "dependency_generation" in self.epic:
+            validate_dependency_generation(self.epic["dependency_generation"])
         _require_keys("indirection", self.indirection, _INDIRECTION_REQUIRED)
         _require_keys("policy", self.policy, _POLICY_REQUIRED)
         _require_keys("timestamps", self.timestamps, _TIMESTAMPS_REQUIRED)
@@ -660,7 +766,11 @@ def _reconstruct(
 
 
 def advance_generation(
-    manifest: RuntimeManifest, new_commit: str, *, reason: str
+    manifest: RuntimeManifest,
+    new_commit: str,
+    *,
+    reason: str,
+    dependency_generation: Mapping[str, Any] | None = None,
 ) -> RuntimeManifest:
     """Return a NEW manifest at ``generation + 1`` pinned to *new_commit*.
 
@@ -670,8 +780,25 @@ def advance_generation(
 
         {"previous_generation", "previous_commit", "reason", "at"}
 
+    T-0301 publication gate: the dependency-generation proof is REQUIRED —
+    *dependency_generation* (a freshly built/verified proof for the new
+    head's frozen spec) when given, else the manifest's CURRENT complete
+    proof, carried into the new generation.  A manifest with NO complete
+    proof (``dependency_generation_proof`` is ``None``) is REFUSED with
+    :class:`ManifestError`: promoting a runtime whose dependency state is
+    unknown would publish an unverifiable generation (fail-closed, G10).
     The original manifest is untouched.
     """
+    if dependency_generation is not None:
+        proof = validate_dependency_generation(dependency_generation)
+    else:
+        proof = dependency_generation_proof(manifest)
+    if proof is None:
+        raise ManifestError(
+            "advance_generation refused: manifest carries no complete "
+            "dependency_generation proof; unknown dependency state blocks "
+            "publication (T-0301)"
+        )
     previous_commit = str(manifest.epic.get("expected_head", ""))
     now = _utc_now()
     promotions = list(manifest.promotions) + [
@@ -685,7 +812,11 @@ def advance_generation(
     return _reconstruct(
         manifest,
         generation=manifest.generation + 1,
-        epic=dict(manifest.epic, expected_head=new_commit),
+        epic=dict(
+            manifest.epic,
+            expected_head=new_commit,
+            dependency_generation=dict(proof),
+        ),
         indirection=dict(manifest.indirection, verified_head=new_commit),
         promotions=promotions,
         timestamps=dict(manifest.timestamps, updated=now),
@@ -702,6 +833,7 @@ def cutover_runtime_manifest(
     to_venv_path: str,
     to_repair_bin: str,
     reason: str,
+    to_dependency_generation: Mapping[str, Any] | None = None,
 ) -> RuntimeManifest:
     """Return a NEW manifest cut over to a receipted runtime at ``generation + 1``.
 
@@ -735,6 +867,16 @@ def cutover_runtime_manifest(
       ``indirection.host_path`` -> *to_runtime_root* (the host side of the
       runtime root follows the epic root, mirroring how
       :func:`advance_generation` moves ``verified_head`` with the head)
+
+    T-0301 publication gate: the dependency-generation proof is REQUIRED —
+    *to_dependency_generation* (a freshly built/verified proof for the
+    receipted runtime's frozen spec) when given, else the manifest's CURRENT
+    complete proof carried into the new generation.  A manifest with NO
+    complete proof is REFUSED with :class:`ManifestError`: cutting over a
+    runtime whose dependency state is unknown would publish an unverifiable
+    generation (fail-closed, G10).  The proof's ``interpreter_path`` follows
+    the root when it resolves inside the from-root (legacy staging layout);
+    a shared generation outside the runtime root is untouched.
 
     ``generation`` is incremented and a promotion/rollback record is appended
     (see :func:`advance_generation`; the record additionally carries the
@@ -802,6 +944,23 @@ def cutover_runtime_manifest(
     relocated_deps_lockfile = _relocate_root_relative(
         epic.get("deps_lockfile"), resolved_from_root, resolved_to_root
     )
+    if to_dependency_generation is not None:
+        generation = validate_dependency_generation(to_dependency_generation)
+    else:
+        generation = dependency_generation_proof(manifest)
+    if generation is None:
+        raise ManifestError(
+            "cutover refused: manifest carries no complete "
+            "dependency_generation proof; unknown dependency state blocks "
+            "publication (T-0301)"
+        )
+    # A root-relative generation interpreter (legacy staging layout, venv
+    # inside the worktree) follows the root; the shared content-addressed
+    # generation store lives OUTSIDE the runtime root and is untouched.
+    generation = dict(generation)
+    generation["interpreter_path"] = _relocate_root_relative(
+        generation.get("interpreter_path"), resolved_from_root, resolved_to_root
+    )
     return _reconstruct(
         manifest,
         generation=manifest.generation + 1,
@@ -814,6 +973,7 @@ def cutover_runtime_manifest(
             "venv_path": to_venv_path,
             "repair_bin": to_repair_bin,
             "deps_lockfile": relocated_deps_lockfile,
+            "dependency_generation": generation,
         },
         indirection=indirection,
         promotions=promotions,
@@ -1168,6 +1328,7 @@ def apply_runtime_manifest_cutover(
     reason: str,
     actor: str = "operator",
     receipt_path: Path | None = None,
+    to_dependency_generation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """CAS-guarded, fail-closed runtime cutover of the manifest at *manifest_path*.
 
@@ -1185,10 +1346,20 @@ def apply_runtime_manifest_cutover(
       ``import_root`` not resolving to *to_runtime_root*
     - the receipted identity's ``source_revision`` != *to_expected_head* (the
       manifest head is bound to the receipt)
-    - *to_venv_path* not existing as a DIRECTORY, *to_repair_bin* not existing
-      as an EXECUTABLE, or either resolving OUTSIDE *to_runtime_root* (a
-      ``..`` escape would point the manifest at a runtime the receipt never
-      verified)
+    - no complete dependency-generation proof: *to_dependency_generation*
+      (when given) or the manifest's current proof must be complete, or the
+      cutover refuses (T-0301 — publishing a runtime whose dependency state
+      is unknown is forbidden)
+    - *to_venv_path* not existing as a DIRECTORY, or its interpreter
+      (``<to_venv_path>/bin/python``) not existing as an EXECUTABLE; the
+      manifest's generation proof ``interpreter_path`` must equal that
+      interpreter (the venv binding and the proof binding must agree — a
+      venv OUTSIDE the runtime root is the NORMAL shared content-addressed
+      generation layout, so root containment is no longer the coherence
+      anchor; the proof is)
+    - *to_repair_bin* not existing as an EXECUTABLE, or resolving OUTSIDE
+      *to_runtime_root* (a ``..`` escape would point the manifest at a
+      runtime the receipt never verified)
     - the receipted identity carrying editable markers (``editable_root``,
       ``direct_url``, ``.pth`` entries) that resolve OUTSIDE its
       ``import_root`` while the manifest's ``base.editable_install_path`` is
@@ -1303,13 +1474,20 @@ def apply_runtime_manifest_cutover(
                 "receipted runtime source revision does not match "
                 "--to-expected-head",
             )
-        # ── TO-path coherence (T-0101h round-2) ──────────────────────────
+        # ── TO-path coherence (T-0101h round-2 + T-0301) ─────────────────
         # The cutover may only move the manifest onto a runtime that actually
-        # EXISTS at the to-paths: the venv must be a real directory, the
-        # repair wrapper a real executable, and BOTH must resolve INSIDE the
-        # receipted runtime root (a ``..`` escape would point the manifest at
-        # a runtime outside the verified root).  Any failure is a typed
-        # refusal with zero mutation and no rollback receipt.
+        # EXISTS at the to-paths: the repair wrapper must be a real
+        # executable resolving INSIDE the receipted runtime root (a ``..``
+        # escape would point the manifest at a runtime outside the verified
+        # root).  The venv is now the content-addressed dependency generation
+        # (T-0301): it must exist as a directory, its interpreter
+        # ``<venv>/bin/python`` must exist and be executable, and the
+        # manifest's generation-proof ``interpreter_path`` must equal that
+        # interpreter — the venv binding and the proof binding must AGREE.  A
+        # shared generation legitimately lives OUTSIDE the runtime root, so
+        # root containment is no longer the venv coherence anchor; the proof
+        # is.  Any failure is a typed refusal with zero mutation and no
+        # rollback receipt.
         venv_resolved = Path(to_venv_path).expanduser().resolve(strict=False)
         repair_resolved = Path(to_repair_bin).expanduser().resolve(strict=False)
         if not venv_resolved.is_dir():
@@ -1322,15 +1500,45 @@ def apply_runtime_manifest_cutover(
                 CUTOVER_ERROR,
                 f"--to-repair-bin is not an existing executable: {to_repair_bin}",
             )
-        if not venv_resolved.is_relative_to(to_root):
-            raise CliError(
-                CUTOVER_ERROR,
-                "--to-venv-path must resolve inside --to-runtime-root",
-            )
         if not repair_resolved.is_relative_to(to_root):
             raise CliError(
                 CUTOVER_ERROR,
                 "--to-repair-bin must resolve inside --to-runtime-root",
+            )
+        # The generation proof (override or preserved) is resolved BEFORE
+        # the interpreter check so a missing/incomplete proof blocks the
+        # cutover with the typed refusal (T-0301 publication gate).
+        if to_dependency_generation is not None:
+            to_proof = validate_dependency_generation(to_dependency_generation)
+        else:
+            to_proof = dependency_generation_proof(manifest)
+        if to_proof is None:
+            raise CliError(
+                CUTOVER_ERROR,
+                "manifest carries no complete dependency_generation proof and "
+                "no --to-dependency-generation was given; unknown dependency "
+                "state blocks publication (T-0301)",
+            )
+        proof_interpreter = str(to_proof.get("interpreter_path") or "")
+        expected_interpreter = str(venv_resolved / "bin" / "python")
+        if (
+            Path(proof_interpreter).expanduser().resolve(strict=False)
+            != Path(expected_interpreter).expanduser().resolve(strict=False)
+        ):
+            raise CliError(
+                CUTOVER_ERROR,
+                "--to-venv-path interpreter does not match the generation "
+                f"proof: proof interpreter_path {proof_interpreter!r} vs "
+                f"venv interpreter {expected_interpreter!r}",
+            )
+        interpreter_resolved = Path(proof_interpreter).expanduser().resolve(strict=False)
+        if not interpreter_resolved.is_file() or not os.access(
+            interpreter_resolved, os.X_OK
+        ):
+            raise CliError(
+                CUTOVER_ERROR,
+                f"--to-venv-path interpreter is not an existing executable: "
+                f"{proof_interpreter}",
             )
         # ── base.editable_install_path coherence ─────────────────────────
         # An EMPTY editable_install_path (the staging default) survives the
@@ -1359,6 +1567,7 @@ def apply_runtime_manifest_cutover(
                 to_venv_path=to_venv_path,
                 to_repair_bin=to_repair_bin,
                 reason=reason,
+                to_dependency_generation=to_proof,
             )
         except ManifestError as exc:
             raise CliError(CUTOVER_ERROR, str(exc)) from exc
@@ -1518,6 +1727,15 @@ def main(argv: list[str] | None = None) -> int:
             f"rollback receipt path (default: <path>{CUTOVER_RECEIPT_SUFFIX})"
         ),
     )
+    cut_p.add_argument(
+        "--to-dependency-generation",
+        help=(
+            "the receipted runtime's content-addressed dependency-generation "
+            "proof (inline JSON or @FILE); when omitted the manifest's "
+            "current complete proof is carried into the new generation "
+            "(T-0301 publication gate: no complete proof -> cutover refused)"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         if args.action == "write":
@@ -1583,6 +1801,11 @@ def main(argv: list[str] | None = None) -> int:
                 reason=args.reason,
                 actor=args.actor,
                 receipt_path=args.receipt_out,
+                to_dependency_generation=(
+                    _parse_json_record(args.to_dependency_generation)
+                    if args.to_dependency_generation
+                    else None
+                ),
             )
             print(json.dumps(result, sort_keys=True))
     except ManifestError as exc:

@@ -2462,9 +2462,20 @@ def _record_lifecycle_failure(
     suggested_action: str | None = None,
     metadata: dict[str, Any] | None = None,
     progress_emitter: Any | None = None,
-) -> None:
+) -> dict[str, Any]:
+    """Record a lifecycle failure and route it into repair custody.
+
+    Returns the canonical repair request identity result produced by the
+    enqueue (``{request_id, decision_id, repair_identity_key, blocker_id}``
+    plus a typed ``status``/``outcome``).  Every exit is typed: a bare
+    identity-free return is impossible, so callers can never mistake a
+    fail-closed exit for successful repair scheduling.
+    """
     if plan_dir is None:
-        return
+        return _repair_unavailable_enqueue_result(
+            outcome="no_plan_dir",
+            reason="no plan directory to record or enqueue a lifecycle failure for",
+        )
     if current_state is None:
         # Driver-lifecycle exit (iteration cap, stall, cost cap, etc.): record
         # the failure event for audit + resume_cursor, but preserve the plan's
@@ -2591,21 +2602,13 @@ def _record_lifecycle_failure(
         # not be lost merely because exact repair authority is unavailable.
         pass
 
-    failure_details: dict[str, Any] | None = None
-    try:
-        failure_details = PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
-            kind=kind,
-            message=message,
-            current_state=current_state,
-            phase=phase,
-            resume_cursor=resume_cursor,
-            last_artifact=last_artifact,
-            suggested_action=suggested_action,
-            metadata=metadata_payload,
-        )
-    except (OSError, RuntimeError, ValueError):
-        return
-    _enqueue_lifecycle_failure_request(
+    # Bind the occurrence identity first (metadata_payload["repair_identity"]
+    # above), then persist the request identity BEFORE the lifecycle record
+    # releases custody — record_lifecycle_failure clears active_step in the
+    # same write.  Enqueue first so the canonical request result can join the
+    # metadata write: no lifecycle release precedes enqueue persistence, and
+    # the returned IDs survive the release.
+    enqueue_result = _enqueue_lifecycle_failure_request(
         plan_dir=plan_dir,
         queue_root=queue_root,
         marker_dir=marker_dir,
@@ -2619,11 +2622,140 @@ def _record_lifecycle_failure(
         metadata=metadata_payload,
         retry_strategy=str((resume_cursor or {}).get("retry_strategy") or ""),
     )
+    metadata_payload[_REPAIR_REQUEST_IDENTITY_META_KEY] = {
+        **_canonical_repair_request_identity(enqueue_result),
+        "status": str(enqueue_result.get("status") or ""),
+        "outcome": str(enqueue_result.get("outcome") or ""),
+    }
+
+    failure_details: dict[str, Any] | None = None
+    try:
+        failure_details = PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
+            kind=kind,
+            message=message,
+            current_state=current_state,
+            phase=phase,
+            resume_cursor=resume_cursor,
+            last_artifact=last_artifact,
+            suggested_action=suggested_action,
+            metadata=metadata_payload,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        # The enqueue already persisted the request; carry its identity instead
+        # of returning identity-free when only the lifecycle record write fails.
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_REPAIR_REQUEST_ENQUEUE",
+            action="record_lifecycle_failure",
+            plan_dir=plan_dir,
+            phase=phase,
+            context={
+                "typed_outcome": "lifecycle_record_failed",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        return {
+            **enqueue_result,
+            "lifecycle_record_persisted": False,
+            "lifecycle_record_error_type": type(exc).__name__,
+            "lifecycle_record_error": str(exc),
+        }
     if progress_emitter is not None and failure_details is not None:
         if current_state == STATE_BLOCKED:
             progress_emitter.execution_blocked(summary=message, **failure_details)
         else:
             progress_emitter.plan_failed(summary=message, **failure_details)
+    return enqueue_result
+
+
+_REPAIR_REQUEST_IDENTITY_KEYS = (
+    "request_id",
+    "decision_id",
+    "repair_identity_key",
+    "blocker_id",
+)
+_REPAIR_REQUEST_IDENTITY_META_KEY = "repair_request_identity"
+
+
+def _canonical_repair_request_identity(result: Any) -> dict[str, str]:
+    """Normalize an enqueue producer result onto the canonical identity shape.
+
+    The four-key shape ``{request_id, decision_id, repair_identity_key,
+    blocker_id}`` is the cross-producer enqueue contract: auto propagates it,
+    the watchdog binds it into custody, and the claim namespace consumes it.
+
+    Accepts both the raw enqueue result (``request``/``decision`` sub-dicts)
+    and an already-canonicalized result (keys at top level) so the same
+    normalizer is safe to apply to either.
+    """
+    request: Mapping[str, Any] = {}
+    decision: Mapping[str, Any] = {}
+    top: Mapping[str, Any] = {}
+    if isinstance(result, Mapping):
+        top = result
+        if isinstance(result.get("request"), Mapping):
+            request = result["request"]
+        if isinstance(result.get("decision"), Mapping):
+            decision = result["decision"]
+    request_id = str(
+        top.get("request_id") or request.get("request_id") or ""
+    ).strip()
+    # T-0203 parity (G8 advisory 2): a coalesced decision binds the RELATED
+    # (persisted) request, never the unwritten candidate record. Resolve so
+    # latest_failure.metadata.repair_request_identity names a persisted
+    # request on coalesced retries too.
+    status = str(top.get("status") or decision.get("status") or "").strip()
+    related_id = str(decision.get("related_request_id") or "").strip()
+    if status == "coalesced" and related_id and related_id != request_id:
+        request_id = related_id
+    return {
+        "request_id": request_id,
+        "decision_id": str(
+            top.get("decision_id") or decision.get("decision_id") or ""
+        ).strip(),
+        "repair_identity_key": str(
+            top.get("repair_identity_key")
+            or request.get("repair_identity_key")
+            or ""
+        ).strip(),
+        "blocker_id": str(
+            top.get("blocker_id") or request.get("blocker_id") or ""
+        ).strip(),
+    }
+
+
+def _repair_unavailable_enqueue_result(
+    *,
+    outcome: str,
+    reason: str,
+    occurrence_identity: Mapping[str, Any] | None = None,
+    error: BaseException | None = None,
+) -> dict[str, Any]:
+    """Typed identity-carrying result for every non-enqueue exit.
+
+    The auto enqueue surface never returns bare ``None``: every exit carries
+    the canonical request identity keys (empty when nothing was written) plus
+    a typed outcome, so callers can distinguish ``queued`` from a fail-closed
+    refusal and no enqueue result is silently identity-free.
+    """
+    from arnold_pipelines.megaplan.cloud.repair_requests import repair_identity_key
+
+    identity_keys = {key: "" for key in _REPAIR_REQUEST_IDENTITY_KEYS}
+    identity_keys["repair_identity_key"] = (
+        repair_identity_key(occurrence_identity)
+        if occurrence_identity is not None
+        else ""
+    )
+    result: dict[str, Any] = {
+        "status": "repair_unavailable",
+        "outcome": outcome,
+        **identity_keys,
+        "reason": reason,
+    }
+    if error is not None:
+        result["error_type"] = type(error).__name__
+        result["error"] = str(error)
+    return result
 
 
 def _enqueue_lifecycle_failure_request(
@@ -2640,16 +2772,35 @@ def _enqueue_lifecycle_failure_request(
     suggested_action: str | None,
     metadata: dict[str, Any] | None,
     retry_strategy: str = "",
-) -> None:
-    try:
-        from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            enqueue_occurrence_bound_repair_request,
-            normalize_repair_identity,
-        )
+) -> dict[str, Any]:
+    """Route a lifecycle failure to the managed repair queue.
 
+    Returns the canonical request identity result ``{request_id,
+    decision_id, repair_identity_key, blocker_id}`` plus a typed
+    ``status``/``outcome``.  Every exit is typed: queue-disabled and enqueue
+    exceptions become ``repair_unavailable`` results (never a swallowed bare
+    return), so no caller can mistake a failed enqueue for successful repair
+    scheduling.
+    """
+    from arnold_pipelines.megaplan.cloud.feature_flags import (
+        repair_request_queue_enabled,
+    )
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        enqueue_occurrence_bound_repair_request,
+        normalize_repair_identity,
+    )
+
+    try:
         if not repair_request_queue_enabled():
-            return
+            return _repair_unavailable_enqueue_result(
+                outcome="queue_disabled",
+                reason="repair request queue is disabled",
+                occurrence_identity=normalize_repair_identity(
+                    (metadata or {}).get("repair_identity")
+                    if isinstance(metadata, dict)
+                    else None
+                ),
+            )
         workspace_path = _workspace_path_for_plan_dir(plan_dir)
 
         session_id = session or plan_dir.name
@@ -2672,7 +2823,11 @@ def _enqueue_lifecycle_failure_request(
             else None
         )
 
-        enqueue_occurrence_bound_repair_request(
+        # The enqueue result is the canonical request identity: it binds the
+        # request, decision, blocker, and occurrence keys that later recovery
+        # (watchdog claim, simple-fixer custody) joins against.  It was
+        # previously dropped; every exit below now carries or joins it.
+        enqueue_result = enqueue_occurrence_bound_repair_request(
             queue_root=queue_root,
             marker_dir=marker_dir or plan_dir,
             session=session_id,
@@ -2702,30 +2857,75 @@ def _enqueue_lifecycle_failure_request(
                 "next_three_hour",
             ],
         )
-    except Exception:
+        canonical = _canonical_repair_request_identity(enqueue_result)
+        result: dict[str, Any] = {
+            **canonical,
+            "status": str(enqueue_result.get("status") or "repair_unavailable"),
+            "outcome": str(
+                enqueue_result.get("outcome")
+                or enqueue_result.get("status")
+                or "repair_unavailable"
+            ),
+        }
+        evidence = enqueue_result.get("evidence")
+        if isinstance(evidence, Mapping):
+            reason = evidence.get("reason")
+            if reason:
+                result["reason"] = str(reason)
+        return result
+    except Exception as exc:
+        # Fail closed: the exception becomes a typed, identity-carrying
+        # failure instead of a swallowed warning-only exit.
         _warn_best_effort_emit_failure(
             "M3A_WARN_REPAIR_REQUEST_ENQUEUE",
             action="enqueue_lifecycle_failure_request",
             plan_dir=plan_dir,
             phase=phase,
-            context={"failure_kind": kind},
+            context={
+                "failure_kind": kind,
+                "typed_outcome": "repair_enqueue_failure",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        return _repair_unavailable_enqueue_result(
+            outcome="repair_enqueue_failure",
+            reason="repair request enqueue raised an exception",
+            occurrence_identity=normalize_repair_identity(
+                (metadata or {}).get("repair_identity")
+                if isinstance(metadata, dict)
+                else None
+            ),
+            error=exc,
         )
 
 
-def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
+def _enqueue_terminal_failure_request(plan_dir: Path) -> dict[str, Any]:
     """Route a handler-recorded terminal failure to the managed repair queue.
 
     Some handlers, notably review, record ``latest_failure`` while transitioning
     the plan directly to ``blocked``.  The auto driver observes that terminal
     state without calling :func:`_record_lifecycle_failure`, so mirror the
     existing failure into repair custody without rewriting plan state.
+
+    Returns the canonical request identity result (typed on every exit), so
+    the terminal mirror never returns identity-free.
     """
 
     try:
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         failure = state.get("latest_failure") if isinstance(state, dict) else None
         if not isinstance(failure, dict):
-            return
+            return _repair_unavailable_enqueue_result(
+                outcome="no_terminal_failure_to_mirror",
+                reason="plan has no latest_failure to mirror into repair custody",
+                occurrence_identity=(
+                    (state or {}).get("repair_identity")
+                    if isinstance(state, dict)
+                    and isinstance(state.get("repair_identity"), dict)
+                    else None
+                ),
+            )
         queue_root, marker_dir, repair_session, repair_run_kind = (
             _lifecycle_repair_request_route(plan_dir)
         )
@@ -2742,7 +2942,7 @@ def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
             state.get("repair_identity"), dict
         ):
             metadata["repair_identity"] = dict(state["repair_identity"])
-        _enqueue_lifecycle_failure_request(
+        return _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
             queue_root=queue_root,
             marker_dir=marker_dir,
@@ -2760,12 +2960,24 @@ def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
                 else ""
             ),
         )
-    except Exception:
+    except Exception as exc:
+        # Fail closed: the exception becomes a typed, identity-carrying
+        # failure instead of a swallowed warning-only exit.
         _warn_best_effort_emit_failure(
             "M3A_WARN_REPAIR_REQUEST_ENQUEUE",
             action="enqueue_terminal_failure_request",
             plan_dir=plan_dir,
             phase="terminal_block",
+            context={
+                "typed_outcome": "repair_enqueue_failure",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        return _repair_unavailable_enqueue_result(
+            outcome="repair_enqueue_failure",
+            reason="terminal failure mirror enqueue raised an exception",
+            error=exc,
         )
 
 

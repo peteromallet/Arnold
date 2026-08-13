@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,7 @@ from arnold_pipelines.megaplan.cloud.runtime_census import (
     mask_cmdline,
     render_census_markdown,
 )
+from arnold_pipelines.megaplan.cloud.runtime_references import run_census
 
 
 def _make_git_repo(
@@ -285,3 +288,118 @@ def test_main_exit_zero_with_no_git_repos(tmp_path: Path, capsys: pytest.Capture
     assert "# Runtime Census" in out
     assert "plain-dir" in out
     assert "not a git repository" in out
+
+
+# ── generation-store census (T-0301 / G10 B2) ───────────────────────────────
+
+
+def _census_with_generation_root(
+    tmp_path: Path, generation_root: Path
+) -> tuple[str, list[str]]:
+    """Reference census (runtime_references.run_census) with every store
+    sandboxed to a missing tmp dir and the given generation store root — a
+    missing store dir is not a reference, so only the generation store can
+    drive the verdict."""
+    return run_census(
+        root=str(tmp_path / "target-root"),
+        workspace="",
+        manifest_store=str(tmp_path / "no-manifests"),
+        current_manifest="",
+        chain_store=str(tmp_path / "no-chains"),
+        marker_store=str(tmp_path / "no-markers"),
+        schedule_store=str(tmp_path / "no-schedules"),
+        repair_queue=str(tmp_path / "no-queue"),
+        lease_store=str(tmp_path / "no-leases"),
+        plan_lease_root=str(tmp_path / "no-plan-leases"),
+        managed_run_store=str(tmp_path / "no-managed-runs"),
+        status_dir=str(tmp_path / "no-status"),
+        ops_store=str(tmp_path / "no-ops"),
+        generation_root=str(generation_root),
+    )
+
+
+@pytest.mark.parametrize(
+    ("proof_setup", "reason_fragment"),
+    [
+        ("no-proof", "carries no .generation.json proof"),
+        ("corrupt-proof", "proof unreadable/corrupt"),
+        ("id-mismatch", "does not match its content-addressed dir name"),
+        ("missing-interpreter", "missing its interpreter"),
+    ],
+)
+def test_census_generation_store_hex_dir_without_valid_proof_is_unknown(
+    tmp_path: Path, proof_setup: str, reason_fragment: str
+) -> None:
+    """G10 B2 (a): a PRESENT hex-named generation dir that cannot be
+    attested — no proof, corrupt proof, id != dirname, or missing
+    interpreter — makes the WHOLE census UNKNOWN (fail-closed).  This is the
+    negative control: deleting the generation-store scan from run_census
+    turns the verdict CLEAR and this test fails."""
+    gen_root = tmp_path / "runtime-venvs"
+    entry = gen_root / ("a" * 64)
+    entry.mkdir(parents=True)
+    if proof_setup == "corrupt-proof":
+        (entry / ".generation.json").write_text("{not valid json", encoding="utf-8")
+    elif proof_setup == "id-mismatch":
+        (entry / ".generation.json").write_text(
+            json.dumps({"id": "b" * 64, "frozen_spec_sha256": "b" * 64}),
+            encoding="utf-8",
+        )
+    elif proof_setup == "missing-interpreter":
+        (entry / ".generation.json").write_text(
+            json.dumps({"id": entry.name, "frozen_spec_sha256": entry.name}),
+            encoding="utf-8",
+        )
+    verdict, reasons = _census_with_generation_root(tmp_path, gen_root)
+    assert verdict == "UNKNOWN", reasons
+    assert any(reason_fragment in reason for reason in reasons), reasons
+
+
+def test_census_cli_reports_status_unknown_for_proofless_generation_dir(
+    tmp_path: Path,
+) -> None:
+    """G10 B2 (a) CLI surface: the census command prints ``STATUS UNKNOWN``
+    with a generation reason — the same verdict arnold-gc-sweep blocks on
+    (exit 5, delete-on-unknown never happens)."""
+    gen_root = tmp_path / "runtime-venvs"
+    (gen_root / ("c" * 64)).mkdir(parents=True)  # hex dir, no .generation.json
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "arnold_pipelines.megaplan.cloud.runtime_references",
+            "census",
+            "--root",
+            str(tmp_path / "target-root"),
+            "--workspace",
+            "",
+            "--manifest-store",
+            str(tmp_path / "no-manifests"),
+            "--chain-store",
+            str(tmp_path / "no-chains"),
+            "--marker-store",
+            str(tmp_path / "no-markers"),
+            "--schedule-store",
+            str(tmp_path / "no-schedules"),
+            "--repair-queue",
+            str(tmp_path / "no-queue"),
+            "--lease-store",
+            str(tmp_path / "no-leases"),
+            "--plan-lease-root",
+            str(tmp_path / "no-plan-leases"),
+            "--managed-run-store",
+            str(tmp_path / "no-managed-runs"),
+            "--status-dir",
+            str(tmp_path / "no-status"),
+            "--ops-store",
+            str(tmp_path / "no-ops"),
+            "--generation-root",
+            str(gen_root),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "STATUS UNKNOWN" in proc.stdout
+    assert "generation" in proc.stdout

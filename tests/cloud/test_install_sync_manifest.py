@@ -1,218 +1,236 @@
-"""Tests for manifest-driven install sync (design §6 install_sync.py row)."""
+"""T-0301: the content-addressed dependency generation bound into runtime
+manifests — ONE immutable venv per frozen-spec digest, SHARED across every
+runtime that resolves to the same spec, with no shared mutable source.
+
+The legacy manifest-driven editable-install sync (``manifest_driven_sync``)
+is retired; these tests cover the successor contract: the manifest binds
+``epic.dependency_generation`` (id = frozen-spec digest, interpreter =
+``<generation>/bin/python``, venv_digest of the built venv), and two
+runtimes sharing the spec share the venv WITHOUT sharing mutable source.
+"""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from arnold_pipelines.megaplan.cloud import install_sync
 from arnold_pipelines.megaplan.cloud.install_sync import (
-    EditablePointerMismatchError,
-    manifest_driven_sync,
+    GenerationError,
+    ensure_dependency_generation,
+    frozen_spec_sha256,
+    generation_dir,
+    generation_interpreter,
+    verify_generation,
 )
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     MANIFEST_SCHEMA_VERSION,
+    ManifestError,
     RuntimeManifest,
+    dependency_generation_proof,
+    load_manifest,
+    write_manifest,
 )
 
+FROZEN_SPEC = {
+    "pyproject.toml": (
+        '[project]\nname = "demo"\nversion = "0.1.0"\n'
+        'requires-python = ">=3.9"\ndependencies = []\n'
+    ),
+    "uv.lock": (
+        'version = 1\nrequires-python = ">=3.9"\n'
+        "\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+        'source = { editable = "." }\n'
+    ),
+}
 
-def _make_manifest(
-    tmp_path: Path,
+
+def _frozen_spec_project(tmp_path: Path, name: str) -> Path:
+    project = tmp_path / name
+    project.mkdir(parents=True, exist_ok=True)
+    for filename, content in FROZEN_SPEC.items():
+        (project / filename).write_text(content, encoding="utf-8")
+    return project
+
+
+def _manifest_payload(
+    runtime_root: str,
     *,
-    sync_policy: Any = "enabled",
-    runtime_root: Path | None = None,
-    venv_path: Path | None = None,
+    spec_digest: str,
+    generation_root: Path,
+    proof: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """A schema-valid runtime manifest whose epic points at *tmp_path* trees."""
-    runtime_root = runtime_root or (tmp_path / "runtime")
-    venv_path = venv_path or (tmp_path / "venv")
+    """A schema-valid runtime manifest binding the dependency generation.
+    *proof* (the REAL built proof when given) is used verbatim; otherwise a
+    structurally valid placeholder proof is emitted."""
+    gen_dir = generation_dir(generation_root, spec_digest)
+    bound_proof = proof or {
+        "id": spec_digest,
+        "frozen_spec_sha256": spec_digest,
+        "interpreter_path": str(generation_interpreter(gen_dir)),
+        "venv_digest": "b" * 64,
+        "created": "2026-08-12T00:00:00Z",
+    }
     return {
-        "runtime_id": "runtime-manifest-sync-1",
+        "runtime_id": f"runtime-{Path(runtime_root).name}",
         "schema": MANIFEST_SCHEMA_VERSION,
         "generation": 1,
-        "epic_id": "epic-manifest-sync",
+        "epic_id": Path(runtime_root).name,
         "state": "active",
-        "owner": "superfixer",
+        "owner": "test",
         "base": {
-            "ref": "refs/heads/base/editable-install",
-            "commit": "basecommit123",
-            "editable_install_path": str(tmp_path / "base"),
-            "venv_path": str(tmp_path / "base" / "venv"),
+            "ref": "refs/heads/main",
+            "commit": "0" * 40,
+            "editable_install_path": "",
+            "venv_path": str(gen_dir),
         },
         "epic": {
-            "branch": "fixer/epic-manifest-sync-20260807",
-            "worktree_path": str(tmp_path / "worktree"),
-            "venv_path": str(venv_path),
-            "runtime_root": str(runtime_root),
-            "expected_head": "epichead123",
-            "repair_bin": str(venv_path / "bin" / "arnold-repair-loop"),
-            "deps_lockfile": str(tmp_path / "base" / "uv.lock"),
+            "branch": "fixer/demo-20260812",
+            "worktree_path": runtime_root,
+            "venv_path": str(gen_dir),
+            "runtime_root": runtime_root,
+            "expected_head": "a" * 40,
+            "repair_bin": f"{runtime_root}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+            "deps_lockfile": f"{runtime_root}/uv.lock",
+            "dependency_generation": bound_proof,
         },
         "indirection": {
-            "host_path": str(tmp_path / "worktree"),
-            "container_path": "/workspace/epic-manifest-sync",
+            "host_path": runtime_root,
+            "container_path": "/workspace/demo",
             "mount_table": [],
-            "execution_namespace": "epic-manifest-sync-ns",
-            "verified_head": "epichead123",
-            "last_verified_at": "2026-08-07T00:00:00+00:00",
+            "execution_namespace": "demo-ns",
+            "verified_head": "a" * 40,
+            "last_verified_at": "2026-08-12T00:00:00Z",
             "attestation": {
-                "module_file": str(runtime_root / "arnold_pipelines" / "__init__.py"),
-                "module_digest": "d41d8cd98f00b204e9800998ecf8427e",
-                "mount_id": "0:42",
+                "module_file": f"{runtime_root}/arnold_pipelines/__init__.py",
+                "module_digest": "0" * 64,
+                "mount_id": "0:0",
             },
         },
         "policy": {
-            "policy_sha": "policy-sha-1",
-            "model_policy_sha": "model-sha-1",
-            "sync_policy": sync_policy,
+            "policy_sha": "0" * 64,
+            "model_policy_sha": "0" * 64,
+            "sync_policy": "disabled",
         },
         "promotions": [],
         "timestamps": {
-            "created": "2026-08-07T00:00:00+00:00",
-            "updated": "2026-08-07T00:00:00+00:00",
+            "created": "2026-08-12T00:00:00Z",
+            "updated": "2026-08-12T00:00:00Z",
             "closed": "",
         },
         "gc_policy": "closed-only",
-        "commands": ["megaplan chain"],
+        "commands": [],
     }
 
 
-def _write_venv_pointer(venv_path: Path, target: str) -> Path:
-    """Write an editable-install .pth into a temp venv layout."""
-    site_packages = venv_path / "lib" / "python3.11" / "site-packages"
-    site_packages.mkdir(parents=True, exist_ok=True)
-    pth = site_packages / "__editable__.arnold_pipelines.pth"
-    pth.write_text(f"{target}\n", encoding="utf-8")
-    return pth
-
-
-def test_manifest_driven_sync_skips_when_sync_policy_disabled(
+def test_two_runtimes_share_one_generation_without_shared_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def boom(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("must not run any sync step when sync_policy disables sync")
+    """T-0301 acceptance: two runtimes with the same frozen spec resolve to
+    ONE immutable generation venv while their source trees stay distinct —
+    the venv is shared, the mutable source is not."""
+    monkeypatch.setenv("ARNOLD_GENERATION_BUILD_STRATEGY", "pip")
+    gen_root = tmp_path / "runtime-venvs"
+    spec_a = _frozen_spec_project(tmp_path, "runtime-a")
+    spec_b = _frozen_spec_project(tmp_path, "runtime-b")
+    # identical spec content -> identical digest -> shared generation
+    assert frozen_spec_sha256(spec_a) == frozen_spec_sha256(spec_b)
 
-    monkeypatch.setattr(install_sync, "apply_install_sync", boom)
-    monkeypatch.setattr(install_sync.subprocess, "run", boom)
+    proof_a = ensure_dependency_generation(spec_a, gen_root)
+    proof_b = ensure_dependency_generation(spec_b, gen_root)
+    assert proof_a == proof_b  # SAME immutable generation proof
+    gen_dir = generation_dir(gen_root, proof_a["id"])
+    assert generation_interpreter(gen_dir).is_file()
 
-    for disabled in ("disabled", {"enabled": False}):
-        manifest = _make_manifest(tmp_path, sync_policy=disabled)
-        result = manifest_driven_sync(manifest)
-        assert result == {"status": "skipped", "reason": "sync_policy_disabled"}
-
-
-def test_manifest_driven_sync_dry_run_performs_no_mutation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    venv_path = tmp_path / "venv"
-    _write_venv_pointer(venv_path, str(runtime_root))
-
-    def boom(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("dry_run must not mutate")
-
-    monkeypatch.setattr(install_sync, "apply_install_sync", boom)
-    monkeypatch.setattr(install_sync.subprocess, "run", boom)
-
-    manifest = _make_manifest(tmp_path, runtime_root=runtime_root, venv_path=venv_path)
-    result = manifest_driven_sync(manifest, dry_run=True)
-
-    assert result["status"] == "would_sync"
-    assert result["dry_run"] is True
-    assert result["runtime_root"] == str(runtime_root)
-    assert result["venv_path"] == str(venv_path)
-    assert result["branch"] == "fixer/epic-manifest-sync-20260807"
-    assert result["expected_head"] == "epichead123"
-    assert result["editable_pointer"]["pointer_present"] is True
-    assert result["editable_pointer"]["matches_runtime"] is True
-    assert result["command"][-2:] == ["-e", str(runtime_root)]
-
-
-def test_manifest_driven_sync_dry_run_allows_venv_without_pointer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def boom(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("dry_run must not mutate")
-
-    monkeypatch.setattr(install_sync, "apply_install_sync", boom)
-
-    manifest = _make_manifest(tmp_path)
-    result = manifest_driven_sync(manifest, dry_run=True)
-
-    assert result["status"] == "would_sync"
-    assert result["editable_pointer"]["pointer_present"] is False
-    assert result["editable_pointer"]["matches_runtime"] is True
-
-
-def test_manifest_driven_sync_editable_pointer_mismatch_is_typed_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    venv_path = tmp_path / "venv"
-    other_tree = tmp_path / "some-other-runtime"
-    _write_venv_pointer(venv_path, str(other_tree))
-
-    def boom(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("pointer mismatch must abort before any sync attempt")
-
-    monkeypatch.setattr(install_sync, "apply_install_sync", boom)
-
-    manifest = _make_manifest(tmp_path, runtime_root=runtime_root, venv_path=venv_path)
-    with pytest.raises(EditablePointerMismatchError) as exc_info:
-        manifest_driven_sync(manifest)
-
-    assert exc_info.value.code == "editable_pointer_mismatch"
-    assert "editable_pointer_mismatch" in str(exc_info.value)
-    assert exc_info.value.runtime_root == str(runtime_root)
-    assert exc_info.value.pointer_target == str(other_tree)
-
-
-def test_manifest_driven_sync_matching_pointer_proceeds_to_sync_attempt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    venv_path = tmp_path / "venv"
-    _write_venv_pointer(venv_path, str(runtime_root))
-
-    calls: list[dict[str, Any]] = []
-
-    def fake_apply(**kwargs: Any) -> dict[str, Any]:
-        calls.append(kwargs)
-        return {"status": "applied", "returncode": 0}
-
-    monkeypatch.setattr(install_sync, "apply_install_sync", fake_apply)
-
-    manifest = _make_manifest(tmp_path, runtime_root=runtime_root, venv_path=venv_path)
-    result = manifest_driven_sync(manifest)
-
-    assert result == {"status": "applied", "returncode": 0}
-    assert len(calls) == 1
-    assert Path(calls[0]["source_root"]).resolve() == runtime_root.resolve()
-    assert calls[0]["python_executable"] == str(venv_path / "bin" / "python")
-    assert calls[0]["incident_id"] == "epic-manifest-sync"
-
-
-def test_manifest_driven_sync_accepts_runtime_manifest_object(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    venv_path = tmp_path / "venv"
-    _write_venv_pointer(venv_path, str(runtime_root))
-
-    def fake_apply(**kwargs: Any) -> dict[str, Any]:
-        return {"status": "applied"}
-
-    monkeypatch.setattr(install_sync, "apply_install_sync", fake_apply)
-
-    manifest_obj = RuntimeManifest.from_dict(
-        _make_manifest(tmp_path, runtime_root=runtime_root, venv_path=venv_path)
+    manifest_a = RuntimeManifest.from_dict(
+        _manifest_payload(str(spec_a), spec_digest=proof_a["id"], generation_root=gen_root)
     )
-    result = manifest_driven_sync(manifest_obj)
+    manifest_b = RuntimeManifest.from_dict(
+        _manifest_payload(str(spec_b), spec_digest=proof_b["id"], generation_root=gen_root)
+    )
+    # distinct source trees...
+    assert manifest_a.epic["runtime_root"] != manifest_b.epic["runtime_root"]
+    assert manifest_a.epic["worktree_path"] != manifest_b.epic["worktree_path"]
+    # ...but the SAME shared venv (content-addressed by spec digest)
+    assert manifest_a.epic["venv_path"] == manifest_b.epic["venv_path"] == str(gen_dir)
+    assert (
+        manifest_a.epic["dependency_generation"]
+        == manifest_b.epic["dependency_generation"]
+    )
+    assert dependency_generation_proof(manifest_a) is not None
+    assert dependency_generation_proof(manifest_b) is not None
 
-    assert result == {"status": "applied"}
+
+def test_manifest_binds_the_on_disk_generation_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The manifest's proof round-trips through load/write and agrees with
+    the on-disk generation it names."""
+    monkeypatch.setenv("ARNOLD_GENERATION_BUILD_STRATEGY", "pip")
+    gen_root = tmp_path / "runtime-venvs"
+    project = _frozen_spec_project(tmp_path, "runtime-demo")
+    proof = ensure_dependency_generation(project, gen_root)
+    manifest_path = tmp_path / "manifests" / "runtime-demo.json"
+    write_manifest(
+        RuntimeManifest.from_dict(
+            _manifest_payload(
+                str(project),
+                spec_digest=proof["id"],
+                generation_root=gen_root,
+                proof=proof,
+            )
+        ),
+        manifest_path,
+    )
+    loaded = load_manifest(manifest_path)
+    assert loaded.epic["dependency_generation"] == proof
+    # the bound generation verifies on disk (proof id == dir name, interpreter
+    # exists, venv digest matches)
+    verdict = verify_generation(
+        generation_dir(gen_root, proof["id"]), deep=True
+    )
+    assert verdict["ok"] is True, verdict["reasons"]
+
+
+def test_corrupt_bound_generation_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest-bound generation that is present but corrupt is never
+    silently rebuilt or reused: ensure_dependency_generation refuses."""
+    monkeypatch.setenv("ARNOLD_GENERATION_BUILD_STRATEGY", "pip")
+    gen_root = tmp_path / "runtime-venvs"
+    project = _frozen_spec_project(tmp_path, "runtime-corrupt")
+    proof = ensure_dependency_generation(project, gen_root)
+    gen_dir = generation_dir(gen_root, proof["id"])
+    (gen_dir / "pyvenv.cfg").write_text("home = /tampered\n", encoding="utf-8")
+    with pytest.raises(GenerationError, match="failed verification"):
+        ensure_dependency_generation(project, gen_root)
+
+
+def test_malformed_manifest_proof_is_schema_invalid() -> None:
+    payload = _manifest_payload(
+        "/workspace/runtime-demo",
+        spec_digest="a" * 64,
+        generation_root=Path("/tmp/venvs"),
+    )
+    payload["epic"]["dependency_generation"]["venv_digest"] = "not-hex"
+    with pytest.raises(ManifestError, match="dependency_generation"):
+        RuntimeManifest.from_dict(payload)
+
+
+def test_manifest_without_proof_is_legacy_loadable() -> None:
+    payload = _manifest_payload(
+        "/workspace/runtime-legacy",
+        spec_digest="a" * 64,
+        generation_root=Path("/tmp/venvs"),
+    )
+    del payload["epic"]["dependency_generation"]
+    manifest = RuntimeManifest.from_dict(payload)
+    assert dependency_generation_proof(manifest) is None
+    assert manifest.epic.get("dependency_generation") is None
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))

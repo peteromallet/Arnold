@@ -411,9 +411,20 @@ def test_identity_free_legacy_request_remains_unclaimable_after_projection(
         repair_data_dir=tmp_path / "repair-data",
     )
 
-    assert projection["active_request_ids"] == [request_id]
-    assert projection["blocker_id"] == ""
-    assert projection["blocker_fingerprint"] is None
+    # No recorded decision: the request is typed pending/blocked, never
+    # active, and never claimable — absent decisions never dispatch.  The
+    # projection still reports the current-target blocker identity (derived
+    # from plan/target evidence) because no active request forces it null.
+    assert projection["active_request_ids"] == []
+    assert projection["blocker_id"] == blocker_id_for_fingerprint(
+        repair_contract.blocker_fingerprint_from_evidence(
+            plan_state=_plan_state(),
+            current_target={**_current_target(), "target_session": "demo-session"},
+        )
+    )
+    assert projection["blocker_fingerprint"] is not None
+    assert projection["requests"][0]["status"] == "pending_decision"
+    assert projection["requests"][0]["active"] is False
     assert projection["requests"][0]["claimable"] is False
     assert projection["lifecycle_counts"]["persisted"] == 1
     assert projection["lifecycle_counts"]["claimable"] == 0

@@ -17,10 +17,16 @@
 #      off <base-ref> HEAD (shared objects — same pattern the orchestrator used)
 #   2. git push origin fixer/<slug>-<YYYYMMDD> at creation — FAILS LOUDLY on
 #      push failure (design rule 4: a box-only branch is a failure)
-#   3. write the epic runtime manifest (state=active, full field set: venv,
-#      repair bin, deps lockfile, content attestation, policy SHAs) atomically
-#      via the runtime_manifest CLI, falling back to direct JSON when the CLI
-#      is absent
+#   2b. build/verify the content-addressed dependency generation (T-0301): ONE
+#      immutable venv per frozen-spec digest (pyproject.toml + uv.lock) under
+#      a single-writer flock, stored at <base>/runtime-venvs/<digest> and
+#      SHARED across every runtime resolving the same spec.  No per-worktree
+#      .venv, no pip install -e.  A missing spec or unverifiable generation
+#      fails loudly — a runtime without a generation proof is never created.
+#   3. write the epic runtime manifest (state=active, full field set: venv =
+#      the shared generation, repair bin, deps lockfile, content attestation,
+#      policy SHAs, dependency_generation proof) atomically via the
+#      runtime_manifest CLI, falling back to direct JSON when the CLI is absent
 #   4. write the ACTIVE POINTER <manifest-dir>/runtime-manifest.json via
 #      write_active_pointer — COMPATIBILITY-ONLY since the P1 admission
 #      kernel: the per-epic manifest is authoritative and admission/dispatch/
@@ -39,6 +45,8 @@
 #   ARNOLD_ORIGIN_URL           push target — URL or remote name      (default: origin)
 #   ARNOLD_WORKSPACE_MARKERS    marker/lock state root                (default: $ARNOLD_BASE_DIR/markers)
 #   ARNOLD_RUNTIME_MANIFEST_DIR dir of per-epic runtime manifests     (default: $ARNOLD_BASE_DIR/.megaplan)
+#   ARNOLD_RUNTIME_VENVS_DIR    shared content-addressed dependency-generation
+#                               store root (T-0301)                   (default: $ARNOLD_BASE_DIR/runtime-venvs)
 #   ARNOLD_RUNTIME_MANIFEST     active-pointer path (bootstrap root)  (default: $ARNOLD_RUNTIME_MANIFEST_DIR/runtime-manifest.json)
 #   ARNOLD_RUNTIME_POLICY       per-chain runtime policy sidecar (.runtime_policy.json)
 #                               holding an optional allow_manifestless permit;
@@ -99,11 +107,48 @@ if ! git -C "$RUNTIME_DIR" push "$REMOTE" "HEAD:refs/heads/$BRANCH"; then
   exit 1
 fi
 
+# (b2) Build the content-addressed dependency generation (T-0301): ONE
+# immutable venv per frozen dependency spec digest (pyproject.toml + uv.lock),
+# shared across ALL runtimes that resolve to the same spec.  The build/verify
+# runs under a single-writer flock inside the generation module; a missing
+# frozen spec, a failed build, or an unverifiable existing generation FAILS
+# LOUDLY — a runtime without a verifiable immutable generation is never
+# created (no manifest without proof, no per-worktree .venv, no editable
+# install).
+GEN_ROOT="${ARNOLD_RUNTIME_VENVS_DIR:-$BASE_DIR/runtime-venvs}"
+DEPS_LOCKFILE="$RUNTIME_DIR/uv.lock"
+GEN_PROOF_JSON="$(python3 - "$RUNTIME_DIR" "$GEN_ROOT" <<'PY'
+import json, sys
+from pathlib import Path
+from arnold_pipelines.megaplan.cloud.install_sync import (
+    ensure_dependency_generation,
+)
+proof = ensure_dependency_generation(
+    Path(sys.argv[1]),
+    Path(sys.argv[2]),
+)
+print(json.dumps(proof, sort_keys=True))
+PY
+)" || {
+  echo "arnold-runtime-create: dependency generation build/verify FAILED for '$RUNTIME_DIR' (frozen spec: '$DEPS_LOCKFILE') — refusing to create a runtime without a verifiable generation" >&2
+  exit 1
+}
+GEN_DIR="$(python3 -c '
+import json, sys
+proof = json.loads(sys.argv[1])
+print(str(proof["interpreter_path"]).rsplit("/bin/python", 1)[0])
+' "$GEN_PROOF_JSON")" || {
+  echo "arnold-runtime-create: dependency generation proof is unreadable (interpreter path missing)" >&2
+  exit 1
+}
+echo "arnold-runtime-create: dependency generation ready at '$GEN_DIR' (id=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$GEN_PROOF_JSON"))"
+
 # (c) Write the epic manifest atomically. Build the full payload first (the
 # complete mandatory field set per the runtime_manifest contract — schema "1",
-# with the venv/repair-bin/lockfile/attestation/policy fields FILLED, not
-# empty), hand it to the authoritative writer (runtime_manifest CLI: `write
-# <path> --from <file>`) when available, else fall back to a direct atomic write.
+# with the venv/repair-bin/lockfile/attestation/policy/dependency-generation
+# fields FILLED, not empty), hand it to the authoritative writer
+# (runtime_manifest CLI: `write <path> --from <file>`) when available, else
+# fall back to a direct atomic write.
 _json_get() {
   python3 -c '
 import json, sys
@@ -146,11 +191,13 @@ else
   trap 'rmdir "$CREATE_LOCK.d" 2>/dev/null || true' EXIT
 fi
 MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX")"
-python3 - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" <<'PY'
+python3 - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" "$GEN_DIR" "$GEN_PROOF_JSON" "$DEPS_LOCKFILE" <<'PY'
 import json, os, sys
 from datetime import datetime, timedelta, timezone
 
-path, slug, branch, runtime_root, head, base_ref, stamp = sys.argv[1:8]
+path, slug, branch, runtime_root, head, base_ref, stamp, gen_dir, gen_proof_json, deps_lockfile = sys.argv[1:11]
+gen_dir = str(gen_dir)
+generation = json.loads(gen_proof_json)
 owner = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -281,16 +328,21 @@ manifest = {
         "ref": base_ref,
         "commit": head,
         "editable_install_path": "",
-        "venv_path": f"{runtime_root}/.venv",
+        "venv_path": gen_dir,
     },
     "epic": {
         "branch": branch,
         "worktree_path": runtime_root,
-        "venv_path": f"{runtime_root}/.venv",
+        "venv_path": gen_dir,
         "runtime_root": runtime_root,
         "expected_head": head,
         "repair_bin": f"{runtime_root}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
-        "deps_lockfile": f"{runtime_root}/pyproject.toml",
+        "deps_lockfile": deps_lockfile,
+        # T-0301: the content-addressed dependency generation proof.  The
+        # venv at gen_dir is SHARED across every runtime that resolves to
+        # the same frozen spec (id = spec digest); the runtime code comes
+        # from this worktree via worktree-first PYTHONPATH at launch.
+        "dependency_generation": generation,
     },
     "indirection": {
         "host_path": runtime_root,

@@ -11,6 +11,7 @@ from string import Template
 
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     COMPATIBILITY_ONLY_KEY,
+    DEPENDENCY_GENERATION_KEYS,
     EPIC_REQUIRED,
     MANIFEST_SCHEMA_VERSION,
     TOP_LEVEL_REQUIRED,
@@ -243,6 +244,29 @@ def _pinned_manifest_field_read(field: str) -> str:
     )
 
 
+def _pinned_manifest_generation_interpreter_read() -> str:
+    """Shell command substitution reading the dependency-generation
+    interpreter from the pinned runtime manifest (T-0301).
+
+    Same canonical-schema + compatibility_only gates as
+    :func:`_pinned_manifest_field_read`, PLUS the generation-proof
+    completeness gate: ``epic.dependency_generation`` must carry the full
+    required key set (:data:`DEPENDENCY_GENERATION_KEYS`).  An absent,
+    partial, or schema-invalid proof yields an EMPTY read, so the auto
+    entrypoint fails closed with exit 24 — a runtime without a verifiable
+    immutable dependency generation is never launched (G10).
+    """
+    return (
+        '$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c \'import json,sys; '
+        f"d=json.load(open(sys.argv[1])); R={json.dumps(TOP_LEVEL_REQUIRED)}; "
+        f"E={json.dumps(EPIC_REQUIRED)}; G={json.dumps(DEPENDENCY_GENERATION_KEYS)}; "
+        f"e=d.get(\"epic\") if isinstance(d,dict) and d.get(\"schema\")=={json.dumps(MANIFEST_SCHEMA_VERSION)} and d.get({json.dumps(COMPATIBILITY_ONLY_KEY)}) is not True and all(k in d for k in R) else None; "
+        f"g=e.get(\"dependency_generation\") if isinstance(e,dict) and all(k in e for k in E) else None; "
+        f"print(g.get(\"interpreter_path\",\"\")) if isinstance(g,dict) and all(k in g for k in G) else None\' "
+        '"$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)'
+    )
+
+
 def _auto_command(spec: CloudSpec) -> str:
     assert spec.auto is not None
     plan_dir = f"{spec.repo.workspace}/.megaplan/plans/{spec.auto.plan_name}"
@@ -279,10 +303,23 @@ fi
   echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >&2
   exit 24
 fi
-# The provenance check runs with PYTHONPATH set to exactly the manifest root
-# so active imports cannot resolve through an unbound shared checkout.
+"""
+        + f'GEN_INTERPRETER="{_pinned_manifest_generation_interpreter_read()}"\n'
+        + """if [[ -z "$GEN_INTERPRETER" ]]; then
+  echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks dependency generation interpreter" >&2
+  exit 24
+fi
+if [[ ! -x "$GEN_INTERPRETER" ]]; then
+  echo "[megaplan-launch] isolated_chain_runtime_binding_drift: dependency generation interpreter not executable ($GEN_INTERPRETER)" >&2
+  exit 24
+fi
+# The provenance check runs under the generation interpreter with PYTHONPATH
+# set to exactly the manifest root (worktree-first: the runtime code comes
+# from the pinned worktree, the frozen dependencies from the immutable
+# generation) so active imports cannot resolve through an unbound shared
+# checkout and cannot fall back to an editable install.
 if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" \
-    python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
+    "$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
     --expected-root "$ENGINE_DIR" \
     --expected-revision "$EXPECTED_REVISION" >/dev/null 2>&1; then
   echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >&2
@@ -296,9 +333,9 @@ set -euo pipefail
 PLAN_DIR={shlex.quote(plan_dir)}
 if [[ ! -d "$PLAN_DIR" ]]; then
   IDEA="$(cat "$IDEA_FILE")"
-  env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" python3 -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(spec.repo.workspace)} --name {shlex.quote(spec.auto.plan_name)} --auto-approve --robustness {shlex.quote(spec.auto.robustness)} "$IDEA"
+  env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" "$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(spec.repo.workspace)} --name {shlex.quote(spec.auto.plan_name)} --auto-approve --robustness {shlex.quote(spec.auto.robustness)} "$IDEA"
 fi
-exec arnold-supervise {shlex.quote(f"auto-{spec.auto.plan_name}")} env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" python3 -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(spec.auto.plan_name)} --project-dir {shlex.quote(spec.repo.workspace)}
+exec arnold-supervise {shlex.quote(f"auto-{spec.auto.plan_name}")} env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" "$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(spec.auto.plan_name)} --project-dir {shlex.quote(spec.repo.workspace)}
 """
     return _quoted(script)
 

@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 from arnold_pipelines.megaplan.cloud import shadow_attestation
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     COMPATIBILITY_ONLY_KEY,
+    DEPENDENCY_GENERATION_KEYS,
     MANIFEST_FILENAME,
     MANIFEST_SCHEMA_VERSION,
     ManifestError,
@@ -26,6 +27,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     append_promotion,
     attest_runtime,
     bootstrap_manifest,
+    dependency_generation_proof,
     has_valid_allow_manifestless_permit,
     is_compatibility_only_pointer,
     list_manifests,
@@ -34,6 +36,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     main,
     manifest_present,
     set_state,
+    validate_dependency_generation,
     validate_deviation,
     write_active_pointer,
     write_manifest,
@@ -67,6 +70,21 @@ def _make_manifest(**overrides: object) -> dict[str, object]:
             "expected_head": "abc123def",
             "repair_bin": "/opt/arnold/runtime-candidates/epic-demo/venv/bin/arnold-repair-loop",
             "deps_lockfile": "/opt/arnold/base/uv.lock",
+            # T-0301: the content-addressed dependency-generation proof.  The
+            # interpreter path matches the DEFAULT cutover --to-venv-path
+            # (runtime-2/venv) so tree-free cutover tests agree by
+            # construction; tree-based tests override it via
+            # _generation_proof(<to_venv>/bin/python).
+            "dependency_generation": {
+                "id": "a" * 64,
+                "frozen_spec_sha256": "a" * 64,
+                "interpreter_path": (
+                    "/opt/arnold/runtime-candidates/epic-demo/runtime-2/"
+                    "venv/bin/python"
+                ),
+                "venv_digest": "b" * 64,
+                "created": "2026-08-07T00:00:00+00:00",
+            },
         },
         "indirection": {
             "host_path": "/opt/arnold/runtime-candidates/epic-demo",
@@ -288,6 +306,103 @@ def test_advance_generation_bumps_and_records_promotion() -> None:
     assert manifest.generation == 2
     assert manifest.epic["expected_head"] == "aaaa1111"
     assert manifest.promotions == []
+
+
+# ── T-0301: content-addressed dependency generation ─────────────────────────
+
+
+def test_advance_generation_carries_the_generation_proof() -> None:
+    manifest = _make_manifest_obj()
+    advanced = advance_generation(manifest, "bbbb2222", reason="carry proof")
+    assert (
+        advanced.epic["dependency_generation"]
+        == manifest.epic["dependency_generation"]
+    )
+    assert dependency_generation_proof(advanced) is not None
+
+
+def test_advance_generation_refuses_without_proof() -> None:
+    """T-0301 publication gate: a manifest with NO dependency-generation
+    proof cannot be advanced — unknown dependency state blocks publication."""
+    manifest = _make_manifest_obj()
+    del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
+    with pytest.raises(ManifestError, match="dependency_generation proof"):
+        advance_generation(manifest, "bbbb2222", reason="no proof")
+
+
+def test_advance_generation_accepts_explicit_override_proof() -> None:
+    manifest = _make_manifest_obj()
+    del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
+    override = _generation_proof(
+        "/opt/elsewhere/venv/bin/python", id="f" * 64, frozen_spec_sha256="f" * 64
+    )
+    advanced = advance_generation(
+        manifest,
+        "bbbb2222",
+        reason="explicit rebuilt generation",
+        dependency_generation=override,
+    )
+    assert advanced.epic["dependency_generation"] == override
+
+
+def test_validate_dependency_generation_rejects_malformed_records() -> None:
+    valid = _make_manifest_obj().epic["dependency_generation"]
+    for field_name in DEPENDENCY_GENERATION_KEYS:
+        broken = dict(valid)
+        del broken[field_name]
+        with pytest.raises(ManifestError, match="dependency_generation"):
+            validate_dependency_generation(broken)
+    # non-hex digests
+    for field_name in ("id", "frozen_spec_sha256", "venv_digest"):
+        with pytest.raises(ManifestError, match=field_name):
+            validate_dependency_generation(dict(valid, **{field_name: "zz" * 32}))
+    # content address must equal the frozen-spec digest
+    with pytest.raises(ManifestError, match="must equal frozen_spec_sha256"):
+        validate_dependency_generation(
+            dict(valid, id="c" * 64, frozen_spec_sha256="d" * 64)
+        )
+    # interpreter must be absolute
+    with pytest.raises(ManifestError, match="interpreter_path"):
+        validate_dependency_generation(
+            dict(valid, interpreter_path="relative/bin/python")
+        )
+    # created must be UTC ISO
+    with pytest.raises(ManifestError, match="created"):
+        validate_dependency_generation(dict(valid, created="2026-08-07T00:00:00"))
+    assert validate_dependency_generation(valid) == valid
+
+
+def test_manifest_rejects_present_but_malformed_proof() -> None:
+    """A PRESENT but malformed proof is schema-invalid (fail-closed — a
+    partial proof is never partially trusted); an ABSENT proof loads fine
+    (legacy) and is enforced at the publication/launch/GC gates."""
+    with pytest.raises(ManifestError, match="dependency_generation"):
+        _make_manifest_obj(
+            epic={"dependency_generation": {"id": "a" * 64}}
+        )
+    legacy = _make_manifest_obj()
+    del legacy.epic["dependency_generation"]  # type: ignore[typeddict-item]
+    assert dependency_generation_proof(legacy) is None
+    assert legacy.epic.get("dependency_generation") is None
+
+
+def test_dependency_generation_proof_returns_complete_record() -> None:
+    manifest = _make_manifest_obj()
+    proof = dependency_generation_proof(manifest)
+    assert proof is not None
+    assert proof["id"] == proof["frozen_spec_sha256"]
+    assert proof["interpreter_path"].endswith("/bin/python")
+
+
+def test_set_state_and_promotion_preserve_the_proof() -> None:
+    manifest = _make_manifest_obj()
+    closed = set_state(manifest, "closed")
+    assert closed.epic["dependency_generation"] == manifest.epic["dependency_generation"]
+    promoted = append_promotion(manifest, {"previous_generation": 1, "reason": "x"})
+    assert (
+        promoted.epic["dependency_generation"]
+        == manifest.epic["dependency_generation"]
+    )
 
 
 def test_set_state_validates_and_stamps_closed_timestamp() -> None:
@@ -1265,6 +1380,24 @@ _TO_REPAIR_BIN = (
 )
 
 
+def _generation_proof(
+    interpreter_path: str, **overrides: object
+) -> dict[str, object]:
+    """A structurally valid content-addressed dependency-generation proof
+    (T-0301) bound to *interpreter_path* — the value every cutover's
+    ``--to-venv-path``/``--to-dependency-generation`` coherence gates expect
+    (proof interpreter == ``<to_venv>/bin/python``)."""
+    proof: dict[str, object] = {
+        "id": "a" * 64,
+        "frozen_spec_sha256": "a" * 64,
+        "interpreter_path": interpreter_path,
+        "venv_digest": "b" * 64,
+        "created": "2026-08-07T00:00:00+00:00",
+    }
+    proof.update(overrides)
+    return proof
+
+
 def _verified_identity(
     to_runtime_root: str = _TO_RUNTIME_ROOT,
     source_revision: str = _TO_EXPECTED_HEAD,
@@ -1300,13 +1433,19 @@ def _fake_identity_files(tmp_path: Path) -> tuple[Path, Path]:
 
 def _make_cutover_runtime_tree(tmp_path: Path) -> tuple[str, str, str]:
     """Build the REAL staging-shaped TO-runtime tree the path-coherence gates
-    require: a ``.venv`` DIRECTORY and an EXECUTABLE repair wrapper, both
+    require: a ``.venv`` DIRECTORY with an EXECUTABLE ``bin/python``
+    interpreter (T-0301: the venv binding must agree with the generation
+    proof's interpreter_path) and an EXECUTABLE repair wrapper, both
     resolving INSIDE the runtime root (the layout arnold-runtime-create
     writes: ``{root}/.venv`` and ``{root}/arnold_pipelines/megaplan/cloud/
     wrappers/arnold-repair-loop``).  Returns ``(to_root, venv, repair)``."""
     to_root = tmp_path / "runtime-candidates" / "epic-demo" / "runtime-2"
     venv = to_root / ".venv"
-    venv.mkdir(parents=True, exist_ok=True)
+    (venv / "bin").mkdir(parents=True, exist_ok=True)
+    python = venv / "bin" / "python"
+    python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python.chmod(0o755)
+    (venv / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
     repair = (
         to_root
         / "arnold_pipelines"
@@ -1517,7 +1656,133 @@ def test_cutover_runtime_manifest_rejects_guard_mismatch() -> None:
             to_repair_bin=_TO_REPAIR_BIN,
             reason="empty to-root",
         )
-    assert manifest.epic["runtime_root"] == _FROM_RUNTIME_ROOT
+    assert manifest.generation == 3
+
+
+# ── T-0301 cutover publication gate ─────────────────────────────────────────
+
+
+def test_cutover_runtime_manifest_carries_the_generation_proof() -> None:
+    manifest = _make_manifest_obj()
+    updated = cutover_runtime_manifest(
+        manifest,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=_TO_RUNTIME_ROOT,
+        to_expected_head=_TO_EXPECTED_HEAD,
+        to_venv_path=_TO_VENV_PATH,
+        to_repair_bin=_TO_REPAIR_BIN,
+        reason="carry generation",
+    )
+    assert (
+        updated.epic["dependency_generation"]
+        == manifest.epic["dependency_generation"]
+    )
+    assert dependency_generation_proof(updated) is not None
+
+
+def test_cutover_runtime_manifest_refuses_without_proof() -> None:
+    """T-0301 publication gate: a manifest with NO dependency-generation
+    proof cannot be cut over — unknown dependency state blocks publication."""
+    manifest = _make_manifest_obj()
+    del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
+    with pytest.raises(ManifestError, match="dependency_generation proof"):
+        cutover_runtime_manifest(
+            manifest,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=_TO_RUNTIME_ROOT,
+            to_expected_head=_TO_EXPECTED_HEAD,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            reason="no proof",
+        )
+
+
+def test_cutover_runtime_manifest_accepts_explicit_proof_override() -> None:
+    manifest = _make_manifest_obj()
+    del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
+    override = _generation_proof(
+        f"{_TO_VENV_PATH}/bin/python", id="e" * 64, frozen_spec_sha256="e" * 64
+    )
+    updated = cutover_runtime_manifest(
+        manifest,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=_TO_RUNTIME_ROOT,
+        to_expected_head=_TO_EXPECTED_HEAD,
+        to_venv_path=_TO_VENV_PATH,
+        to_repair_bin=_TO_REPAIR_BIN,
+        reason="explicit rebuilt generation",
+        to_dependency_generation=override,
+    )
+    assert updated.epic["dependency_generation"] == override
+
+
+def test_cli_cutover_refuses_without_proof_zero_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0301: the CLI cutover refuses (typed, ZERO mutation, no rollback
+    receipt) when the manifest has no complete generation proof and no
+    --to-dependency-generation is given."""
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    path = tmp_path / "m.json"
+    manifest = _make_manifest_obj(generation=3)
+    del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
+    write_manifest(manifest, path)
+    before = path.read_bytes()
+    expected_sha = hashlib.sha256(before).hexdigest()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    assert main(
+        _cutover_argv_with_tree(
+            path, expected_sha, identity, receipt, to_root, to_venv, to_repair
+        )
+    ) == 2
+    assert "dependency_generation proof" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
+
+
+def test_cli_cutover_accepts_explicit_to_dependency_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-0301: --to-dependency-generation supplies the rebuilt proof for a
+    manifest that has none (the normal migration path for pre-T-0301
+    manifests), and the cutover succeeds."""
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    path = tmp_path / "m.json"
+    manifest = _make_manifest_obj(generation=3)
+    del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
+    write_manifest(manifest, path)
+    before_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    args = _cutover_argv_with_tree(
+        path, before_sha, identity, receipt, to_root, to_venv, to_repair
+    )
+    args += [
+        "--to-dependency-generation",
+        json.dumps(_generation_proof(f"{to_venv}/bin/python")),
+    ]
+    assert main(args) == 0
+    updated = load_manifest(path)
+    assert updated.generation == 4
+    assert updated.epic["dependency_generation"]["interpreter_path"] == (
+        f"{to_venv}/bin/python"
+    )
     assert manifest.generation == 3
 
 
@@ -1527,16 +1792,19 @@ def test_cli_cutover_happy_path(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = tmp_path / "m.json"
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     manifest = _make_manifest_obj(
         generation=3,
         base={"commit": _FROM_EXPECTED_HEAD},
         deviations=[_make_deviation()],
+        # T-0301: the manifest's generation proof must agree with the
+        # tree's venv interpreter (proof coherence gate).
+        epic={"dependency_generation": _generation_proof(f"{to_venv}/bin/python")},
     )
     write_manifest(manifest, path)
     before = manifest.to_dict()
     expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    identity, receipt = _fake_identity_files(tmp_path)
-    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",
@@ -1605,10 +1873,16 @@ def test_cli_cutover_happy_path(
 
 def test_cli_cutover_honors_custom_receipt_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "m.json"
-    write_manifest(_make_manifest_obj(generation=3), path)
-    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    write_manifest(
+        _make_manifest_obj(
+            generation=3,
+            epic={"dependency_generation": _generation_proof(f"{to_venv}/bin/python")},
+        ),
+        path,
+    )
+    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",
@@ -1757,9 +2031,12 @@ def test_cli_cutover_receipt_symlink_not_followed(
     NOT followed — the hardened write replaces the link entry with a real
     receipt file at the literal path, and the link's former target stays
     byte-identical."""
-    path, expected_sha = _write_cutover_manifest(tmp_path)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path,
+        epic={"dependency_generation": _generation_proof(f"{to_venv}/bin/python")},
+    )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",
@@ -1801,9 +2078,12 @@ def test_cli_cutover_receipt_post_verify_failed_when_receipt_write_fails(
     (injected no-op emitter) the manifest write still happens, but the
     post-verify refuses instead of reporting success without durable
     rollback evidence — a typed post-condition check."""
-    path, expected_sha = _write_cutover_manifest(tmp_path)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path,
+        epic={"dependency_generation": _generation_proof(f"{to_venv}/bin/python")},
+    )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",
@@ -1841,9 +2121,12 @@ def test_apply_cutover_receipt_post_verify_failed_typed_code(
 ) -> None:
     """T-0101h round-5 blocker 3: the post-verify refusal is TYPED
     (``receipt_post_verify_failed``) at the API level."""
-    path, expected_sha = _write_cutover_manifest(tmp_path)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path,
+        epic={"dependency_generation": _generation_proof(f"{to_venv}/bin/python")},
+    )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",
@@ -1881,9 +2164,12 @@ def test_cli_cutover_happy_path_receipt_post_verify_passes(
     durable rollback receipt exists at the literal ``--receipt-out`` path, is
     parseable, and carries the exact pre-cutover manifest SHA-256 (the
     internal post-verify passes and the command reports success)."""
-    path, expected_sha = _write_cutover_manifest(tmp_path)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path,
+        epic={"dependency_generation": _generation_proof(f"{to_venv}/bin/python")},
+    )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",
@@ -1995,18 +2281,30 @@ def test_cli_cutover_rejects_non_executable_repair_bin_zero_mutation(
     assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
 
 
-def test_cli_cutover_rejects_venv_escaping_root_zero_mutation(
+def test_cli_cutover_rejects_venv_interpreter_mismatch_zero_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """T-0101h round-2: a --to-venv-path that resolves OUTSIDE the receipted
-    runtime root (a ``..`` escape) is refused — the manifest must never point
-    at a venv the receipt did not cover."""
-    path, expected_sha = _write_cutover_manifest(tmp_path)
-    before = path.read_bytes()
+    """T-0301: the venv coherence anchor is the generation PROOF, not root
+    containment.  A venv OUTSIDE the runtime root is the NORMAL shared
+    content-addressed generation layout, but its interpreter must equal the
+    manifest's dependency_generation.interpreter_path — a venv whose
+    interpreter disagrees with the proof is refused (typed, ZERO mutation,
+    no rollback receipt)."""
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, _to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     escaped_venv = tmp_path / "escaped-venv"
-    escaped_venv.mkdir()
+    (escaped_venv / "bin").mkdir(parents=True)
+    (escaped_venv / "bin" / "python").write_text("#!/bin/sh\nexit 0\n")
+    (escaped_venv / "bin" / "python").chmod(0o755)
+    # The manifest proof points at the IN-ROOT venv interpreter, but the
+    # cutover is asked to bind the OUT-OF-ROOT venv: the bindings disagree.
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path,
+        epic={
+            "dependency_generation": _generation_proof(f"{_TO_VENV_PATH}/bin/python")
+        },
+    )
+    before = path.read_bytes()
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",
@@ -2025,7 +2323,7 @@ def test_cli_cutover_rejects_venv_escaping_root_zero_mutation(
             to_repair,
         )
     ) == 2
-    assert "inside --to-runtime-root" in capsys.readouterr().err
+    assert "does not match the generation proof" in capsys.readouterr().err
     assert path.read_bytes() == before
     assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
 
@@ -2073,12 +2371,14 @@ def test_cli_cutover_rejects_stale_editable_install_path_zero_mutation(
     single-root runtime.  An identity with editable markers OUTSIDE its
     import_root proves a split editable install — keeping '' would silently
     leave a stale field, so the cutover refuses with a typed error."""
-    path, expected_sha = _write_cutover_manifest(
-        tmp_path, base={"commit": _FROM_EXPECTED_HEAD, "editable_install_path": ""}
-    )
-    before = path.read_bytes()
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    path, expected_sha = _write_cutover_manifest(
+        tmp_path,
+        base={"commit": _FROM_EXPECTED_HEAD, "editable_install_path": ""},
+        epic={"dependency_generation": _generation_proof(f"{to_venv}/bin/python")},
+    )
+    before = path.read_bytes()
     split_identity = dict(_verified_identity(to_runtime_root=to_root))
     split_identity["editable_root"] = "/opt/elsewhere-editable"
     monkeypatch.setattr(
@@ -2156,6 +2456,8 @@ def test_cli_cutover_rewrites_root_relative_fields_end_to_end(
     deps_lockfile / base.venv_path, empty editable_install_path) is rewritten
     coherently through the REAL CLI cutover — no stale root-relative field
     survives the root move."""
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     path, expected_sha = _write_cutover_manifest(
         tmp_path,
         base={
@@ -2163,11 +2465,12 @@ def test_cli_cutover_rewrites_root_relative_fields_end_to_end(
             "venv_path": f"{_FROM_RUNTIME_ROOT}/.venv",
             "editable_install_path": "",
         },
-        epic={"deps_lockfile": f"{_FROM_RUNTIME_ROOT}/pyproject.toml"},
+        epic={
+            "deps_lockfile": f"{_FROM_RUNTIME_ROOT}/pyproject.toml",
+            "dependency_generation": _generation_proof(f"{to_venv}/bin/python"),
+        },
     )
     before_base_ref = load_manifest(path).base["ref"]
-    identity, receipt = _fake_identity_files(tmp_path)
-    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.runtime_manifest"
         "._verify_external_runtime_identity",

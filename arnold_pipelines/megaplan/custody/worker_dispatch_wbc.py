@@ -31,6 +31,7 @@ from .common_worker_dispatch import CommonWorkerDispatchSpec
 from .controlled_writer_registry import Cohort, ControlledWriter, register_writer
 from .contracts import (
     CustodyTargetKey,
+    RepairOccurrenceKey,
     normalize_repair_occurrence_key,
     process_birth_identity,
 )
@@ -240,6 +241,7 @@ def build_worker_dispatch_spec(
         owner_pid=owner_pid,
         owner_boot_id=owner_boot_id,
         coordinator_fence_token=fence_token,
+        dispatch_key=normalized_dispatch_key,
     )
     success_action_context = _shadow_action_context(
         phase_step=phase_name,
@@ -253,6 +255,7 @@ def build_worker_dispatch_spec(
         owner_pid=owner_pid,
         owner_boot_id=owner_boot_id,
         coordinator_fence_token=fence_token,
+        dispatch_key=normalized_dispatch_key,
     )
     failure_action_context = _shadow_action_context(
         phase_step=phase_name,
@@ -266,6 +269,7 @@ def build_worker_dispatch_spec(
         owner_pid=owner_pid,
         owner_boot_id=owner_boot_id,
         coordinator_fence_token=fence_token,
+        dispatch_key=normalized_dispatch_key,
     )
     lease_store, outbox = _ensure_dispatch_leases(
         plan_dir=plan_dir,
@@ -544,6 +548,7 @@ def _shadow_action_context(
     owner_pid: str,
     owner_boot_id: str,
     coordinator_fence_token: int = 0,
+    dispatch_key: str | None = None,
 ) -> ActionBoundaryContext:
     return ActionBoundaryContext(
         action_type=action_type,  # type: ignore[arg-type]
@@ -554,6 +559,7 @@ def _shadow_action_context(
             route_kind,
             worker_step,
             selected_spec,
+            dispatch_key=dispatch_key or "",
         ),
         run_authority_grant_id=attempt_id,
         coordinator_fence_token=coordinator_fence_token,
@@ -663,12 +669,31 @@ def _ensure_dispatch_leases(
         now = datetime.now(timezone.utc)
         expires_at = (now + timedelta(hours=1)).isoformat()
 
+        # T-0205: acquire/reclaim payloads carry the FULL target identity —
+        # the lossless RepairOccurrenceKey plus the explicit dispatch key — so
+        # replaying the lease history reconstructs the exact dispatch target.
+        # Every custody join (lease id, outbox occurrence digest, replayed
+        # occurrence key) is keyed on the full target including dispatch_key;
+        # two dispatches differing only in dispatch key can never collide.
+        occurrence_key = RepairOccurrenceKey(
+            target=ctx.target,
+            run_id=attempt_id,
+            run_revision=str(custody_epoch),
+            coordinator_attempt_id=attempt_id,
+            fence_token=fence_token,
+            wbc_attempt_reference=attempt_id,
+        )
+        lease_payload = {
+            "dispatch_key": ctx.target.dispatch_key,
+            "occurrence_key": occurrence_key.to_dict(),
+        }
+
         current = lease_store.current_lease(lease_id)
         if current is None:
             # No visible lease — race-safe acquisition: the store serializes
-            # the append under the lease flock, so a concurrent winner
-            # surfaces as a store error here and is re-adjudicated below
-            # instead of being raced in user space.
+            # the load/check/append under ONE lease flock, so a concurrent
+            # winner surfaces as a store error here and is re-adjudicated
+            # below instead of being raced in user space.
             try:
                 lease_store.acquire(
                     lease_id=lease_id,
@@ -681,6 +706,7 @@ def _ensure_dispatch_leases(
                     occurrence_digest=digest,
                     custody_epoch=custody_epoch,
                     expires_at=expires_at,
+                    payload=lease_payload,
                 )
             except LeaseStoreError:
                 current = lease_store.current_lease(lease_id)
@@ -726,6 +752,7 @@ def _ensure_dispatch_leases(
                                 custody_epoch, current.custody_epoch + 1
                             ),
                             expires_at=expires_at,
+                            payload=lease_payload,
                         )
                 # else: idempotent retry of the same dispatch — lease is ours.
             elif current.is_expired:
@@ -748,6 +775,7 @@ def _ensure_dispatch_leases(
                     occurrence_digest=digest,
                     custody_epoch=max(custody_epoch, current.custody_epoch + 1),
                     expires_at=expires_at,
+                    payload=lease_payload,
                 )
             else:
                 # Terminal-but-not-yet-expired foreign lease (clock skew) is
@@ -766,6 +794,7 @@ def _ensure_dispatch_leases(
                             custody_epoch, current.custody_epoch + 1
                         ),
                         expires_at=expires_at,
+                        payload=lease_payload,
                     )
                 except LeaseStoreError:
                     raise ActionBoundaryDeniedError(
@@ -819,6 +848,11 @@ def _ensure_dispatch_leases(
                     payload={
                         "target_digest": digest,
                         "action_type": str(ctx.action_type),
+                        **(
+                            {"dispatch_key": ctx.target.dispatch_key}
+                            if ctx.target.dispatch_key
+                            else {}
+                        ),
                     },
                 )
             )

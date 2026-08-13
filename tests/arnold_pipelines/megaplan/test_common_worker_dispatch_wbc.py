@@ -640,6 +640,210 @@ def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged
     assert {row["terminal_event"] for row in manifest} == {"completed"}
 
 
+# ── T-0205: atomic plain-lease acquire + dispatch_key in custody identity ──
+
+
+def test_plain_lease_acquire_race_has_single_winner_and_zero_mutation(
+    tmp_path: Path,
+) -> None:
+    """T-0205: the plain lease acquire holds ONE lock across load/check/
+    append, so concurrent contenders for the same lease produce exactly one
+    winner.  Every loser re-reads inside the lock and refuses with a typed
+    error and ZERO mutation — no conflict quarantine, no second acquire
+    event, no stray conflict events.
+
+    Contenders share the DEFAULT idempotency key (as the production dispatch
+    path does) but carry distinct owners, so without the atomic acquire the
+    losers would fall through the check and hit the payload-conflict
+    quarantine instead of a clean refusal.
+    """
+    import threading
+
+    from arnold_pipelines.megaplan.custody.lease_store import (
+        LeaseIdempotencyConflict,
+        LeaseStoreError,
+        open_lease_store,
+    )
+
+    store = open_lease_store(tmp_path / "leases", flock=True)
+    lease_id = "custody-lease-race-target"
+    barrier = threading.Barrier(4)
+    results: list[tuple[str, str]] = []
+    results_lock = threading.Lock()
+
+    def _contend(owner: str) -> None:
+        barrier.wait()
+        try:
+            store.acquire(
+                lease_id=lease_id,
+                owner_host=owner,
+                owner_pid="1",
+                owner_boot_id="boot",
+                run_authority_grant_id=f"grant-{owner}",
+                coordinator_fence_token=0,
+                wbc_attempt_reference=f"attempt-{owner}",
+                occurrence_digest="sha256:race-target",
+                custody_epoch=1,
+                # Deliberately OMIT idempotency_key: the production dispatch
+                # path relies on the default acquire-<lease_id> key, and the
+                # race is exactly two distinct attempts sharing that key.
+            )
+            outcome = "won"
+        except LeaseIdempotencyConflict:
+            outcome = "conflict"
+        except LeaseStoreError:
+            outcome = "refused"
+        with results_lock:
+            results.append((owner, outcome))
+
+    threads = [
+        threading.Thread(target=_contend, args=(f"owner-{i}",))
+        for i in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    outcomes = [outcome for _owner, outcome in results]
+    # Exactly one contender won; the rest were CLEANLY refused — never a
+    # payload-conflict quarantine from a check-then-append race.
+    assert outcomes.count("won") == 1, outcomes
+    assert "conflict" not in outcomes, outcomes
+    # Zero mutation: one acquire event, no conflict events, no quarantine.
+    history = store.load_history(lease_id)
+    assert len(history) == 1
+    assert history[0].event_type == "acquire"
+    assert store.quarantined_conflicts(lease_id) == ()
+    # The winner's lease is coherent and owned by exactly one contender.
+    lease = store.current_lease(lease_id)
+    assert lease is not None
+    winners = [owner for owner, outcome in results if outcome == "won"]
+    assert winners == [lease.owner_host]
+
+
+def test_worker_dispatch_different_dispatch_keys_never_collide_on_custody(
+    tmp_path: Path,
+) -> None:
+    """T-0205: dispatch_key is part of the custody target identity, so two
+    dispatches that differ ONLY in dispatch key derive distinct target
+    digests and distinct leases — they can never collide on custody, even in
+    the same runtime."""
+    state = {
+        "name": "plan-dispatch-key-custody",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-dispatch-key"},
+        "active_step": {"run_id": "run-dispatch-key"},
+    }
+    phase = activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="critique",
+        agent="critic",
+    )
+    assert phase is not None
+    common = {
+        "plan_dir": tmp_path,
+        "state": state,
+        "step": "critique",
+        "agent": "hermes",
+        "selected_spec": "hermes:zhipu:glm-5.2",
+        "route_kind": "subprocess",
+    }
+    first = build_worker_dispatch_spec(**common, dispatch_key="critique:scope:initial")
+    second = build_worker_dispatch_spec(**common, dispatch_key="critique:safety:initial")
+    assert first is not None and second is not None
+
+    # The target identity itself carries the dispatch key...
+    assert first.start_action_context.target.dispatch_key == "critique:scope:initial"
+    assert second.start_action_context.target.dispatch_key == "critique:safety:initial"
+    # ...so the digests — and therefore the lease ids — never collide.
+    first_digests = {
+        ctx.target.target_digest
+        for ctx in (
+            first.start_action_context,
+            first.success_action_context,
+            first.failure_action_context,
+        )
+    }
+    second_digests = {
+        ctx.target.target_digest
+        for ctx in (
+            second.start_action_context,
+            second.success_action_context,
+            second.failure_action_context,
+        )
+    }
+    assert first_digests.isdisjoint(second_digests)
+    # Every boundary of every dispatch acquired its own lease, and the two
+    # dispatches share NO lease file on disk (3 boundaries x 2 keys = 6).
+    store = first.facade._lease_store
+    for ctx in (
+        first.start_action_context,
+        first.success_action_context,
+        first.failure_action_context,
+        second.start_action_context,
+        second.success_action_context,
+        second.failure_action_context,
+    ):
+        lease = store.current_lease(f"custody-lease-{ctx.target.target_digest[:16]}")
+        assert lease is not None, ctx.action_type
+    history_files = sorted(
+        path.name
+        for path in (tmp_path / "custody" / "leases").glob("*.history.jsonl")
+    )
+    assert len(history_files) == 6, history_files
+
+
+def test_worker_dispatch_replay_of_same_key_joins_same_lease(
+    tmp_path: Path,
+) -> None:
+    """T-0205: rebuilding the same dispatch (same dispatch_key) joins the
+    SAME custody lease — same lease id, idempotent keep (exactly one acquire
+    event), and the replayed lease's occurrence key carries the FULL target
+    including dispatch_key."""
+    state = {
+        "name": "plan-dispatch-key-replay",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-dispatch-key-replay"},
+        "active_step": {"run_id": "run-dispatch-key-replay"},
+    }
+    phase = activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="critique",
+        agent="critic",
+    )
+    assert phase is not None
+    common = {
+        "plan_dir": tmp_path,
+        "state": state,
+        "step": "critique",
+        "agent": "hermes",
+        "selected_spec": "hermes:zhipu:glm-5.2",
+        "route_kind": "subprocess",
+        "dispatch_key": "critique:scope:initial",
+    }
+    first = build_worker_dispatch_spec(**common)
+    replay = build_worker_dispatch_spec(**common)
+    assert first is not None and replay is not None
+    assert first.attempt_id == replay.attempt_id
+
+    ctx = first.start_action_context
+    lease_id = f"custody-lease-{ctx.target.target_digest[:16]}"
+    store = replay.facade._lease_store
+    lease = store.current_lease(lease_id)
+    assert lease is not None
+    # Exactly ONE acquire event — the replay idempotently kept the lease.
+    assert len(store.load_history(lease_id)) == 1
+    # The replayed occurrence key joins the full dispatch target, including
+    # the dispatch key that distinguishes this slice.
+    assert lease.occurrence_key.target.dispatch_key == "critique:scope:initial"
+    assert lease.occurrence_key.target.target_digest == ctx.target.target_digest
+
+
 def test_worker_dispatch_attempt_identity_changes_with_new_invocation(
     tmp_path: Path,
 ) -> None:

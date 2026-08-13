@@ -30,20 +30,78 @@ if [[ ! -r "$PINNED_RUNTIME_MANIFEST" ]]; then
   echo "[arnold-chain] isolated_chain_runtime_binding_drift: runtime manifest unreadable ($PINNED_RUNTIME_MANIFEST)" >&2
   exit 24
 fi
-ENGINE_DIR="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c 'import json,sys; print(json.load(open(sys.argv[1])).get("epic",{}).get("runtime_root",""))' "$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)"
+
+# ── canonical manifest reads (G6 round-2 finding 2; T-0301) ───────────
+# Stdlib JSON reads gated on the CANONICAL runtime-manifest schema: a field
+# is printed ONLY when the pinned file carries schema "1" plus the full
+# canonical top-level and epic required key sets — the SAME constants the
+# host CLI gate embeds (runtime_manifest.TOP_LEVEL_REQUIRED / EPIC_REQUIRED /
+# DEPENDENCY_GENERATION_KEYS / MANIFEST_SCHEMA_VERSION; the launcher-
+# conformance tests pin them).  A present-but-schema-invalid manifest yields
+# an EMPTY read, so the pin gate exits 24 instead of deriving a dirty
+# ENGINE_DIR or interpreter from it.  These reads are stdlib-only; they
+# never execute engine code.
+_read_manifest_field() {
+  # $1 = pinned manifest path; $2 = epic field name
+  env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+R = ("runtime_id", "schema", "generation", "epic_id", "state", "owner", "base", "epic", "indirection", "policy", "promotions", "timestamps", "gc_policy", "commands")
+E = ("branch", "worktree_path", "venv_path", "runtime_root", "expected_head", "repair_bin", "deps_lockfile")
+e = d.get("epic") if isinstance(d, dict) and d.get("schema") == "1" and all(k in d for k in R) else None
+print(e.get(sys.argv[2], "")) if isinstance(e, dict) and all(k in e for k in E) else None
+' "$1" "$2" 2>/dev/null || true
+}
+
+# Generation-interpreter read (T-0301): the same canonical-schema gate PLUS
+# the dependency-generation proof completeness gate — epic.dependency_generation
+# must carry id / frozen_spec_sha256 / interpreter_path / venv_digest /
+# created.  An absent, partial, or schema-invalid proof yields an EMPTY read,
+# so the launch gate fails closed with exit 24 — a runtime without a
+# verifiable immutable dependency generation is never launched (G10).
+_read_generation_interpreter() {
+  # $1 = pinned manifest path
+  env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+R = ("runtime_id", "schema", "generation", "epic_id", "state", "owner", "base", "epic", "indirection", "policy", "promotions", "timestamps", "gc_policy", "commands")
+E = ("branch", "worktree_path", "venv_path", "runtime_root", "expected_head", "repair_bin", "deps_lockfile")
+G = ("id", "frozen_spec_sha256", "interpreter_path", "venv_digest", "created")
+e = d.get("epic") if isinstance(d, dict) and d.get("schema") == "1" and all(k in d for k in R) else None
+g = e.get("dependency_generation") if isinstance(e, dict) and all(k in e for k in E) else None
+print(g.get("interpreter_path", "")) if isinstance(g, dict) and all(k in g for k in G) else None
+' "$1" 2>/dev/null || true
+}
+
+ENGINE_DIR="$(_read_manifest_field "$PINNED_RUNTIME_MANIFEST" "runtime_root")"
 if [[ -z "$ENGINE_DIR" ]]; then
   echo "[arnold-chain] isolated_chain_runtime_binding_drift: manifest lacks epic.runtime_root" >&2
   exit 24
 fi
-EXPECTED_REVISION="$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c 'import json,sys; print(json.load(open(sys.argv[1])).get("epic",{}).get("expected_head",""))' "$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)"
+EXPECTED_REVISION="$(_read_manifest_field "$PINNED_RUNTIME_MANIFEST" "expected_head")"
 if [[ -z "$EXPECTED_REVISION" ]]; then
   echo "[arnold-chain] isolated_chain_runtime_binding_drift: manifest lacks epic.expected_head" >&2
   exit 24
 fi
-# The provenance check runs with PYTHONPATH set to exactly the manifest root
-# so active imports cannot resolve through an unbound shared checkout.
+# T-0301: the generation-interpreter gate (proof completeness + executable
+# check) runs before the provenance check, and BOTH the provenance probe and
+# the launch execute under the generation interpreter — never the ambient
+# python and never an editable install.
+GEN_INTERPRETER="$(_read_generation_interpreter "$PINNED_RUNTIME_MANIFEST")"
+if [[ -z "$GEN_INTERPRETER" ]]; then
+  echo "[arnold-chain] isolated_chain_runtime_binding_drift: manifest lacks dependency generation interpreter" >&2
+  exit 24
+fi
+if [[ ! -x "$GEN_INTERPRETER" ]]; then
+  echo "[arnold-chain] isolated_chain_runtime_binding_drift: dependency generation interpreter not executable ($GEN_INTERPRETER)" >&2
+  exit 24
+fi
+# The provenance check runs under the generation interpreter with PYTHONPATH
+# set to exactly the manifest root (worktree-first: runtime code from the
+# pinned worktree, frozen dependencies from the immutable generation) so
+# active imports cannot resolve through an unbound shared checkout.
 if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" \
-    python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
+    "$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
     --expected-root "$ENGINE_DIR" \
     --expected-revision "$EXPECTED_REVISION" >/dev/null 2>&1; then
   echo "[arnold-chain] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >&2
@@ -57,7 +115,7 @@ fi
 # outside the Python chain flow.
 _check_acceptance_gate() {
   local spec="$1" workspace="$2" gate_json gate_rc validation_rc validation_message
-  if gate_json="$(PYTHONPATH="$ENGINE_DIR" python3 -P - "$spec" "$workspace" "chain_wrapper" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
+  if gate_json="$(env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" "$GEN_INTERPRETER" -P - "$spec" "$workspace" "chain_wrapper" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
 spec_path, workspace, caller = sys.argv[1:4]
@@ -90,7 +148,7 @@ PY
   # Validate through the canonical helper module.  This is intentionally the
   # only decision parser: the shell never defaults missing/malformed fields
   # open and never interprets a raw gate_open value itself.
-  if validation_message="$(PYTHONPATH="$ENGINE_DIR" python3 -P - "$gate_json" "$spec" "$workspace" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
+  if validation_message="$(env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" "$GEN_INTERPRETER" -P - "$gate_json" "$spec" "$workspace" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
 import sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import (
     AcceptanceGateDecisionError,
@@ -128,8 +186,9 @@ PY
 
 _check_acceptance_gate "$SPEC" "$PROJECT_DIR"
 
+# G10 (no ambient-python launch): the ambient `python -P -m arnold_pipelines.megaplan chain start` launch form is REMOVED — the chain start below runs under the generation interpreter ($GEN_INTERPRETER, resolved + verified above) with worktree-first PYTHONPATH and frozen dependencies from the immutable generation.
 if [ "$ONE_FLAG" = "--one" ]; then
-    exec bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
+    exec bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 \"\$3\" -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR" "$GEN_INTERPRETER"
 else
-    exec bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
+    exec bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 \"\$3\" -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR" "$GEN_INTERPRETER"
 fi

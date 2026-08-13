@@ -541,3 +541,131 @@ class TestKeyDeterminism:
         # attributes by name.
         key_after = repair_requests.repair_dispatch_identity_key(ident)
         assert key_before == key_after
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 13. Canonical enqueue result contract (T-0202 cross-producer shape)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestEnqueueResultContractShape:
+    """The canonical enqueue result shape propagated by auto.py.
+
+    auto's lifecycle-failure enqueue normalizes every enqueue producer
+    result onto ``{request_id, decision_id, repair_identity_key,
+    blocker_id}``; the watchdog binds those IDs into custody and the claim
+    namespace consumes them.  This pins the mapping so producers and
+    consumers cannot drift apart.
+    """
+
+    def test_canonical_shape_is_four_identity_keys(self) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _canonical_repair_request_identity,
+        )
+
+        keys = _canonical_repair_request_identity({})
+        assert set(keys) == {
+            "request_id",
+            "decision_id",
+            "repair_identity_key",
+            "blocker_id",
+        }
+        assert all(value == "" for value in keys.values())
+
+    def test_queued_result_maps_request_and_decision_ids(self) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _canonical_repair_request_identity,
+        )
+
+        result = {
+            "status": "queued",
+            "request": {
+                "request_id": "req-1",
+                "repair_identity_key": "sha256:abc",
+                "blocker_id": "blk-1",
+            },
+            "decision": {
+                "decision_id": "dec-1",
+                "request_id": "req-1",
+            },
+        }
+        canonical = _canonical_repair_request_identity(result)
+
+        assert canonical["request_id"] == "req-1"
+        assert canonical["decision_id"] == "dec-1"
+        assert canonical["repair_identity_key"] == "sha256:abc"
+        assert canonical["blocker_id"] == "blk-1"
+
+    def test_rejected_result_has_empty_ids_but_keeps_shape(self) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _canonical_repair_request_identity,
+        )
+
+        result = {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "evidence": {"reason": "identity required"},
+        }
+        canonical = _canonical_repair_request_identity(result)
+
+        assert set(canonical) == {
+            "request_id",
+            "decision_id",
+            "repair_identity_key",
+            "blocker_id",
+        }
+        assert all(value == "" for value in canonical.values())
+
+    def test_lifecycle_enqueue_emits_canonical_shape(self, tmp_path) -> None:
+        from arnold_pipelines.megaplan import auto
+        from tests.cloud.repair_identity_fixtures import repair_identity
+
+        plan_dir = tmp_path / "markers"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        identity = repair_identity(
+            session="dispatch-shape-session",
+            plan="dispatch-shape-plan",
+            failure_kind="deterministic_phase_failure",
+            phase="critique",
+            task="phase:critique",
+        )
+
+        result = auto._enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=queue_root,
+            session="dispatch-shape-session",
+            run_kind="chain",
+            kind="deterministic_phase_failure",
+            message="phase contract failure",
+            current_state="blocked",
+            phase="critique",
+            suggested_action="repair the phase contract",
+            metadata={
+                "blocked_task_id": "phase:critique",
+                "repair_identity": identity,
+            },
+        )
+
+        assert set(result) >= {
+            "request_id",
+            "decision_id",
+            "repair_identity_key",
+            "blocker_id",
+        }
+        assert result["status"] == "queued"
+        assert result["request_id"]
+        assert result["decision_id"]
+        assert result["repair_identity_key"] == repair_requests.repair_identity_key(identity)
+        assert result["blocker_id"]
+        # The shape is what a watchdog bind and a claim-namespace join consume.
+        claim = repair_requests.claim_active_repair_request(
+            queue_root,
+            blocker_id=result["blocker_id"],
+            request_id=result["request_id"],
+            actor="watchdog",
+            session="dispatch-shape-session",
+            repair_identity=identity,
+        )
+        assert claim.claimed

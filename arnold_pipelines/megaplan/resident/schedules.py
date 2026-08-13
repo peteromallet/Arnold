@@ -307,7 +307,9 @@ class Target(BaseModel):
     task_kind: str = "other"
     description: str = "Scheduled resident-managed work"
     project_dir: str | None = None
-    operation: Literal["managed_launch", "vp_todo_sweep", "probe"] = "managed_launch"
+    operation: Literal[
+        "managed_launch", "vp_todo_sweep", "probe", "superfixer_proactive"
+    ] = "managed_launch"
     dependencies: list[str] = Field(default_factory=list, max_length=8)
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -320,8 +322,13 @@ class Target(BaseModel):
             raise ValueError("prompt_ref must identify an immutable version")
         if self.kind == "resident_managed_agent" and self.operation != "managed_launch":
             raise ValueError("resident_managed_agent targets require managed_launch")
-        if self.kind == "resident_orchestrator_turn" and self.operation not in {"vp_todo_sweep", "probe"}:
-            raise ValueError("resident_orchestrator_turn targets require vp_todo_sweep or probe")
+        if self.kind == "resident_orchestrator_turn" and self.operation not in {
+            "vp_todo_sweep", "probe", "superfixer_proactive",
+        }:
+            raise ValueError(
+                "resident_orchestrator_turn targets require vp_todo_sweep, probe, "
+                "or superfixer_proactive"
+            )
         return self
 
 
@@ -1054,6 +1061,123 @@ class ScheduleService:
                 ))
         return claimed
 
+    def load_occurrence(self, occurrence_id: str) -> OccurrenceProjection | None:
+        """Return the projected occurrence, or ``None`` when unknown."""
+        path = self.repo.occurrence_path(occurrence_id)
+        if not path.exists():
+            return None
+        occurrence = ScheduleOccurrence.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+        return self.repo.project(occurrence)
+
+    def schedule_state(self, schedule_id: str) -> str | None:
+        """Return the definition's current state, or ``None`` when unreadable."""
+        try:
+            return self.repo.read_definition(schedule_id).state
+        except (OSError, ValueError):
+            return None
+
+    def claim_superfixer_occurrence(
+        self,
+        occurrence_id: str,
+        *,
+        job_id: str,
+        worker_id: str,
+        now: datetime | None = None,
+        lease_seconds: int = 600,
+    ) -> OccurrenceProjection:
+        """Atomically take consumer custody of ONE due superfixer occurrence.
+
+        The occurrence must be bound to this scheduled job (state ``launched``
+        with ``run_id == scheduled-job:<job_id>``) and must not already carry
+        a committed managed launch (``manifest_path`` unset).  A live foreign
+        claim or an already-recorded launch raises so a due occurrence can
+        launch at most once.  A stale (expired-lease) claim is reclaimed with
+        a NEWER fence (T-0204 namespace discipline), making reclaim after a
+        crash safe: the reclaiming worker bumps the fence, so any commit made
+        under the old fence fails the CAS and can never double-launch.
+        """
+        now = _utc(now or utc_now())
+        with self.repo.locked():
+            path = self.repo.occurrence_path(occurrence_id)
+            if not path.exists():
+                raise RuntimeError(f"unknown superfixer occurrence: {occurrence_id}")
+            occurrence = ScheduleOccurrence.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            current = self.repo.project(occurrence)
+            if current.manifest_path is not None:
+                raise RuntimeError(
+                    "superfixer occurrence already carries a committed launch"
+                )
+            expected_run = f"scheduled-job:{job_id}"
+            if current.run_id != expected_run:
+                raise RuntimeError(
+                    f"superfixer occurrence not bound to job {job_id}: {current.run_id}"
+                )
+            stale = (
+                current.state == "claimed"
+                and current.claim_expires_at is not None
+                and current.claim_expires_at <= now
+            )
+            if not (current.state == "launched" or stale):
+                raise RuntimeError(
+                    f"superfixer occurrence not claimable: {current.state}"
+                )
+            token = uuid4().hex
+            next_fence = current.fence + 1
+            return self.repo._transition_unlocked(
+                occurrence_id,
+                event="occurrence_reclaimed" if stale else "superfixer_occurrence_claimed",
+                actor=worker_id,
+                changes={"state": "claimed", "attempt": current.attempt + 1,
+                         "claim_owner": worker_id, "claim_token": token, "fence": next_fence,
+                         "claim_expires_at": now + timedelta(seconds=lease_seconds),
+                         "retry_at": None, "decision": "superfixer_consumer_claimed"},
+            )
+
+    def record_superfixer_single_shot(
+        self,
+        *,
+        decision: str,
+        reason: str,
+        actor: str,
+        now: datetime | None = None,
+        occurrence_id: str | None = None,
+        occurrence_key: str | None = None,
+        schedule_id: str | None = None,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Durably record that ONE due superfixer single-shot was NOT launched.
+
+        Every action-off decision (launch flag off, schedule cancelled, or any
+        other non-launch) appends an immutable receipt with ``keep_cancelled:
+        true`` — an explicit NON-enablement record, never a launch or a
+        schedule mutation.  The consumer also marks the fired job payload with
+        ``keep_cancelled`` so the occurrence's final terminal receipt carries
+        the same decision.
+        """
+        now = _utc(now or utc_now())
+        record = {
+            "schema_version": "arnold-resident-schedule-superfixer-singleshot-v1",
+            "keep_cancelled": True,
+            "decision": decision,
+            "reason": reason,
+            "occurrence_id": occurrence_id,
+            "occurrence_key": occurrence_key,
+            "schedule_id": schedule_id,
+            "job_id": job_id,
+            "at": now.isoformat().replace("+00:00", "Z"),
+            "actor": actor,
+        }
+        with self.repo.locked():
+            self.repo._append(
+                self.repo.root / "superfixer-singleshots.jsonl",
+                {key: value for key, value in record.items() if value is not None},
+            )
+        return record
+
     async def run_due_once(self, *, worker_id: str = "resident-schedule-worker",
                            now: datetime | None = None, limit: int = 10) -> ScheduleRunReceipt:
         now = _utc(now or utc_now())
@@ -1215,6 +1339,44 @@ class ScheduleService:
                              "claim_token": None, "claim_expires_at": None},
                 )
                 return "launched"
+            if target.kind == "resident_orchestrator_turn" and target.operation == "superfixer_proactive":
+                from arnold_pipelines.megaplan.store import (
+                    FileStore, ScheduledJobInput, deterministic_idempotency_key,
+                )
+                store = FileStore(self.repo.root.parent)
+                payload = dict(target.payload)
+                payload.update({
+                    "schedule_owned": True,
+                    "recurrence_owner": occurrence.schedule_id,
+                    "schedule_occurrence": schedule_context,
+                    "superfixer_occurrence_state": "committed",
+                })
+                job = store.create_scheduled_job(
+                    ScheduledJobInput(
+                        job_type="superfixer_proactive", scheduled_for=now,
+                        payload=payload,
+                        max_attempts=RetryPolicy.model_validate(pinned["retry"]).launch_max_attempts,
+                    ),
+                    idempotency_key=deterministic_idempotency_key(
+                        "resident-schedule-superfixer-turn", occurrence.occurrence_key
+                    ),
+                )
+                # The occurrence is handed to the superfixer_proactive consumer
+                # (scheduler.ResidentJobHandlers.handle_superfixer_proactive) as a
+                # schedule-owned single-shot job.  Committing the job is NOT a
+                # managed launch: the consumer decides — under the hourly launch
+                # flag and the effect gate — whether to launch the managed run or
+                # record keep_cancelled.  Recurrence custody stays with the
+                # schedule; the occurrence is reconciled terminal when the job
+                # fires or is cancelled/failed.
+                self.repo.transition(
+                    occurrence.occurrence_id, event="superfixer_turn_committed", actor=worker_id,
+                    expected_fence=fence, expected_token=token,
+                    changes={"state": "launched", "run_id": f"scheduled-job:{job.id}",
+                             "decision": "superfixer_proactive_committed", "claim_owner": None,
+                             "claim_token": None, "claim_expires_at": None},
+                )
+                return "launched"
             from .config import ResidentConfig
             from .subagent import launch_subagent_task
             task = target.prompt
@@ -1302,11 +1464,22 @@ class ScheduleService:
                     if job is None or job.status not in {"fired", "cancelled", "failed"}:
                         continue
                     state = "terminal" if job.status == "fired" else "dead_letter"
+                    decision = f"scheduled_job_{job.status}"
+                    if (
+                        job.status == "fired"
+                        and job.job_type == "superfixer_proactive"
+                        and bool((job.payload or {}).get("keep_cancelled"))
+                    ):
+                        # The consumer deliberately kept this single-shot
+                        # cancelled (launch flag off or schedule cancelled):
+                        # the final receipt names the non-enablement instead of
+                        # a launch.
+                        decision = "keep_cancelled_single_shot"
                     self.repo._transition_unlocked(
                         projection.occurrence.occurrence_id,
                         event="orchestrator_turn_terminal",
                         actor="resident-schedule-reconciler",
-                        changes={"state": state, "decision": f"scheduled_job_{job.status}",
+                        changes={"state": state, "decision": decision,
                                  "last_error": job.last_error},
                     )
                     reconciled += 1

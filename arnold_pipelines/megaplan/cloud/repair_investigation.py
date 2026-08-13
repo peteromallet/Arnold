@@ -59,6 +59,17 @@ RECOMMENDED_ACTIONS = frozenset(
 SAFE_REPAIR_TARGET_KINDS = frozenset(
     {"none", "arnold_source", "target_workspace", "plan_state_via_cli", "repair_custody"}
 )
+# Runtime identity axes compared before any code-level diagnosis.  ANY absent
+# axis, dangling declared path, or cross-axis disagreement is a typed
+# root-cause finding that PRECEDES victim patching (T-0206): the investigation
+# must not proceed to code-level diagnosis while runtime identity is
+# incoherent, and it must never recommend editing a pin or a shared tree.
+RUNTIME_IDENTITY_AXES = ("recorded", "manifest", "live", "wrapper", "dependency")
+RUNTIME_IDENTITY_MISSING = "runtime_identity_missing"
+RUNTIME_IDENTITY_DANGLING = "runtime_identity_dangling"
+RUNTIME_IDENTITY_MISMATCH = "runtime_identity_mismatch"
+RUNTIME_SPLIT_BRAIN = "runtime_split_brain"
+RUNTIME_IDENTITY_PIN_FORBIDDEN = ("edit_runtime_pin", "edit_shared_tree")
 
 
 def _load(path: str | Path | None) -> dict[str, Any]:
@@ -696,6 +707,285 @@ def _context_contradictions(
     return contradictions
 
 
+def _runtime_identity_observation(
+    *,
+    present: bool,
+    path: str = "",
+    import_root: str = "",
+    source_revision: str = "",
+    digest: str = "",
+    dangling: bool = False,
+) -> dict[str, Any]:
+    """Normalize one runtime identity axis into an immutable observation."""
+    return {
+        "present": bool(present),
+        "path": _text(path, 2000),
+        "import_root": _text(import_root, 2000),
+        "source_revision": _text(source_revision, 200),
+        "digest": _text(digest, 200),
+        "dangling": bool(dangling),
+    }
+
+
+def compare_runtime_identity(
+    axes: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Compare the five runtime identity axes; ANY divergence is a typed finding.
+
+    The five axes are ``recorded`` (what the session marker/binding recorded),
+    ``manifest`` (the pinned runtime manifest), ``live`` (the tree the
+    investigation itself executes from), ``wrapper`` (the repair wrapper that
+    launched this loop), and ``dependency`` (the pinned dependency lockfile).
+
+    The comparison is authoritative only when at least one declarative axis
+    (any axis other than ``live``) is present; otherwise it reports
+    ``unobserved`` and never blocks.  Once engaged, EVERY absent axis is a
+    ``runtime_identity_missing`` finding, every declared-but-nonexistent
+    import root is ``runtime_identity_dangling``, every pairwise disagreement
+    on import root or pinned revision is ``runtime_identity_mismatch``, and
+    three or more distinct roots are ``runtime_split_brain`` (the four-tree
+    split).  A coherent identity is the ONLY state that may proceed to
+    code-level diagnosis (T-0206).
+    """
+
+    declarative = [name for name in RUNTIME_IDENTITY_AXES if name != "live"]
+    engaged = any((axes.get(name) or {}).get("present") for name in declarative)
+    if not engaged:
+        return {
+            "engaged": False,
+            "coherent": True,
+            "status": "unobserved",
+            "root_cause": None,
+            "axes": {name: dict(axes.get(name) or {}) for name in RUNTIME_IDENTITY_AXES},
+            "findings": [],
+        }
+    findings: list[dict[str, Any]] = []
+    present: dict[str, Mapping[str, Any]] = {}
+    for name in RUNTIME_IDENTITY_AXES:
+        obs = axes.get(name) or {}
+        obs = obs if isinstance(obs, Mapping) else {}
+        if obs.get("present") is not True:
+            findings.append(
+                {
+                    "code": RUNTIME_IDENTITY_MISSING,
+                    "axis": name,
+                    "detail": f"{name} runtime identity axis is absent",
+                }
+            )
+            continue
+        present[name] = obs
+        import_root = str(obs.get("import_root") or "").strip()
+        if import_root and not Path(import_root).exists():
+            findings.append(
+                {
+                    "code": RUNTIME_IDENTITY_DANGLING,
+                    "axis": name,
+                    "path": import_root,
+                    "detail": f"{name} runtime identity declares a nonexistent import root",
+                }
+            )
+        elif obs.get("dangling") is True:
+            findings.append(
+                {
+                    "code": RUNTIME_IDENTITY_DANGLING,
+                    "axis": name,
+                    "path": str(obs.get("path") or ""),
+                    "detail": f"{name} runtime identity path is dangling",
+                }
+            )
+    roots = {
+        name: str(obs.get("import_root") or "").strip()
+        for name, obs in present.items()
+    }
+    for left_index, left in enumerate(RUNTIME_IDENTITY_AXES):
+        if left not in present:
+            continue
+        for right in RUNTIME_IDENTITY_AXES[left_index + 1 :]:
+            if right not in present:
+                continue
+            left_root, right_root = roots[left], roots[right]
+            if left_root and right_root and left_root != right_root:
+                findings.append(
+                    {
+                        "code": RUNTIME_IDENTITY_MISMATCH,
+                        "left": left,
+                        "right": right,
+                        "field": "import_root",
+                        "left_value": left_root,
+                        "right_value": right_root,
+                        "detail": (
+                            f"{left} and {right} resolve to different runtime roots "
+                            f"({left_root} vs {right_root})"
+                        ),
+                    }
+                )
+            left_revision = str(present[left].get("source_revision") or "").strip()
+            right_revision = str(present[right].get("source_revision") or "").strip()
+            if left_revision and right_revision and left_revision != right_revision:
+                findings.append(
+                    {
+                        "code": RUNTIME_IDENTITY_MISMATCH,
+                        "left": left,
+                        "right": right,
+                        "field": "source_revision",
+                        "left_value": left_revision,
+                        "right_value": right_revision,
+                        "detail": (
+                            f"{left} and {right} pin different source revisions "
+                            f"({left_revision} vs {right_revision})"
+                        ),
+                    }
+                )
+            left_digest = str(present[left].get("digest") or "").strip()
+            right_digest = str(present[right].get("digest") or "").strip()
+            if left_digest and right_digest and left_digest != right_digest:
+                findings.append(
+                    {
+                        "code": RUNTIME_IDENTITY_MISMATCH,
+                        "left": left,
+                        "right": right,
+                        "field": "digest",
+                        "left_value": left_digest,
+                        "right_value": right_digest,
+                        "detail": f"{left} and {right} content digests disagree",
+                    }
+                )
+    distinct_roots = sorted({value for value in roots.values() if value})
+    if len(distinct_roots) >= 3:
+        findings.append(
+            {
+                "code": RUNTIME_SPLIT_BRAIN,
+                "roots": distinct_roots,
+                "detail": (
+                    f"runtime identity is split across {len(distinct_roots)} distinct "
+                    f"trees: {', '.join(distinct_roots)}"
+                ),
+            }
+        )
+    codes = {item["code"] for item in findings}
+    if RUNTIME_SPLIT_BRAIN in codes:
+        status, root_cause = "split", RUNTIME_SPLIT_BRAIN
+    elif RUNTIME_IDENTITY_DANGLING in codes:
+        status, root_cause = "dangling", RUNTIME_IDENTITY_DANGLING
+    elif RUNTIME_IDENTITY_MISSING in codes:
+        status, root_cause = "missing", RUNTIME_IDENTITY_MISSING
+    elif RUNTIME_IDENTITY_MISMATCH in codes:
+        status, root_cause = "mismatch", RUNTIME_IDENTITY_MISMATCH
+    else:
+        status, root_cause = "coherent", None
+    return {
+        "engaged": True,
+        "coherent": not findings,
+        "status": status,
+        "root_cause": root_cause,
+        "axes": {name: dict(axes.get(name) or {}) for name in RUNTIME_IDENTITY_AXES},
+        "findings": findings,
+    }
+
+
+def _gather_runtime_identity_sources(
+    *,
+    marker: Mapping[str, Any],
+    marker_path: Path | None,
+    live_root: Path,
+) -> dict[str, Any]:
+    """Gather the five runtime identity axes from bound session evidence.
+
+    ``recorded`` comes from the marker's runtime binding / attestation,
+    ``manifest`` from the pinned ``ARNOLD_RUNTIME_MANIFEST`` (or the canonical
+    default path), ``live`` from the tree this investigation executes from,
+    ``wrapper`` from the repair wrapper origin (or the manifest repair bin),
+    and ``dependency`` from the manifest deps lockfile.  Absent axes are
+    recorded as ``present=False`` so the comparison fails closed once any
+    declarative axis exists (T-0206).
+    """
+
+    binding = marker.get("runtime_binding") if isinstance(marker, Mapping) else {}
+    binding = binding if isinstance(binding, Mapping) else {}
+    current = binding.get("current_identity")
+    current = current if isinstance(current, Mapping) else {}
+    recorded_root = str(current.get("import_root") or "").strip()
+    recorded_revision = str(current.get("source_revision") or "").strip()
+    if not recorded_root:
+        attestation = marker.get("runtime_attestation")
+        attestation = attestation if isinstance(attestation, Mapping) else {}
+        recorded_root = str(attestation.get("expected_import") or "").strip()
+        recorded_revision = str(attestation.get("expected_commit") or "").strip()
+    recorded = _runtime_identity_observation(
+        present=bool(recorded_root),
+        path=str(marker_path) if marker_path else "",
+        import_root=recorded_root,
+        source_revision=recorded_revision,
+    )
+    manifest_env = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
+    manifest_path = (
+        Path(manifest_env)
+        if manifest_env
+        else Path("/workspace/.megaplan/runtime-manifest.json")
+    )
+    manifest_payload: dict[str, Any] = {}
+    if manifest_path.is_file():
+        manifest_payload = _load(manifest_path)
+    epic = (
+        manifest_payload.get("epic")
+        if isinstance(manifest_payload.get("epic"), Mapping)
+        else {}
+    )
+    manifest_root = str(epic.get("runtime_root") or "").strip()
+    manifest = _runtime_identity_observation(
+        present=bool(manifest_path.is_file()),
+        path=str(manifest_path),
+        import_root=manifest_root,
+        source_revision=str(epic.get("expected_head") or "").strip(),
+    )
+    live_head = _git_observation(live_root).get("head") or ""
+    live = _runtime_identity_observation(
+        present=True,
+        path=str(live_root),
+        import_root=str(live_root),
+        source_revision=live_head,
+    )
+    wrapper_env = os.environ.get("ARNOLD_REPAIR_LOOP_ORIGIN", "").strip()
+    if not wrapper_env:
+        wrapper_env = str(epic.get("repair_bin") or "").strip()
+    wrapper_path = Path(wrapper_env) if wrapper_env else None
+    wrapper_root = ""
+    wrapper_digest = ""
+    if wrapper_path:
+        if manifest_root:
+            wrapper_root = manifest_root
+        elif wrapper_path.resolve(strict=False).is_relative_to(live_root):
+            wrapper_root = str(live_root)
+        else:
+            wrapper_root = str(wrapper_path.resolve(strict=False).parent)
+        if wrapper_path.is_file():
+            wrapper_digest = hashlib.sha256(wrapper_path.read_bytes()).hexdigest()
+    wrapper = _runtime_identity_observation(
+        present=bool(wrapper_env),
+        path=wrapper_env,
+        import_root=wrapper_root,
+        digest=wrapper_digest,
+    )
+    lockfile_env = str(epic.get("deps_lockfile") or "").strip()
+    lockfile_path = Path(lockfile_env) if lockfile_env else None
+    lockfile_digest = ""
+    if lockfile_path and lockfile_path.is_file():
+        lockfile_digest = hashlib.sha256(lockfile_path.read_bytes()).hexdigest()
+    dependency = _runtime_identity_observation(
+        present=bool(lockfile_env),
+        path=lockfile_env,
+        import_root=manifest_root,
+        digest=lockfile_digest,
+    )
+    return {
+        "recorded": recorded,
+        "manifest": manifest,
+        "live": live,
+        "wrapper": wrapper,
+        "dependency": dependency,
+    }
+
+
 def build_investigation_context(
     *,
     workspace: str | Path,
@@ -708,6 +998,7 @@ def build_investigation_context(
     l2_context_digest: str = "",
     l2_replan_epoch: int | str | None = None,
     max_prior_attempts: int = 6,
+    runtime_identity_sources: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     repair_data = _load(repair_data_path)
     request = _load(request_path)
@@ -1032,6 +1323,8 @@ def build_investigation_context(
         goal_target.get("marker_dir") or request.get("marker_dir"),
         2000,
     )
+    marker: dict[str, Any] = {}
+    marker_path: Path | None = None
     if marker_dir:
         marker_path = Path(marker_dir) / f"{session}.json"
         marker = _load(marker_path)
@@ -1105,6 +1398,27 @@ def build_investigation_context(
                     "runtime-attested, no-git-refresh, no-push, and profile-preserving"
                 ),
             }
+    if runtime_identity_sources is None:
+        runtime_identity_sources = _gather_runtime_identity_sources(
+            marker=marker,
+            marker_path=marker_path,
+            live_root=Path(__file__).resolve().parents[3],
+        )
+    runtime_identity = compare_runtime_identity(runtime_identity_sources or {})
+    if runtime_identity.get("engaged") is True and runtime_identity.get("coherent") is not True:
+        for finding in runtime_identity.get("findings") or []:
+            contradictions.append(
+                {
+                    "left_source": _text(finding.get("left") or finding.get("axis"), 2000),
+                    "right_source": _text(
+                        finding.get("right") or "runtime identity", 2000
+                    ),
+                    "contradiction": (
+                        f"runtime identity {finding.get('code')}: "
+                        f"{_text(finding.get('detail'), 1000)}"
+                    ),
+                }
+            )
     if supported_recovery_cli.endswith(default_chain_start_cli):
         supported_recovery_cli = (
             supported_recovery_cli[: -len(default_chain_start_cli)]
@@ -1246,6 +1560,64 @@ def build_investigation_context(
                 },
             }
         )
+    runtime_identity_incoherent = bool(
+        runtime_identity.get("engaged") is True
+        and runtime_identity.get("coherent") is not True
+    )
+    if runtime_identity_incoherent:
+        # Runtime identity incoherence PRECEDES victim patching: the typed
+        # root-cause finding must be returned instead of a code-level diagnosis,
+        # and the handoff must never edit a runtime pin or a shared tree.
+        required_investigator_output.update(
+            {
+                "recommended_action": "replan",
+                "safe_repair_target": {
+                    "kind": "repair_custody",
+                    "scope": "runtime identity reconciliation",
+                    "rationale": (
+                        "Runtime identity is incoherent (recorded/manifest/live/wrapper/"
+                        "dependency disagree or are missing); code-level diagnosis is "
+                        "blocked until the runtime identity is reconciled by custody repair."
+                    ),
+                },
+                "handoff": {
+                    "action": "replan",
+                    "allowed_mutations": ["none"],
+                    "forbidden_mutations": [
+                        *RUNTIME_IDENTITY_PIN_FORBIDDEN,
+                        "edit_deps_lockfile",
+                        "edit_runtime_manifest",
+                        "direct_chain_state_edit",
+                        "hand_advance_chain",
+                        "guard_weakening",
+                        "recover_state",
+                    ],
+                },
+                "prohibited_actions": {
+                    "repair_source": (
+                        "runtime identity is incoherent; code-level diagnosis is blocked"
+                    ),
+                    "repair_target": (
+                        "runtime identity is incoherent; code-level diagnosis is blocked"
+                    ),
+                    "recover_state": (
+                        "runtime identity is incoherent; state replay cannot proceed"
+                    ),
+                },
+                "runtime_identity_gate": {
+                    "coherent": False,
+                    "status": runtime_identity.get("status"),
+                    "root_cause": runtime_identity.get("root_cause"),
+                    "findings": runtime_identity.get("findings") or [],
+                    "policy": (
+                        "The typed runtime identity finding is the ROOT CAUSE and "
+                        "PRECEDES any code-level diagnosis. Only replan to custody "
+                        "repair is permitted; never edit a runtime pin (ARNOLD_RUNTIME_"
+                        "MANIFEST, deps lockfile) or a shared tree."
+                    ),
+                },
+            }
+        )
     context: dict[str, Any] = {
         "schema_version": REPAIR_INVESTIGATION_CONTEXT_SCHEMA,
         "target_kind": "l1_repair_target",
@@ -1260,6 +1632,7 @@ def build_investigation_context(
         "checkpoint_digest": _text(goal.get("checkpoint_digest"), 100),
         "frozen_checkpoint": dict(frozen_checkpoint),
         "recovery_contract": recovery_contract,
+        "runtime_identity": runtime_identity,
         "current": current,
         "current_phase_result": phase_result,
         "durable_quality_block": {
@@ -2224,6 +2597,7 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
         "recovery_contract",
         "repair_outcome",
         "request",
+        "runtime_identity",
         "safe_repair_boundaries",
     )
     required_receipt = context.get("required_investigator_output")
@@ -2462,6 +2836,55 @@ def validate_investigator_receipt(
             raise ValueError(
                 "state recovery cannot discard missing durable quality-resolution commits"
             )
+        runtime_identity = investigation_context.get("runtime_identity")
+        runtime_identity = runtime_identity if isinstance(runtime_identity, Mapping) else {}
+        if (
+            runtime_identity.get("engaged") is True
+            and runtime_identity.get("coherent") is not True
+        ):
+            # Runtime identity incoherence is the typed root cause and PRECEDES
+            # victim patching: the receipt must return that finding, must not
+            # proceed to code-level diagnosis, and must never edit a pin or a
+            # shared tree.
+            if actual_failure.get("classification") != "infrastructure_failure":
+                raise ValueError(
+                    "incoherent runtime identity must be classified as infrastructure_failure"
+                )
+            if value.get("custody_status") != "contradictory":
+                raise ValueError(
+                    "incoherent runtime identity requires contradictory custody status"
+                )
+            if action != "replan":
+                raise ValueError(
+                    "incoherent runtime identity blocks code-level diagnosis; only replan may proceed"
+                )
+            if target_kind not in {"repair_custody", "none"}:
+                raise ValueError(
+                    "incoherent runtime identity may name only repair_custody or none"
+                )
+            if allowed_mutations != {"none"}:
+                raise ValueError(
+                    "incoherent runtime identity handoff must allow only none mutations"
+                )
+            forbidden = {str(item).strip() for item in handoff.get("forbidden_mutations") or []}
+            missing_forbidden = [
+                label for label in RUNTIME_IDENTITY_PIN_FORBIDDEN
+                if label not in forbidden
+            ]
+            if missing_forbidden:
+                raise ValueError(
+                    "incoherent runtime identity handoff must forbid runtime pin and "
+                    "shared-tree edits: " + ", ".join(missing_forbidden)
+                )
+            named_finding = any(
+                isinstance(item, Mapping)
+                and "runtime identity" in str(item.get("contradiction") or "").lower()
+                for item in contradictions
+            )
+            if not named_finding:
+                raise ValueError(
+                    "incoherent runtime identity receipt must name the runtime identity contradiction"
+                )
     if isinstance(observation_bundle, Mapping):
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")
@@ -2653,6 +3076,8 @@ def summarize_investigation_artifacts(
         }
     actual_failure = validated.get("actual_failure")
     actual_failure = actual_failure if isinstance(actual_failure, Mapping) else {}
+    runtime_identity = context.get("runtime_identity")
+    runtime_identity = runtime_identity if isinstance(runtime_identity, Mapping) else {}
     return {
         "required": True,
         "status": "accepted",
@@ -2666,6 +3091,13 @@ def summarize_investigation_artifacts(
             "classification": _text(actual_failure.get("classification"), 100),
             "error": _text(actual_failure.get("error"), 1000),
             "mechanism": _text(actual_failure.get("mechanism"), 2000),
+        },
+        "runtime_identity": {
+            "engaged": runtime_identity.get("engaged"),
+            "coherent": runtime_identity.get("coherent"),
+            "status": runtime_identity.get("status"),
+            "root_cause": runtime_identity.get("root_cause"),
+            "finding_count": len(runtime_identity.get("findings") or []),
         },
         "evidence_source_kinds": sorted(
             {str(item.get("kind")) for item in validated.get("evidence_sources") or [] if isinstance(item, Mapping)}
@@ -2800,10 +3232,16 @@ __all__ = [
     "REPAIR_INVESTIGATOR_RECEIPT_SCHEMA",
     "EVIDENCE_SOURCE_KINDS",
     "INVESTIGATION_TARGET_KINDS",
+    "RUNTIME_IDENTITY_AXES",
+    "RUNTIME_IDENTITY_MISSING",
+    "RUNTIME_IDENTITY_DANGLING",
+    "RUNTIME_IDENTITY_MISMATCH",
+    "RUNTIME_SPLIT_BRAIN",
     "build_meta_investigation_context",
     "build_meta_observation_bundle",
     "build_repair_observation_bundle",
     "build_investigation_context",
+    "compare_runtime_identity",
     "load_bounded_investigator_receipt",
     "summarize_investigation_artifacts",
     "validate_meta_investigation_context",

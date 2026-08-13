@@ -6858,6 +6858,28 @@ def _declares_final_conformance_gate(milestone: "MilestoneSpec") -> bool:
     )
 
 
+def _chain_state_is_durably_complete(spec: ChainSpec, state: ChainState) -> bool:
+    """Return True when *state* DURABLY records *spec* as complete.
+
+    A chain is durably complete when the persisted chain state carries a
+    terminal ``last_state`` ("done" / "complete") AND every milestone in
+    *spec* has a completed record.  This is the idempotent-terminal
+    observation: rerunning a completed chain must never regress it to a
+    pending milestone — a completed legacy epic WITHOUT a reconcile
+    milestone is DONE, not "pending reconcile" (P6).
+    """
+    if state.last_state not in {"done", "complete"}:
+        return False
+    if not spec.milestones:
+        return False
+    completed_labels = {
+        str(record.get("label"))
+        for record in state.completed
+        if isinstance(record, dict) and isinstance(record.get("label"), str)
+    }
+    return all(milestone.label in completed_labels for milestone in spec.milestones)
+
+
 def ensure_reconcile_milestone(
     spec_path: Path,
     *,
@@ -6875,7 +6897,13 @@ def ensure_reconcile_milestone(
     writes the ``briefs/reconcile.md`` rubric brief.  The date/branch are
     persisted on FIRST run and never recomputed: a chain that already carries
     the milestone (or has ``reconciliation.enabled: false``) is returned
-    untouched.  Returns the (possibly reloaded) spec.
+    untouched.  A chain that is DURABLY COMPLETE (terminal ``last_state``
+    with every milestone recorded — see
+    :func:`_chain_state_is_durably_complete`) is returned untouched too:
+    rerunning a completed legacy epic is an idempotent terminal observation,
+    never a regression to pending reconcile (the append below would re-open
+    a finished epic by leaving the generated reconcile milestone pending).
+    Returns the (possibly reloaded) spec.
     """
 
     write = writer or (lambda _msg: None)
@@ -6885,6 +6913,26 @@ def ensure_reconcile_milestone(
     if any(milestone.kind == "reconcile" for milestone in spec.milestones):
         return spec
     spec_path = spec_path.expanduser().resolve()
+    # P6 durable-completion guard — checked BEFORE any synthetic append.
+    # The chain's terminal completion is authoritative DURABLE evidence
+    # (state.last_state == done + all milestones recorded); appending the
+    # generated reconcile milestone after completion would regress a finished
+    # epic to pending reconcile.  Read the chain state OBSERVE-ONLY
+    # (verify_execution_binding=False: no binding assertion, no
+    # normalization/save side effects) — a completed chain has nothing to
+    # bind and the observation must not mutate the cursor.  This is the
+    # relocated form of the milestone-loop completion guard in ``run_chain``
+    # (``idx >= len(spec.milestones)`` → terminal), which was DEAD for
+    # completed legacy chains because the append happened before it ran.
+    state = chain_spec.load_chain_state(spec_path, verify_execution_binding=False)
+    if _chain_state_is_durably_complete(spec, state):
+        write(
+            f"[chain] chain {spec_path} is already durably complete "
+            f"(last_state={state.last_state!r}, every milestone completed); "
+            "reconcile milestone NOT appended — idempotent terminal "
+            "observation, not a regression to pending reconcile\n"
+        )
+        return spec
     if spec.milestones and _declares_final_conformance_gate(spec.milestones[-1]):
         # A final_conformance_gate must stay the FINAL milestone (serial
         # order is asserted loudly).  Appending the generated reconcile
@@ -7374,6 +7422,14 @@ def run_chain(
         chain_spec.save_chain_state(spec_path, state)
 
     # ---- Milestones ----
+    # Terminal observation for an already-completed chain: when the cursor is
+    # past every milestone in the spec, the chain is DONE and the loop never
+    # starts (the finalizer + successor gate + ``done`` result below still
+    # run).  For a completed LEGACY chain this guard is only reachable
+    # because ``ensure_reconcile_milestone`` (above) checked durable
+    # completion BEFORE appending the generated reconcile milestone — with
+    # the append happening first the cursor would sit mid-spec here and the
+    # chain would regress to driving a pending reconcile milestone.
     idx = max(state.current_milestone_index, 0)
     if idx >= len(spec.milestones):
         try:

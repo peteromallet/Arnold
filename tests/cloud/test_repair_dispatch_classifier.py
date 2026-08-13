@@ -12,11 +12,14 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     DISPATCH_DECISION_BROKEN_SUPERFIXER,
     DISPATCH_DECISION_HUMAN_REQUIRED,
     DISPATCH_DECISION_L1,
+    DISPATCH_DECISION_PENDING_DECISION,
     DISPATCH_DECISION_REPAIRING,
     DISPATCH_DECISION_TERMINAL,
     DISPATCH_INTENT_BROKEN_SUPERFIXER,
     DISPATCH_INTENT_HUMAN_REQUIRED,
     DISPATCH_INTENT_L1,
+    DISPATCH_INTENT_QUEUE_ONLY,
+    REQUEST_STATUS_PENDING_DECISION,
     RepairDispatchDecision,
     blocker_fingerprint_from_evidence,
     blocker_id_for_fingerprint,
@@ -26,6 +29,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 from arnold_pipelines.megaplan.cloud.repair_lock import RepairLockResult
 from arnold_pipelines.megaplan.cloud.repair_requests import (
     enqueue_repair_request as _enqueue_repair_request,
+    iter_repair_decisions,
 )
 from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 from tests.cloud.repair_identity_fixtures import identity_for_signature
@@ -643,3 +647,216 @@ def test_classifier_reopens_complete_repair_when_chain_is_incomplete(tmp_path: P
 
     assert decision.decision == DISPATCH_DECISION_L1
     assert decision.dispatch_intent == DISPATCH_INTENT_L1
+
+
+def test_request_without_decision_projects_typed_pending_and_never_active(
+    tmp_path: Path,
+) -> None:
+    """A request marker with no decision record is typed pending/blocked."""
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    queued = enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=tmp_path / "markers",
+        session="demo-session",
+        source="lifecycle_failure",
+        target={"plan_name": "m6-exact-contract"},
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "critique",
+            "milestone_or_plan": "m6-exact-contract",
+            "blocked_task_id": "",
+        },
+        root_cause_hint="critique contract failed repeatedly",
+    )
+    request_id = str(queued["request"]["request_id"])
+    # Simulate a crash between the request-marker write and the decision
+    # write: remove every decision record for this request.
+    decision_records = [
+        record
+        for record in iter_repair_decisions(queue_root)
+        if str(record.get("request_id")) == request_id
+    ]
+    assert decision_records, "enqueue must persist an accepted decision first"
+    for record in decision_records:
+        Path(str(record["_path"])).unlink()
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(
+            name="m6-exact-contract",
+            resume_cursor={"phase": "critique", "retry_strategy": "repair_phase_contract"},
+            latest_failure={
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "metadata": {"count": 3, "max_attempts": 3},
+            },
+        ),
+        current_target=_current_target(
+            target_session="demo-session",
+            current_refs={
+                "current_plan_name": "m6-exact-contract",
+                "plan_current_state": "blocked",
+            },
+            event_cursors={"resume_retry_strategy": "repair_phase_contract"},
+            plan_state={"present": True, "fingerprint": "sha256:replayed-critique"},
+        ),
+        queue_root=queue_root,
+    )
+
+    assert projection["active_request_ids"] == []
+    assert projection["request_status_counts"] == {REQUEST_STATUS_PENDING_DECISION: 1}
+    record = next(
+        item for item in projection["requests"] if item["request_id"] == request_id
+    )
+    assert record["status"] == REQUEST_STATUS_PENDING_DECISION
+    assert record["active"] is False
+    assert record["claimable"] is False
+    assert record["decision"] is None
+
+    # Absent decision must NEVER dispatch: no active request means the
+    # classifier cannot authorize L1 for this blocker.
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(
+            name="m6-exact-contract",
+            resume_cursor={"phase": "critique", "retry_strategy": "repair_phase_contract"},
+            latest_failure={
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "metadata": {"count": 3, "max_attempts": 3},
+            },
+        ),
+        current_target=_current_target(
+            target_session="demo-session",
+            current_refs={
+                "current_plan_name": "m6-exact-contract",
+                "plan_current_state": "blocked",
+            },
+            event_cursors={"resume_retry_strategy": "repair_phase_contract"},
+            plan_state={"present": True, "fingerprint": "sha256:replayed-critique"},
+        ),
+        custody_projection=projection,
+    )
+    assert decision.decision != DISPATCH_DECISION_L1
+    assert decision.request_id == ""
+
+
+def test_classifier_never_dispatches_request_without_decision(tmp_path: Path) -> None:
+    """Even a hand-built active projection cannot dispatch without a decision."""
+    projection = _projection(tmp_path)
+    request_id = str(projection["active_request_ids"][0])
+    projection["active_request_ids"] = [request_id]
+    for item in projection["requests"]:
+        if str(item["request_id"]) == request_id:
+            item["status"] = REQUEST_STATUS_PENDING_DECISION
+            item["active"] = True
+            item["claimable"] = False
+            item["decision"] = None
+
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_PENDING_DECISION
+    assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
+    assert decision.request_id == request_id
+
+
+def test_classifier_never_dispatches_rejected_request_decision(tmp_path: Path) -> None:
+    """A rejected (non-dispatchable) decision never authorizes L1."""
+    projection = _projection(tmp_path)
+    request_id = str(projection["active_request_ids"][0])
+    projection["active_request_ids"] = [request_id]
+    for item in projection["requests"]:
+        if str(item["request_id"]) == request_id:
+            item["status"] = "stale"
+            item["active"] = True
+            item["claimable"] = False
+            item["decision"] = {
+                "decision_id": "rejected-decision",
+                "request_id": request_id,
+                "decision": "stale",
+                "reason": "rejected by operator",
+                "related_request_id": "",
+                "created_at": "2026-07-16T13:35:03Z",
+                "path": "/queue/decisions/rejected.json",
+            }
+
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_PENDING_DECISION
+    assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
+    assert decision.request_id == request_id
+
+
+def test_classifier_dispatches_deterministic_phase_failure_with_canonical_request(
+    tmp_path: Path,
+) -> None:
+    """Deterministic mechanical phase failures with a canonical request go L1."""
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    state = _plan_state(
+        name="m6-exact-contract",
+        current_state="blocked",
+        resume_cursor={"phase": "critique", "retry_strategy": "repair_phase_contract"},
+        latest_failure={
+            "kind": "deterministic_phase_failure",
+            "phase": "critique",
+            "metadata": {"count": 3, "max_attempts": 3},
+        },
+    )
+    target = _current_target(
+        current_refs={
+            "current_plan_name": "m6-exact-contract",
+            "plan_current_state": "blocked",
+        },
+        event_cursors={"resume_retry_strategy": "repair_phase_contract"},
+    )
+    queued = enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="lifecycle_failure",
+        target={"plan_name": "m6-exact-contract"},
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "critique",
+            "milestone_or_plan": "m6-exact-contract",
+            "blocked_task_id": "",
+        },
+        root_cause_hint="critique contract failed repeatedly",
+    )
+    projection = project_repair_custody(
+        plan_state=state,
+        current_target=target,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    decision = classify_repair_dispatch(
+        canonical_run_state=CanonicalRunState(
+            canonical_state=CanonicalState.UNKNOWN,
+            confidence="low",
+            repairable=False,
+            running=False,
+            next_action="inspect_evidence",
+            reason="resolver lacked a typed classifier",
+        ),
+        event_plan_dir=tmp_path,
+        plan_state=state,
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
+    assert decision.request_id == str(queued["request"]["request_id"])
+    assert decision.failure_kind == "deterministic_phase_failure"

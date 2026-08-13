@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from arnold.workflow.boundary_evidence import FindingSeverity, SemanticFinding
@@ -12,6 +13,15 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     has_repairable_semantic_finding,
 )
 from tests.cloud.test_watchdog_wrappers import _extract_repair_program, _run_embedded_python
+import datetime as dt
+
+
+def _fresh_generated_at() -> str:
+    """ISO-8601 UTC timestamp at the real wall clock (the wrapper's embedded
+    Python uses real now, so fixtures must be fresh relative to it)."""
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 
 
 def test_render_failure_summary_prefers_authoritative_live_plan_failure_shape(tmp_path: Path) -> None:
@@ -556,3 +566,339 @@ def test_collect_failure_context_includes_semantic_health_key(
         assert "schema" in sh
         assert "fingerprint" in sh
         assert "total_count" in sh
+
+
+# ── T-0207: cursor-validated repair-loop status observation ─────────────────
+
+
+def _write_verdict_snapshot(
+    snapshot_path: Path,
+    *,
+    session: str,
+    generated_at: str,
+    custody_kind: str,
+    record_projection: bool = True,
+) -> None:
+    """Write a cloud-status snapshot with one session entry.
+
+    *record_projection=False* writes the file directly with no projection
+    history so the observation is ``unvalidated`` (fail-closed).
+    """
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    snapshot = {
+        "generated_at": generated_at,
+        "source": "cloud-local-observer",
+        "summary": {"running": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": session,
+                "status": "blocked",
+                "cloud_custody": {"custody_kind": custody_kind},
+            }
+        ],
+        "degraded": None,
+    }
+    if record_projection:
+        status_snapshot.write_cloud_status_snapshot(snapshot, path=snapshot_path)
+    else:
+        snapshot_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+
+def _run_verdict_evidence(
+    data_path: Path,
+    snapshot_path: Path,
+    marker_dir: Path,
+    *,
+    session: str = "demo-session",
+    max_age_s: str = "3600",
+) -> subprocess.CompletedProcess[str]:
+    """Run the repair_save_verdict_evidence embedded Python with a fresh
+    envelope and capture whether the custody-gap sidecar was written."""
+    program = _extract_repair_program(
+        "repair_save_verdict_evidence",
+        'PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$verdict_path" "$SESSION" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "$repair_goal_status_override" "$SNAPSHOT_PATH" "$MARKER_DIR" "$DATA_DIR" "$STATUS_OBSERVATION_MAX_AGE_S" <<\'PY\'',
+    )
+    verdict_path = data_path.with_name(f"{session}.repair-verdict.json")
+    result = _run_embedded_python(
+        program,
+        str(data_path),
+        str(verdict_path),
+        session,
+        "blocker-1",
+        "request-1",
+        "",
+        str(snapshot_path),
+        str(marker_dir),
+        str(marker_dir / "repair-data"),
+        max_age_s,
+    )
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def test_repair_verdict_stale_snapshot_makes_zero_effect_calls(
+    tmp_path: Path,
+) -> None:
+    """A stale status snapshot is DIAGNOSTIC ONLY: a persuasive unmanaged
+    custody state in it can never trigger the custody-gap sidecar write."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    # Stale: 2 hours older than the 3600s freshness window.
+    _write_verdict_snapshot(
+        snapshot_path,
+        session="demo-session",
+        generated_at="2026-08-12T08:00:00Z",
+        custody_kind="unmanaged-warning",
+    )
+    data_path = repair_data_dir / "demo-session.repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "outcome": "complete",
+                "session": "demo-session",
+                "completed_at": "2026-08-12T09:59:00Z",
+                "blocker_id": "blocker-1",
+                "request_id": "request-1",
+                "attempted_actions": ["investigate"],
+                "before_evidence_refs": ["pre-fix-state.json"],
+                "after_evidence_refs": ["post-fix-state.json"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_verdict_evidence(data_path, snapshot_path, marker_dir)
+
+    # The verdict itself is still saved (that is not the gated effect).
+    assert (marker_dir / "repair-data" / "demo-session.repair-verdict.json").exists()
+    # Zero effect calls: no custody-gap sidecar may be written from a stale
+    # snapshot, even though the snapshot carries unmanaged-warning custody.
+    assert not list(repair_data_dir.glob("*.repair-custody-gap.json"))
+
+
+def test_repair_verdict_fresh_snapshot_managed_custody_no_gap_sidecar(
+    tmp_path: Path,
+) -> None:
+    """A FRESH snapshot with managed-running custody backs the repair success
+    and must not write a custody-gap sidecar."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_verdict_snapshot(
+        snapshot_path,
+        session="demo-session",
+        generated_at=_fresh_generated_at(),
+        custody_kind="managed-running",
+    )
+    data_path = repair_data_dir / "demo-session.repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "outcome": "complete",
+                "session": "demo-session",
+                "completed_at": "2026-08-12T09:59:00Z",
+                "blocker_id": "blocker-1",
+                "request_id": "request-1",
+                "attempted_actions": ["investigate"],
+                "before_evidence_refs": ["pre-fix-state.json"],
+                "after_evidence_refs": ["post-fix-state.json"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _run_verdict_evidence(data_path, snapshot_path, marker_dir)
+
+    assert not list(repair_data_dir.glob("*.repair-custody-gap.json"))
+
+
+def test_repair_verdict_fresh_snapshot_unmanaged_custody_writes_gap_sidecar(
+    tmp_path: Path,
+) -> None:
+    """Only a FRESH cursor-validated observation may flag an unmanaged
+    custody state via the custody-gap sidecar."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_verdict_snapshot(
+        snapshot_path,
+        session="demo-session",
+        generated_at=_fresh_generated_at(),
+        custody_kind="unmanaged-warning",
+    )
+    data_path = repair_data_dir / "demo-session.repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "outcome": "complete",
+                "session": "demo-session",
+                "completed_at": "2026-08-12T09:59:00Z",
+                "blocker_id": "blocker-1",
+                "request_id": "request-1",
+                "attempted_actions": ["investigate"],
+                "before_evidence_refs": ["pre-fix-state.json"],
+                "after_evidence_refs": ["post-fix-state.json"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _run_verdict_evidence(data_path, snapshot_path, marker_dir)
+
+    gap_paths = list(repair_data_dir.glob("*.repair-custody-gap.json"))
+    assert len(gap_paths) == 1
+    payload = json.loads(gap_paths[0].read_text(encoding="utf-8"))
+    assert payload["custody_kind"] == "unmanaged-warning"
+    assert payload["verdict_kind"] == "cleared"
+
+
+def test_repair_verdict_unvalidated_snapshot_makes_zero_effect_calls(
+    tmp_path: Path,
+) -> None:
+    """A snapshot with no projection cursor history cannot be cursor-validated
+    and is diagnostic-only: zero custody-gap effect calls."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_verdict_snapshot(
+        snapshot_path,
+        session="demo-session",
+        generated_at=_fresh_generated_at(),
+        custody_kind="unmanaged-warning",
+        record_projection=False,
+    )
+    data_path = repair_data_dir / "demo-session.repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "outcome": "complete",
+                "session": "demo-session",
+                "completed_at": "2026-08-12T09:59:00Z",
+                "blocker_id": "blocker-1",
+                "request_id": "request-1",
+                "attempted_actions": ["investigate"],
+                "before_evidence_refs": ["pre-fix-state.json"],
+                "after_evidence_refs": ["post-fix-state.json"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _run_verdict_evidence(data_path, snapshot_path, marker_dir)
+
+    assert not list(repair_data_dir.glob("*.repair-custody-gap.json"))
+
+
+def test_render_canonical_block_stale_snapshot_is_diagnostic_only(
+    tmp_path: Path,
+) -> None:
+    """A stale snapshot renders a DIAGNOSTIC-ONLY canonical block and never
+    claims resolver authority (no repairable/running claims)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_verdict_snapshot(
+        snapshot_path,
+        session="demo-session",
+        generated_at="2026-08-12T08:00:00Z",
+        custody_kind="unmanaged-warning",
+    )
+
+    program = _extract_repair_program(
+        "render_canonical_block",
+        'python3 - "$SNAPSHOT_PATH" "$SESSION" "$MARKER_DIR" "$DATA_DIR" "$STATUS_OBSERVATION_MAX_AGE_S" "$ARNOLD_SRC" <<\'PY\'',
+    )
+    result = _run_embedded_python(
+        program,
+        str(snapshot_path),
+        "demo-session",
+        str(marker_dir),
+        str(marker_dir / "repair-data"),
+        "3600",
+        "",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "## CANONICAL STATE (DIAGNOSTIC ONLY)" in result.stdout
+    assert "observation: stale" in result.stdout
+    assert "cannot authorize repair or completion" in result.stdout
+    # No resolver-authority claims may leak from a stale snapshot.
+    assert "repairable: true" not in result.stdout
+    assert "automated repair is indicated" not in result.stdout
+    assert "running: true" not in result.stdout
+
+
+def test_render_canonical_block_fresh_snapshot_renders_canonical_fields(
+    tmp_path: Path,
+) -> None:
+    """A FRESH cursor-validated snapshot renders the canonical fields with an
+    observe-only label."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    status_snapshot.write_cloud_status_snapshot(
+        {
+            "generated_at": _fresh_generated_at(),
+            "source": "cloud-local-observer",
+            "summary": {"running": 0, "complete": 0},
+            "sessions": [
+                {
+                    "session": "demo-session",
+                    "status": "blocked",
+                    "cloud_custody": {"custody_kind": "managed-running"},
+                    "canonical_state": "RETRYABLE_EXECUTION_BLOCK",
+                    "canonical_reason": "resolver classified the session",
+                    "canonical_resolver": {
+                        "confidence": "high",
+                        "source_of_truth": ["plan_state"],
+                        "repairable": True,
+                        "running": False,
+                        "next_action": "repair source",
+                    },
+                    "plan_state": {"active_step": None},
+                }
+            ],
+            "degraded": None,
+        },
+        path=snapshot_path,
+    )
+
+    program = _extract_repair_program(
+        "render_canonical_block",
+        'python3 - "$SNAPSHOT_PATH" "$SESSION" "$MARKER_DIR" "$DATA_DIR" "$STATUS_OBSERVATION_MAX_AGE_S" "$ARNOLD_SRC" <<\'PY\'',
+    )
+    result = _run_embedded_python(
+        program,
+        str(snapshot_path),
+        "demo-session",
+        str(marker_dir),
+        str(marker_dir / "repair-data"),
+        "3600",
+        "",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "## CANONICAL STATE (observe-only resolver)" in result.stdout
+    assert "canonical_state: RETRYABLE_EXECUTION_BLOCK" in result.stdout
+    assert "repairable: true - automated repair is indicated by resolver" in result.stdout

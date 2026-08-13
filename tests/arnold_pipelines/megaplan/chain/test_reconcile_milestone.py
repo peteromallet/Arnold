@@ -595,6 +595,208 @@ def test_compute_reconcile_scope_no_engine_changes_noop_without_plan_dir(
     assert scope["waiver_path"] is None
 
 
+# ── T-0501: real-Git reconcile-scope fixtures ──────────────────────────────
+#
+# Every fixture is a REAL git repo with real commits in the reconcile range:
+# (a) product change -> reconcile REQUIRED (pr_required, never waived);
+# (b) fully promoted change (merged to main, promotion evidence in the bound
+#     runtime manifest) -> verified no-op; (c) verified no-op (no diff) ->
+#     waiver recorded, never an agent dispatch; (d) invalid/missing evidence
+#     -> REQUIRES reconcile (uncertain/pr_required, never a silent no-op).
+
+
+def test_reconcile_scope_real_git_product_change_requires_reconcile(
+    tmp_path: Path,
+) -> None:
+    """(a) A real product change — an engine-source commit inside the
+    milestone range — requires reconcile: the scope reports the actual
+    SHA/subject/paths from git, writes NO waiver, and the completion guard
+    refuses a terminal outcome for a reconcile record that carries neither a
+    merged PR nor a verified-noop waiver."""
+    root = _git_repo(tmp_path / "repo")
+    base_sha = _git_sha(root)
+    head = _commit(root, "arnold_pipelines/engine.py", message="engine change")
+    plan_dir = _plan_dir(root, "plan-x", base_sha, current_state="executed")
+
+    scope = chain_module.compute_reconcile_scope(
+        **_scope_kwargs(
+            root,
+            base_sha,
+            plan_dir=plan_dir,
+            plan_name="plan-x",
+            milestone_label="reconcile",
+        )
+    )
+    assert scope["decision"] == "pr_required"
+    assert scope["waiver_path"] is None
+    assert len(scope["engine_changes"]) == 1
+    assert scope["engine_changes"][0]["sha"] == head
+    assert scope["engine_changes"][0]["subject"] == "engine change"
+    assert scope["engine_changes"][0]["paths"] == ["arnold_pipelines/engine.py"]
+    assert "not covered by promotion evidence" in scope["reason"]
+    # the change is NOT terminal without a reconcile PR: the completion guard
+    # fails closed (no merged PR, no verified-noop waiver)
+    ok, reason = chain_module._chain_completion_guard(
+        root,
+        _reconcile_record(plan="plan-x"),
+        implementation_milestone=True,
+        chain_state=None,
+    )
+    assert ok is False
+    assert "execution evidence blocked completion" in reason
+
+
+def _reconcile_promoted_manifest(path: Path, verified_head: str) -> Path:
+    """Write a schema-valid runtime manifest whose promotion evidence covers
+    *verified_head* (the change is already merged to main) and return it."""
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        RuntimeManifest,
+        write_manifest,
+    )
+
+    _reconcile_valid_manifest(path)  # seed a schema-valid payload
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["indirection"]["verified_head"] = verified_head
+    raw["promotions"] = [{"previous_commit": verified_head, "reason": "canary ok"}]
+    write_manifest(RuntimeManifest.from_dict(raw), path)
+    return path
+
+
+def test_reconcile_scope_real_git_promoted_change_is_verified_noop(
+    tmp_path: Path,
+) -> None:
+    """(b) A change that was ALREADY merged to main — the bound runtime
+    manifest's promotion evidence covers the commit — is a verified no-op:
+    ``already_promoted`` waiver with the real SHA recorded, and the
+    completion guard accepts the waiver as terminal (no PR, no agent)."""
+    root = _git_repo(tmp_path / "repo")
+    base_sha = _git_sha(root)
+    head = _commit(root, "arnold_pipelines/engine.py", message="engine change")
+    manifest_path = _reconcile_promoted_manifest(
+        tmp_path / "manifests" / "runtime-manifest.json", verified_head=head
+    )
+    # the plan's milestone base is main's head at reconcile time (the merged
+    # commit) — the value the chain writes on milestone init
+    plan_dir = _plan_dir(root, "plan-x", head, current_state="prepped")
+
+    manifest = chain_module._reconcile_scope_manifest(
+        manifest_path, milestone_label="reconcile"
+    )
+    scope = chain_module.compute_reconcile_scope(
+        **_scope_kwargs(
+            root,
+            base_sha,
+            manifest=manifest,
+            manifest_path=manifest_path,
+            plan_dir=plan_dir,
+            plan_name="plan-x",
+            milestone_label="reconcile",
+        )
+    )
+    assert scope["decision"] == "noop"
+    assert scope["reason"] == "all engine-source changes already promoted"
+    assert scope["waiver_path"] is not None
+    waiver = json.loads(Path(scope["waiver_path"]).read_text(encoding="utf-8"))
+    assert waiver["schema"] == chain_module.RECONCILE_VERIFICATION_SCHEMA
+    assert waiver["scope"] == "already_promoted"
+    assert waiver["engine_changes"][0]["sha"] == head
+    assert head in waiver["promotion_evidence"]
+    # terminal without an agent: the guard accepts the waiver as the
+    # reconcile outcome
+    ok, reason = chain_module._chain_completion_guard(
+        root,
+        _reconcile_record(plan="plan-x"),
+        implementation_milestone=True,
+        chain_state=None,
+    )
+    assert ok is True
+    assert "reconcile verification waiver accepted" in reason
+
+
+def test_reconcile_scope_real_git_verified_noop_never_dispatches_agent(
+    tmp_path: Path,
+) -> None:
+    """(c) A verified no-op (docs-only diff in the reconcile range) records
+    the waiver and is terminal WITHOUT any agent dispatch: the completion
+    guard accepts the reconcile record purely on the waiver — no PR context,
+    no execution batches, no agent."""
+    root = _git_repo(tmp_path / "repo")
+    base_sha = _git_sha(root)
+    docs_head = _commit(root, "docs/note.md", message="docs only")
+    # the plan's milestone base is main's head at reconcile time (the docs
+    # commit), matching the waiver's pinned base
+    plan_dir = _plan_dir(root, "plan-x", docs_head, current_state="prepped")
+
+    scope = chain_module.compute_reconcile_scope(
+        **_scope_kwargs(
+            root,
+            base_sha,
+            plan_dir=plan_dir,
+            plan_name="plan-x",
+            milestone_label="reconcile",
+        )
+    )
+    assert scope["decision"] == "noop"
+    assert scope["engine_changes"] == []
+    assert scope["waiver_path"] is not None
+    waiver = json.loads(Path(scope["waiver_path"]).read_text(encoding="utf-8"))
+    assert waiver["scope"] == "no_engine_changes"
+    # the waiver ALONE is the terminal evidence: guard accepts with no PR and
+    # no execution batch — the verified no-op never dispatches an agent
+    ok, reason = chain_module._chain_completion_guard(
+        root,
+        _reconcile_record(plan="plan-x"),
+        implementation_milestone=True,
+        chain_state=None,
+    )
+    assert ok is True
+    assert "reconcile verification waiver accepted" in reason
+
+
+def test_reconcile_scope_real_git_invalid_evidence_requires_reconcile(
+    tmp_path: Path,
+) -> None:
+    """(d) MISSING or UNCERTAIN evidence REQUIRES reconcile — never a
+    silent no-op: with an engine change in range, a missing manifest
+    degrades to ``pr_required`` and an unreadable promotion journal to
+    ``uncertain``; neither writes a waiver, and the completion guard refuses
+    a terminal outcome for the reconcile record."""
+    root = _git_repo(tmp_path / "repo")
+    base_sha = _git_sha(root)
+    _commit(root, "arnold_pipelines/engine.py", message="engine change")
+
+    # (i) missing manifest -> pr_required (the reconcile is REQUIRED)
+    scope = chain_module.compute_reconcile_scope(
+        **_scope_kwargs(root, base_sha, manifest=None)
+    )
+    assert scope["decision"] == "pr_required"
+    assert scope["waiver_path"] is None
+
+    # (ii) unreadable promotion journal -> uncertain (also REQUIRED)
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir()
+    (manifest_dir / "promotion-journal.jsonl").mkdir()  # journal as DIRECTORY
+    manifest_path = manifest_dir / "runtime-manifest.json"
+    scope = chain_module.compute_reconcile_scope(
+        **_scope_kwargs(root, base_sha, manifest_path=manifest_path)
+    )
+    assert scope["decision"] == "uncertain"
+    assert scope["waiver_path"] is None
+    assert "promotion journal unreadable" in scope["reason"]
+
+    # both evidence-less outcomes fail the completion guard: the reconcile
+    # record has no merged PR and no verified-noop waiver
+    plan_dir = _plan_dir(root, "plan-x", base_sha, current_state="executed")
+    ok, reason = chain_module._chain_completion_guard(
+        root,
+        _reconcile_record(plan="plan-x"),
+        implementation_milestone=True,
+        chain_state=None,
+    )
+    assert ok is False
+    assert "execution evidence blocked completion" in reason
+
+
 # ── T-0024: reconcile-scope manifest reader (absent vs invalid) ─────────────
 
 
@@ -1116,3 +1318,183 @@ def test_run_chain_invokes_ensure_reconcile_before_binding(
     result = chain_module.run_chain(spec_path, root, writer=lambda _msg: None)
     assert result.get("status") in {"done", "completed", "stopped"}
     assert order == ["ensure", "bind"]
+
+
+# ── T-0501: completed legacy chain (no reconcile) stays terminal ────────────
+
+
+def _completed_legacy_chain(
+    root: Path, *, engine_change_after_completion: bool = False
+) -> tuple[Path, str]:
+    """A pre-P6 legacy epic that is DURABLY complete and has NO
+    ``kind: reconcile`` milestone: one product milestone (local-only, no PR
+    branch) with a terminal ``done`` plan, plus a persisted chain state whose
+    ``last_state == "done"`` and whose completed records cover every spec
+    milestone.
+
+    Returns ``(spec_path, base_sha)``.  With
+    *engine_change_after_completion*, a real engine-source commit lands on
+    main AFTER *base_sha*, so a naively appended reconcile milestone would
+    compute PR-required scope and dispatch the agent — the regression this
+    suite must keep terminal.
+    """
+    initiative = root / ".megaplan" / "initiatives" / "demo"
+    briefs = initiative / "briefs"
+    briefs.mkdir(parents=True)
+    (initiative / "NORTHSTAR.md").write_text("# North Star\n", encoding="utf-8")
+    (briefs / "m1.md").write_text("# M1\n", encoding="utf-8")
+    spec_path = initiative / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n"
+        "merge_policy: auto\n",
+        encoding="utf-8",
+    )
+    _git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "add", ".")
+    _git(
+        root,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "scaffold initiative",
+    )
+    base_sha = _git_sha(root)
+
+    # terminal plan for the one product milestone (local-only, no PR)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    plan_dir.joinpath("state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "done",
+                "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    if engine_change_after_completion:
+        _commit(root, "arnold_pipelines/engine.py", message="engine change after completion")
+
+    # durable completed chain state: last_state done + every milestone completed
+    state = chain_spec_module.ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="done",
+        completed=[
+            {
+                "label": "m1",
+                "plan": "plan-m1",
+                "status": "done",
+                "pr_number": None,
+                "pr_state": None,
+            }
+        ],
+        target_base_ref=base_sha,
+    )
+    chain_spec_module.save_chain_state(spec_path, state)
+    return spec_path, base_sha
+
+
+def test_ensure_reconcile_milestone_completed_legacy_chain_stays_terminal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """(e) Rerunning a COMPLETED legacy epic is an idempotent terminal
+    observation, never a regression to pending reconcile: the durable chain
+    state (``last_state == done`` with every milestone completed) wins over
+    the missing synthetic milestone — the spec file is untouched and the
+    reconcile brief is never materialized."""
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_RUNTIME_POLICY", raising=False)
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    root = _git_repo(tmp_path / "repo")
+    spec_path, _base = _completed_legacy_chain(root)
+    before = spec_path.read_bytes()
+
+    messages: list[str] = []
+    spec = chain_module.ensure_reconcile_milestone(
+        spec_path,
+        root=root,
+        writer=messages.append,
+        now=datetime(2026, 8, 11, tzinfo=timezone.utc),
+    )
+    assert [m.kind for m in spec.milestones] == ["product"]
+    # the SPEC FILE is untouched: no synthetic milestone persisted
+    assert spec_path.read_bytes() == before
+    assert [m.kind for m in load_spec(spec_path).milestones] == ["product"]
+    assert not (spec_path.parent / "briefs" / "reconcile.md").exists()
+    # the terminal observation is announced, never silently swallowed
+    assert any(
+        "reconcile milestone" in m and "not appended" in m.lower()
+        for m in messages
+    )
+
+    # idempotent: a second run (later date) behaves identically
+    messages.clear()
+    spec_again = chain_module.ensure_reconcile_milestone(
+        spec_path,
+        root=root,
+        writer=messages.append,
+        now=datetime(2026, 8, 12, tzinfo=timezone.utc),
+    )
+    assert [m.kind for m in spec_again.milestones] == ["product"]
+    assert spec_path.read_bytes() == before
+    assert any(
+        "reconcile milestone" in m and "not appended" in m.lower()
+        for m in messages
+    )
+
+
+def test_run_chain_completed_legacy_chain_stays_terminal_no_agent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """(e) ``run_chain`` on a durably-completed legacy epic returns a
+    terminal observation — status ``done``, no plan initialization, no agent
+    drive — and the spec file STILL has no reconcile milestone.  Without the
+    durable-completion guard the chain would regress to a pending reconcile
+    milestone (PR-required scope: the engine change lands after the milestone
+    base) and dispatch the agent."""
+    from unittest.mock import patch
+
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_RUNTIME_POLICY", raising=False)
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    root = _git_repo(tmp_path / "repo")
+    spec_path, _base = _completed_legacy_chain(
+        root, engine_change_after_completion=True
+    )
+    _git(root, "remote", "add", "origin", str(root))
+    _git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "push", "-u", "origin", "main")
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._init_plan",
+            side_effect=AssertionError(
+                "reconcile milestone must not be initialized for a "
+                "durably-completed legacy chain"
+            ),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            side_effect=AssertionError(
+                "agent must not run for a durably-completed legacy chain"
+            ),
+        ),
+    ):
+        result = chain_module.run_chain(
+            spec_path, root, writer=lambda _msg: None, no_push=True
+        )
+
+    assert result.get("status") == "done"
+    # the completed epic did not regress: still no reconcile milestone on disk
+    assert [m.kind for m in load_spec(spec_path).milestones] == ["product"]
+    state = chain_spec_module.load_chain_state(spec_path)
+    assert state.last_state == "done"
+    assert [r.get("label") for r in state.completed] == ["m1"]

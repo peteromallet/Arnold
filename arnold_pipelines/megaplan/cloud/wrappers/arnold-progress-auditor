@@ -198,9 +198,8 @@ AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"
 # MEGAPLAN_AUDIT_SESSION_ALLOWLIST / MEGAPLAN_AUDIT_PLAN_ALLOWLIST are
 # REPORT-ONLY row filters for the audit report (never effect authority): they
 # narrow which sessions/plans appear in the report but cannot authorize any
-# mutation, dispatch, or repair.  ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST has
-# NO reader anywhere in this tree — it is intentionally not created (G5); do
-# not add one.
+# mutation, dispatch, or repair.  Audit reporting may filter by session or
+# plan; mutation and push remain separately default-off.
 AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"
 AUDIT_PLAN_ALLOWLIST="${MEGAPLAN_AUDIT_PLAN_ALLOWLIST:-}"
 if ! "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" - "$AUDIT_WINDOW_HOURS" <<'PY'
@@ -328,13 +327,23 @@ EOF
 
 AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"
 AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"
-# ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED is NOT a control in this wrapper (G5):
-# the L3 audit reviewer is dispatched with `codex exec --sandbox read-only`
-# and the reviewer brief is unconditionally READ-ONLY EVALUATOR, so there is
-# no commit-capable effect here to gate.  The retired flag is intentionally
-# not read, not forwarded, and never rendered into the brief; feature_flags
-# keeps the API for any future commit boundary (T-0208) but the auditor does
-# not consume it.  Do not re-introduce a reader that cannot gate.
+# T-0208: ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED is enforced at the auditor's
+# commit-capable effect boundary, not in prompt text.  The L3 reviewer itself
+# stays read-only (codex --sandbox read-only), so the flag never alters the
+# brief; instead it gates every auditor effect that can end in a git commit:
+# the watchdog recovery sweep and the L3 escalation controller's
+# repair-request handoff (a commit-capable fixer drains that queue).  With
+# the flag off the auditor degrades to observation/report-only and performs
+# zero commit-capable dispatch, no matter how persuasive an agent result
+# claims to be.  Read-only reviewer dispatch stays gated on the
+# master-plus-path mutation flag alone (AUDIT_MUTATION_AUTHORIZED_FLAG).
+AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"
+# Combined authority for any commit-capable auditor effect: mutation
+# authorization AND the explicit audit-autofix commit gate.
+AUDIT_EFFECT_AUTHORITY_FLAG="0"
+if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" && "$AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG" == "1" ]]; then
+  AUDIT_EFFECT_AUTHORITY_FLAG="1"
+fi
 AUDIT_LAUNCH_ATTEMPTED=0
 export ARNOLD_META_REPAIR_ENABLED="${ARNOLD_META_REPAIR_ENABLED:-1}"
 export ARNOLD_META_REPAIR_COMMIT_ENABLED="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
@@ -506,7 +515,7 @@ payload = {
     "should_run_count": sum(1 for item in decisions if item["should_run"]),
     "codex_model": codex_model,
     "decisions": decisions,
-}
+}  # Keep the shell-function extractor from mistaking this for its closing brace.
 pathlib.Path(output_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }
@@ -535,7 +544,7 @@ payload = {
     "sessions_discovered": 0,
     "should_run_count": 0,
     "decisions": [],
-}
+}  # Keep the shell-function extractor from mistaking this for its closing brace.
 pathlib.Path(sys.argv[1]).write_text(
     json.dumps(payload, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
@@ -545,8 +554,12 @@ PY
       ;;
   esac
   capture_recovery_snapshot "$before_path"
-  if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" != "1" ]]; then
-    log "report-only audit: skipping watchdog recovery sweep because mutation is not authorized"
+  # T-0208: the sweep can end in a watchdog source repair + git commit, so it
+  # requires the commit-capable effect authority (mutation authorization AND
+  # ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED).  A closed commit gate makes the
+  # sweep a zero-effect observation.
+  if [[ "$AUDIT_EFFECT_AUTHORITY_FLAG" != "1" ]]; then
+    log "report-only audit: skipping watchdog recovery sweep because commit-capable effect authority is not granted (requires ARNOLD_AUTONOMY, ARNOLD_AUDIT_AUTOFIX_ENABLED, and ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED)"
     capture_recovery_snapshot "$after_path"
     assemble_recovery_evidence "$before_path" "$after_path" 0 0
     return 0
@@ -797,9 +810,9 @@ for entry in entries.values():
     entry["session_evidence_scope"] = bool(current_plan and current_plan == entry["plan"])
 
 # Report-only row filters (never authority): these narrow which rows the
-# audit report includes.  They cannot authorize dispatch, mutation, or repair
-# (G5).  ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST has no reader — do not add
-# one here.
+# audit report includes.  They cannot authorize dispatch, mutation, repair,
+# commit, or push — audit reporting may filter by session/plan; mutation and
+# push remain separately default-off.
 session_allowlist = {
     item.strip()
     for item in os.environ.get("MEGAPLAN_AUDIT_SESSION_ALLOWLIST", "").split(",")
@@ -6992,12 +7005,17 @@ record_incident_audits "$GATHER_DIR/findings.json"
 # produced by the controller (Steps 43/46).  Audit reporting, human
 # escalation, GitHub sync, and model audit behaviour are intentionally left
 # non-authoritative and are NOT routed through this shim.
+# T-0208: the controller receives AUDIT_EFFECT_AUTHORITY_FLAG — mutation
+# authorization AND ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED — so a closed commit
+# gate degrades the handoff to report-only classification (zero repair-request
+# enqueue, hence zero commit calls downstream) even when a reviewer result is
+# persuasive.
 L3_ESCALATION_RESULT="$(
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
     "$GATHER_DIR/findings.json" \
     "$ESCALATION_STATE_ROOT" \
     "$REPAIR_QUEUE_ROOT" \
-    "$AUDIT_MUTATION_AUTHORIZED_FLAG" <<'PY'
+    "$AUDIT_EFFECT_AUTHORITY_FLAG" <<'PY'
 import json
 import sys
 from pathlib import Path

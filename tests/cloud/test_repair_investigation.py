@@ -16,10 +16,16 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import (
     MAX_OBSERVATION_BUNDLE_BYTES,
     META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA,
     REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
+    RUNTIME_IDENTITY_AXES,
+    RUNTIME_IDENTITY_DANGLING,
+    RUNTIME_IDENTITY_MISSING,
+    RUNTIME_IDENTITY_MISMATCH,
+    RUNTIME_SPLIT_BRAIN,
     build_meta_investigation_context,
     build_meta_observation_bundle,
     build_investigation_context,
     build_repair_observation_bundle,
+    compare_runtime_identity,
     load_bounded_investigator_receipt,
     summarize_investigation_artifacts,
     validate_meta_investigation_context,
@@ -1971,3 +1977,412 @@ def test_mechanical_fence_keeps_exact_status_channel_clean() -> None:
         'log "mechanical relaunch fenced: deterministic owner circuit requires replan '
         'session=$session iteration=$iteration" >&2'
     ) in wrapper
+
+
+# ── T-0206: runtime identity comparison precedes code-level diagnosis ───────
+
+
+def _runtime_axes(*, root: str, revision: str = "a" * 40) -> dict:
+    """One coherent five-axis runtime identity observation set."""
+    return {
+        "recorded": {
+            "present": True,
+            "path": f"{root}/marker.json",
+            "import_root": root,
+            "source_revision": revision,
+            "digest": "",
+        },
+        "manifest": {
+            "present": True,
+            "path": f"{root}/runtime-manifest.json",
+            "import_root": root,
+            "source_revision": revision,
+            "digest": "",
+        },
+        "live": {
+            "present": True,
+            "path": root,
+            "import_root": root,
+            "source_revision": revision,
+            "digest": "",
+        },
+        "wrapper": {
+            "present": True,
+            "path": f"{root}/arnold-repair-loop",
+            "import_root": root,
+            "source_revision": revision,
+            "digest": "",
+        },
+        "dependency": {
+            "present": True,
+            "path": f"{root}/deps.lock",
+            "import_root": root,
+            "source_revision": revision,
+            "digest": "",
+        },
+    }
+
+
+def test_runtime_identity_unobserved_does_not_block_when_nothing_bound() -> None:
+    axes = {"live": {"present": True, "path": "/live", "import_root": "/live"}}
+    result = compare_runtime_identity(axes)
+
+    assert result["engaged"] is False
+    assert result["coherent"] is True
+    assert result["status"] == "unobserved"
+    assert result["findings"] == []
+
+
+def test_runtime_identity_coherent_allows_code_diagnosis(tmp_path: Path) -> None:
+    root = tmp_path / "runtime-tree"
+    root.mkdir()
+    axes = _runtime_axes(root=str(root))
+
+    result = compare_runtime_identity(axes)
+
+    assert result["engaged"] is True
+    assert result["coherent"] is True
+    assert result["status"] == "coherent"
+    assert result["root_cause"] is None
+    assert result["findings"] == []
+
+
+def test_runtime_identity_missing_axis_is_typed_finding(tmp_path: Path) -> None:
+    root = tmp_path / "runtime-tree"
+    root.mkdir()
+    axes = _runtime_axes(root=str(root))
+    del axes["dependency"]
+
+    result = compare_runtime_identity(axes)
+
+    assert result["coherent"] is False
+    assert result["status"] == "missing"
+    assert result["root_cause"] == RUNTIME_IDENTITY_MISSING
+    assert any(
+        item["code"] == RUNTIME_IDENTITY_MISSING and item["axis"] == "dependency"
+        for item in result["findings"]
+    )
+
+
+def test_runtime_identity_dangling_root_is_typed_finding(tmp_path: Path) -> None:
+    root = tmp_path / "runtime-tree"
+    root.mkdir()
+    axes = _runtime_axes(root=str(root))
+    axes["manifest"]["import_root"] = str(tmp_path / "missing-tree")
+
+    result = compare_runtime_identity(axes)
+
+    assert result["coherent"] is False
+    assert result["status"] == "dangling"
+    assert result["root_cause"] == RUNTIME_IDENTITY_DANGLING
+    assert any(
+        item["code"] == RUNTIME_IDENTITY_DANGLING and item["axis"] == "manifest"
+        for item in result["findings"]
+    )
+
+
+def test_runtime_identity_four_tree_split_is_root_cause(tmp_path: Path) -> None:
+    roots = [tmp_path / f"tree-{index}" for index in range(4)]
+    for root in roots:
+        root.mkdir()
+    axes = {
+        "recorded": {
+            "present": True,
+            "path": str(roots[0] / "marker.json"),
+            "import_root": str(roots[0]),
+            "source_revision": "a" * 40,
+        },
+        "manifest": {
+            "present": True,
+            "path": str(roots[1] / "runtime-manifest.json"),
+            "import_root": str(roots[1]),
+            "source_revision": "b" * 40,
+        },
+        "live": {
+            "present": True,
+            "path": str(roots[2]),
+            "import_root": str(roots[2]),
+            "source_revision": "c" * 40,
+        },
+        "wrapper": {
+            "present": True,
+            "path": str(roots[3] / "arnold-repair-loop"),
+            "import_root": str(roots[3]),
+            "source_revision": "d" * 40,
+        },
+        "dependency": {
+            "present": True,
+            "path": str(roots[1] / "deps.lock"),
+            "import_root": str(roots[1]),
+            "source_revision": "b" * 40,
+        },
+    }
+
+    result = compare_runtime_identity(axes)
+
+    assert result["coherent"] is False
+    assert result["status"] == "split"
+    assert result["root_cause"] == RUNTIME_SPLIT_BRAIN
+    assert len(result["findings"][-1]["roots"]) == 4
+    assert any(
+        item["code"] == RUNTIME_IDENTITY_MISMATCH for item in result["findings"]
+    )
+
+
+def test_context_embeds_runtime_identity_and_gates_required_output(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    root = tmp_path / "runtime-tree"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    incoherent = _runtime_axes(root=str(root))
+    incoherent["recorded"]["import_root"] = str(elsewhere)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+        runtime_identity_sources=incoherent,
+    )
+
+    identity = context["runtime_identity"]
+    assert identity["engaged"] is True
+    assert identity["coherent"] is False
+    assert identity["root_cause"] == RUNTIME_IDENTITY_MISMATCH
+    assert context["custody_status"] == "contradictory"
+    assert any(
+        "runtime identity" in item["contradiction"]
+        for item in context["custody_contradictions"]
+    )
+    required = context["required_investigator_output"]
+    assert required["recommended_action"] == "replan"
+    assert required["safe_repair_target"]["kind"] == "repair_custody"
+    assert required["handoff"]["allowed_mutations"] == ["none"]
+    assert "edit_runtime_pin" in required["handoff"]["forbidden_mutations"]
+    assert "edit_shared_tree" in required["handoff"]["forbidden_mutations"]
+    assert required["runtime_identity_gate"]["coherent"] is False
+    assert len(json.dumps(context).encode()) <= MAX_CONTEXT_BYTES
+
+
+def test_coherent_context_leaves_code_diagnosis_available(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    root = tmp_path / "runtime-tree"
+    root.mkdir()
+    coherent = _runtime_axes(root=str(root))
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+        runtime_identity_sources=coherent,
+    )
+
+    assert context["runtime_identity"]["coherent"] is True
+    required = context["required_investigator_output"]
+    assert "runtime_identity_gate" not in required
+    assert "repair_source" in required["recommended_action"]
+    assert "repair_target" in required["recommended_action"]
+
+
+def _runtime_replan_receipt(digest: str) -> dict:
+    return {
+        "schema_version": REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
+        "context_digest": digest,
+        "target_kind": "l1_repair_target",
+        "actual_failure": {
+            "classification": "infrastructure_failure",
+            "mechanism": "recorded/manifest/live/wrapper/dependency runtime identity disagree",
+            "error": "runtime_split_brain: four distinct runtime trees",
+        },
+        "evidence_sources": [
+            {
+                "kind": "source_tree",
+                "path": "/runtime/tree",
+                "authority": 4,
+                "observed": "four distinct runtime roots",
+            }
+        ],
+        "custody_status": "contradictory",
+        "custody_contradictions": [
+            {
+                "left_source": "recorded",
+                "right_source": "manifest",
+                "contradiction": "runtime identity mismatch: recorded root differs from manifest root",
+            }
+        ],
+        "intended_recovery": {
+            "predicate": "runtime identity reconciled; blocker cleared and fresh progress beyond frozen stage",
+            "blocker_cleared_required": True,
+            "fresh_progress_required": True,
+            "beyond_stage_required": True,
+        },
+        "safe_repair_target": {
+            "kind": "repair_custody",
+            "scope": "runtime identity reconciliation",
+            "rationale": "typed runtime identity finding precedes code-level diagnosis",
+        },
+        "handoff": {
+            "action": "replan",
+            "allowed_mutations": ["none"],
+            "forbidden_mutations": [
+                "edit_runtime_pin",
+                "edit_shared_tree",
+                "edit_deps_lockfile",
+                "edit_runtime_manifest",
+                "direct_chain_state_edit",
+                "hand_advance_chain",
+                "guard_weakening",
+                "recover_state",
+            ],
+        },
+        "four_axis": {
+            "TRACKED": "fail",
+            "FIXED": "fail",
+            "INTENT": "pass",
+            "CONTEXT": "fail",
+        },
+        "prior_repairs_considered": ["runtime identity comparison"],
+        "preserve_live": False,
+        "recommended_action": "replan",
+        "guard_weakening_risk": "none",
+    }
+
+
+def test_incoherent_runtime_identity_rejects_code_level_receipt(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    root = tmp_path / "runtime-tree"
+    root.mkdir()
+    incoherent = _runtime_axes(root=str(root))
+    incoherent["manifest"]["import_root"] = str(tmp_path / "missing-tree")
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+        runtime_identity_sources=incoherent,
+    )
+    digest = context["context_digest"]
+
+    receipt = _receipt(digest)
+    with pytest.raises(ValueError, match="infrastructure_failure"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest=digest,
+            investigation_context=context,
+        )
+
+    replan = _runtime_replan_receipt(digest)
+    validated = validate_investigator_receipt(
+        replan,
+        expected_context_digest=digest,
+        investigation_context=context,
+    )
+    assert validated["recommended_action"] == "replan"
+    assert validated["safe_repair_target"]["kind"] == "repair_custody"
+
+
+def test_runtime_split_brain_blocks_victim_patching_even_for_target_rework(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    roots = [tmp_path / f"tree-{index}" for index in range(4)]
+    for tree in roots:
+        tree.mkdir()
+    axes = {
+        "recorded": {
+            "present": True,
+            "path": str(roots[0] / "marker.json"),
+            "import_root": str(roots[0]),
+            "source_revision": "a" * 40,
+        },
+        "manifest": {
+            "present": True,
+            "path": str(roots[1] / "runtime-manifest.json"),
+            "import_root": str(roots[1]),
+            "source_revision": "b" * 40,
+        },
+        "live": {
+            "present": True,
+            "path": str(roots[2]),
+            "import_root": str(roots[2]),
+            "source_revision": "c" * 40,
+        },
+        "wrapper": {
+            "present": True,
+            "path": str(roots[3] / "arnold-repair-loop"),
+            "import_root": str(roots[3]),
+            "source_revision": "d" * 40,
+        },
+        "dependency": {
+            "present": True,
+            "path": str(roots[1] / "deps.lock"),
+            "import_root": str(roots[1]),
+            "source_revision": "b" * 40,
+        },
+    }
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+        runtime_identity_sources=axes,
+    )
+    digest = context["context_digest"]
+
+    assert context["runtime_identity"]["root_cause"] == RUNTIME_SPLIT_BRAIN
+    receipt = _receipt(digest)
+    with pytest.raises(ValueError, match="infrastructure_failure"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest=digest,
+            investigation_context=context,
+        )
+
+    replan = _runtime_replan_receipt(digest)
+    replan["actual_failure"]["mechanism"] = "runtime_split_brain: four trees"
+    validated = validate_investigator_receipt(
+        replan,
+        expected_context_digest=digest,
+        investigation_context=context,
+    )
+    assert validated["recommended_action"] == "replan"
+
+
+def test_gather_runtime_identity_sources_marks_absent_axes_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live_root = tmp_path / "live-tree"
+    live_root.mkdir()
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_REPAIR_LOOP_ORIGIN", raising=False)
+    monkeypatch.setenv("MEGAPLAN_SANDBOX_TEST_ROOT", str(tmp_path))
+
+    sources = repair_investigation._gather_runtime_identity_sources(
+        marker={},
+        marker_path=None,
+        live_root=live_root,
+    )
+
+    assert sources["recorded"]["present"] is False
+    assert sources["manifest"]["present"] is False
+    assert sources["live"]["present"] is True
+    assert sources["wrapper"]["present"] is False
+    assert sources["dependency"]["present"] is False
+
+    result = compare_runtime_identity(sources)
+    assert result["engaged"] is False
+    assert result["status"] == "unobserved"

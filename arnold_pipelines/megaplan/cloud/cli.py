@@ -41,6 +41,7 @@ from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud import status_format, status_snapshot
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    DEPENDENCY_GENERATION_KEYS,
     EPIC_REQUIRED,
     MANIFEST_SCHEMA_VERSION,
     TOP_LEVEL_REQUIRED,
@@ -3542,6 +3543,57 @@ def _pinned_manifest_field_read(field: str) -> str:
     )
 
 
+def _pinned_manifest_generation_interpreter_read() -> str:
+    """Shell command substitution reading the dependency-generation
+    interpreter from the pinned runtime manifest (T-0301).
+
+    Same canonical-schema gate as :func:`_pinned_manifest_field_read`, PLUS
+    the generation-proof completeness gate: ``epic.dependency_generation``
+    must carry the full required key set
+    (:data:`DEPENDENCY_GENERATION_KEYS`).  An absent, partial, or
+    schema-invalid proof yields an EMPTY read, so the launch gate fails
+    closed with exit 24 — a runtime without a verifiable immutable
+    dependency generation is never launched (G10), and there is no
+    editable-install / fixed-python fallback.
+    """
+    return (
+        '$(env -u PYTHONHOME PYTHONSAFEPATH=1 python -P -c \'import json,sys; '
+        f"d=json.load(open(sys.argv[1])); R={json.dumps(TOP_LEVEL_REQUIRED)}; "
+        f"E={json.dumps(EPIC_REQUIRED)}; G={json.dumps(DEPENDENCY_GENERATION_KEYS)}; "
+        f"e=d.get(\"epic\") if isinstance(d,dict) and d.get(\"schema\")=={json.dumps(MANIFEST_SCHEMA_VERSION)} and all(k in d for k in R) else None; "
+        f"g=e.get(\"dependency_generation\") if isinstance(e,dict) and all(k in e for k in E) else None; "
+        f"print(g.get(\"interpreter_path\",\"\")) if isinstance(g,dict) and all(k in g for k in G) else None\' "
+        '"$PINNED_RUNTIME_MANIFEST" 2>/dev/null || true)'
+    )
+
+
+def _generation_interpreter_gate(log_target: str) -> str:
+    """Shell fragment reading the dependency-generation interpreter from the
+    pinned manifest and failing closed (exit 24,
+    ``isolated_chain_runtime_binding_drift``) when the proof is missing,
+    incomplete, or the interpreter is not executable.
+
+    T-0301: every launch executes from the generation interpreter with
+    worktree-first PYTHONPATH (runtime code from the pinned worktree, frozen
+    dependencies from the immutable generation).  There is NO ``python`` /
+    ``python3`` launch and NO editable-install fallback — a runtime without
+    a verifiable generation is never launched (G10).
+    """
+    return (
+        f'GEN_INTERPRETER="{_pinned_manifest_generation_interpreter_read()}"; '
+        'if [ -z "$GEN_INTERPRETER" ]; then '
+        f'{{ echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks dependency generation interpreter" >> {log_target}; }} 2>/dev/null || '
+        'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks dependency generation interpreter" >&2; '
+        'exit 24; '
+        'fi; '
+        'if [ ! -x "$GEN_INTERPRETER" ]; then '
+        f'{{ echo "[megaplan-launch] isolated_chain_runtime_binding_drift: dependency generation interpreter not executable ($GEN_INTERPRETER)" >> {log_target}; }} 2>/dev/null || '
+        'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: dependency generation interpreter not executable ($GEN_INTERPRETER)" >&2; '
+        'exit 24; '
+        'fi; '
+    )
+
+
 def _manifest_pin_fail_closed_prefix(
     log_target: str, *, post_pin_checks: str = ""
 ) -> str:
@@ -3616,9 +3668,15 @@ def _manifest_pin_fail_closed_prefix(
         )
         + 'exit 24; '
         'fi; '
-        'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        # T-0301: the generation interpreter gate (proof completeness +
+        # executable check) runs before the provenance check, and BOTH the
+        # provenance probe and the launch execute under the generation
+        # interpreter — never the ambient python and never an editable
+        # install.
+        + _generation_interpreter_gate(log_target)
+        + 'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
         'PYTHONPATH="$ENGINE_DIR" '
-        'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+        '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
         '--expected-root "$ENGINE_DIR" '
         '--expected-revision "$_EXPECTED_REVISION" '
         f'>> {log_target} 2>&1; then '
@@ -3726,9 +3784,15 @@ def _chain_start_command(
             f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
             'exit 24; '
             'fi; '
-            'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+            # T-0301: the generation interpreter gate runs before the
+            # provenance check; BOTH the provenance probe and the launch run
+            # under the generation interpreter (worktree-first PYTHONPATH,
+            # frozen deps from the immutable generation).  No ambient-python
+            # launch and no editable-install fallback.
+            + _generation_interpreter_gate(log_target)
+            + 'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
             'PYTHONPATH="$ENGINE_DIR" '
-            'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+            '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
             '--expected-root "$ENGINE_DIR" '
             '--expected-revision "$_EXPECTED_REVISION" '
             f'>> {log_target} 2>&1; then '
@@ -3740,8 +3804,15 @@ def _chain_start_command(
             'cd "$ENGINE_DIR" && env -u PYTHONHOME PYTHONSAFEPATH=1 '
             'PYTHONPATH="$ENGINE_DIR" '
         )
+    # The manifest-pinned path launches from the generation interpreter
+    # ($GEN_INTERPRETER, set + verified by the gate above).  The unbound
+    # pre-pin branch (engine_dir=None — marker prelude only, never a
+    # production chain launch) keeps the ambient python; there is NO
+    # editable-install refresh anywhere in this command.
+    launch_interpreter = '"$GEN_INTERPRETER"' if engine_dir else "python"
     return (
-        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {launch_interpreter} -P -m "
+        f"arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
     )
 
@@ -3813,7 +3884,8 @@ def _plan_auto_command(
     return (
         f"{prefix}cd \"$ENGINE_DIR\" && env -u PYTHONHOME PYTHONSAFEPATH=1 "
         'PYTHONPATH="$ENGINE_DIR" '
-        'MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan auto '
+        'MEGAPLAN_TRUSTED_CONTAINER=1 "$GEN_INTERPRETER" -P -m '
+        'arnold_pipelines.megaplan auto '
         f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)} "
         f">> {log_target} 2>&1"
     )
@@ -4371,9 +4443,14 @@ def _epic_chain_start_command(
         f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
         'exit 24; '
         'fi; '
-        'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        # T-0301: the generation interpreter gate runs before the provenance
+        # check; BOTH the provenance probe and the launch run under the
+        # generation interpreter (worktree-first PYTHONPATH, frozen deps
+        # from the immutable generation).
+        + _generation_interpreter_gate(log_target)
+        + 'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
         'PYTHONPATH="$ENGINE_DIR" '
-        'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+        '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
         '--expected-root "$ENGINE_DIR" '
         '--expected-revision "$_EXPECTED_REVISION" '
         f'>> {log_target} 2>&1; then '
@@ -4386,7 +4463,8 @@ def _epic_chain_start_command(
         'PYTHONPATH="$ENGINE_DIR" '
     )
     return (
-        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start {flags} "
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 \"$GEN_INTERPRETER\" -P -m "
+        f"arnold_pipelines.megaplan epic-chain start {flags} "
         f">> {log_target} 2>&1"
     )
 
@@ -6441,7 +6519,8 @@ def _bootstrap_launch_command(
         f"{_write_session_marker_command(marker_path, marker_payload)} && "
         "env -u PYTHONHOME PYTHONSAFEPATH=1 "
         'PYTHONPATH="$ENGINE_DIR" '
-        f"python -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(workspace)} "
+        '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan init '
+        f"--project-dir {shlex.quote(workspace)} "
         f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
         f"--robustness {shlex.quote(robustness)} --name {shlex.quote(plan_name)}"
     )
