@@ -23611,6 +23611,26 @@ def test_watchdog_owner_adoption_custody_dispatches_exact_occurrence_consumer(
         request_id=str(envelope["request_id"]),
         decision_id=str(envelope["decision_id"]),
     )
+    # A durable phase-contract resume cursor is REQUIRED for the consumer's
+    # repair action to run (fail closed otherwise).
+    _write_plan(
+        plan_dir,
+        {
+            "iteration": 5,
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "gate",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "gate",
+                "message": "gate contract failed",
+            },
+        },
+        events_body="{}\n",
+    )
     log_path = tmp_path / "watchdog.log"
     claim_log = tmp_path / "claim.log"
     fake_py_log = tmp_path / "fake-python.log"
@@ -23642,21 +23662,26 @@ def test_watchdog_owner_adoption_custody_dispatches_exact_occurrence_consumer(
     result = _run_watchdog_shell(script)
 
     assert result.returncode == 0, result.stderr
+    # The authorized path ACTUALLY dispatched: the exact-occurrence consumer
+    # entered the canonical runner and delegated (a typed reroute or a
+    # zero-authority rejection would leave REPAIR_DISPATCH_RESULT unavailable).
+    assert "RESULT=dispatched" in result.stdout, result.stdout
     # The authorized path must NOT reach the managed-agent dispatch (a real
-    # managed run would fail at bind and produce launch_failed).  The exact-
-    # occurrence consumer delegation either dispatches or fails closed with
-    # the delegation outcome recorded — never launch_failed.
+    # managed run would fail at bind and produce launch_failed).
     assert "RESULT=launch_failed" not in result.stdout, result.stdout
     # The generic active claim was NEVER called on this identity.
     assert not claim_log.exists() or claim_log.read_text(encoding="utf-8") == ""
     # The managed-agent child was NEVER launched.
     assert not fake_py_log.exists(), fake_py_log.read_text(encoding="utf-8") if fake_py_log.exists() else ""
-    # The exact-occurrence consumer was invoked and recorded its outcome.
+    # The exact-occurrence consumer was entered, ran the repair under the
+    # live join claim, and reported delegated — this is the real-bind line:
+    # it only appears when delegate_owner_adopted_occurrence returned
+    # outcome=delegated.
     deadline = time.monotonic() + 10
     while not log_path.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     log_text = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-    assert "owner-adoption exact-occurrence" in log_text, log_text
+    assert "owner-adoption exact-occurrence consumer delegated" in log_text, log_text
     assert "session=" in log_text, log_text
 
 
@@ -23888,11 +23913,11 @@ def test_watchdog_phase_contract_path_launches_owner_adoption_exact_occurrence_c
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
     # The fence-authorized path delegates to the exact-occurrence consumer,
-    # which fails closed with a typed outcome for the owner-adoption identity
-    # (the exact F01 tuple cannot be constructed) — NEVER the managed-agent
-    # path (which would bind and fail as launch_failed).
+    # which ACTUALLY runs the phase-contract repair under the live join claim
+    # (repair_running) — NEVER the managed-agent path (which would bind and
+    # fail as launch_failed) and never a typed reroute to repair_unavailable.
     assert (
-        "\trepair\trepair_unavailable\tdeterministic phase-contract failure requires a claimed repair request before relaunch\t"
+        "\trepair\trepair_running\tdeterministic phase-contract failure is under canonical repair custody\t"
         in report
     ), report
     # The generic active claim was never called on the adoption identity.
@@ -23901,12 +23926,14 @@ def test_watchdog_phase_contract_path_launches_owner_adoption_exact_occurrence_c
     assert not fake_py_log.exists(), (
         fake_py_log.read_text(encoding="utf-8") if fake_py_log.exists() else ""
     )
-    # The exact-occurrence consumer was invoked and recorded its outcome.
+    # The exact-occurrence consumer was entered and reported delegated — this
+    # is the real-bind line: it only appears when the consumer's delegation
+    # outcome was delegated.
     deadline = time.monotonic() + 10
     while not log_path.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     log_text = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-    assert "owner-adoption exact-occurrence" in log_text, log_text
+    assert "owner-adoption exact-occurrence consumer delegated" in log_text, log_text
     assert "session=" in log_text, log_text
 
 

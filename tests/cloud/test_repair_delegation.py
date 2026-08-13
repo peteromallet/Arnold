@@ -16,6 +16,10 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 
 from arnold_pipelines.megaplan.cloud import repair_requests
@@ -451,3 +455,490 @@ def test_delegation_result_properties():
     )
     assert fail.delegated is False
     assert fail.rejected is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Owner-adoption exact-occurrence consumer (T-0640 D2 / G14 round 3)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The owner-boundary-adoption identity carries NO F01 tuple: its authority is
+# the operator's LIVE occurrence-join claim.  The consumer re-verifies the
+# claim read-only (fail closed), claims through the SAME queue-root mkdir
+# primitive keyed by the JOIN claim id (never the F01 singleton key), and
+# runs the mutation through the SAME canonical runner.  Every negative must
+# fail closed with zero_authority_rejected and MUST NOT enter the mutation.
+
+
+def _owner_adoption_envelope(
+    tmp_path: Path, *, session: str, plan_name: str = "adopt-plan"
+) -> dict[str, object]:
+    """Enqueue ONE owner-adoption request with an accepted decision."""
+    from arnold_pipelines.megaplan.chain.occurrence_adopt import (
+        build_adoption_identity,
+    )
+
+    built = build_adoption_identity(
+        session=session,
+        plan_name=plan_name,
+        phase="gate",
+        failure_kind="deterministic_phase_failure",
+        failure_code="blocked_no_lease",
+        failure_recorded_at="2026-08-11T07:35:34Z",
+        resume_phase="gate",
+        retry_strategy="repair_phase_contract",
+        cas={
+            field: "sha256:" + "a" * 64
+            for field in repair_requests.OWNER_ADOPTION_CAS_FIELDS
+        },
+        runtime_roots={
+            field: "/workspace/runtime-candidates/arnold-test"
+            for field in repair_requests.OWNER_ADOPTION_ROOT_FIELDS
+        },
+    )
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    enqueued = repair_requests.enqueue_owner_adopted_repair_request(
+        queue_root=queue_root,
+        session=session,
+        source="owner_boundary_occurrence_adoption",
+        marker_dir=tmp_path,
+        target={
+            "plan_dir": str(tmp_path),
+            "plan_name": plan_name,
+            "retry_strategy": "repair_phase_contract",
+            "adoption_record_id": built["adoption_record_id"],
+        },
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "gate",
+            "milestone_or_plan": plan_name,
+            "gate_recommendation": "repair gate contract",
+            "blocked_task_id": "phase:gate",
+        },
+        root_cause_hint="owner adoption of identity-less blocked occurrence",
+        repair_identity=built["identity"],
+        workspace=str(tmp_path),
+        run_kind="chain",
+    )
+    assert enqueued["status"] == "queued", enqueued
+    return {
+        "built": built,
+        "request": enqueued["request"],
+        "decision": enqueued["decision"],
+        "queue_root": queue_root,
+        "identity": built["identity"],
+        "repair_identity_key": built["repair_identity_key"],
+        "request_id": str(enqueued["request"]["request_id"]),
+        "decision_id": str(enqueued["decision"]["decision_id"]),
+    }
+
+
+def _write_join_claim(
+    plan_dir: Path,
+    *,
+    occurrence_id: str,
+    request_id: str,
+    decision_id: str,
+    expires_in_seconds: int = 3600,
+    kind: str = "occurrence_join",
+    write_wbc: bool = True,
+    write_lease: bool = True,
+    wbc_occurrence_id: str | None = None,
+    lease_occurrence_id: str | None = None,
+) -> tuple[str, str]:
+    """Write a REAL live occurrence-join claim (WBC STARTED + custody lease).
+
+    Mirrors the durable claim occurrence_join writes.  Returns
+    ``(claim_id, lease_id)``.  The optional ``*_occurrence_id`` overrides
+    let negatives write a claim that does NOT cover the target occurrence.
+    """
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+    from arnold.workflow.execution_attempt_ledger import (
+        AdapterKind,
+        AttemptEventType,
+        AttemptIdentity,
+        AttemptProvenance,
+        GrantRef,
+        LedgerEvent,
+        RuntimeAdapter,
+        VersionSet,
+    )
+    from arnold_pipelines.megaplan.custody.lease_store import open_lease_store
+
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    attempt_id = str(uuid4())
+    claim_id = "t0101-owner-adoption:delegation-test"
+    lease_id = (
+        "occurrence-join-" + hashlib.sha256(claim_id.encode("utf-8")).hexdigest()[:16]
+    )
+    occurred_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    started = LedgerEvent(
+        idempotency_key=f"{attempt_id}:started",
+        event_type=AttemptEventType.STARTED,
+        identity=AttemptIdentity(
+            workflow_id="megaplan-occurrence-join",
+            run_id="watchdog-delegation-test",
+            graph_revision=(occurrence_id or "0")[:32] or "0",
+            step_id="occurrence-join",
+            invocation_id=claim_id,
+            attempt_ordinal=1,
+            attempt_id=attempt_id,
+        ),
+        provenance=AttemptProvenance(
+            actor_id="operator", tool_id="megaplan.occurrence_join"
+        ),
+        adapter=RuntimeAdapter(
+            adapter_kind=AdapterKind.MEGAPLAN_PHASE, adapter_version="1"
+        ),
+        versions=VersionSet(code_version="occurrence-join.v1"),
+        grant_ref=GrantRef(grant_id=request_id, decision_id=decision_id),
+        sequence=1,
+        causal_predecessor_sequence=0,
+        append_position=1,
+        occurred_at=occurred_at,
+        observed_at=occurred_at,
+        payload={
+            "kind": kind,
+            "occurrence_id": occurrence_id if wbc_occurrence_id is None else wbc_occurrence_id,
+            "occurrence_digest": "sha256:" + "b" * 64,
+            "claim_id": claim_id,
+            "request_id": request_id,
+            "decision_id": decision_id,
+            "lease_id": lease_id,
+            "session": "watchdog-delegation-test",
+            "actor": "operator",
+            "reason": "T-0640 D2 consumer test",
+        },
+    )
+    if write_wbc:
+        wbc_path = plan_dir / ".phase_wbc_attempts.sqlite3"
+        store = SqliteAttemptLedgerStore(wbc_path)
+        store.append_started(attempt_id, started)
+
+    if write_lease:
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        lease_store = open_lease_store(plan_dir / "custody" / "leases")
+        lease_store.acquire(
+            lease_id=lease_id,
+            owner_host="test-host",
+            owner_pid="1234",
+            owner_boot_id="test-boot",
+            run_authority_grant_id=request_id,
+            coordinator_fence_token=1,
+            wbc_attempt_reference=attempt_id,
+            occurrence_digest="sha256:" + "b" * 64,
+            custody_epoch=1,
+            expires_at=expires_at,
+            payload={
+                "kind": kind,
+                "occurrence_id": (
+                    occurrence_id if lease_occurrence_id is None else lease_occurrence_id
+                ),
+                "claim_id": claim_id,
+                "request_id": request_id,
+                "decision_id": decision_id,
+                "session": "watchdog-delegation-test",
+                "actor": "operator",
+                "reason": "T-0640 D2 consumer test",
+            },
+        )
+    return claim_id, lease_id
+
+
+def _delegate_owner_adopted(
+    tmp_path: Path,
+    envelope: dict[str, object],
+    *,
+    identity: dict | None = None,
+    mutate=None,
+    plan_name: str = "adopt-plan",
+    **kwargs,
+) -> tuple[rd.RepairDelegationResult, Path]:
+    """Call the owner-adoption consumer with a marker-writing mutate."""
+    marker = tmp_path / "mutate-ran.marker"
+
+    def default_mutate(occ):
+        marker.write_text(
+            json.dumps({"fingerprint": occ.occurrence_fingerprint}), encoding="utf-8"
+        )
+        return occ.occurrence_fingerprint + ":ran"
+
+    result = rd.delegate_owner_adopted_occurrence(
+        envelope["identity"] if identity is None else identity,
+        queue_dir=envelope["queue_root"],
+        workspace=tmp_path,
+        plan_name=plan_name,
+        mutate=default_mutate if mutate is None else mutate,
+        actor="arnold-watchdog",
+        request_id=envelope["request_id"],
+        session_id="sess-owner-adoption",
+        decision_id=envelope["decision_id"],
+        blocker_id="phase:gate",
+        kind="owner_adoption_dispatch",
+        **kwargs,
+    )
+    return result, marker
+
+
+def test_owner_adopted_occurrence_delegation_runs_under_live_join_claim(
+    tmp_path: Path,
+) -> None:
+    """A live join claim + accepted owner-adoption request + matching key is
+    ALREADY-AUTHORIZED custody: the consumer ACTUALLY enters the canonical
+    runner, runs the mutation, and reports delegated.  This is the real-bind
+    test: if the path were rewired to the generic F01 delegate (which must
+    keep rejecting the adoption envelope) or to a typed reroute, this FAILS
+    because the outcome would not be delegated and the mutation marker would
+    not exist."""
+    session = "consumer-positive"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _claim_id, _lease_id = _write_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+
+    result, marker = _delegate_owner_adopted(tmp_path, envelope)
+
+    assert result.outcome == "delegated", result.to_dict()
+    assert result.delegated is True
+    assert result.occurrence_fingerprint == envelope["repair_identity_key"]
+    assert result.simple_fixer_outcome == "attempted"
+    assert result.evidence is not None
+    assert result.evidence["consumer_entered"] is True
+    assert result.evidence["claim_id"] == _claim_id
+    assert result.evidence["lease_id"] == _lease_id
+    assert str(result.evidence["post_mutation_fingerprint"]).endswith(":ran")
+    # The mutation ran (the repair action was invoked).
+    assert marker.exists(), "mutation was not entered"
+
+    # The lease-derived claim was released: a fresh claim on the same key
+    # (the JOIN claim key, never the F01 fingerprint key) succeeds.
+    from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        singleton_occurrence_claim_lock_dir,
+    )
+
+    claim_key = f"owner-adoption:{_lease_id}"
+    lock_dir = singleton_occurrence_claim_lock_dir(envelope["queue_root"], claim_key)
+    recheck = acquire_repair_lock(lock_dir, session="recheck-owner")
+    assert recheck.acquired, recheck.status
+    from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
+
+    release_repair_lock(lock_dir, owner=recheck.owner)
+
+
+def test_owner_adoption_identity_cannot_run_through_generic_f01_path(
+    tmp_path: Path,
+) -> None:
+    """The generic F01 delegation path keeps rejecting the adoption envelope:
+    build_repair_delegation returns None and delegate_to_simple_fixer never
+    fabricates an F01 tuple for it (the deliberate boundary stays intact)."""
+    session = "generic-reject"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    assert (
+        rd.build_repair_delegation(
+            "operator_trigger", "request-x", envelope["identity"]
+        )
+        is None
+    )
+    result = rd.delegate_to_simple_fixer(  # type: ignore[arg-type]
+        envelope["identity"],
+        queue_dir=envelope["queue_root"],
+        mutate=lambda occ: occ.occurrence_fingerprint,
+    )
+    assert result.outcome == "invalid_caller"
+
+
+def test_owner_adopted_delegation_fails_closed_without_lease(tmp_path: Path) -> None:
+    """No lease in the plan-scoped lease store: fail closed, no mutation."""
+    session = "neg-no-lease"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _claim_id, _lease_id = _write_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+        write_lease=False,
+    )
+    result, marker = _delegate_owner_adopted(tmp_path, envelope)
+    assert result.outcome == "zero_authority_rejected", result.to_dict()
+    assert "custody lease" in str(result.evidence["reason"])
+    assert not marker.exists()
+
+
+def test_owner_adopted_delegation_fails_closed_on_expired_lease(tmp_path: Path) -> None:
+    """An EXPIRED lease is not live custody: fail closed, no mutation."""
+    import time
+
+    session = "neg-expired-lease"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _claim_id, _lease_id = _write_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+        expires_in_seconds=1,
+    )
+    # Let the TTL lapse: the lease must be expired by consumer time (no
+    # repair under an expired claim).
+    time.sleep(2)
+    result, marker = _delegate_owner_adopted(tmp_path, envelope)
+    assert result.outcome == "zero_authority_rejected", result.to_dict()
+    assert "custody lease" in str(result.evidence["reason"])
+    assert not marker.exists()
+
+
+def test_owner_adopted_delegation_fails_closed_on_non_join_wbc_kind(
+    tmp_path: Path,
+) -> None:
+    """A WBC STARTED whose kind is NOT occurrence_join is not the join claim:
+    fail closed, no mutation."""
+    session = "neg-wbc-kind"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _claim_id, _lease_id = _write_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+        kind="phase_rerun",
+    )
+    result, marker = _delegate_owner_adopted(tmp_path, envelope)
+    assert result.outcome == "zero_authority_rejected", result.to_dict()
+    assert "occurrence_join" in str(result.evidence["reason"])
+    assert not marker.exists()
+
+
+def test_owner_adopted_delegation_fails_closed_when_decision_not_latest_accepted(
+    tmp_path: Path,
+) -> None:
+    """A later non-accepted decision supersedes the acceptance: the latest
+    decision must be accepted, otherwise fail closed with no mutation."""
+    session = "neg-decision"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _claim_id, _lease_id = _write_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    # A later (strictly newer) decision overrides the acceptance.
+    repair_requests.write_decision(
+        envelope["queue_root"],
+        request_id=str(envelope["request_id"]),
+        decision="rejected",
+        reason="later override",
+        created_at="2099-01-01T00:00:00Z",
+    )
+    result, marker = _delegate_owner_adopted(tmp_path, envelope)
+    assert result.outcome == "zero_authority_rejected", result.to_dict()
+    assert "latest owner-adoption decision is not accepted" in str(
+        result.evidence["reason"]
+    )
+    assert not marker.exists()
+
+
+def test_owner_adopted_delegation_fails_closed_on_identity_key_mismatch(
+    tmp_path: Path,
+) -> None:
+    """A passed identity whose digest key does not match the recorded request
+    key is not the accepted occurrence: fail closed, no mutation."""
+    session = "neg-key-mismatch"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _claim_id, _lease_id = _write_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    # Build a DIFFERENT adoption identity (different failure_code ⇒ key).
+    from arnold_pipelines.megaplan.chain.occurrence_adopt import (
+        build_adoption_identity,
+    )
+
+    other = build_adoption_identity(
+        session=session,
+        plan_name="adopt-plan",
+        phase="gate",
+        failure_kind="deterministic_phase_failure",
+        failure_code="other_code",
+        failure_recorded_at="2026-08-11T07:35:34Z",
+        resume_phase="gate",
+        retry_strategy="repair_phase_contract",
+        cas={
+            field: "sha256:" + "a" * 64
+            for field in repair_requests.OWNER_ADOPTION_CAS_FIELDS
+        },
+        runtime_roots={
+            field: "/workspace/runtime-candidates/arnold-test"
+            for field in repair_requests.OWNER_ADOPTION_ROOT_FIELDS
+        },
+    )
+    result, marker = _delegate_owner_adopted(
+        tmp_path, envelope, identity=other["identity"]
+    )
+    assert result.outcome == "zero_authority_rejected", result.to_dict()
+    assert "identity key mismatch" in str(result.evidence["reason"])
+    assert not marker.exists()
+
+
+def test_owner_adopted_delegation_fails_closed_when_claim_contended(
+    tmp_path: Path,
+) -> None:
+    """A concurrent owner on the lease-derived claim key refuses the
+    delegation (fail closed, no mutation; no auto-seize)."""
+    session = "neg-contended"
+    envelope = _owner_adoption_envelope(tmp_path, session=session)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "adopt-plan"
+    _claim_id, lease_id = _write_join_claim(
+        plan_dir,
+        occurrence_id=str(envelope["repair_identity_key"]),
+        request_id=str(envelope["request_id"]),
+        decision_id=str(envelope["decision_id"]),
+    )
+    from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        singleton_occurrence_claim_lock_dir,
+    )
+
+    claim_key = f"owner-adoption:{lease_id}"
+    lock_dir = singleton_occurrence_claim_lock_dir(envelope["queue_root"], claim_key)
+    pre = acquire_repair_lock(lock_dir, session="other-owner")
+    assert pre.acquired, pre.status
+    try:
+        result, marker = _delegate_owner_adopted(tmp_path, envelope)
+        assert result.outcome == "delegation_failed", result.to_dict()
+        assert "claim outcome" in str(result.evidence["reason"])
+        assert not marker.exists()
+    finally:
+        from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
+
+        release_repair_lock(lock_dir, owner=pre.owner)
+
+
+def test_owner_adopted_delegation_rejects_non_adoption_identity(
+    tmp_path: Path,
+) -> None:
+    """A non-owner-adoption identity (e.g. an F01 repair identity) can never
+    run through the owner-adoption consumer: fail closed."""
+    result = rd.delegate_owner_adopted_occurrence(
+        {"identity_kind": "run_custody", "schema_version": "megaplan-repair-identity-v1"},
+        queue_dir=tmp_path / ".megaplan" / "repair-queue",
+        workspace=tmp_path,
+        plan_name="adopt-plan",
+        mutate=lambda occ: "sha256:x",
+    )
+    assert result.outcome == "zero_authority_rejected", result.to_dict()
+    assert "owner_boundary_adoption" in str(result.evidence["reason"])
