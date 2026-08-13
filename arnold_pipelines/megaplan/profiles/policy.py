@@ -44,7 +44,7 @@ def _selected_phase_specs(phase_models: list[str]) -> dict[str, str]:
     return selected
 
 DEFAULT_AGENT_ROUTING: dict[str, str] = build_default_agent_routing()
-KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
+KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon", "xai"]
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 ROBUSTNESS_ALIASES: dict[str, str] = {
     "tiny": "bare",

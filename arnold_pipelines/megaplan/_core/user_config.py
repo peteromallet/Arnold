@@ -26,7 +26,7 @@ from typing import Any
 
 from . import io
 
-VALID_VENDORS = ("claude", "codex")
+VALID_VENDORS = ("claude", "codex", "xai")
 
 
 def config_dir(home: Path | None = None) -> Path:

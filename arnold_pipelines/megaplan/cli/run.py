@@ -158,7 +158,7 @@ def build_run_parser(subparsers: Any) -> None:
     )
     parser.add_argument(
         "--vendor", default=None,
-        choices=["claude", "codex"],
+        choices=["claude", "codex", "xai"],
         help="Vendor override for premium slots in profiles.",
     )
     parser.add_argument(

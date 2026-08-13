@@ -152,7 +152,7 @@ from .skills import (
 def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
     """Wire profile modifier flags onto a subparser."""
 
-    parser.add_argument("--vendor", choices=["claude", "codex"], default=None)
+    parser.add_argument("--vendor", choices=["claude", "codex", "xai"], default=None)
     parser.add_argument(
         "--depth",
         choices=["minimal", "low", "medium", "high", "xhigh", "max"],
