@@ -4,8 +4,8 @@ anchors:
 milestones:
 - label: m1-containment-and-truth
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m1-containment-and-truth.md
-  profile: partnered-5
-  vendor: codex
+  profile: partnered-5-grok
+  vendor: xai
   robustness: full
   depth: high
   prep_clarify: false
@@ -15,8 +15,8 @@ milestones:
     autonomy.
 - label: m2-coherent-authority
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-authority.md
-  profile: partnered-5
-  vendor: codex
+  profile: partnered-5-grok
+  vendor: xai
   robustness: full
   depth: high
   depends_on:
@@ -30,8 +30,8 @@ milestones:
     public cross-system boundaries whose failure can remain locally green.
 - label: m3-independent-verification
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m3-independent-verification.md
-  profile: partnered-5
-  vendor: codex
+  profile: partnered-5-grok
+  vendor: xai
   robustness: full
   depth: high
   depends_on:
@@ -43,7 +43,7 @@ milestones:
 - label: m4-six-hour-product-and-rollout
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md
   profile: partnered-4
-  vendor: codex
+  vendor: xai
   robustness: full
   depth: high
   depends_on:
@@ -55,7 +55,7 @@ milestones:
 - label: m5-daily-efficiency-auditor
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m5-daily-efficiency-auditor.md
   profile: partnered-4
-  vendor: codex
+  vendor: xai
   robustness: full
   depth: high
   depends_on:
