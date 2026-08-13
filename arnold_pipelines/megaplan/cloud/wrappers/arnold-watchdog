@@ -58,7 +58,20 @@ if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
 fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
-arnold_supervisor_runtime_init watchdog /workspace/arnold || exit $?
+# Bootstrap the supervisor against the MANIFEST-bound runtime when one is
+# declared (ARNOLD_RUNTIME_MANIFEST env or the default marker-adjacent
+# manifest). The fixed /workspace/arnold default is only a fallback for
+# environments without a per-epic manifest — a live epic must import its
+# own fixer-lineage engine, never the shared resident tree, or the
+# readiness probe binds the WRONG code (watchdog bootstrap regression).
+_BOOTSTRAP_SOURCE_ROOT="/workspace/arnold"
+if [[ -n "${ARNOLD_RUNTIME_MANIFEST:-}" ]]; then
+  _manifest_root="$(arnold_runtime_manifest_epic_field epic.runtime_root 2>/dev/null || true)"
+  if [[ -n "$_manifest_root" && -d "$_manifest_root" ]]; then
+    _BOOTSTRAP_SOURCE_ROOT="$_manifest_root"
+  fi
+fi
+arnold_supervisor_runtime_init watchdog "$_BOOTSTRAP_SOURCE_ROOT" || exit $?
 
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 if command -v readlink >/dev/null 2>&1; then
