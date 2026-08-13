@@ -227,7 +227,7 @@ def inspect_repair_lock(
                 evidence["reasons"].append("owner_pid_not_live")
             elif (
                 Path(f"/proc/{pid}").exists()
-                and not _pid_matches_expected_repair_loop(owner, pid)
+                and not _pid_matches_expected_babysitter(owner, pid)
             ):
                 evidence["reasons"].append("owner_process_mismatch")
                 observed_command = _pid_command_text(pid)
@@ -1402,7 +1402,7 @@ def _owner_pid_liveness(
     return True
 
 
-def _pid_matches_expected_repair_loop(owner: Mapping[str, Any], pid: int) -> bool:
+def _pid_matches_expected_babysitter(owner: Mapping[str, Any], pid: int) -> bool:
     session = str(owner.get("session") or "").strip()
     owner_command = str(owner.get("command") or "").strip()
     if not session or not owner_command:
@@ -1411,12 +1411,12 @@ def _pid_matches_expected_repair_loop(owner: Mapping[str, Any], pid: int) -> boo
         owner_args = shlex.split(owner_command)
     except ValueError:
         owner_args = owner_command.split()
-    if not _args_match_repair_loop_session(owner_args, session):
+    if not _args_match_babysitter_session(owner_args, session):
         return True
     live_args = _pid_command_args(pid)
     if not live_args:
         return True
-    return _args_match_repair_loop_session(live_args, session)
+    return _args_match_babysitter_session(live_args, session)
 
 
 def _pid_command_args(pid: int) -> list[str]:
@@ -1448,11 +1448,11 @@ def _pid_command_text(pid: int) -> str:
     return " ".join(_pid_command_args(pid))
 
 
-def _args_match_repair_loop_session(args: list[str], session: str) -> bool:
+def _args_match_babysitter_session(args: list[str], session: str) -> bool:
     def match_at(idx: int) -> bool:
         if idx >= len(args):
             return False
-        if Path(args[idx]).name != "arnold-repair-loop":
+        if Path(args[idx]).name != "arnold-babysitter":
             return False
         return idx + 1 < len(args) and args[idx + 1] == session
 
@@ -1508,7 +1508,7 @@ def occurrence_scoped_lock_dir(
 # Two claim namespaces live under one repair queue root:
 #
 #   * **active claims** — blocker-keyed (``active-claims/<sha256(blocker)>.lock``,
-#     :func:`arnold_pipelines.megaplan.cloud.repair_requests.claim_active_repair_request`);
+#     :func:`arnold_pipelines.megaplan.cloud.repair_requests.active_repair_claim_lock_dir`);
 #   * **occurrence claims** — occurrence-fingerprint-keyed
 #     (``occurrence-claims/<sha256(fingerprint)>.lock``,
 #     :func:`arnold_pipelines.megaplan.cloud.simple_fixer.claim_singleton_occurrence`).

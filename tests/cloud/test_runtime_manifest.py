@@ -68,7 +68,7 @@ def _make_manifest(**overrides: object) -> dict[str, object]:
             "venv_path": "/opt/arnold/runtime-candidates/epic-demo/venv",
             "runtime_root": "/opt/arnold/runtime-candidates/epic-demo/runtime",
             "expected_head": "abc123def",
-            "repair_bin": "/opt/arnold/runtime-candidates/epic-demo/venv/bin/arnold-repair-loop",
+            "repair_bin": "/opt/arnold/runtime-candidates/epic-demo/venv/bin/arnold-babysitter",
             "deps_lockfile": "/opt/arnold/base/uv.lock",
             # T-0301: the content-addressed dependency-generation proof.  The
             # interpreter path matches the DEFAULT cutover --to-venv-path
@@ -180,7 +180,7 @@ def test_write_load_round_trip(tmp_path: Path) -> None:
     assert loaded == manifest
     assert loaded.to_dict() == manifest.to_dict()
     assert loaded.schema == MANIFEST_SCHEMA_VERSION
-    assert loaded.epic["repair_bin"].endswith("arnold-repair-loop")
+    assert loaded.epic["repair_bin"].endswith("arnold-babysitter")
 
 
 def test_load_rejects_schema_mismatch(tmp_path: Path) -> None:
@@ -1376,7 +1376,7 @@ _TO_RUNTIME_ROOT = "/opt/arnold/runtime-candidates/epic-demo/runtime-2"
 _TO_EXPECTED_HEAD = "def456789"
 _TO_VENV_PATH = "/opt/arnold/runtime-candidates/epic-demo/runtime-2/venv"
 _TO_REPAIR_BIN = (
-    "/opt/arnold/runtime-candidates/epic-demo/runtime-2/venv/bin/arnold-repair-loop"
+    "/opt/arnold/runtime-candidates/epic-demo/runtime-2/venv/bin/arnold-babysitter"
 )
 
 
@@ -1438,7 +1438,7 @@ def _make_cutover_runtime_tree(tmp_path: Path) -> tuple[str, str, str]:
     proof's interpreter_path) and an EXECUTABLE repair wrapper, both
     resolving INSIDE the runtime root (the layout arnold-runtime-create
     writes: ``{root}/.venv`` and ``{root}/arnold_pipelines/megaplan/cloud/
-    wrappers/arnold-repair-loop``).  Returns ``(to_root, venv, repair)``."""
+    wrappers/arnold-babysitter``).  Returns ``(to_root, venv, repair)``."""
     to_root = tmp_path / "runtime-candidates" / "epic-demo" / "runtime-2"
     venv = to_root / ".venv"
     (venv / "bin").mkdir(parents=True, exist_ok=True)
@@ -1452,7 +1452,7 @@ def _make_cutover_runtime_tree(tmp_path: Path) -> tuple[str, str, str]:
         / "megaplan"
         / "cloud"
         / "wrappers"
-        / "arnold-repair-loop"
+        / "arnold-babysitter"
     )
     repair.parent.mkdir(parents=True, exist_ok=True)
     repair.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -2418,7 +2418,7 @@ def test_cutover_relocates_root_relative_fields() -> None:
         to_venv_path=f"{_TO_RUNTIME_ROOT}/.venv",
         to_repair_bin=(
             f"{_TO_RUNTIME_ROOT}/arnold_pipelines/megaplan/cloud/wrappers/"
-            "arnold-repair-loop"
+            "arnold-babysitter"
         ),
         reason="cutover relocates root-relative fields",
     )

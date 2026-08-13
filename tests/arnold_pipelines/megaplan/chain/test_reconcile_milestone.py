@@ -828,7 +828,7 @@ def _reconcile_valid_manifest(path: Path) -> Path:
                 "venv_path": "/tmp/venv",
                 "runtime_root": "/tmp/wt",
                 "expected_head": "0" * 40,
-                "repair_bin": "/usr/local/bin/arnold-repair-loop",
+                "repair_bin": "/usr/local/bin/arnold-babysitter",
                 "deps_lockfile": "requirements.lock",
             },
             "indirection": {

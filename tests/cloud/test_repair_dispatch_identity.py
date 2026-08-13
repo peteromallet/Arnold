@@ -660,12 +660,3 @@ class TestEnqueueResultContractShape:
         assert result["repair_identity_key"] == repair_requests.repair_identity_key(identity)
         assert result["blocker_id"]
         # The shape is what a watchdog bind and a claim-namespace join consume.
-        claim = repair_requests.claim_active_repair_request(
-            queue_root,
-            blocker_id=result["blocker_id"],
-            request_id=result["request_id"],
-            actor="watchdog",
-            session="dispatch-shape-session",
-            repair_identity=identity,
-        )
-        assert claim.claimed

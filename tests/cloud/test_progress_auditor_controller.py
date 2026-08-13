@@ -53,7 +53,7 @@ def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path:
         state_root=tmp_path / "audit-escalations",
         queue_root=queue,
         authorized=False,
-        trigger_argv=["/usr/local/bin/arnold-repair-trigger"],
+        trigger_argv=["/usr/local/bin/arnold-watchdog"],
     )
 
     assert result["l3_escalation_summary"]["dispatched"] == 0
@@ -80,7 +80,7 @@ def test_retroactive_approval_path_never_dispatches_mutating_repair(tmp_path: Pa
             state_root=tmp_path / f"audit-escalations-{authorized}",
             queue_root=queue,
             authorized=authorized,
-            trigger_argv=["/usr/local/bin/arnold-repair-trigger"],
+            trigger_argv=["/usr/local/bin/arnold-watchdog"],
         )
 
         item = result["l3_escalation_summary"]["items"][0]
@@ -574,7 +574,7 @@ def test_controller_rejects_noncanonical_trigger_argv(tmp_path: Path) -> None:
     receipt, or rebuildable projection.
     """
     noncanonical_cases = [
-        (["/usr/local/bin/arnold-repair-trigger"], "legacy_binary_name"),
+        (["/usr/local/bin/arnold-watchdog"], "legacy_binary_name"),
         (["sh", "-c", "echo pwn ; rm -rf /"], "shell_token"),
         (
             ["python", "-m", "arnold_pipelines.megaplan.cloud.repair"],

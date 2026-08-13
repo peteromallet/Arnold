@@ -480,29 +480,6 @@ def test_cloud_tmux_launch_exports_custody_to_remote_chain(monkeypatch) -> None:
     assert provenance["custody_id"] in command
 
 
-@pytest.mark.parametrize(
-    "wrapper_name",
-    ["arnold-repair-loop", "arnold-meta-repair-loop"],
-)
-def test_watchdog_repair_wrappers_restore_marker_custody_before_agents(wrapper_name) -> None:
-    wrapper = (
-        Path(__file__).parents[2]
-        / "arnold_pipelines/megaplan/cloud/wrappers"
-        / wrapper_name
-    )
-    text = wrapper.read_text(encoding="utf-8")
-    definition = text.index("load_resident_delegation_context()")
-    invocation = text.index("load_resident_delegation_context || exit", definition)
-    first_agent_reference = min(
-        index
-        for token in ("HERMES_LAUNCHER", "LAUNCHER=", "codex exec")
-        if (index := text.find(token, invocation)) >= 0
-    )
-    assert invocation < first_agent_reference
-    assert "normalize_delegation_provenance" in text[definition:invocation]
-    assert "ARNOLD_RESIDENT_DELEGATION_CONTEXT" in text[definition:invocation]
-
-
 def test_provenance_rejects_conflicts_and_drops_unapproved_metadata() -> None:
     value = _origin(source="msg_securityorigin1", message="1525300000000000055")
     value["authorization"] = "Bot secret-value"

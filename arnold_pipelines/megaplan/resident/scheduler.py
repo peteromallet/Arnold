@@ -3,10 +3,11 @@
 Manifest-pin + proactive-seam integration (fixer-unification Phase 2/3A):
 ``runtime_pin_ok`` verifies the executed runtime tree against the per-runtime
 manifest's pinned ``expected_head`` before proactive dispatch, and
-``proactive_seam_dispatch`` plans the hourly superfixer dispatch through the
-unified ``arnold-repair-loop --mode=proactive`` seam.  The resident job state
-machine (``cloud.repair_lock``) is part of the occurrence lifecycle: a pin
-failure fails the occurrence through the backend's existing ``mark_failed``
+``proactive_seam_dispatch`` plans the hourly superfixer dispatch as the
+status-trigger babysitter launch (the ``arnold-babysitter`` wrapper, same
+seam the watchdog status trigger uses).  The resident job state machine
+(``cloud.repair_lock``) is part of the occurrence lifecycle: a pin failure
+fails the occurrence through the backend's existing ``mark_failed``
 retry/cancel path, exactly like any other handler failure.
 """
 
@@ -215,18 +216,19 @@ def _runtime_manifest_path() -> Path:
     return Path("/workspace/.megaplan/runtime-manifest.json")
 
 
-def _repair_loop_wrapper(manifest_path: Path | None) -> tuple[Path, str]:
-    """Resolve the repair-loop wrapper: manifest ``epic.repair_bin``, else __file__.
+def _babysitter_wrapper(manifest_path: Path | None) -> tuple[Path, str]:
+    """Resolve the babysitter wrapper: manifest ``epic.repair_bin``, else __file__.
 
     Fail-closed manifest authority (design line 191 kills ``__file__``-relative
     wrapper resolution): when a manifest is present, its ``epic.repair_bin``
-    names the executable that must run.  The ``__file__``-relative path is
-    ONLY the absent-manifest fallback (bootstrap-only backward compat).  A
-    present-but-invalid manifest cannot supply a repair bin — the pin check
-    (``runtime_pin_ok``) has already failed closed, so this falls back to the
-    local wrapper without ever becoming authority to dispatch.  Returns the
-    wrapper path plus a ``"manifest"`` / ``"absent_manifest_fallback"``
-    provenance label.
+    names the executable that must run.  The single-flash babysitter is the
+    only repair flow, so the manifest's repair bin is the ``arnold-babysitter``
+    wrapper.  The ``__file__``-relative path is ONLY the absent-manifest
+    fallback (bootstrap-only backward compat).  A present-but-invalid manifest
+    cannot supply a repair bin — the pin check (``runtime_pin_ok``) has
+    already failed closed, so this falls back to the local wrapper without
+    ever becoming authority to dispatch.  Returns the wrapper path plus a
+    ``"manifest"`` / ``"absent_manifest_fallback"`` provenance label.
     """
     if manifest_path is not None:
         try:
@@ -237,7 +239,9 @@ def _repair_loop_wrapper(manifest_path: Path | None) -> tuple[Path, str]:
             repair_bin = manifest.epic.get("repair_bin")
             if repair_bin:
                 return Path(str(repair_bin)), "manifest"
-    fallback = Path(__file__).resolve().parents[1] / "cloud" / "wrappers" / "arnold-repair-loop"
+    fallback = (
+        Path(__file__).resolve().parents[1] / "cloud" / "wrappers" / "arnold-babysitter"
+    )
     return fallback, "absent_manifest_fallback"
 
 
@@ -249,35 +253,36 @@ def proactive_seam_dispatch(
     manifest_path: Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Plan the proactive (hourly superfixer) dispatch through the unified seam.
+    """Plan the proactive (hourly superfixer) dispatch as the babysitter launch.
 
     Returns a dispatch record naming the seam invocation — the
-    ``arnold-repair-loop`` wrapper in ``--mode=proactive`` (fixer-unification
-    Phase 3A) — together with the manifest pin status.  The wrapper comes from
-    the manifest's ``epic.repair_bin`` when a manifest is present; the
-    ``__file__``-relative path is used ONLY when no manifest exists (design
-    line 191).  This is a dispatch-PLANNING hook: it never launches a process
-    itself.  Actual process launch stays with the existing
-    ``subagent_worker --run-managed`` machinery, which the caller wires to
-    this record's ``command``.
+    ``arnold-babysitter`` wrapper in ``--mode superfixer``, the same launch
+    shape the watchdog status trigger uses — together with the manifest pin
+    status.  The wrapper comes from the manifest's ``epic.repair_bin`` when a
+    manifest is present; the ``__file__``-relative path is used ONLY when no
+    manifest exists (design line 191).  This is a dispatch-PLANNING hook: it
+    never launches a process itself.  Launch-time facts (goal file, occurrence
+    digest, run id/root) are filled by the launch machinery, exactly as the
+    watchdog status trigger fills them before Popen; the caller wires this
+    record's ``command`` into the managed-run launch.
     """
     pin_ok, pin_reason = runtime_pin_ok(manifest_path=manifest_path)
-    wrapper, repair_bin_source = _repair_loop_wrapper(manifest_path)
+    wrapper, babysitter_bin_source = _babysitter_wrapper(manifest_path)
     command = [
         str(wrapper),
-        "--mode=proactive",
-        session,
-        str(workspace),
-        str(remote_spec),
+        "--mode", "superfixer",
+        "--session", session,
+        "--workspace", str(workspace),
+        "--remote-spec", str(remote_spec),
     ]
     return {
-        "seam": "arnold-repair-loop",
-        "mode": "proactive",
+        "seam": "arnold-babysitter",
+        "mode": "superfixer",
         "command": command,
         "dry_run": dry_run,
         "pin_ok": pin_ok,
         "pin_reason": pin_reason,
-        "repair_bin_source": repair_bin_source,
+        "babysitter_bin_source": babysitter_bin_source,
     }
 
 
@@ -518,8 +523,8 @@ class ResidentJobHandlers:
     async def handle_superfixer_proactive(self, job_payload: dict[str, Any]) -> None:
         """Consume one due ``superfixer_proactive`` single-shot occurrence.
 
-        Planning (the unified ``arnold-repair-loop --mode=proactive`` seam
-        dispatch record, after the fail-closed manifest pin check) is
+        Planning (the ``arnold-babysitter`` seam dispatch record in
+        ``--mode superfixer``, after the fail-closed manifest pin check) is
         persisted first; then the consumer decides what the occurrence is
         worth:
 

@@ -336,7 +336,7 @@ manifest = {
         "venv_path": gen_dir,
         "runtime_root": runtime_root,
         "expected_head": head,
-        "repair_bin": f"{runtime_root}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+        "repair_bin": f"{runtime_root}/arnold_pipelines/megaplan/cloud/wrappers/arnold-babysitter",
         "deps_lockfile": deps_lockfile,
         # T-0301: the content-addressed dependency generation proof.  The
         # venv at gen_dir is SHARED across every runtime that resolves to

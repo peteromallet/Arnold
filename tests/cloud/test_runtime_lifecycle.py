@@ -261,7 +261,7 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
     assert Path(m["epic"]["venv_path"]).name == generation["id"]
     assert (
         m["epic"]["repair_bin"]
-        == f"{worktree}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+        == f"{worktree}/arnold_pipelines/megaplan/cloud/wrappers/arnold-babysitter"
     )
     assert m["epic"]["deps_lockfile"] == f"{worktree}/uv.lock"
     # policy SHAs computed from the canonical policy modules (best-effort)

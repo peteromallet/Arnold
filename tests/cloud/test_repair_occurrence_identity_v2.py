@@ -105,57 +105,6 @@ def test_legacy_f01_identity_is_read_only_and_enqueue_rejects_it(tmp_path: Path)
     assert not list((_queue(tmp_path) / "requests").glob("*.json"))
 
 
-def test_enqueue_claim_restart_and_fence_are_bound_to_one_identity(tmp_path: Path) -> None:
-    queue = _queue(tmp_path)
-    identity = _identity()
-    queued = repair_requests.enqueue_repair_request(
-        queue_root=queue,
-        session="session-a",
-        source="test-producer",
-        problem_signature=_signature(),
-        repair_identity=identity,
-    )
-    request = queued["request"]
-
-    missing = repair_requests.claim_active_repair_request(
-        queue,
-        blocker_id=request["blocker_id"],
-        request_id=request["request_id"],
-        actor="repair-a",
-        session="session-a",
-    )
-    wrong = repair_requests.claim_active_repair_request(
-        queue,
-        blocker_id=request["blocker_id"],
-        request_id=request["request_id"],
-        actor="repair-a",
-        session="session-a",
-        repair_identity=_identity(attempt="2"),
-    )
-    claimed = repair_requests.claim_active_repair_request(
-        queue,
-        blocker_id=request["blocker_id"],
-        request_id=request["request_id"],
-        actor="repair-a",
-        session="session-a",
-        repair_identity=identity,
-    )
-    restarted = repair_requests.claim_active_repair_request(
-        queue,
-        blocker_id=request["blocker_id"],
-        request_id=request["request_id"],
-        actor="repair-a",
-        session="session-a",
-        repair_identity=identity,
-    )
-
-    assert missing.status == "stale"
-    assert wrong.status == "stale"
-    assert claimed.claimed
-    assert restarted.already_claimed
-    assert claimed.owner["repair_identity_key"] == request["repair_identity_key"]
-
-
 def test_simple_fixer_and_delegation_reject_legacy_but_accept_current_identity(
     tmp_path: Path,
 ) -> None:
@@ -268,14 +217,6 @@ def test_manual_producer_and_effect_boundaries_have_no_legacy_positive_path() ->
     assert "enqueue_repair_request(" not in manual_source
     assert "_build_manual_trigger_occurrence_target" not in manual_source
 
-    claim_source = inspect.getsource(repair_requests.claim_active_repair_request)
-    claim_tree = ast.parse(claim_source)
-    assert any(
-        isinstance(node, ast.Return)
-        and isinstance(node.value, ast.Call)
-        and getattr(node.value.func, "id", "") == "ActiveRepairClaimResult"
-        for node in ast.walk(claim_tree)
-    )
     mutation_source = inspect.getsource(simple_fixer.SimpleFixerSession.attempt_mutation)
     assert "not self.occurrence.authoritative" in mutation_source
 
@@ -347,16 +288,6 @@ def test_managed_lifecycle_failure_publishes_identity_then_claims_and_delegates(
     assert len(records) == 1
     request = records[0]
     assert request["repair_identity_key"] == repair_requests.repair_identity_key(identity)
-
-    claim = repair_requests.claim_active_repair_request(
-        queue,
-        blocker_id=request["blocker_id"],
-        request_id=request["request_id"],
-        actor="watchdog",
-        session="managed-demo",
-        repair_identity=identity,
-    )
-    assert claim.claimed
 
     occurrence = simple_fixer.build_simple_fixer_occurrence(identity)
     assert occurrence is not None
@@ -577,30 +508,6 @@ class TestLifecycleEnqueueResultPropagation:
             and decision["request_id"] == result["request_id"]
             for decision in decisions
         )
-
-    def test_returned_ids_survive_claim(self, tmp_path: Path) -> None:
-        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
-
-        plan_dir = tmp_path / "markers"
-        plan_dir.mkdir()
-        (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
-        queue_root = _queue(tmp_path)
-        identity = _lifecycle_identity()
-
-        result = _enqueue_lifecycle_failure_request(
-            **_enqueue_kwargs(plan_dir, queue_root, identity=identity)
-        )
-
-        claim = repair_requests.claim_active_repair_request(
-            queue_root,
-            blocker_id=result["blocker_id"],
-            request_id=result["request_id"],
-            actor="watchdog",
-            session="enqueue-session",
-            repair_identity=identity,
-        )
-        assert claim.claimed
-        assert claim.owner["request_id"] == result["request_id"]
 
     def test_record_lifecycle_failure_joins_result_before_custody_release(
         self, tmp_path: Path

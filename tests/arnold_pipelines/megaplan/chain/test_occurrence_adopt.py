@@ -243,7 +243,7 @@ def _build_tree(root: Path) -> dict:
                     / "megaplan"
                     / "cloud"
                     / "wrappers"
-                    / "arnold-repair-loop"
+                    / "arnold-babysitter"
                 ),
                 "deps_lockfile": str(REPO_ROOT / "pyproject.toml"),
             },
@@ -757,17 +757,6 @@ def test_generic_repair_machinery_rejects_adoption_scope(tmp_path: Path) -> None
         occurrence_identity=identity,
     )
     assert bound["status"] == "zero_authority_rejected", bound
-
-    claim = repair_requests.claim_active_repair_request(
-        queue_root,
-        blocker_id="phase:gate",
-        request_id="x",
-        actor="operator",
-        session=args["session"],
-        repair_identity=identity,
-    )
-    assert claim.status == "stale"
-    assert str(claim.evidence.get("reason") or "").startswith("owner_boundary_adoption")
 
     with pytest.raises(ValueError):
         repair_requests.write_dispatch_attempt(

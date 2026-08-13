@@ -31,9 +31,7 @@ _RUNNER_TOKENS = (
     "mp-chain",
 )
 _REPAIR_TOKENS = (
-    "arnold-repair-loop",
-    "arnold-meta-repair-loop",
-    "arnold-kimi-goal-operator",
+    "arnold-babysitter",
 )
 
 TmuxProbe = Callable[[str], bool | None]

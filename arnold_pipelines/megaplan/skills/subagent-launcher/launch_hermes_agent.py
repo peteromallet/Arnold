@@ -262,6 +262,7 @@ _MODEL_SHORTCUTS = {
     "mimo-fast": "mimo:mimo-v2.5-pro-ultraspeed",
     "flash": "deepseek:deepseek-v4-flash",
     "pro": "deepseek:deepseek-v4-pro",
+    "grok": "xai:grok-4.6",
 }
 
 _HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:", "mimo:")

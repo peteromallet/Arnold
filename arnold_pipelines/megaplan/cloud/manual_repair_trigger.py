@@ -13,9 +13,9 @@ M7 shadow validation is wired into ``trigger_once`` before delegation
 so that stale-authority paths are diagnosed before the fixer is invoked.
 Production enforcement is always disabled.
 
-Legacy ``/usr/local/bin/arnold-repair-trigger`` and
-``ARNOLD_MANUAL_REPAIR_TRIGGER_BIN`` authority have been retired in favour
-of typed simple_fixer delegation with append-only queue evidence.
+Legacy trigger-binary and ``ARNOLD_MANUAL_REPAIR_TRIGGER_BIN`` authority
+have been retired in favour of typed simple_fixer delegation with
+append-only queue evidence.
 """
 
 from __future__ import annotations

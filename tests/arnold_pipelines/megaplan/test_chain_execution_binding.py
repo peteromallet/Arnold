@@ -2038,7 +2038,7 @@ def _write_runtime_manifest(
                 "venv_path": str(runtime_root / "venv"),
                 "runtime_root": str(runtime_root),
                 "expected_head": expected_head,
-                "repair_bin": str(runtime_root / "venv" / "bin" / "arnold-repair-loop"),
+                "repair_bin": str(runtime_root / "venv" / "bin" / "arnold-babysitter"),
                 "deps_lockfile": str(runtime_root / "uv.lock"),
             },
             "indirection": {
