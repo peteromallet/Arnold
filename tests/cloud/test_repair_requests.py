@@ -636,6 +636,54 @@ def test_request_id_for_differs_with_different_repair_identity() -> None:
     assert id_1 != id_2
 
 
+def test_derive_repair_identity_returns_none_for_planner_repair_only_plan() -> None:
+    """Lock out option (b): a plan carrying only meta.planner_repair (candidate
+    id + failure fingerprint) must NOT be dispatchable — no lifecycle owner has
+    persisted a normalized envelope."""
+    plan_state = {
+        "meta": {
+            "planner_repair": {
+                "schema": "megaplan.planner_repair",
+                "schema_version": 1,
+                "candidate_id": "candidate:abc",
+                "failure_fingerprint": "fp-1",
+                "occurrences": 2,
+                "circuit_open": True,
+            }
+        }
+    }
+    assert repair_requests.derive_repair_identity(plan_state=plan_state) is None
+    assert repair_requests.derive_repair_identity(target={"meta": plan_state["meta"]}) is None
+
+
+def test_derive_repair_identity_reads_persisted_envelope_from_plan_state() -> None:
+    """The finalize producer persists meta.repair_identity; the watchdog
+    dispatch derives exactly that normalized envelope from plan state."""
+    identity = _repair_identity()
+    plan_state = {
+        "meta": {
+            "planner_repair": {
+                "schema": "megaplan.planner_repair",
+                "schema_version": 1,
+                "candidate_id": "candidate:abc",
+                "failure_fingerprint": "fp-1",
+                "occurrences": 2,
+                "circuit_open": True,
+            },
+            "repair_identity": identity,
+            "repair_identity_provenance": {
+                "authority_source": "finalize_planner_repair_circuit_open_owner",
+                "phase": "finalize",
+            },
+        }
+    }
+    derived = repair_requests.derive_repair_identity(plan_state=plan_state)
+    expected = repair_requests.normalize_repair_identity(identity)
+    assert expected is not None
+    assert derived == expected
+    assert derived["occurrence"]["contract_type"] == "repair_occurrence_key"
+
+
 # ---------------------------------------------------------------------------
 # write_decision and decision records
 # ---------------------------------------------------------------------------
