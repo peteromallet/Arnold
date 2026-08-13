@@ -28,7 +28,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPERS_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
-TRIGGER = WRAPPERS_DIR / "arnold-repair-trigger"
 WATCHDOG = WRAPPERS_DIR / "arnold-watchdog"
 CHAIN = WRAPPERS_DIR / "arnold-chain"
 RUNTIME_LIB = WRAPPERS_DIR / "arnold-supervisor-runtime-lib"
@@ -104,7 +103,7 @@ def _schema_valid_manifest() -> dict[str, object]:
             "venv_path": "/workspace/.megaplan/venv",
             "runtime_root": "/workspace/demo-epic-worktree",
             "expected_head": "0" * 40,
-            "repair_bin": "/usr/local/bin/arnold-repair-loop",
+            "repair_bin": "/usr/local/bin/arnold-babysitter",
             "deps_lockfile": "requirements.lock",
         },
         "indirection": {
@@ -132,272 +131,13 @@ def _schema_valid_manifest() -> dict[str, object]:
     }
 
 
-def _run_trigger(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(TRIGGER)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-        timeout=60,
-    )
-
-
-def test_trigger_resolves_repair_bins_manifest_only() -> None:
-    """The trigger resolves repair bins from the runtime manifest ONLY.
-
-    ``_default_repair_bin`` / ``_default_meta_repair_bin`` read
-    ``epic.repair_bin`` / ``epic.runtime_root`` from the bootstrapped manifest;
-    the env vars are explicit operator/test pins layered on top.  There is NO
-    ``with_name(...)`` sibling fallback — an unresolved default fails closed at
-    dispatch.
-    """
-    text = TRIGGER.read_text(encoding="utf-8")
-
-    assert "runtime_manifest" in text
-    # The with_name fallback chain is REMOVED — no Path(__file__).with_name.
-    assert 'with_name("arnold-repair-loop")' not in text
-    assert 'with_name("arnold-meta-repair-loop")' not in text
-    # Manifest-only resolvers + explicit env pins.
-    assert "def _default_repair_bin()" in text
-    assert "def _default_meta_repair_bin()" in text
-    assert "_manifest_repair_bin()" in text
-    assert "_manifest_runtime_root()" in text
-    assert "ARNOLD_REPAIR_TRIGGER_REPAIR_BIN" in text
-    assert "ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN" in text
-    # Stable bootstrap path env/default are present.
-    assert "ARNOLD_RUNTIME_MANIFEST" in text
-    assert DEFAULT_MANIFEST_PATH in text
-
-
-def test_trigger_keeps_env_pins_without_with_name_fallback() -> None:
-    """Env pins survive as operator/test overrides; with_name is gone."""
-    text = TRIGGER.read_text(encoding="utf-8")
-
-    assert "ARNOLD_REPAIR_TRIGGER_REPAIR_BIN" in text
-    assert "ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN" in text
-    assert 'with_name("arnold-meta-repair-loop")' not in text
-    assert 'with_name("arnold-repair-loop")' not in text
-
-
-def test_watchdog_references_manifest_resolution_for_bins() -> None:
-    """The watchdog resolves PRIMARY/META/TRIGGER bins from the manifest.
-
-    The shared supervisor runtime lib is sourced and is the SOLE manifest
-    reader: the watchdog calls ``arnold_runtime_manifest_authority`` (the
-    P1 admission gate) and reads ``epic.repair_bin`` / ``epic.runtime_root``
-    through ``arnold_runtime_manifest_epic_field``.  Source/fallback bins and
-    env overrides remain as explicit pins.
-    """
-    text = WATCHDOG.read_text(encoding="utf-8")
-    lib = RUNTIME_LIB.read_text(encoding="utf-8")
-
-    # The lib defines the canonical reader + admission gate.
-    assert "arnold_runtime_manifest_path()" in lib
-    assert "arnold_runtime_manifest_epic_field()" in lib
-    assert "arnold_runtime_manifest_authority()" in lib
-    assert DEFAULT_MANIFEST_PATH in lib
-    # The watchdog uses the lib gate before any field read.
-    assert "arnold_runtime_manifest_authority watchdog" in text
-    assert 'MANIFEST_REPAIR_BIN="$(arnold_runtime_manifest_epic_field epic.repair_bin)"' in text
-    assert 'MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"' in text
-    # Source/fallback bins + env overrides still exist as explicit pins.
-    assert "CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN" in text
-    assert "CLOUD_WATCHDOG_META_REPAIR_BIN" in text
-    assert "CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN" in text
-    assert 'PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"' in text
-    assert 'META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"' in text
-
-
 def test_launcher_sources_parse() -> None:
-    """bash -n and py_compile must both succeed on the edited launchers."""
-    bash_n = subprocess.run(["bash", "-n", str(WATCHDOG)], capture_output=True, text=True)
-    assert bash_n.returncode == 0, f"bash -n arnold-watchdog failed:\n{bash_n.stderr}"
-
-    py_compile = subprocess.run(
-        [sys.executable, "-m", "py_compile", str(TRIGGER)],
-        capture_output=True,
-        text=True,
-    )
-    assert py_compile.returncode == 0, f"py_compile arnold-repair-trigger failed:\n{py_compile.stderr}"
-
-
-def test_trigger_refuses_present_but_invalid_manifest(tmp_path: Path) -> None:
-    """A present-but-invalid manifest fails closed BEFORE any dispatch.
-
-    ``ARNOLD_RUNTIME_MANIFEST`` set means the manifest is THE resolver: a
-    corrupt manifest must exit non-zero with a typed ``manifest_invalid``
-    error, never fall back to env/with_name.  A permit cannot rescue a
-    present-but-invalid manifest (the manifest is present; absence is the
-    only permitted case).
-    """
-    corrupt = tmp_path / "runtime-manifest.json"
-    corrupt.write_text("{not valid json", encoding="utf-8")
-    policy = _write_allow_manifestless_policy(tmp_path / ".runtime_policy.json")
-    env = {
-        **_base_env(),
-        "ARNOLD_RUNTIME_MANIFEST": str(corrupt),
-        "ARNOLD_RUNTIME_POLICY": str(policy),
-    }
-    proc = _run_trigger(env)
-    assert proc.returncode == 78
-    assert "manifest_invalid:" in proc.stderr
-
-
-def test_trigger_absent_manifest_without_permit_fails_closed(tmp_path: Path) -> None:
-    """A genuinely absent manifest (no env, no file) BLOCKS without a permit.
-
-    The with_name/env/SRC_DIR fallback chain is removed: absence is never an
-    allow.  The launcher must exit 78 with the typed failing-closed message.
-    """
-    env = _base_env()
-    env.pop("ARNOLD_RUNTIME_MANIFEST", None)
-    env.pop("ARNOLD_RUNTIME_POLICY", None)
-    proc = _run_trigger(env)
-    assert proc.returncode == 78
-    assert "runtime manifest absent without a valid allow_manifestless permit" in proc.stderr
-
-
-def test_trigger_absent_manifest_admitted_by_valid_permit(tmp_path: Path) -> None:
-    """A valid unexpired allow_manifestless permit admits the manifestless run."""
-    policy = _write_allow_manifestless_policy(tmp_path / ".runtime_policy.json")
-    env = {
-        **_base_env(),
-        "ARNOLD_RUNTIME_POLICY": str(policy),
-    }
-    proc = _run_trigger(env)
-    # Admission passes; with an empty queue the trigger exits 0 (no dispatch).
-    assert proc.returncode == 0, proc.stderr
-    assert "manifest_invalid:" not in proc.stderr
-
-
-def test_trigger_rejects_expired_permit(tmp_path: Path) -> None:
-    """Expiry rejects admission — an expired permit never admits."""
-    now = datetime.now(timezone.utc)
-    expired = now - timedelta(hours=2)
-    permit = {
-        "kind": "allow_manifestless",
-        "id": "permit-expired",
-        "issued_at": (expired - timedelta(hours=1)).isoformat(),
-        "expires_at": expired.isoformat(),
-        "actor": "launcher-conformance-test",
-        "reason": "expired permit fixture",
-        "evidence": [],
-        "chain_digest": hashlib.sha256(b"chain").hexdigest(),
-    }
-    policy = _write_allow_manifestless_policy(
-        tmp_path / ".runtime_policy.json", permits=[permit]
-    )
-    env = {
-        **_base_env(),
-        "ARNOLD_RUNTIME_POLICY": str(policy),
-    }
-    proc = _run_trigger(env)
-    assert proc.returncode == 78
-    assert "runtime manifest absent without a valid allow_manifestless permit" in proc.stderr
-
-
-def test_trigger_rejects_revoked_permit(tmp_path: Path) -> None:
-    """A revoked permit (revoked_at tombstone) never admits."""
-    now = datetime.now(timezone.utc)
-    permit = {
-        "kind": "allow_manifestless",
-        "id": "permit-revoked",
-        "issued_at": now.isoformat(),
-        "expires_at": (now + timedelta(hours=1)).isoformat(),
-        "actor": "launcher-conformance-test",
-        "reason": "revoked permit fixture",
-        "evidence": [],
-        "chain_digest": hashlib.sha256(b"chain").hexdigest(),
-        "revoked_at": now.isoformat(),
-    }
-    policy = _write_allow_manifestless_policy(
-        tmp_path / ".runtime_policy.json", permits=[permit]
-    )
-    env = {
-        **_base_env(),
-        "ARNOLD_RUNTIME_POLICY": str(policy),
-    }
-    proc = _run_trigger(env)
-    assert proc.returncode == 78
-    assert "runtime manifest absent without a valid allow_manifestless permit" in proc.stderr
-
-
-def test_trigger_last_valid_unexpired_permit_wins(tmp_path: Path) -> None:
-    """The LAST unrevoked, valid, unexpired allow_manifestless record wins.
-
-    Expired/revoked records stay loadable but never admit; a later valid
-    record after an expired one admits; a later expired record after a valid
-    one does NOT invalidate the earlier valid record (last-valid-wins, not
-    last-record-wins).
-    """
-    now = datetime.now(timezone.utc)
-    expired = {
-        "kind": "allow_manifestless",
-        "id": "permit-expired-first",
-        "issued_at": (now - timedelta(hours=2)).isoformat(),
-        "expires_at": (now - timedelta(hours=1)).isoformat(),
-        "actor": "launcher-conformance-test",
-        "reason": "expired earlier record",
-        "evidence": [],
-        "chain_digest": hashlib.sha256(b"chain").hexdigest(),
-    }
-    valid = {
-        "kind": "allow_manifestless",
-        "id": "permit-valid-later",
-        "issued_at": now.isoformat(),
-        "expires_at": (now + timedelta(hours=1)).isoformat(),
-        "actor": "launcher-conformance-test",
-        "reason": "valid later record",
-        "evidence": [],
-        "chain_digest": hashlib.sha256(b"chain").hexdigest(),
-    }
-    # Expired record first, valid record later -> last valid wins -> admit.
-    policy = _write_allow_manifestless_policy(
-        tmp_path / "policy-later-valid.json", permits=[expired, valid]
-    )
-    env = {
-        **_base_env(),
-        "ARNOLD_RUNTIME_POLICY": str(policy),
-    }
-    proc = _run_trigger(env)
-    assert proc.returncode == 0, proc.stderr
-
-    # Valid record first, expired record later -> earlier valid still active.
-    policy2 = _write_allow_manifestless_policy(
-        tmp_path / "policy-later-expired.json", permits=[valid, expired]
-    )
-    env2 = {
-        **_base_env(),
-        "ARNOLD_RUNTIME_POLICY": str(policy2),
-    }
-    proc2 = _run_trigger(env2)
-    assert proc2.returncode == 0, proc2.stderr
-
-
-def test_trigger_rejects_permit_outside_24h_lifetime(tmp_path: Path) -> None:
-    """Permits with 0 < expires_at - issued_at > 24h are structurally invalid."""
-    now = datetime.now(timezone.utc)
-    permit = {
-        "kind": "allow_manifestless",
-        "id": "permit-too-long",
-        "issued_at": now.isoformat(),
-        "expires_at": (now + timedelta(hours=25)).isoformat(),
-        "actor": "launcher-conformance-test",
-        "reason": "oversized lifetime fixture",
-        "evidence": [],
-        "chain_digest": hashlib.sha256(b"chain").hexdigest(),
-    }
-    policy = _write_allow_manifestless_policy(
-        tmp_path / ".runtime_policy.json", permits=[permit]
-    )
-    env = {
-        **_base_env(),
-        "ARNOLD_RUNTIME_POLICY": str(policy),
-    }
-    proc = _run_trigger(env)
-    assert proc.returncode == 78
-    assert "runtime manifest absent without a valid allow_manifestless permit" in proc.stderr
+    """bash -n must succeed on the surviving launcher wrappers."""
+    for wrapper in (WATCHDOG, WRAPPERS_DIR / "arnold-babysitter"):
+        bash_n = subprocess.run(
+            ["bash", "-n", str(wrapper)], capture_output=True, text=True
+        )
+        assert bash_n.returncode == 0, f"bash -n {wrapper.name} failed:\n{bash_n.stderr}"
 
 
 def test_watchdog_fail_closed_manifest_gate_and_reactive_dispatch() -> None:
@@ -417,15 +157,17 @@ def test_watchdog_fail_closed_manifest_gate_and_reactive_dispatch() -> None:
     # The watchdog wires the gate BEFORE field reads.
     assert "arnold_runtime_manifest_authority watchdog" in text
     assert text.index("arnold_runtime_manifest_authority watchdog") < text.index(
-        "MANIFEST_REPAIR_BIN="
+        "MANIFEST_RUNTIME_ROOT="
     )
-    # Dispatch through the unified seam names the mode explicitly.
-    assert '--command-display "arnold-repair-loop --mode=reactive $session"' in text
-    assert '"$PRIMARY_REPAIR_BIN" --mode=reactive "$session" "$workspace" "$remote_spec"' in text
+    # Dispatch through the babysitter seam; the layered repair-bin resolution
+    # was removed with the layered repair stack.
+    assert "arnold-babysitter" in text
+    assert "CLOUD_WATCHDOG_BABYSITTER_BIN" in text
     # Manifest runtime binding: PYTHONPATH/SRC_DIR follow the manifest runtime
     # root so the selected executable and imported code share one runtime.
     assert "REPAIR_DISPATCH_RUNTIME_SRC" in text
-    assert 'ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR"' in text
+    assert 'REPAIR_DISPATCH_RUNTIME_SRC="$SRC_DIR"' in text
+    assert 'REPAIR_DISPATCH_RUNTIME_SRC="$MANIFEST_RUNTIME_ROOT"' in text
 
 
 def test_lib_manifest_authority_gate_blocks_and_admits(tmp_path: Path) -> None:
@@ -595,57 +337,6 @@ echo "GATE_OK"
     assert "GATE_OK" in admitted.stdout
 
 
-LEAF_WRAPPERS: tuple[tuple[str, tuple[str, ...], str], ...] = (
-    ("arnold-repair-loop", ("sess-test", "ws", "spec.yaml"), "ARNOLD_REPAIR_RUNTIME_SRC"),
-    ("arnold-kimi-goal-operator", ("sess-test", "ws", "spec.yaml"), "KIMI_GOAL_ARNOLD_SRC"),
-    ("arnold-meta-repair-loop", ("sess-test",), "MEGAPLAN_META_ARNOLD_SRC"),
-)
-
-
-@pytest.mark.parametrize(
-    ("wrapper_name", "extra_args", "src_env"),
-    LEAF_WRAPPERS,
-    ids=[entry[0] for entry in LEAF_WRAPPERS],
-)
-def test_leaf_wrapper_direct_invocation_blocks_without_manifest_or_permit(
-    tmp_path: Path,
-    wrapper_name: str,
-    extra_args: tuple[str, ...],
-    src_env: str,
-) -> None:
-    """G2 correction 3: leaf fixer wrappers fail closed on DIRECT invocation.
-
-    With no session-bound manifest and no valid ``allow_manifestless`` permit
-    the wrapper's entry admission gate must exit 78 with the exact
-    fail-closed message — before any dispatch.  Direct invocation is not
-    rescued by the expected parent.
-    """
-    wrapper = WRAPPERS_DIR / wrapper_name
-    env = _base_env()
-    env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
-    env["MEGAPLAN_SUPERVISOR_STATUS_DIR"] = str(tmp_path / "status")
-    env["ARNOLD_REPAIR_LOOP_SKIP_SELF_COPY"] = "1"
-    # Pin the source root so arnold_supervisor_runtime_init (which runs before
-    # the entry gate) validates against the repo tree.
-    env[src_env] = str(REPO_ROOT)
-    env.pop("ARNOLD_RUNTIME_MANIFEST", None)
-    env.pop("ARNOLD_RUNTIME_POLICY", None)
-
-    proc = subprocess.run(
-        ["bash", str(wrapper), *extra_args],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-        timeout=240,
-    )
-    assert proc.returncode == 78, proc.stderr
-    assert (
-        "runtime manifest absent without a valid allow_manifestless permit; failing closed"
-        in proc.stderr
-    )
-
-
 def _fake_runtime_manifest(tmp_path: Path, module_digest: str) -> dict:
     """A schema-shaped fake manifest with attestation fields (Phase 2 schema)."""
 
@@ -673,7 +364,7 @@ def _fake_runtime_manifest(tmp_path: Path, module_digest: str) -> dict:
             "venv_path": str(tree / "venv"),
             "runtime_root": str(tree),
             "expected_head": "0" * 40,
-            "repair_bin": str(tree / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"),
+            "repair_bin": str(tree / "arnold_pipelines/megaplan/cloud/wrappers/arnold-babysitter"),
             "deps_lockfile": "deps_lockfile.txt",
         },
         "indirection": {

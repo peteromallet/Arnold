@@ -27,6 +27,13 @@ FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
 VALID_CODEX_REASONING = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_CODEX_AUTH = ("chatgpt", "apikey")
+# Babysitter modes: ``superfixer`` is the default status-trigger recovery for
+# ordinary cloud chains (Sol scopes -> Flash swarm -> Sol adjudicates ->
+# implement); ``off`` disables the status-trigger babysitter for this chain
+# (used by canaries that must stay default-off until they are proven).
+# The layered repair stack was removed: the single-flash babysitter is the
+# ONLY repair flow.
+VALID_BABYSITTER_MODES = ("superfixer", "off")
 _SSH_ALIAS_RE = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?\Z")
 _SSH_USER_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 _DOCKER_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -60,8 +67,36 @@ class ChainSubSpec:
 
 
 @dataclass(frozen=True)
+class BabysitterSpec:
+    """Status-trigger babysitter policy for a cloud chain.
+
+    ``mode`` selects how a blocked/errored cloud chain is recovered by the
+    watchdog status trigger: ``superfixer`` (default) launches the
+    swarm -> Sol -> implement babysitter (the ONLY repair flow); ``off``
+    disables the status-trigger dispatch. ``after`` is an ISO-8601 duration
+    (e.g. ``PT1H``) the chain must stay blocked/errored before the trigger
+    fires.
+    """
+
+    mode: str = "superfixer"
+    after: str | None = None
+
+
+@dataclass(frozen=True)
 class DriverSpec:
     max_stall_iterations: int | None = None
+    babysitter: BabysitterSpec | None = None
+
+
+def babysitter_effective_mode(driver: DriverSpec | None) -> str:
+    """Return the effective babysitter mode for a parsed cloud spec.
+
+    The default is ``superfixer``: ordinary cloud chains get the status-trigger
+    superfixer unless the spec explicitly opts out (``mode: off``).
+    """
+    if driver is not None and driver.babysitter is not None:
+        return driver.babysitter.mode
+    return "superfixer"
 
 
 @dataclass(frozen=True)
@@ -612,12 +647,47 @@ def load_spec(path: Path) -> CloudSpec:
         "max_stall_iterations",
         driver_raw.get("stall_threshold"),
     )
+    babysitter_raw = _mapping(driver_raw.get("babysitter"), "driver.babysitter")
+    babysitter: BabysitterSpec | None = None
+    if "babysitter" in driver_raw:
+        babysitter_mode_raw = babysitter_raw.get("mode")
+        if babysitter_mode_raw is False:
+            # PyYAML parses `mode: off` as boolean False (YAML 1.1); the
+            # documented spelling is the unquoted string `off`.
+            babysitter_mode_raw = "off"
+        babysitter_mode = _string(
+            babysitter_mode_raw,
+            "driver.babysitter.mode",
+            default="superfixer",
+        )
+        if babysitter_mode not in VALID_BABYSITTER_MODES:
+            raise _invalid(
+                "driver.babysitter.mode must be one of "
+                f"{', '.join(VALID_BABYSITTER_MODES)}; got {babysitter_mode!r}"
+            )
+        babysitter_after = _optional_string(
+            babysitter_raw.get("after"), "driver.babysitter.after"
+        )
+        if babysitter_after is not None:
+            # Lazy import: resident.schedules pulls cloud.cli -> cloud.spec,
+            # which would be circular at module import time.
+            from arnold_pipelines.megaplan.resident.schedules import parse_duration
+
+            try:
+                parse_duration(babysitter_after)
+            except ValueError as exc:
+                raise _invalid(
+                    f"`driver.babysitter.after` must be a positive ISO-8601 "
+                    f"duration (e.g. PT1H); got {babysitter_after!r}"
+                ) from exc
+        babysitter = BabysitterSpec(mode=babysitter_mode, after=babysitter_after)
     driver = (
         DriverSpec(
             max_stall_iterations=_optional_positive_int(
                 max_stall_iterations,
                 "driver.max_stall_iterations",
-            )
+            ),
+            babysitter=babysitter,
         )
         if driver_raw
         else None

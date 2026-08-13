@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Status-trigger epic babysitter: ONE detached hermes:deepseek:deepseek-v4-flash
+# managed agent whose goal prompt drives the whole recovery flow itself —
+# swarm -> codex -> implement -> relaunch -> prove.
+#
+# Launched detached by the arnold-watchdog status trigger (MEGAPLAN_SUPERFIXER_ONLY=1)
+# as the deterministic replacement for the broken schedule-add hop.  The launch
+# logic lives in arnold_pipelines.megaplan.cloud.babysitter.launch: the goal
+# file (rendered by skills/babysitter/scripts/render_babysitter_goal.py) is the
+# agent's ENTIRE prompt — there is no coded multi-stage orchestrator anymore.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+PYTHONPATH="$ROOT:${PYTHONPATH:-}" python3 -P -m \
+  arnold_pipelines.megaplan.cloud.babysitter.launch "$@"

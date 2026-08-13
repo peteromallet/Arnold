@@ -781,7 +781,7 @@ def _ensure_seed_env(
                     "venv_path": str(root / "venv"),
                     "runtime_root": str(root),
                     "expected_head": state["revision"],
-                    "repair_bin": str(root / "venv" / "bin" / "arnold-repair-loop"),
+                    "repair_bin": str(root / "venv" / "bin" / "arnold-babysitter"),
                     "deps_lockfile": str(root / "uv.lock"),
                 },
                 "indirection": {

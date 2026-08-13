@@ -92,7 +92,7 @@ def _manifest_payload(
             "venv_path": str(gen_dir),
             "runtime_root": runtime_root,
             "expected_head": "a" * 40,
-            "repair_bin": f"{runtime_root}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+            "repair_bin": f"{runtime_root}/arnold_pipelines/megaplan/cloud/wrappers/arnold-babysitter",
             "deps_lockfile": f"{runtime_root}/uv.lock",
             "dependency_generation": bound_proof,
         },

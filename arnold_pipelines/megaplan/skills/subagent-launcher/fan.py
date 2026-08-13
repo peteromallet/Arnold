@@ -261,6 +261,7 @@ _MODEL_SHORTCUTS = {
     "kimi": "fireworks:accounts/fireworks/models/kimi-k2p5",
     "kimi26": "fireworks:accounts/fireworks/models/kimi-k2p6",
     "glm": "zhipu:glm-4.6",
+    "grok": "xai:grok-4.6",
 }
 
 _HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:", "mimo:")

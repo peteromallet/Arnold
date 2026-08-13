@@ -779,7 +779,7 @@ def _write_runtime_manifest(
                     / "megaplan"
                     / "cloud"
                     / "wrappers"
-                    / "arnold-repair-loop"
+                    / "arnold-babysitter"
                 ),
                 "deps_lockfile": str(runtime_root / "pyproject.toml"),
             },
@@ -1447,7 +1447,7 @@ def test_canary_rehearsal_full_sequence_with_rollback_injection(
     # receipts — runs for real.
     candidate_dir = tmp_path / "workspace" / "runtime-candidates" / "arnold-canary-legacy"
     (candidate_dir / ".venv").mkdir(parents=True, exist_ok=True)
-    wrapper = candidate_dir / "arnold-repair-loop"
+    wrapper = candidate_dir / "arnold-babysitter"
     wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     wrapper.chmod(0o755)
     fixture = _migration_fixture(
@@ -2105,7 +2105,7 @@ def test_canary_rehearsal_full_sequence_with_rollback_injection(
     to_venv_path = REPO_ROOT / ".venv"
     to_repair_bin = (
         REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
-    ) / "arnold-repair-loop"
+    ) / "arnold-babysitter"
     assert to_venv_path.is_dir()
     assert to_repair_bin.is_file() and os.access(to_repair_bin, os.X_OK)
 
@@ -2832,7 +2832,7 @@ def test_canary_rehearsal_identityless_adoption_sequence(
     # ── (c) legacy_marker_runtime_migration via its REAL module CLI ───────
     candidate_dir = tmp_path / "workspace" / "runtime-candidates" / "arnold-canary-legacy"
     (candidate_dir / ".venv").mkdir(parents=True, exist_ok=True)
-    wrapper = candidate_dir / "arnold-repair-loop"
+    wrapper = candidate_dir / "arnold-babysitter"
     wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     wrapper.chmod(0o755)
     fixture = _migration_fixture(
@@ -2938,7 +2938,7 @@ def test_canary_rehearsal_identityless_adoption_sequence(
     to_venv_path = REPO_ROOT / ".venv"
     to_repair_bin = (
         REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
-    ) / "arnold-repair-loop"
+    ) / "arnold-babysitter"
     assert to_venv_path.is_dir()
     assert to_repair_bin.is_file() and os.access(to_repair_bin, os.X_OK)
     manifest = load_manifest(manifest_path)

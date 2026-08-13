@@ -78,7 +78,7 @@ def _valid_manifest() -> dict[str, object]:
             "venv_path": "/opt/arnold/runtime-candidates/epic-demo/venv",
             "runtime_root": "/opt/arnold/runtime-candidates/epic-demo/runtime",
             "expected_head": "abc123def",
-            "repair_bin": "/opt/arnold/runtime-candidates/epic-demo/venv/bin/arnold-repair-loop",
+            "repair_bin": "/opt/arnold/runtime-candidates/epic-demo/venv/bin/arnold-babysitter",
             "deps_lockfile": "/opt/arnold/base/uv.lock",
         },
         "indirection": {

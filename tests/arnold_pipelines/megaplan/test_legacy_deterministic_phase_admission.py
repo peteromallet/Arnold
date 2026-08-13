@@ -19,12 +19,12 @@ The exact minimal p1 state from the occurrence (9d6eb33c9c29) is used verbatim:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
-from arnold_pipelines.megaplan.cloud.babysitter import orchestrator as _orchestrator
 from arnold_pipelines.megaplan.handlers.override import (
     _materialize_legacy_deterministic_phase_cursor,
     _override_recover_blocked,
@@ -270,6 +270,62 @@ class TestRecoverBlockedIntegration:
 
 
 class TestStage4MovementProof:
+    def _chain_movement_evidence(self, workspace: Path, plan: str) -> dict[str, object]:
+        """Content-addressed plan-state + journal + incident-ledger snapshot.
+
+        Local stand-in for the deleted coded orchestrator's evidence helpers:
+        the babysitter is prompt-driven, so movement proof reads the durable
+        plan state, plan event journal, and incident ledger directly.
+        """
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state_bytes = json.dumps(
+            state, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        events_path = plan_dir / "events.ndjson"
+        seq_path = plan_dir / ".events.seq"
+        ledger_dir = workspace / ".megaplan" / "incident-ledger"
+        ledger_path = ledger_dir / "events.jsonl"
+        ledger_seq_path = ledger_dir / ".events.seq"
+
+        def _seq(path: Path) -> int:
+            if not path.exists():
+                return 0
+            try:
+                return int(path.read_text(encoding="utf-8").strip() or "0")
+            except ValueError:
+                return 0
+
+        return {
+            "plan_state_sha256": hashlib.sha256(state_bytes).hexdigest(),
+            "plan_current_state": str(state.get("current_state") or ""),
+            "plan_events_seq": _seq(seq_path),
+            "plan_events_lines": (
+                len(events_path.read_text(encoding="utf-8").splitlines())
+                if events_path.exists()
+                else 0
+            ),
+            "incident_ledger_seq": _seq(ledger_seq_path),
+            "incident_ledger_lines": (
+                len(ledger_path.read_text(encoding="utf-8").splitlines())
+                if ledger_path.exists()
+                else 0
+            ),
+        }
+
+    def _advance_key(self, evidence: dict[str, object]) -> str:
+        return ":".join(
+            str(evidence[key])
+            for key in (
+                "plan_events_seq",
+                "plan_events_lines",
+                "incident_ledger_seq",
+                "incident_ledger_lines",
+                "plan_current_state",
+                "plan_state_sha256",
+            )
+        )
+
     def test_movement_evidence_is_content_addressed_and_journal_aware(
         self, tmp_path: Path
     ) -> None:
@@ -279,8 +335,8 @@ class TestStage4MovementProof:
         plan_dir = workspace / ".megaplan" / "plans" / "p1"
         _write_exact_p1_state(plan_dir)
 
-        before = _orchestrator._chain_movement_evidence(workspace, "p1")
-        before_key = _orchestrator._advance_key(before)
+        before = self._chain_movement_evidence(workspace, "p1")
+        before_key = self._advance_key(before)
         assert "plan_state_sha256" in before
         assert before["plan_current_state"] == "blocked"
 
@@ -307,8 +363,8 @@ class TestStage4MovementProof:
         )
         (ledger / ".events.seq").write_text("2", encoding="utf-8")
 
-        after = _orchestrator._chain_movement_evidence(workspace, "p1")
-        after_key = _orchestrator._advance_key(after)
+        after = self._chain_movement_evidence(workspace, "p1")
+        after_key = self._advance_key(after)
 
         assert after["plan_state_sha256"] != before["plan_state_sha256"]
         assert after["plan_current_state"] == "planned"

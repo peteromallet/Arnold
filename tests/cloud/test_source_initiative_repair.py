@@ -13,7 +13,6 @@ from arnold_pipelines.megaplan.cloud.source_initiative_repair import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-REPAIR_LOOP = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-repair-loop"
 
 
 def _write_source_initiative(source_root: Path) -> tuple[Path, Path]:
@@ -118,56 +117,3 @@ def test_source_initiative_repair_never_overwrites_existing_active_spec(
     assert remote_spec.read_text(encoding="utf-8") == existing
     assert local_brief.read_text(encoding="utf-8") == "# Preserve active work\n"
     assert not (remote_spec.parent / "completion-manifest.json").exists()
-
-
-def test_repair_loop_accepts_bounded_source_restore_and_exits_complete(
-    tmp_path: Path,
-) -> None:
-    source_root = tmp_path / "arnold-src"
-    _write_source_initiative(source_root)
-    marker_dir = tmp_path / "markers"
-    repair_data_dir = marker_dir / "repair-data"
-    marker_dir.mkdir()
-    repair_data_dir.mkdir()
-    workspace = tmp_path / "workspace"
-    remote_spec = workspace / ".megaplan" / "initiatives" / "demo.chain" / "chain.yaml"
-    session = "demo-chain"
-    restored = repair_source_initiative(
-        workspace=workspace,
-        remote_spec=remote_spec,
-        arnold_src=source_root,
-    )
-    assert restored.repaired is True
-
-    (marker_dir / f"{session}.json").write_text(
-        json.dumps(
-            {
-                "session": session,
-                "workspace": str(workspace),
-                "remote_spec": str(remote_spec),
-                "run_kind": "chain",
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    env = dict(os.environ)
-    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
-    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
-    env["ARNOLD_REPAIR_RUNTIME_SRC"] = str(source_root)
-    env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
-    env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(tmp_path / "repair-root")
-
-    result = subprocess.run(
-        ["bash", str(REPAIR_LOOP), session, str(workspace), str(remote_spec)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads((repair_data_dir / f"{session}.repair-data.json").read_text(encoding="utf-8"))
-    assert payload["outcome"] == "complete"
-    assert remote_spec.exists()
-    assert (remote_spec.parent / "completion-manifest.json").exists()
