@@ -4508,6 +4508,8 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
             f"PLAN_STATUS_REQUEST_ID={request_id!r}",
+            f"PLAN_STATUS_DECISION_ID={str(queued['decision']['decision_id'])!r}",
+            f"PLAN_STATUS_REPAIR_IDENTITY_KEY={str(queued['request']['repair_identity_key'])!r}",
             "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
@@ -4566,6 +4568,11 @@ def test_watchdog_dispatch_does_not_reclaim_stale_request_claim(tmp_path: Path) 
     blocker_id = str(stale_queued["request"]["blocker_id"])
     assert live_queued["request"]["blocker_id"] == blocker_id
     request_id = str(live_queued["request"]["request_id"])
+    # T-0203 / G9 advisory-1: the claim identity guard requires all FOUR keys
+    # (blocker, request, decision, repair identity); bind the enqueue-returned
+    # decision/identity ids so the stale-claim adoption path is exercised.
+    decision_id = str(live_queued["decision"]["decision_id"])
+    repair_identity_key = str(live_queued["request"]["repair_identity_key"])
     repair_requests.claim_active_repair_request(
         repair_requests.repair_queue_dir(marker_dir),
         blocker_id=blocker_id,
@@ -4587,7 +4594,8 @@ def test_watchdog_dispatch_does_not_reclaim_stale_request_claim(tmp_path: Path) 
             (
                 "claim_active_repair_launch demo-a "
                 f"{shlex.quote(str(workspace))} /tmp/spec "
-                f"{shlex.quote(blocker_id)} {shlex.quote(request_id)}"
+                f"{shlex.quote(blocker_id)} {shlex.quote(request_id)} "
+                f"{shlex.quote(decision_id)} {shlex.quote(repair_identity_key)}"
             ),
         ]
     )
@@ -4634,6 +4642,8 @@ def test_watchdog_claim_accepts_inherited_goal_request_and_blocker_identity(
     )
     blocker_id = str(queued["request"]["blocker_id"])
     request_id = str(queued["request"]["request_id"])
+    decision_id = str(queued["decision"]["decision_id"])
+    repair_identity_key = str(queued["request"]["repair_identity_key"])
     script = "\n\n".join(
         [
             _extract_wrapper_function("claim_active_repair_launch"),
@@ -4643,7 +4653,7 @@ def test_watchdog_claim_accepts_inherited_goal_request_and_blocker_identity(
             "PLAN_STATUS_DISPATCH_DECISION=",
             (
                 "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec "
-                f"{blocker_id} {request_id}"
+                f"{blocker_id} {request_id} {decision_id} {repair_identity_key}"
             ),
         ]
     )
@@ -4652,6 +4662,138 @@ def test_watchdog_claim_accepts_inherited_goal_request_and_blocker_identity(
 
     assert result.returncode == 0
     assert result.stdout.strip() == "claimed"
+
+
+@pytest.mark.parametrize(
+    "omitted_key",
+    [
+        "blocker_id",
+        "request_id",
+        "decision_id",
+        "repair_identity_key",
+    ],
+)
+def test_watchdog_claim_omitting_single_identity_key_fails_closed(
+    tmp_path: Path,
+    omitted_key: str,
+) -> None:
+    """G9 advisory-1 NC: the 4-key claim identity guard fails closed
+    (missing_identity, rc 1, no claim lock) when exactly ONE identity key is
+    absent.  The decision_id and repair_identity_key omissions are the focused
+    controls — a regression to a 2-key (blocker+request) guard would accept
+    those and this test would fail."""
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    queued, _ = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-session",
+    )
+    ids = {
+        "blocker_id": str(queued["request"]["blocker_id"]),
+        "request_id": str(queued["request"]["request_id"]),
+        "decision_id": str(queued["decision"]["decision_id"]),
+        "repair_identity_key": str(queued["request"]["repair_identity_key"]),
+    }
+    # Keep positional alignment (blocker, request, decision, identity): empty
+    # exactly the omitted slot so ONLY that key is missing.
+    identity_args = " ".join(
+        shlex.quote("" if key == omitted_key else ids[key]) for key in ids
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=",
+            (
+                "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec "
+                f"{identity_args}"
+            ),
+            'echo "rc:$?"',
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == ["missing_identity", "rc:1"]
+    # Fail closed with zero mutation: no claim lock may be acquired.
+    assert not repair_requests.active_repair_claim_lock_dir(
+        repair_requests.repair_queue_dir(marker_dir), ids["blocker_id"]
+    ).exists()
+
+
+def test_watchdog_dispatch_refuses_missing_decision_id(tmp_path: Path) -> None:
+    """G9 advisory-1 NC at the dispatch boundary: a dispatch binding omitting
+    ONLY decision_id must refuse dispatch — the claim guard emits
+    missing_identity, dispatch_kimi_repair treats it as refuse-dispatch
+    (rc 1, REPAIR_DISPATCH_RESULT unset, no child launch)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    log_path = tmp_path / "watchdog.log"
+    launch_log = tmp_path / "repair-launches.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        "sleep 5\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+    queued, _ = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-session",
+    )
+    blocker_id = str(queued["request"]["blocker_id"])
+    request_id = str(queued["request"]["request_id"])
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("claim_active_repair_launch"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
+            f"PLAN_STATUS_REQUEST_ID={request_id!r}",
+            # decision_id deliberately absent: the 4-key guard must refuse.
+            f"PLAN_STATUS_REPAIR_IDENTITY_KEY={str(queued['request']['repair_identity_key'])!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+dispatch_kimi_repair demo-session /tmp/ws /tmp/spec
+dispatch_rc=$?
+echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
+echo "rc:${dispatch_rc}"
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    # Refuse-dispatch: rc 1, no dispatch result emitted (the * ) case leaves
+    # the pre-initialized "unavailable" in REPAIR_DISPATCH_RESULT).
+    assert result.stdout.strip().splitlines() == ["status:unavailable", "rc:1"]
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "refusing dispatch session=demo-session" in log_text
+    assert "status=missing_identity" in log_text
+    assert not launch_log.exists()
+    assert not repair_requests.active_repair_claim_lock_dir(
+        repair_requests.repair_queue_dir(marker_dir), blocker_id
+    ).exists()
 
 
 def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path) -> None:
@@ -10212,6 +10354,236 @@ def test_watchdog_manual_review_enqueue_journals_runtime_transitions(tmp_path: P
     )
     assert len(requests) == 1, requests
     assert requests[0]["session"] == session
+
+
+def test_watchdog_manual_review_enqueue_binds_returned_ids_into_claim(
+    tmp_path: Path,
+) -> None:
+    """T-0203: manual_review_dispatch_status_env captures the
+    enqueue_occurrence_bound_repair_request return (the former dropped value)
+    and emits the returned request/blocker/decision/identity ids; the
+    subsequent claim binds those exact ids into the owner record."""
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    plan_name = "cl2-wbc-backed-ledger"
+    spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    session = "critique-r5"
+    phase_identity = repair_identity(
+        session=session,
+        plan=plan_name,
+        failure_kind="deterministic_phase_failure",
+        phase="critique",
+        task="phase:critique",
+        chain=str(spec_path),
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 2,
+            "current_state": "blocked",
+            "repair_identity": phase_identity,
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "message": "critique contract failed three times",
+            },
+        },
+        events_body="{}\n",
+    )
+    (marker_dir / f"{session}.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("manual_review_dispatch_status_env"),
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "eval \"$(manual_review_dispatch_status_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} plan {shlex.quote(plan_name)})\""
+            ),
+            (
+                "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "
+                '"$PLAN_STATUS_DISPATCH_DECISION" "$PLAN_STATUS_REQUEST_ID" '
+                '"$PLAN_STATUS_BLOCKER_ID" "$PLAN_STATUS_DECISION_ID" '
+                '"$PLAN_STATUS_REPAIR_IDENTITY_KEY"'
+            ),
+            (
+                "claim_active_repair_launch "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} \"$PLAN_STATUS_BLOCKER_ID\" "
+                '"$PLAN_STATUS_REQUEST_ID" "$PLAN_STATUS_DECISION_ID" '
+                '"$PLAN_STATUS_REPAIR_IDENTITY_KEY"'
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+
+    identity, claim_status = result.stdout.strip().splitlines()
+    decision, request_id, blocker_id, decision_id, identity_key = identity.split("\t")
+    assert decision == "dispatch_l1_repair"
+    assert request_id, "watchdog must emit the enqueue-returned request_id"
+    assert blocker_id, "watchdog must emit the enqueue-returned blocker_id"
+    assert decision_id, "watchdog must emit the enqueue-returned decision_id"
+    assert identity_key, "watchdog must emit the enqueue-returned repair_identity_key"
+    assert claim_status == "claimed", claim_status
+
+    # The emitted ids are the SAME ids the enqueue persisted (spy: read the
+    # queue back and confirm the emitted ids equal the persisted records).
+    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    requests = list(repair_requests.iter_repair_requests(queue_dir))
+    assert len(requests) == 1, requests
+    persisted = requests[0]
+    assert persisted["request_id"] == request_id
+    assert persisted["blocker_id"] == blocker_id
+    assert persisted["repair_identity_key"] == identity_key
+    decisions = [
+        record
+        for record in repair_requests.iter_repair_decisions(queue_dir)
+        if record.get("request_id") == request_id
+    ]
+    accepted = [record for record in decisions if record.get("decision") == "accepted"]
+    assert accepted, decisions
+    assert accepted[0]["decision_id"] == decision_id
+
+    # The claim owner record carries the bound decision/identity ids.
+    owner_path = (
+        repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
+        / "owner.json"
+    )
+    owner = json.loads(owner_path.read_text(encoding="utf-8"))
+    assert owner["request_id"] == request_id
+    assert owner["blocker_id"] == blocker_id
+    assert owner["decision_id"] == decision_id
+    assert owner["repair_identity_key"] == identity_key
+    assert owner["actor"] == "arnold-watchdog"
+
+
+def test_watchdog_manual_review_enqueue_failure_dispatches_nothing(
+    tmp_path: Path,
+) -> None:
+    """T-0203: when the enqueue does not produce a claimable request (absent
+    or error result), manual_review_dispatch_status_env must NOT emit a
+    dispatch decision and must NOT bind identity-free ids; the claim path
+    refuses to claim."""
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    plan_name = "cl2-wbc-backed-ledger"
+    spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    session = "critique-r5"
+    # No repair identity anywhere: derive_repair_identity returns None, so the
+    # occurrence-bound enqueue is zero_authority_rejected (absent result).
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 2,
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "message": "critique contract failed three times",
+            },
+        },
+        events_body="{}\n",
+    )
+    (marker_dir / f"{session}.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("manual_review_dispatch_status_env"),
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "eval \"$(manual_review_dispatch_status_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} plan {shlex.quote(plan_name)})\""
+            ),
+            (
+                "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "
+                '"$PLAN_STATUS_DISPATCH_DECISION" "$PLAN_STATUS_REQUEST_ID" '
+                '"$PLAN_STATUS_BLOCKER_ID" "$PLAN_STATUS_DECISION_ID" '
+                '"$PLAN_STATUS_REPAIR_IDENTITY_KEY"'
+            ),
+            (
+                "claim_active_repair_launch "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} \"$PLAN_STATUS_BLOCKER_ID\" "
+                '"$PLAN_STATUS_REQUEST_ID" "$PLAN_STATUS_DECISION_ID" '
+                '"$PLAN_STATUS_REPAIR_IDENTITY_KEY"'
+            ),
+            'echo "CLAIM_RC=$?"',
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+
+    identity, claim_status, claim_rc = result.stdout.strip().splitlines()
+    decision, request_id, blocker_id, decision_id, identity_key = identity.split("\t")
+    # Absent enqueue: no dispatch decision, no claimable ids.
+    assert decision != "dispatch_l1_repair", decision
+    assert not request_id, f"identity-free request id must not be emitted: {request_id!r}"
+    assert not blocker_id, f"identity-free blocker id must not be emitted: {blocker_id!r}"
+    assert not decision_id, f"identity-free decision id must not be emitted: {decision_id!r}"
+    assert not identity_key, f"identity-free identity key must not be emitted: {identity_key!r}"
+    assert claim_status == "missing_identity", claim_status
+    assert claim_rc == "CLAIM_RC=1", claim_rc
+
+    # No request was persisted by the failed enqueue.
+    requests = list(
+        repair_requests.iter_repair_requests(
+            repair_requests.repair_queue_dir(marker_dir)
+        )
+    )
+    assert requests == [], requests
 
 
 def test_watchdog_manual_review_enqueue_ledger_failure_blocks(tmp_path: Path) -> None:

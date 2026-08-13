@@ -1411,6 +1411,9 @@ from arnold_pipelines.megaplan.cloud.repair_requests import (
     active_repair_claim_lock_dir,
     derive_repair_identity,
     enqueue_occurrence_bound_repair_request,
+    has_claimable_repair_request_contract,
+    iter_repair_decisions,
+    iter_repair_requests,
     repair_queue_dir,
 )
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
@@ -1476,6 +1479,87 @@ def load_json_dict(path: Path | None) -> dict[str, object]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+CLAIMABLE_ENQUEUE_STATUSES = frozenset({"queued", "coalesced"})
+
+
+def _accepted_decision_id(queue_root: Path, request_id: str) -> str:
+    """Return the persisted accepted decision id for *request_id*, or ""."""
+    for record in iter_repair_decisions(queue_root):
+        if (
+            str(record.get("request_id") or "").strip() == request_id
+            and str(record.get("decision") or "").strip() == "accepted"
+        ):
+            return str(record.get("decision_id") or "").strip()
+    return ""
+
+
+def resolve_request_binding(
+    queue_root: Path,
+    request_id: str,
+) -> dict[str, str] | None:
+    """Return the canonical claim binding for a persisted claimable request.
+
+    Returns ``{request_id, decision_id, repair_identity_key, blocker_id}``
+    only when the request marker exists, carries all ids, and has an accepted
+    decision.  ``None`` fails closed (nothing may dispatch/claim).
+    """
+    if not str(request_id or "").strip():
+        return None
+    persisted = None
+    for record in iter_repair_requests(queue_root):
+        if str(record.get("request_id") or "").strip() == str(request_id or "").strip():
+            if has_claimable_repair_request_contract(record):
+                persisted = record
+                break
+    if persisted is None:
+        return None
+    persisted_id = str(persisted.get("request_id") or "").strip()
+    blocker_id = str(persisted.get("blocker_id") or "").strip()
+    identity_key = str(persisted.get("repair_identity_key") or "").strip()
+    decision_id = _accepted_decision_id(queue_root, persisted_id)
+    if not persisted_id or not blocker_id or not identity_key or not decision_id:
+        return None
+    return {
+        "request_id": persisted_id,
+        "decision_id": decision_id,
+        "repair_identity_key": identity_key,
+        "blocker_id": blocker_id,
+    }
+
+
+def bind_watchdog_enqueue_result(
+    enqueue_result: object,
+    queue_root: Path,
+) -> dict[str, str] | None:
+    """Validate an enqueue result and bind its canonical claim identity.
+
+    Only a persisted, claimable request with an accepted decision may bind
+    the watchdog's claim/attempt path.  Returns
+    ``{request_id, decision_id, repair_identity_key, blocker_id}`` on
+    success, or ``None`` to fail closed (nothing may dispatch/claim).
+    """
+    if not isinstance(enqueue_result, dict):
+        return None
+    status = str(enqueue_result.get("status") or "").strip()
+    if status not in CLAIMABLE_ENQUEUE_STATUSES:
+        return None
+    request = enqueue_result.get("request")
+    decision = enqueue_result.get("decision")
+    if not isinstance(request, dict) or not isinstance(decision, dict):
+        return None
+    candidate_id = str(request.get("request_id") or "").strip()
+    related_id = str(decision.get("related_request_id") or "").strip()
+    if not candidate_id:
+        return None
+    # The persisted claimable request is the returned request for "queued"
+    # and same-id coalesced; a cross-id coalesced resolves to the related
+    # request (never the unwritten candidate record).
+    resolved_id = candidate_id
+    if status == "coalesced" and related_id and related_id != candidate_id:
+        resolved_id = related_id
+    return resolve_request_binding(queue_root, resolved_id)
 
 
 def plan_state_path() -> Path | None:
@@ -1591,6 +1675,11 @@ projection = project_repair_custody(
     marker_dir=marker_dir,
     repair_data_dir=repair_data_dir,
 )
+# T-0203: the enqueue result is the canonical source of claim identity.  Track
+# whether this tick attempted the enqueue so a failed/absent result can never
+# fall through to a dispatch decision.
+enqueue_attempted = False
+enqueue_binding = None
 if not projection.get("active_request_ids"):
     latest_failure = plan_state.get("latest_failure")
     latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
@@ -1662,39 +1751,64 @@ if not projection.get("active_request_ids"):
         "fallback_considered",
         summary=f"watchdog considered manual-review repair fallback session={session}",
     )
-    enqueue_occurrence_bound_repair_request(
-        queue_root=repair_queue_dir(marker_dir),
-        marker_dir=marker_dir,
-        session=session,
-        source="watchdog",
-        target={
-            "workspace": str(workspace),
-            "remote_spec": remote_spec_raw,
-            "run_kind": run_kind,
-            "plan_name": resolved_plan_name,
-        },
-        workspace=str(workspace),
-        run_kind=run_kind,
-        problem_signature={
-            "failure_kind": str(latest_failure.get("kind") or ""),
-            "current_state": str(plan_state.get("current_state") or ""),
-            "phase_or_step": str(latest_failure.get("phase") or ""),
-            "milestone_or_plan": resolved_plan_name,
-            "gate_recommendation": "",
-            "superfixer_only": "1" if _superfixer_only else "",
-            "blocked_task_id": str(
-                metadata.get("blocked_task_id")
-                or _blocked_task_id_from_failure(latest_failure, metadata)
-                or ""
-            ),
-        },
-        root_cause_hint=str(latest_failure.get("message") or ""),
-        occurrence_identity=derive_repair_identity(
+    enqueue_attempted = True
+    try:
+        enqueue_result = enqueue_occurrence_bound_repair_request(
+            queue_root=repair_queue_dir(marker_dir),
+            marker_dir=marker_dir,
             session=session,
-            plan_state=plan_state,
-            current_target=target,
-        ),
+            source="watchdog",
+            target={
+                "workspace": str(workspace),
+                "remote_spec": remote_spec_raw,
+                "run_kind": run_kind,
+                "plan_name": resolved_plan_name,
+            },
+            workspace=str(workspace),
+            run_kind=run_kind,
+            problem_signature={
+                "failure_kind": str(latest_failure.get("kind") or ""),
+                "current_state": str(plan_state.get("current_state") or ""),
+                "phase_or_step": str(latest_failure.get("phase") or ""),
+                "milestone_or_plan": resolved_plan_name,
+                "gate_recommendation": "",
+                "superfixer_only": "1" if _superfixer_only else "",
+                "blocked_task_id": str(
+                    metadata.get("blocked_task_id")
+                    or _blocked_task_id_from_failure(latest_failure, metadata)
+                    or ""
+                ),
+            },
+            root_cause_hint=str(latest_failure.get("message") or ""),
+            occurrence_identity=derive_repair_identity(
+                session=session,
+                plan_state=plan_state,
+                current_target=target,
+            ),
+        )
+    except Exception as _enqueue_exc:
+        # T-0203: an enqueue exception is a typed failure, never a silent
+        # drop.  Fail closed — nothing claimable was produced, so the emit
+        # block below must not dispatch or claim.
+        print(
+            f"watchdog enqueue raised session={session} err={_enqueue_exc}",
+            file=sys.stderr,
+        )
+        enqueue_result = {"status": "enqueue_exception"}
+    # T-0203: bind the enqueue result to custody.  A dropped or identity-free
+    # enqueue must never feed the claim/attempt path; validate status + ids
+    # and fail closed (no dispatch, no claim) when the enqueue did not
+    # produce a persisted claimable request with an accepted decision.
+    enqueue_binding = bind_watchdog_enqueue_result(
+        enqueue_result,
+        repair_queue_dir(marker_dir),
     )
+    if enqueue_binding is None:
+        print(
+            f"watchdog enqueue did not bind a claimable request/decision "
+            f"session={session} status={str(enqueue_result.get('status') or '')!r}",
+            file=sys.stderr,
+        )
     projection = project_repair_custody(
         plan_state=plan_state,
         current_target=target,
@@ -1731,12 +1845,58 @@ decision = classify_repair_dispatch(
     custody_projection=projection,
 )
 
-emit("PLAN_STATUS_DISPATCH_DECISION", decision.decision)
-emit("PLAN_STATUS_DISPATCH_INTENT", decision.dispatch_intent)
-emit("PLAN_STATUS_CUSTODY_BUCKET", decision.custody_bucket)
-emit("PLAN_STATUS_BLOCKER_ID", decision.blocker_id)
-emit("PLAN_STATUS_REQUEST_ID", decision.request_id)
-emit("PLAN_STATUS_TARGET_SOURCE", str(target.get("authoritative_source") or ""))
+# T-0203: bind the enqueue result to custody.  When this tick enqueued, the
+# emitted request/blocker/decision ids MUST come from the enqueue return (the
+# canonical claim identity), and a failed/absent enqueue MUST NOT dispatch or
+# claim — no identity-free exits.
+if enqueue_attempted and enqueue_binding is None:
+    # T-0203 fail closed: an enqueue that did not bind a claimable
+    # request/decision is NOT successful repair scheduling.  Never emit a
+    # dispatch decision or identity-free claim ids; a legit non-dispatch
+    # classification (e.g. human_required) still surfaces.
+    if decision.decision == "dispatch_l1_repair":
+        emit("PLAN_STATUS_DISPATCH_DECISION", "no_action")
+        emit("PLAN_STATUS_DISPATCH_INTENT", "queue_only")
+    else:
+        emit("PLAN_STATUS_DISPATCH_DECISION", decision.decision)
+        emit("PLAN_STATUS_DISPATCH_INTENT", decision.dispatch_intent)
+    emit("PLAN_STATUS_CUSTODY_BUCKET", decision.custody_bucket or "")
+    emit("PLAN_STATUS_BLOCKER_ID", "")
+    emit("PLAN_STATUS_REQUEST_ID", "")
+    emit("PLAN_STATUS_DECISION_ID", "")
+    emit("PLAN_STATUS_REPAIR_IDENTITY_KEY", "")
+    emit("PLAN_STATUS_TARGET_SOURCE", str(target.get("authoritative_source") or ""))
+elif enqueue_binding is not None:
+    emit("PLAN_STATUS_DISPATCH_DECISION", decision.decision)
+    emit("PLAN_STATUS_DISPATCH_INTENT", decision.dispatch_intent)
+    emit("PLAN_STATUS_CUSTODY_BUCKET", decision.custody_bucket)
+    emit("PLAN_STATUS_BLOCKER_ID", enqueue_binding["blocker_id"])
+    emit("PLAN_STATUS_REQUEST_ID", enqueue_binding["request_id"])
+    emit("PLAN_STATUS_DECISION_ID", enqueue_binding["decision_id"])
+    emit("PLAN_STATUS_REPAIR_IDENTITY_KEY", enqueue_binding["repair_identity_key"])
+    emit("PLAN_STATUS_TARGET_SOURCE", str(target.get("authoritative_source") or ""))
+else:
+    # No enqueue was needed this tick (active requests already existed); bind
+    # the persisted request/decision ids so the claim/attempt path still
+    # carries the canonical identity instead of an identity-free fallback.
+    persisted_binding = resolve_request_binding(
+        repair_queue_dir(marker_dir),
+        decision.request_id,
+    )
+    emit("PLAN_STATUS_DISPATCH_DECISION", decision.decision)
+    emit("PLAN_STATUS_DISPATCH_INTENT", decision.dispatch_intent)
+    emit("PLAN_STATUS_CUSTODY_BUCKET", decision.custody_bucket)
+    if persisted_binding is not None:
+        emit("PLAN_STATUS_BLOCKER_ID", persisted_binding["blocker_id"])
+        emit("PLAN_STATUS_REQUEST_ID", persisted_binding["request_id"])
+        emit("PLAN_STATUS_DECISION_ID", persisted_binding["decision_id"])
+        emit("PLAN_STATUS_REPAIR_IDENTITY_KEY", persisted_binding["repair_identity_key"])
+    else:
+        emit("PLAN_STATUS_BLOCKER_ID", decision.blocker_id)
+        emit("PLAN_STATUS_REQUEST_ID", decision.request_id)
+        emit("PLAN_STATUS_DECISION_ID", "")
+        emit("PLAN_STATUS_REPAIR_IDENTITY_KEY", "")
+    emit("PLAN_STATUS_TARGET_SOURCE", str(target.get("authoritative_source") or ""))
 PY
 }
 
@@ -5283,7 +5443,7 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
+  local pgid_path repair_busy claim_status request_id blocker_id decision_id repair_identity_key managed_identity incident_id
   local run_id_file launch_evidence child_pid inherited_goal_id inherited_goal_path
   local inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence
   local gate_json gate_open reason repair_run_kind
@@ -5293,6 +5453,8 @@ dispatch_kimi_repair() {
   REPAIR_DISPATCH_MANIFEST=""
   request_id=""
   blocker_id=""
+  decision_id=""
+  repair_identity_key=""
   repair_run_kind="chain"
   if [[ -n "${PLAN_STATUS_PLAN_NAME:-}" ]]; then
     repair_run_kind="plan"
@@ -5300,6 +5462,11 @@ dispatch_kimi_repair() {
   if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+    # T-0203: the enqueue-returned decision and repair identity bind the
+    # subsequent claim/attempt path; a dispatch without them fails closed at
+    # the claim boundary (missing_identity) below.
+    decision_id="${PLAN_STATUS_DECISION_ID:-}"
+    repair_identity_key="${PLAN_STATUS_REPAIR_IDENTITY_KEY:-}"
   fi
   # P2: record the runtime manifest selection BEFORE any claim/dispatch side
   # effect.  The watchdog resolved the manifest at startup (MANIFEST_REPAIR_BIN
@@ -5465,7 +5632,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     return 0
   fi
   if declare -F claim_active_repair_launch >/dev/null 2>&1; then
-    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec" "$blocker_id" "$request_id")"
+    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec" "$blocker_id" "$request_id" "$decision_id" "$repair_identity_key")"
   else
     claim_status=""
   fi
@@ -5519,6 +5686,8 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --run-id-file "$run_id_file"
     --link "repair_request_id=$request_id"
     --link "blocker_id=$blocker_id"
+    --link "decision_id=$decision_id"
+    --link "repair_identity_key=$repair_identity_key"
     --link "repair_queue_dir=${MARKER_DIR%/*}/repair-queue"
     --link "incident_id=$incident_id"
     --link "cloud_session=$session"
@@ -5576,6 +5745,8 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     PYTHONPATH="$WRAPPER_REPO_ROOT:${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    CLOUD_WATCHDOG_REPAIR_DECISION_ID="$decision_id" \
+    CLOUD_WATCHDOG_REPAIR_REPAIR_IDENTITY_KEY="$repair_identity_key" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
     ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
     ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
@@ -5592,6 +5763,8 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     PYTHONPATH="$WRAPPER_REPO_ROOT:${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    CLOUD_WATCHDOG_REPAIR_DECISION_ID="$decision_id" \
+    CLOUD_WATCHDOG_REPAIR_REPAIR_IDENTITY_KEY="$repair_identity_key" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
     ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
     ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
@@ -5708,14 +5881,28 @@ claim_active_repair_launch() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local blocker_id request_id
+  local blocker_id request_id decision_id repair_identity_key
   blocker_id="${4:-}"
   request_id="${5:-}"
-  if [[ -z "$blocker_id" && -z "$request_id" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+  decision_id="${6:-}"
+  repair_identity_key="${7:-}"
+  # T-0203: bind the enqueue-returned ids into the claim record.  Each id is
+  # filled independently from the watchdog's canonical PLAN_STATUS_* binding
+  # so an explicitly-passed blocker/request still carries the decision and
+  # repair identity; a dispatch without request/blocker fails closed below.
+  if [[ -z "$blocker_id" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+  fi
+  if [[ -z "$request_id" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
   fi
-  if [[ -z "$blocker_id" || -z "$request_id" ]]; then
+  if [[ -z "$decision_id" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+    decision_id="${PLAN_STATUS_DECISION_ID:-}"
+  fi
+  if [[ -z "$repair_identity_key" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+    repair_identity_key="${PLAN_STATUS_REPAIR_IDENTITY_KEY:-}"
+  fi
+  if [[ -z "$blocker_id" || -z "$request_id" || -z "$decision_id" || -z "$repair_identity_key" ]]; then
     printf 'missing_identity\n'
     return 1
   fi
@@ -5741,13 +5928,15 @@ claim_active_repair_launch() {
     "$remote_spec" \
     "$blocker_id" \
     "$request_id" \
+    "$decision_id" \
+    "$repair_identity_key" \
     "$$" <<'PY'
 import os
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_requests
 
-marker_dir, session, workspace, remote_spec, blocker_id, request_id, pid_text = sys.argv[1:]
+marker_dir, session, workspace, remote_spec, blocker_id, request_id, decision_id, repair_identity_key, pid_text = sys.argv[1:]
 try:
     pid = int(pid_text)
 except ValueError:
@@ -5786,7 +5975,12 @@ result = repair_requests.claim_active_repair_request(
     command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
     cwd=workspace,
     is_pid_live=_pid_is_live,
-    extra={"workspace": workspace, "remote_spec": remote_spec},
+    extra={
+        "workspace": workspace,
+        "remote_spec": remote_spec,
+        "decision_id": decision_id,
+        "repair_identity_key": repair_identity_key,
+    },
 )
 # A stale owner is evidence, never authority for this watchdog to delete a
 # claim and seize it.  Explicit simple_fixer recovery owns any retirement and
@@ -8893,6 +9087,8 @@ PY
   PLAN_STATUS_CUSTODY_BUCKET=
   PLAN_STATUS_BLOCKER_ID=
   PLAN_STATUS_REQUEST_ID=
+  PLAN_STATUS_DECISION_ID=
+  PLAN_STATUS_REPAIR_IDENTITY_KEY=
   PLAN_STATUS_TARGET_SOURCE=
 
   local repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action repair_goal_target_worker_live

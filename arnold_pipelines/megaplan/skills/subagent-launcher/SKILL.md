@@ -15,7 +15,7 @@ Three pathways:
 | **Codex** | GPT-5.5 | `codex exec` (CLI) | sandboxed workspace |
 | **Claude** | Claude (Opus/Sonnet/Haiku) | `launch_claude_agent.py --model=opus` or Claude Code `Agent` tool | Claude Code tools |
 
-**Default to the hermes agentic pathway, and to DeepSeek within it** — different model family, cheap, tool-using. Reach for Codex or Claude only when you specifically want their strengths.
+**Default to the hermes agentic pathway, and to DeepSeek Flash within it** — different model family, cheap, fast, tool-using. Reach for DeepSeek Pro only when the task needs reasoning judgement; reach for Codex or Claude only when you specifically want their strengths.
 
 > **⚠️ Network sandbox warning for Codex subagents**
 > `codex exec` runs its subprocess with `CODEX_SANDBOX_NETWORK_DISABLED=1`. Hermes agents (DeepSeek/Kimi/MiMo/GLM/OpenRouter) need outbound network to reach their provider APIs, so **launching them from inside a `codex exec` subagent will fail**. The launcher itself is fine; it fails only because the parent process has no network.
@@ -56,8 +56,8 @@ Three pathways:
 Independence is the *why*; cost is the *which*. Default to the cheapest model that can plausibly succeed; escalate only on evidence.
 
 1. **MiMo V2.5 Pro Ultraspeed** (`fast`, alias for `mimo:mimo-v2.5-pro-ultraspeed`) — very fast. High-volume, low-judgement work: scan files, extract facts, short first-pass research.
-2. **DeepSeek V4 Flash** (`deepseek:deepseek-v4-flash`) — non-reasoning, fast, cheap. High-volume work that needs more coding-tuned behavior than MiMo.
-3. **DeepSeek V4 Pro** (`deepseek:deepseek-v4-pro`, the default) — reasoning model. When the task needs judgement: root-cause analysis, "is this sound", "should this merge".
+2. **DeepSeek V4 Flash** (`deepseek:deepseek-v4-flash`, **the default**) — non-reasoning, fast, cheap. The default for most dispatches: implementation, mechanical edits, focused investigation, verification. Escalate to Pro only on evidence that reasoning is needed.
+3. **DeepSeek V4 Pro** (`deepseek:deepseek-v4-pro`) — reasoning model. Use when the task needs judgement: root-cause analysis, "is this sound", "should this merge".
 4. **GPT-5.5 (Codex) or Claude** — only for *real* complexity: subtle multi-step reasoning, write-heavy implementation, the strongest adversarial review.
 
 Two rules: **start low, escalate on evidence** (don't reach for the frontier model "to be safe"); and **prepare the context so a cheap model can win** — most "cheap model failed" cases are under-specified prompts. A moment spent scoping the task is cheaper than burning a Claude subagent on something Flash could do.
@@ -83,9 +83,9 @@ PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/launch_hermes_ag
 
 Key flags:
 
-- **`--model`** (default `deepseek:deepseek-v4-pro`). Prefix convention from the megaplan key pool:
+- **`--model`** (default `deepseek:deepseek-v4-flash`). Prefix convention from the megaplan key pool:
   - `fast`, `mimo`, `mimo-fast` → `mimo:mimo-v2.5-pro-ultraspeed` (very fast MiMo path; requires `MIMO_API_KEY`)
-  - `deepseek:deepseek-v4-pro` (default) / `deepseek:deepseek-v4-flash` (faster, non-reasoning) → DeepSeek API
+  - `deepseek:deepseek-v4-flash` (default, non-reasoning) / `deepseek:deepseek-v4-pro` (reasoning) → DeepSeek API
   - `kimi:kimi-k2.7-code` → Kimi coding API (requires `KIMI_API_KEY` or `MOONSHOT_API_KEY`)
   - `zhipu:glm-5.2` / `zhipu:glm-4.6` → Zhipu GLM API (requires `ZHIPU_API_KEY`)
   - `google:gemini-…`, `minimax:MiniMax-M2`, … — see `megaplan/runtime/key_pool.py:resolve_model`
@@ -106,7 +106,7 @@ Output is **freeform text** — if you want JSON, ask for it in the prompt and p
 ```bash
 PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/fan.py \
   --briefs-dir=/tmp/briefs --output-dir=/tmp/results \
-  --max-workers=5 --model="deepseek:deepseek-v4-pro" \
+  --max-workers=5 --model="deepseek:deepseek-v4-flash" \
   --toolsets="file,web" --max-tokens=65536 --task-timeout=1800 --project-dir="$PWD"
 # Or positional brief paths instead of --briefs-dir.
 # Per-brief models: --model-map="fast:scan-*.md,pro:verdict-*.md"
@@ -222,9 +222,9 @@ Check liveness **30–60 s after launch**, not 10 minutes in.
 ```bash
 # 1. Hermes agentic (default) — DeepSeek/Kimi/Zhipu GLM with tools
 PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py \
-  --model="deepseek:deepseek-v4-pro" --toolsets="file,web" \
+  --model="deepseek:deepseek-v4-flash" --toolsets="file,web" \
   --query-file=/tmp/brief.md --max-tokens=65536 --project-dir="$PWD"
-# Very fast: --model=fast   Flash: --model="deepseek:deepseek-v4-flash"   Kimi: --model="kimi:kimi-k2.7-code"   GLM: --model="zhipu:glm-5.2"
+# Default: --model="deepseek:deepseek-v4-flash"   Very fast: --model=fast   Pro (reasoning): --model="deepseek:deepseek-v4-pro"   Kimi: --model="kimi:kimi-k2.7-code"   GLM: --model="zhipu:glm-5.2"
 # Pure chat: --toolsets=""    Fan N≥5: fan.py --briefs-dir=… --output-dir=… --max-workers=5 --task-timeout=1800
 
 # 2. Codex — always seal stdin with </dev/null, allow 30 min

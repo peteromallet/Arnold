@@ -434,6 +434,144 @@ def test_orchestrator_occurrence_commits_one_schedule_owned_legacy_job(tmp_path:
     assert service.repo.occurrences(row.schedule_id)[0].state == "terminal"
 
 
+def test_superfixer_proactive_commits_one_schedule_owned_job_and_reconciles_keep_cancelled(
+    tmp_path: Path,
+) -> None:
+    service = ScheduleService(tmp_path)
+    row = definition(
+        operation="superfixer_proactive", kind="resident_orchestrator_turn",
+        bounds={"max_occurrences": 2},
+    )
+    service.create(row, idempotency_key="superfixer-turn")
+    receipt = asyncio.run(service.run_due_once(now=NOW, worker_id="superfixer-schedule"))
+    assert receipt.launched == 1
+    projection = service.repo.occurrences(row.schedule_id)[0]
+    assert projection.run_id.startswith("scheduled-job:")
+    assert projection.state == "launched"
+    assert projection.decision == "superfixer_proactive_committed"
+    job_id = projection.run_id.removeprefix("scheduled-job:")
+    store = FileStore(tmp_path)
+    job = store.load_scheduled_job(job_id)
+    assert job is not None
+    assert job.payload["schedule_owned"] is True
+    assert job.payload["superfixer_occurrence_state"] == "committed"
+    assert job.payload["schedule_occurrence"]["occurrence_id"] == projection.occurrence.occurrence_id
+    # The consumer's action-off decision fires the job with keep_cancelled;
+    # the final terminal receipt must name the non-enablement, not a launch.
+    store.update_scheduled_job(
+        job_id,
+        status="fired",
+        fired_at=NOW,
+        payload={
+            **job.payload,
+            "keep_cancelled": True,
+            "keep_cancelled_decision": "keep_cancelled_flag_disabled",
+        },
+    )
+    assert service.reconcile_terminal_runs() == 1
+    terminal = service.repo.occurrences(row.schedule_id)[0]
+    assert terminal.state == "terminal"
+    assert terminal.decision == "keep_cancelled_single_shot"
+
+
+def test_superfixer_consumer_claim_is_atomic_and_reclaims_stale_with_newer_fence(
+    tmp_path: Path,
+) -> None:
+    service = ScheduleService(tmp_path)
+    row = definition(
+        operation="superfixer_proactive", kind="resident_orchestrator_turn",
+        bounds={"max_occurrences": 2},
+    )
+    service.create(row, idempotency_key="consumer-claim")
+    receipt = asyncio.run(service.run_due_once(now=NOW, worker_id="superfixer-schedule"))
+    assert receipt.launched == 1
+    projection = service.repo.occurrences(row.schedule_id)[0]
+    occurrence_id = projection.occurrence.occurrence_id
+    job_id = projection.run_id.removeprefix("scheduled-job:")
+    before = service.load_occurrence(occurrence_id)
+    # First consumer takes custody with a fresh lease and a bumped fence.
+    claim = service.claim_superfixer_occurrence(
+        occurrence_id, job_id=job_id, worker_id="consumer-a", now=NOW,
+        lease_seconds=60,
+    )
+    assert claim.state == "claimed"
+    assert claim.claim_owner == "consumer-a"
+    assert claim.fence == before.fence + 1
+    # A second consumer cannot double-claim while the lease is live.
+    with pytest.raises(RuntimeError, match="not claimable"):
+        service.claim_superfixer_occurrence(
+            occurrence_id, job_id=job_id, worker_id="consumer-b",
+            now=NOW + timedelta(seconds=10), lease_seconds=60,
+        )
+    # Crash-safe reclaim: after the lease expires a new worker reclaims with a
+    # NEWER fence and a fresh token (T-0204 namespace discipline).
+    reclaimed = service.claim_superfixer_occurrence(
+        occurrence_id, job_id=job_id, worker_id="consumer-c",
+        now=NOW + timedelta(seconds=61), lease_seconds=60,
+    )
+    assert reclaimed.fence == claim.fence + 1
+    assert reclaimed.claim_owner == "consumer-c"
+    assert reclaimed.claim_token != claim.claim_token
+    # The stale owner's commit under the old fence fails the CAS.
+    with pytest.raises(RuntimeError, match="stale occurrence fence"):
+        service.repo.transition(
+            occurrence_id, event="stale_commit", actor="consumer-a",
+            expected_fence=claim.fence, expected_token=claim.claim_token,
+            changes={"state": "terminal"},
+        )
+    # A committed launch receipt is never re-claimed: one launch per occurrence.
+    service.repo.transition(
+        occurrence_id, event="launch_receipt", actor="consumer-c",
+        expected_fence=reclaimed.fence, expected_token=reclaimed.claim_token,
+        changes={"state": "launched", "run_id": "run-1",
+                 "manifest_path": str(tmp_path / "m.json")},
+    )
+    with pytest.raises(RuntimeError, match="already carries a committed launch"):
+        service.claim_superfixer_occurrence(
+            occurrence_id, job_id=job_id, worker_id="consumer-d",
+            now=NOW + timedelta(seconds=120), lease_seconds=60,
+        )
+
+
+def test_superfixer_single_shot_record_is_durable_and_never_a_schedule_mutation(
+    tmp_path: Path,
+) -> None:
+    service = ScheduleService(tmp_path)
+    row = definition(
+        operation="superfixer_proactive", kind="resident_orchestrator_turn",
+        bounds={"max_occurrences": 2},
+    )
+    service.create(row, idempotency_key="singleshot")
+    receipt = asyncio.run(service.run_due_once(now=NOW, worker_id="superfixer-schedule"))
+    assert receipt.launched == 1
+    projection = service.repo.occurrences(row.schedule_id)[0]
+    record = service.record_superfixer_single_shot(
+        decision="keep_cancelled_flag_disabled",
+        reason="hourly superfixer launch flag is off",
+        actor="sfx-consumer",
+        now=NOW,
+        occurrence_id=projection.occurrence.occurrence_id,
+        occurrence_key=projection.occurrence.occurrence_key,
+        schedule_id=row.schedule_id,
+        job_id="job-sfx-1",
+    )
+    assert record["keep_cancelled"] is True
+    lines = (tmp_path / "schedules" / "superfixer-singleshots.jsonl").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert len(lines) == 1
+    stored = json.loads(lines[0])
+    assert stored["keep_cancelled"] is True
+    assert stored["decision"] == "keep_cancelled_flag_disabled"
+    assert stored["occurrence_id"] == projection.occurrence.occurrence_id
+    # The schedule definition and head are untouched (no enablement, no state
+    # flip): revision and state stay exactly as created.
+    current = service.repo.read_definition(row.schedule_id)
+    assert current.revision == row.revision
+    assert current.state == row.state == "active"
+    assert service.repo.occurrences(row.schedule_id)[0].state == "launched"
+
+
 def test_transient_launch_failure_retries_then_recovers_without_new_occurrence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

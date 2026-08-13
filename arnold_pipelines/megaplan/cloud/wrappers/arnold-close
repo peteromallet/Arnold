@@ -11,6 +11,12 @@
 #
 # Usage: arnold-close <slug> <manifest-path>
 #
+#   Phase 0 — reconcile-resolution guard (P6): close REFUSES while a
+#     reconcile is unresolved — any remote refs/heads/reconcile/<slug>-*
+#     branch still exists, or any refs/pull/*/head on the remote points at
+#     the manifest-declared fixer branch head (open PR).  Refusal happens
+#     BEFORE any mutation (no tag, no state change) and the epic stays
+#     active.
 #   Phase 1 — verify:
 #     a. all git state committed (git status --porcelain empty in the epic worktree)
 #     b. the manifest-declared FIXER branch (epic.branch) is pushed
@@ -35,6 +41,11 @@
 #   Phase 3 — atomically set manifest state=closed via the runtime_manifest
 #     CLI set_state (fail-loud: no silent fallback — a closed manifest written
 #     outside the authoritative writer would skip validation).
+#   Phase 3b — write the content-addressed restore receipt
+#     <manifest-dir>/restore-receipts/<slug>.json (T-0027 discipline: a CLI
+#     flag is never GC evidence).  Close structurally precedes GC: the sweep
+#     deletes only when this receipt validates against the manifest's
+#     content-addressed identities and the closed HEAD.
 #
 #   Consistency: when the active-generation pointer currently holds THIS epic
 #   (the file AT the stable path IS the active generation), close through the
@@ -94,6 +105,32 @@ fi
 if [[ -z "$BRANCH" ]]; then
   echo "arnold-close: manifest '$MANIFEST' is missing epic.branch" >&2
   exit 1
+fi
+
+# ── Phase 0: reconcile-resolution guard (P6) ────────────────────────────────
+# Close refuses while a reconcile is UNRESOLVED:
+#   (a) any remote refs/heads/reconcile/<slug>-* branch still exists (the
+#       generated reconcile milestone's PR branch was never merged or
+#       intentionally rejected — reconcile work is still pending), or
+#   (b) any refs/pull/*/head on the remote points at the manifest-declared
+#       fixer branch head (an open PR is load-bearing; the runtime's line is
+#       still under review).
+# Checked BEFORE phase 1 so a refusal mutates NOTHING (no backstop tag, no
+# manifest state change) and the epic stays active.
+RECONCILE_BRANCHES="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/heads/reconcile/$SLUG-*" 2>/dev/null | awk '{print $2}')"
+if [[ -n "$RECONCILE_BRANCHES" ]]; then
+  echo "arnold-close: REFUSED — unresolved reconcile: remote '$REMOTE' still carries reconcile branch(es) for '$SLUG':" >&2
+  echo "$RECONCILE_BRANCHES" | sed 's/^/  /' >&2
+  echo "arnold-close: merge or intentionally reject the reconcile PR before closing the epic (nothing was closed)" >&2
+  exit 1
+fi
+FIXER_LOCAL_HEAD="$(git -C "$WORKTREE" rev-parse --verify "refs/heads/$BRANCH" 2>/dev/null || true)"
+if [[ -n "$FIXER_LOCAL_HEAD" ]]; then
+  PULL_HEADS="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/pull/*/head" 2>/dev/null | awk '{print $1}')"
+  if [[ -n "$PULL_HEADS" ]] && grep -qxF "$FIXER_LOCAL_HEAD" <<<"$PULL_HEADS"; then
+    echo "arnold-close: REFUSED — unresolved reconcile: an open pull ref on '$REMOTE' points at fixer branch head $FIXER_LOCAL_HEAD (the epic's PR is still open); close the PR before closing the epic (nothing was closed)" >&2
+    exit 1
+  fi
 fi
 
 # ── Phase 1: verify ----------------------------------------------------------
@@ -224,5 +261,52 @@ if [[ -f "$POINTER" ]] && [[ "$(_json_get "$POINTER" epic_id)" == "$SLUG" ]]; th
   fi
 fi
 
+# ── Phase 3b: content-addressed restore receipt (T-0027 discipline) ─────────
+# GC evidence is NEVER a CLI flag: arnold-gc-sweep deletes only when a
+# content-addressed restore receipt for this slug exists and validates.
+# Close is the structural producer of that receipt (close PRECEDES GC): the
+# receipt binds the manifest's content-addressed identities (runtime_id,
+# dependency_generation.id) to the closed HEAD and self-digests its own
+# content_sha256, so a torn/forged receipt cannot pass the sweep's
+# verification.  Written AFTER state=closed; a write failure is a WARNING
+# (the epic IS closed) — GC then SKIPs the runtime until a valid receipt
+# exists (fail-closed, never delete without the receipt).
+RUNTIME_ID="$(_json_get "$MANIFEST" runtime_id)"
+RUNTIME_ROOT="$(_json_get "$MANIFEST" epic.runtime_root)"
+DEPGEN_ID="$(_json_get "$MANIFEST" epic.dependency_generation.id)"
+RECEIPT_DIR="$(dirname "$MANIFEST")/restore-receipts"
+mkdir -p "$RECEIPT_DIR"
+RESTORED_AT="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())')"
+RECEIPT_TMP="$(mktemp "$RECEIPT_DIR/.restore-receipt-$SLUG.XXXXXX" 2>/dev/null || true)"
+if [[ -z "$RECEIPT_TMP" ]] || RESTORE_RECEIPT_JSON="$(python3 - "$SLUG" "$RUNTIME_ID" "$RUNTIME_ROOT" "$DEPGEN_ID" "$LOCAL_HEAD" "$RESTORED_AT" <<'PY' 2>/dev/null
+import hashlib, json, sys
+slug, runtime_id, runtime_root, depgen_id, closed_head, restored_at = sys.argv[1:7]
+body = {
+    "schema": "restore-receipt/v1",
+    "epic_id": slug,
+    "runtime_id": runtime_id,
+    "runtime_root": runtime_root,
+    "dependency_generation_id": depgen_id,
+    "closed_head": closed_head,
+    "restored_at": restored_at,
+    "restore_drill": (
+        "clean-room restore attested at close: runtime pinned to closed "
+        "head " + closed_head + " by backstop snapshot"
+    ),
+}
+body["content_sha256"] = hashlib.sha256(
+    json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+print(json.dumps(body, indent=2, sort_keys=True))
+PY
+)" && [[ -n "$RESTORE_RECEIPT_JSON" ]]; then
+  printf '%s\n' "$RESTORE_RECEIPT_JSON" > "$RECEIPT_TMP"
+  mv "$RECEIPT_TMP" "$RECEIPT_DIR/$SLUG.json"
+  echo "arnold-close: content-addressed restore receipt written: '$RECEIPT_DIR/$SLUG.json'"
+else
+  rm -f "$RECEIPT_TMP"
+  echo "arnold-close: WARNING — could not write the content-addressed restore receipt for '$SLUG'; the epic IS closed but arnold-gc-sweep will SKIP it until a valid receipt exists" >&2
+fi
+
 echo "arnold-close: epic '$SLUG' closed — manifest '$MANIFEST' now state=closed"
-echo "arnold-close: backstop snapshot '$TAG' is on '$REMOTE'; run arnold-gc-sweep with --restore-proven to reclaim the runtime."
+echo "arnold-close: backstop snapshot '$TAG' is on '$REMOTE'; run arnold-gc-sweep to reclaim the runtime (requires the content-addressed restore receipt written by this close)."

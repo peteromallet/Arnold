@@ -128,7 +128,12 @@ def _chain_gate_fixture(*, spec_path: Path, workspace: Path, **overrides: object
     return json.dumps(payload, sort_keys=True)
 
 
-def _chain_runtime_manifest(*, runtime_root: str, expected_head: str = "test-head") -> dict[str, object]:
+def _chain_runtime_manifest(
+    *,
+    runtime_root: str,
+    expected_head: str = "test-head",
+    interpreter_path: str | None = None,
+) -> dict[str, object]:
     """Fixture per-session runtime manifest — canonically schema-valid.
 
     Mirrors the canonical ``runtime_manifest`` schema (schema ``"1"`` with
@@ -137,9 +142,15 @@ def _chain_runtime_manifest(*, runtime_root: str, expected_head: str = "test-hea
     valid manifest.  The wrapper gate reads ``epic.runtime_root`` +
     ``epic.expected_head``; the remaining keys are required by the canonical
     validator (G5 round-8 finding 4: a three-field payload is schema-invalid
-    and must never be labeled 'valid')."""
+    and must never be labeled 'valid').
+
+    G10 B1 (T-0301): when ``interpreter_path`` is given, the manifest also
+    binds a COMPLETE dependency-generation proof — the launch gate requires
+    all of id / frozen_spec_sha256 / interpreter_path / venv_digest / created
+    and exits 24 on anything less.  Omit ``interpreter_path`` to exercise the
+    proof-less fail-closed path."""
     now = datetime.now(timezone.utc).isoformat()
-    return {
+    manifest = {
         "runtime_id": "test-runtime",
         "schema": "1",
         "generation": 1,
@@ -184,6 +195,15 @@ def _chain_runtime_manifest(*, runtime_root: str, expected_head: str = "test-hea
         "gc_policy": "keep",
         "commands": [],
     }
+    if interpreter_path is not None:
+        manifest["epic"]["dependency_generation"] = {
+            "id": "d" * 64,
+            "frozen_spec_sha256": "d" * 64,
+            "interpreter_path": interpreter_path,
+            "venv_digest": "v" * 64,
+            "created": now,
+        }
+    return manifest
 
 
 _CHAIN_PYTHON_SHIM = f"""#!{sys.executable}
@@ -235,8 +255,11 @@ def _run_chain_wrapper_subprocess(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    # arnold-chain invokes `python` (manifest field reads + provenance) and
-    # `python3` (acceptance-gate helpers); both get the same shim.
+    # arnold-chain uses `python` for the stdlib manifest-field reads; the
+    # provenance probe, the acceptance-gate helpers, and the chain launch all
+    # run under the GENERATION interpreter resolved from the manifest
+    # (T-0301/G10 B1) — the fixture points it at this same shim so every
+    # interception keeps working.
     for name in ("python", "python3"):
         shim = fake_bin / name
         shim.write_text(_CHAIN_PYTHON_SHIM, encoding="utf-8")
@@ -280,7 +303,12 @@ exit 0
         env.pop("ARNOLD_RUNTIME_MANIFEST", None)
     elif manifest == "valid":
         manifest_path.write_text(
-            json.dumps(_chain_runtime_manifest(runtime_root=str(REPO_ROOT))),
+            json.dumps(
+                _chain_runtime_manifest(
+                    runtime_root=str(REPO_ROOT),
+                    interpreter_path=str(fake_bin / "python"),
+                )
+            ),
             encoding="utf-8",
         )
         env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
@@ -422,10 +450,14 @@ def test_arnold_chain_unbound_manifest_fails_closed_before_launch(tmp_path: Path
             "manifest lacks epic.runtime_root",
         ),
         (
-            "no-expected-head",
+            # G6 round-2 finding 2: the field reads are gated on the CANONICAL
+            # schema, so a manifest missing ANY epic required key (here
+            # expected_head) fails closed at the FIRST read — the pin gate can
+            # never derive a dirty ENGINE_DIR from a non-canonical manifest.
+            "schema-invalid-missing-expected-head",
             {"epic": {"runtime_root": "/some/root"}},
             0,
-            "manifest lacks epic.expected_head",
+            "manifest lacks epic.runtime_root",
         ),
         (
             "provenance-mismatch",
@@ -460,7 +492,10 @@ def test_arnold_chain_bound_manifest_launches_with_only_manifest_root(
     result = _run_chain_wrapper_subprocess(
         tmp_path,
         gate_output=_chain_gate_fixture(spec_path=spec_path, workspace=workspace),
-        manifest=_chain_runtime_manifest(runtime_root=str(REPO_ROOT)),
+        manifest=_chain_runtime_manifest(
+            runtime_root=str(REPO_ROOT),
+            interpreter_path=str(tmp_path / "bin" / "python"),
+        ),
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "chain-launched").read_text(encoding="utf-8") == "launch\n"
@@ -470,6 +505,67 @@ def test_arnold_chain_bound_manifest_launches_with_only_manifest_root(
     provenance = (tmp_path / "provenance-record").read_text(encoding="utf-8")
     assert f"pythonpath={REPO_ROOT}" in provenance, provenance
     assert "/workspace/arnold" not in provenance, provenance
+
+
+# ── G10 B1: generation-interpreter launch gate (T-0301) ─────────────────────
+
+
+def test_arnold_chain_proof_complete_launch_threads_generation_interpreter(
+    tmp_path: Path,
+) -> None:
+    """G10 B1 positive: with a COMPLETE dependency-generation proof the
+    wrapper resolves the generation interpreter from the manifest and threads
+    it into the launch boundary — the launch shell now receives
+    ENGINE_DIR SPEC PROJECT_DIR GEN_INTERPRETER (the pre-G10 wrapper passed
+    only three), so the chain start executes under the generation
+    interpreter, never the ambient python.  The launch env records the
+    interpreter path; the provenance probe ran with PYTHONPATH = the manifest
+    runtime_root only."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    result = _run_chain_wrapper_subprocess(
+        tmp_path,
+        gate_output=_chain_gate_fixture(spec_path=spec_path, workspace=workspace),
+        manifest=_chain_runtime_manifest(
+            runtime_root=str(REPO_ROOT),
+            interpreter_path=str(tmp_path / "bin" / "python"),
+        ),
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (tmp_path / "chain-launched").read_text(encoding="utf-8") == "launch\n"
+    launch_env = (tmp_path / "chain-launch-env").read_text(encoding="utf-8")
+    all_line = next(
+        line for line in launch_env.splitlines() if line.startswith("ALL=")
+    )
+    # The generation interpreter rides into the launch as the 4th positional
+    # arg (after ENGINE_DIR / SPEC / PROJECT_DIR) — the ambient-python launch
+    # boundary never carried it.
+    assert str(tmp_path / "bin" / "python") in all_line, launch_env
+    assert "PYTHONPATH=" in launch_env, launch_env
+    provenance = (tmp_path / "provenance-record").read_text(encoding="utf-8")
+    assert f"pythonpath={REPO_ROOT}" in provenance, provenance
+    assert "/workspace/arnold" not in provenance, provenance
+
+
+def test_arnold_chain_missing_generation_proof_fails_closed_before_launch(
+    tmp_path: Path,
+) -> None:
+    """G10 B1 negative: a schema-valid manifest WITHOUT a dependency-
+    generation proof (or with an incomplete one) must exit 24 with the typed
+    binding-drift message before any provenance probe or launch — a runtime
+    without a verifiable immutable dependency generation is never launched
+    and there is no ambient-python / editable-install fallback."""
+    result = _run_chain_wrapper_subprocess(
+        tmp_path,
+        manifest=_chain_runtime_manifest(runtime_root=str(REPO_ROOT)),
+    )
+    assert result.returncode == 24, (result.stdout, result.stderr)
+    assert "isolated_chain_runtime_binding_drift" in result.stderr
+    assert "manifest lacks dependency generation interpreter" in result.stderr
+    assert not (tmp_path / "chain-launched").exists()
+    assert not (tmp_path / "provenance-record").exists()
 
 
 def test_arnold_chain_wrapper_has_no_shared_root_fallback() -> None:

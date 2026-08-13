@@ -16,15 +16,20 @@ from typing import Any, Iterator, Literal, Mapping
 from arnold_pipelines.megaplan.cloud import repair_contract
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.cloud.repair_lock import (
+    ClaimAliasRecord,
     RepairLockResult,
     acquire_repair_lock,
+    claim_fence,
+    consult_claim_namespace,
     decision_admission_lock,
     decision_admission_lock_dir,
+    finalize_cross_namespace_claim,
     inspect_repair_lock,
     occurrence_scoped_lock_dir,
     owner_metadata_path,
     process_owner_identity,
     release_repair_lock,
+    write_claim_alias,
 )
 from arnold_pipelines.megaplan.cloud.repair_recurrence import (
     ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS,
@@ -2142,9 +2147,45 @@ def claim_active_repair_request(
         "blocker_fingerprint": dict(blocker_fingerprint or {}),
         "repair_identity": normalized_repair_identity or {},
         "repair_identity_key": normalized_repair_identity_key,
+        "occurrence_fingerprint": normalized_repair_identity_key,
     }
     if extra:
         metadata.update(dict(extra))
+
+    # ── T-0204: consult the occurrence claim namespace BEFORE acquiring ──
+    # The same repair must converge on ONE owner across the blocker-keyed
+    # active namespace and the fingerprint-keyed occurrence namespace.  A
+    # live foreign owner in the occurrence namespace refuses this claim
+    # (no double launch); only a stale claim with a strictly newer fence
+    # may be reclaimed, and that happens after acquisition below.
+    occurrence_fingerprint = normalized_repair_identity_key
+    consultation = consult_claim_namespace(
+        queue_dir,
+        own_namespace="active",
+        occurrence_fingerprint=occurrence_fingerprint,
+        repair_identity_key=normalized_repair_identity_key,
+        request_id=normalized_request_id,
+        fence=claim_fence(normalized_repair_identity),
+        blocker_id=normalized_blocker_id,
+        now=now,
+        is_pid_live=is_pid_live,
+    )
+    if not consultation.may_proceed:
+        return ActiveRepairClaimResult(
+            status="busy",
+            lock_dir=claim_lock_dir,
+            evidence={
+                "kind": "cross_namespace_claim_conflict",
+                "namespace": "active",
+                "outcome": consultation.outcome,
+                "occurrence_fingerprint": occurrence_fingerprint,
+                "blocker_id": normalized_blocker_id,
+                "request_id": normalized_request_id,
+                "other_namespace": consultation.other_namespace,
+                "other_lock_dirs": [str(p) for p in consultation.other_lock_dirs],
+                "consultation": consultation.evidence,
+            },
+        )
 
     result = acquire_repair_lock(
         claim_lock_dir,
@@ -2166,6 +2207,37 @@ def claim_active_repair_request(
         now=now,
         is_pid_live=is_pid_live,
     )
+    # ── T-0204: post-acquisition cross-namespace backstop + stale reclaim ──
+    if result.acquired:
+        ok, backstop_evidence = finalize_cross_namespace_claim(
+            queue_dir,
+            own_namespace="active",
+            occurrence_fingerprint=occurrence_fingerprint,
+            repair_identity_key=normalized_repair_identity_key,
+            request_id=normalized_request_id,
+            fence=claim_fence(normalized_repair_identity),
+            blocker_id=normalized_blocker_id,
+            claim_lock_dir=claim_lock_dir,
+            claim_owner=result.owner,
+            claim_metadata=metadata,
+            now=now,
+            is_pid_live=is_pid_live,
+        )
+        if not ok:
+            release_repair_lock(claim_lock_dir, owner=result.owner)
+            return ActiveRepairClaimResult(
+                status="busy",
+                lock_dir=claim_lock_dir,
+                evidence={
+                    "kind": "cross_namespace_backstop_failed",
+                    "namespace": "active",
+                    "blocker_id": normalized_blocker_id,
+                    "request_id": normalized_request_id,
+                    "occurrence_fingerprint": occurrence_fingerprint,
+                    "reason": backstop_evidence.get("reason"),
+                    "evidence": backstop_evidence,
+                },
+            )
     # A stale claim is evidence for the operator/repair loop, not authority to
     # delete another worker's lock and seize it.  PID reuse and delayed writes
     # make automatic reclamation unsafe; a subsequent explicit recovery owns
@@ -2175,6 +2247,20 @@ def claim_active_repair_request(
         blocker_id=normalized_blocker_id,
         request_id=normalized_request_id,
     )
+    if claim_result.claimed:
+        repair_fence = claim_fence(normalized_repair_identity)
+        write_claim_alias(
+            queue_dir,
+            ClaimAliasRecord(
+                blocker_id=normalized_blocker_id,
+                occurrence_fingerprint=occurrence_fingerprint,
+                request_id=normalized_request_id,
+                repair_identity_key=normalized_repair_identity_key,
+                fence_epoch=repair_fence[0],
+                fence_token=repair_fence[1],
+                holder_namespaces=("active",),
+            ),
+        )
     # ── M7: shadow custody lease acquisition on successful claim ──
     if claim_result.claimed:
         lease_store = _open_custody_lease_store(lease_store_dir)

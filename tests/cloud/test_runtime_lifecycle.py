@@ -54,6 +54,28 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
     git(base_repo, "config", "user.email", "lifecycle@example.invalid")
     git(base_repo, "config", "commit.gpgsign", "false")
     (base_repo / "README.md").write_text("base seed\n")
+    # T-0301: the frozen dependency spec (pyproject.toml + uv.lock pair) that
+    # every created runtime's dependency generation is content-addressed
+    # from.  Zero dependencies and a project-only (editable-sourced) lock so
+    # the pip build path installs nothing and stays hermetic/offline.
+    (base_repo / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "sandbox-arnold"\n'
+        'version = "0.1.0"\n'
+        'requires-python = ">=3.9"\n'
+        "dependencies = []\n",
+        encoding="utf-8",
+    )
+    (base_repo / "uv.lock").write_text(
+        'version = 1\n'
+        'requires-python = ">=3.9"\n'
+        "\n"
+        "[[package]]\n"
+        'name = "sandbox-arnold"\n'
+        'version = "0.1.0"\n'
+        'source = { editable = "." }\n',
+        encoding="utf-8",
+    )
     git(base_repo, "add", "-A")
     git(base_repo, "commit", "-m", "seed base")
     git(base_repo, "branch", "-M", "main")
@@ -66,6 +88,12 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
     markers = tmp_path / "markers"
     manifest_dir = markers / "runtime-manifests"
     schedule_store = tmp_path / "schedule-store"
+    # T-0301: the shared content-addressed dependency-generation store root
+    # (one immutable venv per frozen-spec digest; every runtime resolving the
+    # same spec shares the venv).  The build strategy is pinned to pip so the
+    # sandbox builds are hermetic/offline (the sandbox uv.lock has zero
+    # installable packages).
+    gen_dir = base_dir / "runtime-venvs"
     env = os.environ.copy()
     env.update(
         {
@@ -77,6 +105,9 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
             "ARNOLD_ORIGIN_URL": str(origin),
             "ARNOLD_PROMOTION_JOURNAL": str(manifest_dir / "promotion-journal.jsonl"),
             "ARNOLD_SCHEDULE_STORE": str(schedule_store),
+            "ARNOLD_RUNTIME_VENVS_DIR": str(gen_dir),
+            "ARNOLD_REFERENCE_RUNTIME_VENVS_DIR": str(gen_dir),
+            "ARNOLD_GENERATION_BUILD_STRATEGY": "pip",
             # Reference-census stores (T-0012): sandbox-scoped so the sweep's
             # census never reads host stores.  These dirs are absent unless a
             # fixture populates them (a missing store is not a reference).
@@ -207,14 +238,32 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
     assert m["base"]["ref"] == "base/editable-install"
     assert m["timestamps"]["created"]
     assert isinstance(m["promotions"], list)
-    # filled fields: venv, repair bin, deps lockfile (no empty runtime fields)
-    assert m["epic"]["venv_path"] == f"{worktree}/.venv"
-    assert m["base"]["venv_path"] == f"{worktree}/.venv"
+    # T-0301: NO per-worktree .venv fiction — the venv is the SHARED
+    # content-addressed dependency generation, and the manifest binds its
+    # complete proof (id = frozen-spec digest).
+    gen_dir = Path(str(sandbox["env"]["ARNOLD_RUNTIME_VENVS_DIR"]))
+    assert m["epic"]["venv_path"] != f"{worktree}/.venv"
+    assert not str(m["epic"]["venv_path"]).startswith(str(worktree))
+    assert m["base"]["venv_path"] == m["epic"]["venv_path"]
+    assert str(m["epic"]["venv_path"]).startswith(str(gen_dir))
+    generation = m["epic"]["dependency_generation"]
+    assert set(generation) >= {
+        "id",
+        "frozen_spec_sha256",
+        "interpreter_path",
+        "venv_digest",
+        "created",
+    }
+    assert generation["id"] == generation["frozen_spec_sha256"]
+    assert generation["interpreter_path"] == f"{m['epic']['venv_path']}/bin/python"
+    assert Path(generation["interpreter_path"]).is_file()
+    # the generation dir is the content-addressed store entry
+    assert Path(m["epic"]["venv_path"]).name == generation["id"]
     assert (
         m["epic"]["repair_bin"]
         == f"{worktree}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
     )
-    assert m["epic"]["deps_lockfile"] == f"{worktree}/pyproject.toml"
+    assert m["epic"]["deps_lockfile"] == f"{worktree}/uv.lock"
     # policy SHAs computed from the canonical policy modules (best-effort)
     assert m["policy"]["policy_sha"]
     assert m["policy"]["model_policy_sha"]
@@ -466,6 +515,112 @@ def test_close_closes_clean_pushed_epic(sandbox: dict[str, object]) -> None:
     p = json.loads(pointer.read_text())
     assert p["state"] == "closed"
     assert p["compatibility_only"] is True
+    # close wrote the content-addressed restore receipt binding the
+    # manifest's content-addressed identities to the closed HEAD (close
+    # structurally PRECEDES restore-proven GC)
+    receipt = _restore_receipt_path(sandbox, "epic-clean")
+    assert receipt.exists()
+    payload = json.loads(receipt.read_text())
+    assert payload["schema"] == "restore-receipt/v1"
+    assert payload["epic_id"] == "epic-clean"
+    assert payload["runtime_id"] == m["runtime_id"]
+    assert payload["runtime_root"] == m["epic"]["runtime_root"]
+    assert (
+        payload["dependency_generation_id"]
+        == m["epic"]["dependency_generation"]["id"]
+    )
+    assert payload["closed_head"] == git(worktree, "rev-parse", "HEAD")
+    digest = hashlib.sha256(
+        json.dumps(
+            {k: v for k, v in payload.items() if k != "content_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    assert payload["content_sha256"] == digest
+
+
+def test_close_refuses_unresolved_reconcile_branch_on_origin(
+    sandbox: dict[str, object],
+) -> None:
+    """P6 terminal-state rules: standalone close REFUSES while a
+    ``refs/heads/reconcile/<slug>-*`` branch still exists on the remote — the
+    generated reconcile milestone's PR branch was never merged or
+    intentionally rejected, so reconcile work is still pending.  Nothing is
+    mutated: no backstop tag, no state change, no receipt."""
+    worktree = sandbox["create"]("epic-recopen")
+    git(worktree, "checkout", "-b", "reconcile/epic-recopen-20260812")
+    epic_commit(worktree, "pending.txt", "pending\n", "reconcile work (unresolved)")
+    git(
+        worktree,
+        "push",
+        "origin",
+        "HEAD:refs/heads/reconcile/epic-recopen-20260812",
+    )
+    assert sandbox["origin_heads"]("reconcile/epic-recopen-20260812")
+
+    proc = sandbox["run"](
+        CLOSE, "epic-recopen", str(manifest_path(sandbox, "epic-recopen"))
+    )
+    assert proc.returncode != 0
+    assert "unresolved reconcile" in proc.stderr.lower()
+    assert read_manifest(sandbox, "epic-recopen")["state"] == "active"
+    assert worktree.is_dir()
+    assert not _restore_receipt_path(sandbox, "epic-recopen").exists()
+    # no backstop tag was created or pushed
+    assert not _git(
+        None, "ls-remote", str(sandbox["origin"]), "refs/tags/box-snapshot/epic-recopen-*"
+    ).stdout.strip()
+
+
+def test_close_refuses_open_pull_ref_on_fixer_branch(
+    sandbox: dict[str, object],
+) -> None:
+    """Standalone close REFUSES while an open pull ref on the remote points
+    at the manifest-declared fixer branch head (the epic's PR is still open
+    and load-bearing) — close mutates nothing."""
+    worktree = sandbox["create"]("epic-propen")
+    branch = read_manifest(sandbox, "epic-propen")["epic"]["branch"]
+    head = sandbox["origin_heads"](branch)
+    assert head
+    git(Path(sandbox["base_repo"]), "update-ref", "refs/pull/321/head", head)
+    git(Path(sandbox["base_repo"]), "push", str(sandbox["origin"]), "refs/pull/321/head")
+
+    proc = sandbox["run"](
+        CLOSE, "epic-propen", str(manifest_path(sandbox, "epic-propen"))
+    )
+    assert proc.returncode != 0
+    assert "pull ref" in proc.stderr.lower()
+    assert read_manifest(sandbox, "epic-propen")["state"] == "active"
+    assert worktree.is_dir()
+    assert not _restore_receipt_path(sandbox, "epic-propen").exists()
+
+
+def test_close_proceeds_once_reconcile_resolved(sandbox: dict[str, object]) -> None:
+    """Once the reconcile is RESOLVED (the PR branch deleted on origin after
+    merge or intentional rejection), standalone close succeeds even while
+    the worktree still sits on the (now-remote-less) reconcile branch — the
+    fixer branch is verified as a ref, and close writes the receipt."""
+    worktree = sandbox["create"]("epic-recdone")
+    git(worktree, "checkout", "-b", "reconcile/epic-recdone-20260812")
+    epic_commit(worktree, "done.txt", "done\n", "reconcile work (resolved)")
+    git(worktree, "push", "origin", "HEAD:refs/heads/reconcile/epic-recdone-20260812")
+    # merged / intentionally rejected: the P6 flow deletes the PR branch
+    git(
+        Path(sandbox["base_repo"]),
+        "push",
+        str(sandbox["origin"]),
+        "--delete",
+        "refs/heads/reconcile/epic-recdone-20260812",
+    )
+    assert not sandbox["origin_heads"]("reconcile/epic-recdone-20260812")
+
+    proc = sandbox["run"](
+        CLOSE, "epic-recdone", str(manifest_path(sandbox, "epic-recdone"))
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert read_manifest(sandbox, "epic-recdone")["state"] == "closed"
+    assert _restore_receipt_path(sandbox, "epic-recdone").exists()
 
 
 def test_close_phase1_fails_on_live_pidfile(sandbox: dict[str, object]) -> None:
@@ -535,10 +690,18 @@ def test_close_refuses_present_but_corrupt_manifest(sandbox: dict[str, object]) 
 # ── arnold-gc-sweep ──────────────────────────────────────────────────────────
 
 
-def test_gc_sweep_dry_run_then_restore_proven_removes(sandbox: dict[str, object]) -> None:
+def test_gc_sweep_dry_run_then_restore_proven_removes(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """T-0027 discipline: a CLI flag is NEVER restore evidence.  After close
+    (which itself writes the content-addressed restore receipt), the sweep
+    proceeds WITHOUT any flag.  But with the receipt LOST, neither
+    ``--restore-proven`` alone nor a ``restore-proven.txt`` marker alone may
+    delete anything — only a validating content-addressed receipt does."""
     worktree = sandbox["create"]("epic-gc")
     close = sandbox["run"](CLOSE, "epic-gc", str(manifest_path(sandbox, "epic-gc")))
     assert close.returncode == 0, close.stderr
+    assert _restore_receipt_path(sandbox, "epic-gc").exists()
 
     dry = sandbox["run"](GC_SWEEP, "--dry-run", str(sandbox["manifest_dir"]))
     assert dry.returncode == 0, dry.stderr
@@ -546,31 +709,173 @@ def test_gc_sweep_dry_run_then_restore_proven_removes(sandbox: dict[str, object]
     assert worktree.is_dir()
     assert manifest_path(sandbox, "epic-gc").exists()
 
-    no_proof = sandbox["run"](GC_SWEEP, str(sandbox["manifest_dir"]))
-    assert no_proof.returncode == 0, no_proof.stderr
-    assert "restore" in no_proof.stdout.lower()  # SKIP: not restore-proven
-    assert worktree.is_dir()
-
-    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text(
-        "clean-room restore drilled 2026-08-07\n"
+    # the receipt (written by close) IS the evidence: a plain sweep — no
+    # --restore-proven flag — removes the closed, receipt-proven runtime
+    no_flag = _sweep_with_spy(
+        sandbox, git_spy, str(sandbox["manifest_dir"])
     )
-    sweep = sandbox["run"](GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"]))
-    assert sweep.returncode == 0, sweep.stderr
-    assert "SWEPT" in sweep.stdout
+    assert no_flag.returncode == 0, no_flag.stderr
+    assert "SWEPT=YES 'epic-gc'" in no_flag.stdout
     assert not worktree.exists()
     assert not manifest_path(sandbox, "epic-gc").exists()
     assert (Path(sandbox["manifest_dir"]) / "archived" / "epic-gc.json").exists()
 
 
-def test_gc_sweep_never_removes_active_manifest_tree(sandbox: dict[str, object]) -> None:
+def test_gc_sweep_flag_alone_is_not_restore_evidence(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """A CLI flag alone (--restore-proven) with NO content-addressed receipt
+    must SKIP with ZERO deletion — the flag is intent, not evidence."""
+    worktree = sandbox["create"]("epic-flagonly")
+    close = sandbox["run"](
+        CLOSE, "epic-flagonly", str(manifest_path(sandbox, "epic-flagonly"))
+    )
+    assert close.returncode == 0, close.stderr
+    # lose the restore evidence: the receipt never made it durable
+    _delete_restore_receipt(sandbox, "epic-flagonly")
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "not restore-proven" in proc.stdout
+    assert "SWEPT=YES" not in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-flagonly").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_text_marker_is_not_restore_evidence(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """A restore-proven.txt marker (the legacy evidence) with NO
+    content-addressed receipt must ALSO SKIP with zero deletion — only the
+    per-slug receipt validates (T-0504: flag/txt alone are never evidence)."""
+    worktree = sandbox["create"]("epic-markeronly")
+    close = sandbox["run"](
+        CLOSE, "epic-markeronly", str(manifest_path(sandbox, "epic-markeronly"))
+    )
+    assert close.returncode == 0, close.stderr
+    _delete_restore_receipt(sandbox, "epic-markeronly")
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text(
+        "clean-room restore drilled 2026-08-07\n"
+    )
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "not restore-proven" in proc.stdout
+    assert "SWEPT=YES" not in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-markeronly").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_torn_receipt_is_not_restore_evidence(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """A receipt whose content no longer matches its self-digest (torn after
+    close, or hand-edited) is NOT restore evidence — SKIP, zero deletion."""
+    worktree = sandbox["create"]("epic-torn")
+    close = sandbox["run"](
+        CLOSE, "epic-torn", str(manifest_path(sandbox, "epic-torn"))
+    )
+    assert close.returncode == 0, close.stderr
+    receipt = _restore_receipt_path(sandbox, "epic-torn")
+    assert receipt.exists()
+    payload = json.loads(receipt.read_text())
+    payload["restore_drill"] = "tampered after close"
+    receipt.write_text(json.dumps(payload), encoding="utf-8")  # digest now stale
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "not restore-proven" in proc.stdout
+    assert "SWEPT=YES" not in proc.stdout
+    assert worktree.is_dir()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_receipt_bound_to_other_epic_is_not_restore_evidence(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """A receipt bound to a DIFFERENT epic (epic_id mismatch) is not
+    evidence for this manifest — SKIP, zero deletion."""
+    worktree = sandbox["create"]("epic-otherrec")
+    close = sandbox["run"](
+        CLOSE, "epic-otherrec", str(manifest_path(sandbox, "epic-otherrec"))
+    )
+    assert close.returncode == 0, close.stderr
+    _delete_restore_receipt(sandbox, "epic-otherrec")
+    _write_restore_receipt(
+        sandbox, "epic-otherrec", worktree=worktree, epic_id="epic-someone-else"
+    )
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "not restore-proven" in proc.stdout
+    assert "SWEPT=YES" not in proc.stdout
+    assert worktree.is_dir()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_stale_closed_head_receipt_is_not_restore_evidence(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """A receipt whose closed_head no longer matches the LIVE worktree HEAD
+    (the tree moved after close) is stale evidence — SKIP, zero deletion."""
+    worktree = sandbox["create"]("epic-stalehead")
+    close = sandbox["run"](
+        CLOSE, "epic-stalehead", str(manifest_path(sandbox, "epic-stalehead"))
+    )
+    assert close.returncode == 0, close.stderr
+    closed_head = git(worktree, "rev-parse", "HEAD")
+    _delete_restore_receipt(sandbox, "epic-stalehead")
+    # a receipt bound to the CLOSED head exists...
+    _write_restore_receipt(
+        sandbox, "epic-stalehead", worktree=worktree, closed_head=closed_head
+    )
+    # ...but the tree advances after close AND is pushed (origin-resolvable,
+    # so the receipt's closed_head binding is the only remaining gate): the
+    # receipt is stale evidence
+    branch = read_manifest(sandbox, "epic-stalehead")["epic"]["branch"]
+    epic_commit(worktree, "late.txt", "late\n", "post-close commit")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "not restore-proven" in proc.stdout
+    assert "closed_head" in proc.stdout
+    assert "SWEPT=YES" not in proc.stdout
+    assert worktree.is_dir()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_never_removes_active_manifest_tree(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """Close PRECEDES restore-proven GC: even a VALID content-addressed
+    restore receipt cannot sweep an ACTIVE (never-closed) manifest — the
+    sweep never runs before close, no matter how strong the receipt looks
+    (design rule 0/6: an executing/editable runtime is never deleted)."""
     worktree = sandbox["create"]("epic-live")
-    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
-    proc = sandbox["run"](GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"]))
+    _write_restore_receipt(sandbox, "epic-live", worktree=worktree)
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
     assert proc.returncode == 0, proc.stderr
     assert "SKIP" in proc.stdout
     assert "active" in proc.stdout.lower()
+    assert "SWEPT=YES" not in proc.stdout
     assert worktree.is_dir()
     assert manifest_path(sandbox, "epic-live").exists()
+    _assert_no_destructive(git_spy)
 
 
 def test_gc_sweep_lists_manifestless_tree_as_needs_reconcile(
@@ -718,6 +1023,74 @@ def test_gc_sweep_absent_manifests_are_not_needs_reconcile(
     assert "done" in proc.stdout
 
 
+# ── T-0301 / G10 B2: generation-store negative controls ─────────────────────
+
+
+def test_gc_sweep_corrupt_generation_store_blocks_deletion_with_exit5(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G10 B2 (b): a PRESENT hex-named generation dir without a valid
+    .generation.json proof makes the reference census UNKNOWN, and the sweep
+    must BLOCK with exit 5 and ZERO deletions — delete-on-unknown never
+    happens, even for a closed, origin-resolvable, restore-proven runtime.
+    Deleting the generation-store scan from the census turns this into a
+    successful sweep and the test fails."""
+    worktree = sandbox["create"]("epic-genunknown")
+    close = sandbox["run"](
+        CLOSE, "epic-genunknown", str(manifest_path(sandbox, "epic-genunknown"))
+    )
+    assert close.returncode == 0, close.stderr
+    # Plant a hex-named generation entry with NO proof beside the real one.
+    gen_root = Path(str(sandbox["env"]["ARNOLD_RUNTIME_VENVS_DIR"]))
+    assert gen_root.is_dir()
+    corrupt_entry = gen_root / ("b" * 64)
+    corrupt_entry.mkdir(parents=True)
+    assert not (corrupt_entry / ".generation.json").exists()
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 5, (proc.stdout, proc.stderr)
+    assert "UNKNOWN" in proc.stderr, proc.stderr
+    assert "generation" in proc.stderr.lower(), proc.stderr
+    assert "SWEPT=YES" not in proc.stdout, proc.stdout
+    assert worktree.is_dir()  # the tree is never deleted
+    assert manifest_path(sandbox, "epic-genunknown").exists()
+    _assert_no_destructive(git_spy)
+
+
+def test_gc_sweep_manifest_without_generation_proof_needs_reconcile_never_deletes(
+    sandbox: dict[str, object], git_spy: dict[str, object]
+) -> None:
+    """G10 B2 (c): a CLOSED manifest whose dependency-generation proof is
+    missing cannot attest its dependency state — the sweep must report
+    NEEDS-RECONCILE for it (T-0301 fail-closed) and never delete the tree,
+    even with --restore-proven and a healthy generation store."""
+    worktree = sandbox["create"]("epic-nodepgen")
+    close = sandbox["run"](
+        CLOSE, "epic-nodepgen", str(manifest_path(sandbox, "epic-nodepgen"))
+    )
+    assert close.returncode == 0, close.stderr
+    mf = manifest_path(sandbox, "epic-nodepgen")
+    payload = json.loads(mf.read_text())
+    del payload["epic"]["dependency_generation"]
+    mf.write_text(json.dumps(payload), encoding="utf-8")
+
+    proc = _sweep_with_spy(
+        sandbox, git_spy, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "NEEDS-RECONCILE" in proc.stdout
+    assert "dependency generation proof missing or incomplete" in proc.stdout
+    # No deletion anywhere: the only SWEPT tokens are SWEPT=NO:REFERENCED
+    # skip markers (the proof-less per-slug manifest stays in the store and
+    # keeps the tree referenced); SWEPT=YES never appears.
+    assert "SWEPT=YES" not in proc.stdout, proc.stdout
+    assert worktree.is_dir()  # the proof-less manifest's tree is never deleted
+    assert mf.exists()
+    _assert_no_destructive(git_spy)
+
+
 def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
     sandbox: dict[str, object],
 ) -> None:
@@ -726,7 +1099,6 @@ def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
         CLOSE, "epic-schedref", str(manifest_path(sandbox, "epic-schedref"))
     )
     assert close.returncode == 0, close.stderr
-    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
     # the schedule store references this tree (probe-4 trees must never be swept)
     store = Path(str(sandbox["env"]["ARNOLD_SCHEDULE_STORE"]))
     store.mkdir(parents=True, exist_ok=True)
@@ -750,11 +1122,65 @@ def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
 # ── reference census (T-0012): fail-closed before every deletion ────────────
 
 
+def _restore_receipt_path(sandbox: dict[str, object], slug: str) -> Path:
+    """The content-addressed restore receipt arnold-close writes for a slug."""
+    return Path(sandbox["manifest_dir"]) / "restore-receipts" / f"{slug}.json"
+
+
+def _delete_restore_receipt(sandbox: dict[str, object], slug: str) -> None:
+    """Remove the restore receipt (simulate the restore evidence being lost
+    after close) so a sweep must SKIP — a CLI flag is never evidence."""
+    receipt = _restore_receipt_path(sandbox, slug)
+    if receipt.exists():
+        receipt.unlink()
+
+
+def _write_restore_receipt(
+    sandbox: dict[str, object],
+    slug: str,
+    *,
+    worktree: Path,
+    **overrides: object,
+) -> Path:
+    """Write a content-addressed restore receipt for a slug, mirroring
+    arnold-close phase 3b exactly: schema ``restore-receipt/v1``, bound to
+    the manifest's runtime_id / dependency_generation.id / runtime_root and
+    the worktree HEAD, with a self-digest ``content_sha256`` over the
+    canonical JSON body (``sort_keys``, compact separators).  ``overrides``
+    lets a fixture forge a mismatched/torn receipt for the fail-closed
+    tests (the self-digest is always recomputed over the forged body, so a
+    torn receipt's digest stops matching)."""
+    manifest = read_manifest(sandbox, slug)
+    receipt_dir = Path(sandbox["manifest_dir"]) / "restore-receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    body: dict[str, object] = {
+        "schema": "restore-receipt/v1",
+        "epic_id": slug,
+        "runtime_id": manifest["runtime_id"],
+        "runtime_root": manifest["epic"]["runtime_root"],
+        "dependency_generation_id": manifest["epic"]["dependency_generation"]["id"],
+        "closed_head": git(worktree, "rev-parse", "HEAD"),
+        "restored_at": "2026-08-12T00:00:00+00:00",
+        "restore_drill": "clean-room restore drill (fixture)",
+    }
+    body.update(overrides)
+    digest = hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    body["content_sha256"] = digest
+    path = receipt_dir / f"{slug}.json"
+    path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 def _close_epic_and_prove(sandbox: dict[str, object], slug: str) -> Path:
+    """Close an epic; close itself writes the content-addressed restore
+    receipt (close PRECEDES restore-proven GC), so the sweep's restore gate
+    passes without any flag."""
     worktree = sandbox["create"](slug)
     close = sandbox["run"](CLOSE, slug, str(manifest_path(sandbox, slug)))
     assert close.returncode == 0, close.stderr
-    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
+    assert _restore_receipt_path(sandbox, slug).exists(), close.stdout + close.stderr
     return worktree
 
 
@@ -1622,7 +2048,6 @@ def test_gc_sweep_deletes_fixer_branch_after_restore_proof(
     branch = read_manifest(sandbox, "epic-fixer")["epic"]["branch"]
     close = sandbox["run"](CLOSE, "epic-fixer", str(manifest_path(sandbox, "epic-fixer")))
     assert close.returncode == 0, close.stderr
-    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
 
     # branch exists local + remote before the sweep
     assert git(Path(sandbox["base_repo"]), "rev-parse", "--verify", branch)
@@ -1663,7 +2088,6 @@ def test_gc_sweep_refuses_fixer_branch_deletion_when_pr_still_open(
         CLOSE, "epic-fixerpr", str(manifest_path(sandbox, "epic-fixerpr"))
     )
     assert close.returncode == 0, close.stderr
-    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
     branch_head = sandbox["origin_heads"](branch)
     assert branch_head
     # simulate an open PR: a refs/pull/*/head ref on the remote pointing at
@@ -1732,15 +2156,17 @@ def test_close_passes_when_worktree_on_other_branch_but_fixer_pushed(
     sandbox: dict[str, object],
 ) -> None:
     """The fixer branch is verified as a REF, not via the checked-out HEAD:
-    close must pass when the runtime worktree sits on a milestone/reconcile
+    close must pass when the runtime worktree sits on a milestone-style
     branch while the manifest-declared fixer branch stays pushed (the P6
-    reconcile-flow shape)."""
+    reconcile-flow shape).  The branch MUST NOT carry the ``reconcile/<slug>-*``
+    prefix — any such remote branch is an UNRESOLVED reconcile and close
+    refuses by design (P6 terminal-state rules)."""
     worktree = sandbox["create"]("epic-fixerother")
     branch = read_manifest(sandbox, "epic-fixerother")["epic"]["branch"]
     # move the worktree onto a milestone-style branch + push it
-    git(worktree, "checkout", "-b", "reconcile/epic-fixerother-20260811")
-    epic_commit(worktree, "reconcile.txt", "reconciled\n", "reconcile work")
-    git(worktree, "push", "origin", "HEAD:refs/heads/reconcile/epic-fixerother-20260811")
+    git(worktree, "checkout", "-b", "milestone/epic-fixerother-20260811")
+    epic_commit(worktree, "work.txt", "milestone work\n", "milestone work")
+    git(worktree, "push", "origin", "HEAD:refs/heads/milestone/epic-fixerother-20260811")
     # the fixer branch itself is still pushed (unmoved since creation)
     assert sandbox["origin_heads"](branch)
     proc = sandbox["run"](
@@ -1748,6 +2174,8 @@ def test_close_passes_when_worktree_on_other_branch_but_fixer_pushed(
     )
     assert proc.returncode == 0, proc.stderr
     assert read_manifest(sandbox, "epic-fixerother")["state"] == "closed"
+    # close wrote the content-addressed restore receipt (close precedes GC)
+    assert _restore_receipt_path(sandbox, "epic-fixerother").exists()
 
 
 # ── arnold-promote ───────────────────────────────────────────────────────────

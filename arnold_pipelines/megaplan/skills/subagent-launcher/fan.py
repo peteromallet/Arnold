@@ -19,7 +19,7 @@ Kill-switch layers (see SKILL.md for full design notes):
 Usage:
     PYENV_VERSION=3.11.11 python fan.py \\
         --briefs-dir=/tmp/briefs --output-dir=/tmp/results \\
-        --max-workers=5 --model="deepseek:deepseek-v4-pro" \\
+        --max-workers=5 --model="deepseek:deepseek-v4-flash" \\
         --toolsets="file,web" --max-tokens=65536 --task-timeout=1800
 
     # Positional briefs:
@@ -762,7 +762,7 @@ def run(
     briefs_dir: Optional[str] = None,
     output_dir: str = "./fan_out",
     max_workers: int = 5,
-    model: str = "deepseek:deepseek-v4-pro",
+    model: str = "deepseek:deepseek-v4-flash",
     model_map: Optional[str] = None,
     toolsets: str = "file,web",
     max_tokens: int = 65536,

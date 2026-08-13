@@ -51,6 +51,22 @@ redaction             ARNOLD_REDACTION_ENABLED      1 (on)     Redact secrets fr
                                                                 outbound artifacts.
 ====================  ============================  =========  ===================
 
+Report filters (never authority)
+--------------------------------
+
+``MEGAPLAN_AUDIT_SESSION_ALLOWLIST`` and ``MEGAPLAN_AUDIT_PLAN_ALLOWLIST``
+are REPORT-ONLY row filters consumed by the progress-auditor report
+assembler.  They narrow which sessions/plans appear in an audit report and
+can NEVER authorize mutation, dispatch, repair, commit, or push.  Audit
+reporting may filter by session or plan; the mutation and push gates remain
+separate and default-off (``ARNOLD_AUTONOMY``, ``ARNOLD_META_REPAIR_PUSH_
+ENABLED``).
+
+The ghost name ``ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST`` has no reader
+anywhere in this tree.  It is a removed non-control: the hot-env validator
+(``scripts/cloud_hot_upload.py``) rejects it by name so an absent control
+cannot be resurrected as a plausible-looking knob.
+
 Every caller MUST import from here rather than calling ``os.getenv`` or
 ``os.environ.get`` directly for the env vars listed above.
 """
@@ -244,13 +260,14 @@ def audit_autofix_commit_enabled() -> bool:
 
     Controlled by ``ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED`` — defaults to ON (``"1"``).
 
-    Retired as an auditor control (G5): the L3 audit reviewer is dispatched
-    with ``codex exec --sandbox read-only`` and an unconditionally
-    read-only evaluator policy, so there is no commit-capable effect in the
-    progress-auditor wrapper to gate.  The progress-auditor no longer reads
-    this flag, forwards it, or renders it into the reviewer brief.  The API
-    is retained for a future commit boundary (T-0208) and for the hot-env
-    deny-list; do not re-introduce an auditor-side reader that cannot gate.
+    Enforced at the auditor's commit-capable effect boundary (T-0208), not
+    in prompt text: the progress-auditor folds this flag into the authority
+    it grants the watchdog recovery sweep and the L3 escalation controller's
+    repair-request handoff (a commit-capable fixer drains that queue).  With
+    the flag off the auditor degrades to observation and report-only — zero
+    commit-capable dispatch — no matter how persuasive an agent result
+    claims to be.  The read-only L3 reviewer dispatch is not commit-capable
+    and stays gated on :func:`audit_autofix_mutation_authorized` alone.
     """
     return _is_enabled("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", True)
 

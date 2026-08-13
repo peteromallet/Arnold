@@ -84,7 +84,10 @@ def test_chain_start_uses_manifest_activate_when_bound() -> None:
     assert "pip install -e" not in command
     assert "git fetch" not in command
     assert "git pull" not in command
-    assert "python -P -m arnold_pipelines.megaplan chain start" in command
+    # T-0301: the launch runs under the generation interpreter
+    # (manifest-bound, worktree-first PYTHONPATH) — never ambient python.
+    assert '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan chain start' in command
+    assert "python -P -m arnold_pipelines.megaplan chain start" not in command
 
 
 def test_chain_start_without_binding_never_refreshes_remote_git() -> None:
@@ -118,10 +121,17 @@ def test_chain_start_without_binding_never_refreshes_remote_git() -> None:
     assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in command
     assert "isolated_chain_runtime_binding_drift: manifest lacks runtime_root" in command
     assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" in command
+    # T-0301: the generation-interpreter gate (proof completeness +
+    # executable check) runs before the provenance check, and the launch
+    # executes under the generation interpreter — no ambient python, no
+    # editable-install fallback.
+    assert "manifest lacks dependency generation interpreter" in command
+    assert "dependency generation interpreter not executable" in command
     assert 'PYTHONPATH="$ENGINE_DIR"' in command
     assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
     assert "MEGAPLAN_RUNTIME_SRC" not in command
-    assert "python -P -m arnold_pipelines.megaplan chain start" in command
+    assert '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan chain start' in command
+    assert "python -P -m arnold_pipelines.megaplan chain start" not in command
 
 
 def test_chain_start_command_keeps_launch_pin_before_hot_env() -> None:
@@ -183,7 +193,10 @@ def _runtime_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
 
 
 def _canonical_manifest_payload(
-    runtime_root: str, *, expected_head: str
+    runtime_root: str,
+    *,
+    expected_head: str,
+    interpreter_path: str = "/opt/arnold/runtime-venvs/generation/bin/python",
 ) -> dict[str, object]:
     """Canonical schema-"1" runtime-manifest payload (G6 round-9 finding 1).
 
@@ -191,6 +204,11 @@ def _canonical_manifest_payload(
     (``TOP_LEVEL_REQUIRED`` / ``EPIC_REQUIRED``), which the schema-gated
     pinned-manifest reads now enforce.  A schema-less ``{"epic": {...}}``
     shape is canonically INVALID and must never be used as a trusted fixture.
+
+    T-0301: carries a complete ``dependency_generation`` proof whose
+    ``interpreter_path`` the launch gate requires (every production launch
+    runs under the generation interpreter; a manifest without the proof
+    fails closed with exit 24).
     """
     return {
         "runtime_id": "auto-pin-runtime-1",
@@ -213,6 +231,13 @@ def _canonical_manifest_payload(
             "expected_head": expected_head,
             "repair_bin": f"{runtime_root}/venv/bin/arnold-repair-loop",
             "deps_lockfile": f"{runtime_root}/uv.lock",
+            "dependency_generation": {
+                "id": "a" * 64,
+                "frozen_spec_sha256": "a" * 64,
+                "interpreter_path": interpreter_path,
+                "venv_digest": "b" * 64,
+                "created": "2026-08-12T00:00:00Z",
+            },
         },
         "indirection": {
             "host_path": runtime_root,
@@ -303,6 +328,12 @@ def test_auto_entrypoint_manifest_pin_precedes_marker_and_launch() -> None:
             "manifest lacks runtime identity",
         ),
         (
+            "no-generation",  # T-0301: proof missing -> launch blocked
+            "valid-no-generation",
+            0,
+            "manifest lacks dependency generation interpreter",
+        ),
+        (
             "provenance-mismatch",
             "valid",
             23,
@@ -361,9 +392,21 @@ def test_auto_entrypoint_fails_closed_before_marker_write(
             # Canonically schema-valid (gate passes) but expected_head empty:
             # ENGINE_DIR reads, then the runtime-identity check fails.
             manifest = _canonical_manifest_payload(runtime_root, expected_head="")
-        else:  # kind == "valid"
+        elif kind == "valid-no-generation":
+            # T-0301: canonically schema-valid but carrying NO
+            # dependency_generation proof — the launch gate fails closed
+            # (a runtime without a verifiable immutable generation is never
+            # launched, and there is no editable-install fallback).
             manifest = _canonical_manifest_payload(
-                runtime_root, expected_head="a" * 40
+                runtime_root, expected_head="a" * 40, interpreter_path=str(shim)
+            )
+            del manifest["epic"]["dependency_generation"]  # type: ignore[typeddict-item]
+        else:  # kind == "valid"
+            # The generation proof points at the shim so the gate's
+            # interpreter-existence check passes and the failure lands in the
+            # provenance check (provenance_rc).
+            manifest = _canonical_manifest_payload(
+                runtime_root, expected_head="a" * 40, interpreter_path=str(shim)
             )
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
@@ -427,9 +470,16 @@ def test_auto_entrypoint_schema_valid_manifest_binds_engine_dir_to_root(
         "REAL_PYTHON": sys.executable,
     }
     manifest_path = tmp_path / "runtime-manifest.json"
+    # T-0301: the generation proof's interpreter IS the shim — the gate's
+    # interpreter-existence check passes and the provenance check runs via
+    # the shim (which records the PYTHONPATH it was invoked with).
     manifest_path.write_text(
         json.dumps(
-            _canonical_manifest_payload(str(runtime_root), expected_head="a" * 40)
+            _canonical_manifest_payload(
+                str(runtime_root),
+                expected_head="a" * 40,
+                interpreter_path=str(shim),
+            )
         ),
         encoding="utf-8",
     )

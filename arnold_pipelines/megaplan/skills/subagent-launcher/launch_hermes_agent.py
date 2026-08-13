@@ -9,7 +9,7 @@ one-shot opinion.
 
 Usage:
     PYENV_VERSION=3.11.11 python launch_hermes_agent.py \
-        --model="deepseek:deepseek-v4-pro" \
+        --model="deepseek:deepseek-v4-flash" \
         --toolsets="file,web" \
         --query-file=/tmp/brief.md
 
@@ -312,7 +312,7 @@ def _automatic_managed_reexec() -> int | None:
     except (OSError, TypeError, ValueError) as exc:
         raise RuntimeError("automatic nested launcher inherited invalid managed custody") from exc
 
-    model = "deepseek:deepseek-v4-pro"
+    model = "deepseek:deepseek-v4-flash"
     project_dir = str(Path.cwd())
     query_file = ""
     child_args: list[str] = []
@@ -462,7 +462,7 @@ def _apply_context_budget(agent, budget_tokens: Optional[int]) -> Optional[dict[
 
 
 def run(
-    model: str = "deepseek:deepseek-v4-pro",
+    model: str = "deepseek:deepseek-v4-flash",
     query: Optional[str] = None,
     query_file: Optional[str] = None,
     toolsets: str = "file,web",

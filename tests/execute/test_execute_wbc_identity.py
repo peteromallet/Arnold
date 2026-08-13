@@ -124,6 +124,34 @@ def test_execute_wbc_real_builder_acquires_custody_and_is_authorized(
     assert (tmp_path / "custody" / "outbox").is_dir()
 
 
+def test_execute_wbc_replay_joins_same_lease_with_full_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-0205: rebuilding the same execute dispatch (same dispatch identity)
+    joins the SAME custody lease — one acquire event, idempotent keep — and
+    the replayed lease's occurrence key reconstructs the FULL acquisition
+    target (digest join is stable across builds)."""
+    monkeypatch.delenv("ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT", raising=False)
+    dispatch = _dispatch(coordinator_attempt_id="coord-1", fence_token=1)
+    first = _spec(tmp_path, dispatch)
+    replay = _spec(tmp_path, dispatch)
+    assert first.attempt_id == replay.attempt_id
+
+    ctx = first.start_action_context
+    lease_id = f"custody-lease-{ctx.target.target_digest[:16]}"
+    store = replay.facade._lease_store
+    lease = store.current_lease(lease_id)
+    assert lease is not None
+    # The lease history contains exactly one acquire — the replay idempotently
+    # kept the same lease rather than appending a second event.
+    assert len(store.load_history(lease_id)) == 1
+    # The replayed occurrence key joins the full target used at acquisition:
+    # replaying the acquire payload reconstructs the same digest.
+    assert lease.occurrence_key.target.target_digest == ctx.target.target_digest
+    assert lease.wbc_attempt_reference == first.attempt_id
+
+
 def test_execute_wbc_denies_when_custody_is_contended(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

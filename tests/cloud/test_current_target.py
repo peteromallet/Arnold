@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 from copy import deepcopy
@@ -1497,3 +1498,279 @@ def test_resolve_current_target_contains_event_checkpoint_failure(
 
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
     return chain_spec._state_path_for(spec_path)
+
+
+# ── T-0207: cursor-validated status observation envelope ────────────────────
+
+
+def _write_status_snapshot(
+    snapshot_path: Path,
+    *,
+    session: str,
+    generated_at: str,
+    custody_kind: str = "managed-running",
+    canonical_state: str = "RETRYABLE_EXECUTION_BLOCK",
+    record_projection: bool = True,
+    sessions: list[dict[str, Any]] | None = None,
+) -> None:
+    """Write a cloud-status snapshot at *snapshot_path*.
+
+    When *record_projection* is True the write goes through
+    ``write_cloud_status_snapshot`` so the projection history carries a cursor
+    for the same file content (the coherent/fresh case).  When False the file
+    is written directly with no projection history (the unvalidated case).
+    """
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    if sessions is None:
+        sessions = [
+            {
+                "session": session,
+                "status": "blocked",
+                "cloud_custody": {"custody_kind": custody_kind},
+                "canonical_state": canonical_state,
+                "canonical_reason": "resolver classified the session",
+                "canonical_resolver": {
+                    "confidence": "high",
+                    "source_of_truth": ["plan_state"],
+                    "repairable": True,
+                    "running": False,
+                    "next_action": "repair source",
+                    "evidence": [
+                        {
+                            "key": "root_cause_fingerprint",
+                            "value": "sha256:abc123",
+                        }
+                    ],
+                },
+                "plan_state": {"active_step": None},
+            }
+        ]
+    snapshot = {
+        "generated_at": generated_at,
+        "source": "cloud-local-observer",
+        "summary": {"running": 0, "complete": 0},
+        "sessions": sessions,
+        "degraded": None,
+    }
+    if record_projection:
+        status_snapshot.write_cloud_status_snapshot(snapshot, path=snapshot_path)
+    else:
+        snapshot_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+
+def _observation(
+    session: str,
+    marker_dir: Path,
+    *,
+    snapshot_path: Path,
+    max_age_s: float = 3600.0,
+    now: Any = None,
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.cloud.current_target import (
+        resolve_status_observation,
+    )
+
+    return resolve_status_observation(
+        session,
+        marker_dir=marker_dir,
+        repair_data_dir=marker_dir / "repair-data",
+        snapshot_path=snapshot_path,
+        max_age_s=max_age_s,
+        now=now,
+    )
+
+
+def test_status_observation_fresh_coherent_snapshot_is_eligible(
+    tmp_path: Path,
+) -> None:
+    """A fresh, cursor-validated snapshot yields an eligible observation that
+    is still NEVER authority (authorizes_* always False)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_marker(
+        marker_dir / "demo.json",
+        {
+            "session": "demo",
+            "workspace": str(tmp_path / "ws"),
+            "run_kind": "plan",
+        },
+    )
+    _write_status_snapshot(
+        snapshot_path,
+        session="demo",
+        generated_at="2026-08-12T10:00:00Z",
+        custody_kind="managed-running",
+    )
+
+    now = dt.datetime(2026, 8, 12, 10, 0, 30, tzinfo=dt.timezone.utc)
+    env = _observation("demo", marker_dir, snapshot_path=snapshot_path, now=now)
+
+    assert env["observation"] == "fresh"
+    assert env["effect_eligible"] is True
+    assert env["diagnostic_only"] is False
+    assert env["authorizes_repair"] is False
+    assert env["authorizes_completion"] is False
+    assert env["reason"] == ""
+    assert env["session_entry"]["session"] == "demo"
+    assert env["canonical"]["canonical_state"] == "RETRYABLE_EXECUTION_BLOCK"
+    assert env["canonical"]["cloud_custody"]["custody_kind"] == "managed-running"
+    assert env["cursor"] is not None
+    assert env["target"]["session"] == "demo"
+
+
+def test_status_observation_stale_snapshot_is_diagnostic_only(tmp_path: Path) -> None:
+    """A snapshot older than the freshness window is diagnostic-only and can
+    never authorize an effect call."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_status_snapshot(
+        snapshot_path,
+        session="demo",
+        generated_at="2026-08-12T08:00:00Z",
+        custody_kind="unmanaged-warning",
+    )
+
+    now = dt.datetime(2026, 8, 12, 10, 0, 30, tzinfo=dt.timezone.utc)
+    env = _observation(
+        "demo", marker_dir, snapshot_path=snapshot_path, max_age_s=3600.0, now=now
+    )
+
+    assert env["observation"] == "stale"
+    assert env["effect_eligible"] is False
+    assert env["diagnostic_only"] is True
+    assert env["authorizes_repair"] is False
+    assert env["authorizes_completion"] is False
+    assert "stale" in env["reason"]
+    assert env["session_entry"] is None
+    assert env["canonical"] == {}
+    # Even a persuasive unmanaged custody state in the stale snapshot cannot
+    # produce an eligible observation (zero effect calls downstream).
+    assert env["canonical"].get("cloud_custody") is None
+
+
+def test_status_observation_missing_snapshot_is_diagnostic_only(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+
+    env = _observation("demo", marker_dir, snapshot_path=snapshot_path)
+
+    assert env["observation"] == "missing"
+    assert env["effect_eligible"] is False
+    assert env["diagnostic_only"] is True
+    assert env["authorizes_repair"] is False
+
+
+def test_status_observation_unreadable_snapshot_is_diagnostic_only(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    snapshot_path.write_text("{not valid json", encoding="utf-8")
+
+    env = _observation("demo", marker_dir, snapshot_path=snapshot_path)
+
+    assert env["observation"] == "unreadable"
+    assert env["effect_eligible"] is False
+    assert env["diagnostic_only"] is True
+
+
+def test_status_observation_mixed_torn_snapshot_is_diagnostic_only(
+    tmp_path: Path,
+) -> None:
+    """A snapshot whose file content diverges from its projection cursor
+    (torn read / tamper) is diagnostic-only."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_status_snapshot(
+        snapshot_path,
+        session="demo",
+        generated_at="2026-08-12T10:00:00Z",
+        custody_kind="managed-running",
+    )
+    # Tamper the file AFTER the projection cursor was recorded: the content
+    # now diverges from the cursor's source digest (torn/tampered read).
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-08-12T10:00:00Z",
+                "sessions": [
+                    {
+                        "session": "demo",
+                        "cloud_custody": {"custody_kind": "unmanaged-warning"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    now = dt.datetime(2026, 8, 12, 10, 0, 30, tzinfo=dt.timezone.utc)
+    env = _observation("demo", marker_dir, snapshot_path=snapshot_path, now=now)
+
+    assert env["observation"] == "mixed"
+    assert env["effect_eligible"] is False
+    assert env["diagnostic_only"] is True
+    assert "diverges from projection cursor" in env["reason"]
+    assert env["session_entry"] is None
+
+
+def test_status_observation_unvalidated_snapshot_is_diagnostic_only(
+    tmp_path: Path,
+) -> None:
+    """A snapshot with no projection cursor history cannot be cursor-validated
+    and is therefore diagnostic-only (fail-closed)."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_status_snapshot(
+        snapshot_path,
+        session="demo",
+        generated_at="2026-08-12T10:00:00Z",
+        custody_kind="unmanaged-warning",
+        record_projection=False,
+    )
+
+    now = dt.datetime(2026, 8, 12, 10, 0, 30, tzinfo=dt.timezone.utc)
+    env = _observation("demo", marker_dir, snapshot_path=snapshot_path, now=now)
+
+    assert env["observation"] == "unvalidated"
+    assert env["effect_eligible"] is False
+    assert env["diagnostic_only"] is True
+    assert env["authorizes_repair"] is False
+    assert env["session_entry"] is None
+
+
+def test_status_observation_observe_disabled_is_diagnostic_only(
+    tmp_path: Path, monkeypatch
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    snapshot_path = tmp_path / "status" / "cloud-status.json"
+    snapshot_path.parent.mkdir(parents=True)
+    _write_status_snapshot(
+        snapshot_path,
+        session="demo",
+        generated_at="2026-08-12T10:00:00Z",
+        custody_kind="unmanaged-warning",
+    )
+    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
+
+    env = _observation("demo", marker_dir, snapshot_path=snapshot_path)
+
+    assert env["observation"] == "unavailable"
+    assert env["effect_eligible"] is False
+    assert env["diagnostic_only"] is True
+    assert env["authorizes_repair"] is False

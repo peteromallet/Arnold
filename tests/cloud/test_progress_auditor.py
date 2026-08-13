@@ -1010,6 +1010,237 @@ def test_auditor_worklist_supports_explicit_session_scope() -> None:
     assert "if plan_allowlist and entry.get(\"plan\") not in plan_allowlist:" in wrapper
 
 
+# ---------------------------------------------------------------------------
+# T-0208 ghost controls: commit flag enforced at the effect boundary,
+# allowlists are report filters only
+# ---------------------------------------------------------------------------
+
+
+def test_auditor_wrapper_enforces_commit_flag_at_effect_boundary() -> None:
+    """The wrapper derives the audit commit flag and folds it into a single
+    effect authority used by every commit-capable surface (watchdog recovery
+    sweep and L3 escalation controller).  The read-only reviewer dispatch is
+    not commit-capable and stays on the raw mutation flag."""
+    wrapper = _wrapper("arnold-progress-auditor")
+
+    assert (
+        'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled '
+        "audit_autofix_commit_enabled)\""
+    ) in wrapper
+    assert (
+        'if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" '
+        '&& "$AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG" == "1" ]]; then'
+    ) in wrapper
+    commit_at = wrapper.index("AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG=")
+    effect_at = wrapper.index("AUDIT_EFFECT_AUTHORITY_FLAG=")
+    assert commit_at < effect_at
+    # The L3 escalation controller (the auditor's commit-capable repair
+    # handoff) receives the combined effect authority, never the raw
+    # mutation flag, so a closed commit gate zeroes the enqueue.
+    assert '    "$AUDIT_EFFECT_AUTHORITY_FLAG" <<\'PY\'' in wrapper
+    # The recovery sweep (can end in a watchdog source repair + git commit)
+    # is gated on the same effect authority.
+    assert 'if [[ "$AUDIT_EFFECT_AUTHORITY_FLAG" != "1" ]]; then' in wrapper
+    assert (
+        "skipping watchdog recovery sweep because commit-capable effect "
+        "authority is not granted" in wrapper
+    )
+    # The report-filter allowlists never appear in an authority decision:
+    # they are consumed only in the report worklist assembly.
+    authority_start = wrapper.index("AUDIT_EFFECT_AUTHORITY_FLAG=")
+    report_filter_start = wrapper.index("session_allowlist = {")
+    assert report_filter_start > authority_start
+    assert "AUDIT_SESSION_ALLOWLIST" not in wrapper[authority_start:report_filter_start]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "commit", "expected"),
+    [("1", "1", "1"), ("1", "0", "0"), ("0", "1", "0"), ("0", "0", "0")],
+)
+def test_audit_effect_authority_requires_mutation_and_commit_gate(
+    mutation: str, commit: str, expected: str
+) -> None:
+    """AUDIT_EFFECT_AUTHORITY_FLAG is the AND of the mutation gate and the
+    audit commit gate: a closed commit flag zeroes every commit-capable
+    auditor effect."""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                'AUDIT_MUTATION_AUTHORIZED_FLAG="$1"\n'
+                'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$2"\n'
+                'AUDIT_EFFECT_AUTHORITY_FLAG="0"\n'
+                'if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" '
+                '&& "$AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG" == "1" ]]; then\n'
+                '  AUDIT_EFFECT_AUTHORITY_FLAG="1"\n'
+                "fi\n"
+                'printf "%s\\n" "$AUDIT_EFFECT_AUTHORITY_FLAG"'
+            ),
+            "bash",
+            mutation,
+            commit,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected
+
+
+def test_commit_gate_closed_recovery_sweep_makes_zero_effect_calls(tmp_path: Path) -> None:
+    """With the audit commit gate closed, the watchdog recovery sweep is a
+    zero-effect observation: the watchdog binary is never invoked (a sweep
+    can end in a watchdog source repair + git commit)."""
+    wrapper = _wrapper("arnold-progress-auditor")
+    fn_start = wrapper.index("run_recovery_sweep() {")
+    # The first GLOBAL_WATCHDOG_SWEEP_ENABLED case needs bash 4+ (${var,,});
+    # macOS ships bash 3.2, so extract the gate + watchdog-invocation segment
+    # after that case.  The closed-gate path returns before the second case,
+    # keeping the segment bash-3.2-safe.
+    seg_start = wrapper.index('  capture_recovery_snapshot "$before_path"', fn_start)
+    # Stop before the function's closing brace so the segment can be wrapped
+    # in a test-local function (its `return 0` requires a function frame).
+    seg_end = wrapper.index("\n}\n", seg_start)
+    sweep_segment = wrapper[seg_start:seg_end]
+    # Positive path is source-asserted: with the gate open, the sweep's
+    # commit-capable watchdog invocation follows the gate and is only further
+    # gated by RECOVERY_ENABLED.
+    assert 'if [[ "$AUDIT_EFFECT_AUTHORITY_FLAG" != "1" ]]; then' in sweep_segment
+    assert sweep_segment.index("AUDIT_EFFECT_AUTHORITY_FLAG") < sweep_segment.index(
+        '"$WATCHDOG_BIN" --audit-sweep'
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir(parents=True, exist_ok=True)
+    recovery_evidence = tmp_path / "recovery.json"
+    watchdog_report = tmp_path / "watchdog-report.json"
+    watchdog_report.write_text(json.dumps({"timestamp_utc": "now", "items": []}), encoding="utf-8")
+
+    watchdog = tmp_path / "watchdog"
+    called_marker = tmp_path / "watchdog-called"
+    watchdog.write_text(
+        "#!/usr/bin/env bash\n"
+        f": > {shlex.quote(str(called_marker))}\n"
+        "echo watchdog-sweep-invoked\n",
+        encoding="utf-8",
+    )
+    watchdog.chmod(watchdog.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_auditor_function("redact_inline_text"),
+            _extract_auditor_function("log"),
+            _extract_auditor_function("capture_recovery_snapshot"),
+            _extract_auditor_function("assemble_recovery_evidence"),
+        ]
+    )
+    script += (
+        "\n"
+        f"GATHER_DIR={shlex.quote(str(gather_dir))}\n"
+        f"RECOVERY_EVIDENCE={shlex.quote(str(recovery_evidence))}\n"
+        f"WATCHDOG_REPORT={shlex.quote(str(watchdog_report))}\n"
+        f"WATCHDOG_BIN={shlex.quote(str(watchdog))}\n"
+        "RECOVERY_ENABLED=1\n"
+        "RECOVERY_SYNC_ENABLED=0\n"
+        "AUDIT_MUTATION_AUTHORIZED_FLAG=1\n"
+        "AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG=0\n"
+        "AUDIT_EFFECT_AUTHORITY_FLAG=0\n"
+        'before_path="$GATHER_DIR/recovery-before.json"\n'
+        'after_path="$GATHER_DIR/recovery-after.json"\n'
+        "watchdog_rc=0\n"
+        "run_sweep_segment() {\n"
+        + sweep_segment
+        + "\n}\n"
+        "run_sweep_segment\n"
+    )
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": str(REPO_ROOT),
+            "WRAPPER_REPO_ROOT": str(REPO_ROOT),
+            "ARNOLD_SRC": str(REPO_ROOT),
+        }
+    )
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, env=env, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert not called_marker.exists(), (
+        "watchdog sweep must make zero effect calls with the commit gate closed"
+    )
+    assert (
+        "commit-capable effect authority is not granted" in result.stdout
+    ), result.stdout
+    evidence = json.loads(recovery_evidence.read_text(encoding="utf-8"))
+    assert evidence["enabled"] is False
+    assert evidence["watchdog_exit_code"] == 0
+    assert evidence["sessions_discovered"] == 0
+
+
+def test_commit_gate_closed_l3_controller_enqueues_zero_requests(tmp_path: Path) -> None:
+    """With the audit commit gate closed, the L3 escalation controller runs
+    in report-only: zero repair requests are enqueued — hence zero
+    commit-capable dispatch — even for a finding that the true-stall gate
+    would otherwise evaluate."""
+    wrapper = _wrapper("arnold-progress-auditor")
+    start = wrapper.index('L3_ESCALATION_RESULT="$(')
+    end = wrapper.index('PY\n)"', start) + len('PY\n)"')
+    controller_script = wrapper[start:end] + '\nprintf "%s\\n" "$L3_ESCALATION_RESULT"\n'
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir(parents=True, exist_ok=True)
+    findings = {
+        "window_hours": 6,
+        "stall_summary": "stall:demo",
+        "findings": [
+            {
+                "workspace": str(tmp_path / "workspace"),
+                "plan": "demo-plan",
+                "session": "demo-session",
+                "reasons": ["phase_failed: stale watchdog output"],
+                "session_header": {"kind": "chain"},
+            }
+        ],
+        "green_checks": [],
+    }
+    findings_path = gather_dir / "findings.json"
+    findings_path.write_text(json.dumps(findings), encoding="utf-8")
+    state_root = tmp_path / "escalations"
+    queue_root = tmp_path / "queue"
+    state_root.mkdir(parents=True)
+    queue_root.mkdir(parents=True)
+
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": str(REPO_ROOT),
+            "WRAPPER_REPO_ROOT": str(REPO_ROOT),
+            "ARNOLD_SRC": str(REPO_ROOT),
+            "GATHER_DIR": str(gather_dir),
+            "ESCALATION_STATE_ROOT": str(state_root),
+            "REPAIR_QUEUE_ROOT": str(queue_root),
+            "AUDIT_EFFECT_AUTHORITY_FLAG": "0",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "-lc", controller_script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout.strip().splitlines()[-1])
+    assert summary["authorized"] is False
+    assert summary["dispatched"] == 0
+    assert summary["repair_handoff_routed_through_shim"] is True
+    assert not any(queue_root.rglob("*")), (
+        "a closed commit gate must enqueue zero repair requests"
+    )
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")

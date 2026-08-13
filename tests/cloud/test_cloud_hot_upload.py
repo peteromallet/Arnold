@@ -119,6 +119,33 @@ def test_upload_env_names_rejects_retired_runtime_selectors(monkeypatch) -> None
     assert commands == []
 
 
+def test_upload_env_names_rejects_absent_ghost_config_names(monkeypatch) -> None:
+    """An absent control must not be resurrected through hot env: ghost
+    names with no reader anywhere in the tree are rejected by name (T-0208)."""
+    from scripts import cloud_hot_upload as hot_upload
+
+    spec = _ssh_spec()
+    assert spec.ssh is not None
+    remote = Remote(spec.ssh, apply=False)
+    commands: list[str] = []
+
+    def fake_docker_exec(command: str, **_kwargs):
+        commands.append(command)
+        return None
+
+    monkeypatch.setattr(remote, "docker_exec", fake_docker_exec)
+    monkeypatch.setenv("ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST", "session-x")
+
+    try:
+        hot_upload.upload_env_names(remote, ["ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST"])
+    except hot_upload.HotUploadError as exc:
+        assert "ghost config name" in str(exc)
+    else:
+        raise AssertionError("ghost config name was not rejected")
+
+    assert commands == []
+
+
 def test_upload_env_names_rejects_nonsecret_tuning_and_plain_vars(
     monkeypatch,
 ) -> None:

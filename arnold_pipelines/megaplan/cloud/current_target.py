@@ -1469,3 +1469,187 @@ def _artifact_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:
         _safe_text(item.get("path")),
         _safe_text(item.get("session")),
     )
+
+
+# ── T-0207: cursor-validated status observation envelope ────────────────────
+
+# Freshness window for repair-loop status observations.  The watchdog writes
+# cloud-status.json once per sweep (default 3600s), so an observation older
+# than one sweep is stale by construction.
+_STATUS_OBSERVATION_MAX_AGE_S = 3600.0
+
+
+def _extract_status_session_entry(
+    snapshot: Mapping[str, Any] | None,
+    session: str,
+) -> dict[str, Any] | None:
+    """Return the snapshot's session entry for *session*, or None."""
+    if not isinstance(snapshot, Mapping):
+        return None
+    sessions = snapshot.get("sessions")
+    if not isinstance(sessions, list):
+        return None
+    for entry in sessions:
+        if isinstance(entry, Mapping) and _safe_text(entry.get("session")) == session:
+            return dict(entry)
+    return None
+
+
+def _extract_canonical_from_entry(entry: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Extract canonical resolver fields from a snapshot session entry."""
+    if not isinstance(entry, Mapping):
+        return {}
+    resolver = entry.get("canonical_resolver")
+    if not isinstance(resolver, Mapping):
+        resolver = {}
+    return {
+        "canonical_state": _safe_text(entry.get("canonical_state")),
+        "canonical_reason": _safe_text(entry.get("canonical_reason")),
+        "canonical_resolver": _stable_mapping(resolver),
+        "canonical_human_required": entry.get("canonical_human_required"),
+        "canonical_human_gate": entry.get("canonical_human_gate"),
+        "cloud_custody": _stable_mapping(entry.get("cloud_custody")),
+    }
+
+
+def resolve_status_observation(
+    session: str,
+    *,
+    marker_dir: str | Path,
+    repair_data_dir: str | Path | None = None,
+    snapshot_path: str | Path | None = None,
+    max_age_s: float | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return a cursor-validated status observation envelope for *session*.
+
+    The envelope ties the cloud status snapshot (``cloud-status.json``) to the
+    resolved current target and the snapshot's projection cursor.  It is
+    NEVER authority: ``authorizes_repair`` and ``authorizes_completion`` are
+    always ``False``, and only a ``fresh`` observation is ``effect_eligible``.
+    Stale, unreadable, missing, mixed (torn/tampered), and unvalidated (no
+    cursor history) snapshots are DIAGNOSTIC ONLY — callers MUST make zero
+    effect calls from them.
+
+    *snapshot_path* defaults to the canonical ``cloud-status.json`` path.
+    *max_age_s* defaults to the watchdog sweep window (3600s).  Cursor
+    validation compares the current file digest against the latest projection
+    cursor; a mismatch is a torn read or tamper and is reported as ``mixed``.
+    """
+    from arnold_pipelines.megaplan.cloud import status_snapshot  # lazy: circular
+    from arnold_pipelines.megaplan._core.io import sha256_file
+
+    envelope_base = {
+        "schema_version": 1,
+        "session": session,
+        "authorizes_repair": False,
+        "authorizes_completion": False,
+        "effect_eligible": False,
+        "diagnostic_only": True,
+        "target": resolve_current_target(
+            session,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+        ),
+    }
+    if not resolver_observe_enabled():
+        return {
+            **envelope_base,
+            "observation": "unavailable",
+            "reason": "resolver observe disabled via ARNOLD_RESOLVER_OBSERVE",
+            "snapshot_path": str(snapshot_path or status_snapshot.DEFAULT_SNAPSHOT_PATH),
+            "snapshot_generated_at": None,
+            "cursor": None,
+            "session_entry": None,
+            "canonical": {},
+        }
+
+    path = Path(snapshot_path) if snapshot_path is not None else status_snapshot.DEFAULT_SNAPSHOT_PATH
+    path = Path(path)
+    max_age = _STATUS_OBSERVATION_MAX_AGE_S if max_age_s is None else float(max_age_s)
+
+    if not path.exists():
+        return {
+            **envelope_base,
+            "observation": "missing",
+            "reason": f"status snapshot missing at {path}",
+            "snapshot_path": str(path),
+            "snapshot_generated_at": None,
+            "cursor": None,
+            "session_entry": None,
+            "canonical": {},
+        }
+
+    snapshot, degraded_reason = status_snapshot.load_cloud_status_snapshot(
+        path, max_age_s=max_age, now=now
+    )
+    if snapshot is None:
+        return {
+            **envelope_base,
+            "observation": "unreadable",
+            "reason": degraded_reason or f"status snapshot unreadable at {path}",
+            "snapshot_path": str(path),
+            "snapshot_generated_at": None,
+            "cursor": None,
+            "session_entry": None,
+            "canonical": {},
+        }
+    if degraded_reason is not None:
+        # Readable but not fresh: either the snapshot predates the freshness
+        # window or it carries no generated_at timestamp to prove freshness.
+        return {
+            **envelope_base,
+            "observation": "stale",
+            "reason": degraded_reason,
+            "snapshot_path": str(path),
+            "snapshot_generated_at": snapshot.get("generated_at"),
+            "cursor": None,
+            "session_entry": None,
+            "canonical": {},
+        }
+
+    # Fresh by age; now cursor-validate against the projection history.
+    cursor = status_snapshot.status_snapshot_projection_cursor(path)
+    if cursor is None:
+        return {
+            **envelope_base,
+            "observation": "unvalidated",
+            "reason": f"status snapshot {path} has no projection cursor history",
+            "snapshot_path": str(path),
+            "snapshot_generated_at": snapshot.get("generated_at"),
+            "cursor": None,
+            "session_entry": None,
+            "canonical": {},
+        }
+    try:
+        current_digest = sha256_file(path)
+    except (OSError, UnicodeDecodeError):
+        current_digest = ""
+    if not current_digest or current_digest != cursor.source_digest:
+        return {
+            **envelope_base,
+            "observation": "mixed",
+            "reason": (
+                f"status snapshot {path} diverges from projection cursor "
+                "(torn read or tamper)"
+            ),
+            "snapshot_path": str(path),
+            "snapshot_generated_at": snapshot.get("generated_at"),
+            "cursor": cursor.to_dict(),
+            "session_entry": None,
+            "canonical": {},
+        }
+
+    entry = _extract_status_session_entry(snapshot, session)
+    return {
+        **envelope_base,
+        "observation": "fresh",
+        "reason": "",
+        "effect_eligible": True,
+        "diagnostic_only": False,
+        "snapshot_path": str(path),
+        "snapshot_generated_at": snapshot.get("generated_at"),
+        "cursor": cursor.to_dict(),
+        "session_entry": entry,
+        "canonical": _extract_canonical_from_entry(entry),
+    }

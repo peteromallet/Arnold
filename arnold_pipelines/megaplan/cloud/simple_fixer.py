@@ -42,10 +42,15 @@ from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_lock import (
+    ClaimAliasRecord,
     RepairLockResult,
     acquire_repair_lock,
+    claim_fence,
+    consult_claim_namespace,
+    finalize_cross_namespace_claim,
     inspect_repair_lock,
     release_repair_lock,
+    write_claim_alias,
 )
 from arnold_pipelines.megaplan.cloud.repair_requests import (
     singleton_occurrence_claim_lock_dir,
@@ -406,10 +411,44 @@ def claim_singleton_occurrence(
         "occurrence": occurrence.target.to_dict(),
         "repair_identity": dict(occurrence.repair_identity or {}),
     }
+    # ── T-0204: consult the blocker-keyed active claim namespace FIRST ──
+    # Fingerprint-keyed occurrence custody must not be acquired while the
+    # same repair is actively claimed (blocker-keyed) by a different owner.
+    # The canonical alias index maps this occurrence to its blocker; a live
+    # foreign owner refuses the claim, and only a stale claim with a
+    # strictly newer fence may be reclaimed (after acquisition below).
+    repair_fence = claim_fence(occurrence.repair_identity)
+    consultation = consult_claim_namespace(
+        queue_dir,
+        own_namespace="occurrence",
+        occurrence_fingerprint=fingerprint,
+        repair_identity_key=fingerprint,
+        request_id=request_id,
+        fence=repair_fence,
+        now=now,
+        is_pid_live=is_pid_live,
+    )
+    if not consultation.may_proceed:
+        return SimpleFixerClaimResult(
+            outcome="busy",
+            occurrence_fingerprint=fingerprint,
+            lock_dir=str(lock_dir),
+            evidence={
+                "kind": "cross_namespace_claim_conflict",
+                "namespace": "occurrence",
+                "outcome": consultation.outcome,
+                "occurrence_fingerprint": fingerprint,
+                "request_id": request_id,
+                "other_namespace": consultation.other_namespace,
+                "other_lock_dirs": [str(p) for p in consultation.other_lock_dirs],
+                "consultation": consultation.evidence,
+            },
+        )
     result = acquire_repair_lock(
         lock_dir,
         session=session,
         target_id=fingerprint,
+        repair_identity=occurrence.repair_identity,
         pid=pid,
         command=command,
         started_at=started_at,
@@ -420,9 +459,54 @@ def claim_singleton_occurrence(
         now=now,
         is_pid_live=is_pid_live,
     )
-    return _claim_result_from_lock(
+    # ── T-0204: post-acquisition backstop + fenced stale reclaim ──────
+    if result.acquired:
+        ok, backstop_evidence = finalize_cross_namespace_claim(
+            queue_dir,
+            own_namespace="occurrence",
+            occurrence_fingerprint=fingerprint,
+            repair_identity_key=fingerprint,
+            request_id=request_id,
+            fence=repair_fence,
+            blocker_id=consultation.blocker_id,
+            claim_lock_dir=lock_dir,
+            claim_owner=result.owner,
+            claim_metadata=metadata,
+            now=now,
+            is_pid_live=is_pid_live,
+        )
+        if not ok:
+            release_repair_lock(lock_dir, owner=result.owner)
+            return SimpleFixerClaimResult(
+                outcome="busy",
+                occurrence_fingerprint=fingerprint,
+                lock_dir=str(lock_dir),
+                evidence={
+                    "kind": "cross_namespace_backstop_failed",
+                    "namespace": "occurrence",
+                    "occurrence_fingerprint": fingerprint,
+                    "request_id": request_id,
+                    "reason": backstop_evidence.get("reason"),
+                    "evidence": backstop_evidence,
+                },
+            )
+    claim_result = _claim_result_from_lock(
         result, occurrence_fingerprint=fingerprint, request_id=request_id
     )
+    if claim_result.claimed:
+        write_claim_alias(
+            queue_dir,
+            ClaimAliasRecord(
+                blocker_id=consultation.blocker_id,
+                occurrence_fingerprint=fingerprint,
+                request_id=request_id,
+                repair_identity_key=fingerprint,
+                fence_epoch=repair_fence[0],
+                fence_token=repair_fence[1],
+                holder_namespaces=("occurrence",),
+            ),
+        )
+    return claim_result
 
 
 def inspect_singleton_occurrence_claim(

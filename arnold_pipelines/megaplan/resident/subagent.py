@@ -7600,6 +7600,54 @@ def list_managed_resident_agents(
     }
 
 
+SUPERFIXER_PROACTIVE_MODEL_SPEC = "hermes:deepseek:deepseek-v4-flash"
+
+
+def launch_superfixer_proactive_managed(
+    *,
+    task: str,
+    description: str | None = None,
+    project_dir: str | None = None,
+    request_id: str | None = None,
+    launch_origin: Mapping[str, Any] | None = None,
+    schedule_context: Mapping[str, Any] | None = None,
+    model_spec: str = SUPERFIXER_PROACTIVE_MODEL_SPEC,
+) -> SubagentResult:
+    """Launch the hourly superfixer backstop through the durable managed-run path.
+
+    One managed agent per due occurrence: ``request_id`` and
+    ``schedule_context`` bind the schedule occurrence and claim custody into
+    the durable manifest (``schedule_occurrence``), and ``launch_origin``
+    carries the scheduled-turn source kind, so the durable launch receipt
+    links back to the occurrence claim and forward to the final run receipt.
+    The model spec defaults to the fixed hermes/deepseek-v4-flash backstop
+    identity used by the hourly schedule; anything else fails closed.
+    """
+    if model_spec.count(":") < 1:
+        raise ValueError(
+            f"superfixer model spec requires a provider prefix: {model_spec!r}"
+        )
+    backend, _, model = model_spec.partition(":")
+    if backend != "hermes":
+        raise ValueError(
+            f"superfixer backstop requires the hermes backend: {model_spec!r}"
+        )
+    return launch_managed_subagent_detached(
+        task=task,
+        description=description,
+        project_dir=project_dir,
+        backend=backend,
+        model=model,
+        model_spec=model_spec,
+        task_kind="autonomous",
+        work_intent="execution",
+        mutation_claim="auto",
+        request_id=request_id,
+        launch_origin=launch_origin,
+        schedule_context=schedule_context,
+    )
+
+
 async def launch_subagent_task(
     config: ResidentConfig,
     *,

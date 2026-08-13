@@ -310,9 +310,13 @@ def _thaw_sorted(value: Any) -> Any:
 class CustodyTargetKey(Contract):
     """Canonical custody target identity.
 
-    Composed of the F01 repair-occurrence tuple plus chain identity.
-    All ten F01 fields are required non-empty strings; chain_identity is
-    optional (empty string when not yet bound).
+    Composed of the F01 repair-occurrence tuple plus chain identity and an
+    optional dispatch discriminator.  All ten F01 fields are required
+    non-empty strings; chain_identity and dispatch_key are optional (empty
+    string when not yet bound).  ``dispatch_key`` names a worker-dispatch
+    slice (e.g. ``critique:scope:initial``) so two dispatches that differ
+    ONLY in dispatch key derive distinct target digests and can never
+    collide on a custody lease.
     """
 
     contract_type: ClassVar[str] = "custody_target_key"
@@ -329,6 +333,7 @@ class CustodyTargetKey(Contract):
     blocker_or_phase_result_hash: str
     fence: str
     chain_identity: str = ""
+    dispatch_key: str = ""
 
     def __init__(self, *args: str, **kwargs: str) -> None:
         """Build either the current F01 key or the predecessor six-field key.
@@ -352,7 +357,7 @@ class CustodyTargetKey(Contract):
         legacy_values: tuple[str, ...] | None = None
 
         if args:
-            if kwargs or len(args) != len(legacy_names):
+            if (set(kwargs) - {"dispatch_key"}) or len(args) != len(legacy_names):
                 raise TypeError(
                     "CustodyTargetKey positional construction requires the "
                     "six predecessor target fields"
@@ -360,7 +365,7 @@ class CustodyTargetKey(Contract):
             legacy_values = tuple(args)
         elif any(name in kwargs for name in legacy_names):
             missing = [name for name in legacy_names if name not in kwargs]
-            unknown = set(kwargs) - set(legacy_names)
+            unknown = set(kwargs) - set(legacy_names) - {"dispatch_key"}
             if missing or unknown:
                 raise TypeError(
                     "legacy CustodyTargetKey requires exactly "
@@ -388,11 +393,12 @@ class CustodyTargetKey(Contract):
                 "blocker_or_phase_result_hash": compatibility_hash,
                 "fence": "legacy-non-authoritative",
                 "chain_identity": "",
+                "dispatch_key": kwargs.get("dispatch_key", ""),
             }
             object.__setattr__(self, "_legacy_values", legacy_values)
         else:
             missing = [name for name in f01_names if name not in kwargs]
-            unknown = set(kwargs) - set(f01_names) - {"chain_identity"}
+            unknown = set(kwargs) - set(f01_names) - {"chain_identity", "dispatch_key"}
             if missing or unknown:
                 raise TypeError(
                     "CustodyTargetKey requires the complete F01 tuple; "
@@ -400,6 +406,7 @@ class CustodyTargetKey(Contract):
                 )
             mapped = {name: kwargs[name] for name in f01_names}
             mapped["chain_identity"] = kwargs.get("chain_identity", "")
+            mapped["dispatch_key"] = kwargs.get("dispatch_key", "")
             object.__setattr__(self, "_legacy_values", None)
 
         for name, value in mapped.items():
@@ -412,6 +419,9 @@ class CustodyTargetKey(Contract):
         # chain_identity is optional but must be a string
         if not isinstance(self.chain_identity, str):
             raise ContractError("chain_identity must be a string")
+        # dispatch_key is optional but must be a string
+        if not isinstance(self.dispatch_key, str):
+            raise ContractError("dispatch_key must be a string")
 
     @property
     def subject_type(self) -> str:
@@ -456,7 +466,12 @@ class CustodyTargetKey(Contract):
                 "target_id",
                 "contract_id",
             )
-            return dict(zip(names, values, strict=True))
+            legacy = dict(zip(names, values, strict=True))
+            # Preserve the dispatch discriminator on legacy round trips so a
+            # legacy-constructed dispatch target keeps its full identity.
+            if self.dispatch_key:
+                legacy["dispatch_key"] = self.dispatch_key
+            return legacy
         return super().to_dict()
 
     def to_tuple(self) -> tuple[str, ...]:
@@ -465,11 +480,17 @@ class CustodyTargetKey(Contract):
 
     @property
     def target_digest(self) -> str:
-        """Deterministic SHA-256 of the canonical key (F01 fields + chain_identity only)."""
+        """Deterministic SHA-256 of the canonical key.
+
+        Covers the F01 fields plus chain_identity and dispatch_key, so the
+        full target identity — including the worker-dispatch discriminator —
+        keys every custody join (lease id, outbox occurrence digest, replay).
+        """
         plain: dict[str, Any] = {}
         for name in F01_REPAIR_OCCURRENCE_FIELDS:
             plain[name] = getattr(self, name)
         plain["chain_identity"] = self.chain_identity
+        plain["dispatch_key"] = self.dispatch_key
         return target_digest(plain)
 
 
@@ -488,7 +509,8 @@ def normalize_custody_target_key(payload: Mapping[str, Any] | None) -> CustodyTa
         )
         if all(name in payload for name in legacy_names):
             return CustodyTargetKey(
-                **{name: str(payload[name]) for name in legacy_names}
+                **{name: str(payload[name]) for name in legacy_names},
+                dispatch_key=payload.get("dispatch_key", ""),
             )
         return CustodyTargetKey(
             environment=payload.get("environment", ""),
@@ -502,6 +524,7 @@ def normalize_custody_target_key(payload: Mapping[str, Any] | None) -> CustodyTa
             blocker_or_phase_result_hash=payload.get("blocker_or_phase_result_hash", ""),
             fence=payload.get("fence", ""),
             chain_identity=payload.get("chain_identity", ""),
+            dispatch_key=payload.get("dispatch_key", ""),
         )
     except (ContractError, TypeError):
         return None
@@ -520,6 +543,7 @@ def build_custody_target_key(
     blocker_or_phase_result_hash: str = "",
     fence: str = "",
     chain_identity: str = "",
+    dispatch_key: str = "",
 ) -> CustodyTargetKey | None:
     """Build a CustodyTargetKey from keyword arguments; returns None if any required field is empty."""
     try:
@@ -535,6 +559,7 @@ def build_custody_target_key(
             blocker_or_phase_result_hash=blocker_or_phase_result_hash,
             fence=fence,
             chain_identity=chain_identity,
+            dispatch_key=dispatch_key,
         )
     except ContractError:
         return None

@@ -1,31 +1,97 @@
+"""Content-addressed dependency-generation lifecycle (T-0301).
+
+The editable-install sync path is RETIRED.  Dependencies are frozen into ONE
+immutable venv per frozen dependency spec — the ``pyproject.toml`` +
+``uv.lock`` pair under the runtime root — and that generation is shared by
+EVERY runtime that resolves to the same spec (the content address IS the
+sha256 of the frozen spec).  There is no per-worktree ``.venv`` and no
+``pip install -e`` anywhere.
+
+This module owns the generation store contract:
+
+* :func:`frozen_spec_sha256` — the content address of a project's frozen
+  spec (pyproject.toml + uv.lock bytes, deterministic).
+* :func:`ensure_dependency_generation` — build-or-verify the generation at
+  ``<generations_root>/<address>`` ONCE under a single-writer flock
+  (``<generations_root>/.build.lock``); concurrent runtimes resolving the
+  same spec serialize and share the same immutable venv.
+* :func:`verify_generation` — on-disk verification of an existing
+  generation: proof file matches the content address, interpreter exists
+  and is executable, and (deep) the recomputed pip-list venv digest equals
+  the recorded one.
+* :func:`compute_venv_digest` — the deterministic sha256 of the installed
+  package set (``pip list --format=json``, sorted).
+
+Fail-closed invariants:
+
+* A project WITHOUT a frozen spec (missing pyproject.toml or uv.lock)
+  cannot build a generation — :class:`GenerationError`, no manifest without
+  proof.
+* An EXISTING generation that fails verification is NEVER silently reused
+  or overwritten (the store is immutable): :class:`GenerationError`.
+* The dependency install is pinned by uv.lock (``name==version`` from
+  registry sources via pip, or ``uv sync --frozen --no-install-project``
+  when uv is available); non-registry (git/editable/path) packages are
+  skipped by the pip path and handled by uv — the runtime code itself is
+  NEVER installed into the generation (worktree-first ``PYTHONPATH``
+  supplies it at launch).
+
+``apply_install_sync`` survives ONLY as the retired path's fail-closed
+landing: it raises :class:`EditableInstallRetiredError` so any residual
+caller (the meta-repair loop) fails loudly instead of silently skipping the
+sync concept.
+"""
+
 from __future__ import annotations
 
-import shlex
+import fcntl
+import hashlib
+import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from arnold_pipelines.megaplan.cloud.incident_bridge import (
-    append_install_sync_applied,
-    append_install_sync_failed,
-)
 from arnold_pipelines.megaplan.cloud.redact import redact_text
-from arnold_pipelines.megaplan.cloud.runtime_manifest import ManifestError
-
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
-_IDENTITY_PROBE = (
-    "import json, pathlib, sys; "
-    "import arnold_pipelines; "
-    "package_file = pathlib.Path(arnold_pipelines.__file__).resolve(); "
-    "print(json.dumps({"
-    "'python_executable': sys.executable, "
-    "'package_file': str(package_file), "
-    "'package_root': str(package_file.parent.parent)"
-    "}, sort_keys=True))"
-)
+# The frozen dependency spec: BOTH files must exist under the project root.
+# ``deps_lockfile`` in the runtime manifest names the lockfile; the content
+# address covers the pair so a dependency-adding pyproject edit alone (or a
+# re-lock alone) yields a NEW generation.
+FROZEN_SPEC_FILENAMES = ("pyproject.toml", "uv.lock")
+
+_FULL_HEX64 = __import__("re").compile(r"^[0-9a-f]{64}$")
+
+
+class GenerationError(RuntimeError):
+    """A dependency generation could not be built or verified (T-0301).
+
+    Fail-closed: the generation store is immutable and content-addressed; a
+    missing frozen spec, a failed build, or an unverifiable existing
+    generation raises this instead of silently reusing or rebuilding.
+    """
+
+
+class EditableInstallRetiredError(RuntimeError):
+    """The editable-install sync path is RETIRED (T-0301).
+
+    Dependencies are immutable content-addressed generations built by
+    ``arnold-runtime-create``; there is no mutable editable install to sync.
+    Any residual caller fails loudly here — the sync concept is retired,
+    never silently skipped and never a ``pip install -e``.
+    """
+
+    code = "editable_install_retired"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _run(
@@ -33,14 +99,17 @@ def _run(
     *,
     cwd: Path,
     runner: Runner,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return runner(
-        command,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    kwargs: dict[str, Any] = {
+        "cwd": str(cwd),
+        "capture_output": True,
+        "text": True,
+        "check": False,
+    }
+    if env is not None:
+        kwargs["env"] = dict(env)
+    return runner(command, **kwargs)
 
 
 def _tail(text: str, *, max_lines: int = 20) -> str:
@@ -54,319 +123,483 @@ def _redacted_tail(text: str) -> str:
     return redact_text(_tail(text or ""))
 
 
-def _command_text(command: list[str]) -> str:
-    return " ".join(shlex.quote(part) for part in command)
-
-
-def capture_runtime_identity(
-    source_root: Path | str,
-    *,
-    python_executable: str | None = None,
-    runner: Runner = subprocess.run,
-) -> dict[str, Any]:
-    root = Path(source_root).expanduser().resolve()
-    python_bin = python_executable or sys.executable
-
-    git_head_proc = _run(["git", "rev-parse", "HEAD"], cwd=root, runner=runner)
-    git_branch_proc = _run(["git", "branch", "--show-current"], cwd=root, runner=runner)
-    probe_proc = _run([python_bin, "-c", _IDENTITY_PROBE], cwd=root, runner=runner)
-
-    package_identity: dict[str, Any] = {}
-    if probe_proc.returncode == 0:
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    """Atomic tmp-file + ``os.replace`` write (fsync before rename)."""
+    path = Path(path).expanduser().resolve(strict=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
         try:
-            import json
-
-            loaded = json.loads(probe_proc.stdout or "{}")
-        except Exception:
-            loaded = {}
-        if isinstance(loaded, dict):
-            package_identity = loaded
-
-    return {
-        "source_root": str(root),
-        "python_executable": package_identity.get("python_executable") or python_bin,
-        "git_head": (git_head_proc.stdout or "").strip() or None,
-        "git_branch": (git_branch_proc.stdout or "").strip() or None,
-        "package_file": package_identity.get("package_file"),
-        "package_root": package_identity.get("package_root"),
-    }
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
-def apply_install_sync(
+# ── frozen spec → content address ────────────────────────────────────────────
+
+
+def frozen_spec_sha256(project_root: Path | str) -> str:
+    """The content address of *project_root*'s frozen dependency spec.
+
+    sha256 over the deterministic concatenation of the ``pyproject.toml``
+    and ``uv.lock`` bytes.  A MISSING file raises :class:`GenerationError`
+    (fail-closed: no frozen spec, no generation — the per-epic venv fiction
+    is retired).
+    """
+    project = Path(project_root).expanduser().resolve()
+    digest = hashlib.sha256()
+    for filename in FROZEN_SPEC_FILENAMES:
+        path = project / filename
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise GenerationError(
+                f"frozen dependency spec file {path} is unreadable: {exc} — "
+                "a runtime cannot be created without a frozen spec "
+                "(pyproject.toml + uv.lock)"
+            ) from exc
+        digest.update(filename.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content)
+    return digest.hexdigest()
+
+
+# ── uv.lock freeze ───────────────────────────────────────────────────────────
+
+
+def _parse_uv_lock_packages(lock_text: str) -> list[dict[str, Any]]:
+    """Minimal dependency-free parser for uv.lock ``[[package]]`` blocks.
+
+    Extracts ``name``, ``version`` and the source kind (``registry`` |
+    ``git`` | ``editable`` | ``directory`` | ``path`` | ``url``) per
+    package.  Robust for the pinned-freeze purpose; not a full TOML parser.
+    A package without an explicit source is treated as registry (uv.lock v1
+    omits ``source`` for default-index packages).
+    """
+    packages: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    in_source = False
+    for raw in lock_text.splitlines():
+        line = raw.strip()
+        if line.startswith("[["):
+            current = {"source": "registry"}
+            packages.append(current)
+            in_source = False
+        elif current is None:
+            continue
+        elif line.startswith("name = "):
+            current["name"] = line[len("name = ") :].strip().strip('"')
+        elif line.startswith("version = "):
+            current["version"] = line[len("version = ") :].strip().strip('"')
+        elif line.startswith("source = {"):
+            # Both single-line (``source = { registry = "..." }``) and
+            # multi-line source blocks occur in uv.lock v1.
+            remainder = line[len("source = {") :].strip()
+            if remainder.endswith("}"):
+                remainder = remainder[:-1].strip()
+                in_source = False
+                if remainder:
+                    _set_package_source(current, remainder.split("=", 1)[0].strip())
+            else:
+                in_source = True
+        elif in_source:
+            if line == "}":
+                in_source = False
+            elif line.startswith(("git", "url", "editable", "directory", "path")):
+                current["source"] = line.split("=", 1)[0].strip()
+            elif line.startswith(("registry", "index")):
+                current["source"] = "registry"
+    return packages
+
+
+def _set_package_source(package: dict[str, Any], key: str) -> None:
+    """Record the source kind of a uv.lock package from the source-block
+    key (registry/index/git/url/editable/directory/path)."""
+    if key in ("registry", "index"):
+        package["source"] = "registry"
+    elif key in ("git", "url", "editable", "directory", "path"):
+        package["source"] = key
+    # unknown keys leave the default ("registry") — fail-open on the side of
+    # trying the frozen pin, which pip will refuse loudly if it is wrong.
+
+
+def frozen_requirements(uv_lock_text: str) -> list[str]:
+    """Pinned ``name==version`` requirements for every REGISTRY-sourced
+    package in *uv_lock_text* (sorted, deduped).
+
+    Non-registry packages (git/editable/directory/path — workspace members
+    and the project itself) are never frozen into pip requirements: the
+    runtime code must NOT be installed into the generation (worktree-first
+    ``PYTHONPATH`` supplies it at launch).
+    """
+    requirements: list[str] = []
+    for package in _parse_uv_lock_packages(uv_lock_text):
+        name = str(package.get("name") or "")
+        version = str(package.get("version") or "")
+        if package.get("source") != "registry" or not name or not version:
+            continue
+        requirements.append(f"{name}=={version}")
+    return sorted(set(requirements))
+
+
+# ── generation store ─────────────────────────────────────────────────────────
+
+
+def generation_dir(generations_root: Path | str, spec_digest: str) -> Path:
+    """The content-addressed generation dir ``<root>/<spec_digest>``."""
+    if not _FULL_HEX64.fullmatch(spec_digest):
+        raise GenerationError(
+            f"invalid generation content address {spec_digest!r} (must be 64-char hex)"
+        )
+    return Path(generations_root).expanduser().resolve(strict=False) / spec_digest
+
+
+def generation_interpreter(generation: Path | str) -> Path:
+    """The generation venv's python interpreter."""
+    return Path(generation).expanduser() / "bin" / "python"
+
+
+def _site_packages_dirs(venv: Path) -> list[Path]:
+    """``site-packages`` dirs of *venv* (``lib/python*/site-packages`` and
+    ``lib64/python*/site-packages`` — the latter appears on some Linux
+    layouts)."""
+    found: list[Path] = []
+    for lib in ("lib", "lib64"):
+        base = venv / lib
+        if base.is_dir():
+            found.extend(sorted(base.glob("python*/site-packages")))
+    return found
+
+
+def _read_dist_metadata(meta_path: Path) -> tuple[str, str]:
+    """(Name, Version) from a ``*.dist-info/METADATA`` / ``*.egg-info/PKG-INFO``
+    file; ``("", "")`` when unreadable or headers absent."""
+    name = ""
+    version = ""
+    try:
+        with meta_path.open(encoding="utf-8", errors="replace") as handle:
+            for _ in range(60):
+                line = handle.readline()
+                if not line or not line.strip():
+                    break
+                if line.startswith("Name: "):
+                    name = line[len("Name: ") :].strip()
+                elif line.startswith("Version: "):
+                    version = line[len("Version: ") :].strip()
+    except OSError:
+        return "", ""
+    return name or "", version or ""
+
+
+def _installed_distributions(venv: Path) -> list[tuple[str, str]]:
+    """Sorted, deduped ``(name, version)`` of every installed distribution in
+    *venv* — read from the package metadata (``*.dist-info/METADATA`` /
+    ``*.egg-info/PKG-INFO``), NEVER from pip.  This is the pip-free semantic
+    freeze: it reflects exactly what is installed, changes when the venv
+    content changes, and works for ``--without-pip`` venvs."""
+    found: list[tuple[str, str]] = []
+    for site in _site_packages_dirs(venv):
+        for meta_dir in sorted(site.glob("*.dist-info")):
+            name, version = _read_dist_metadata(meta_dir / "METADATA")
+            if name and version:
+                found.append((name, version))
+        for meta_dir in sorted(site.glob("*.egg-info")):
+            name, version = _read_dist_metadata(meta_dir / "PKG-INFO")
+            if name and version:
+                found.append((name, version))
+    return sorted(set(found))
+
+
+def compute_venv_digest(
+    interpreter: Path | str,
     *,
-    source_root: Path | str,
-    incident_id: str,
-    session_id: str | None = None,
-    problem_id: str | None = None,
-    root: Path | str | None = None,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Deterministic sha256 of the generation venv's built content.
+
+    Digests the venv's ``pyvenv.cfg`` (the base-interpreter identity) plus
+    the sorted installed-distribution set read from package metadata — no
+    pip subprocess, deterministic for a given frozen spec + base
+    interpreter, and it changes whenever the venv content changes (a
+    rebuilt, modified, or partially installed venv fails deep
+    verification).  ``runner`` is accepted for interface uniformity but the
+    digest itself runs no subprocesses.
+    """
+    del runner  # the digest reads metadata directly; no subprocess needed
+    interpreter = Path(interpreter).expanduser()
+    venv = interpreter.parent.parent
+    cfg = venv / "pyvenv.cfg"
+    try:
+        cfg_text = cfg.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        cfg_text = ""
+    payload = {
+        "pyvenv_cfg": cfg_text,
+        "installed": _installed_distributions(venv),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def verify_generation(
+    generation: Path | str,
+    *,
+    runner: Runner = subprocess.run,
+    deep: bool = True,
+) -> dict[str, Any]:
+    """Verify the on-disk generation at *generation*.
+
+    Returns ``{"ok": bool, "reasons": [...]}`` (never raises): the dir
+    exists, ``pyvenv.cfg`` present, interpreter present + executable,
+    ``.generation.json`` parses + validates + its ``id`` equals the dir
+    name; with *deep* (default) the venv digest is RECOMPUTED and compared
+    against the recorded one.
+    """
+    gen = Path(generation).expanduser()
+    reasons: list[str] = []
+    if not gen.is_dir():
+        reasons.append(f"generation dir missing: {gen}")
+        return {"ok": False, "reasons": reasons}
+    if not (gen / "pyvenv.cfg").is_file():
+        reasons.append(f"missing pyvenv.cfg at {gen}")
+    interpreter = generation_interpreter(gen)
+    interpreter_ok = False
+    if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+        reasons.append(f"interpreter missing/not executable: {interpreter}")
+    else:
+        interpreter_ok = True
+    proof_file = gen / ".generation.json"
+    proof: dict[str, Any] = {}
+    if not proof_file.is_file():
+        reasons.append(f"missing .generation.json proof at {gen}")
+    else:
+        try:
+            raw = proof_file.read_text(encoding="utf-8")
+            parsed = json.loads(raw)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            reasons.append(f"corrupt .generation.json at {gen}: {exc}")
+        else:
+            if not isinstance(parsed, dict):
+                reasons.append(f".generation.json at {gen} is not an object")
+            else:
+                proof = parsed
+                try:
+                    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+                        validate_dependency_generation,
+                    )
+
+                    validate_dependency_generation(parsed)
+                except Exception as exc:  # noqa: BLE001 - validation failures are reasons
+                    reasons.append(f"invalid generation proof at {gen}: {exc}")
+                if str(parsed.get("id") or "") != gen.name:
+                    reasons.append(
+                        f"generation proof id {parsed.get('id')!r} does not "
+                        f"match its content-addressed dir name {gen.name!r}"
+                    )
+    if deep and interpreter_ok and proof:
+        try:
+            observed = compute_venv_digest(interpreter, runner=runner)
+        except GenerationError as exc:
+            reasons.append(f"venv digest unavailable: {exc}")
+        else:
+            recorded = str(proof.get("venv_digest") or "")
+            if observed != recorded:
+                reasons.append(
+                    f"venv_digest mismatch: recorded {recorded}, observed "
+                    f"{observed} (the immutable generation was modified or "
+                    "rebuilt with a different interpreter)"
+                )
+    return {"ok": not reasons, "reasons": reasons}
+
+
+def _build_generation(
+    project: Path,
+    gen_dir: Path,
+    spec_digest: str,
+    *,
+    strategy: str,
+    python_executable: str | None,
+    runner: Runner,
+) -> None:
+    """Create the venv, install the frozen dependencies, stamp the proof.
+
+    The runtime code itself is NEVER installed (no ``pip install -e``, no
+    project install): the generation holds ONLY the frozen dependencies;
+    worktree-first ``PYTHONPATH`` supplies the code at launch.
+    """
+    base_python = python_executable or sys.executable
+    lock_path = project / "uv.lock"
+    try:
+        lock_text = lock_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise GenerationError(
+            f"cannot read frozen spec {lock_path}: {exc}"
+        ) from exc
+    use_uv = strategy == "uv" or (
+        strategy == "auto" and shutil.which("uv") is not None
+    )
+    requirements = [] if use_uv else frozen_requirements(lock_text)
+    # A dependency-FREE generation needs no pip inside the venv (the digest
+    # reads package metadata, never pip): create it with --without-pip so
+    # the build is fast and hermetic.  A generation with dependencies needs
+    # pip for the install step (or uv, which manages its own packages).
+    venv_args = [base_python, "-m", "venv"]
+    if not requirements:
+        venv_args.append("--without-pip")
+    venv_args.append(str(gen_dir))
+    venv_proc = _run(venv_args, cwd=project, runner=runner)
+    if venv_proc.returncode != 0:
+        raise GenerationError(
+            f"venv creation failed for generation {gen_dir}: "
+            f"{_redacted_tail(venv_proc.stderr or venv_proc.stdout)}"
+        )
+    interpreter = generation_interpreter(gen_dir)
+    if use_uv:
+        # uv installs EXACTLY the uv.lock pins into the ACTIVE venv and
+        # never the project itself (--no-install-project).
+        env = dict(os.environ)
+        env["VIRTUAL_ENV"] = str(gen_dir)
+        uv_proc = _run(
+            ["uv", "sync", "--frozen", "--no-install-project", "--active"],
+            cwd=project,
+            runner=runner,
+            env=env,
+        )
+        if uv_proc.returncode != 0:
+            raise GenerationError(
+                f"uv sync failed for generation {gen_dir}: "
+                f"{_redacted_tail(uv_proc.stderr or uv_proc.stdout)}"
+            )
+    elif requirements:
+        pip_proc = _run(
+            [str(interpreter), "-m", "pip", "install", *requirements],
+            cwd=project,
+            runner=runner,
+        )
+        if pip_proc.returncode != 0:
+            raise GenerationError(
+                f"dependency install failed for generation {gen_dir}: "
+                f"{_redacted_tail(pip_proc.stderr or pip_proc.stdout)}"
+            )
+    venv_digest = compute_venv_digest(interpreter, runner=runner)
+    proof = {
+        "id": spec_digest,
+        "frozen_spec_sha256": spec_digest,
+        "interpreter_path": str(interpreter),
+        "venv_digest": venv_digest,
+        "created": _utc_now_iso(),
+    }
+    _atomic_write_json(gen_dir / ".generation.json", proof)
+
+
+def ensure_dependency_generation(
+    project_root: Path | str,
+    generations_root: Path | str,
+    *,
     python_executable: str | None = None,
     runner: Runner = subprocess.run,
+    build_strategy: str | None = None,
 ) -> dict[str, Any]:
-    source = Path(source_root).expanduser().resolve()
-    python_bin = python_executable or sys.executable
-    command = [python_bin, "-m", "pip", "install", "-e", str(source)]
-    before_identity = capture_runtime_identity(
-        source,
-        python_executable=python_bin,
-        runner=runner,
-    )
-    install_proc = _run(command, cwd=source, runner=runner)
-    after_identity = capture_runtime_identity(
-        source,
-        python_executable=python_bin,
-        runner=runner,
-    )
+    """Build (or verify) the content-addressed dependency generation for
+    *project_root*'s frozen spec and return its proof dict.
 
-    command_text = _command_text(command)
-    verification = {
-        "kind": "install_sync_verification",
-        "expected_git_head": before_identity.get("git_head"),
-        "observed_git_head": after_identity.get("git_head"),
-        "runtime_changed": before_identity != after_identity,
-        "returncode": install_proc.returncode,
-        "success": install_proc.returncode == 0,
-    }
-    evidence = [
-        {
-            "kind": "runtime_identity",
-            "before": before_identity,
-            "after": after_identity,
-            "command": command_text,
-            "returncode": install_proc.returncode,
-        },
-        {
-            "kind": "command_result",
-            "command": command_text,
-            "returncode": install_proc.returncode,
-            "stdout_tail": _redacted_tail(install_proc.stdout or ""),
-            "stderr_tail": _redacted_tail(install_proc.stderr or ""),
-        },
-        verification,
-    ]
-    summary = (
-        f"Editable install synced with {command_text}"
-        if install_proc.returncode == 0
-        else f"Editable install sync failed with {command_text}"
-    )
-    if install_proc.returncode == 0:
-        event = append_install_sync_applied(
-            incident_id=incident_id,
-            summary=summary,
-            evidence=evidence,
-            session_id=session_id,
-            problem_id=problem_id,
-            root=root or source,
-        )
-        status = "applied"
-    else:
-        event = append_install_sync_failed(
-            incident_id=incident_id,
-            summary=summary,
-            evidence=evidence,
-            session_id=session_id,
-            problem_id=problem_id,
-            root=root or source,
-        )
-        status = "failed"
+    The generation lives at ``<generations_root>/<spec_digest>`` and is
+    IMMUTABLE: an existing generation that fails deep verification
+    (venv-digest mismatch, missing interpreter, corrupt/mismatched proof) is
+    REFUSED with :class:`GenerationError` — never silently reused and never
+    overwritten.  Builds run under a single-writer flock on
+    ``<generations_root>/.build.lock``, so concurrent runtimes resolving the
+    same spec build once and share the venv.
 
-    return {
-        "status": status,
-        "command": command,
-        "command_text": command_text,
-        "returncode": install_proc.returncode,
-        "before_identity": before_identity,
-        "after_identity": after_identity,
-        "stdout_tail": evidence[1]["stdout_tail"],
-        "stderr_tail": evidence[1]["stderr_tail"],
-        "verification": verification,
-        "event": event,
-    }
-
-
-class EditablePointerMismatchError(RuntimeError):
-    """The venv's editable pointer targets a tree other than the manifest runtime.
-
-    Design rule 2: never write an editable pointer into an environment another
-    runtime uses. A mismatched pointer means this venv already belongs to a
-    different runtime tree — sync aborts instead of clobbering it.
+    *build_strategy*: ``"auto"`` (default — uv when on PATH, else pip from
+    the uv.lock pins), ``"uv"``, or ``"pip"``; overridable via env
+    ``ARNOLD_GENERATION_BUILD_STRATEGY``.
     """
-
-    code = "editable_pointer_mismatch"
-
-    def __init__(
-        self,
-        *,
-        pointer_file: Path | str,
-        pointer_target: str,
-        runtime_root: Path | str,
-    ) -> None:
-        self.pointer_file = str(pointer_file)
-        self.pointer_target = pointer_target
-        self.runtime_root = str(runtime_root)
-        super().__init__(
-            f"editable_pointer_mismatch: venv editable pointer {self.pointer_file} "
-            f"targets {pointer_target!r}, expected manifest runtime {self.runtime_root!r}"
+    project = Path(project_root).expanduser().resolve()
+    gen_root = Path(generations_root).expanduser().resolve(strict=False)
+    spec_digest = frozen_spec_sha256(project)
+    gen_dir = generation_dir(gen_root, spec_digest)
+    strategy = (
+        build_strategy
+        or os.environ.get("ARNOLD_GENERATION_BUILD_STRATEGY")
+        or "auto"
+    ).strip().lower()
+    if strategy not in ("auto", "pip", "uv"):
+        raise GenerationError(
+            f"unknown generation build strategy {strategy!r} (auto|pip|uv)"
         )
-
-
-def _manifest_value(manifest: Any, name: str, default: Any = None) -> Any:
-    """Read a top-level manifest field from a dict OR a RuntimeManifest object."""
-    if isinstance(manifest, Mapping):
-        return manifest.get(name, default)
-    return getattr(manifest, name, default)
-
-
-def _manifest_section(manifest: Any, name: str) -> dict[str, Any]:
-    section = _manifest_value(manifest, name)
-    if not isinstance(section, dict):
-        raise ManifestError(
-            f"manifest section {name!r} must be an object, "
-            f"got {type(section).__name__}"
+    gen_root.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(str(gen_root / ".build.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        verification = verify_generation(gen_dir, runner=runner, deep=True)
+        if verification["ok"]:
+            return json.loads(
+                (gen_dir / ".generation.json").read_text(encoding="utf-8")
+            )
+        if gen_dir.exists():
+            raise GenerationError(
+                f"generation {gen_dir} exists but failed verification: "
+                + "; ".join(verification["reasons"])
+                + " — refusing to reuse or overwrite an immutable generation "
+                "(reconcile the generation store before recreating the runtime)"
+            )
+        _build_generation(
+            project,
+            gen_dir,
+            spec_digest,
+            strategy=strategy,
+            python_executable=python_executable,
+            runner=runner,
         )
-    return section
-
-
-def _manifest_path(section: dict[str, Any], key: str) -> Path:
-    raw = section.get(key)
-    if not isinstance(raw, str) or not raw.strip():
-        raise ManifestError(f"manifest epic.{key} must be a non-empty path string")
-    return Path(raw).expanduser()
-
-
-def _sync_policy_disabled(sync_policy: Any) -> bool:
-    """True when the manifest's sync_policy disables sync.
-
-    Mirrors :func:`arnold_pipelines.megaplan.cloud.github_sync.sync_policy_gate`
-    for the two disabling forms ("disabled" / ``{"enabled": false}``) without
-    pulling the GitHub publication stack into this module.
-    """
-    if isinstance(sync_policy, Mapping):
-        return sync_policy.get("enabled") is False
-    if isinstance(sync_policy, str):
-        return sync_policy.strip().lower() == "disabled"
-    return False
-
-
-def _venv_site_packages(venv_path: Path) -> list[Path]:
-    if not venv_path.is_dir():
-        return []
-    return sorted(venv_path.glob("lib/python*/site-packages"))
-
-
-def _read_editable_pointer_targets(site_packages: list[Path]) -> list[tuple[Path, str]]:
-    """(pointer_file, target) for every path-line in any ``*.pth`` under *site_packages*."""
-    targets: list[tuple[Path, str]] = []
-    for site_dir in site_packages:
-        for pth in sorted(site_dir.glob("*.pth")):
-            try:
-                lines = pth.read_text(encoding="utf-8").splitlines()
-            except OSError:
-                continue
-            for raw in lines:
-                line = raw.strip()
-                if line.startswith("/") and not line.startswith("//"):
-                    targets.append((pth, line))
-    return targets
-
-
-def _check_editable_pointer(venv_path: Path, runtime_root: Path) -> dict[str, Any]:
-    """Per-venv editable pointer check (design rule 2).
-
-    A pointer that references a tree other than *runtime_root* means this venv
-    already belongs to another runtime — error out rather than write an
-    editable pointer into an environment another runtime uses. A venv with no
-    editable pointer (or one pointing at *runtime_root*) is safe to sync.
-    """
-    site_packages = _venv_site_packages(venv_path)
-    targets = _read_editable_pointer_targets(site_packages)
-    expected = runtime_root.resolve()
-    for pointer_file, target in targets:
-        if Path(target).expanduser().resolve() == expected:
-            continue
-        raise EditablePointerMismatchError(
-            pointer_file=pointer_file,
-            pointer_target=target,
-            runtime_root=runtime_root,
+        return json.loads(
+            (gen_dir / ".generation.json").read_text(encoding="utf-8")
         )
-    return {
-        "site_packages": [str(site_dir) for site_dir in site_packages],
-        "pointer_present": bool(targets),
-        "pointer_target": targets[0][1] if targets else None,
-        "matches_runtime": True,
-    }
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
 
 
-def manifest_driven_sync(
-    manifest: Mapping[str, Any],
-    *,
-    dry_run: bool = False,
-    incident_id: str | None = None,
-    session_id: str | None = None,
-    problem_id: str | None = None,
-    root: Path | str | None = None,
-    runner: Runner = subprocess.run,
-) -> dict[str, Any]:
-    """Manifest-driven install sync scoped to ``manifest.epic``.
+# ── retired editable-install sync path (T-0301) ──────────────────────────────
 
-    Reads the epic section (``runtime_root``, ``venv_path``, ``branch``,
-    ``expected_head``) and ``policy.sync_policy`` from an already-loaded
-    runtime manifest (either a plain mapping or a
-    :class:`~arnold_pipelines.megaplan.cloud.runtime_manifest.RuntimeManifest`
-    object). When sync is disabled by policy, nothing runs and the result is
-    ``{"status": "skipped", "reason": "sync_policy_disabled"}``. Otherwise the
-    venv's editable pointer is verified against ``runtime_root`` (per-venv
-    editable pointer check, design rule 2) and the same editable-install sync
-    as :func:`apply_install_sync` is applied into the epic venv.
 
-    ``dry_run=True`` performs every read/check but no mutation, returning what
-    would happen.
+def apply_install_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """RETIRED (T-0301): the editable-install sync path no longer exists.
+
+    Dependencies are immutable content-addressed generations
+    (``epic.dependency_generation``) built once by ``arnold-runtime-create``
+    under a single-writer flock; there is no mutable editable install to
+    sync and no ``pip install -e`` fallback.  Any residual caller (the
+    meta-repair loop) fails loudly here instead of silently skipping the
+    sync concept.
     """
-    epic = _manifest_section(manifest, "epic")
-    policy = _manifest_section(manifest, "policy")
-
-    runtime_root = _manifest_path(epic, "runtime_root")
-    venv_path = _manifest_path(epic, "venv_path")
-    branch = str(epic.get("branch") or "")
-    expected_head = str(epic.get("expected_head") or "") or None
-    sync_policy = policy.get("sync_policy")
-
-    if _sync_policy_disabled(sync_policy):
-        return {"status": "skipped", "reason": "sync_policy_disabled"}
-
-    pointer = _check_editable_pointer(venv_path, runtime_root)
-
-    venv_python = venv_path / "bin" / "python"
-    command = [str(venv_python), "-m", "pip", "install", "-e", str(runtime_root)]
-
-    if dry_run:
-        return {
-            "status": "would_sync",
-            "dry_run": True,
-            "runtime_root": str(runtime_root),
-            "venv_path": str(venv_path),
-            "branch": branch,
-            "expected_head": expected_head,
-            "sync_policy": sync_policy,
-            "editable_pointer": pointer,
-            "command": command,
-            "command_text": _command_text(command),
-        }
-
-    return apply_install_sync(
-        source_root=runtime_root,
-        incident_id=incident_id
-        or str(_manifest_value(manifest, "epic_id") or "manifest-sync"),
-        session_id=session_id,
-        problem_id=problem_id,
-        root=root,
-        python_executable=str(venv_python),
-        runner=runner,
+    raise EditableInstallRetiredError(
+        "editable install sync is retired (T-0301): dependencies are "
+        "immutable content-addressed generations (epic.dependency_generation); "
+        "there is no pip install -e path"
     )
 
 
 __all__ = [
-    "EditablePointerMismatchError",
+    "EditableInstallRetiredError",
+    "GenerationError",
     "apply_install_sync",
-    "capture_runtime_identity",
-    "manifest_driven_sync",
+    "compute_venv_digest",
+    "ensure_dependency_generation",
+    "frozen_requirements",
+    "frozen_spec_sha256",
+    "generation_dir",
+    "generation_interpreter",
+    "verify_generation",
 ]

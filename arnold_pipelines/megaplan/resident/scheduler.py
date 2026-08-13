@@ -25,6 +25,10 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
+from arnold_pipelines.megaplan.custody.action_validator import (
+    GateResult,
+    adapter_effect_authorized,
+)
 from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
 from .timezone import TimezoneService, localize_text_timestamps
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
@@ -66,6 +70,41 @@ TERMINAL_OR_INPUT_NEEDED: frozenset[CloudClassification] = frozenset(
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+# Distinct hourly-superfixer launch gate (Phase 4, action-off): the consumer
+# chain is built and tested, but the backstop stays inert until an operator
+# sets ARNOLD_HOURLY_SUPERFIXER_ENABLED=1.  This is NOT the same flag as any
+# repair/enqueue gate; uncancelling the schedule jobs is a separate operator
+# decision.
+HOURLY_SUPERFIXER_ENABLED_ENV = "ARNOLD_HOURLY_SUPERFIXER_ENABLED"
+# Consumer custody lease for a claimed superfixer occurrence: shorter than the
+# job retry cadence so a crashed consumer's claim is reclaimed (with a newer
+# fence) on the next delivery instead of burning the occurrence.
+SUPERFIXER_CONSUMER_LEASE_SECONDS = 30
+
+
+class SuperfixerOccurrenceAlreadyLaunched(Exception):
+    """The occurrence already carries a committed managed launch.
+
+    Raised by the consumer claim when a duplicate delivery reaches an
+    occurrence whose launch receipt was already recorded.  The handler treats
+    it as an idempotent no-op (never a second launch, never a failure).
+    """
+
+
+def hourly_superfixer_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether the hourly superfixer launch flag is on (fail-closed).
+
+    Only an explicit truthy value (``1``/``true``/``yes``/``on``) enables the
+    backstop; anything unset, empty, or non-truthy keeps it OFF.  This is the
+    Phase 4 action-off guarantee: a due occurrence never launches without the
+    flag, and the flag never uncancels the schedule jobs.
+    """
+    raw = str(
+        (env or os.environ).get(HOURLY_SUPERFIXER_ENABLED_ENV, "")
+    ).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _git_head(root: Path) -> str | None:
@@ -477,19 +516,34 @@ class ResidentJobHandlers:
         )
 
     async def handle_superfixer_proactive(self, job_payload: dict[str, Any]) -> None:
-        """Plan the proactive superfixer dispatch for this scheduled occurrence.
+        """Consume one due ``superfixer_proactive`` single-shot occurrence.
 
-        Runs the manifest pin check (manifest from ``ARNOLD_RUNTIME_MANIFEST``
-        or the ``/workspace/.megaplan`` default), then persists the seam
-        dispatch plan on the job payload and re-arms a pending follow-up
-        occurrence (mirroring how ``handle_cloud_check`` reports non-terminal
-        state via ``_reschedule_cloud_check``).  A pin failure fails the
-        occurrence through the worker's existing ``mark_failed`` path (raised
-        here, like the other handlers).  PLANNING ALONE IS NEVER A TERMINAL
-        SUCCESS: the occurrence is recorded as ``planned`` and stays pending
-        in the schedule store until the actual launch is performed by the
-        ``subagent_worker --run-managed`` machinery consuming this record's
-        ``command`` — only that launch records the occurrence as fired.
+        Planning (the unified ``arnold-repair-loop --mode=proactive`` seam
+        dispatch record, after the fail-closed manifest pin check) is
+        persisted first; then the consumer decides what the occurrence is
+        worth:
+
+        * **Launch flag off** (``ARNOLD_HOURLY_SUPERFIXER_ENABLED`` unset or
+          non-truthy — the default) or the bound schedule cancelled/paused:
+          the single-shot is recorded with ``keep_cancelled: true`` (an
+          explicit non-enablement) and is NEVER launched.  Schedule-owned
+          occurrences then fire and reconcile terminal with the same
+          ``keep_cancelled_single_shot`` decision; legacy (non schedule-owned)
+          occurrences keep the old plan-only behavior (re-arm + PlannedOutcome).
+        * **Enabled + schedule active**: the consumer atomically claims the
+          occurrence (fence CAS; a stale claim is reclaimed with a newer
+          fence), runs the canonical identity-only effect gate
+          (``adapter_effect_authorized``), launches the managed run through
+          ``subagent.launch_superfixer_proactive_managed``, and records the
+          durable launch receipt on the occurrence (``run_id`` +
+          ``manifest_path``).  The FINAL receipt is the occurrence's terminal
+          transition once the managed-run manifest goes terminal
+          (``ScheduleService.reconcile_terminal_runs``).
+
+        Fail-closed invariants: no launch without the flag; no double launch
+        (the occurrence claim is atomic and a committed launch is never
+        re-claimed); no receipt without a launch; no schedule mutation
+        anywhere (definitions and heads are never rewritten here).
         """
         job = _job_from_payload(job_payload)
         manifest_path = _runtime_manifest_path()
@@ -520,12 +574,11 @@ class ResidentJobHandlers:
                 "resident-superfixer-proactive-plan", job.id, job.attempt_count
             ),
         )
-        self._reschedule_superfixer_proactive(job, dispatch)
         self._emit_sink().log_system_event(
             level="info",
             category="system",
             event_type="resident_superfixer_proactive",
-            message="superfixer proactive seam dispatch planned; occurrence pending until launch",
+            message="superfixer proactive seam dispatch planned; occurrence pending consumer decision",
             details={
                 "job_id": job.id,
                 "superfixer_occurrence_state": "planned",
@@ -535,13 +588,99 @@ class ResidentJobHandlers:
                 "resident-superfixer-proactive-fire", job.id, job.attempt_count
             ),
         )
-        # Planning alone is NEVER a terminal success: the occurrence stays
-        # pending (planned) until the launch machinery records the actual
-        # dispatch.  Raising PlannedOutcome keeps the worker from marking the
-        # job fired.
-        raise PlannedOutcome(
-            "superfixer_proactive: seam dispatch planned; occurrence pending "
-            "until the managed launch performs and records the dispatch"
+
+        schedule_owned = bool(job.payload.get("schedule_owned"))
+        if not hourly_superfixer_enabled():
+            # Action-off (default): record the explicit non-enablement and
+            # never launch, even with a due occurrence.
+            self._keep_superfixer_cancelled(
+                job,
+                dispatch,
+                decision="keep_cancelled_flag_disabled",
+                reason="hourly superfixer launch flag is off",
+            )
+            if schedule_owned:
+                # Job fires; reconcile marks the occurrence terminal with the
+                # keep_cancelled final receipt.  Recurrence custody stays with
+                # the schedule — nothing is re-armed here.
+                return
+            self._reschedule_superfixer_proactive(job, dispatch)
+            raise PlannedOutcome(
+                "superfixer_proactive: hourly launch flag off; single-shot "
+                "kept cancelled (keep_cancelled), no launch"
+            )
+
+        if not schedule_owned:
+            # No occurrence custody to claim or gate.  A legacy (non
+            # schedule-owned) occurrence stays planned/pending until a
+            # schedule-bound occurrence exists; planning alone is never a
+            # terminal success.
+            self._reschedule_superfixer_proactive(job, dispatch)
+            raise PlannedOutcome(
+                "superfixer_proactive: seam dispatch planned; occurrence "
+                "pending until a schedule-bound occurrence exists"
+            )
+
+        occurrence = self._bound_superfixer_occurrence(job)
+        if occurrence is None:
+            raise ValueError(
+                "superfixer_proactive schedule-owned job lost its occurrence binding"
+            )
+        service = self._superfixer_schedule_service()
+        if service is None:
+            raise ValueError("superfixer_proactive requires the resident schedule store")
+        from .schedules import TERMINAL_OCCURRENCE_STATES
+
+        if occurrence.state in TERMINAL_OCCURRENCE_STATES:
+            return  # already reconciled; nothing to launch
+        state = service.schedule_state(occurrence.occurrence.schedule_id)
+        if state not in {"active", "exhausted"}:
+            # Belt-and-suspenders: the bound schedule was cancelled/paused
+            # after this single-shot was committed.  Keep it cancelled.
+            self._keep_superfixer_cancelled(
+                job,
+                dispatch,
+                decision="keep_cancelled_schedule_cancelled",
+                reason=(
+                    f"superfixer schedule {occurrence.occurrence.schedule_id} "
+                    f"is {state}"
+                ),
+                occurrence=occurrence,
+                service=service,
+            )
+            return
+
+        # Enabled + active: atomic due claim, identity-only effect gate,
+        # managed launch, durable launch receipt.
+        try:
+            claim = self._claim_superfixer_occurrence(job, occurrence, service)
+        except SuperfixerOccurrenceAlreadyLaunched:
+            # Duplicate delivery of an already-launched single-shot: the
+            # launch receipt exists; idempotent no-op (never a second launch).
+            return
+        except RuntimeError:
+            # A live foreign claim (crash in flight or a concurrent delivery)
+            # routes through the worker's retry machinery; by the time the
+            # retry arrives the lease has expired and the next delivery
+            # reclaims the occurrence with a newer fence (crash-safe reclaim)
+            # and launches once.  Never a second launch, never a burned job.
+            raise
+        verdict = self._superfixer_effect_gate(claim)
+        if not adapter_effect_authorized(verdict):
+            self._keep_superfixer_cancelled(
+                job,
+                dispatch,
+                decision=f"keep_cancelled_{verdict.value}",
+                reason=f"superfixer launch effect gate denied: {verdict.value}",
+                occurrence=occurrence,
+                service=service,
+            )
+            raise ValueError(
+                f"superfixer_proactive launch not authorized: {verdict.value}"
+            )
+        result = await self._launch_superfixer_managed(job, occurrence, claim, dispatch)
+        self._record_superfixer_launch_receipt(
+            job, occurrence, claim, result, service=service
         )
 
     def _reschedule_superfixer_proactive(
@@ -584,6 +723,282 @@ class ResidentJobHandlers:
                 "resident-superfixer-proactive-reschedule",
                 job.id,
                 job.attempt_count,
+            ),
+        )
+
+    def _superfixer_schedule_service(self) -> Any | None:
+        """Return the resident ScheduleService, or ``None`` without a store root."""
+        from .schedules import ScheduleService, schedule_store_root
+
+        root = schedule_store_root(self.store)
+        if root is None:
+            return None
+        return ScheduleService(root)
+
+    def _bound_superfixer_occurrence(self, job: ScheduledJob) -> Any | None:
+        """Resolve the schedule-owned occurrence bound to this job payload."""
+        context = job.payload.get("schedule_occurrence")
+        if not isinstance(context, Mapping):
+            return None
+        occurrence_id = context.get("occurrence_id")
+        if not occurrence_id:
+            return None
+        service = self._superfixer_schedule_service()
+        if service is None:
+            return None
+        return service.load_occurrence(str(occurrence_id))
+
+    def _keep_superfixer_cancelled(
+        self,
+        job: ScheduledJob,
+        dispatch: Mapping[str, Any],
+        *,
+        decision: str,
+        reason: str,
+        occurrence: Any | None = None,
+        service: Any | None = None,
+    ) -> None:
+        """Durably record the explicit non-enablement of ONE due single-shot.
+
+        Appends the immutable ``keep_cancelled: true`` receipt in the schedule
+        store (when available) and marks the job payload so the occurrence's
+        final terminal receipt carries the same decision.  Never launches,
+        never touches the schedule definition or head, never re-arms
+        recurrence custody.
+        """
+        schedule_id = None
+        occurrence_id = None
+        occurrence_key = None
+        if occurrence is not None:
+            schedule_id = occurrence.occurrence.schedule_id
+            occurrence_id = occurrence.occurrence.occurrence_id
+            occurrence_key = occurrence.occurrence.occurrence_key
+        else:
+            context = job.payload.get("schedule_occurrence")
+            if isinstance(context, Mapping):
+                schedule_id = context.get("schedule_id")
+                occurrence_id = context.get("occurrence_id")
+                occurrence_key = context.get("occurrence_key")
+        if service is None:
+            service = self._superfixer_schedule_service()
+        if service is not None:
+            service.record_superfixer_single_shot(
+                decision=decision,
+                reason=reason,
+                actor=self.worker_id,
+                now=utc_now(),
+                occurrence_id=occurrence_id,
+                occurrence_key=occurrence_key,
+                schedule_id=schedule_id,
+                job_id=job.id,
+            )
+        payload = dict(job.payload)
+        payload["seam_dispatch_plan"] = dict(dispatch)
+        payload["keep_cancelled"] = True
+        payload["keep_cancelled_decision"] = decision
+        payload["keep_cancelled_reason"] = reason
+        payload["superfixer_occurrence_state"] = "kept_cancelled"
+        self.store.update_scheduled_job(
+            job.id,
+            payload=payload,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-superfixer-keep-cancelled",
+                job.id,
+                job.attempt_count,
+                decision,
+            ),
+        )
+
+    def _claim_superfixer_occurrence(
+        self, job: ScheduledJob, occurrence: Any, service: Any
+    ) -> Any:
+        """Atomically claim the due occurrence (fence CAS, crash-safe reclaim)."""
+        try:
+            return service.claim_superfixer_occurrence(
+                occurrence.occurrence.occurrence_id,
+                job_id=job.id,
+                worker_id=self.worker_id,
+                now=utc_now(),
+                lease_seconds=SUPERFIXER_CONSUMER_LEASE_SECONDS,
+            )
+        except RuntimeError as exc:
+            if "already carries a committed launch" in str(exc):
+                raise SuperfixerOccurrenceAlreadyLaunched(str(exc)) from exc
+            raise
+
+    def _superfixer_effect_gate(self, claim: Any) -> GateResult:
+        """Identity-only custody gate for the superfixer launch.
+
+        The canonical ``adapter_effect_authorized`` verdict is granted only
+        while THIS worker holds the current occurrence claim with a live
+        lease.  Foreign ownership, an expired lease, or a missing claim all
+        fail closed — no WBC reread, no shadow observation.
+        """
+        if claim.state != "claimed":
+            return GateResult.BLOCKED_NOT_OWNER
+        if claim.claim_owner != self.worker_id:
+            return GateResult.BLOCKED_NOT_OWNER
+        if claim.fence == 0:
+            return GateResult.BLOCKED_STALE_EPOCH
+        if claim.claim_expires_at is None or claim.claim_expires_at <= utc_now():
+            return GateResult.BLOCKED_STALE_EPOCH
+        return GateResult.AUTHORIZED
+
+    def _superfixer_schedule_context(
+        self, occurrence: Any, claim: Any
+    ) -> dict[str, Any]:
+        """Build the bounded schedule context binding occurrence + claim custody."""
+        item = occurrence.occurrence
+        return {
+            "schema_version": item.schema_version,
+            "schedule_id": item.schedule_id,
+            "schedule_revision": item.schedule_revision,
+            "generation": item.generation,
+            "occurrence_id": item.occurrence_id,
+            "occurrence_key": item.occurrence_key,
+            "nominal_at": item.nominal_at.isoformat(),
+            "authorization_digest": item.authorization_digest,
+            "pinned_definition_digest": item.pinned_definition_digest,
+            "claim": {
+                "claim_owner": claim.claim_owner,
+                "fence": claim.fence,
+            },
+            "superfixer": True,
+        }
+
+    def _superfixer_launch_task(
+        self, job: ScheduledJob, occurrence: Any, dispatch: Mapping[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Resolve the managed-run task prompt and launch options.
+
+        The pinned target prompt is the fixer goal when the occurrence names
+        one; otherwise the seam dispatch record is rendered into a task.
+        """
+        pinned = occurrence.occurrence.pinned_launch_spec
+        target = pinned.get("target") if isinstance(pinned, Mapping) else None
+        prompt = str((target or {}).get("prompt") or "").strip()
+        description = str(
+            (target or {}).get("description") or "Hourly superfixer backstop"
+        ).strip()
+        project_dir = str(
+            (target or {}).get("project_dir") or job.payload.get("workspace") or "/workspace"
+        )
+        model = str((target or {}).get("model") or "").strip()
+        if prompt:
+            return prompt, {
+                "description": description,
+                "project_dir": project_dir,
+                "model": model,
+            }
+        command = " ".join(str(part) for part in (dispatch.get("command") or []))
+        return (
+            f"Run the proactive superfixer dispatch for this due occurrence.\n\n"
+            f"Seam: {dispatch.get('seam')} ({dispatch.get('mode')})\n"
+            f"Command: {command}\n"
+            f"Pin: {dispatch.get('pin_ok')} ({dispatch.get('pin_reason')})",
+            {"description": description, "project_dir": project_dir, "model": model},
+        )
+
+    async def _launch_superfixer_managed(
+        self,
+        job: ScheduledJob,
+        occurrence: Any,
+        claim: Any,
+        dispatch: Mapping[str, Any],
+    ) -> Any:
+        """Launch the managed run through the existing managed-run path."""
+        from arnold_pipelines.megaplan.resident import subagent as subagent_module
+
+        task, options = self._superfixer_launch_task(job, occurrence, dispatch)
+        schedule_context = self._superfixer_schedule_context(occurrence, claim)
+        launch_origin = {
+            "applicability": "not_applicable",
+            "transport": "non_discord",
+            "source_kind": "scheduled_turn",
+            "superfixer_proactive": True,
+            "occurrence_id": occurrence.occurrence.occurrence_id,
+            "claim_owner": claim.claim_owner,
+            "fence": claim.fence,
+        }
+        if options["model"]:
+            return subagent_module.launch_superfixer_proactive_managed(
+                task=task,
+                description=options["description"],
+                project_dir=options["project_dir"],
+                request_id=occurrence.occurrence.occurrence_id,
+                launch_origin=launch_origin,
+                schedule_context=schedule_context,
+                model_spec=options["model"],
+            )
+        return subagent_module.launch_superfixer_proactive_managed(
+            task=task,
+            description=options["description"],
+            project_dir=options["project_dir"],
+            request_id=occurrence.occurrence.occurrence_id,
+            launch_origin=launch_origin,
+            schedule_context=schedule_context,
+        )
+
+    def _record_superfixer_launch_receipt(
+        self,
+        job: ScheduledJob,
+        occurrence: Any,
+        claim: Any,
+        result: Any,
+        *,
+        service: Any,
+    ) -> None:
+        """Persist the durable launch receipt on the occurrence and event log.
+
+        The occurrence transitions to ``launched`` bound to the managed-run
+        identity (``run_id``/``manifest_path``/``manifest_digest``); the final
+        receipt arrives later when ``reconcile_terminal_runs`` observes the
+        terminal manifest.  Receipt linkage: occurrence.run_id == result.run_id
+        == manifest run_id.
+        """
+        manifest_path = getattr(result, "manifest_path", None)
+        manifest_digest = None
+        if manifest_path is not None:
+            manifest_digest = "sha256:" + hashlib.sha256(
+                Path(str(manifest_path)).read_bytes()
+            ).hexdigest()
+        service.repo.transition(
+            occurrence.occurrence.occurrence_id,
+            event="superfixer_managed_launch_committed",
+            actor=self.worker_id,
+            expected_fence=claim.fence,
+            expected_token=claim.claim_token,
+            changes={
+                "state": "launched",
+                "run_id": str(getattr(result, "run_id", "")),
+                "manifest_path": str(manifest_path) if manifest_path is not None else None,
+                "manifest_digest": manifest_digest,
+                "decision": "superfixer_managed_launch_committed",
+                "claim_owner": None,
+                "claim_token": None,
+                "claim_expires_at": None,
+            },
+        )
+        self._emit_sink().log_system_event(
+            level="info",
+            category="system",
+            event_type="resident_superfixer_launch",
+            message="superfixer proactive managed run launched",
+            details={
+                "job_id": job.id,
+                "schedule_id": occurrence.occurrence.schedule_id,
+                "occurrence_id": occurrence.occurrence.occurrence_id,
+                "occurrence_key": occurrence.occurrence.occurrence_key,
+                "claim_owner": claim.claim_owner,
+                "fence": claim.fence,
+                "run_id": str(getattr(result, "run_id", "")),
+                "manifest_path": str(manifest_path) if manifest_path is not None else None,
+            },
+            idempotency_key=deterministic_idempotency_key(
+                "resident-superfixer-launch",
+                job.id,
+                occurrence.occurrence.occurrence_id,
+                getattr(result, "run_id", ""),
             ),
         )
 

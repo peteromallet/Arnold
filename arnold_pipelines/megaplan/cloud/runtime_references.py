@@ -91,6 +91,14 @@ any os error — is UNKNOWN, fail-closed):
   * ops          ops schedule stores ``/workspace/.megaplan/ops/schedules``
                  and ``/workspace/.megaplan/schedule-inputs`` (per-input
                  dirs, scanned two levels deep; probe_records.py).
+  * generation   the content-addressed dependency-generation store root
+                 (``/workspace/runtime-venvs`` — T-0301).  A missing store
+                 is NOT a reference; a PRESENT hex-named generation dir that
+                 cannot be attested (corrupt/missing ``.generation.json``,
+                 proof id != dir name, missing interpreter) is UNKNOWN
+                 (fail-closed).  References to a generation come from the
+                 other stores' path-bearing keys (``venv_path``), so a
+                 generation with zero references is deletable.
 
 CLI (used by arnold-gc-sweep):
 
@@ -100,7 +108,8 @@ CLI (used by arnold-gc-sweep):
       [--marker-store <d1:d2>] [--schedule-store <d1:d2>] \\
       [--repair-queue <dir>] [--lease-store <dir>] \\
       [--plan-lease-root <dir>] [--managed-run-store <d1:d2>] \\
-      [--status-dir <dir>] [--ops-store <d1:d2>]
+      [--status-dir <dir>] [--ops-store <d1:d2>] \\
+      [--generation-root <dir>]
 
 Prints ``STATUS <verdict>`` plus ``REASON <...>`` lines and always exits 0;
 the WRAPPER decides how to act on the verdict (REFERENCED -> hard skip,
@@ -114,6 +123,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -211,6 +221,20 @@ DEFAULT_OPS_STORE = os.environ.get(
     "ARNOLD_REFERENCE_OPS_STORE",
     "/workspace/.megaplan/ops/schedules:/workspace/.megaplan/schedule-inputs",
 )
+# Content-addressed dependency-generation store root (T-0301): one immutable
+# venv per frozen-spec digest at <root>/<sha256> with a .generation.json
+# proof.  Matches the arnold-runtime-create default
+# ($ARNOLD_RUNTIME_VENVS_DIR or <base>/runtime-venvs) and the legacy
+# /workspace/runtime-venvs/arnold-<sha>-live pattern.
+DEFAULT_GENERATION_ROOT = os.environ.get(
+    "ARNOLD_REFERENCE_RUNTIME_VENVS_DIR", "/workspace/runtime-venvs"
+)
+
+# Content-addressed generation dir names are 64-char hex spec digests; the
+# legacy /workspace/runtime-venvs/arnold-<sha>-live venvs predate T-0301 and
+# carry no generation proof, so only hex-named dirs are generation-store
+# entries (a legacy venv is still a reference via venv_path path-keys).
+_GENERATION_NAME = re.compile(r"^[0-9a-f]{64}$")
 
 
 def normalize_root(value: object) -> str:
@@ -450,6 +474,95 @@ def _scan_store(
     return "CLEAR", []
 
 
+def _scan_generation_store(
+    root: str,
+    dirs: tuple[str, ...],
+) -> tuple[str, list[str]]:
+    """Scan the content-addressed dependency-generation store (T-0301).
+
+    The generation store holds ONE dir per frozen-spec digest
+    (``<root>/<sha256>``) with a ``.generation.json`` proof.  A missing
+    generation root is NOT a reference (the store is lazily created); a
+    PRESENT hex-named generation dir that cannot be attested — unreadable,
+    missing/corrupt ``.generation.json``, a proof whose ``id`` does not
+    match the dir name, or a missing interpreter — is UNKNOWN (fail-closed:
+    the census cannot attest the generation's integrity, so no deletion
+    happens anywhere in the sweep).  Non-hex subdirs (the legacy
+    ``arnold-<sha>-live`` venvs) are ignored: they predate T-0301 and carry
+    no generation proof.
+
+    References to a generation come from the manifest store (``venv_path``
+    key) and every other path-bearing store — the store itself never makes
+    a generation REFERENCED by mere existence (an orphan generation with
+    zero references is deletable).
+    """
+    for dirname in dirs:
+        store_dir = Path(dirname)
+        try:
+            st = store_dir.stat()
+        except FileNotFoundError:
+            if os.path.islink(str(store_dir)):
+                return (
+                    "UNKNOWN",
+                    [f"generation store path {store_dir} is a dangling symlink"],
+                )
+            # A genuinely missing generation store is not a reference.
+            continue
+        except OSError as exc:
+            return "UNKNOWN", [f"unreadable generation store dir {store_dir}: {exc}"]
+        if not stat.S_ISDIR(st.st_mode):
+            return (
+                "UNKNOWN",
+                [f"generation store path {store_dir} exists but is not a directory"],
+            )
+        try:
+            entries = sorted(store_dir.iterdir())
+        except OSError as exc:
+            return "UNKNOWN", [f"unreadable generation store dir {store_dir}: {exc}"]
+        for entry in entries:
+            if not _GENERATION_NAME.match(entry.name):
+                continue  # legacy / unrelated content, not a generation entry
+            if not entry.is_dir():
+                return (
+                    "UNKNOWN",
+                    [
+                        f"generation store path {entry} exists but is not a directory"
+                    ],
+                )
+            proof_file = entry / ".generation.json"
+            if not proof_file.is_file():
+                return (
+                    "UNKNOWN",
+                    [
+                        f"generation {entry} is present but carries no "
+                        ".generation.json proof"
+                    ],
+                )
+            try:
+                raw = proof_file.read_text(encoding="utf-8")
+                proof = json.loads(raw)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return "UNKNOWN", [f"generation proof unreadable/corrupt at {proof_file}: {exc}"]
+            if (
+                not isinstance(proof, dict)
+                or not isinstance(proof.get("id"), str)
+                or proof.get("id") != entry.name
+            ):
+                return (
+                    "UNKNOWN",
+                    [
+                        f"generation proof at {proof_file} does not match its "
+                        "content-addressed dir name"
+                    ],
+                )
+            if not (entry / "bin" / "python").is_file():
+                return (
+                    "UNKNOWN",
+                    [f"generation {entry} is missing its interpreter"],
+                )
+    return "CLEAR", []
+
+
 def run_census(
     *,
     root: str,
@@ -465,6 +578,7 @@ def run_census(
     managed_run_store: str = DEFAULT_MANAGED_RUN_STORE,
     status_dir: str = DEFAULT_STATUS_DIR,
     ops_store: str = DEFAULT_OPS_STORE,
+    generation_root: str = DEFAULT_GENERATION_ROOT,
 ) -> tuple[str, list[str]]:
     """Classify *root* against every configured reference store.
 
@@ -617,6 +731,14 @@ def run_census(
         )
         if verdict != "CLEAR":
             return verdict, reasons
+    # T-0301: the content-addressed dependency-generation store.  Corrupt
+    # or unverifiable generation dirs make the whole census UNKNOWN
+    # (fail-closed — delete-on-unknown never happens); a missing store is
+    # not a reference; references to a generation are found via the
+    # path-bearing keys (venv_path) in the stores above.
+    verdict, reasons = _scan_generation_store(root, (generation_root,))
+    if verdict != "CLEAR":
+        return verdict, reasons
     return "CLEAR", []
 
 
@@ -654,6 +776,12 @@ def _build_parser() -> argparse.ArgumentParser:
     census.add_argument("--managed-run-store", default=DEFAULT_MANAGED_RUN_STORE)
     census.add_argument("--status-dir", default=DEFAULT_STATUS_DIR)
     census.add_argument("--ops-store", default=DEFAULT_OPS_STORE)
+    census.add_argument(
+        "--generation-root",
+        default=DEFAULT_GENERATION_ROOT,
+        help="content-addressed dependency-generation store root (T-0301); "
+        "corrupt/unverifiable generations are UNKNOWN (fail-closed)",
+    )
     return parser
 
 
@@ -681,6 +809,7 @@ def main(argv: list[str] | None = None) -> int:
         managed_run_store=args.managed_run_store,
         status_dir=args.status_dir,
         ops_store=args.ops_store,
+        generation_root=args.generation_root,
     )
     print(f"STATUS {verdict}")
     for reason in reasons:

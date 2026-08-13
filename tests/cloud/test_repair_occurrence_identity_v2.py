@@ -486,3 +486,382 @@ def test_cleanup_seed_allows_managed_failure_identity_after_active_step_clear(
         ] == "active_step_cleanup"
     finally:
         publisher.close()
+
+
+# ---------------------------------------------------------------------------
+# T-0202 — auto enqueue result propagation (persist identity before release)
+# ---------------------------------------------------------------------------
+
+
+def _lifecycle_identity(**overrides: object) -> dict[str, object]:
+    """Explicit authority-bearing identity for the lifecycle enqueue path."""
+    from tests.cloud.repair_identity_fixtures import repair_identity
+
+    return repair_identity(
+        session=overrides.get("session", "enqueue-session"),
+        plan=overrides.get("plan", "enqueue-plan"),
+        failure_kind=overrides.get("failure_kind", "deterministic_phase_failure"),
+        phase=overrides.get("phase", "critique"),
+        task=overrides.get("task", "phase:critique"),
+    )
+
+
+def _enqueue_kwargs(
+    plan_dir: Path,
+    queue_root: Path,
+    *,
+    session: str = "enqueue-session",
+    identity: dict[str, object] | None = None,
+    kind: str = "deterministic_phase_failure",
+    phase: str = "critique",
+) -> dict[str, object]:
+    return {
+        "plan_dir": plan_dir,
+        "queue_root": queue_root,
+        "session": session,
+        "run_kind": "chain",
+        "kind": kind,
+        "message": "deterministic phase contract failure",
+        "current_state": "blocked",
+        "phase": phase,
+        "suggested_action": "repair the phase contract",
+        "metadata": {
+            "blocked_task_id": "phase:critique",
+            "repair_identity": identity or _lifecycle_identity(),
+        },
+        "retry_strategy": "repair_phase_contract",
+    }
+
+
+class TestLifecycleEnqueueResultPropagation:
+    """T-0202: every auto enqueue exit carries the canonical request result.
+
+    The canonical shape is ``{request_id, decision_id, repair_identity_key,
+    blocker_id}`` plus a typed ``status``/``outcome``; no exit returns bare
+    identity-free ``None``.
+    """
+
+    def test_main_enqueue_path_returns_ids_that_survive_on_disk(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
+
+        plan_dir = tmp_path / "markers"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
+        queue_root = _queue(tmp_path)
+        identity = _lifecycle_identity()
+
+        result = _enqueue_lifecycle_failure_request(
+            **_enqueue_kwargs(plan_dir, queue_root, identity=identity)
+        )
+
+        assert result["status"] == "queued"
+        assert result["outcome"] == "queued"
+        assert result["request_id"]
+        assert result["decision_id"]
+        assert result["repair_identity_key"] == repair_requests.repair_identity_key(identity)
+        assert result["blocker_id"]
+
+        requests = repair_requests.iter_repair_requests(queue_root)
+        assert len(requests) == 1
+        request = requests[0]
+        assert request["request_id"] == result["request_id"]
+        assert request["repair_identity_key"] == result["repair_identity_key"]
+        assert request["blocker_id"] == result["blocker_id"]
+        decisions = list(
+            repair_requests.iter_repair_decisions(queue_root)
+        )
+        assert any(
+            decision["decision_id"] == result["decision_id"]
+            and decision["request_id"] == result["request_id"]
+            for decision in decisions
+        )
+
+    def test_returned_ids_survive_claim(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
+
+        plan_dir = tmp_path / "markers"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
+        queue_root = _queue(tmp_path)
+        identity = _lifecycle_identity()
+
+        result = _enqueue_lifecycle_failure_request(
+            **_enqueue_kwargs(plan_dir, queue_root, identity=identity)
+        )
+
+        claim = repair_requests.claim_active_repair_request(
+            queue_root,
+            blocker_id=result["blocker_id"],
+            request_id=result["request_id"],
+            actor="watchdog",
+            session="enqueue-session",
+            repair_identity=identity,
+        )
+        assert claim.claimed
+        assert claim.owner["request_id"] == result["request_id"]
+
+    def test_record_lifecycle_failure_joins_result_before_custody_release(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan import auto
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "enqueue-plan"
+        plan_dir.mkdir(parents=True)
+        state = {
+            "name": "enqueue-plan",
+            "current_state": "critique",
+            "history": [],
+            "sessions": {},
+            "meta": {},
+        }
+        set_active_step(
+            state,
+            step="critique",
+            agent="codex",
+            mode="persistent",
+            run_id="run-1",
+        )
+        (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        queue_root = _queue(tmp_path)
+        identity = _lifecycle_identity()
+
+        result = auto._record_lifecycle_failure(
+            plan_dir=plan_dir,
+            kind="deterministic_phase_failure",
+            message="deterministic phase contract failure",
+            current_state="blocked",
+            phase="critique",
+            resume_cursor={"phase": "critique", "retry_strategy": "repair_phase_contract"},
+            suggested_action="repair the phase contract",
+            metadata={
+                "blocked_task_id": "phase:critique",
+                "repair_identity": identity,
+            },
+        )
+
+        # The canonical result is returned…
+        assert result["request_id"]
+        assert result["decision_id"]
+        assert result["repair_identity_key"] == repair_requests.repair_identity_key(identity)
+        assert result["blocker_id"]
+
+        # …and joined into the SAME metadata write that releases custody
+        # (record_lifecycle_failure clears active_step), so the IDs survive.
+        persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert "active_step" not in persisted
+        joined = persisted["latest_failure"]["metadata"]["repair_request_identity"]
+        assert joined["request_id"] == result["request_id"]
+        assert joined["decision_id"] == result["decision_id"]
+        assert joined["repair_identity_key"] == result["repair_identity_key"]
+        assert joined["blocker_id"] == result["blocker_id"]
+        assert joined["status"] == "queued"
+        assert joined["outcome"] == "queued"
+        assert persisted["latest_failure"]["metadata"]["repair_identity"]
+        assert repair_requests.normalize_repair_identity(
+            persisted.get("repair_identity")
+        ) is not None
+
+    def test_no_plan_dir_exit_is_typed(self) -> None:
+        from arnold_pipelines.megaplan import auto
+
+        result = auto._record_lifecycle_failure(
+            plan_dir=None,
+            kind="stall_detected",
+            message="driver stalled",
+            current_state="blocked",
+            phase="execute",
+            resume_cursor=None,
+            suggested_action="",
+            metadata=None,
+        )
+        assert result["status"] == "repair_unavailable"
+        assert result["outcome"] == "no_plan_dir"
+        assert result["request_id"] == ""
+        assert result["decision_id"] == ""
+        assert result["repair_identity_key"] == ""
+        assert result["blocker_id"] == ""
+
+    def test_lifecycle_record_exception_still_carries_enqueue_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan import auto
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "enqueue-plan"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "enqueue-plan", "current_state": "critique"}),
+            encoding="utf-8",
+        )
+        queue_root = _queue(tmp_path)
+        identity = _lifecycle_identity()
+
+        def _boom(self: object, **kwargs: object) -> dict[str, object]:
+            raise OSError("state disk full")
+
+        monkeypatch.setattr(
+            auto.PlanRepository, "record_lifecycle_failure", _boom
+        )
+
+        result = auto._record_lifecycle_failure(
+            plan_dir=plan_dir,
+            kind="deterministic_phase_failure",
+            message="deterministic phase contract failure",
+            current_state="blocked",
+            phase="critique",
+            resume_cursor=None,
+            suggested_action="",
+            metadata={
+                "blocked_task_id": "phase:critique",
+                "repair_identity": identity,
+            },
+        )
+
+        # The enqueue ran first and its identity is carried, not dropped.
+        assert result["request_id"]
+        assert result["decision_id"]
+        assert result["repair_identity_key"] == repair_requests.repair_identity_key(identity)
+        assert result["blocker_id"]
+        assert result["lifecycle_record_persisted"] is False
+        assert result["lifecycle_record_error_type"] == "OSError"
+        assert "disk full" in result["lifecycle_record_error"]
+        requests = repair_requests.iter_repair_requests(queue_root)
+        assert len(requests) == 1
+
+    def test_queue_disabled_exit_is_typed(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
+
+        plan_dir = tmp_path / "markers"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
+        queue_root = _queue(tmp_path)
+        identity = _lifecycle_identity()
+
+        with patch(
+            "arnold_pipelines.megaplan.cloud.feature_flags.repair_request_queue_enabled",
+            return_value=False,
+        ):
+            result = _enqueue_lifecycle_failure_request(
+                **_enqueue_kwargs(plan_dir, queue_root, identity=identity)
+            )
+
+        assert result["status"] == "repair_unavailable"
+        assert result["outcome"] == "queue_disabled"
+        assert result["repair_identity_key"] == repair_requests.repair_identity_key(identity)
+        assert result["request_id"] == ""
+        assert list((queue_root / "requests").glob("*.json")) == []
+
+    def test_enqueue_exception_becomes_typed_failure(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
+
+        plan_dir = tmp_path / "markers"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
+        queue_root = _queue(tmp_path)
+        identity = _lifecycle_identity()
+
+        with patch(
+            "arnold_pipelines.megaplan.cloud.repair_requests.enqueue_occurrence_bound_repair_request",
+            side_effect=RuntimeError("disk full"),
+        ):
+            result = _enqueue_lifecycle_failure_request(
+                **_enqueue_kwargs(plan_dir, queue_root, identity=identity)
+            )
+
+        assert result["status"] == "repair_unavailable"
+        assert result["outcome"] == "repair_enqueue_failure"
+        assert result["error_type"] == "RuntimeError"
+        assert "disk full" in result["error"]
+        # The occurrence identity still rides along on the failure result.
+        assert result["repair_identity_key"] == repair_requests.repair_identity_key(identity)
+        assert list((queue_root / "requests").glob("*.json")) == []
+
+    def test_terminal_mirror_without_failure_is_typed(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_terminal_failure_request
+
+        plan_dir = tmp_path / "markers"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
+
+        result = _enqueue_terminal_failure_request(plan_dir)
+
+        assert result["status"] == "repair_unavailable"
+        assert result["outcome"] == "no_terminal_failure_to_mirror"
+        assert result["request_id"] == ""
+
+    def test_terminal_mirror_exception_is_typed_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_terminal_failure_request
+
+        plan_dir = tmp_path / "markers"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "current_state": "blocked",
+                    "latest_failure": {
+                        "kind": "quality_gate_blocked",
+                        "message": "deterministic review check failed",
+                        "phase": "review",
+                        "metadata": {"blocked_task_id": "T24"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def _boom(plan_dir: Path) -> tuple[Path, Path, str, str]:
+            raise RuntimeError("route exploded")
+
+        monkeypatch.setattr(auto, "_lifecycle_repair_request_route", _boom)
+
+        result = _enqueue_terminal_failure_request(plan_dir)
+
+        assert result["status"] == "repair_unavailable"
+        assert result["outcome"] == "repair_enqueue_failure"
+        assert result["error_type"] == "RuntimeError"
+        assert "route exploded" in result["error"]
+
+
+def test_canonical_repair_request_identity_resolves_coalesced_related_request():
+    """G8 advisory 2: a coalesced decision names the RELATED persisted request,
+    never the unwritten candidate record."""
+    from arnold_pipelines.megaplan.auto import _canonical_repair_request_identity
+
+    candidate = "candidate-request-1"
+    related = "related-persisted-request-2"
+    result = {
+        "status": "coalesced",
+        "request": {"request_id": candidate, "blocker_id": "blocker-x"},
+        "decision": {
+            "decision_id": "dec-1",
+            "status": "coalesced",
+            "related_request_id": related,
+        },
+        "repair_identity_key": "key-1",
+    }
+    canon = _canonical_repair_request_identity(result)
+    assert canon["request_id"] == related, canon
+    assert canon["decision_id"] == "dec-1"
+    assert canon["blocker_id"] == "blocker-x"
+    assert canon["repair_identity_key"] == "key-1"
+
+
+def test_canonical_repair_request_identity_keeps_candidate_when_not_coalesced():
+    from arnold_pipelines.megaplan.auto import _canonical_repair_request_identity
+
+    result = {
+        "status": "queued",
+        "request": {"request_id": "req-1", "blocker_id": "b-1"},
+        "decision": {"decision_id": "d-1", "status": "accepted"},
+        "repair_identity_key": "k-1",
+    }
+    canon = _canonical_repair_request_identity(result)
+    assert canon["request_id"] == "req-1"
+    assert canon["decision_id"] == "d-1"

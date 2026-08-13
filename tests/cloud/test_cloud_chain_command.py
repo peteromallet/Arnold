@@ -303,7 +303,13 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert 'cd /workspace/project' not in command
     assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
     assert "MEGAPLAN_RUNTIME_SRC" not in command
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+    # T-0301: the launch runs under the generation interpreter
+    # (manifest-bound, worktree-first PYTHONPATH) — never ambient python.
+    assert (
+        'MEGAPLAN_TRUSTED_CONTAINER=1 "$GEN_INTERPRETER" -P -m '
+        "arnold_pipelines.megaplan chain start"
+    ) in command
+    assert "python -P -m arnold_pipelines.megaplan chain start" not in command
 
 
 def test_chain_start_command_cd_is_manifest_accepted_root_not_project_or_engine() -> None:
@@ -373,7 +379,13 @@ def test_epic_chain_start_command_pins_manifest_before_hot_env_and_fails_closed(
     assert "/workspace/arnold" not in command
     assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
     assert "MEGAPLAN_RUNTIME_SRC" not in command
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start" in command
+    assert "manifest lacks dependency generation interpreter" in command
+    assert "dependency generation interpreter not executable" in command
+    assert (
+        'MEGAPLAN_TRUSTED_CONTAINER=1 "$GEN_INTERPRETER" -P -m '
+        "arnold_pipelines.megaplan epic-chain start"
+    ) in command
+    assert "python -P -m arnold_pipelines.megaplan epic-chain start" not in command
 
 
 def test_refresh_then_epic_chain_start_command_has_no_spec_engine_or_fixed_fallback() -> None:
@@ -396,7 +408,10 @@ def test_refresh_then_epic_chain_start_command_has_no_spec_engine_or_fixed_fallb
     assert "pip install -e" not in command
     assert "MEGAPLAN_LAUNCH_RUNTIME_SRC" not in command
     assert "MEGAPLAN_RUNTIME_SRC" not in command
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start" in command
+    assert (
+        'MEGAPLAN_TRUSTED_CONTAINER=1 "$GEN_INTERPRETER" -P -m '
+        "arnold_pipelines.megaplan epic-chain start"
+    ) in command
 
 
 def test_managed_chain_start_exports_canonical_repair_route() -> None:
@@ -545,7 +560,10 @@ def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
 
 
 def _canonical_manifest_payload(
-    runtime_root: str, *, expected_head: str
+    runtime_root: str,
+    *,
+    expected_head: str,
+    interpreter_path: str = "/opt/arnold/runtime-venvs/generation/bin/python",
 ) -> dict[str, object]:
     """Canonical schema-"1" runtime-manifest payload (G6 round-2 finding 2).
 
@@ -553,6 +571,11 @@ def _canonical_manifest_payload(
     schema-valid) and must satisfy the shell pin-gate's canonical required
     key sets (``TOP_LEVEL_REQUIRED`` / ``EPIC_REQUIRED``), which the
     schema-gated pinned-manifest reads now enforce.
+
+    T-0301: carries a complete ``dependency_generation`` proof; launch tests
+    that RUN the emitted command point ``interpreter_path`` at their probe
+    shim so the gate's executable check passes and the provenance/launch run
+    through the shim.
     """
     return {
         "runtime_id": "pincheck-runtime-1",
@@ -575,6 +598,13 @@ def _canonical_manifest_payload(
             "expected_head": expected_head,
             "repair_bin": f"{runtime_root}/venv/bin/arnold-repair-loop",
             "deps_lockfile": f"{runtime_root}/uv.lock",
+            "dependency_generation": {
+                "id": "a" * 64,
+                "frozen_spec_sha256": "a" * 64,
+                "interpreter_path": interpreter_path,
+                "venv_digest": "b" * 64,
+                "created": "2026-08-12T00:00:00Z",
+            },
         },
         "indirection": {
             "host_path": runtime_root,
@@ -605,7 +635,9 @@ def _canonical_manifest_payload(
     }
 
 
-def _write_runtime_manifest(path: Path, *, runtime_root: Path, revision: str) -> Path:
+def _write_runtime_manifest(
+    path: Path, *, runtime_root: Path, revision: str, interpreter_path: str | None = None
+) -> Path:
     """Write a canonically schema-valid runtime manifest (G6 round-2 finding 2).
 
     The pinned-manifest reads are schema-gated, so trusted-case fixtures must
@@ -617,12 +649,12 @@ def _write_runtime_manifest(path: Path, *, runtime_root: Path, revision: str) ->
         write_manifest,
     )
 
-    write_manifest(
-        RuntimeManifest.from_dict(
-            _canonical_manifest_payload(str(runtime_root), expected_head=revision)
-        ),
-        path,
-    )
+    payload = _canonical_manifest_payload(str(runtime_root), expected_head=revision)
+    if interpreter_path is not None:
+        payload["epic"]["dependency_generation"]["interpreter_path"] = (  # type: ignore[index]
+            interpreter_path
+        )
+    write_manifest(RuntimeManifest.from_dict(payload), path)
     return path
 
 
@@ -637,8 +669,14 @@ def test_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
     accepted.mkdir()
     stale.mkdir()
     revision = "a" * 40
+    shim = _runtime_probe_shim(tmp_path)
     accepted_manifest = _write_runtime_manifest(
-        tmp_path / "accepted-manifest.json", runtime_root=accepted, revision=revision
+        tmp_path / "accepted-manifest.json",
+        runtime_root=accepted,
+        revision=revision,
+        # T-0301: the generation interpreter IS the shim so the gate's
+        # executable check passes and provenance/launch run through it.
+        interpreter_path=str(shim),
     )
     stale_manifest = tmp_path / "stale-manifest.json"
     hot_env = tmp_path / "cloud-hot-env"
@@ -656,7 +694,6 @@ def test_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
         encoding="utf-8",
     )
     monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
-    shim = _runtime_probe_shim(tmp_path)
     capture = tmp_path / "capture.txt"
     # The manifest pin is mandatory regardless of isolated_chain_runner
     # (T-0011); the /fallback/runtime engine_dir must never reach PYTHONPATH.
@@ -687,11 +724,12 @@ def test_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
-    # run inside the pin gate; provenance + chain start follow.
-    assert len(observations) == 4, observations
+    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
+    # + the T-0301 generation-interpreter read) run inside the pin gate;
+    # provenance + chain start follow.
+    assert len(observations) == 5, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 2, observations
+    assert len(json_reads) == 3, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 2, observations
     for observation in main:
@@ -741,6 +779,7 @@ def test_chain_launch_fails_closed_before_chain_on_runtime_drift(
         tmp_path / "accepted-manifest.json",
         runtime_root=accepted,
         revision="a" * 40,
+        interpreter_path=str(shim),
     )
     command = cloud_cli._chain_start_command(
         str(tmp_path / "chain.yaml"),
@@ -765,11 +804,13 @@ def test_chain_launch_fails_closed_before_chain_on_runtime_drift(
 
     assert result.returncode == 24
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # The two manifest JSON-reader subprocesses ran inside the pin gate;
-    # provenance is the only main-step invocation (chain start never ran).
-    assert len(observations) == 3, observations
+    # The three manifest JSON-reader subprocesses (runtime_root +
+    # expected_head + the T-0301 generation-interpreter read) ran inside the
+    # pin gate; provenance is the only main-step invocation (chain start
+    # never ran).
+    assert len(observations) == 4, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 2, observations
+    assert len(json_reads) == 3, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 1, observations
     assert "runtime_provenance" in main[0]
@@ -868,10 +909,12 @@ def test_epic_chain_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
     accepted = tmp_path / "accepted-runtime"
     stale.mkdir()
     accepted.mkdir()
+    shim = _runtime_probe_shim(tmp_path)
     accepted_manifest = _write_runtime_manifest(
         tmp_path / "accepted-manifest.json",
         runtime_root=accepted,
         revision="a" * 40,
+        interpreter_path=str(shim),
     )
     stale_manifest = tmp_path / "stale-manifest.json"
     hot_env = tmp_path / "cloud-hot-env"
@@ -889,7 +932,6 @@ def test_epic_chain_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
         encoding="utf-8",
     )
     monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
-    shim = _runtime_probe_shim(tmp_path)
     capture = tmp_path / "capture.txt"
 
     command = _epic_chain_launch_command(workspace)
@@ -913,11 +955,12 @@ def test_epic_chain_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
-    # run inside the pin gate; provenance + epic-chain start follow.
-    assert len(observations) == 4, observations
+    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
+    # + the T-0301 generation-interpreter read) run inside the pin gate;
+    # provenance + epic-chain start follow.
+    assert len(observations) == 5, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 2, observations
+    assert len(json_reads) == 3, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 2, observations
     for observation in main:
@@ -1047,6 +1090,7 @@ def test_epic_chain_launch_invalid_manifest_fails_closed_before_launch(
             manifest_path,
             runtime_root=tmp_path / "accepted-runtime",
             revision="a" * 40,
+            interpreter_path=str(shim),
         )
         env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
     elif isinstance(manifest, dict):
@@ -1095,10 +1139,12 @@ def test_plan_auto_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
     accepted = tmp_path / "accepted-runtime"
     stale.mkdir()
     accepted.mkdir()
+    shim = _runtime_probe_shim(tmp_path)
     accepted_manifest = _write_runtime_manifest(
         tmp_path / "accepted-manifest.json",
         runtime_root=accepted,
         revision="a" * 40,
+        interpreter_path=str(shim),
     )
     stale_manifest = tmp_path / "stale-manifest.json"
     hot_env = tmp_path / "cloud-hot-env"
@@ -1116,7 +1162,6 @@ def test_plan_auto_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
         encoding="utf-8",
     )
     monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
-    shim = _runtime_probe_shim(tmp_path)
     capture = tmp_path / "capture.txt"
 
     command = _plan_auto_launch_command(workspace)
@@ -1140,11 +1185,12 @@ def test_plan_auto_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
-    # run inside the pin gate; provenance + auto follow.
-    assert len(observations) == 4, observations
+    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
+    # + the T-0301 generation-interpreter read) run inside the pin gate;
+    # provenance + auto follow.
+    assert len(observations) == 5, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 2, observations
+    assert len(json_reads) == 3, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 2, observations
     for observation in main:
@@ -1275,6 +1321,7 @@ def test_plan_auto_launch_invalid_manifest_fails_closed_before_launch(
             manifest_path,
             runtime_root=tmp_path / "accepted-runtime",
             revision="a" * 40,
+            interpreter_path=str(shim),
         )
         env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
     elif isinstance(manifest, dict):
@@ -1381,12 +1428,13 @@ def test_bootstrap_launch_bound_manifest_reaches_init_with_manifest_root_only(
     monkeypatch.setattr(cloud_cli, "_CHAIN_SESSION_MARKER_DIR", str(marker_dir))
     accepted = tmp_path / "accepted-runtime"
     accepted.mkdir()
+    shim = _runtime_probe_shim(tmp_path)
     accepted_manifest = _write_runtime_manifest(
         tmp_path / "accepted-manifest.json",
         runtime_root=accepted,
         revision="a" * 40,
+        interpreter_path=str(shim),
     )
-    shim = _runtime_probe_shim(tmp_path)
     capture = tmp_path / "capture.txt"
 
     command = cloud_cli._bootstrap_launch_command(
@@ -1412,11 +1460,12 @@ def test_bootstrap_launch_bound_manifest_reaches_init_with_manifest_root_only(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Two manifest JSON-reader subprocesses (runtime_root + expected_head)
-    # run inside the pin gate, then runtime_provenance, then init.
-    assert len(observations) == 4, observations
+    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
+    # + the T-0301 generation-interpreter read) run inside the pin gate,
+    # then runtime_provenance, then init.
+    assert len(observations) == 5, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 2, observations
+    assert len(json_reads) == 3, observations
     provenance = [o for o in observations if "runtime_provenance" in o]
     init = [o for o in observations if "arnold_pipelines.megaplan init" in o]
     assert len(provenance) == 1 and len(init) == 1, observations
@@ -1585,7 +1634,10 @@ def test_refresh_then_chain_start_command_uses_activate_when_bound() -> None:
     )
     # manifest-bound runtime: the editable-install refresh is skipped
     assert "activating manifest-bound runtime" in command
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+    assert (
+        'MEGAPLAN_TRUSTED_CONTAINER=1 "$GEN_INTERPRETER" -P -m '
+        "arnold_pipelines.megaplan chain start"
+    ) in command
     assert "megaplan-refresh" not in command
     assert "pip install -e" not in command
     assert 'export ARNOLD_RUNTIME_MANIFEST="$MANIFEST"' in command
@@ -2075,7 +2127,10 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     assert marker["allow_human_gates"] is False
     assert marker["should_run"] is True
     assert marker["operator_pause"] is None
-    assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
+    assert (
+        '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan chain start'
+        in marker["relaunch_command"]
+    )
     assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files
 
@@ -2112,9 +2167,16 @@ def test_bootstrap_launch_command_writes_plan_marker_and_relaunch_command() -> N
     assert "/workspace/.megaplan/cloud-sessions/vibecomfy-per-workflow-window-chat.json" in command
     assert '"run_kind": "plan"' in command
     assert '"plan_name": "per-workflow-window-chat-cloud-20260628"' in command
-    assert "python -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in command
+    # T-0301: auto/init launch under the generation interpreter.  The
+    # relaunch command embedded in the marker payload is JSON-escaped twice
+    # (heredoc + json.dumps), so its quotes appear as \\" inside the emitted
+    # command.
     assert (
-        "python -P -m arnold_pipelines.megaplan init --project-dir "
+        '\\\\"$GEN_INTERPRETER\\\\" -P -m arnold_pipelines.megaplan auto '
+        "--plan per-workflow-window-chat-cloud-20260628"
+    ) in command
+    assert (
+        '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan init --project-dir '
         "/workspace/vibecomfy-per-workflow-window-chat-20260628"
     ) in command
     assert "--name per-workflow-window-chat-cloud-20260628" in command

@@ -34,6 +34,7 @@ from arnold_pipelines.megaplan.chain.spec import (
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
 CREATE = WRAPPER_DIR / "arnold-runtime-create"
+CLOSE = WRAPPER_DIR / "arnold-close"
 
 
 def _git(cwd: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
@@ -62,6 +63,28 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
     git(base_repo, "config", "user.email", "finalizer@example.invalid")
     git(base_repo, "config", "commit.gpgsign", "false")
     (base_repo / "README.md").write_text("base seed\n")
+    # T-0301: the frozen dependency spec (pyproject.toml + uv.lock pair) that
+    # every created runtime's dependency generation is content-addressed
+    # from.  Zero dependencies and a project-only (editable-sourced) lock so
+    # the pip build path installs nothing and stays hermetic/offline.
+    (base_repo / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "sandbox-arnold"\n'
+        'version = "0.1.0"\n'
+        'requires-python = ">=3.9"\n'
+        "dependencies = []\n",
+        encoding="utf-8",
+    )
+    (base_repo / "uv.lock").write_text(
+        'version = 1\n'
+        'requires-python = ">=3.9"\n'
+        "\n"
+        "[[package]]\n"
+        'name = "sandbox-arnold"\n'
+        'version = "0.1.0"\n'
+        'source = { editable = "." }\n',
+        encoding="utf-8",
+    )
     git(base_repo, "add", "-A")
     git(base_repo, "commit", "-m", "seed base")
     git(base_repo, "branch", "-M", "main")
@@ -73,6 +96,10 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
     markers = tmp_path / "markers"
     manifest_dir = markers / "runtime-manifests"
     schedule_store = tmp_path / "schedule-store"
+    # T-0301: the shared content-addressed dependency-generation store root
+    # (one immutable venv per frozen-spec digest).  The build strategy is
+    # pinned to pip so the sandbox builds are hermetic/offline.
+    gen_dir = base_dir / "runtime-venvs"
     env = os.environ.copy()
     env.update(
         {
@@ -84,6 +111,20 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
             "ARNOLD_ORIGIN_URL": str(origin),
             "ARNOLD_PROMOTION_JOURNAL": str(manifest_dir / "promotion-journal.jsonl"),
             "ARNOLD_SCHEDULE_STORE": str(schedule_store),
+            "ARNOLD_RUNTIME_VENVS_DIR": str(gen_dir),
+            "ARNOLD_REFERENCE_RUNTIME_VENVS_DIR": str(gen_dir),
+            "ARNOLD_GENERATION_BUILD_STRATEGY": "pip",
+            # Reference-census stores (T-0012): sandbox-scoped so the sweep's
+            # census never reads host stores.  Absent unless a fixture
+            # populates them (a missing store is not a reference).
+            "ARNOLD_REFERENCE_CHAIN_STORE": str(tmp_path / "ref-chains"),
+            "ARNOLD_REFERENCE_MARKER_STORE": str(tmp_path / "ref-markers"),
+            "ARNOLD_REFERENCE_REPAIR_QUEUE": str(tmp_path / "ref-repair-queue"),
+            "ARNOLD_REFERENCE_LEASE_STORE": str(tmp_path / "ref-leases"),
+            "ARNOLD_REFERENCE_PLAN_LEASE_ROOT": str(tmp_path / "ref-plan-leases"),
+            "ARNOLD_REFERENCE_MANAGED_RUN_STORE": str(tmp_path / "ref-managed-runs"),
+            "ARNOLD_REFERENCE_STATUS_DIR": str(tmp_path / "ref-status"),
+            "ARNOLD_REFERENCE_OPS_STORE": str(tmp_path / "ref-ops"),
             "PYTHONPATH": str(REPO_ROOT),
         }
     )
@@ -438,18 +479,14 @@ def test_finalizer_is_idempotent_across_close_then_sweep_crash(
         pr_state=None,
         completed=[_reconcile_record()],
     )
-    # First run: close only (simulate the sweep failing by planting a pull ref
-    # that refuses the branch deletion; then remove it and re-run).
-    env = dict(sandbox["env"])
-    env["ARNOLD_RUNTIME_MANIFEST"] = str(_manifest_path(sandbox, "epic-crash"))
-    head = sandbox["origin_heads"](fixer_branch)
-    git(Path(sandbox["base_repo"]), "update-ref", "refs/pull/99/head", head)
-    git(
-        Path(sandbox["base_repo"]),
-        "push",
-        str(sandbox["origin"]),
-        "refs/pull/99/head",
-    )
+    # First run: close only.  The sweep is made to fail by planting a
+    # corrupt reference store that makes the sweep's census UNKNOWN (exit 5)
+    # — close does NOT consult the census, so close still succeeds and the
+    # crash lands between close and sweep.  (A pull-ref block would NOT work:
+    # the standalone-close reconcile guard refuses open PRs before close.)
+    store_dir = Path(sandbox["base_dir"]) / ".megaplan" / "plans" / ".chains"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "chain-crash.json").write_text("{not json")
 
     def writer(text: str) -> None:
         pass
@@ -457,6 +494,8 @@ def test_finalizer_is_idempotent_across_close_then_sweep_crash(
     def log(msg: str, **fields: object) -> None:
         pass
 
+    env = dict(sandbox["env"])
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_manifest_path(sandbox, "epic-crash"))
     old_env = os.environ.copy()
     os.environ.update(env)
     try:
@@ -472,22 +511,17 @@ def test_finalizer_is_idempotent_across_close_then_sweep_crash(
     finally:
         os.environ.clear()
         os.environ.update(old_env)
-    # close succeeded but the open-PR gate refused the sweep → blocked
+    # close succeeded but the UNKNOWN census blocked the sweep → blocked
     assert first is not None
     assert first["status"] == "blocked"
     assert "arnold-gc-sweep failed" in first["reason"]
+    assert "exit 5" in first["reason"]
     assert worktree.is_dir()
     assert _read_manifest(sandbox, "epic-crash")["state"] == "closed"
+    assert sandbox["origin_heads"](fixer_branch)  # branch never deleted
 
-    # resolve the PR (remove the pull ref) and re-run: sweep completes
-    git(Path(sandbox["base_repo"]), "update-ref", "-d", "refs/pull/99/head")
-    git(
-        Path(sandbox["base_repo"]),
-        "push",
-        str(sandbox["origin"]),
-        "--delete",
-        "refs/pull/99/head",
-    )
+    # resolve the census (remove the corrupt store) and re-run: sweep completes
+    (store_dir / "chain-crash.json").unlink()
     result = _finalize(sandbox, spec, state, slug="epic-crash")
     assert result["status"] == "ok"
     assert not worktree.exists()
@@ -513,6 +547,118 @@ def test_finalizer_second_run_after_sweep_is_noop(sandbox: dict[str, object]) ->
     second = _finalize(sandbox, spec, state, slug="epic-twice")
     assert second["status"] == "ok"
     assert any("already gone" in event["msg"] for event in second["events"])
+
+
+def test_finalizer_recreates_lost_receipt_and_heals(
+    sandbox: dict[str, object],
+) -> None:
+    """Crash between close and sweep with the restore evidence LOST: the
+    finalizer's idempotent close re-run RE-WRITES the content-addressed
+    restore receipt (close PRECEDES restore-proven GC — close is the
+    structural receipt producer), then the sweep validates it and removes
+    the runtime.  A missing receipt never blocks recovery; the sweep itself
+    refuses to delete without a validating receipt (covered by the wrapper
+    fixtures in test_runtime_lifecycle.py)."""
+    worktree = _create_runtime(sandbox, "epic-noreceipt")
+    fixer_branch = _read_manifest(sandbox, "epic-noreceipt")["epic"]["branch"]
+
+    # close succeeds and writes the content-addressed restore receipt
+    proc = sandbox["run"](
+        CLOSE, "epic-noreceipt", str(_manifest_path(sandbox, "epic-noreceipt"))
+    )
+    assert proc.returncode == 0, proc.stderr
+    receipt = (
+        Path(sandbox["manifest_dir"]) / "restore-receipts" / "epic-noreceipt.json"
+    )
+    assert receipt.exists()
+    assert _read_manifest(sandbox, "epic-noreceipt")["state"] == "closed"
+
+    # simulate the restore evidence being lost before the sweep ran (a crash
+    # in the gap where the durable receipt never landed)
+    receipt.unlink()
+
+    spec = _reconcile_spec()
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        pr_number=None,
+        pr_state=None,
+        completed=[_reconcile_record()],
+    )
+    result = _finalize(sandbox, spec, state, slug="epic-noreceipt")
+    assert result["status"] == "ok"
+    # the close re-run re-attested the restore: receipt re-created, then the
+    # sweep removed the runtime + fixer branch
+    assert receipt.exists()
+    assert not worktree.exists()
+    assert not sandbox["origin_heads"](fixer_branch)
+    assert state.metadata["reconcile_terminal_finalizer"]["swept"] is True
+
+
+def test_finalizer_repeated_crash_recovery_is_idempotent(
+    sandbox: dict[str, object],
+) -> None:
+    """Repeated crash recovery is idempotent: N blocked attempts between
+    close and sweep (UNKNOWN census exit 5) followed by resolution heal in
+    ONE final run — the runtime is removed exactly once, the fixer branch is
+    deleted local+remote, and later re-runs are idempotent no-ops."""
+    worktree = _create_runtime(sandbox, "epic-repcrash")
+    fixer_branch = _read_manifest(sandbox, "epic-repcrash")["epic"]["branch"]
+
+    spec = _reconcile_spec()
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        pr_number=None,
+        pr_state=None,
+        completed=[_reconcile_record()],
+    )
+    store_dir = Path(sandbox["base_dir"]) / ".megaplan" / "plans" / ".chains"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "chain-repcrash.json").write_text("{not json")
+
+    def writer(text: str) -> None:
+        pass
+
+    def log(msg: str, **fields: object) -> None:
+        pass
+
+    env = dict(sandbox["env"])
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(_manifest_path(sandbox, "epic-repcrash"))
+    old_env = os.environ.copy()
+    os.environ.update(env)
+    try:
+        for _ in range(3):  # three crash-restarts while the census stays UNKNOWN
+            attempt = _run_reconcile_terminal_finalizer(
+                root=Path(sandbox["base_repo"]),
+                spec_path=Path(sandbox["tmp_path"]) / "chain.yaml",
+                spec=spec,
+                state=state,
+                events=[],
+                writer=writer,
+                log=log,
+            )
+            assert attempt is not None
+            assert attempt["status"] == "blocked"
+            assert "arnold-gc-sweep failed" in attempt["reason"]
+            assert worktree.is_dir()  # never deleted on a blocked attempt
+            assert _read_manifest(sandbox, "epic-repcrash")["state"] == "closed"
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+
+    # resolve the census and heal in one run
+    (store_dir / "chain-repcrash.json").unlink()
+    result = _finalize(sandbox, spec, state, slug="epic-repcrash")
+    assert result["status"] == "ok"
+    assert not worktree.exists()
+    assert not sandbox["origin_heads"](fixer_branch)
+    assert state.metadata["reconcile_terminal_finalizer"]["swept"] is True
+
+    # later re-runs are idempotent no-ops ("already gone")
+    again = _finalize(sandbox, spec, state, slug="epic-repcrash")
+    assert again["status"] == "ok"
+    assert any("already gone" in event["msg"] for event in again["events"])
 
 
 # ── manifest presence triage: absent vs present-but-unreadable ──────────────

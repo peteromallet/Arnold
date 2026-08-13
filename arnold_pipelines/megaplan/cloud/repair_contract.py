@@ -116,12 +116,14 @@ BLOCKER_ID_V2_PREFIX = "blocker:v2:"
 RepairRequestStatus: TypeAlias = Literal[
     "accepted",
     "coalesced",
+    "pending_decision",
     "stale",
     "superseded",
     "dispatched",
 ]
 REQUEST_STATUS_ACCEPTED: RepairRequestStatus = "accepted"
 REQUEST_STATUS_COALESCED: RepairRequestStatus = "coalesced"
+REQUEST_STATUS_PENDING_DECISION: RepairRequestStatus = "pending_decision"
 REQUEST_STATUS_STALE: RepairRequestStatus = "stale"
 REQUEST_STATUS_SUPERSEDED: RepairRequestStatus = "superseded"
 REQUEST_STATUS_DISPATCHED: RepairRequestStatus = "dispatched"
@@ -129,6 +131,7 @@ REPAIR_REQUEST_STATUSES: frozenset[RepairRequestStatus] = frozenset(
     {
         REQUEST_STATUS_ACCEPTED,
         REQUEST_STATUS_COALESCED,
+        REQUEST_STATUS_PENDING_DECISION,
         REQUEST_STATUS_STALE,
         REQUEST_STATUS_SUPERSEDED,
         REQUEST_STATUS_DISPATCHED,
@@ -954,6 +957,7 @@ RepairDispatchDecisionKind: TypeAlias = Literal[
     "broken_superfixer",
     "no_action",
     "terminal",
+    "pending_decision",
 ]
 DISPATCH_DECISION_L1: RepairDispatchDecisionKind = "dispatch_l1_repair"
 DISPATCH_DECISION_REPAIRING: RepairDispatchDecisionKind = "repairing"
@@ -961,6 +965,7 @@ DISPATCH_DECISION_HUMAN_REQUIRED: RepairDispatchDecisionKind = "human_required"
 DISPATCH_DECISION_BROKEN_SUPERFIXER: RepairDispatchDecisionKind = "broken_superfixer"
 DISPATCH_DECISION_NO_ACTION: RepairDispatchDecisionKind = "no_action"
 DISPATCH_DECISION_TERMINAL: RepairDispatchDecisionKind = "terminal"
+DISPATCH_DECISION_PENDING_DECISION: RepairDispatchDecisionKind = "pending_decision"
 REPAIR_DISPATCH_DECISION_KINDS: frozenset[RepairDispatchDecisionKind] = frozenset(
     {
         DISPATCH_DECISION_L1,
@@ -969,6 +974,7 @@ REPAIR_DISPATCH_DECISION_KINDS: frozenset[RepairDispatchDecisionKind] = frozense
         DISPATCH_DECISION_BROKEN_SUPERFIXER,
         DISPATCH_DECISION_NO_ACTION,
         DISPATCH_DECISION_TERMINAL,
+        DISPATCH_DECISION_PENDING_DECISION,
     }
 )
 
@@ -1256,10 +1262,16 @@ def project_repair_custody(
             fingerprint = request_fingerprint
         history = decision_history.get(str(record.get("request_id") or ""), [])
         latest_decision = _effective_request_decision(history)
-        status = (
-            str(latest_decision["decision"])
-            if latest_decision is not None
-            else REQUEST_STATUS_ACCEPTED
+        if latest_decision is not None:
+            status = str(latest_decision["decision"])
+        else:
+            # Fail closed: a request with no recorded decision is typed
+            # pending/blocked.  It is never active and never claimable, so no
+            # dispatch can ever be authorized on an absent decision.
+            status = REQUEST_STATUS_PENDING_DECISION
+        dispatchable_decision = (
+            latest_decision is not None
+            and status in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED}
         )
         requests.append(
             {
@@ -1272,8 +1284,12 @@ def project_repair_custody(
                 "problem_signature": problem_signature,
                 "target": _stable_mapping(_as_mapping(record.get("target"))),
                 "status": status,
-                "active": status in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED},
-                "claimable": bool(request_blocker_id and request_fingerprint is not None),
+                "active": dispatchable_decision,
+                "claimable": bool(
+                    request_blocker_id
+                    and request_fingerprint is not None
+                    and dispatchable_decision
+                ),
                 "decision": latest_decision,
                 "decision_history": history,
             }
@@ -1656,6 +1672,45 @@ def classify_wbc_evidence_for_repair(
     return result
 
 
+def _request_record_by_id(
+    custody: Mapping[str, Any],
+    request_id: str,
+) -> Mapping[str, Any] | None:
+    """Return the projected request record for *request_id*, if present."""
+    for item in _as_list(custody.get("requests")):
+        if (
+            isinstance(item, Mapping)
+            and _as_text(item.get("request_id")) == _as_text(request_id)
+        ):
+            return item
+    return None
+
+
+def _request_id_without_dispatchable_decision(
+    custody: Mapping[str, Any],
+    active_request_ids: list[str],
+) -> str:
+    """Return the active request whose recorded decision forbids dispatch.
+
+    Fail-closed guard for accepted-without-decision: when the custody
+    projection also carries per-request records, an active request with no
+    recorded decision (typed pending/blocked) or with a non-dispatchable
+    decision (rejected/stale/superseded/...) must never dispatch.  Projections
+    without request records retain the legacy trust in ``active_request_ids``.
+    """
+    for request_id in active_request_ids:
+        record = _request_record_by_id(custody, request_id)
+        if record is None:
+            continue
+        decision = record.get("decision")
+        if not isinstance(decision, Mapping):
+            return _as_text(request_id)
+        decision_kind = _as_text(decision.get("decision"))
+        if decision_kind not in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED}:
+            return _as_text(request_id)
+    return ""
+
+
 def classify_repair_dispatch(
     *,
     canonical_run_state: CanonicalRunState | None = None,
@@ -1721,6 +1776,28 @@ def classify_repair_dispatch(
     terminal_outcomes = [
         value for value in (_as_list(custody.get("terminal_outcomes")) if custody else []) if _as_text(value)
     ]
+
+    # Fail closed on accepted-without-decision: a request with no recorded
+    # decision (typed pending/blocked) or a non-dispatchable decision must
+    # NEVER dispatch.  Emit a typed pending_decision result so no consumer
+    # treats the occurrence as repairable-and-claimable.
+    pending_decision_request_id = _request_id_without_dispatchable_decision(
+        custody, active_request_ids
+    )
+    if pending_decision_request_id:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_PENDING_DECISION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=(
+                "request awaits an explicit repair decision; absent decision never dispatches",
+            ),
+            blocker_id=blocker_id,
+            request_id=pending_decision_request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+        )
 
     # --- recovery-view preferred path -----------------------------------------
     if recovery:
@@ -6191,6 +6268,7 @@ __all__ = [
     "DISPATCH_DECISION_HUMAN_REQUIRED",
     "DISPATCH_DECISION_L1",
     "DISPATCH_DECISION_NO_ACTION",
+    "DISPATCH_DECISION_PENDING_DECISION",
     "DISPATCH_DECISION_REPAIRING",
     "DISPATCH_DECISION_TERMINAL",
     "DISPATCH_INTENT_BROKEN_SUPERFIXER",
