@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.feature_flags import control_interface_routing_on
 from arnold_pipelines.megaplan.profiles import (
@@ -64,6 +66,7 @@ from arnold_pipelines.megaplan.control_interface import (
 )
 from arnold_pipelines.megaplan.blocker_recovery import (
     command_blocker_details,
+    compact_failure_identity,
     evaluate_blocker_recovery,
     validated_deterministic_phase_repair,
 )
@@ -596,6 +599,8 @@ def _handle_routed_override(
             "repair_commit": getattr(args, "repair_commit", None),
             "failure_fingerprint": getattr(args, "failure_fingerprint", None),
             "repair_scope": getattr(args, "repair_scope", None),
+            "occurrence": getattr(args, "occurrence", None),
+            "handoff_id": getattr(args, "handoff_id", None),
             "source": getattr(args, "source", None),
             "robustness": getattr(args, "robustness", None),
             "profile": getattr(args, "profile", None),
@@ -1205,6 +1210,172 @@ def _blocked_plan_has_operational_unverifiable_evidence(
     return False
 
 
+_LEGACY_DETERMINISTIC_PHASE_ADMISSION_SCHEMA = (
+    "arnold.superfixer.phase_repair_admission.v1"
+)
+
+
+def _engine_root_for_admission() -> str:
+    """Return the running megaplan engine root for the admission record."""
+    try:
+        from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+
+        return str(megaplan_engine_root())
+    except Exception:
+        return ""
+
+
+def _reconstruct_failure_occurrence_digest(
+    latest_failure: Mapping[str, Any],
+) -> str:
+    """Reconstruct the watchdog occurrence digest for a latest_failure.
+
+    Mirrors ``arnold-watchdog`` ``_failure_digest_src`` exactly (kind /
+    phase / message / phase_or_step / blocked_task_id) so a recovery
+    admission can be CAS-fenced against the occurrence the watchdog bound
+    at dispatch time.
+    """
+
+    metadata = latest_failure.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    source = {
+        "kind": str(latest_failure.get("kind") or ""),
+        "phase": str(latest_failure.get("phase") or ""),
+        "message": str(latest_failure.get("message") or ""),
+        "phase_or_step": str(metadata.get("phase_or_step") or ""),
+        "blocked_task_id": str(metadata.get("blocked_task_id") or ""),
+    }
+    return hashlib.sha256(
+        json.dumps(source, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:12]
+
+
+def _materialize_legacy_deterministic_phase_cursor(
+    plan_dir: Path,
+    state: PlanState,
+    args: argparse.Namespace,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any] | None:
+    """CAS-fenced compatibility admission for an exact blocked
+    ``deterministic_phase_failure`` whose reconstructed occurrence digest
+    matches and whose cursor is absent.
+
+    Legacy/synthetic producers (and manual state surgery) can persist
+    ``current_state=blocked`` with a ``deterministic_phase_failure`` but no
+    ``resume_cursor``/retry metadata.  The supported recover-blocked seam
+    fails closed on those states even though the no-op guard permits
+    recovery.  When the caller binds the exact occurrence digest (watchdog
+    ``_failure_digest_src`` reconstruction) and the content-addressed
+    recovery handoff id, atomically materialize the missing repair identity
+    and ``resume_cursor {phase, retry_strategy: repair_phase_contract}``
+    WITHOUT clearing the failure or changing ``current_state``.
+
+    Returns the durable admission record when the admission was applied, or
+    None when it does not apply (the caller keeps the existing fail-closed
+    ``missing_resume_cursor`` behavior).  Raises CliError when the fence is
+    engaged but the occurrence/state does not match.
+    """
+
+    latest_failure = state.get("latest_failure")
+    if not isinstance(latest_failure, dict):
+        return None
+    if latest_failure.get("kind") != "deterministic_phase_failure":
+        return None
+    phase = str(latest_failure.get("phase") or "").strip()
+    if not phase:
+        return None
+    if isinstance(state.get("resume_cursor"), dict):
+        return None
+    occurrence = getattr(args, "occurrence", None)
+    handoff_id = getattr(args, "handoff_id", None)
+    if not isinstance(occurrence, str) or not occurrence.strip():
+        return None
+    if not isinstance(handoff_id, str) or not handoff_id.strip():
+        return None
+    reconstructed = _reconstruct_failure_occurrence_digest(latest_failure)
+    if reconstructed != occurrence.strip():
+        raise CliError(
+            "occurrence_digest_mismatch",
+            "legacy deterministic-phase admission is CAS-fenced to the exact "
+            "bound occurrence digest",
+            extra={
+                "expected_occurrence": occurrence.strip(),
+                "reconstructed_occurrence": reconstructed,
+                "latest_failure": dict(latest_failure),
+            },
+        )
+    # CAS re-read: the on-disk state must still be the same minimal legacy
+    # shape (no resume_cursor, same digest).  A concurrent writer that
+    # already repaired the cursor must not be double-admitted.
+    try:
+        raw = (plan_dir / "state.json").read_text(encoding="utf-8")
+    except OSError:
+        raw = ""
+    if raw:
+        try:
+            disk_state = json.loads(raw)
+        except ValueError:
+            disk_state = {}
+        if isinstance(disk_state, dict):
+            disk_failure = disk_state.get("latest_failure")
+            if isinstance(disk_failure, dict) and (
+                isinstance(disk_state.get("resume_cursor"), dict)
+                or _reconstruct_failure_occurrence_digest(disk_failure)
+                != reconstructed
+            ):
+                raise CliError(
+                    "admission_state_drift",
+                    "on-disk plan state changed between load and legacy "
+                    "deterministic-phase admission",
+                    extra={
+                        "occurrence": occurrence.strip(),
+                        "reconstructed_occurrence": reconstructed,
+                    },
+                )
+    resume_cursor = {
+        "phase": phase,
+        "retry_strategy": "repair_phase_contract",
+    }
+    admission = {
+        "schema": _LEGACY_DETERMINISTIC_PHASE_ADMISSION_SCHEMA,
+        "occurrence_digest": occurrence.strip(),
+        "handoff_id": handoff_id.strip(),
+        "plan": state.get("name") or plan_dir.name,
+        "admitted_at": now_utc(),
+        "failure": {
+            "kind": latest_failure.get("kind"),
+            "phase": phase,
+            "message": str(latest_failure.get("message") or ""),
+        },
+        "failure_fingerprint": str(
+            compact_failure_identity(latest_failure).get("fingerprint") or ""
+        ),
+        "materialized": {"resume_cursor": dict(resume_cursor)},
+        "engine_root": _engine_root_for_admission(),
+        "repair_scope": "engine_runtime",
+        "repair_commit": str(getattr(args, "repair_commit", None) or ""),
+    }
+    state["resume_cursor"] = dict(resume_cursor)
+    # The legacy/synthetic record may also lack the minimal config the worker
+    # preflight requires (config.project_dir).  Materialize it bound to the
+    # plan's own project root so the supported seam can execute — the failure
+    # and current_state remain untouched.
+    config = state.setdefault("config", {})
+    if not isinstance(config, dict):
+        config = {}
+        state["config"] = config
+    if not str(config.get("project_dir") or "").strip() and root is not None:
+        config["project_dir"] = str(root)
+        admission["materialized"]["project_dir"] = str(root)
+    meta = state.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        state["meta"] = meta
+    meta.setdefault("phase_repair_admissions", []).append(admission)
+    return admission
+
+
 def _override_recover_blocked(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
@@ -1225,10 +1396,23 @@ def _override_recover_blocked(
         raise CliError("invalid_args", "override recover-blocked requires --reason")
     resume_cursor = state.get("resume_cursor")
     if not isinstance(resume_cursor, dict):
-        raise CliError(
-            "missing_resume_cursor",
-            "recover-blocked requires a stored resume_cursor",
+        # Legacy/synthetic blocked deterministic-phase states may lack the
+        # resume_cursor the current producer persists.  The supported
+        # recover-blocked seam must not fail closed on those states when the
+        # caller binds the exact occurrence digest and the content-addressed
+        # handoff id — the CAS-fenced compatibility admission materializes
+        # the missing repair identity and cursor WITHOUT clearing the
+        # failure or changing current_state (see
+        # _materialize_legacy_deterministic_phase_cursor).
+        admission = _materialize_legacy_deterministic_phase_cursor(
+            plan_dir, state, args
         )
+        if admission is None:
+            raise CliError(
+                "missing_resume_cursor",
+                "recover-blocked requires a stored resume_cursor",
+            )
+        resume_cursor = state.get("resume_cursor")
     phase = resume_cursor.get("phase")
     if not isinstance(phase, str) or not phase:
         raise CliError(
@@ -2243,6 +2427,18 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     if action in {"adopt-execution"}:
         pass
     elif action in {"force-proceed", "recover-blocked", "resume-clarify"}:
+        # The worker preflight requires config.project_dir and the recovery
+        # handler requires a stored resume_cursor.  A structurally incomplete
+        # legacy/synthetic blocked deterministic-phase state (no cursor, no
+        # config) must be admitted BEFORE the preflight when the caller binds
+        # the exact occurrence digest + handoff id; without the fence the
+        # fail-closed errors below are preserved unchanged.
+        if action == "recover-blocked" and not isinstance(
+            state.get("resume_cursor"), dict
+        ):
+            _materialize_legacy_deterministic_phase_cursor(
+                plan_dir, state, args, root=root
+            )
         preflight_mutating_phase(root=root, state=state, phase=f"override:{action}")
     else:
         preflight_phase(root=root, state=state, phase=f"override:{action}")
