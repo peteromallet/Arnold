@@ -6381,6 +6381,17 @@ claim_active_repair_launch() {
     repair_identity_key="${PLAN_STATUS_REPAIR_IDENTITY_KEY:-}"
   fi
   if [[ -z "$blocker_id" || -z "$request_id" || -z "$decision_id" || -z "$repair_identity_key" ]]; then
+    # Distinguish "no request was ever created" (enqueue produced no
+    # claimable identity — the planner-repair/finalize-rejection failure
+    # class) from "a request exists but ids are empty" (dispatch plumbing).
+    # Both fail closed with missing_identity, but the cause matters: the
+    # former is a producer bug (the failure path must persist repair
+    # identity), the latter a dispatch bug.
+    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" != "dispatch_l1_repair" ]]; then
+      log "repair dispatch has no enqueued request (producer did not persist repair identity) session=$session decision=${PLAN_STATUS_DISPATCH_DECISION:-none}"
+    else
+      log "repair dispatch missing claim ids despite dispatch_l1_repair session=$session request=${request_id:-none} blocker=${blocker_id:-none} identity=${repair_identity_key:-none}"
+    fi
     printf 'missing_identity\n'
     return 1
   fi
