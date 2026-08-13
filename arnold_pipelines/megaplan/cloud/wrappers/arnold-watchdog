@@ -5662,11 +5662,13 @@ PY
 # exact occurrence-join (T-0101e' scope); when the fence has already verified
 # a LIVE join claim + an accepted owner-adoption request + a matching
 # repair_identity_key, the join IS the already-authorized custody and the
-# exact-occurrence consumer (simple_fixer / operator_trigger) is launched
-# UNDER that live join claim — never the generic managed_agent repair-loop
-# (whose _bind_repair_claim is forbidden for this identity).  Prints a JSON
-# delegation result on stdout with an ``outcome`` key in the
-# repair_delegation vocabulary (delegated | zero_authority_rejected | ...).
+# exact-occurrence consumer (simple_fixer canonical runner / operator_trigger)
+# is launched UNDER that live join claim — never the generic managed_agent
+# repair-loop (whose _bind_repair_claim is forbidden for this identity).  The
+# consumer re-verifies the live join claim read-only (fail closed) and runs
+# the phase-contract repair under it.  Prints a JSON delegation result on
+# stdout with an ``outcome`` key in the repair_delegation vocabulary
+# (delegated | zero_authority_rejected | ...).
 owner_adoption_exact_occurrence_delegate() {
   local session="$1"
   local workspace="$2"
@@ -5682,12 +5684,12 @@ owner_adoption_exact_occurrence_delegate() {
 import json
 import os
 import pathlib
+import subprocess
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
-    build_repair_delegation,
-    delegate_to_simple_fixer,
+    delegate_owner_adopted_occurrence,
 )
 
 session, workspace_raw, remote_spec_raw, request_id, decision_id, repair_identity_key, blocker_id = sys.argv[1:8]
@@ -5696,6 +5698,81 @@ session, workspace_raw, remote_spec_raw, request_id, decision_id, repair_identit
 def emit_result(outcome: str, **evidence: object) -> None:
     payload = {"outcome": outcome, "evidence": evidence}
     print(json.dumps(payload, sort_keys=True))
+
+
+def phase_contract_resume_mutate(occ):
+    """Invoke the phase-contract repair under the live join claim.
+
+    For a chain blocked at gate with retry_strategy=repair_phase_contract
+    the repair action is the canonical plan resume (the same command
+    arnold-repair-loop's resume path builds): re-read the durable plan
+    state, fail closed unless the resume cursor still records the
+    phase-contract contract, then dispatch the resume as a DETACHED child
+    so the chain owns gate re-entry (mirrors the repair-loop mechanical
+    relaunch; the no-child-agent gate is about agent fan-out, not the
+    repair action itself).  Returns the post-mutation digest fingerprint;
+    an empty return means no repair action was taken and the consumer
+    reports delegation_failed.
+    """
+    identity = occ.repair_identity
+    occurrence = identity.get("occurrence") if isinstance(identity, dict) else {}
+    plan = str(occurrence.get("plan_name") or "").strip()
+    retry_strategy = str(occurrence.get("retry_strategy") or "").strip()
+    if retry_strategy != "repair_phase_contract" or not plan:
+        return ""
+    state_path = (
+        pathlib.Path(workspace_raw) / ".megaplan" / "plans" / plan / "state.json"
+    )
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    cursor = state.get("resume_cursor") if isinstance(state, dict) else {}
+    cursor = cursor if isinstance(cursor, dict) else {}
+    if str(cursor.get("retry_strategy") or "").strip() != "repair_phase_contract":
+        return ""
+    log_dir = pathlib.Path(workspace_raw) / ".megaplan" / "cloud-logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return ""
+    log_path = log_dir / f"{plan}.log"
+    python = os.environ.get("MEGAPLAN_SUPERVISOR_PYTHON") or sys.executable
+    log_file = None
+    try:
+        log_file = open(log_path, "ab")
+        subprocess.Popen(
+            [
+                python,
+                "-P",
+                "-m",
+                "arnold_pipelines.megaplan",
+                "resume",
+                "--plan",
+                plan,
+                "--project-dir",
+                str(workspace_raw),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            cwd=str(workspace_raw),
+            start_new_session=True,
+            env={
+                **os.environ,
+                "PYTHONSAFEPATH": "1",
+                "MEGAPLAN_TRUSTED_CONTAINER": "1",
+            },
+        )
+    except Exception:
+        return ""
+    finally:
+        if log_file is not None:
+            try:
+                log_file.close()
+            except OSError:
+                pass
+    return occ.occurrence_fingerprint + ":phase-contract-resume-dispatched"
 
 
 try:
@@ -5716,42 +5793,45 @@ try:
             blocker_id=blocker_id,
         )
         raise SystemExit(0)
-    delegation = build_repair_delegation(
-        "operator_trigger",
-        request_id,
-        request.get("repair_identity"),
+    plan_name = ""
+    target = request.get("target")
+    if isinstance(target, dict):
+        plan_name = str(target.get("plan_name") or "").strip()
+    normalized_identity = repair_requests.normalize_owner_adoption_identity(
+        request.get("repair_identity")
     )
-    if delegation is None:
-        emit_result(
-            "zero_authority_rejected",
-            reason=(
-                "owner-boundary-adoption identity cannot construct the exact "
-                "F01 occurrence tuple; the occurrence-join claim is the only "
-                "authorized custody"
-            ),
-            request_id=request_id,
-            decision_id=decision_id,
-            repair_identity_key=repair_identity_key,
-            blocker_id=blocker_id,
-        )
-        raise SystemExit(0)
-    result = delegate_to_simple_fixer(
-        delegation,
+    if normalized_identity is not None:
+        occurrence = normalized_identity.get("occurrence")
+        if isinstance(occurrence, dict):
+            plan_name = plan_name or str(occurrence.get("plan_name") or "").strip()
+    # G14 round 3: the exact-occurrence consumer ACTUALLY runs the repair
+    # under the live join claim (verified read-only, fail closed inside
+    # delegate_owner_adopted_occurrence) — never a typed reroute to
+    # repair_unavailable and never a fabricated F01 tuple.
+    result = delegate_owner_adopted_occurrence(
+        request.get("repair_identity"),
         queue_dir=str(queue_root),
-        mutate=lambda occ: occ.occurrence_fingerprint + ":owner-adoption-watchdog-dispatched",
+        workspace=workspace_raw,
+        plan_name=plan_name,
+        mutate=phase_contract_resume_mutate,
         actor="arnold-watchdog",
         request_id=request_id,
         session_id=session,
+        decision_id=decision_id,
+        blocker_id=blocker_id,
         kind="owner_adoption_dispatch",
     )
     emit_result(
         result.outcome,
         simple_fixer_outcome=result.simple_fixer_outcome,
         occurrence_fingerprint=result.occurrence_fingerprint,
+        consumer_entered=bool((result.evidence or {}).get("consumer_entered")),
+        plan_name=plan_name,
         request_id=request_id,
         decision_id=decision_id,
         repair_identity_key=repair_identity_key,
         blocker_id=blocker_id,
+        delegation_evidence=result.evidence,
     )
 except SystemExit:
     raise
