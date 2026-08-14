@@ -909,14 +909,19 @@ def ensure_runtime_launch_seed(
         )
 
         chain_identity = normalize_runtime_identity(chain_runtime_identity)
-        # Compare the CANONICAL DIGEST, not the full dict: identical digests
-        # with different diagnostic shapes (editable_root/pth populated vs
-        # None depending on which writer stored them) are the same runtime
-        # (grok consult, d58701026410). A full-dict comparison false-positives
-        # on shape drift and blocks every relaunch.
-        if chain_identity.get("content_sha256") != live_identity.get(
-            "content_sha256"
-        ):
+        # Compare the launch-relevant identity (grok consult, d58701026410):
+        # import_root + source_revision, resolved. The digest is a derived
+        # view; root+rev are the facts the tree determines. Equal root+rev
+        # with different diagnostic shapes (editable/pth/imports populated vs
+        # None depending on which writer stored them) is the same runtime.
+        # Fail closed on root or revision mismatch only.
+        chain_root = str(
+            (chain_identity.get("import_root") or "").rstrip("/")
+        )
+        live_root = str((live_identity.get("import_root") or "").rstrip("/"))
+        chain_rev = str(chain_identity.get("source_revision") or "")
+        live_rev = str(live_identity.get("source_revision") or "")
+        if chain_root != live_root or chain_rev != live_rev:
             raise CliError(
                 RUNTIME_ATTESTATION_ERROR,
                 "chain execution binding does not match the live manifest-pinned runtime",
@@ -1139,9 +1144,22 @@ def validate_runtime_launch_seed(
             RUNTIME_ATTESTATION_ERROR,
             "cloud marker launch binding drifted",
         )
+    live_binding_runtime = _chain_binding_runtime_identity(
+        Path(str(paths.get("chain_spec") or ""))
+    )
+    seed_binding_runtime = (seed.get("chain_runtime_binding") or {}).get(
+        "runtime_identity"
+    ) or {}
+    # Compare the launch-relevant identity (grok consult, d58701026410):
+    # import_root + source_revision, resolved — the fields the seed actually
+    # pins (see _chain_binding_runtime_identity docstring). Diagnostic shape
+    # (editable/pth/imports) legitimately differs between writers; root+rev
+    # are the tree-determined facts.
     if (
-        _chain_binding_runtime_identity(Path(str(paths.get("chain_spec") or "")))
-        != (seed.get("chain_runtime_binding") or {}).get("runtime_identity")
+        str(live_binding_runtime.get("import_root") or "").rstrip("/")
+        != str(seed_binding_runtime.get("import_root") or "").rstrip("/")
+        or str(live_binding_runtime.get("source_revision") or "")
+        != str(seed_binding_runtime.get("source_revision") or "")
     ):
         raise CliError(RUNTIME_ATTESTATION_ERROR, "chain runtime binding drifted")
     return {
