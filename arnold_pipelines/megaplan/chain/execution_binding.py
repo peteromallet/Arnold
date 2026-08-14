@@ -439,18 +439,14 @@ def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
     }
     # T-0301 canonicalization (grok consult, occurrence d58701026410):
     # content_sha256 must be ENV-INDEPENDENT. editable_root / editable_revision
-    # / direct_url / pth all derive from
-    # importlib.metadata.distribution("arnold"), which only succeeds when the
-    # executing interpreter has arnold's dist-info on sys.path. Under the
-    # launch recipe (generation interpreter, PYTHONPATH=$ENGINE_DIR, -P) arnold
-    # is never pip-installed, so those fields are empty; a leftover candidate
-    # .venv (pre-T-0301 debris) makes a DIFFERENT interpreter see a stale
-    # dist-info and fill them, producing a different digest for the same tree
-    # (7be714fda21a vs 6db5419f). An identity pin that changes with the probing
+    # / direct_url / pth / imports all derive from the probing interpreter's
+    # view (importlib.metadata dist-info, resolved module paths) and drift
+    # between the generation-interpreter launch recipe and a leftover
+    # candidate .venv. An identity pin that changes with the probing
     # interpreter is not an identity. The launch-relevant identity is
-    # import_root + source_revision + imports — the only fields determined by
-    # the tree itself, not by which interpreter probed it.
-    for key in ("editable_root", "editable_revision", "direct_url", "pth"):
+    # import_root + source_revision — the only fields determined by the tree
+    # itself, not by which interpreter probed it.
+    for key in ("editable_root", "editable_revision", "direct_url", "pth", "imports"):
         core[key] = None
     return core
 
