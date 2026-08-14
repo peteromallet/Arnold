@@ -498,7 +498,25 @@ def _persisted_runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
     # against a raw full-payload hash would reject every canonical identity
     # as "invalid"; recompute with the same canonical builder.
     observed = _runtime_identity_sha256(identity)
-    if not _FULL_SHA256.fullmatch(supplied) or supplied != observed:
+    if not _FULL_SHA256.fullmatch(supplied):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: persisted runtime identity digest is invalid",
+        )
+    if supplied == observed:
+        return supplied
+    # Canonical-identity migration bridge (grok consult, d58701026410):
+    # markers written BEFORE the env-independent digest landed carry a digest
+    # computed over the legacy 7-field payload (editable diagnostics
+    # included). Accept that legacy hash so a pre-canonical marker can rebind
+    # to the canonical digest; the rebind rewrites the marker canonically.
+    payload = {
+        key: value for key, value in identity.items() if key != "content_sha256"
+    }
+    legacy = _sha256_bytes(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    if supplied != legacy:
         raise CliError(
             RUNTIME_DRIFT_ERROR,
             "runtime rebind refused: persisted runtime identity digest is invalid",
