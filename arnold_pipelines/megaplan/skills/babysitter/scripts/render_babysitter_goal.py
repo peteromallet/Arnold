@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 
 def _safe_text(value: object) -> str:
@@ -40,6 +41,73 @@ def _json_block(label: str, payload: object) -> str:
     return f"{label}:\n```json\n{json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)}\n```\n"
 
 
+_PRIOR_EVIDENCE_MARKERS = (
+    "swarm-index.md",
+    "sol-stage2-proposal.md",
+    "sol-stage2-prompt.md",
+    "handoff.md",
+)
+
+
+def _render_prior_fixer_work_block(recovery_dir: str) -> str:
+    """List prior fixer occurrences' evidence dirs so the babysitter can read
+    the previous handoff instead of re-deriving the same diagnosis from zero.
+
+    The recovery root layout is ``<recovery_dir>/<occurrence_digest>/`` with a
+    per-incarnation sub-tree (``swarm-briefs/``, ``swarm-results/``,
+    ``codex/``, ``execution/``).  Absent/missing root -> a short orientation
+    block that names the convention, never a hard error.
+    """
+    root = Path(recovery_dir) if recovery_dir else None
+    if root is None or not root.is_dir():
+        return (
+            "\nPrior fixer work:\n"
+            "- Recovery evidence root not provided/unreadable. If prior fixer "
+            "occurrences exist, they live under the chain's "
+            "`.megaplan/plans/.chains/recovery/<digest>/`; locate and read "
+            "their handoff before starting a fresh swarm.\n"
+        )
+    occurrences = sorted(
+        (entry for entry in root.iterdir() if entry.is_dir()),
+        key=lambda p: p.name,
+    )
+    if not occurrences:
+        return (
+            "\nPrior fixer work:\n"
+            "- No prior fixer occurrences recorded under "
+            f"{root}.\n"
+        )
+    lines = [
+        "\nPrior fixer work (READ THIS FIRST — continue the lineage, do not "
+        "re-derive from scratch):",
+    ]
+    for occurrence in occurrences:
+        # Markers can sit at the occurrence root or one level down (codex/,
+        # swarm-results/, execution/).
+        marker_hits: list[str] = []
+        for marker in _PRIOR_EVIDENCE_MARKERS:
+            if (occurrence / marker).is_file():
+                marker_hits.append(f"{occurrence.name}/{marker}")
+            else:
+                for sub in ("codex", "swarm-results", "execution", "swarm-briefs"):
+                    if (occurrence / sub / marker).is_file():
+                        marker_hits.append(f"{occurrence.name}/{sub}/{marker}")
+        marker_line = (
+            f" (has: {', '.join(sorted(marker_hits))})" if marker_hits else " (evidence dir only)"
+        )
+        lines.append(f"- {occurrence.name}{marker_line}")
+        for hit in sorted(marker_hits):
+            lines.append(f"    - read {hit}")
+    lines.append(
+        "- If a prior incarnation already diagnosed the root cause and "
+        "implemented a fix, verify the fix landed in the runtime lineage; if "
+        "it did not, ship it (cherry-pick/apply + regression) instead of "
+        "re-authoring it. If the prior handoff names an exact next step, "
+        "execute that step first."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def render_babysitter_goal(
     target: str,
     *,
@@ -49,6 +117,7 @@ def render_babysitter_goal(
     latest_failure: dict[str, object] | None = None,
     planner_repair: dict[str, object] | None = None,
     occurrence_digest: str = "",
+    recovery_dir: str = "",
 ) -> str:
     """Render the status-trigger babysitter /goal for *target* (epic/session).
 
@@ -57,7 +126,11 @@ def render_babysitter_goal(
     implement -> relaunch -> prove.  It includes the session/workspace/plan
     context and the durable failure evidence (``latest_failure``,
     ``planner_repair``) so the babysitter never starts from a bare session
-    name.
+    name.  ``recovery_dir`` (the chain's ``.megaplan/plans/.chains/recovery/``
+    root) is scanned for prior fixer occurrences; the goal lists them and
+    instructs the babysitter to read the previous handoff FIRST so it
+    continues the lineage instead of re-deriving the same diagnosis from
+    scratch.
     """
     encoded_target = json.dumps(target, ensure_ascii=False)
     context_lines = [
@@ -76,6 +149,7 @@ def render_babysitter_goal(
         if evidence.strip()
         else "\nNo structured failure evidence was supplied — build the evidence pack from canonical state.\n"
     )
+    prior_block = _render_prior_fixer_work_block(recovery_dir)
     return f"""/goal
 You are the BABYSITTER for target {encoded_target}: ONE
 hermes:deepseek:deepseek-v4-flash managed agent and the ORCHESTRATOR of the
@@ -89,6 +163,8 @@ Context:
 {chr(10).join(context_lines)}
 
 {evidence_block}
+
+{prior_block}
 
 Mandatory flow — follow the five steps exactly:
 
@@ -165,6 +241,11 @@ def main() -> int:
     parser.add_argument("--failure-json", default=None, help="path to latest_failure JSON")
     parser.add_argument("--planner-repair-json", default=None, help="path to planner_repair JSON")
     parser.add_argument("--occurrence-digest", default="", help="occurrence/failure fingerprint")
+    parser.add_argument(
+        "--recovery-dir",
+        default="",
+        help="chain recovery evidence root (.megaplan/plans/.chains/recovery) to scan for prior fixer occurrences",
+    )
     args = parser.parse_args()
 
     def _load_json(path: str | None) -> dict[str, object] | None:
@@ -183,6 +264,7 @@ def main() -> int:
             latest_failure=_load_json(args.failure_json),
             planner_repair=_load_json(args.planner_repair_json),
             occurrence_digest=args.occurrence_digest,
+            recovery_dir=args.recovery_dir,
         )
     )
     return 0
