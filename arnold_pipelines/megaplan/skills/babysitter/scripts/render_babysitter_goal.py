@@ -213,6 +213,23 @@ Operator contract:
 - NO-OP GUARD: FIRST enumerate blocked/failed chains via megaplan cloud status
   / introspect.  If none are blocked or failed, report "No blocked/failed
   chains found; nothing to fix", write the no-action receipt, and end.
+  REAL CONDITION (do not trust latest_failure alone — the auto-driver CLEARS
+  it on stall, so null latest_failure with a blocked chain is a FALSE
+  "healthy"). A chain is GENUINELY STUCK and agent-actionable when ANY of:
+    (a) plan/chain state is blocked AND the launch-seed's expected_revision
+        != manifest epic.expected_head (stale seed -> every worker fails
+        source_revision_mismatch; rebuild the seed via
+        ensure_runtime_launch_seed / the supported chain-start seam);
+    (b) phase history shows the SAME phase erroring >= 2 consecutive times
+        (e.g. repeated critique_evaluator_failed / internal_error) even when
+        latest_failure is null;
+    (c) state is blocked AND events.ndjson is not advancing AND no live
+        driver process is making progress (driver-alive is NOT health;
+        driver-alive + flat events + blocked = wedged).
+  Verify (a)-(c) from CURRENT state before declaring no-action: read
+  manifest.epic.expected_head vs the seed file, tail the plan history, and
+  compare events.ndjson growth. Only when all three are clean is
+  "nothing to fix" the honest verdict.
 - COORDINATION GUARD: before any recovery, check whether another fixer/repair
   is already active for the target chain (fresh managed subagent dir, held
   repair lease, or running subagent_worker for this session).  If active,

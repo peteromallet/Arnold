@@ -196,3 +196,34 @@ def test_renderer_absent_recovery_dir_is_orientation_not_error(
     )
     assert result.returncode == 0, result.stderr
     assert "Recovery evidence root not provided/unreadable" in result.stdout
+
+
+def test_renderer_noop_guard_teaches_real_health_condition(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The NO-OP guard must not trust latest_failure alone (the auto-driver
+    clears it on stall). It must teach the real stuck-condition: stale seed
+    revision vs manifest, repeated phase errors, flat events while blocked."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RENDERER),
+            "--target",
+            "megaplan-maintenance",
+            "--workspace",
+            "/workspace/app",
+            "--plan",
+            "m1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "REAL CONDITION" in result.stdout
+    assert "auto-driver CLEARS" in result.stdout
+    assert "stale seed" in result.stdout
+    assert "expected_revision" in result.stdout
+    assert "SAME phase erroring" in result.stdout
+    assert "events.ndjson is not advancing" in result.stdout
+    assert "driver-alive is NOT health" in result.stdout
