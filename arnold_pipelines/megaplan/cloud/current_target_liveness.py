@@ -170,6 +170,9 @@ def _result(
         "identity": dict(identity),
         "lease": dict(lease),
         "diagnostics": diagnostics,
+        # A "live" observation is liveness-only evidence: it is provisional and
+        # must never authorize verified recovery on its own.
+        "provisional_liveness": state == "live",
         "control_permitted": known,
         "mutation_permitted": known,
         "escalation_permitted": known,

@@ -1720,10 +1720,14 @@ def _auditor_spec_and_digest(tmp_path: Path) -> tuple[Path, str]:
 
 def test_runtime_transition_absence_findings_map_to_auditor_shape(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The auditor maps incident-ledger runtime absences (missing events,
     invalid failure classes, digest drift, expired permits) into its finding
     shape — read-only, escalation-only."""
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_RUNTIME_POLICY", raising=False)
+
     from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
         runtime_transition_absence_findings,
     )

@@ -8364,9 +8364,13 @@ def test_runtime_absence_helpers_report_missing_and_invalid_events(
 
 def test_runtime_absence_helpers_report_chain_digest_drift_and_expired_permit(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """manifest_digest_drift + expired_manifestless_permit surface stale
     admissions and expired permits (deny-by-default, never silent absence)."""
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_RUNTIME_POLICY", raising=False)
+
     from arnold_pipelines.megaplan.cloud.watchdog import (
         expired_manifestless_permit,
         manifest_digest_drift,
