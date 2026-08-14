@@ -557,11 +557,14 @@ def _strict_external_runtime_shape(
         return errors
     import_root = Path(import_root_text).resolve(strict=False)
     editable_root = Path(editable_root_text).resolve(strict=False)
-    if import_root != editable_root:
-        errors.append("editable_root_mismatch")
     if not _FULL_SHA.fullmatch(source_revision):
         errors.append("source_revision_invalid")
-    if editable_revision != source_revision:
+    # T-0301 worktree-first: empty editable_root is launch-ready, not a
+    # mismatch (the legacy editable checks bind only when an editable install
+    # actually exists).
+    if editable_root_text and import_root != editable_root:
+        errors.append("editable_root_mismatch")
+    if editable_root_text and editable_revision != source_revision:
         errors.append("editable_revision_mismatch")
     if str(provenance.get("expected_root") or "") != str(import_root):
         errors.append("receipt_expected_root_mismatch")
@@ -582,31 +585,38 @@ def _strict_external_runtime_shape(
         if parsed.scheme == "file"
         else None
     )
-    if not bool(dir_info.get("editable")) or direct_root != import_root:
-        errors.append("editable_direct_url_mismatch")
-
-    pth = identity.get("pth")
-    pth = pth if isinstance(pth, list) else []
-    pth_entries: list[Path] = []
-    if not pth:
-        errors.append("editable_pth_missing")
-    for record in pth:
-        if not isinstance(record, Mapping) or not bool(record.get("readable")):
-            errors.append("editable_pth_unreadable")
-            continue
-        entries = record.get("entries")
-        if not isinstance(entries, list):
-            errors.append("editable_pth_invalid")
-            continue
-        pth_entries.extend(
-            Path(str(entry)).resolve(strict=False)
-            for entry in entries
-            if isinstance(entry, str) and entry
-        )
-    if not pth_entries:
-        errors.append("editable_pth_entries_missing")
-    elif any(entry != import_root for entry in pth_entries):
-        errors.append("editable_pth_mismatch")
+    # T-0301 worktree-first runtime (grok consult, d58701026410): when no pip
+    # editable install exists (editable_root empty, no pth, no direct_url),
+    # the editable requirements do not apply — import_root + source_revision
+    # + provenance.ok are the authoritative launch gate. The legacy editable
+    # shape (direct_url.editable, pth entries, editable_root == import_root)
+    # is pre-T-0301 only.
+    worktree_first = not editable_root_text and not pth
+    if not worktree_first:
+        if not bool(dir_info.get("editable")) or direct_root != import_root:
+            errors.append("editable_direct_url_mismatch")
+        pth = identity.get("pth")
+        pth = pth if isinstance(pth, list) else []
+        pth_entries: list[Path] = []
+        if not pth:
+            errors.append("editable_pth_missing")
+        for record in pth:
+            if not isinstance(record, Mapping) or not bool(record.get("readable")):
+                errors.append("editable_pth_unreadable")
+                continue
+            entries = record.get("entries")
+            if not isinstance(entries, list):
+                errors.append("editable_pth_invalid")
+                continue
+            pth_entries.extend(
+                Path(str(entry)).resolve(strict=False)
+                for entry in entries
+                if isinstance(entry, str) and entry
+            )
+        if not pth_entries:
+            errors.append("editable_pth_entries_missing")
+        elif any(entry != import_root for entry in pth_entries):
+            errors.append("editable_pth_mismatch")
 
     imports = identity.get("imports")
     imports = imports if isinstance(imports, Mapping) else {}
