@@ -1498,8 +1498,11 @@ for name in (
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         continue
-    if str(payload.get("occurrence_digest") or "") != digest:
-        continue
+    # Dedup is SESSION-keyed, not digest-keyed: any live babysitter for this
+    # session blocks a new launch. Digest-keyed dedup let a second babysitter
+    # launch the moment the occurrence digest changed (e.g. the durable-digest
+    # fix changed d58701026410 -> 4f5b449cfd75 while the old babysitter was
+    # still running), spawning competing fixers for the same chain.
     if str(payload.get("status") or "") in {"launched", "running"}:
         if pid_live(payload.get("babysitter_pid")) or pid_live(payload.get("supervisor_pid")):
             raise SystemExit(0)
