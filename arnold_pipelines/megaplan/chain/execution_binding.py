@@ -425,7 +425,7 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
 
 
 def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    core = {
         key: identity.get(key)
         for key in (
             "import_root",
@@ -437,6 +437,22 @@ def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
             "imports",
         )
     }
+    # T-0301 canonicalization (grok consult, occurrence d58701026410):
+    # content_sha256 must be ENV-INDEPENDENT. editable_root / editable_revision
+    # / direct_url / pth all derive from
+    # importlib.metadata.distribution("arnold"), which only succeeds when the
+    # executing interpreter has arnold's dist-info on sys.path. Under the
+    # launch recipe (generation interpreter, PYTHONPATH=$ENGINE_DIR, -P) arnold
+    # is never pip-installed, so those fields are empty; a leftover candidate
+    # .venv (pre-T-0301 debris) makes a DIFFERENT interpreter see a stale
+    # dist-info and fill them, producing a different digest for the same tree
+    # (7be714fda21a vs 6db5419f). An identity pin that changes with the probing
+    # interpreter is not an identity. The launch-relevant identity is
+    # import_root + source_revision + imports — the only fields determined by
+    # the tree itself, not by which interpreter probed it.
+    for key in ("editable_root", "editable_revision", "direct_url", "pth"):
+        core[key] = None
+    return core
 
 
 def _runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
@@ -477,10 +493,11 @@ def _persisted_runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
             "fields: " + ", ".join(unexpected),
         )
     supplied = str(identity.get("content_sha256") or "")
-    payload = {key: value for key, value in identity.items() if key != "content_sha256"}
-    observed = _sha256_bytes(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    )
+    # The stored digest is the CANONICAL one (env-independent core with
+    # editable diagnostics excluded — see _runtime_identity_core). Verifying
+    # against a raw full-payload hash would reject every canonical identity
+    # as "invalid"; recompute with the same canonical builder.
+    observed = _runtime_identity_sha256(identity)
     if not _FULL_SHA256.fullmatch(supplied) or supplied != observed:
         raise CliError(
             RUNTIME_DRIFT_ERROR,

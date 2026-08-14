@@ -244,8 +244,28 @@ def normalized_runtime_identity(provenance: Mapping[str, Any]) -> dict[str, Any]
         identity["editable_revision"] = _git_revision(
             Path(editable_root_text).expanduser()
         )
-    identity["content_sha256"] = _canonical_sha256(identity)
+    identity["content_sha256"] = _canonical_sha256(_identity_digest_core(identity))
     return identity
+
+
+def _identity_digest_core(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """Env-independent identity digest (grok consult, occurrence d58701026410).
+
+    editable_root / editable_revision / direct_url / pth all derive from
+    importlib.metadata.distribution("arnold"), which only succeeds when the
+    probing interpreter has arnold's dist-info on sys.path. Under the T-0301
+    launch recipe (generation interpreter, PYTHONPATH=$ENGINE_DIR, -P) arnold
+    is never pip-installed, so those fields are empty; a leftover candidate
+    .venv dist-info fills them for a different interpreter, yielding a
+    different digest for the same tree. An identity pin that changes with the
+    probing interpreter is not an identity. The launch-relevant identity is
+    import_root + source_revision + imports — the only fields determined by
+    the tree itself.
+    """
+    core = {key: identity.get(key) for key in _RUNTIME_IDENTITY_KEYS}
+    for key in ("editable_root", "editable_revision", "direct_url", "pth"):
+        core[key] = None
+    return core
 
 
 def runtime_provenance_receipt(provenance: Mapping[str, Any]) -> dict[str, Any]:

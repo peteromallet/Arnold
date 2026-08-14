@@ -29,26 +29,29 @@ def _sha256(value: bytes) -> str:
 
 
 def _identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        key: identity.get(key)
-        for key in (
-            "import_root",
-            "source_revision",
-            "editable_root",
-            "editable_revision",
-            "direct_url",
-            "pth",
-            "imports",
-        )
-    }
+    # DEPRECATED: superseded by runtime_provenance.normalized_runtime_identity
+    # (single canonical builder). Kept only for out-of-tree callers that still
+    # import it; new code must call normalize_runtime_identity instead.
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+        normalized_runtime_identity,
+    )
+
+    value = normalized_runtime_identity(identity)
+    return {key: value.get(key) for key in ("import_root", "source_revision", "imports")}
 
 
 def normalize_runtime_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
-    value = _identity_core(identity)
-    value["content_sha256"] = _sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    # Single canonical builder (grok consult, occurrence d58701026410): the
+    # digest AND the returned shape must be identical across every identity
+    # path. runtime_provenance.normalized_runtime_identity is the canonical
+    # builder (full identity dict + env-independent canonical digest);
+    # delegating here guarantees cutover/seed/marker comparisons never see
+    # two different shapes for the same runtime.
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+        normalized_runtime_identity,
     )
-    return value
+
+    return normalized_runtime_identity(identity)
 
 
 def marker_runtime_identity(marker: Mapping[str, Any]) -> dict[str, Any] | None:
