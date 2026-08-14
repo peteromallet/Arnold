@@ -4022,7 +4022,7 @@ def _chain_runtime_probe_and_create_command(
             "  fi",
             # Best-effort ref refresh so creation resolves the configured
             # engine ref (the launch's own refresh would run too late).
-            '  git -C "$BASE_REPO" fetch origin "$BASE_REF" 2>/dev/null || true',
+            '  git -C "$BASE_REPO" fetch origin "$BASE_REF" >/dev/null 2>&1 || true',
             *create_env,
             '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
             '  python3 - "$MANIFEST" 1 <<\'PY\'',

@@ -111,10 +111,10 @@ if git -C "$BASE_REPO" rev-parse --verify "refs/heads/$BRANCH" >/dev/null 2>&1; 
   exit 2
 fi
 mkdir -p "$CANDIDATES_DIR"
-git -C "$BASE_REPO" worktree add -b "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD"
+git -C "$BASE_REPO" worktree add -b "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" >&2
 
 # (b) Push at creation — FAIL LOUDLY (design rule 4). A box-only branch is a failure.
-if ! git -C "$RUNTIME_DIR" push "$REMOTE" "HEAD:refs/heads/$BRANCH"; then
+if ! git -C "$RUNTIME_DIR" push "$REMOTE" "HEAD:refs/heads/$BRANCH" >&2; then
   echo "arnold-runtime-create: FAILED to push '$BRANCH' to '$REMOTE' — refusing to leave a box-only runtime. The worktree is left in place for diagnosis; it is NOT authoritative and must not be treated as live." >&2
   exit 1
 fi
