@@ -169,6 +169,8 @@ def test_renderer_embeds_prior_fixer_occurrences(tmp_path: pathlib.Path) -> None
     assert "a102d8d24045" in result.stdout
     assert "continue the lineage" in result.stdout
     assert "ship it (cherry-pick/apply + regression) instead of re-authoring" in result.stdout
+    assert "PERSIST THE FIX" in result.stdout
+    assert "write handoff.md here" in result.stdout
 
 
 def test_renderer_absent_recovery_dir_is_orientation_not_error(

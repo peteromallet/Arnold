@@ -150,6 +150,11 @@ def render_babysitter_goal(
         else "\nNo structured failure evidence was supplied — build the evidence pack from canonical state.\n"
     )
     prior_block = _render_prior_fixer_work_block(recovery_dir)
+    recovery_hint = (
+        f"\nYour recovery evidence root (write handoff.md here): {recovery_dir}\n"
+        if recovery_dir
+        else ""
+    )
     return f"""/goal
 You are the BABYSITTER for target {encoded_target}: ONE
 hermes:deepseek:deepseek-v4-flash managed agent and the ORCHESTRATOR of the
@@ -165,7 +170,7 @@ Context:
 {evidence_block}
 
 {prior_block}
-
+{recovery_hint}
 Mandatory flow — follow the five steps exactly:
 
 - STEP 1 — DEPLOY THE SWARM: over the failure evidence, fan out one bounded,
@@ -186,6 +191,13 @@ Mandatory flow — follow the five steps exactly:
   failed attempt) until the occurrence advances.  Escalate back to codex after
   three distinct verified fix attempts.  agent_actionable: false is reserved
   for a genuinely external gate.
+  PERSIST THE FIX (the runtime candidate is push-blocked by design — your
+  commit lives only there until shipped): after a fix passes its regression,
+  (a) record the commit SHA plus the full ``git show``/patch of the change in
+  your evidence pack, and (b) write ``handoff.md`` at the recovery evidence
+  root naming the commit SHA, the changed files, the regression that passed,
+  and the exact next step (resume/rebind).  A fix that is only in the
+  candidate is not durable — it must be shippable by the next incarnation.
 - STEP 4 — RELAUNCH: restart the chain through the supported seam — megaplan
   resume / chain start as the evidence requires — never --fresh, never a state
   wipe.  The relaunch must carry the same occurrence identity and the fixed
@@ -194,7 +206,8 @@ Mandatory flow — follow the five steps exactly:
   must leave blocked and the same failure_fingerprint must not recur, with
   matching identities (runtime/request/grant/claim/WBC) and exactly one
   terminal notification.  A PID, commit, self-report, or heartbeat is NOT
-  proof.  Then close the loop and summarize the session.
+  proof.  Then close the loop, write the handoff.md (SHA + next step), and
+  summarize the session.
 
 Operator contract:
 - NO-OP GUARD: FIRST enumerate blocked/failed chains via megaplan cloud status
