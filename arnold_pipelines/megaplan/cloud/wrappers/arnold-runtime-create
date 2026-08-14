@@ -157,7 +157,7 @@ print(str(proof["interpreter_path"]).rsplit("/bin/python", 1)[0])
   echo "arnold-runtime-create: dependency generation proof is unreadable (interpreter path missing)" >&2
   exit 1
 }
-echo "arnold-runtime-create: dependency generation ready at '$GEN_DIR' (id=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$GEN_PROOF_JSON"))"
+echo "arnold-runtime-create: dependency generation ready at '$GEN_DIR' (id=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$GEN_PROOF_JSON"))" >&2
 
 # (c) Write the epic manifest atomically. Build the full payload first (the
 # complete mandatory field set per the runtime_manifest contract — schema "1",
@@ -495,8 +495,8 @@ echo "arnold-runtime-create: WARNING — active pointer '$POINTER' is COMPATIBIL
 # (e) Report the manifest path + runtime_id.
 RUNTIME_ID="$(_json_get "$MANIFEST_PATH" runtime_id)"
 [[ -n "$RUNTIME_ID" ]] || RUNTIME_ID="$SLUG-$STAMP"
-echo "arnold-runtime-create: runtime '$SLUG' created (runtime_id=$RUNTIME_ID)"
-echo "  branch:   $BRANCH (pushed to $REMOTE)"
-echo "  runtime:  $RUNTIME_DIR"
-echo "  manifest: $MANIFEST_PATH (authoritative)"
-echo "  pointer:  $POINTER (COMPATIBILITY-ONLY; per-epic manifests are authoritative — G1 no-global-pointer fallback)"
+echo "arnold-runtime-create: runtime '$SLUG' created (runtime_id=$RUNTIME_ID)" >&2
+echo "  branch:   $BRANCH (pushed to $REMOTE)" >&2
+echo "  runtime:  $RUNTIME_DIR" >&2
+echo "  manifest: $MANIFEST_PATH (authoritative)" >&2
+echo "  pointer:  $POINTER (COMPATIBILITY-ONLY; per-epic manifests are authoritative — G1 no-global-pointer fallback)" >&2
