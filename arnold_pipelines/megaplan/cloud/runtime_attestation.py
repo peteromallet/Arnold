@@ -909,7 +909,14 @@ def ensure_runtime_launch_seed(
         )
 
         chain_identity = normalize_runtime_identity(chain_runtime_identity)
-        if chain_identity != live_identity:
+        # Compare the CANONICAL DIGEST, not the full dict: identical digests
+        # with different diagnostic shapes (editable_root/pth populated vs
+        # None depending on which writer stored them) are the same runtime
+        # (grok consult, d58701026410). A full-dict comparison false-positives
+        # on shape drift and blocks every relaunch.
+        if chain_identity.get("content_sha256") != live_identity.get(
+            "content_sha256"
+        ):
             raise CliError(
                 RUNTIME_ATTESTATION_ERROR,
                 "chain execution binding does not match the live manifest-pinned runtime",
