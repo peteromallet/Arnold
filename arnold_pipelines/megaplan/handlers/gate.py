@@ -629,6 +629,7 @@ def _build_gate_route_signal(
 
         # Validate each explicit resolution
         addressed_ids = {f.get("id") for f in addressed if f.get("id")}
+        unresolved_ids = {f.get("id") for f in unresolved if isinstance(f, dict) and f.get("id")}
         valid_resolved_ids: set[str] = set()
         valid_resolutions: list[dict[str, Any]] = []
         for res in resolutions:
@@ -638,7 +639,15 @@ def _build_gate_route_signal(
                 evidence = res.get("evidence", "").strip()
                 if not evidence or is_rubber_stamp(evidence, strict=True):
                     continue
-                if flag_id not in addressed_ids:
+                # verify_fixed closes a flag the gate worker just proved the
+                # plan fixes. That is valid whether the flag was previously
+                # addressed (revise track) OR still open (plan-rewrite track:
+                # a `plan` phase never writes flags_addressed, so every flag
+                # stays `open` and the old addressed-only check discarded
+                # valid resolutions -> catch-22, PROCEED auto-downgraded to
+                # ITERATE forever. See grok consult, d58701026410). Accept
+                # when the flag is unresolved OR addressed; reject unknown IDs.
+                if flag_id not in addressed_ids and flag_id not in unresolved_ids:
                     continue
             elif action == "dispute":
                 evidence = res.get("evidence", "").strip()

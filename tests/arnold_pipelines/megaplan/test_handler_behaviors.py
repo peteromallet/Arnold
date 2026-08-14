@@ -592,6 +592,99 @@ class TestGateOutcomeSemantics:
         assert outcome["route_signal"] == "retry_gate"
         assert outcome["blocking_unresolved_ids"]
 
+    def test_build_gate_route_signal_verify_fixed_resolves_open_flag(self, tmp_path: Path) -> None:
+        """d58701026410 catch-22 regression: after a `plan` REWRITE (not
+        revise), flags_addressed stays empty so every carried flag remains
+        `open`. The gate worker proves them fixed (flag_resolutions
+        verify_fixed) but the old addressed-only membership check discarded
+        the resolution -> PROCEED auto-downgraded to ITERATE forever. A
+        verify_fixed with real evidence for an UNRESOLVED (open) flag must
+        resolve it."""
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        summary = {
+            "recommendation": "PROCEED",
+            "passed": True,  # gate worker's PROCEED carries passed=True
+            "rationale": "No blocking flag remains unresolved, so PROCEED is warranted",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "addressed_flags": [],  # plan-rewrite track: nothing was addressed
+            "unresolved_flags": [
+                {
+                    "id": "CF-65426ECA51BDDD1938F4",
+                    "severity": "significant",
+                    "status": "open",
+                    "concern": "installed-runtime coverage",
+                }
+            ],
+            "flag_resolutions": [
+                {
+                    "flag_id": "CF-65426ECA51BDDD1938F4",
+                    "action": "verify_fixed",
+                    "evidence": (
+                        "plan_v5b.md Step 7 adds the shipped-wrapper bash -n "
+                        "check under exact T7 nodes; evaluator_verdict.json "
+                        "verified the node selectors resolve"
+                    ),
+                }
+            ],
+            "orchestrator_guidance": "",
+        }
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "proceed"
+        assert not outcome.get("blocking_unresolved_ids")
+
+    def test_build_gate_route_signal_rejects_rubber_stamp_verify_fixed(self, tmp_path: Path) -> None:
+        """Rubber-stamp verify_fixed (no evidence) must NOT resolve an open
+        flag — the fail-closed side of the catch-22 fix."""
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        summary = {
+            "recommendation": "PROCEED",
+            "passed": False,
+            "rationale": "ok",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "addressed_flags": [],
+            "unresolved_flags": [
+                {"id": "f2", "severity": "significant", "status": "open", "concern": "y"}
+            ],
+            "flag_resolutions": [
+                {
+                    "flag_id": "f2",
+                    "action": "verify_fixed",
+                    "evidence": "resolved",  # rubber stamp
+                }
+            ],
+            "orchestrator_guidance": "",
+        }
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["result"] == "unresolved_flags"
+        assert "f2" in outcome.get("blocking_unresolved_ids", [])
+
 
 class TestTiebreakerOutcomeSemantics:
     def test_pick_promotes_proceed_signal(self) -> None:
