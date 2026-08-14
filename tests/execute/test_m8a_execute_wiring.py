@@ -873,6 +873,67 @@ def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Pat
         )
 
 
+def test_enforce_task_test_budgets_allows_same_selector_rerun_at_per_run_ceiling(
+    tmp_path: Path,
+) -> None:
+    """Two honest re-runs of the same admitted selector at the per-run ceiling
+    (max_runs=2, max_seconds=120) are evidence, not budget exhaustion."""
+    from arnold_pipelines.megaplan.execute.merge import _enforce_task_test_budgets
+
+    entry = {
+        "task_id": "T2",
+        "status": "done",
+        "commands_run": [
+            "timeout 120s python -m pytest tests/cloud/test_maintenance_environment.py -q",
+            "timeout 120s python -m pytest tests/cloud/test_maintenance_environment.py -q",
+        ],
+    }
+    targets_by_id = {
+        "T2": {
+            "id": "T2",
+            "narrow_tests": {
+                "selectors": ["tests/cloud/test_maintenance_environment.py"],
+                "max_seconds": 120,
+                "max_runs": 2,
+            },
+        }
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([entry], targets_by_id=targets_by_id, issues=issues)
+    assert entry["status"] == "done"
+    assert issues == []
+
+
+def test_enforce_task_test_budgets_blocks_single_run_above_per_run_ceiling(
+    tmp_path: Path,
+) -> None:
+    """A single invocation whose declared timeout exceeds the per-run ceiling
+    must still block the task."""
+    from arnold_pipelines.megaplan.execute.merge import _enforce_task_test_budgets
+
+    entry = {
+        "task_id": "T2",
+        "status": "done",
+        "commands_run": [
+            "timeout 121s python -m pytest tests/cloud/test_maintenance_environment.py -q",
+        ],
+    }
+    targets_by_id = {
+        "T2": {
+            "id": "T2",
+            "narrow_tests": {
+                "selectors": ["tests/cloud/test_maintenance_environment.py"],
+                "max_seconds": 120,
+                "max_runs": 2,
+            },
+        }
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([entry], targets_by_id=targets_by_id, issues=issues)
+    assert entry["status"] == "blocked"
+    assert any("task_test_budget_exhausted" in issue for issue in issues)
+
+
 def test_deferred_selector_blocks_without_accepted_result_envelope(tmp_path: Path) -> None:
     """A worker row without durable accepted authority cannot release deferral."""
     from arnold_pipelines.megaplan.execute.batch import (

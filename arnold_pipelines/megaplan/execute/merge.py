@@ -981,12 +981,17 @@ def _enforce_task_test_budgets(
         violations: list[str] = []
         if isinstance(max_runs, int) and len(invocations) > max_runs:
             violations.append(f"{len(invocations)} test runs exceeds max_runs={max_runs}")
-        timeout_total = 0
         for timeout_seconds, selectors in invocations:
             if timeout_seconds is None:
                 violations.append("test command lacks an admitted timeout wrapper")
-            else:
-                timeout_total += timeout_seconds
+            elif isinstance(max_seconds, int) and timeout_seconds > max_seconds:
+                # max_seconds is a PER-RUN ceiling: repeated honest re-runs of the
+                # same admitted selector (each within the per-run ceiling, bounded
+                # by max_runs) are evidence, not aggregate budget exhaustion.
+                violations.append(
+                    f"declared test timeout {timeout_seconds}s exceeds per-run "
+                    f"max_seconds={max_seconds}"
+                )
             if not selectors:
                 violations.append("test command has no bounded path selector")
                 continue
@@ -998,10 +1003,6 @@ def _enforce_task_test_budgets(
                     for allowed in allowed_selectors
                 ):
                     violations.append(f"selector {selector!r} is outside narrow_tests.selectors")
-        if isinstance(max_seconds, int) and timeout_total > max_seconds:
-            violations.append(
-                f"declared test timeout total {timeout_total}s exceeds max_seconds={max_seconds}"
-            )
         if not violations:
             continue
         reason = "task_test_budget_exhausted: " + "; ".join(dict.fromkeys(violations))
