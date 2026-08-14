@@ -29,6 +29,7 @@ from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan.orchestration.test_selection import (
     _existing_pytest_selector_path,
+    _looks_like_repo_path,
 )
 
 # ---------------------------------------------------------------------------
@@ -390,6 +391,193 @@ def _compile_post_execute_suite(
 
 
 # ---------------------------------------------------------------------------
+# Selector shape validation + legacy-contract recovery projection
+# ---------------------------------------------------------------------------
+#
+# The finalize model occasionally emits full shell commands as
+# ``narrow_tests.selectors`` (``python -m compileall -q astrid/core/store``,
+# ``pytest tests/x.py -q``).  Ordinary finalization must REJECT those graphs
+# (task_feasibility emits ``task_test_selector_invalid_shape`` so planner
+# repair re-emits path selectors).  The projector below exists ONLY for the
+# bounded execute-entry recovery path: a blocked pre-dispatch validation
+# failure whose resume cursor is ``{phase: execute, retry_strategy:
+# repair_validation_failure}`` may deterministically recompile an in-memory
+# contract from the preserved finalize payload.  It never rewrites plan
+# artifacts, never silently widens, and fails closed unless every effective
+# narrow job still classifies READY or DEFERRED under the unchanged
+# ``classify_selector_lifecycle`` ownership rules.
+
+
+def validate_narrow_selector_shape(selector: Any) -> tuple[bool, str]:
+    """Return ``(valid, reason)`` for one ``narrow_tests`` selector string.
+
+    Valid selectors are concrete repository-relative pytest path selectors
+    (``tests/x.py``, ``tests/x.py::test_y``, ``astrid/pkg/mod.py``) with no
+    whitespace, no shell operators, no runner prefixes (``pytest``,
+    ``python -m``, ``bash``, ``make``, ...), no flags, and no absolute or
+    traversal paths.  Command-shaped selectors are rejected so the harness
+    compiler can never copy a shell command into a deterministic job.
+    """
+    if not isinstance(selector, str):
+        return False, "selector must be a string"
+    value = selector.strip()
+    if not value:
+        return False, "empty selector"
+    if any(ch in value for ch in (" ", "\t", "\n")):
+        return False, "selector must be a single path token (no shell commands or flags)"
+    if any(op in value for op in ("&&", "||", ";", "|", ">", "<", "`", "$(")):
+        return False, "selector must not contain shell operators"
+    if value.startswith("-"):
+        return False, "selector must not start with a flag"
+    path = normalize_selector_path(value)
+    if path is None:
+        return False, "selector must be a repository-relative path"
+    if not _looks_like_repo_path(value):
+        return False, "selector must be a tests/-prefixed or .py pytest path"
+    if _is_ambiguous_selector(value):
+        return False, "selector is ambiguous (directory-wide or catch-all)"
+    return True, ""
+
+
+def _extract_pytest_paths_from_command(command: str) -> list[str]:
+    """Extract positional pytest path selectors from one pytest command.
+
+    Recognizes only ``pytest ...`` / ``python -m pytest ...`` invocations.
+    Parsing stops at the first option so option values (e.g.
+    ``--cov tests/y.py``) can never widen the selector set, and only
+    path-shaped tokens are kept.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return []
+    runner_index: int | None = None
+    for index, part in enumerate(parts):
+        if part == "pytest" or part.endswith("/pytest"):
+            runner_index = index
+            break
+        if (
+            part in ("python", "python3")
+            and index + 1 < len(parts)
+            and parts[index + 1] == "-m"
+            and index + 2 < len(parts)
+            and parts[index + 2] == "pytest"
+        ):
+            runner_index = index + 2
+            break
+    if runner_index is None:
+        return []
+    paths: list[str] = []
+    for part in parts[runner_index + 1 :]:
+        if part.startswith("-"):
+            break
+        if not part:
+            continue
+        if _looks_like_repo_path(part):
+            paths.append(part)
+    return paths
+
+
+def project_legacy_validation_contract(
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Deterministic in-memory recompilation of a malformed legacy contract.
+
+    Only the bounded execute-entry recovery path may call this.  Returns
+    ``None`` when the payload carries nothing to recover.  The returned
+    receipt binds the original and effective job sets plus every excluded
+    command-shaped selector; callers persist it and never rewrite
+    ``finalize.json``.
+    """
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return None
+
+    normalized_tasks: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task = dict(task)
+        narrow = task.get("narrow_tests")
+        if isinstance(narrow, Mapping):
+            narrow = dict(narrow)
+            raw_selectors = narrow.get("selectors")
+            kept: list[str] = []
+            if isinstance(raw_selectors, list):
+                for selector in raw_selectors:
+                    if not isinstance(selector, str):
+                        continue
+                    ok, _reason = validate_narrow_selector_shape(selector)
+                    if ok:
+                        if selector not in kept:
+                            kept.append(selector)
+                        continue
+                    extracted = _extract_pytest_paths_from_command(selector)
+                    if extracted:
+                        for path in extracted:
+                            if path not in kept:
+                                kept.append(path)
+                        excluded.append(
+                            {
+                                "task_id": task.get("id"),
+                                "selector": selector,
+                                "reason": "command_extracted",
+                                "paths": extracted,
+                            }
+                        )
+                    else:
+                        excluded.append(
+                            {
+                                "task_id": task.get("id"),
+                                "selector": selector,
+                                "reason": "non_path_selector_dropped",
+                            }
+                        )
+            narrow["selectors"] = kept
+            task["narrow_tests"] = narrow
+        normalized_tasks.append(task)
+
+    projected = dict(payload)
+    projected["tasks"] = normalized_tasks
+
+    test_selection = payload.get("test_selection")
+    if isinstance(test_selection, Mapping):
+        ts = dict(test_selection)
+        command_override = ts.get("command_override")
+        if isinstance(command_override, str) and command_override.strip():
+            override_paths = _extract_pytest_paths_from_command(command_override)
+            if not override_paths:
+                # Malformed override (e.g. quoted command list): rebuild from
+                # the union of extracted per-task paths, else full-suite.
+                all_paths: list[str] = []
+                for entry in excluded:
+                    for path in entry.get("paths") or []:
+                        if path not in all_paths:
+                            all_paths.append(path)
+                override_paths = all_paths
+            if override_paths:
+                ts["command_override"] = _build_pytest_command(
+                    override_paths,
+                    timeout_seconds=_DEFAULT_POST_EXECUTE_MAX_SECONDS,
+                    extra_args="--no-header",
+                )
+            else:
+                ts.pop("command_override", None)
+                ts["mode"] = "full"
+                ts["selectors_used"] = []
+        projected["test_selection"] = ts
+
+    effective_jobs = compile_validation_jobs(projected)
+    original_jobs = payload.get("validation_jobs")
+    return {
+        "effective_jobs": effective_jobs,
+        "original_jobs": [dict(j) for j in original_jobs] if isinstance(original_jobs, list) else [],
+        "excluded": excluded,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public compiler entry point
 # ---------------------------------------------------------------------------
 
@@ -526,5 +714,7 @@ __all__ = [
     "declared_task_output_paths",
     "deferred_selector_evidence",
     "normalize_selector_path",
+    "project_legacy_validation_contract",
     "validate_model_validation_jobs",
+    "validate_narrow_selector_shape",
 ]
