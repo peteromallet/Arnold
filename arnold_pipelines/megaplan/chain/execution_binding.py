@@ -652,9 +652,23 @@ def verify_external_runtime_identity(
 
     normalized = _normalized_runtime_identity(identity)
     supplied_identity_digest = str(identity.get("content_sha256") or "")
+    receipt_identity = receipt.get("runtime_identity")
+    receipt_identity = (
+        receipt_identity if isinstance(receipt_identity, Mapping) else {}
+    )
+    # Compare launch-relevant identity (grok consult, d58701026410): digest +
+    # import_root + source_revision. The receipt's runtime_identity (built by
+    # runtime_provenance.normalized_runtime_identity) carries the full
+    # diagnostic shape (direct_url/editable_root/pth/imports populated) while
+    # _normalized_runtime_identity nulls them — same digest, different shapes,
+    # and a full-dict compare false-positives 'identity disagrees with its
+    # receipt' on every offline verification.
     if (
         supplied_identity_digest != normalized["content_sha256"]
-        or receipt.get("runtime_identity") != normalized
+        or str(receipt_identity.get("import_root") or "").rstrip("/")
+        != str(normalized.get("import_root") or "").rstrip("/")
+        or str(receipt_identity.get("source_revision") or "")
+        != str(normalized.get("source_revision") or "")
     ):
         raise CliError(
             RUNTIME_DRIFT_ERROR,
