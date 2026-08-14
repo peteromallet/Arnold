@@ -591,12 +591,12 @@ def _strict_external_runtime_shape(
     # + provenance.ok are the authoritative launch gate. The legacy editable
     # shape (direct_url.editable, pth entries, editable_root == import_root)
     # is pre-T-0301 only.
+    pth = identity.get("pth")
+    pth = pth if isinstance(pth, list) else []
     worktree_first = not editable_root_text and not pth
     if not worktree_first:
         if not bool(dir_info.get("editable")) or direct_root != import_root:
             errors.append("editable_direct_url_mismatch")
-        pth = identity.get("pth")
-        pth = pth if isinstance(pth, list) else []
         pth_entries: list[Path] = []
         if not pth:
             errors.append("editable_pth_missing")
