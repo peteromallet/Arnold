@@ -202,6 +202,12 @@ Mandatory flow — follow the five steps exactly:
   resume / chain start as the evidence requires — never --fresh, never a state
   wipe.  The relaunch must carry the same occurrence identity and the fixed
   source.
+  SEED ENV (required when driving plan/resume directly): export
+  MEGAPLAN_RUNTIME_LAUNCH_SEED=<launch-seed path> and
+  ARNOLD_RUNTIME_MANIFEST=<manifest path> in the invocation env, exactly as
+  chain/__init__.py run_chain does. A bare `megaplan plan`/`resume` worker
+  fails with "canonical runtime launch seed is required but missing" when the
+  seed env is absent (chain start exports it; direct phase commands do not).
 - STEP 5 — PROVE MOVEMENT: from canonical state, the chain-*.json last_state
   must leave blocked and the same failure_fingerprint must not recur, with
   matching identities (runtime/request/grant/claim/WBC) and exactly one
