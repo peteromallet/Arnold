@@ -869,32 +869,68 @@ def _run_write_needs_human_marker(
     return _run_embedded_python(program, str(data_path), str(out_path), discord_status)
 
 
+def _isolated_worker_env() -> dict[str, str]:
+    """Deterministic subprocess environment for extracted-fragment tests.
+
+    Extracted production shell fragments must behave identically regardless of
+    the test launcher, so ambient supervisor/cloud state (``MEGAPLAN_*``,
+    ``ARNOLD_*``, exported ``BASH_FUNC_*``, ``BASH_ENV``/``ENV``/
+    ``SHELLOPTS``) and ambient notification authority are never inherited.
+    Callers may still inject supported variables explicitly afterwards.
+    """
+    env = {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+    for name, value in os.environ.items():
+        if name.startswith(("MEGAPLAN_", "ARNOLD_", "BASH_FUNC_")) and "MANIFEST" not in name and name != "ARNOLD_RUNTIME_POLICY":
+            continue
+        if name in {
+            "BASH_ENV",
+            "ENV",
+            "SHELLOPTS",
+            "DISCORD_BOT_TOKEN",
+            "DISCORD_DM_USER_ID",
+            "DISCORD_WEBHOOK_URL",
+            "REPORT_WEBHOOK",
+            "SLACK_WEBHOOK_URL",
+            "PYTEST_CURRENT_TEST",
+        }:
+            continue
+        env[name] = value
+    return env
+
+
 def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ)
+    env = _isolated_worker_env()
     # Watchdog tests execute extracted production shell functions.  Never let
     # ambient credentials grant those functions outbound notification
     # authority; delivery tests must inject an explicit local stub instead.
-    for name in (
-        "DISCORD_BOT_TOKEN",
-        "DISCORD_DM_USER_ID",
-        "DISCORD_WEBHOOK_URL",
-        "REPORT_WEBHOOK",
-        "SLACK_WEBHOOK_URL",
-        "PYTEST_CURRENT_TEST",
-    ):
-        env.pop(name, None)
     env["DISCORD_DM_BIN"] = "/bin/false"
     env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
     env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
-    return subprocess.run(
-        ["bash", "-c", script],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
+    # Run the assembled fragment from a temp file: production fragments
+    # routinely exceed Linux MAX_ARG_STRLEN (128 KiB) as a single `bash -c`
+    # argument, which fails with E2BIG ("Argument list too long").
+    fd, script_path = tempfile.mkstemp(prefix="watchdog-fragment-", suffix=".sh")
+    try:
+        os.close(fd)
+        Path(script_path).write_text(script, encoding="utf-8")
+        return subprocess.run(
+            ["bash", str(script_path)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+    finally:
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass
 
 
 def test_run_watchdog_shell_strips_ambient_notification_authority(
@@ -4356,7 +4392,7 @@ def test_watchdog_allows_concurrent_repairs_for_different_sessions(tmp_path: Pat
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        f"printf '%s\\n' \"$2\" >> {str(launch_log)!r}\n"
         "sleep 5\n",
         encoding="utf-8",
     )
@@ -4466,7 +4502,7 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        f"printf '%s\\n' \"$2\" >> {str(launch_log)!r}\n"
         "sleep 5\n",
         encoding="utf-8",
     )
@@ -4535,7 +4571,7 @@ def test_watchdog_dispatch_does_not_reclaim_stale_request_claim(tmp_path: Path) 
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        f"printf '%s\\n' \"$2\" >> {str(launch_log)!r}\n"
         "sleep 5\n",
         encoding="utf-8",
     )
@@ -4736,7 +4772,7 @@ def test_watchdog_dispatch_refuses_missing_decision_id(tmp_path: Path) -> None:
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        f"printf '%s\\n' \"$2\" >> {str(launch_log)!r}\n"
         "sleep 5\n",
         encoding="utf-8",
     )
@@ -5171,12 +5207,12 @@ def test_repair_loop_missing_goal_custody_cleans_pidfile_on_term(
     codex_path = bin_dir / "codex"
     codex_path.write_text(
         "#!/usr/bin/env bash\n"
-        "sleep 5\n",
+        "sleep 2\n",
         encoding="utf-8",
     )
     codex_path.chmod(codex_path.stat().st_mode | stat.S_IXUSR)
     launcher_path = tmp_path / "launcher.py"
-    launcher_path.write_text("import time\n\ntime.sleep(5)\n", encoding="utf-8")
+    launcher_path.write_text("import time\n\ntime.sleep(2)\n", encoding="utf-8")
 
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
@@ -5260,12 +5296,12 @@ def test_repair_loop_preserves_unbound_pidfile_and_uses_durable_lock(tmp_path: P
     codex_path = bin_dir / "codex"
     codex_path.write_text(
         "#!/usr/bin/env bash\n"
-        "sleep 5\n",
+        "sleep 2\n",
         encoding="utf-8",
     )
     codex_path.chmod(codex_path.stat().st_mode | stat.S_IXUSR)
     launcher_path = tmp_path / "launcher.py"
-    launcher_path.write_text("import time\n\ntime.sleep(5)\n", encoding="utf-8")
+    launcher_path.write_text("import time\n\ntime.sleep(2)\n", encoding="utf-8")
 
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
@@ -5354,12 +5390,12 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     codex_path.write_text(
         "#!/usr/bin/env bash\n"
         f"printf '%s\\n' \"$$\" >> {shlex.quote(str(codex_pids))}\n"
-        "sleep 30\n",
+        "sleep 3\n",
         encoding="utf-8",
     )
     codex_path.chmod(codex_path.stat().st_mode | stat.S_IXUSR)
     launcher_path = tmp_path / "launcher.py"
-    launcher_path.write_text("import time\n\ntime.sleep(30)\n", encoding="utf-8")
+    launcher_path.write_text("import time\n\ntime.sleep(3)\n", encoding="utf-8")
 
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
@@ -5442,7 +5478,7 @@ def test_repair_loop_busy_directory_lock_exits_without_mutating_repair_data(tmp_
         },
     )
 
-    holder = subprocess.Popen(["sleep", "30"])
+    holder = subprocess.Popen(["sleep", "3"])
     lock_dir = marker_dir / "demo-session.repair-loop.lock"
     try:
         acquired = repair_lock.acquire_repair_lock(
@@ -6811,13 +6847,17 @@ def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) 
         encoding="utf-8",
     )
     command.chmod(command.stat().st_mode | stat.S_IXUSR)
-    env = dict(os.environ)
+    env = _isolated_worker_env()
     env.update(
         {
             "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
             # G4: no MEGAPLAN_SUPERVISOR_SOURCE transport — the wrapper never
             # reads it.  Attestation explicitly opted out so this retry-logic
-            # test does not need a full launch seed.
+            # test does not need a full launch seed.  _isolated_worker_env
+            # drops the ambient MEGAPLAN_RUNTIME_LAUNCH_SEED (and exported
+            # python3 function pinning the bound runtime), so the wrapper
+            # skips the manifest block and imports feature_flags from the
+            # reviewed workspace tree via the explicit PYTHONPATH.
             "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
             "ARNOLD_AUTONOMY": "1",
             "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
@@ -6868,12 +6908,15 @@ def test_supervise_durable_review_quality_block_does_not_retry(tmp_path: Path) -
     command = tmp_path / "blocked-review"
     command.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
     command.chmod(command.stat().st_mode | stat.S_IXUSR)
-    env = dict(os.environ)
+    env = _isolated_worker_env()
     env.update(
         {
             "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
             # G4: attestation explicitly opted out so this retry-logic test
-            # does not need a full launch seed.
+            # does not need a full launch seed.  _isolated_worker_env drops
+            # the ambient MEGAPLAN_RUNTIME_LAUNCH_SEED and the exported
+            # python3 runtime pinning, so the wrapper's feature_flags import
+            # resolves from the reviewed workspace tree.
             "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
             "ARNOLD_AUTONOMY": "1",
             "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
@@ -20298,6 +20341,11 @@ def _build_meta_dispatch_script(
     source_dir = marker_dir.parent / "managed-source"
     source_dir.mkdir(parents=True, exist_ok=True)
     lines: list[str] = [
+        # The babysitter/worker shell exports a `python3` function that pins
+        # PYTHONPATH to the bound runtime candidate; the recursion guard's
+        # PYTHONPATH-based import contract must resolve from this repo instead.
+        "unset -f python3 2>/dev/null || true",
+        "unset ARNOLD_MANAGED_AGENT_DIFFICULTY_CEILING 2>/dev/null || true",
         _LOG_STUB,
         _REDACT_INLINE_STUB,
         _REPORT_ITEM_STUB,
@@ -22068,7 +22116,7 @@ def test_watchdog_ledger_write_failure_blocks_dispatch(tmp_path: Path) -> None:
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        f"printf '%s\\n' \"$2\" >> {str(launch_log)!r}\n"
         "sleep 30\n",
         encoding="utf-8",
     )
@@ -22202,7 +22250,7 @@ def test_watchdog_fallback_taken_write_failure_blocks_launch(
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        f"printf '%s\\n' \"$2\" >> {str(launch_log)!r}\n"
         "sleep 30\n",
         encoding="utf-8",
     )

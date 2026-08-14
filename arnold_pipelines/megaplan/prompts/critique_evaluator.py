@@ -465,7 +465,9 @@ def _critique_evaluator_prompt(
           domains you are routing critics into; `domain_skips`: list of
           {{domain, why}} objects for domains deliberately excluded. Each
           domain must appear in exactly one of the two lists and every
-          entry must carry a concrete `why`.
+          entry must carry a concrete `why`. If this brief provides NO
+          known domain context, emit `[]` for BOTH lists — never invent
+          domains.
         - `critique_mode`: "BLIND" or "HISTORY_AWARE" — the routing mode
           the critic dispatch must assume for this verdict.
         - `budgets`: object of integer caps {{max_tokens,
@@ -479,7 +481,18 @@ def _critique_evaluator_prompt(
           considered (mirror the ledger manifest's input-set accounting).
         - `expected_revision` and `expected_briefing_hash`: when the ledger
           supplies the prior revision id and the briefing hash, echo them
-          verbatim so the validator can confirm provenance.
+          verbatim so the validator can confirm provenance. When this
+          brief does NOT supply them (no prior revision or briefing hash
+          is present in the context), emit `""` for both — never invent or
+          copy a hash from elsewhere.
+        - `evidence_targets`: echo only finding ids that appear in this
+          brief's known-finding context; when the brief supplies NO
+          known-finding refs, emit `[]`.
+        - `budgets`: when this brief supplies no budget-cap context,
+          emit `{{}}` (an empty object) — never invent caps.
+        - `input_set_hashes`: mirror only input-set hashes that appear in
+          this brief's ledger context; when the brief supplies none, emit
+          `[]` — never copy hashes from other files.
 
         The generated output template ({output_path}) is the structural
         source of truth for the JSON shape. Populate every routing, budget,

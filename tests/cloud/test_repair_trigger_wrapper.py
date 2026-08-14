@@ -281,6 +281,37 @@ raise SystemExit(75)
     return stub
 
 
+def _isolated_worker_env() -> dict[str, str]:
+    """Deterministic subprocess environment for wrapper tests.
+
+    Ambient supervisor/cloud state (``MEGAPLAN_*``, ``ARNOLD_*``, exported
+    ``BASH_FUNC_*``) and ambient notification authority must never leak into
+    wrapper subprocesses; tests inject supported variables explicitly.
+    """
+    env = {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+    for name, value in os.environ.items():
+        if name.startswith(("MEGAPLAN_", "ARNOLD_", "BASH_FUNC_")) and "MANIFEST" not in name and name != "ARNOLD_RUNTIME_POLICY":
+            continue
+        if name in {
+            "BASH_ENV",
+            "ENV",
+            "SHELLOPTS",
+            "DISCORD_BOT_TOKEN",
+            "DISCORD_DM_USER_ID",
+            "DISCORD_WEBHOOK_URL",
+            "REPORT_WEBHOOK",
+            "SLACK_WEBHOOK_URL",
+            "PYTEST_CURRENT_TEST",
+        }:
+            continue
+        env[name] = value
+    return env
+
+
 def _run_trigger(
     marker_dir: Path,
     repair_bin: Path,
@@ -292,7 +323,7 @@ def _run_trigger(
     meta_repair_bin: Path | None = None,
     request_id: str = "",
 ) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ)
+    env = _isolated_worker_env()
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     env["ARNOLD_CLOUD_HOT_ENV"] = str(marker_dir / "missing-hot-env")
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)

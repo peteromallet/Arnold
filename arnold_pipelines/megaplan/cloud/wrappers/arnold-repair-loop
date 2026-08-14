@@ -9214,59 +9214,6 @@ if [[ "${ENTRY_COMPLETE:-0}" == "1" && "${_entry_scope:-}" != "stale_marker" ]];
   exit 0
 fi
 
-# This is the outer repair/retrigger fence.  The repair loop must not infer
-# authority from its local PID namespace, a tmux server, runner-transition
-# sidecars, or watchdog health.  Only a complete canonical record may admit
-# subsequent mutation; UNKNOWN exits before lock acquisition, model launch,
-# marker retirement, or mechanical relaunch.
-ENTRY_CANONICAL_LIVENESS="$(
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" <<'PY' 2>>"$LOG" || printf unknown
-import pathlib
-import sys
-from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
-from arnold_pipelines.megaplan.cloud.current_target_liveness import control_liveness_from_current_target
-
-session, marker_dir, repair_data_dir = sys.argv[1:]
-target = resolve_current_target(
-    session,
-    marker_dir=pathlib.Path(marker_dir),
-    repair_data_dir=pathlib.Path(repair_data_dir),
-)
-liveness = control_liveness_from_current_target(target, action="mutation")
-print(liveness["state"] if liveness.get("action_permitted") is True else "unknown")
-PY
-)"
-
-# Namespace-bound lock admission is a safety operation, not authority to
-# repair.  Preserve duplicate/recursive suppression even when target liveness
-# is UNKNOWN, then release the claim on the fenced exit below.
-guard_against_recursive_repair_loop || exit 0
-if [[ "$REPAIR_LOOP_MODE" == "proactive" ]]; then
-  # Proactive NO-OP guard (design section 3 mode semantics): exit 0 cleanly
-  # with a typed no-op when nothing is blocked, BEFORE lock acquisition,
-  # marker mutation, agent spawn, or relaunch.  Completion already exited
-  # above; this covers a healthy live target with no repair-forcing evidence.
-  proactive_noop_health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
-  if [[ "$proactive_noop_health" == "alive" ]]; then
-    proactive_noop_forced="$(marker_requires_repair_despite_alive || authority_gap_continue "T29-BYPASS-115" "authority-risk bypass converted to typed evidence gap")"
-    if [[ -z "$proactive_noop_forced" ]]; then
-      log "proactive NO-OP guard: target alive and nothing blocked; clean no-op exit session=$SESSION mode=proactive"
-      printf '%s\n' "NOOP exit 0: target alive; nothing is blocked (mode=proactive session=$SESSION)"
-      exit 0
-    fi
-    log "proactive NO-OP guard: target alive but marker requires repair session=$SESSION reason=$proactive_noop_forced"
-  fi
-fi
-acquire_repair_lock || exit 75
-export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
-export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
-export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
-if [[ "$ENTRY_CANONICAL_LIVENESS" == "unknown" ]]; then
-  log "canonical target liveness UNKNOWN; repair loop exits before mutation and legacy PID/tmux evidence remains diagnostic-only session=$SESSION"
-  exit 0
-fi
-log "canonical repair-entry liveness admitted session=$SESSION state=$ENTRY_CANONICAL_LIVENESS"
-
 # Environment-gone backstop: if the workspace dir is gone the repair loop has
 # nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
 # a wiped workspace). Persist an environment_gone outcome for audit and exit 0
@@ -9275,10 +9222,10 @@ log "canonical repair-entry liveness admitted session=$SESSION state=$ENTRY_CANO
 # entry can bypass that watchdog tolerance, so we also consult the resolver:
 # when the workspace is missing, or when a chain/epic-chain marker points at a
 # missing spec AND there are no live chain/plan artifacts left, this session is
-# stale rather than repairable. This guard runs BEFORE acquire_repair_lock, so
-# it writes repair-data via save_repair_data directly rather than
-# repair_data_set_outcome (which requires the lock). Best-effort: a failed
-# write must not block the no-op exit.
+# stale rather than repairable. This guard runs BEFORE acquire_repair_lock and
+# BEFORE the canonical-liveness fence, so it writes repair-data via
+# save_repair_data directly rather than repair_data_set_outcome (which requires
+# the lock). Best-effort: a failed write must not block the no-op exit.
 ENTRY_TARGET_MISSING_REASON=""
 ENTRY_TARGET_MISSING_REASON="$(entry_target_missing_reason 2>>"$LOG" || authority_gap_continue "T29-BYPASS-090" "authority-risk bypass converted to typed evidence gap")"
 if [[ -z "$ENTRY_TARGET_MISSING_REASON" && ! -d "$WORKSPACE" ]]; then
@@ -9332,6 +9279,59 @@ if entry_reason == "stale_marker":
 PY
   exit 0
 fi
+
+# This is the outer repair/retrigger fence.  The repair loop must not infer
+# authority from its local PID namespace, a tmux server, runner-transition
+# sidecars, or watchdog health.  Only a complete canonical record may admit
+# subsequent mutation; UNKNOWN exits before lock acquisition, model launch,
+# marker retirement, or mechanical relaunch.
+ENTRY_CANONICAL_LIVENESS="$(
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" <<'PY' 2>>"$LOG" || printf unknown
+import pathlib
+import sys
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+from arnold_pipelines.megaplan.cloud.current_target_liveness import control_liveness_from_current_target
+
+session, marker_dir, repair_data_dir = sys.argv[1:]
+target = resolve_current_target(
+    session,
+    marker_dir=pathlib.Path(marker_dir),
+    repair_data_dir=pathlib.Path(repair_data_dir),
+)
+liveness = control_liveness_from_current_target(target, action="mutation")
+print(liveness["state"] if liveness.get("action_permitted") is True else "unknown")
+PY
+)"
+
+# Namespace-bound lock admission is a safety operation, not authority to
+# repair.  Preserve duplicate/recursive suppression even when target liveness
+# is UNKNOWN, then release the claim on the fenced exit below.
+guard_against_recursive_repair_loop || exit 0
+if [[ "$REPAIR_LOOP_MODE" == "proactive" ]]; then
+  # Proactive NO-OP guard (design section 3 mode semantics): exit 0 cleanly
+  # with a typed no-op when nothing is blocked, BEFORE lock acquisition,
+  # marker mutation, agent spawn, or relaunch.  Completion already exited
+  # above; this covers a healthy live target with no repair-forcing evidence.
+  proactive_noop_health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
+  if [[ "$proactive_noop_health" == "alive" ]]; then
+    proactive_noop_forced="$(marker_requires_repair_despite_alive || authority_gap_continue "T29-BYPASS-115" "authority-risk bypass converted to typed evidence gap")"
+    if [[ -z "$proactive_noop_forced" ]]; then
+      log "proactive NO-OP guard: target alive and nothing blocked; clean no-op exit session=$SESSION mode=proactive"
+      printf '%s\n' "NOOP exit 0: target alive; nothing is blocked (mode=proactive session=$SESSION)"
+      exit 0
+    fi
+    log "proactive NO-OP guard: target alive but marker requires repair session=$SESSION reason=$proactive_noop_forced"
+  fi
+fi
+acquire_repair_lock || exit 75
+export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
+export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
+export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
+if [[ "$ENTRY_CANONICAL_LIVENESS" == "unknown" ]]; then
+  log "canonical target liveness UNKNOWN; repair loop exits before mutation and legacy PID/tmux evidence remains diagnostic-only session=$SESSION"
+  exit 0
+fi
+log "canonical repair-entry liveness admitted session=$SESSION state=$ENTRY_CANONICAL_LIVENESS"
 
 IFS=$'\t' read -r ENTRY_COMPLETE _entry_scope _entry_reason _entry_chain _entry_plan _entry_state <<< "$(repair_target_completion_status "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME")"
 if [[ "${ENTRY_COMPLETE:-0}" == "1" ]]; then

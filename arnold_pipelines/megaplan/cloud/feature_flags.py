@@ -1,10 +1,13 @@
 """Centralized env-backed feature-flag defaults for the cloud-safe repair substrate.
 
-Repair automation is **enabled by default**. Operators can still explicitly
-disable individual paths with ``"0"``, ``"false"``, ``"no"``, or ``"off"``.
-Mutation is nevertheless disabled by default: every mutation-capable action
-must pass the default-off ``ARNOLD_AUTONOMY`` master gate *and* its path gate.
-Observation, evidence capture, and reporting retain their independent flags.
+Path gates for the three mutation-capable repair paths (L1/L2/L3) default ON,
+but a path gate is **necessary and never sufficient**: every mutation-capable
+action must also pass the default-off ``ARNOLD_AUTONOMY`` master gate.  Master
+off is the release default, so mutation is disabled unless both gates are true.
+Operators can still explicitly disable individual paths with ``"0"``,
+``"false"``, ``"no"``, or ``"off"``.  Observation, evidence capture, and
+reporting retain their independent flags and continue while mutation is
+blocked.
 
 Flags
 -----
@@ -282,8 +285,9 @@ def mutation_authorized(path: str) -> bool:
 
     The default-off ``ARNOLD_AUTONOMY`` gate is the master authority for
     L1/L2/L3 state, source, commit, and mutation-capable subprocess effects. A
-    path's own gate is necessary but insufficient: authorization requires both
-    gates. Push has an additional explicit gate because it is externally
+    path's own gate is necessary but never sufficient: authorization requires
+    both gates, so master-off is the release default regardless of path-gate
+    state. Push has an additional explicit gate because it is externally
     consequential. Unknown paths fail closed.
 
     This predicate deliberately does not gate observation, redaction, evidence
