@@ -1068,7 +1068,18 @@ def assert_execution_binding(
 def bind_execution_identity(spec_path: Path, state: Any) -> dict[str, Any]:
     policy = binding_policy(spec_path)
     report = execution_binding_report(spec_path, state)
-    if not policy["required"]:
+    # Grok consult (astrid-first 20260814): a per-epic runtime manifest in
+    # play (cloud launch / ARNOLD_RUNTIME_MANIFEST / trusted container) means
+    # the launch seed REQUIRES a chain binding even when the spec omits
+    # driver.execution_binding (defaults optional). Without this stamp the
+    # fresh chain record stays unbound, ensure_runtime_launch_seed substitutes
+    # live_identity, and the first prep fails 3x with 'chain runtime binding
+    # drifted'. Bind whenever a manifest is in play OR policy requires it.
+    manifest_in_play = bool(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+        or os.environ.get("MEGAPLAN_TRUSTED_CONTAINER")
+    )
+    if not policy["required"] and not manifest_in_play:
         return report
     if report["status"] != "missing":
         return assert_execution_binding(spec_path, state, operation="chain start")
