@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import shlex
 from dataclasses import dataclass, field
@@ -62,14 +63,69 @@ def _existing_file(repo_root: Path, rel_path: str) -> bool:
     return candidate.is_file()
 
 
+def split_pytest_selector(selector: str) -> tuple[str, tuple[str, ...]]:
+    """Split a pytest selector into its repository path and node parts.
+
+    ``('tests/foo.py', ('TestCls', 'test_bar'))`` — any trailing
+    parametrize suffix (``[param]``) is stripped from each node part.
+    """
+    raw = _normalize_relpath(selector.strip())
+    path, _, node = raw.partition("::")
+    if not node:
+        return path, ()
+    parts = tuple(
+        part.split("[", 1)[0].strip()
+        for part in node.split("::")
+        if part.split("[", 1)[0].strip()
+    )
+    return path, parts
+
+
+def pytest_node_defined_in_source(source: str, node_parts: tuple[str, ...]) -> bool:
+    """AST name match only — never imports or collects the module.
+
+    Returns True when the node parts resolve to a module-level
+    ``FunctionDef``/``AsyncFunctionDef`` (``file::test_foo``), a ``ClassDef``
+    (``file::TestCls``), or a method on that class
+    (``file::TestCls::test_foo``).  Empty parts, a SyntaxError, or an
+    unresolvable name all fail closed (False).
+    """
+    if not node_parts:
+        return False
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    current: list[ast.AST] = list(tree.body)
+    for part in node_parts:
+        matches = [
+            node
+            for node in current
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == part
+        ]
+        if not matches:
+            return False
+        current = [node for node in matches[0].body if isinstance(node, ast.AST)]
+    return True
+
+
 def _existing_pytest_selector_path(repo_root: Path, rel_path: str) -> bool:
-    selector_path = rel_path.split("::", 1)[0].strip()
-    if not selector_path:
+    path, node_parts = split_pytest_selector(rel_path)
+    if not path or _is_archived_or_hidden_test_path(path):
         return False
-    if _is_archived_or_hidden_test_path(selector_path):
+    candidate = repo_root / path
+    if candidate.is_dir():
+        return not node_parts  # dir::node is invalid
+    if not candidate.is_file():
         return False
-    candidate = repo_root / selector_path
-    return candidate.is_file() or candidate.is_dir()
+    if not node_parts:
+        return True
+    try:
+        source = candidate.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return pytest_node_defined_in_source(source, node_parts)
 
 
 def _direct_selector_candidates(rel_path: str) -> list[str]:
@@ -218,25 +274,34 @@ def _sanitize_blast_radius_paths(
             kept_commands.append(command.strip())
         sanitized["always_run"] = kept_commands
 
-    if missing:
-        existing_missing = sanitized.get("missing_test_selectors")
+    existing_missing = sanitized.get("missing_test_selectors")
+    # Re-validate prior entries too: drop entries whose node now exists, keep
+    # entries still absent even when they are no longer in ``selectors``.
+    if missing or isinstance(existing_missing, list):
         all_missing: list[str] = []
         seen: set[str] = set()
         for value in [
             *(existing_missing if isinstance(existing_missing, list) else []),
             *missing,
         ]:
-            if isinstance(value, str) and value not in seen:
-                seen.add(value)
-                all_missing.append(value)
-        sanitized["missing_test_selectors"] = all_missing
-        rationale = str(sanitized.get("rationale") or "").strip()
-        suffix = (
-            " Dropped nonexistent pytest path(s) from plan-time baseline metadata: "
-            + ", ".join(all_missing)
-            + "."
-        )
-        sanitized["rationale"] = (rationale + suffix).strip()
+            if not isinstance(value, str) or value in seen:
+                continue
+            if _existing_pytest_selector_path(repo_root, value):
+                continue
+            seen.add(value)
+            all_missing.append(value)
+        if all_missing:
+            sanitized["missing_test_selectors"] = all_missing
+        else:
+            sanitized.pop("missing_test_selectors", None)
+        if all_missing:
+            rationale = str(sanitized.get("rationale") or "").strip()
+            suffix = (
+                " Dropped nonexistent pytest path(s) from plan-time baseline metadata: "
+                + ", ".join(all_missing)
+                + "."
+            )
+            sanitized["rationale"] = (rationale + suffix).strip()
     return sanitized
 
 
@@ -605,6 +670,9 @@ def merge_blast_radius_floor(
     }
     if "import_graph" in floor:
         result["import_graph"] = floor["import_graph"]
+    missing = union_strings("missing_test_selectors")
+    if missing:
+        result["missing_test_selectors"] = missing
     return result
 
 

@@ -27,6 +27,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from arnold_pipelines.megaplan.orchestration.test_selection import (
+    _existing_pytest_selector_path,
+)
+
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
@@ -77,9 +81,11 @@ class SelectorLifecycle:
 def normalize_selector_path(selector: Any) -> str | None:
     """Return the repository-relative path portion of a test selector.
 
-    Pytest node selectors (``path.py::test_name``) are checked for existence
-    using only ``path.py``.  We retain no inferred path and reject traversal or
-    empty selectors rather than trying to repair them.
+    The ``::`` strip exists for write-set matching only — ownership is
+    file-level.  Existence is decided separately by the node-aware
+    ``_existing_pytest_selector_path`` on the full selector.  We retain no
+    inferred path and reject traversal or empty selectors rather than trying
+    to repair them.
     """
 
     if not isinstance(selector, str):
@@ -138,10 +144,11 @@ def classify_selector_lifecycle(
 ) -> SelectorLifecycle:
     """Classify selectors as runnable, deferred, or invalid.
 
-    Existing selectors are runnable immediately.  A missing selector is
-    deferred only when the exact same normalized path is present in the
-    task's declared ``write_set.paths``.  A missing selector with no declared
-    owner is invalid and must stop execution before a worker is dispatched.
+    Existing selectors (node-aware: file exists and any ``::node`` parts are
+    defined in the source AST) are runnable immediately.  A missing selector
+    is deferred only when its file-level path is present in the task's
+    declared ``write_set.paths``.  A missing selector with no declared owner
+    is invalid and must stop execution before a worker is dispatched.
     """
 
     raw_selectors = job.get("selectors")
@@ -161,9 +168,21 @@ def classify_selector_lifecycle(
 
     declared_outputs = declared_task_output_paths(task)
     root = Path(project_dir)
-    missing = tuple(
-        path for path in selector_paths if not (root / path).exists()
-    )
+    # Existence is node-aware: a selector whose file exists but whose node is
+    # absent is missing.  missing_selectors keeps the full selector string.
+    missing_selectors: list[str] = []
+    missing_paths: list[str] = []
+    seen_missing: set[str] = set()
+    for selector in raw_selectors:
+        if _existing_pytest_selector_path(root, selector):
+            continue
+        path = normalize_selector_path(selector)
+        if path is None or path in seen_missing:
+            continue
+        seen_missing.add(path)
+        missing_selectors.append(selector.strip())
+        missing_paths.append(path)
+    missing = tuple(missing_selectors)
     if not missing:
         return SelectorLifecycle(
             status=SELECTOR_READY,
@@ -171,7 +190,7 @@ def classify_selector_lifecycle(
             declared_outputs=declared_outputs,
         )
 
-    undeclared = tuple(path for path in missing if path not in declared_outputs)
+    undeclared = tuple(path for path in missing_paths if path not in declared_outputs)
     if undeclared:
         return SelectorLifecycle(
             status=SELECTOR_INVALID,
