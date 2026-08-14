@@ -673,7 +673,18 @@ def build_runtime_launch_seed(
         errors.append("chain_runtime_root_mismatch")
     if str(chain_identity.get("source_revision") or "") != expected_revision:
         errors.append("chain_runtime_revision_mismatch")
-    if dict(marker_identity) != dict(chain_identity):
+    # Compare marker vs chain by launch-relevant identity (grok consult,
+    # d58701026410): root+rev. The DIGESTS agree across writers; diagnostic
+    # shape (editable_root/pth/direct_url/imports populated vs null depending
+    # on which writer stored the identity) legitimately differs and a
+    # full-dict compare false-positives marker_chain_runtime_identity_mismatch
+    # after every cutover.
+    if (
+        str(marker_identity.get("import_root") or "").rstrip("/")
+        != str(chain_identity.get("import_root") or "").rstrip("/")
+        or str(marker_identity.get("source_revision") or "")
+        != str(chain_identity.get("source_revision") or "")
+    ):
         errors.append("marker_chain_runtime_identity_mismatch")
     # ── Step 5A: branch binding ─────────────────────────────────────────
     if expected_branch is not None:
@@ -803,7 +814,16 @@ def _rebind_marker_if_stale(
             RUNTIME_ATTESTATION_ERROR,
             "cloud session marker has no content-addressable runtime identity",
         )
-    if marker_identity == live_identity:
+    # Compare by launch-relevant identity (root+rev), not full dict (grok
+    # consult, d58701026410): digest agrees across writers but diagnostic
+    # shape (editable/pth/imports) legitimately differs; full-dict compare
+    # would rebind every launch.
+    if (
+        str(marker_identity.get("import_root") or "").rstrip("/")
+        == str(live_identity.get("import_root") or "").rstrip("/")
+        and str(marker_identity.get("source_revision") or "")
+        == str(live_identity.get("source_revision") or "")
+    ):
         return
     relaunch_command = str(
         marker.get("relaunch_command") or marker.get("launch_command") or ""
