@@ -618,7 +618,9 @@ def _strict_external_runtime_shape(
         elif any(entry != import_root for entry in pth_entries):
             errors.append("editable_pth_mismatch")
 
-    imports = identity.get("imports")
+    # The normalized identity nulls imports (canonical core); use the
+    # provenance's populated imports for the set/root check.
+    imports = provenance.get("imports")
     imports = imports if isinstance(imports, Mapping) else {}
     if set(imports) != {"arnold", "arnold_pipelines", "megaplan"}:
         errors.append("runtime_import_set_mismatch")
