@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+
+import pytest
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -1774,3 +1776,87 @@ def test_status_observation_observe_disabled_is_diagnostic_only(
     assert env["effect_eligible"] is False
     assert env["diagnostic_only"] is True
     assert env["authorizes_repair"] is False
+
+
+# ── M1 T15: incoherent-evidence matrix stays non-green and non-dispatchable ─
+
+@pytest.mark.parametrize(
+    ("session", "prepare", "unknown_type"),
+    [
+        ("missing", lambda markers, _workspace: None, "missing"),
+        (
+            "stale",
+            lambda markers, workspace: (
+                _write_marker(
+                    markers / "stale.json",
+                    {
+                        "session": "stale",
+                        "workspace": str(workspace),
+                        "run_kind": "plan",
+                        "plan_name": "old-plan",
+                    },
+                ),
+                _write_plan(
+                    workspace / ".megaplan" / "plans" / "new-plan",
+                    {"name": "new-plan", "current_state": "executing"},
+                ),
+            ),
+            "stale",
+        ),
+        (
+            "partial",
+            lambda markers, _workspace: (markers / "partial.json").write_text(
+                '{"session":"partial","workspace":', encoding="utf-8"
+            ),
+            "partial",
+        ),
+        (
+            "contradictory",
+            lambda markers, workspace: (
+                _write_marker(
+                    markers / "contradictory.json",
+                    {
+                        "session": "contradictory",
+                        "workspace": str(workspace),
+                        "run_kind": "plan",
+                        "plan_name": "chain-plan",
+                    },
+                ),
+                _write_plan(
+                    workspace / ".megaplan" / "plans" / "chain-plan",
+                    {"name": "different-plan", "current_state": "executing"},
+                ),
+            ),
+            "contradictory",
+        ),
+        (
+            "present-but-invalid",
+            lambda markers, _workspace: (markers / "invalid.json").write_text(
+                "[1, 2, 3]", encoding="utf-8"
+            ),
+            "partial",
+        ),
+    ],
+)
+def test_incoherent_evidence_matrix_is_non_green_and_non_dispatchable(
+    tmp_path: Path, session: str, prepare: object, unknown_type: str
+) -> None:
+    """Missing, stale, partial, contradictory, and present-but-invalid evidence
+    is always typed UNKNOWN, non-green, and never dispatchable."""
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "ws"
+    marker_dir.mkdir()
+    workspace.mkdir()
+    prepare(marker_dir, workspace)  # type: ignore[operator]
+
+    record = resolve_current_target(session, marker_dir=marker_dir, workspace_hint=workspace)
+
+    state = record["evidence_state"]
+    assert state["status"] == "unknown"
+    assert state["unknown_type"] == unknown_type
+    assert state["green"] is False
+    assert state["mutation_eligible"] is False
+    assert state["authorizes_mutation"] is False
+    assert record["positive_dispatch_requires_reread"]["custody"]["lease_epoch"] == (
+        "must be reread from live source"
+    )

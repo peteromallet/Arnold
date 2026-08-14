@@ -755,6 +755,47 @@ def _prepare_emergency_prompt_json(
     return _json.dumps(compact, indent=2, default=str, ensure_ascii=False)
 
 
+def _diagnostic_only_provisional_observation(
+    current_target_observation: Mapping[str, Any] | None,
+) -> bool:
+    """Return True when the observation is diagnostic-only provisional liveness.
+
+    A live-but-provisional target observation plus diagnostic signals
+    (PID/tmux/heartbeat/lease/subprocess) and no direct, independent,
+    blocker-specific recovery evidence is UNKNOWN — it never authorizes
+    meta-repair dispatch on its own.
+    """
+    if not isinstance(current_target_observation, Mapping) or not current_target_observation:
+        return False
+    liveness = current_target_observation.get("current_target_liveness")
+    if not isinstance(liveness, Mapping):
+        return False
+    if liveness.get("known") is not True or liveness.get("provisional_liveness") is not True:
+        return False
+    diagnostic_signals = current_target_observation.get("diagnostic_signals")
+    if not isinstance(diagnostic_signals, Sequence) or isinstance(
+        diagnostic_signals, (str, bytes)
+    ):
+        return False
+    if not diagnostic_signals:
+        return False
+    # Direct, independent, blocker-specific recovery evidence outranks
+    # diagnostic-only signals.
+    if any(
+        key in current_target_observation
+        for key in (
+            "blocker_cleared",
+            "directly_observed",
+            "independent",
+            "blocker_id",
+            "blocker_fingerprint",
+            "fingerprint",
+        )
+    ):
+        return False
+    return True
+
+
 def classify_repair_system_failure(
     session: str,
     *,
@@ -911,6 +952,25 @@ def classify_repair_system_failure(
         )
 
     # --- 2. Repair timeout --------------------------------------------------
+    # Diagnostic-only provisional liveness (PID/tmux/heartbeat/lease/subprocess
+    # signals plus a live-but-provisional target observation) is not direct
+    # repair evidence: it never authorizes meta-repair dispatch.  A timeout
+    # exhausted while the target is merely observed live stays UNKNOWN.
+    _diagnostic_only_unknown = _diagnostic_only_provisional_observation(
+        current_target_observation
+    )
+    if _diagnostic_only_unknown:
+        rationale.append(
+            "UNKNOWN: diagnostic-only provisional liveness is not direct repair evidence"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=None,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
     if repair_budget_exhausted and repair_outcome in (REPAIR_TIMEOUT, REPAIR_EXHAUSTED):
         rationale.append(
             f"repair budget exhausted with outcome={repair_outcome!r}"
