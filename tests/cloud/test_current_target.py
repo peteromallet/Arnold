@@ -1797,8 +1797,12 @@ def test_status_observation_observe_disabled_is_diagnostic_only(
                     },
                 ),
                 _write_plan(
-                    workspace / ".megaplan" / "plans" / "new-plan",
-                    {"name": "new-plan", "current_state": "executing"},
+                    workspace / ".megaplan" / "plans" / "old-plan",
+                    {
+                        "name": "old-plan",
+                        "current_state": "executing",
+                        "active_step": {"phase": "execute", "worker_pid": 999999},
+                    },
                 ),
             ),
             "stale",
@@ -1831,7 +1835,9 @@ def test_status_observation_observe_disabled_is_diagnostic_only(
         ),
         (
             "present-but-invalid",
-            lambda markers, _workspace: (markers / "invalid.json").write_text(
+            lambda markers, _workspace: (
+                markers / "present-but-invalid.json"
+            ).write_text(
                 "[1, 2, 3]", encoding="utf-8"
             ),
             "partial",
@@ -1849,7 +1855,12 @@ def test_incoherent_evidence_matrix_is_non_green_and_non_dispatchable(
     workspace.mkdir()
     prepare(marker_dir, workspace)  # type: ignore[operator]
 
-    record = resolve_current_target(session, marker_dir=marker_dir, workspace_hint=workspace)
+    record = resolve_current_target(
+            session,
+            marker_dir=marker_dir,
+            workspace_hint=workspace,
+            pid_is_live=lambda _pid: False,
+        )
 
     state = record["evidence_state"]
     assert state["status"] == "unknown"
