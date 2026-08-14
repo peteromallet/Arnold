@@ -740,7 +740,12 @@ def verify_external_runtime_identity(
         check=False,
         capture_output=True,
         text=True,
-        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key != "PYTHONPATH"
+        }
+        | {"PYTHONPATH": str(normalized["import_root"])},
     )
     try:
         observed = json.loads(rerun.stdout)
