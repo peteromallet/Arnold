@@ -125,3 +125,72 @@ def test_renderer_cli_mentions_single_flash_contract(tmp_path: pathlib.Path) -> 
     assert "hermes:deepseek:deepseek-v4-flash" in result.stdout
     assert "failure_fingerprint" in result.stdout
     assert "stall_detected" in result.stdout
+
+
+def test_renderer_embeds_prior_fixer_occurrences(tmp_path: pathlib.Path) -> None:
+    """The goal must point the babysitter at prior fixer evidence so it
+    continues the lineage instead of re-deriving from scratch."""
+    recovery = tmp_path / "recovery"
+    prior = recovery / "d58701026410"
+    prior.mkdir(parents=True)
+    (prior / "handoff.md").write_text("# prior handoff", encoding="utf-8")
+    (prior / "codex").mkdir()
+    (prior / "codex" / "sol-stage2-proposal.md").write_text(
+        "# proposal", encoding="utf-8"
+    )
+    (recovery / "a102d8d24045").mkdir()  # evidence dir only, no markers
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RENDERER),
+            "--target",
+            "megaplan-maintenance",
+            "--workspace",
+            "/workspace/app",
+            "--plan",
+            "m1",
+            "--run-kind",
+            "chain",
+            "--occurrence-digest",
+            "a2c3644905c0",
+            "--recovery-dir",
+            str(recovery),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Prior fixer work (READ THIS FIRST" in result.stdout
+    assert "d58701026410" in result.stdout
+    assert "handoff.md" in result.stdout
+    assert "sol-stage2-proposal.md" in result.stdout
+    assert "a102d8d24045" in result.stdout
+    assert "continue the lineage" in result.stdout
+    assert "ship it (cherry-pick/apply + regression) instead of re-authoring" in result.stdout
+
+
+def test_renderer_absent_recovery_dir_is_orientation_not_error(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Missing recovery root must not hard-fail; the goal names the convention."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RENDERER),
+            "--target",
+            "megaplan-maintenance",
+            "--workspace",
+            "/workspace/app",
+            "--plan",
+            "m1",
+            "--recovery-dir",
+            str(tmp_path / "does-not-exist"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Recovery evidence root not provided/unreadable" in result.stdout

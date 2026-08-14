@@ -278,6 +278,22 @@ def _load_optional_json(path_raw: str | None) -> dict[str, object] | None:
     return payload
 
 
+def _recovery_evidence_root(workspace: str) -> str:
+    """Chain recovery evidence root, scanned for prior fixer occurrences.
+
+    Each fixer incarnation persists its evidence under
+    ``<workspace>/.megaplan/plans/.chains/recovery/<occurrence_digest>/``
+    (swarm-briefs/, swarm-results/, codex/, execution/).  The goal renderer
+    lists prior occurrences so the next babysitter reads the previous
+    handoff instead of re-deriving the same diagnosis from scratch.
+    """
+    if not workspace:
+        return ""
+    return str(
+        Path(workspace) / ".megaplan" / "plans" / ".chains" / "recovery"
+    )
+
+
 def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schema": LAUNCH_RECEIPT_SCHEMA,
@@ -390,6 +406,7 @@ def _resolve_goal_file(ctx: dict[str, Any]) -> Path:
         latest_failure=_load_optional_json(ctx["failure_json"]),
         planner_repair=_load_optional_json(ctx["planner_repair_json"]),
         occurrence_digest=ctx["occurrence"],
+        recovery_dir=_recovery_evidence_root(ctx["workspace"]),
     )
     goal_path = ctx["run_root"] / "babysitter-goal.md"
     goal_path.parent.mkdir(parents=True, exist_ok=True)
