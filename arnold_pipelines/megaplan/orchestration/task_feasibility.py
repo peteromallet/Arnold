@@ -30,6 +30,15 @@ _CHECKPOINT_RECORDS = {
     "test_state",
 }
 _DEPENDENCY_KINDS = {"consumes_output", "write_conflict", "human_prerequisite"}
+
+
+def _narrow_selector_is_path_shaped(selector: Any) -> bool:
+    """True when a narrow_tests selector is a concrete pytest path selector."""
+    from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+        validate_narrow_selector_shape,
+    )
+
+    return validate_narrow_selector_shape(selector)[0]
 _ROUTING_WORDS = {
     "routing",
     "model tier",
@@ -264,6 +273,16 @@ def compile_task_feasibility(
                 for selector in selectors
             ):
                 diagnostics.append(FeasibilityDiagnostic("task_test_selector_too_broad", "Narrow selectors must name bounded files/modules, not an entire test directory.", task["id"]))
+            elif any(
+                not _narrow_selector_is_path_shaped(selector)
+                for selector in selectors
+                if isinstance(selector, str)
+            ):
+                diagnostics.append(FeasibilityDiagnostic(
+                    "task_test_selector_invalid_shape",
+                    "Narrow selectors must be concrete pytest path selectors (e.g. tests/core/store/test_x.py or tests/x.py::test_y); shell commands (pytest ..., python -m ..., bash ..., make ...) and flags are not allowed.",
+                    task["id"],
+                ))
             if not isinstance(max_seconds, int) or isinstance(max_seconds, bool) or not 0 <= max_seconds <= MAX_NARROW_TEST_SECONDS:
                 diagnostics.append(FeasibilityDiagnostic("task_test_time_budget_exceeded", f"narrow_tests.max_seconds must be in 0..{MAX_NARROW_TEST_SECONDS}.", task["id"]))
             if not isinstance(max_runs, int) or isinstance(max_runs, bool) or not 0 <= max_runs <= MAX_NARROW_TEST_RUNS:

@@ -3561,6 +3561,145 @@ def _advance_batch_circuit(error, *, task_id="", attempt_id=""):
     return new_state, decision, fclass
 
 
+def _legacy_validation_recovery_cursor_active(plan_dir: Path) -> bool:
+    """True only for the exact blocked pre-dispatch validation recovery cursor."""
+    try:
+        state = json.loads((Path(plan_dir) / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(state, dict) or state.get("current_state") != "blocked":
+        return False
+    failure = state.get("latest_failure")
+    if not isinstance(failure, dict) or failure.get("kind") != "pre_dispatch_validation_failed":
+        return False
+    metadata = failure.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("error_code") != "invalid_validation_job":
+        return False
+    cursor = state.get("resume_cursor")
+    return (
+        isinstance(cursor, dict)
+        and cursor.get("phase") == "execute"
+        and cursor.get("retry_strategy") == "repair_validation_failure"
+    )
+
+
+def _persisted_validation_jobs_malformed(jobs: list[dict[str, Any]]) -> bool:
+    """True when any persisted narrow job carries a command-shaped selector."""
+    from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+        validate_narrow_selector_shape,
+    )
+
+    for job in jobs:
+        if job.get("kind") != "narrow_recheck":
+            continue
+        selectors = job.get("selectors")
+        if isinstance(selectors, list):
+            for selector in selectors:
+                if isinstance(selector, str) and not validate_narrow_selector_shape(
+                    selector
+                )[0]:
+                    return True
+    return False
+
+
+def _project_legacy_validation_contract_for_recovery(
+    *,
+    plan_dir: Path,
+    finalize_data: Mapping[str, Any],
+    persisted_jobs: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Cursor-gated in-memory recovery projection for malformed legacy jobs.
+
+    Returns ``None`` unless every precondition holds AND every effective
+    narrow job still classifies READY or DEFERRED under the unchanged
+    lifecycle ownership rules (fail closed).  Never rewrites plan artifacts.
+    """
+    if len(persisted_jobs) < 2:
+        return None
+    if not _legacy_validation_recovery_cursor_active(plan_dir):
+        return None
+    if not _persisted_validation_jobs_malformed(persisted_jobs):
+        return None
+    from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+        SELECTOR_INVALID,
+        classify_selector_lifecycle,
+        project_legacy_validation_contract,
+    )
+
+    projected = project_legacy_validation_contract(finalize_data)
+    if projected is None:
+        return None
+
+    tasks = finalize_data.get("tasks")
+    task_by_id: dict[str, Mapping[str, Any]] = {}
+    if isinstance(tasks, list):
+        for task in tasks:
+            if isinstance(task, Mapping) and isinstance(task.get("id"), str):
+                task_by_id[task["id"]] = task
+
+    project_dir = finalize_data.get("_project_dir") or plan_dir
+    for job in projected["effective_jobs"]:
+        if job.get("kind") != "narrow_recheck":
+            continue
+        task_id = job.get("task_id")
+        task = task_by_id.get(task_id) if isinstance(task_id, str) else None
+        lifecycle = classify_selector_lifecycle(
+            project_dir=project_dir,
+            job=job,
+            task=task,
+        )
+        if lifecycle.status == SELECTOR_INVALID:
+            # Fail closed: recovery must never admit a job the unchanged gate
+            # would reject.
+            return None
+
+    original = projected.get("original_jobs", [])
+    effective = projected.get("effective_jobs", [])
+    try:
+        original_sha = "sha256:" + hashlib.sha256(
+            json.dumps(original, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        effective_sha = "sha256:" + hashlib.sha256(
+            json.dumps(effective, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError):
+        original_sha = ""
+        effective_sha = ""
+    return {
+        "effective_jobs": effective,
+        "original_jobs_sha256": original_sha,
+        "effective_jobs_sha256": effective_sha,
+        "excluded": projected.get("excluded", []),
+    }
+
+
+def _persist_validation_recovery_receipt(
+    plan_dir: Path,
+    projected: Mapping[str, Any],
+) -> None:
+    """Persist the additive execute recovery receipt (never touches finalize.json)."""
+    try:
+        verification_dir = Path(plan_dir) / "verification"
+        verification_dir.mkdir(parents=True, exist_ok=True)
+        receipt = {
+            "schema": "megaplan.execute.validation_contract_recovery.v1",
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **{k: v for k, v in projected.items() if k != "effective_jobs"},
+            "effective_job_ids": [str(j.get("id") or "") for j in projected.get("effective_jobs", [])],
+        }
+        receipt_path = verification_dir / "validation_contract_recovery.json"
+        tmp = receipt_path.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        tmp.replace(receipt_path)
+    except Exception:  # pragma: no cover - receipt persistence is best-effort
+        logging.getLogger("megaplan.execute.batch").warning(
+            "validation contract recovery receipt persistence failed",
+            exc_info=True,
+        )
+
+
 def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None):
     """Run deterministic harness validation jobs outside model dispatch (M8A T10).
 
@@ -3581,6 +3720,24 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
     validation_jobs = finalize_data.get("validation_jobs")
     if not isinstance(validation_jobs, list) or not validation_jobs:
         return evidence_results
+    # Bounded legacy-contract recovery: a blocked pre-dispatch validation
+    # failure (cursor {phase: execute, retry_strategy: repair_validation_failure})
+    # may deterministically recompile an in-memory validation contract from the
+    # preserved finalize payload.  The projector is cursor-gated, fail-closed,
+    # and never rewrites plan artifacts.
+    _recovery_projection = _project_legacy_validation_contract_for_recovery(
+        plan_dir=plan_dir,
+        finalize_data=finalize_data,
+        persisted_jobs=validation_jobs,
+    )
+    if _recovery_projection is not None:
+        logging.getLogger("megaplan.execute.batch").info(
+            "execute validation contract recovery: %d effective jobs replacing %d persisted jobs",
+            len(_recovery_projection["effective_jobs"]),
+            len(validation_jobs),
+        )
+        validation_jobs = _recovery_projection["effective_jobs"]
+        _persist_validation_recovery_receipt(plan_dir, _recovery_projection)
     batch_id_set = set(batch_task_ids or [])
     verification_dir = Path(plan_dir) / "verification"
     try:
