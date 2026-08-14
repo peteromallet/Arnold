@@ -232,7 +232,18 @@ def normalized_runtime_identity(provenance: Mapping[str, Any]) -> dict[str, Any]
     # which derives it from the editable root only). Falling back to
     # source_revision here made the seed identity disagree with the chain
     # binding identity and broke ensure_runtime_launch_seed's equality check.
+    #
+    # For an EDITABLE-installed runtime, active_execution_identity derives
+    # editable_revision from the editable root's git revision; mirror that
+    # exactly so the launch-seed live identity equals the chain-bound
+    # identity (runtime_provenance() itself does not emit editable_revision,
+    # so fall back to the editable root's git revision when one exists).
+    editable_root_text = str(provenance.get("editable_root") or "")
     identity["editable_revision"] = str(provenance.get("editable_revision") or "")
+    if not identity["editable_revision"] and editable_root_text:
+        identity["editable_revision"] = _git_revision(
+            Path(editable_root_text).expanduser()
+        )
     identity["content_sha256"] = _canonical_sha256(identity)
     return identity
 

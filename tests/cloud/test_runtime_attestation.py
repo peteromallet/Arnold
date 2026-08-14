@@ -704,6 +704,62 @@ def test_release_seed_accepts_supervisor_receipt_from_another_source(
     assert seed2["supervisor_receipt"]["source_revision"] == "d" * 40
 
 
+def test_normalized_identity_mirrors_active_execution_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """d587/a2c3644905c0 regression: normalized_runtime_identity forced
+    editable_revision='' while active_execution_identity derives it from the
+    editable root's git revision, so _strict_external_runtime_shape raised
+    editable_revision_mismatch on a launch-ready runtime.  Mirror the chain
+    binding: fall back to the editable root's git revision when one exists."""
+    from arnold_pipelines.megaplan.cloud import runtime_provenance as rp
+
+    # A git root exists -> identity derives its HEAD revision, matching
+    # active_execution_identity's editable_revision.
+    git_root = tmp_path / "editable-root"
+    git_root.mkdir()
+    subprocess.run(["git", "-C", str(git_root), "init", "-q"], check=True)
+    (git_root / "marker.txt").write_text("x", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(git_root), "add", "-A"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(git_root), "commit", "-qm", "seed"],
+        check=True,
+        capture_output=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(git_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    prov = {
+        "editable_root": str(git_root),
+        "source_revision": head,
+        "editable_revision": "",
+    }
+    identity = normalized_runtime_identity(prov)
+    assert identity["editable_revision"] == head
+    assert len(identity["content_sha256"]) == 64
+
+    # No editable root -> stays empty (worktree-first T-0301 runtime).
+    prov_none = {"editable_root": "", "source_revision": "a" * 40}
+    identity_none = normalized_runtime_identity(prov_none)
+    assert identity_none["editable_revision"] == ""
+
+    # Explicit editable_revision wins over the fallback.
+    prov_explicit = {
+        "editable_root": str(git_root),
+        "source_revision": "b" * 40,
+        "editable_revision": "c" * 40,
+    }
+    identity_explicit = normalized_runtime_identity(prov_explicit)
+    assert identity_explicit["editable_revision"] == "c" * 40
+
+
 def _ensure_seed_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
