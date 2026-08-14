@@ -155,15 +155,24 @@ def _recover_evaluator_payload_from_raw(
 # must corroborate it. When a verdict references one of these fields but the
 # runtime has no corresponding accepted value, the call fails closed rather
 # than silently accepting an unverifiable provenance claim.
+#
+# Only evaluator fields that reference ACCEPTED RUNTIME CONTEXT belong here
+# (provenance echoes / routing refs the runtime holds). Self-declared output
+# fields the prompt mandates unconditionally — `budgets` and
+# `input_set_hashes` — are corroborated only when the runtime actually
+# declares a matching value: `audits/critique_evaluator.py` enforces
+# `budgets.max_findings` against a declared `max_budget_findings` cap and
+# shape-checks `input_set_hashes`; absence of a declared cap/handoff is
+# "no constraint", not an unverifiable handoff claim. Treating them as
+# fail-closed refs wedges every plan whose profile does not configure
+# `critique_max_findings` / a ledger handoff (see occurrence a2c3644905c0).
 _EVALUATOR_HANDOFF_REFS: dict[str, str] = {
     "expected_revision": "expected_revision",
     "expected_briefing_hash": "expected_briefing_hash",
     "domain_selections": "known_domains",
     "domain_skips": "known_domains",
     "evidence_targets": "known_finding_refs",
-    "budgets": "max_budget_findings",
     "critique_mode": "allowed_critique_modes",
-    "input_set_hashes": "input_set_hash",
 }
 
 
