@@ -1314,6 +1314,25 @@ digest_src = dict(
     phase_or_step=str(metadata.get("phase_or_step") or ""),
     blocked_task_id=str(metadata.get("blocked_task_id") or ""),
 )
+if not any(digest_src.values()):
+    # The auto-driver clears state.latest_failure when a stall is recorded,
+    # so the fields above degenerate to ALL-EMPTY for every stalled chain and
+    # the digest collapses to one fixed value (which collided with d587's real
+    # digest). Recover durable identity from artifacts the driver does NOT
+    # clear: the plan's phase_result (exit kind + phase) plus iteration and
+    # current state. Same stall -> same digest; different stall -> different.
+    if state_path is not None and state_path.is_file():
+        plan_dir = state_path.parent
+        phase_result = _load_json(plan_dir / "phase_result.json")
+        digest_src["phase_result_phase"] = str(
+            phase_result.get("phase") if isinstance(phase_result, dict) else ""
+        )
+        digest_src["phase_result_exit"] = str(
+            phase_result.get("exit_kind") if isinstance(phase_result, dict) else ""
+        )
+        state_payload = _load_json(state_path)
+        digest_src["state"] = str(state_payload.get("current_state") or "")
+        digest_src["iteration"] = str(state_payload.get("iteration") or "")
 print(hashlib.sha256(json.dumps(digest_src, sort_keys=True).encode("utf-8")).hexdigest()[:12])
 PY
 }
@@ -1730,6 +1749,9 @@ try:
         latest_failure=latest_failure if isinstance(latest_failure, dict) else None,
         planner_repair=planner_repair if isinstance(planner_repair, dict) else None,
         occurrence_digest=digest,
+        recovery_dir=str(
+            Path(workspace) / ".megaplan" / "plans" / ".chains" / "recovery"
+        ),
     )
     goal_fd, goal_path = _tempfile.mkstemp(suffix=".md", prefix="superfixer-goal-")
     with os.fdopen(goal_fd, "w") as fh:
