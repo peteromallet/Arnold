@@ -265,27 +265,74 @@ def test_budgets_with_declared_cap_still_enforced_by_validator() -> None:
         )
 
 
-def test_remaining_handoff_refs_still_fail_closed() -> None:
-    # The six remaining refs (provenance echoes / routing refs) must keep
-    # failing closed when the accepted context cannot corroborate them.
-    refs = {
-        "expected_revision": "expected_revision",
-        "expected_briefing_hash": "expected_briefing_hash",
-        "domain_selections": "known_domains",
-        "domain_skips": "known_domains",
-        "evidence_targets": "known_finding_refs",
-        "critique_mode": "allowed_critique_modes",
-    }
-    assert refs == _EVALUATOR_HANDOFF_REFS
-    for field, ctx_key in refs.items():
-        payload = _legacy_four_field_payload()
-        payload[field] = {
-            "expected_revision": "rev-1",
-            "expected_briefing_hash": "brief-1",
-            "domain_selections": [{"domain": "critique_ledger", "why": "core"}],
-            "domain_skips": [{"domain": "other", "why": "not needed"}],
-            "evidence_targets": ["finding-1"],
-            "critique_mode": "BLIND",
-        }[field]
-        with pytest.raises(ValueError, match="unverifiable handoff reference"):
-            _fail_closed_on_unverifiable_evaluator_handoff(payload, {})
+def test_handoff_refs_classification_pins_critique_mode_only() -> None:
+    # Field-authority classification (occurrence a2c3644905c0, evidence
+    # delta 2): only `critique_mode` is a genuine accepted-policy ref. Every
+    # other CL3 additive output field is prompt-mandated SELF-DECLARED output
+    # that the validator corroborates only when accepted context exists.
+    assert _EVALUATOR_HANDOFF_REFS == {"critique_mode": "allowed_critique_modes"}
+
+
+def test_critique_mode_still_fails_closed_without_allowed_modes() -> None:
+    payload = _legacy_four_field_payload()
+    payload["critique_mode"] = "BLIND"
+    with pytest.raises(ValueError, match="unverifiable handoff reference"):
+        _fail_closed_on_unverifiable_evaluator_handoff(payload, {})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("expected_revision", "rev-1"),
+        ("expected_briefing_hash", "briefing-hash"),
+        ("domain_selections", [{"domain": "critique_ledger", "why": "core"}]),
+        ("domain_skips", [{"domain": "other", "why": "not needed"}]),
+        ("evidence_targets", ["finding-1"]),
+    ],
+)
+def test_self_declared_cl3_fields_do_not_fail_closed_without_context(
+    field: str, value: object,
+) -> None:
+    # No raise: absence of accepted context is "no constraint" for
+    # self-declared fields; the validator enforces shape + optional
+    # corroboration when context exists.
+    payload = _legacy_four_field_payload()
+    payload[field] = value
+    _fail_closed_on_unverifiable_evaluator_handoff(payload, {})
+    warnings = validate_evaluator_verdict(
+        payload, evaluator_model="gpt-5.5", vendor="codex",
+        accepted_context={},
+    )
+    assert isinstance(warnings, list)
+
+
+def test_validator_optional_corroboration_still_enforced_when_context_present() -> None:
+    # expected_revision mismatch is a hard reject when the accepted context
+    # actually carries the expected revision.
+    payload = _legacy_four_field_payload()
+    payload["expected_revision"] = "rev-999"
+    with pytest.raises(ValueError, match="expected_revision"):
+        validate_evaluator_verdict(
+            payload, evaluator_model="gpt-5.5", vendor="codex",
+            accepted_context={"expected_revision": "rev-1"},
+        )
+
+    # Unknown domains in domain_selections are a warning when known_domains
+    # is declared in accepted context.
+    payload2 = _legacy_four_field_payload()
+    payload2["domain_selections"] = [{"domain": "unknown_domain", "why": "core"}]
+    warnings = validate_evaluator_verdict(
+        payload2, evaluator_model="gpt-5.5", vendor="codex",
+        accepted_context={"known_domains": ["critique_ledger"]},
+    )
+    assert any("Unknown domains" in w for w in warnings)
+
+    # Unknown evidence targets are a warning when known_finding_refs is
+    # declared in accepted context.
+    payload3 = _legacy_four_field_payload()
+    payload3["evidence_targets"] = ["CF-UNKNOWN"]
+    warnings3 = validate_evaluator_verdict(
+        payload3, evaluator_model="gpt-5.5", vendor="codex",
+        accepted_context={"known_finding_refs": ["CF-REAL"]},
+    )
+    assert any("unknown finding ref" in w for w in warnings3)
