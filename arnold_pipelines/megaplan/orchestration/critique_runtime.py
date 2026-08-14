@@ -156,22 +156,21 @@ def _recover_evaluator_payload_from_raw(
 # runtime has no corresponding accepted value, the call fails closed rather
 # than silently accepting an unverifiable provenance claim.
 #
-# Only evaluator fields that reference ACCEPTED RUNTIME CONTEXT belong here
-# (provenance echoes / routing refs the runtime holds). Self-declared output
-# fields the prompt mandates unconditionally — `budgets` and
-# `input_set_hashes` — are corroborated only when the runtime actually
-# declares a matching value: `audits/critique_evaluator.py` enforces
-# `budgets.max_findings` against a declared `max_budget_findings` cap and
-# shape-checks `input_set_hashes`; absence of a declared cap/handoff is
-# "no constraint", not an unverifiable handoff claim. Treating them as
-# fail-closed refs wedges every plan whose profile does not configure
-# `critique_max_findings` / a ledger handoff (see occurrence a2c3644905c0).
+# Field-authority classification (occurrence a2c3644905c0, evidence delta 2):
+# only `critique_mode` is a GENUINE accepted-policy ref — the runtime always
+# admits the allowed modes and the validator rejects unpermitted modes.
+# Every other CL3 additive output field (`budgets`, `input_set_hashes`,
+# `domain_selections`, `domain_skips`, `evidence_targets`,
+# `expected_revision`, `expected_briefing_hash`) is a PROMPT-MANDATED
+# SELF-DECLARED field: `audits/critique_evaluator.py` validates its shape and
+# compares it against accepted context ONLY when that context exists
+# (declared budget cap, ledger handoff, known domains/refs); absence of the
+# context is "no constraint", not an unverifiable handoff claim. Mandatory
+# fail-closed corroboration for those fields wedges every plan whose profile
+# does not configure the corresponding data (see occurrence a2c3644905c0:
+# budgets -> max_budget_findings, input_set_hashes -> input_set_hash,
+# domain_selections -> known_domains).
 _EVALUATOR_HANDOFF_REFS: dict[str, str] = {
-    "expected_revision": "expected_revision",
-    "expected_briefing_hash": "expected_briefing_hash",
-    "domain_selections": "known_domains",
-    "domain_skips": "known_domains",
-    "evidence_targets": "known_finding_refs",
     "critique_mode": "allowed_critique_modes",
 }
 
