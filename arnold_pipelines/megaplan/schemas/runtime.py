@@ -111,6 +111,10 @@ TEST_BLAST_RADIUS_SCHEMA: dict[str, Any] = {
         "full_suite_fallback": {"type": "boolean"},
         "rationale": {"type": "string"},
         "import_graph": deepcopy(TEST_BLAST_RADIUS_IMPORT_GRAPH_SCHEMA),
+        # Harness-derived: selectors (or full selectors with node parts) that
+        # did not exist at plan time. Optional — existing artifacts omit it,
+        # and the worker must never author it.
+        "missing_test_selectors": {"type": "array", "items": {"type": "string"}},
     },
     "required": [
         "strategy",
