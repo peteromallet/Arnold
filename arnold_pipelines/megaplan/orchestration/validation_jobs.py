@@ -137,19 +137,52 @@ def declared_task_output_paths(task: Mapping[str, Any] | None) -> tuple[str, ...
     return tuple(normalized)
 
 
+def graph_declared_output_paths(
+    tasks: Sequence[Mapping[str, Any]] | None,
+) -> tuple[str, ...]:
+    """Return the normalized, deterministic union of task-declared outputs.
+
+    The union spans every admitted task's ``write_set.paths``.  It is the
+    graph-level ownership source used when a narrow validation job's owning
+    task references a selector produced by ANOTHER task in the same finalized
+    graph (e.g. a packaging task whose narrow test file is authored by a
+    later test-authoring task).  Normalization and deduplication mirror
+    ``declared_task_output_paths`` exactly; the result is stable-sorted so
+    classification is deterministic across processes.
+    """
+
+    if not isinstance(tasks, Sequence) or isinstance(tasks, (str, bytes)):
+        return ()
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        for path in declared_task_output_paths(task):
+            if path in seen:
+                continue
+            seen.add(path)
+            normalized.append(path)
+    return tuple(sorted(normalized))
+
+
 def classify_selector_lifecycle(
     *,
     project_dir: Path | str,
     job: Mapping[str, Any],
     task: Mapping[str, Any] | None,
+    all_declared_outputs: tuple[str, ...] | None = None,
 ) -> SelectorLifecycle:
     """Classify selectors as runnable, deferred, or invalid.
 
     Existing selectors (node-aware: file exists and any ``::node`` parts are
     defined in the source AST) are runnable immediately.  A missing selector
     is deferred only when its file-level path is present in the task's
-    declared ``write_set.paths``.  A missing selector with no declared owner
-    is invalid and must stop execution before a worker is dispatched.
+    declared ``write_set.paths`` OR (when ``all_declared_outputs`` is given)
+    in the union of every admitted task's declared ``write_set.paths`` — a
+    selector owned by a different task in the same graph may be produced in a
+    later batch.  A missing selector with no declared owner is invalid and
+    must stop execution before a worker is dispatched.
     """
 
     raw_selectors = job.get("selectors")
@@ -168,6 +201,9 @@ def classify_selector_lifecycle(
             selector_paths.append(path)
 
     declared_outputs = declared_task_output_paths(task)
+    admissible_outputs = set(declared_outputs)
+    if all_declared_outputs is not None:
+        admissible_outputs.update(all_declared_outputs)
     root = Path(project_dir)
     # Existence is node-aware: a selector whose file exists but whose node is
     # absent is missing.  missing_selectors keeps the full selector string.
@@ -191,7 +227,7 @@ def classify_selector_lifecycle(
             declared_outputs=declared_outputs,
         )
 
-    undeclared = tuple(path for path in missing_paths if path not in declared_outputs)
+    undeclared = tuple(path for path in missing_paths if path not in admissible_outputs)
     if undeclared:
         return SelectorLifecycle(
             status=SELECTOR_INVALID,
@@ -713,6 +749,7 @@ __all__ = [
     "compile_validation_jobs",
     "declared_task_output_paths",
     "deferred_selector_evidence",
+    "graph_declared_output_paths",
     "normalize_selector_path",
     "project_legacy_validation_contract",
     "validate_model_validation_jobs",
