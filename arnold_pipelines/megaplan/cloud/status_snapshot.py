@@ -387,6 +387,163 @@ LivenessProbe = Callable[[Mapping[str, Any]], dict[str, Any]]
 # --- public API ------------------------------------------------------------
 
 
+def render_maintenance_observation(
+    envelope: Any,
+    *,
+    comparison: Any | None = None,
+    projection: Any | None = None,
+) -> dict[str, Any]:
+    """Render a deterministic sibling ``maintenance_observation`` section.
+
+    The section is built exclusively from immutable snapshot inputs already
+    captured inside the coherent envelope (T9) and the shared shadow
+    comparison (T14); it never rereads mutable sources and never infers
+    progress from PID/tmux/activity/status freshness.  It carries:
+
+    * envelope identity — schema version, observed instant, typed source
+      identities, envelope digest;
+    * completeness/coherence/freshness states and typed coherence reasons;
+    * per-source before/after version vectors (with environments, so
+      cross-environment evidence is explicit);
+    * projection freshness + comparison buckets with EXPLICIT denominators
+      (``denominator``/``covered_count``/``coverage``; missing denominators
+      stay explicit ``None`` and are non-green, never coerced to zero);
+    * a deterministic ``view_hash`` over the rendered content.
+
+    Fail-closed rendering (SC17): missing, stale, or cross-environment
+    evidence displays as non-green — ``green``/``terminal``/``dispatchable``
+    are True ONLY for an eligible envelope whose shadow comparison is a
+    ``match``; every other case is non-green with the reason visible.
+    """
+    from arnold_pipelines.megaplan.maintenance.identity import canonical_digest
+
+    if comparison is None:
+        bucket = None
+        reasons: list[str] = []
+        stale_projection = False
+        digest_mismatch = False
+        missing_denominator = None
+        denominator = None
+        covered_count = None
+        coverage = None
+        projection_name = None
+        projection_source_digest = None
+        projection_output_digest = None
+    else:
+        bucket = comparison.bucket.value
+        reasons = list(comparison.reasons)
+        stale_projection = comparison.stale_projection
+        digest_mismatch = comparison.digest_mismatch
+        missing_denominator = comparison.missing_denominator
+        denominator = comparison.denominator
+        covered_count = comparison.covered_count
+        coverage = comparison.coverage
+        projection_name = comparison.projection_name
+        projection_source_digest = comparison.projection_source_digest
+        projection_output_digest = comparison.projection_output_digest
+
+    projection_freshness = None
+    if projection is not None:
+        projection_freshness = getattr(projection, "freshness", None)
+        if hasattr(projection_freshness, "value"):
+            projection_freshness = projection_freshness.value
+
+    # Projection freshness gate: stale/unknown projections are never green.
+    projection_green = not (
+        projection_freshness in ("stale", "unknown")
+        or stale_projection
+    )
+    envelope_eligible = bool(envelope.is_eligible)
+    eligible = envelope_eligible and projection_green
+    shadow_green = bool(comparison is not None and comparison.green)
+    green = bool(eligible and shadow_green)
+    terminal = bool(
+        eligible
+        and comparison is not None
+        and comparison.terminal
+    )
+    dispatchable = bool(
+        eligible
+        and comparison is not None
+        and comparison.dispatchable
+    )
+
+    vectors = []
+    for vector in envelope.version_vectors:
+        vectors.append(
+            {
+                "owner": vector.owner,
+                "source": vector.source,
+                "environment": (
+                    vector.environment.root if vector.environment is not None else None
+                ),
+                "before": vector.before,
+                "after": vector.after,
+            }
+        )
+
+    payload = {
+        "schema_version": 1,
+        "envelope": {
+            "schema_version": envelope.schema_version,
+            "observed_at": envelope.observed_at.root.isoformat(),
+            "environment": (
+                envelope.environment.root if envelope.environment is not None else None
+            ),
+            "tenant": envelope.tenant.root if envelope.tenant is not None else None,
+            "run": envelope.run.root if envelope.run is not None else None,
+            "chain": envelope.chain.root if envelope.chain is not None else None,
+            "plan": envelope.plan.root if envelope.plan is not None else None,
+            "stage": envelope.stage.root if envelope.stage is not None else None,
+            "model": envelope.model.root if envelope.model is not None else None,
+            "profile": envelope.profile.root if envelope.profile is not None else None,
+            "attempt": envelope.attempt.root if envelope.attempt is not None else None,
+            "digest": canonical_digest(envelope),
+        },
+        "states": {
+            "completeness": envelope.completeness.value,
+            "freshness": envelope.freshness.value,
+            "coherence": envelope.coherence.value,
+            "coherence_reasons": [r.value for r in envelope.coherence_reasons],
+        },
+        "cross_environment": bool(envelope.cross_environment),
+        "source_version_vectors": vectors,
+        "projection": {
+            "name": projection_name,
+            "freshness": projection_freshness,
+            "source_digest": projection_source_digest,
+            "output_digest": projection_output_digest,
+        },
+        "comparison": {
+            "present": comparison is not None,
+            "bucket": bucket,
+            "reasons": reasons,
+            "stale_projection": stale_projection,
+            "digest_mismatch": digest_mismatch,
+            "missing_denominator": missing_denominator,
+            "denominator": denominator,
+            "covered_count": covered_count,
+            "coverage": coverage,
+        },
+        "verdict": {
+            "green": green,
+            "terminal": terminal,
+            "dispatchable": dispatchable,
+            "eligible": eligible,
+        },
+        # Explicit anti-inference marker: progress is NEVER derived from
+        # PID/tmux/activity/status freshness.
+        "progress_inferred_from_process": False,
+    }
+    view_hash = hashlib.sha256(
+        json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+    ).hexdigest()
+    payload["view_hash"] = view_hash
+    return payload
+
+
 def build_cloud_status_snapshot(
     *,
     marker_dir: Path | None = None,
@@ -397,6 +554,7 @@ def build_cloud_status_snapshot(
     liveness_probe: LivenessProbe | None = None,
     history_path: Path | str | None = None,
     source_cursor_vector: Mapping[str, Any] | None = None,
+    maintenance_observation: Any | None = None,
 ) -> dict[str, Any]:
     """Build the canonical cloud status snapshot from local observation only.
 
@@ -410,6 +568,15 @@ def build_cloud_status_snapshot(
     so downstream consumers (format module, resident) can trace evidence
     provenance without repeating the read.  It never grants authority — this
     is a display-only projection.
+
+    *maintenance_observation* is an optional M2 coherent
+    :class:`~arnold_pipelines.megaplan.maintenance.contracts.ObservationEnvelope`
+    (immutable snapshot).  When supplied it is rendered as a sibling
+    read-only ``maintenance_observation`` section (envelope identity,
+    completeness/coherence, source/projection freshness, comparison buckets
+    with explicit denominators, and a deterministic view hash).  It never
+    changes any established status field or classification and never infers
+    progress from process or mutable status freshness.
     """
     now = now or _utcnow()
     # Resolve defaults at call time so tests (and in-container callers) see the
@@ -474,6 +641,14 @@ def build_cloud_status_snapshot(
         "degraded": {"reasons": degraded_reasons} if degraded_reasons else None,
         "source_cursor_vector": _format_source_cursor(source_cursor_vector),
     }
+    # M2 (T17): sibling read-only Maintenance observation section.  Rendered
+    # exclusively from the immutable envelope snapshot (never a reread of
+    # mutable sources); absent evidence keeps the key absent so legacy status
+    # fields and classifications are byte-for-byte unchanged.
+    if maintenance_observation is not None:
+        snapshot["maintenance_observation"] = render_maintenance_observation(
+            maintenance_observation
+        )
     if watchdog_report is not None:
         snapshot["watchdog_generated_at"] = watchdog_report.get("timestamp_utc") or ""
         snapshot["watchdog_sessions_seen"] = watchdog_report.get("sessions_seen")
