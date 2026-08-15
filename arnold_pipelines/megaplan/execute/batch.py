@@ -5080,7 +5080,23 @@ def _reset_stale_authority_done_tasks(
     root: Path | None,
     state: PlanState,
 ) -> list[str]:
-    """Demote terminal-success rows whose authority evidence went stale."""
+    """Demote terminal-success rows whose authority evidence went stale.
+
+    A task is only durably ``done``/``completed`` when its result envelope
+    carries strict accepted authority (terminal attempt status **and** an
+    explicit grant-aware decision with outcome ``accepted`` — see
+    ``accepted_attempt_execution_projection``).  Rows marked terminal by a
+    merge that never produced such authority (e.g. hollow shadow-wave
+    envelopes) must return to ``pending`` so the truthful frontier re-dispatches
+    instead of being silently skipped by the scheduler and then rejected by the
+    ``before_cursor_clear`` authority gate (``execute_authority_diverged``).
+
+    The same reset applies to retryable aggregate-level blocks: a task blocked
+    solely by the failed execute aggregate (scope drift, iteration-cap, budget
+    exhaustion) has no durable authority either and must re-enter the frontier.
+    Genuine task-level blockers (explicit prereq/user-action blocks with a
+    recorded reason) remain blocked.
+    """
 
     tasks = finalize_data.get("tasks")
     if not isinstance(tasks, list) or not tasks:
@@ -5099,23 +5115,48 @@ def _reset_stale_authority_done_tasks(
             continue
         task_id = task.get("id")
         raw_status = task.get("status")
-        if not isinstance(task_id, str) or raw_status not in {"done", "completed"}:
+        if not isinstance(task_id, str):
             continue
-        if task_id in completed_ids:
+        if raw_status in {"done", "completed"}:
+            terminal_without_authority = task_id not in completed_ids
+        elif raw_status == "blocked":
+            if task_id in completed_ids:
+                continue
+            if _has_genuine_task_level_blocker(task):
+                continue
+            terminal_without_authority = True
+        else:
+            continue
+        if not terminal_without_authority:
             continue
         decision = decisions.get(task_id)
-        if decision is None:
-            continue
-        reasons = tuple(
-            reason
-            for reason in getattr(decision, "would_block_reasons", ())
-            if isinstance(reason, str) and reason
-        )
-        if not reasons or any(not reason.startswith("stale_evidence:") for reason in reasons):
+        if decision is not None and getattr(decision, "satisfied", False):
             continue
         _clear_task_attempt_fields(task)
         reset_ids.append(task_id)
     return sorted(reset_ids)
+
+
+def _has_genuine_task_level_blocker(task: Mapping[str, Any]) -> bool:
+    """True when a blocked task carries an explicit task-level blocker.
+
+    Aggregate-level execute blocks (scope drift, iteration-cap, budget
+    exhaustion) are recorded without a specific blocker reason/by set and are
+    retryable.  Prereq/user-action blocks carry a concrete reason or by-set and
+    must not be silently reset.
+    """
+    for key in (
+        "blocked_reason",
+        "blocked_by",
+        "blocked_by_user_action_ids",
+        "unresolved_dependency_ids",
+    ):
+        value = task.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, (list, tuple, set)) and value:
+            return True
+    return False
 
 
 def _adopt_authority_completed_blocked_tasks(
