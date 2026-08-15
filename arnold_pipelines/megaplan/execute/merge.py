@@ -908,7 +908,32 @@ _TIMEOUT_PREFIX = re.compile(
 )
 
 
-def _test_command_evidence(command: str) -> tuple[int | None, list[str]] | None:
+def _normalize_test_selector(part: str, project_dir: str | None) -> str:
+    """Project-relative form of a test selector.
+
+    Absolute in-project paths are rebased against the project root so an
+    executor that runs ``pytest /abs/project/tests/foo.py`` matches the
+    admitted relative selector ``tests/foo.py``.  Fail closed: a path
+    outside the root, a relative ``..`` escape, an unknown root, or any
+    normalization failure falls back to the legacy character-strip form
+    (which cannot match the relative allowance), so the budget guard is
+    never widened.
+    """
+
+    part = part.strip()
+    if not project_dir or not part.startswith("/"):
+        return part.lstrip("./")
+    try:
+        resolved = Path(part).resolve(strict=False)
+        root = Path(project_dir).resolve(strict=False)
+        return resolved.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        return part.lstrip("./")
+
+
+def _test_command_evidence(
+    command: str, project_dir: str | None = None
+) -> tuple[int | None, list[str]] | None:
     """Return declared timeout seconds and path selectors for one test command."""
 
     try:
@@ -932,7 +957,7 @@ def _test_command_evidence(command: str) -> tuple[int | None, list[str]] | None:
         if timeout_match.group("unit") == "m":
             timeout_seconds *= 60
     selectors = [
-        part.lstrip("./")
+        _normalize_test_selector(part, project_dir)
         for part in parts[runner_index + 1 :]
         if part
         and not part.startswith("-")
@@ -950,6 +975,7 @@ def _enforce_task_test_budgets(
     *,
     targets_by_id: Mapping[str, dict[str, Any]],
     issues: list[str],
+    project_dir: str | None = None,
 ) -> None:
     """Fail closed when v2 task evidence exceeds its admitted narrow-test budget."""
 
@@ -968,11 +994,11 @@ def _enforce_task_test_budgets(
             evidence
             for command in commands
             if isinstance(command, str)
-            for evidence in [_test_command_evidence(command)]
+            for evidence in [_test_command_evidence(command, project_dir)]
             if evidence is not None
         ]
         allowed_selectors = {
-            selector.strip().lstrip("./")
+            _normalize_test_selector(selector, project_dir)
             for selector in narrow.get("selectors", [])
             if isinstance(selector, str) and selector.strip()
         }
@@ -1215,6 +1241,7 @@ def _merge_batch_results(
         task_authority.entries,
         targets_by_id=merge_targets_by_id,
         issues=issues,
+        project_dir=(mode_state.get("config") or {}).get("project_dir"),
     )
     _enforce_task_write_budgets(
         task_authority.entries,

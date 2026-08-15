@@ -97,6 +97,14 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         # FinalizeFieldOwnershipError before finalize.json is updated.
         "head_sha",
         "code_hash",
+        # Scope-reconciliation field the execute seam stamps onto task records
+        # (aggregation.py:reconcile_finalized_review_scope_claims — merges
+        # review-verdict evidence_files into files_changed and records the
+        # reconciled additions).  The execute owner computes and publishes it
+        # during the aggregate-execute publish, so it must be publishable or
+        # every post-review execute aborts with FinalizeFieldOwnershipError
+        # before finalize.json is updated (recurring scope-drift blocker).
+        "scope_reconciled_files",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})
