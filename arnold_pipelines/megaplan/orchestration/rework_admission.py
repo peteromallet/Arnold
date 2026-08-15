@@ -16,6 +16,37 @@ ACCEPTED_DEBT_SOURCES = frozenset(
 )
 
 
+def _normalized_check_status(value: object) -> str:
+    """Normalize a check-status string for set/prefix matching.
+
+    Mirrors ``handlers/review.py:_failed_check_status`` so that a status
+    carrying an evidence parenthetical (e.g. ``failed (AssertionError: ...)``)
+    is recognized as the same outcome as the bare token ``failed`` instead of
+    being mislabeled ``accepted_task_reopen_unproven``.
+    """
+    return (
+        str(value or "")
+        .strip()
+        .casefold()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+
+
+def _is_failed_check_status(value: object) -> bool:
+    normalized = _normalized_check_status(value)
+    return normalized in FAIL_STATUSES or any(
+        normalized.startswith(f"{status}_") for status in FAIL_STATUSES
+    )
+
+
+def _is_passed_check_status(value: object) -> bool:
+    normalized = _normalized_check_status(value)
+    return normalized in PASS_STATUSES or any(
+        normalized.startswith(f"{status}_") for status in PASS_STATUSES
+    )
+
+
 def _digest(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -189,7 +220,7 @@ def reconcile_review_rework(
                     "task_ids": accepted_ids,
                 }
             )
-        elif post_status in FAIL_STATUSES:
+        elif _is_failed_check_status(post_status):
             runnable.extend(accepted_ids)
             dispositions.append(
                 {
@@ -199,7 +230,7 @@ def reconcile_review_rework(
                     "deterministic_check": command,
                 }
             )
-        elif post_status in PASS_STATUSES:
+        elif _is_passed_check_status(post_status):
             suppressed.extend(accepted_ids)
             dispositions.append(
                 {

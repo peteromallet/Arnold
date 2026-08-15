@@ -15,6 +15,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -22,6 +24,33 @@ from pathlib import Path
 from typing import Any, Mapping
 
 log = logging.getLogger(__name__)
+
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+
+
+def _split_leading_environment_assignments(
+    command: list[str],
+    environment: dict[str, str],
+) -> tuple[list[str], dict[str, str]]:
+    """Fold leading ``KEY=value`` tokens into the environment (shell semantics).
+
+    Only *leading* assignment tokens before the first non-assignment token are
+    environment assignments (``PYTHONPATH=. make cycles PY=...`` → env
+    ``PYTHONPATH=.``, argv ``["make", "cycles", "PY=..."]`` where ``PY=...``
+    stays a make-style argument).  At least one token is always kept as the
+    executable so an all-assignment command remains a launch error instead of
+    becoming ``subprocess.run([])`` (ValueError, not the caught OSError).
+    """
+    argv = list(command)
+    effective_environment = dict(environment)
+    while (
+        len(argv) > 1
+        and _ENV_ASSIGNMENT_RE.fullmatch(argv[0]) is not None
+    ):
+        token = argv.pop(0)
+        key, _, value = token.partition("=")
+        effective_environment[key] = value
+    return argv, effective_environment
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -167,13 +196,20 @@ def run_single_validation_job(
         the result carries an ``error`` field and a non-zero exit_code.
     """
     job_id = str(job.get("id", "unknown"))
-    command = job.get("command", [])
-    if not isinstance(command, list):
-        command = []
+    requested_command = job.get("command", [])
+    if not isinstance(requested_command, list):
+        requested_command = []
     environment = job.get("environment")
     if not isinstance(environment, Mapping):
         environment = {}
     env_dict = {str(k): str(v) for k, v in environment.items()}
+    # Fold leading ``KEY=value`` tokens into the environment before any
+    # classification / hashing / execution so that shell-style command
+    # strings (e.g. ``PYTHONPATH=. make cycles ...``) launch correctly.
+    command, env_dict = _split_leading_environment_assignments(
+        requested_command,
+        env_dict,
+    )
     cwd_raw = str(job.get("cwd", "${project_dir}"))
     cwd = _resolve_cwd(cwd_raw, project_dir)
     timeout = job.get("timeout_seconds", 300)
@@ -187,7 +223,7 @@ def run_single_validation_job(
         completed = subprocess.run(
             command,
             cwd=cwd,
-            env={**env_dict} if env_dict else None,
+            env={**os.environ, **env_dict} if env_dict else None,
             capture_output=True,
             text=True,
             timeout=timeout,
