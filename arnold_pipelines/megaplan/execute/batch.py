@@ -139,7 +139,9 @@ from arnold_pipelines.megaplan.orchestration.validation_jobs import (
     SELECTOR_DEFERRED,
     SELECTOR_INVALID,
     classify_selector_lifecycle,
+    declared_task_output_paths,
     deferred_selector_evidence,
+    graph_declared_output_paths,
     normalize_selector_path,
 )
 from arnold_pipelines.megaplan.orchestration.plan_contracts import (
@@ -3347,6 +3349,23 @@ def _run_and_merge_batch(
         payload.setdefault("validation_results", []).extend(
             _deferred_validation_results
         )
+    # Final-batch deferred sweep: every admitted task has now run, so any
+    # narrow job whose selector was missing at its own pre-dispatch can be
+    # re-attempted (selector exists -> run), or fails closed (still missing ->
+    # undeclared or declared-but-never-created).  Runs BEFORE execute success
+    # is projected so a broken write-set contract blocks, never silently
+    # passes.
+    if _is_final_batch_flag:
+        _final_sweep_results = _sweep_persisted_deferred_selector_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            state=state,
+        )
+        if _final_sweep_results:
+            payload.setdefault("validation_results", []).extend(
+                _final_sweep_results
+            )
     attribution_result = AttributionResult(records=[], recursive_snapshot=None)
     if not is_prose_mode(state):
         attribution_result = _auto_attribute_unclaimed_paths(
@@ -3638,6 +3657,7 @@ def _project_legacy_validation_contract_for_recovery(
                 task_by_id[task["id"]] = task
 
     project_dir = finalize_data.get("_project_dir") or plan_dir
+    all_declared_outputs = graph_declared_output_paths(finalize_data.get("tasks"))
     for job in projected["effective_jobs"]:
         if job.get("kind") != "narrow_recheck":
             continue
@@ -3647,6 +3667,7 @@ def _project_legacy_validation_contract_for_recovery(
             project_dir=project_dir,
             job=job,
             task=task,
+            all_declared_outputs=all_declared_outputs,
         )
         if lifecycle.status == SELECTOR_INVALID:
             # Fail closed: recovery must never admit a job the unchanged gate
@@ -3836,6 +3857,9 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     project_dir=project_dir,
                     job=job,
                     task=task,
+                    all_declared_outputs=graph_declared_output_paths(
+                        finalize_data.get("tasks")
+                    ),
                 )
                 if lifecycle.status == SELECTOR_INVALID:
                     raise CliError(
@@ -4109,6 +4133,175 @@ def _raise_deferred_selector_result_block(
     )
 
 
+def _load_current_unresolved_deferred_selector_jobs(
+    *,
+    plan_dir: Path,
+    finalize_data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Load persisted deferred-selector records for CURRENT finalize jobs.
+
+    Only records whose ``job_id`` maps to an effective ``narrow_recheck``
+    job in the preserved finalize payload are considered; stale or malformed
+    artifacts are ignored (they are best-effort evidence; the finalize
+    payload is authoritative).  Records are deduplicated by ``job_id``.
+    """
+
+    jobs_by_id = {
+        str(job.get("id")): job
+        for job in finalize_data.get("validation_jobs", [])
+        if isinstance(job, Mapping)
+        and isinstance(job.get("id"), str)
+        and job.get("kind") == "narrow_recheck"
+    }
+    verification_dir = Path(plan_dir) / "verification"
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    try:
+        candidates = sorted(verification_dir.glob("validation_*_deferred.json"))
+    except OSError:
+        return []
+    for artifact in candidates:
+        try:
+            record = json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            log.warning("ignoring unreadable deferred evidence %s", artifact)
+            continue
+        if not isinstance(record, Mapping):
+            continue
+        job_id = str(record.get("job_id") or "")
+        if not job_id or job_id in seen:
+            continue
+        if job_id not in jobs_by_id:
+            continue
+        seen.add(job_id)
+        records.append(dict(record))
+    return records
+
+
+def _sweep_persisted_deferred_selector_jobs(
+    *,
+    plan_dir: Path,
+    project_dir: Path,
+    finalize_data: Mapping[str, Any],
+    state: PlanState | None = None,
+) -> list[dict[str, Any]]:
+    """Re-attempt unresolved deferred narrow jobs once every task has run.
+
+    Called at the final batch post-merge, after the same-batch deferred
+    recheck.  Every admitted task has now produced (or failed to produce) its
+    declared outputs, so a deferred selector that is STILL missing is either
+    genuinely undeclared (invalid) or declared-but-never-created (fail
+    closed).  A selector that now exists runs its narrow recheck through the
+    same deterministic job runner; a failing recheck raises
+    ``validation_job_failed`` exactly like any other harness run.
+    """
+
+    if not isinstance(finalize_data, dict):
+        return []
+    graph_outputs = graph_declared_output_paths(finalize_data.get("tasks"))
+    tasks_by_id = {
+        str(task.get("id")): task
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, Mapping) and isinstance(task.get("id"), str)
+    }
+    jobs_by_id = {
+        str(job.get("id")): job
+        for job in finalize_data.get("validation_jobs", [])
+        if isinstance(job, Mapping)
+        and isinstance(job.get("id"), str)
+        and job.get("kind") == "narrow_recheck"
+    }
+    verification_dir = Path(plan_dir) / "verification"
+    deferred = _load_current_unresolved_deferred_selector_jobs(
+        plan_dir=plan_dir,
+        finalize_data=finalize_data,
+    )
+    sweep_results: list[dict[str, Any]] = []
+    for record in deferred:
+        job_id = str(record.get("job_id") or "")
+        task_id = str(record.get("task_id") or "")
+        job = jobs_by_id.get(job_id)
+        task = tasks_by_id.get(task_id)
+        if job is None or task is None:
+            raise CliError(
+                "deferred_validation_result_missing",
+                f"deferred validation job {job_id} cannot be revalidated: "
+                "task_or_validation_job_missing_from_finalize_contract",
+                valid_next=["execute", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": "task_or_validation_job_missing_from_finalize_contract",
+                },
+            )
+        # A non-deferred result artifact proves this job already ran (e.g. the
+        # same-batch recheck discharged it); do not re-run a resolved job.
+        try:
+            resolved = any(
+                artifact.name != f"validation_{job_id}_deferred.json"
+                for artifact in verification_dir.glob(f"validation_{job_id}_*.json")
+            )
+        except OSError:
+            resolved = False
+        if resolved:
+            continue
+        lifecycle = classify_selector_lifecycle(
+            project_dir=project_dir,
+            job=job,
+            task=task,
+            all_declared_outputs=graph_outputs,
+        )
+        if lifecycle.status == SELECTOR_INVALID:
+            raise CliError(
+                "invalid_validation_job",
+                f"validation job {job_id} references missing selectors "
+                "that are not declared task outputs",
+                valid_next=["finalize", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "invalid_fields": ["selectors"],
+                    "missing_selectors": list(lifecycle.missing_selectors),
+                    "undeclared_missing_selectors": list(
+                        lifecycle.undeclared_missing_selectors
+                    ),
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": lifecycle.reason,
+                },
+            )
+        if lifecycle.status == SELECTOR_DEFERRED:
+            # Every admitted task has run; a still-missing graph-declared
+            # selector means the declaring task broke its write-set contract.
+            raise CliError(
+                "deferred_validation_result_missing",
+                f"deferred validation job {job_id} cannot be revalidated: "
+                "declared_selector_output_never_created",
+                valid_next=["execute", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": "declared_selector_output_never_created",
+                    "missing_selectors": sorted(set(lifecycle.missing_selectors)),
+                },
+            )
+        # Selector now exists: run the narrow recheck as a singleton job so
+        # only THIS job's command is admitted (never sibling jobs of the task).
+        rerun_data = dict(finalize_data)
+        rerun_data["validation_jobs"] = [dict(job)]
+        sweep_results.extend(
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=rerun_data,
+                batch_task_ids=[task_id],
+                is_final_batch=False,
+                state=state,
+            )
+        )
+    return sweep_results
+
+
 def _rerun_deferred_selector_validation_jobs(
     *,
     plan_dir: Path,
@@ -4224,17 +4417,69 @@ def _rerun_deferred_selector_validation_jobs(
             - result_paths
         )
         if missing_from_result:
-            _raise_deferred_selector_result_block(
-                job_id=job_id,
-                task_id=task_id,
-                reason="accepted_task_result_does_not_claim_selector_output",
-                extra={"missing_result_paths": missing_from_result},
+            # Cross-task ownership: a deferred selector may be declared as an
+            # output of ANOTHER admitted task (produced in this or a later
+            # batch) rather than the owning task.  The owning task's accepted
+            # result is not required to claim it; the deferred evidence stays
+            # unresolved until the final sweep re-classifies it against the
+            # graph.  Own-task outputs and no-task-declared paths remain
+            # fail-closed exactly as before.
+            own_outputs = set(declared_task_output_paths(task))
+            graph_outputs = set(
+                graph_declared_output_paths(finalize_data.get("tasks"))
             )
+            own_declared_unclaimed = sorted(
+                set(missing_from_result) & own_outputs
+            )
+            undeclared_missing = sorted(
+                set(missing_from_result) - graph_outputs
+            )
+            other_task_declared = sorted(
+                (set(missing_from_result) - own_outputs) & graph_outputs
+            )
+            if own_declared_unclaimed:
+                _raise_deferred_selector_result_block(
+                    job_id=job_id,
+                    task_id=task_id,
+                    reason="accepted_task_result_does_not_claim_selector_output",
+                    extra={"missing_result_paths": own_declared_unclaimed},
+                )
+            if undeclared_missing:
+                raise CliError(
+                    "invalid_validation_job",
+                    f"validation job {job_id} references missing selectors "
+                    "that are not declared task outputs",
+                    valid_next=["finalize", "revise"],
+                    extra={
+                        "job_id": job_id,
+                        "invalid_fields": ["selectors"],
+                        "missing_selectors": missing_from_result,
+                        "undeclared_missing_selectors": undeclared_missing,
+                        "validation_job_kind": "narrow_recheck",
+                        "reason": "undeclared_missing_selector",
+                    },
+                )
+            if other_task_declared:
+                # A different admitted task may produce these paths in this or
+                # a later batch.  Keep the persisted deferred evidence
+                # unresolved; the final-batch sweep re-attempts the job once
+                # every admitted task has run.
+                log.info(
+                    "validation job %s remains deferred: selectors %s are "
+                    "declared outputs of other tasks, not the owning task %s",
+                    job_id,
+                    sorted(other_task_declared),
+                    task_id,
+                )
+                continue
 
         lifecycle = classify_selector_lifecycle(
             project_dir=project_dir,
             job=job,
             task=task,
+            all_declared_outputs=graph_declared_output_paths(
+                finalize_data.get("tasks")
+            ),
         )
         if lifecycle.status == SELECTOR_INVALID:
             raise CliError(
