@@ -3331,6 +3331,32 @@ def _run_and_merge_batch(
             source_path=batch_artifact_path,
         )
     )
+    # Adopt authority-completed blocked tasks BEFORE the deferred-selector
+    # revalidation gate: a task whose accepted-attempt kernel authority is
+    # dependency-closed (done) must not keep its stale `blocked` status, or a
+    # deferred narrow recheck referencing that task refuses with
+    # task_result_blocked_by_post_merge_policy.  The kernel projection (not the
+    # live payload's pre-policy accepted flag) is the source of truth; a task
+    # only grant-accepted this turn (policy not yet closed) stays blocked and
+    # the gate keeps refusing — that is the intentional post-merge policy.
+    authority_adopted_ids = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
+    if authority_adopted_ids:
+        _publish_execute_finalize(
+            plan_dir,
+            finalize_data,
+            operation="adopt-authority-completed-blocked",
+            state=state,
+        )
+        log.info(
+            "authority-adopt: promoted %d authority-completed blocked task(s) to done: %s",
+            len(authority_adopted_ids),
+            ", ".join(authority_adopted_ids),
+        )
     # A narrow validation whose selector was a declared task output is not a
     # terminal pass.  Re-check it only after the task's *accepted* result
     # envelope proves that the task created the exact path.  This keeps the
@@ -4610,6 +4636,32 @@ def handle_execute_one_batch(
                     "authority_decisions": missing_decisions,
                 },
             )
+
+    # Adopt authority-completed blocked tasks before dispatching this batch: a
+    # blocked row whose accepted-attempt kernel authority is dependency-closed
+    # is promoted to done so (a) the batch-prerequisites check above passes and
+    # (b) a deferred narrow recheck referencing the task revalidates instead of
+    # refusing with task_result_blocked_by_post_merge_policy.  Mirrors the
+    # auto-loop's adopt-after-merge in `_run_and_merge_batch`.
+    authority_adopted_ids = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
+    if authority_adopted_ids:
+        _publish_execute_finalize(
+            plan_dir,
+            finalize_data,
+            operation="adopt-authority-completed-blocked(batch)",
+            state=state,
+        )
+        log.info(
+            "authority-adopt(batch): promoted %d authority-completed blocked task(s) to done: %s",
+            len(authority_adopted_ids),
+            ", ".join(authority_adopted_ids),
+        )
+        tasks = finalize_data.get("tasks", [])
 
     batch_task_ids = global_batches[batch_number - 1]
     active_task_ids = set(batch_task_ids)

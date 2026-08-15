@@ -142,11 +142,13 @@ def graph_declared_output_paths(
 ) -> tuple[str, ...]:
     """Return the normalized, deterministic union of task-declared outputs.
 
-    The union spans every admitted task's ``write_set.paths``.  It is the
-    graph-level ownership source used when a narrow validation job's owning
-    task references a selector produced by ANOTHER task in the same finalized
-    graph (e.g. a packaging task whose narrow test file is authored by a
-    later test-authoring task).  Normalization and deduplication mirror
+    The union spans every admitted task's ``write_set.paths`` AND
+    ``narrow_tests.selectors``.  ``narrow_tests`` are the test files the
+    finalize contract declares each task will produce/run, so a narrow
+    validation job referencing a test file authored by ANOTHER task in the
+    same graph (e.g. a packaging task whose narrow test is written by a later
+    test-authoring task) is owned by the graph and may be produced in a later
+    batch.  Normalization and deduplication mirror
     ``declared_task_output_paths`` exactly; the result is stable-sorted so
     classification is deterministic across processes.
     """
@@ -160,6 +162,18 @@ def graph_declared_output_paths(
             continue
         for path in declared_task_output_paths(task):
             if path in seen:
+                continue
+            seen.add(path)
+            normalized.append(path)
+        narrow = task.get("narrow_tests")
+        if not isinstance(narrow, Mapping):
+            continue
+        raw_selectors = narrow.get("selectors")
+        if not isinstance(raw_selectors, list):
+            continue
+        for raw in raw_selectors:
+            path = normalize_selector_path(raw)
+            if path is None or path in seen:
                 continue
             seen.add(path)
             normalized.append(path)
