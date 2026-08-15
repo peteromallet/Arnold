@@ -6359,7 +6359,7 @@ def handle_execute_auto_loop(
                         for row in validation_results
                         if row.get("error") or row.get("timed_out") or row.get("exit_code") != 0
                     ]
-                    if failed_validation:
+                    if failed_validation and not review_rework_task_ids:
                         return _block_no_runnable_rework(
                             plan_dir=plan_dir,
                             state=state,

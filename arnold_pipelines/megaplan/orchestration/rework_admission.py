@@ -81,8 +81,9 @@ class ReworkAdmission:
     runnable_task_ids: tuple[str, ...]
     suppressed_task_ids: tuple[str, ...]
     validation_jobs: tuple[Mapping[str, Any], ...]
-    blockers: tuple[Mapping[str, Any], ...]
-    dispositions: tuple[Mapping[str, Any], ...]
+    external_gates: tuple[Mapping[str, Any], ...] = ()
+    blockers: tuple[Mapping[str, Any], ...] = ()
+    dispositions: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def admitted(self) -> bool:
@@ -97,6 +98,7 @@ class ReworkAdmission:
             "runnable_task_ids": list(self.runnable_task_ids),
             "suppressed_task_ids": list(self.suppressed_task_ids),
             "validation_jobs": [dict(row) for row in self.validation_jobs],
+            "external_gates": [dict(row) for row in self.external_gates],
             "blockers": [dict(row) for row in self.blockers],
             "dispositions": [dict(row) for row in self.dispositions],
             "admitted": self.admitted,
@@ -128,6 +130,7 @@ def reconcile_review_rework(
     runnable: list[str] = []
     suppressed: list[str] = []
     jobs: list[Mapping[str, Any]] = []
+    external_gates: list[Mapping[str, Any]] = []
     blockers: list[Mapping[str, Any]] = []
     dispositions: list[Mapping[str, Any]] = []
 
@@ -178,6 +181,41 @@ def reconcile_review_rework(
                 if isinstance(raw.get("target"), Mapping)
                 else ""
             ) or f"review-validation-{index + 1}"
+            # Human-gate items (NSA-1 / add_human_halt / north-star-human-halt) are
+            # EXTERNAL gates, not bounded validation jobs: their deterministic check
+            # fails by design until a human records an acceptance decision, and they
+            # must not pre-empt runnable actionable rework or open the quality circuit.
+            flag_id = str(raw.get("flag_id") or "").strip().lower()
+            raw_source = str(raw.get("source") or "").strip().lower()
+            human_gate = (
+                "human_halt" in job_id
+                or "human_halt" in flag_id
+                or "nsa-1" in flag_id
+                or "nsa-1" in raw_source
+                or "human_halt" in raw_source
+            )
+            if human_gate:
+                external_gates.append(
+                    {
+                        "id": job_id,
+                        "command": command,
+                        "task_ids": task_ids,
+                        "source_item_index": index,
+                        "authority_digest": authority_digest,
+                        "agent_actionable": False,
+                        "reason": "requires an explicit human acceptance decision",
+                    }
+                )
+                suppressed.extend(accepted_ids)
+                dispositions.append(
+                    {
+                        "item_index": index,
+                        "disposition": "external_gate_deferred",
+                        "task_ids": task_ids,
+                        "external_gate_id": job_id,
+                    }
+                )
+                continue
             jobs.append(
                 {
                     "id": job_id,
@@ -256,6 +294,7 @@ def reconcile_review_rework(
         runnable_task_ids=tuple(dict.fromkeys(runnable)),
         suppressed_task_ids=tuple(dict.fromkeys(suppressed)),
         validation_jobs=tuple(jobs),
+        external_gates=tuple(external_gates),
         blockers=tuple(blockers),
         dispositions=tuple(dispositions),
     )
