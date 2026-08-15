@@ -12,6 +12,11 @@ from typing import Any, Callable, Mapping
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json
 from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabled
+from arnold_pipelines.megaplan.cloud.maintenance_environment import (
+    MaintenanceEnvironmentError,
+    VALID_MAINTENANCE_ENVIRONMENTS,
+    resolve_maintenance_environment,
+)
 from arnold_pipelines.megaplan.cloud.current_target_liveness import (
     liveness_from_current_target,
     observe_current_target_liveness,
@@ -42,6 +47,7 @@ _PARTIAL_EVIDENCE_KINDS = {
     "runtime_manifest_invalid",
     "missing_chain_state",
     "missing_plan_state",
+    "invalid_marker_environment",
 }
 _MISSING_EVIDENCE_KINDS = {
     "missing_marker_json",
@@ -347,6 +353,44 @@ def resolve_current_target(
     elif not marker_path.exists():
         stale_evidence.append(_artifact(kind="missing_marker_json", path=marker_path))
         rationale.append("marker JSON missing")
+
+    # ── M1 T9: cross-environment and present-but-invalid namespace evidence ──
+    # A marker that names a maintenance environment namespace is only usable
+    # when that namespace is canonical AND provably the observer's own.  An
+    # unrecognized alias is present-but-invalid; a canonical namespace that
+    # differs from the observer's resolved identity (or cannot be confirmed
+    # against an unset observer identity) is cross-environment evidence.  Both
+    # fail closed into typed UNKNOWN state: they never turn green and never
+    # become dispatchable.
+    declared_environment = _marker_declared_environment(marker)
+    if declared_environment:
+        if declared_environment not in VALID_MAINTENANCE_ENVIRONMENTS:
+            stale_evidence.append(
+                _artifact(
+                    kind="invalid_marker_environment",
+                    path=marker_path,
+                    declared_environment=declared_environment,
+                )
+            )
+            rationale.append(
+                "marker declares an unrecognized maintenance environment namespace; "
+                "failing closed without treating the evidence as authoritative"
+            )
+        else:
+            observer_environment = _observer_maintenance_environment()
+            if observer_environment != declared_environment:
+                stale_evidence.append(
+                    _artifact(
+                        kind="cross_environment_evidence",
+                        path=marker_path,
+                        declared_environment=declared_environment,
+                        observer_environment=observer_environment,
+                    )
+                )
+                rationale.append(
+                    "marker maintenance environment does not match the observer "
+                    "namespace; failing closed on cross-environment evidence"
+                )
 
     if remote_spec is None and run_kind != "plan":
         stale_evidence.append(_artifact(kind="spec_missing", path=_safe_text(marker.get("remote_spec"))))
@@ -784,6 +828,8 @@ def _classify_evidence_state(evidence: list[dict[str, Any]]) -> dict[str, Any]:
     kinds = [kind for kind in kinds if kind]
     if any(kind.startswith("contradictory_") for kind in kinds):
         return _evidence_state("contradictory", kinds)
+    if any(kind.startswith("cross_environment") for kind in kinds):
+        return _evidence_state("cross_environment", kinds)
     if any(kind.startswith("stale_") or kind.startswith("superseded_") for kind in kinds):
         return _evidence_state("stale", kinds)
     if any(kind in _PARTIAL_EVIDENCE_KINDS for kind in kinds):
@@ -814,6 +860,38 @@ def _safe_plan_name(value: object) -> str:
 def _safe_path(value: object) -> Path | None:
     text = _safe_text(value)
     return Path(text) if text else None
+
+
+def _marker_declared_environment(marker: Mapping[str, Any]) -> str:
+    """Return the maintenance environment namespace a marker declares, if any.
+
+    A session marker may name its maintenance environment explicitly via
+    ``maintenance_environment`` (or the legacy ``environment`` spelling).
+    The value is normalized with surrounding whitespace stripped; it is
+    deliberately NOT case-folded here so the caller can distinguish an
+    unrecognized alias (``Prod``, ``prod``) from a canonical namespace and
+    fail closed on it.
+    """
+    for field in ("maintenance_environment", "environment"):
+        raw = marker.get(field)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return ""
+
+
+def _observer_maintenance_environment() -> str:
+    """Return the observer's resolved maintenance environment namespace.
+
+    Falls back to the literal ``"unset"`` when no explicit namespace or
+    ``ARNOLD_MAINTENANCE_ENVIRONMENT`` is bound.  An unset observer identity
+    can never confirm that a marker's declared namespace is the same
+    environment, so callers treat anything other than an exact match as
+    cross-environment evidence and fail closed.
+    """
+    try:
+        return resolve_maintenance_environment(explicit=None)
+    except MaintenanceEnvironmentError:
+        return "unset"
 
 
 def _resolve_remote_spec(workspace: Path | None, value: object) -> Path | None:
@@ -1426,6 +1504,20 @@ def _collect_target_evidence_gaps(
         gaps["plan_identity"] = {
             "gap": "contradictory_plan_identity",
             "reason": "chain and plan state identify different current plans",
+            "evidence_status": "degraded",
+        }
+
+    # --- maintenance environment ---
+    if "cross_environment_evidence" in stale_kinds:
+        gaps["maintenance_environment"] = {
+            "gap": "cross_environment_evidence",
+            "reason": "marker maintenance environment does not match the observer namespace",
+            "evidence_status": "degraded",
+        }
+    elif "invalid_marker_environment" in stale_kinds:
+        gaps["maintenance_environment"] = {
+            "gap": "invalid_marker_environment",
+            "reason": "marker declares an unrecognized maintenance environment namespace",
             "evidence_status": "degraded",
         }
 

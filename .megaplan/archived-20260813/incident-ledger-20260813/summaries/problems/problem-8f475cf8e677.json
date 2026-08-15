@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-07T01:36:24.080188+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-superfixer-alive-but-failed-recovery"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 2,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-8f475cf8e677",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:c96cf6179e6f342d635416e16508e7b6b6e5a4962a84c85614b0e279d828bf8c",
+    "last_seq": 205,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-8f475cf8e677: meta-repair recursion guard blocked dispatch"
+}

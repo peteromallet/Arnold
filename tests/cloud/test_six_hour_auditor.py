@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -1976,3 +1978,170 @@ def test_auditor_enqueue_report_only_finding_needs_no_writer(tmp_path: Path) -> 
     result = enqueue_audit_repair_request(item, queue_root=queue_root)
     assert result is None
     assert not queue_root.exists()
+
+
+# ── M1 T12: receipt-derived automatic-launch guards ─────────────────────
+
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import (  # noqa: E402
+    AuditDispatchError,
+    audit_report_only,
+    audit_reconciliation_receipt,
+    launch_audit_maintenance_dispatch,
+    require_preinitialized_audit_receipt,
+    require_receipt_proven_runtime_model,
+    validate_audit_launch_guards,
+)
+from arnold_pipelines.megaplan.cloud.maintenance_dispatch import (  # noqa: E402
+    prepare_maintenance_dispatch_receipt,
+)
+from arnold_pipelines.megaplan.receipts import writer as receipt_writer  # noqa: E402
+
+
+def test_audit_launch_requires_preinitialized_receipt(tmp_path: Path) -> None:
+    """Automatic maintenance launch is blocked without a durable initialized receipt."""
+    plan_dir = tmp_path / "plan"
+    prepared = prepare_maintenance_dispatch_receipt(
+        action="six_hour_audit",
+        configured_model=AUDIT_CODEX_MODEL,
+        dispatch_id="audit-dispatch-1",
+    )
+    with pytest.raises(AuditDispatchError, match="no durable preinitialized receipt"):
+        require_preinitialized_audit_receipt(plan_dir, "audit-dispatch-1")
+
+    launch = mock.Mock()
+    with pytest.raises(AuditDispatchError, match="no durable preinitialized receipt"):
+        launch_audit_maintenance_dispatch(
+            plan_dir,
+            prepared,
+            launch,
+            resolved_runtime_model=AUDIT_CODEX_MODEL,
+        )
+    launch.assert_not_called()
+
+    # A durable initialized snapshot satisfies the pre-launch guard.
+    receipt_writer.initialize_dispatch_receipt(plan_dir, prepared)
+    snapshot = require_preinitialized_audit_receipt(plan_dir, "audit-dispatch-1")
+    assert snapshot["outcome"] == "initialized"
+    assert snapshot["subprocess_started"] is False
+
+
+def test_audit_launch_blocks_on_conflicting_model_pins_and_model_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Launch refuses model pin conflicts and any non-gpt-5.6-sol resolved model."""
+    plan_dir = tmp_path / "plan"
+    prepared = prepare_maintenance_dispatch_receipt(
+        action="six_hour_audit",
+        configured_model=AUDIT_CODEX_MODEL,
+        dispatch_id="audit-dispatch-2",
+    )
+    receipt_writer.initialize_dispatch_receipt(plan_dir, prepared)
+    launch = mock.Mock()
+
+    with pytest.raises(ValueError, match="model pin conflict"):
+        validate_audit_launch_guards(
+            plan_dir,
+            "audit-dispatch-2",
+            environ={"CODEX_MODEL": "gpt-5.5"},
+        )
+    with pytest.raises(AuditDispatchError, match="resolved runtime model must be exactly"):
+        launch_audit_maintenance_dispatch(
+            plan_dir,
+            prepared,
+            launch,
+            resolved_runtime_model="deepseek:deepseek-v4-pro",
+        )
+    launch.assert_not_called()
+    # Configured intent can never substitute for the receipt-proven model.
+    with pytest.raises(AuditDispatchError, match="receipt-proven runtime model"):
+        require_receipt_proven_runtime_model(prepared)
+
+
+def test_audit_launch_records_receipt_proven_model_and_falsifies_report_only(
+    tmp_path: Path,
+) -> None:
+    """A launched maintenance action records gpt-5.6-sol and permanently falsifies report_only."""
+    plan_dir = tmp_path / "plan"
+    prepared = prepare_maintenance_dispatch_receipt(
+        action="six_hour_audit",
+        configured_model=AUDIT_CODEX_MODEL,
+        dispatch_id="audit-dispatch-3",
+    )
+    receipt_writer.initialize_dispatch_receipt(plan_dir, prepared)
+    assert audit_report_only(plan_dir, "audit-dispatch-3") is True
+    initialized = json.loads(
+        receipt_writer.dispatch_receipt_path(plan_dir, "audit-dispatch-3").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    launched: list[object] = []
+
+    def launch() -> object:
+        launched.append(object())
+        return launched[-1]
+
+    started, process = launch_audit_maintenance_dispatch(
+        plan_dir,
+        initialized,
+        launch,
+        resolved_runtime_model=AUDIT_CODEX_MODEL,
+    )
+    assert process is launched[0]
+    assert started["subprocess_started"] is True
+    assert started["resolved_runtime_model"] == AUDIT_CODEX_MODEL == "gpt-5.6-sol"
+    assert require_receipt_proven_runtime_model(started) == AUDIT_CODEX_MODEL
+    # Once any action has started, report_only is permanently false.
+    assert audit_report_only(plan_dir, "audit-dispatch-3") is False
+    assert audit_report_only(plan_dir) is False
+    # The durable snapshot proves the exact model without configured intent.
+    snapshot = json.loads(
+        receipt_writer.dispatch_receipt_path(plan_dir, "audit-dispatch-3").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert snapshot["resolved_runtime_model"] == AUDIT_CODEX_MODEL
+    assert snapshot["subprocess_started"] is True
+
+
+def test_audit_reconciliation_preserves_explicit_indeterminate_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reconciliation failure keeps the explicit indeterminate receipt state."""
+    plan_dir = tmp_path / "plan"
+    prepared = prepare_maintenance_dispatch_receipt(
+        action="six_hour_audit",
+        configured_model=AUDIT_CODEX_MODEL,
+        dispatch_id="audit-dispatch-4",
+    )
+    initialized = receipt_writer.initialize_dispatch_receipt(plan_dir, prepared)
+
+    monkeypatch.setattr(
+        receipt_writer,
+        "atomic_write_json",
+        mock.Mock(side_effect=OSError("snapshot unavailable")),
+    )
+    with pytest.raises(receipt_writer.DispatchFinalizationError) as excinfo:
+        receipt_writer.record_dispatch_started(
+            plan_dir,
+            initialized,
+            resolved_runtime_model=AUDIT_CODEX_MODEL,
+        )
+    indeterminate = excinfo.value.receipt
+    assert indeterminate["outcome"] == "indeterminate"
+    assert indeterminate["subprocess_started"] is True
+    assert indeterminate["failure_stage"] == "subprocess_started"
+    # The start transition reached the append-only journal, so report_only is
+    # permanently falsified even though the snapshot finalization failed.
+    assert audit_report_only(plan_dir, "audit-dispatch-4") is False
+    # Reconciliation preserves the explicit indeterminate receipt state and
+    # never rewrites or downgrades it to report-only.
+    reconciled = audit_reconciliation_receipt(
+        plan_dir,
+        "audit-dispatch-4",
+        failure_receipt=indeterminate,
+    )
+    assert reconciled is not None
+    assert reconciled["outcome"] == "indeterminate"
+    assert reconciled["subprocess_started"] is True
+    assert reconciled["failure_stage"] == "subprocess_started"

@@ -6137,6 +6137,10 @@ from arnold_pipelines.megaplan.receipts.writer import initialize_dispatch_receip
 
 root, model = sys.argv[1:]
 receipt = prepare_dispatch_receipt(action="six_hour_audit", configured_model=model)
+# Strict maintenance marker: the receipt is maintenance-bound and requires the
+# exact runtime model below for any successful finalization.
+receipt["maintenance"] = True
+receipt["required_runtime_model"] = model
 initialized = initialize_dispatch_receipt(pathlib.Path(root), receipt)
 print(initialized["dispatch_id"])
 PY
@@ -6171,10 +6175,16 @@ from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path, fin
 root, dispatch_id, model, rc = sys.argv[1:]
 root_path = pathlib.Path(root)
 receipt = json.loads(dispatch_receipt_path(root_path, dispatch_id).read_text(encoding="utf-8"))
+outcome = "succeeded" if int(rc) == 0 else "failed"
+# Receipt-proven model truth: a successful maintenance finalization requires
+# the exact runtime model durably recorded at the subprocess-start transition.
+# Configured intent is never proof; a mismatch fails closed without certifying.
+if outcome == "succeeded" and receipt.get("resolved_runtime_model") != model:
+    raise SystemExit(77)
 finalize_dispatch_receipt(
     root_path,
     receipt,
-    outcome="succeeded" if int(rc) == 0 else "failed",
+    outcome=outcome,
     resolved_runtime_model=model,
     mutation_facts={"state": False, "source": False, "commit": False, "push": False},
     detail=f"six-hour audit subprocess exited {rc}",

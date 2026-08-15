@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-11T19:35:12.157965+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-demo-session"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 57,
+  "owner_actor": "immediate_repair",
+  "problem_id": "problem-9e338df241c5",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 343,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-9e338df241c5: repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
+}

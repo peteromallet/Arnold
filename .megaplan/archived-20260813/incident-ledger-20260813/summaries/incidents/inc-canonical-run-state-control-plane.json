@@ -1,0 +1,111 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 17,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T012914Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T012914Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T072938Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T072938Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "canonical-run-state-control-plane",
+      "status": "2026-07-07T12:33:03.348306+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "canonical-run-state-control-plane",
+      "status": "2026-07-07T12:33:03.348306+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/incidents/inc-canonical-run-state-control-plane.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/incidents/inc-canonical-run-state-control-plane.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125805Z.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125805Z.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125806Z.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125806Z.json",
+      "session_id": "canonical-run-state-control-plane"
+    }
+  ],
+  "generated_at": "2026-07-11T19:35:12.142709+00:00",
+  "incident_id": "inc-canonical-run-state-control-plane",
+  "kind": "incident_summary",
+  "latest_actor": "six_hour_auditor",
+  "next_expected_event": null,
+  "outcome": "audit_cycle_complete",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-bef9405c197d"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 224,
+    "projection": "incidents"
+  },
+  "state": "six_hour_auditor.audit_complete",
+  "summary_text": "inc-canonical-run-state-control-plane: Audit completed for inc-canonical-run-state-control-plane with no blocking reconciler findings."
+}

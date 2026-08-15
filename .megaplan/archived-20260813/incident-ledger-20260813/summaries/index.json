@@ -1,0 +1,82 @@
+{
+  "generated_at": "2026-07-11T19:35:12.159445+00:00",
+  "incident_count": 7,
+  "incidents": [
+    {
+      "incident_id": "inc-canonical-run-state-control-plane",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-canonical-run-state-control-plane.json"
+    },
+    {
+      "incident_id": "inc-custody-control-plane",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane.json"
+    },
+    {
+      "incident_id": "inc-demo-session",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-demo-session.json"
+    },
+    {
+      "incident_id": "inc-megaplan-maintenance",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-megaplan-maintenance.json"
+    },
+    {
+      "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-megaplan-north-star-sense-checks-revise-design.json"
+    },
+    {
+      "incident_id": "inc-superfixer-alive-but-failed-recovery",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-superfixer-alive-but-failed-recovery.json"
+    },
+    {
+      "incident_id": "incident-42",
+      "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
+    }
+  ],
+  "problem_count": 11,
+  "problems": [
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "problem_id": "problem-67a765759422"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-68a048c70af7.json",
+      "problem_id": "problem-68a048c70af7"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-6e386e382223.json",
+      "problem_id": "problem-6e386e382223"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-6eaee57d9632.json",
+      "problem_id": "problem-6eaee57d9632"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-72f87afd3954.json",
+      "problem_id": "problem-72f87afd3954"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-9e338df241c5.json",
+      "problem_id": "problem-9e338df241c5"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-b3c4cc0b2599.json",
+      "problem_id": "problem-b3c4cc0b2599"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
+      "problem_id": "problem-bef9405c197d"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-e20c45ae0eb0.json",
+      "problem_id": "problem-e20c45ae0eb0"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-fb07a266e6f8.json",
+      "problem_id": "problem-fb07a266e6f8"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-fc037a661409.json",
+      "problem_id": "problem-fc037a661409"
+    }
+  ],
+  "schema_version": 1
+}

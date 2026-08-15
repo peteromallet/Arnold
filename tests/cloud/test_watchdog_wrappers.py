@@ -19464,13 +19464,61 @@ def test_meta_repair_wrapper_has_env_setup_and_redaction() -> None:
 
 
 def test_meta_repair_wrapper_has_feature_flag_gating() -> None:
-    """Wrapper must gate on META_REPAIR_ENABLED and exit early when off."""
+    """The shipped meta-repair wrapper must fail closed on its L2 flags.
+
+    The legacy explicit-disable early gate keeps its text markers, and the
+    shipped wrapper bytes must exercise the centralized L2 predicate:
+    ARNOLD_AUTONOMY (master, default off) AND ARNOLD_META_REPAIR_ENABLED
+    (path) together authorize mutation.  Master off (default) or path off
+    denies; both on admits.  This node proves only shipped-wrapper bash
+    syntax and feature-flag gating — it makes no seven-invariant runtime
+    claim.
+    """
     text = _meta_repair_wrapper()
 
+    # Legacy explicit-disable early gate markers (unchanged behavior).
     assert 'META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"' in text
-    assert 'meta-repair disabled' in text
+    assert "meta-repair disabled" in text
     assert 'META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"' in text
-    assert '0|false|False|FALSE|no|No|NO|off|Off|OFF' in text
+    assert "0|false|False|FALSE|no|No|NO|off|Off|OFF" in text
+
+    # Fail-closed gating is enforced by the centralized L2 predicate at the
+    # wrapper's mutation-capable effect boundaries, never by combining flags
+    # at individual call sites.
+    assert "l2_mutation_authorized() {" in text
+    assert "mutation_authorized(MUTATION_PATH_L2)" in text
+    assert "&& l2_mutation_authorized;" in text
+    assert "elif ! l2_mutation_authorized; then" in text
+
+    # Execute the shipped predicate bytes across the fail-closed matrix.
+    # (master, path, expected_exit)
+    matrix = [
+        ("", "1", 1),  # master unset (default off) -> fail closed
+        ("0", "1", 1),  # master explicitly off -> fail closed
+        ("1", "0", 1),  # path off -> fail closed
+        ("1", "1", 0),  # master and path on -> authorized
+    ]
+    fn = _extract_meta_repair_function("l2_mutation_authorized")
+    for autonomy, path, expected in matrix:
+        env = _isolated_worker_env()
+        env["WRAPPER_REPO_ROOT"] = str(REPO_ROOT)
+        env["ARNOLD_SRC"] = str(REPO_ROOT)
+        env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
+        if autonomy:
+            env["ARNOLD_AUTONOMY"] = autonomy
+        env["ARNOLD_META_REPAIR_ENABLED"] = path
+        result = subprocess.run(
+            ["bash", "-c", f"{fn}\nl2_mutation_authorized"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == expected, (
+            f"autonomy={autonomy!r} path={path!r} -> rc={result.returncode} "
+            f"stderr={result.stderr!r}"
+        )
+
 
 
 def test_meta_repair_wrapper_has_recursion_guard() -> None:
@@ -20346,6 +20394,10 @@ def _build_meta_dispatch_script(
         # PYTHONPATH-based import contract must resolve from this repo instead.
         "unset -f python3 2>/dev/null || true",
         "unset ARNOLD_MANAGED_AGENT_DIFFICULTY_CEILING 2>/dev/null || true",
+        # The L2 centralized predicate (master-plus-path) must admit the
+        # authorized dispatch path exercised by these tests.
+        "export ARNOLD_AUTONOMY=1",
+        "export ARNOLD_META_REPAIR_ENABLED=1",
         _LOG_STUB,
         _REDACT_INLINE_STUB,
         _REPORT_ITEM_STUB,
@@ -20358,6 +20410,7 @@ def _build_meta_dispatch_script(
         _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
         _extract_wrapper_function("confirm_managed_agent_dispatch"),
         _extract_wrapper_function("dispatch_meta_repair"),
+        _extract_wrapper_function("l2_mutation_authorized"),
         _extract_wrapper_function("durable_operator_pause_active"),
         _extract_wrapper_function("child_agent_launch_authority_or_reject"),
         _extract_wrapper_function("kimi_dispatch_marker_path"),

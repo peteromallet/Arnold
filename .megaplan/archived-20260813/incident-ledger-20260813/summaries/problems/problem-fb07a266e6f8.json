@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-11T19:35:12.159024+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-maintenance"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 1,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-fb07a266e6f8",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 357,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-fb07a266e6f8: stale_active_step: plan=m1-containment-and-truthful-20260711-0021; state=finalized; phase=execute; worker_pid=3111410 not live"
+}

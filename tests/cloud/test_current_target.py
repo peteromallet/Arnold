@@ -1871,3 +1871,207 @@ def test_incoherent_evidence_matrix_is_non_green_and_non_dispatchable(
     assert record["positive_dispatch_requires_reread"]["custody"]["lease_epoch"] == (
         "must be reread from live source"
     )
+
+
+# ── M1 T9: production adapter signature drift guard ─────────────────────────
+
+def test_production_current_target_adapter_signature_is_pinned() -> None:
+    """The production current-target adapter signature is pinned.
+
+    Production consumers call ``resolve_current_target(session, marker_dir=...,
+    repair_data_dir=..., workspace_hint=...)``.  Any change to this call
+    contract (renaming, reordering, adding required parameters, or dropping a
+    keyword-only parameter) fails loudly here so consumers cannot silently
+    drift to a different evidence shape.
+    """
+    import inspect
+
+    sig = inspect.signature(resolve_current_target)
+    expected_order = [
+        "session",
+        "marker_dir",
+        "repair_data_dir",
+        "workspace_hint",
+        "session_is_live",
+        "pid_is_live",
+        "process_start_identity",
+        "observer_pid_namespace_id",
+        "source_cursor_vector",
+    ]
+    assert list(sig.parameters) == expected_order, (
+        f"resolve_current_target signature drifted; expected parameters "
+        f"{expected_order}, got {list(sig.parameters)}"
+    )
+    assert sig.parameters["session"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    for name in expected_order[1:]:
+        assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"{name} must stay keyword-only so positional callers cannot drift"
+        )
+    assert sig.parameters["marker_dir"].default is inspect.Parameter.empty
+    assert sig.parameters["repair_data_dir"].default is None
+    assert sig.parameters["workspace_hint"].default is None
+    assert sig.parameters["session_is_live"].default is None
+    assert sig.parameters["pid_is_live"].default is None
+    assert sig.parameters["process_start_identity"].default is None
+    assert sig.parameters["observer_pid_namespace_id"].default is None
+    assert sig.parameters["source_cursor_vector"].default is None
+
+
+# ── M1 T9: cross-environment and present-but-invalid namespace evidence ──────
+
+def _write_marker_with_environment(
+    marker_dir: Path,
+    session: str,
+    workspace: Path,
+    environment_value: str,
+) -> None:
+    _write_marker(
+        marker_dir / f"{session}.json",
+        {
+            "session": session,
+            "workspace": str(workspace),
+            "run_kind": "plan",
+            "plan_name": "m1-plan",
+            "maintenance_environment": environment_value,
+        },
+    )
+
+
+def test_cross_environment_marker_evidence_is_typed_unknown_non_dispatchable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A marker from a different maintenance environment is typed UNKNOWN.
+
+    The evidence can never become green or dispatchable: the observer resolves
+    ``production`` while the marker declares ``staging``, so the record is
+    typed ``cross_environment`` with mutation eligibility revoked.
+    """
+    monkeypatch.setenv("ARNOLD_MAINTENANCE_ENVIRONMENT", "production")
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    _write_marker_with_environment(marker_dir, "cross-env", workspace, "staging")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "m1-plan",
+        {"name": "m1-plan", "current_state": "executing"},
+    )
+
+    record = resolve_current_target(
+        "cross-env",
+        marker_dir=marker_dir,
+        workspace_hint=workspace,
+    )
+
+    state = record["evidence_state"]
+    assert state["status"] == "unknown"
+    assert state["unknown_type"] == "cross_environment"
+    assert "cross_environment_evidence" in state["issue_kinds"]
+    assert state["green"] is False
+    assert state["mutation_eligible"] is False
+    assert state["authorizes_mutation"] is False
+    assert record["evidence_gaps"]["maintenance_environment"]["gap"] == (
+        "cross_environment_evidence"
+    )
+    assert any("cross-environment evidence" in r for r in record["rationale"])
+
+
+def test_cross_environment_marker_with_unset_observer_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """A declared namespace cannot be confirmed without an observer identity.
+
+    When ``ARNOLD_MAINTENANCE_ENVIRONMENT`` is unset the observer cannot prove
+    the marker's declared namespace is its own, so the record fails closed as
+    typed UNKNOWN instead of turning green.
+    """
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    _write_marker_with_environment(marker_dir, "unset-observer", workspace, "production")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "m1-plan",
+        {"name": "m1-plan", "current_state": "executing"},
+    )
+
+    record = resolve_current_target(
+        "unset-observer",
+        marker_dir=marker_dir,
+        workspace_hint=workspace,
+    )
+
+    state = record["evidence_state"]
+    assert state["status"] == "unknown"
+    assert state["unknown_type"] == "cross_environment"
+    assert state["green"] is False
+    assert state["mutation_eligible"] is False
+    assert state["authorizes_mutation"] is False
+
+
+def test_same_environment_marker_stays_resolved(tmp_path: Path, monkeypatch) -> None:
+    """A marker whose declared namespace matches the observer stays resolved.
+
+    Positive control for the cross-environment gate: matching namespaces do
+    not fabricate a coherence failure.
+    """
+    monkeypatch.setenv("ARNOLD_MAINTENANCE_ENVIRONMENT", "production")
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    _write_marker_with_environment(marker_dir, "same-env", workspace, "production")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "m1-plan",
+        {"name": "m1-plan", "current_state": "executing"},
+    )
+
+    record = resolve_current_target(
+        "same-env",
+        marker_dir=marker_dir,
+        workspace_hint=workspace,
+    )
+
+    state = record["evidence_state"]
+    assert state["status"] == "resolved"
+    assert state["unknown_type"] == ""
+    assert state["green"] is False
+    assert state["authorizes_mutation"] is False
+    assert "cross_environment_evidence" not in state["issue_kinds"]
+
+
+def test_invalid_marker_environment_is_typed_unknown_non_green(
+    tmp_path: Path,
+) -> None:
+    """A present-but-invalid namespace alias fails closed as typed UNKNOWN.
+
+    ``prod`` is not one of the accepted maintenance environment namespaces
+    (production/staging/test/fixture), so the marker's environment claim is
+    present-but-invalid evidence: partial/UNKNOWN, never green or dispatchable.
+    """
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    _write_marker_with_environment(marker_dir, "bad-env", workspace, "prod")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "m1-plan",
+        {"name": "m1-plan", "current_state": "executing"},
+    )
+
+    record = resolve_current_target(
+        "bad-env",
+        marker_dir=marker_dir,
+        workspace_hint=workspace,
+    )
+
+    state = record["evidence_state"]
+    assert state["status"] == "unknown"
+    assert state["unknown_type"] == "partial"
+    assert "invalid_marker_environment" in state["issue_kinds"]
+    assert state["green"] is False
+    assert state["mutation_eligible"] is False
+    assert state["authorizes_mutation"] is False
+    assert record["evidence_gaps"]["maintenance_environment"]["gap"] == (
+        "invalid_marker_environment"
+    )

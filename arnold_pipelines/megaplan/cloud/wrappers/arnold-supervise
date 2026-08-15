@@ -69,6 +69,24 @@ authority_gap_continue() {
   return 0
 }
 
+# The supervised command may mutate plan state, source, commits, or remotes.
+# Check the shared predicate at the child-process boundary BEFORE runtime
+# attestation: the default-off (master-off) contract must be observable even
+# when the installed runtime attestation is stale (review finding
+# REVIEW-FOCUSED_CONTRACT_MODULES-001: exit 77 precedes any exit-78 path).
+l1_mutation_authorized() {
+  PYTHONPATH="${PYTHONPATH:-}:$SUPERVISE_SOURCE" python3 -B -c \
+    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
+}
+if ! l1_mutation_authorized; then
+  log "observed: L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
+  # Refusing the effect is not a successful launch.  A zero exit code is
+  # consumed by repair-loop as a durable mechanical-launch receipt and can
+  # falsely describe a command that never started as successful.
+  # A refused effect is not a successful launch receipt.
+  exit 77
+fi
+
 if [[ -n "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
   || "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-1}" == "1" ]]; then
   SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]}")/arnold-supervisor-runtime-lib"
@@ -185,11 +203,6 @@ PY
   return 1
 }
 
-l1_mutation_authorized() {
-  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 -B -c \
-    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
-}
-
 queue_repair_request() {
   local reason="$1"
   if [[ -z "$SUPERVISE_SESSION" || -z "$SUPERVISE_WORKSPACE" || -z "$SUPERVISE_REMOTE_SPEC" ]]; then
@@ -224,18 +237,6 @@ exit_with_repair_request() {
   log "repair queue result: $queue_result"
   exit 1
 }
-
-# The supervised command may mutate plan state, source, commits, or remotes.
-# Check the shared predicate at the child-process boundary; blocked supervisors
-# still emit an observation but do not start or describe work as dispatched.
-if ! l1_mutation_authorized; then
-  log "observed: L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
-  # Refusing the effect is not a successful launch.  A zero exit code is
-  # consumed by repair-loop as a durable mechanical-launch receipt and can
-  # falsely describe a command that never started as successful.
-  # A refused effect is not a successful launch receipt.
-  exit 77
-fi
 
 log "starting cmd: ${CMD[*]}"
 while true; do

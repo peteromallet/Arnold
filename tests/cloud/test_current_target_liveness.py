@@ -390,3 +390,76 @@ def test_legacy_classifier_is_explicitly_diagnostic_only() -> None:
     assert result["diagnostic_only"] is True
     assert result["authoritative"] is False
     assert result["control_permitted"] is False
+
+
+# ── M1 T15: cross-environment and present-but-invalid liveness negatives ──
+
+
+def test_cross_environment_evidence_is_unknown_and_not_dispatchable(
+    tmp_path: Path,
+) -> None:
+    """A marker bound to a foreign environment namespace stays UNKNOWN and never
+    permits control, mutation, escalation, or retrigger."""
+    marker = _marker(
+        tmp_path,
+        pid=4242,
+        pid_namespace_id="pid:[foreign]",
+        process_start_identity="boot-a:10",
+        maintenance_environment="staging",
+    )
+    observed = observe_current_target_liveness(
+        marker,
+        marker_dir=tmp_path,
+        observer_pid_namespace_id="pid:[resident-production]",
+        pid_is_live=lambda _pid: True,
+    )
+    assert observed["state"] == "unknown"
+    assert observed["provisional_liveness"] is False
+    assert observed["control_permitted"] is False
+    assert observed["mutation_permitted"] is False
+    assert observed["escalation_permitted"] is False
+    assert observed["retrigger_permitted"] is False
+
+
+def test_diagnostic_signals_never_emit_verified_recovery(tmp_path: Path) -> None:
+    """PID, tmux, heartbeat, lease, and subprocess success are diagnostic only."""
+    for signal in (
+        {"kind": "pid", "pid_alive": True},
+        {"kind": "tmux", "session_live": True},
+        {"kind": "heartbeat", "heartbeat_active": True},
+        {"kind": "lease", "lease_live": True},
+        {"kind": "subprocess_success", "returncode": 0},
+    ):
+        result = classify_repair_system_failure(
+            "demo",
+            current_target_observation={
+                "current_target_liveness": {
+                    "schema": SCHEMA,
+                    "state": "live",
+                    "known": True,
+                    "provisional_liveness": True,
+                },
+                "diagnostic_signals": [signal],
+            },
+            repair_budget_exhausted=True,
+            repair_outcome="repair_timeout",
+        )
+        assert "UNKNOWN" in result.rationale[0]
+        assert result.should_dispatch is False
+    # A live bound observation is provisional liveness only, never verified.
+    live = observe_current_target_liveness(
+        _marker(
+            tmp_path,
+            pid=4242,
+            pid_namespace_id="pid:[same]",
+            process_start_identity="boot-a:10",
+        ),
+        marker_dir=tmp_path,
+        observer_pid_namespace_id="pid:[same]",
+        pid_is_live=lambda _pid: True,
+        process_start_identity=lambda _pid: "boot-a:10",
+    )
+    assert live["state"] == "live"
+    assert live["provisional_liveness"] is True
+    assert live["source"] != "verified_recovery"
+    assert "verified" not in live["source"]

@@ -6391,6 +6391,11 @@ raise SystemExit(0 if isinstance(pause, dict) and pause.get("active") is True el
 PY
 }
 
+l2_mutation_authorized() {
+  PYTHONSAFEPATH=1 PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -P -c \
+    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L2, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L2) else 1)'
+}
+
 dispatch_meta_repair() {
   local session="$1"
   local workspace="$2"
@@ -6600,6 +6605,20 @@ PY
       log "runtime fallback_taken ledger write failed; blocking dispatch session=$session"
       return 1
     fi
+  fi
+
+  # L2 centralized predicate: the meta-repair child is a mutation-capable
+  # subprocess.  Master-plus-path authorization is required before the launch.
+  # A blocked launch still emits typed evidence (incident event + report item)
+  # and never suppresses the runtime-transition journal written above.
+  if ! l2_mutation_authorized; then
+    log "observed: L2 meta-repair dispatch blocked by master-plus-path authorization gate session=$session"
+    REPAIR_DISPATCH_RESULT="unauthorized"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair dispatch blocked by L2 master-plus-path authorization gate" "unauthorized" "meta_repair"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "meta_repair" "unauthorized" "meta-repair dispatch blocked by master-plus-path authorization gate" "$workspace" "$remote_spec"
+    fi
+    return 1
   fi
 
   # Background-dispatch meta-repair so it never blocks the watchdog tick

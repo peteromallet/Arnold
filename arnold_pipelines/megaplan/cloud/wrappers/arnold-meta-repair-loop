@@ -1691,7 +1691,7 @@ INSTALL_SYNC_EVENT_ID=""
 INSTALL_SYNC_EVENT_TYPE=""
 export INSTALL_SYNC_JSON="{}"
 
-if [[ "$VERDICT" == FIXED* && "$COMMIT_CUSTODY_ACCEPTED" == "true" ]]; then
+if [[ "$VERDICT" == FIXED* && "$COMMIT_CUSTODY_ACCEPTED" == "true" ]] && l2_mutation_authorized; then
   log "verdict=FIXED; checking for source commits before install sync"
 
   INSTALL_SYNC_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$ARNOLD_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
@@ -1763,8 +1763,14 @@ PY
   fi
 else
   if [[ "$VERDICT" == FIXED* ]]; then
-    INSTALL_SYNC_STATUS="commit_custody_failed"
-    export INSTALL_SYNC_JSON='{"status":"commit_custody_failed"}'
+    if ! l2_mutation_authorized; then
+      log "observed: L2 install sync blocked by master-plus-path authorization gate session=$SESSION (evidence retained)"
+      INSTALL_SYNC_STATUS="l2_gate_blocked"
+      export INSTALL_SYNC_JSON='{"status":"l2_gate_blocked","reason":"L2 master-plus-path authorization gate denied install sync"}'
+    else
+      INSTALL_SYNC_STATUS="commit_custody_failed"
+      export INSTALL_SYNC_JSON='{"status":"commit_custody_failed"}'
+    fi
   else
     export INSTALL_SYNC_JSON="{}"
   fi
@@ -1929,8 +1935,12 @@ export META_REPAIR_VERIFICATION_JSON='{}'
 # the canonical repair-data artifact.  Return-code 0 without verified
 # delegation outcome is treated as rejection (returncode 73).
 if [[ "$VERDICT" == FIXED* ]]; then
-  if [[ "$INSTALL_SYNC_STATUS" == "failed" || "$INSTALL_SYNC_STATUS" == "commit_custody_failed" ]]; then
+  if [[ "$INSTALL_SYNC_STATUS" == "failed" || "$INSTALL_SYNC_STATUS" == "commit_custody_failed" || "$INSTALL_SYNC_STATUS" == "l2_gate_blocked" ]]; then
     log "skipping retrigger: install sync or commit custody failed"
+  elif ! l2_mutation_authorized; then
+    log "observed: L2 ordinary retrigger blocked by master-plus-path authorization gate session=$SESSION (evidence retained)"
+    META_REPAIR_VERIFICATION_JSON='{"accepted":false,"rejection_reason":"L2 master-plus-path authorization gate denied retrigger","l2_gate_blocked":true}'
+    export META_REPAIR_VERIFICATION_JSON
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 

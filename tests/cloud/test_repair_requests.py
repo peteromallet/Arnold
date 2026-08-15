@@ -1579,6 +1579,37 @@ def test_enqueue_without_repair_identity_is_zero_authority_rejected(
     assert not lease_dir.exists()
 
 
+def test_enqueue_requires_environment_identity(tmp_path: Path) -> None:
+    """A repair identity whose custody target has no environment is rejected.
+
+    The queue requires an explicit environment identity on every occurrence:
+    a target with the ``environment`` F01 field missing normalizes to ``None``
+    and the enqueue fails closed with ``zero_authority_rejected`` — it never
+    writes a request that could later alias another environment's custody.
+    """
+
+    queue_dir = _queue_root(tmp_path)
+    identity = _repair_identity()
+    occurrence = dict(identity["occurrence"])  # type: ignore[arg-type]
+    target = dict(occurrence["target"])  # type: ignore[index]
+    target.pop("environment", None)
+    occurrence["target"] = target
+    environmentless = {**identity, "occurrence": occurrence}
+
+    result = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        problem_signature=_signature(blocked_task_id="env-required"),
+        root_cause_hint="same failure",
+        source="test",
+        repair_identity=environmentless,
+    )
+    assert repair_requests.normalize_repair_identity(environmentless) is None
+    assert result["status"] == "zero_authority_rejected"
+    assert result["outcome"] == "zero_authority_rejected"
+    assert repair_requests.iter_repair_requests(queue_dir) == []
+
+
 def test_enqueue_with_full_repair_identity_binds_shadow_lease(tmp_path: Path) -> None:
     """A full repair-identity tuple binds a real (non-synthetic) shadow lease."""
 
@@ -1672,5 +1703,192 @@ def test_pending_request_then_escalates_after_unclaimed_handoffs(tmp_path: Path)
         reason="no worker bound repair identity",
         max_retries=2,
     )
-    assert final["status"] == "alerted"
-    assert final["alert"]["decision"] == "claim_alert"
+    assert final['status'] == 'alerted'
+    assert final['alert']['decision'] == 'claim_alert'
+
+
+# ── M1 T14: custody negatives (fencing, coalescing, recurrence, replay) ──
+
+from arnold_pipelines.megaplan.custody.lease_store import (  # noqa: E402
+    LeaseStoreError,
+    open_lease_store,
+)
+
+
+def test_claim_rejects_stale_fence_from_older_custody_epoch(tmp_path: Path) -> None:
+    """A strictly older custody fence cannot claim or reclaim the occurrence."""
+    queue_dir = _queue_root(tmp_path)
+    request = _claimable_request(
+        queue_dir, blocked_task_id='fence-stale', repair_identity=_repair_identity(attempt_number=2)
+    )
+    newer_identity = _repair_identity(attempt_number=2)
+    first = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id=str(request['blocker_id']),
+        request_id=str(request['request_id']),
+        actor='trigger-newer',
+        session='demo-session',
+        pid=os.getpid(),
+        is_pid_live=lambda pid: True,
+        repair_identity=newer_identity,
+    )
+    assert first.claimed
+
+    # A stale fence (older custody epoch) is refused: no second owner, no
+    # mutation, and the original owner stays in place.
+    stale_identity = _repair_identity(attempt_number=1)
+    stale = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id=str(request['blocker_id']),
+        request_id=str(request['request_id']),
+        actor='trigger-stale',
+        session='demo-session',
+        pid=os.getpid() + 1,
+        is_pid_live=lambda pid: True,
+        repair_identity=stale_identity,
+    )
+    assert not stale.claimed
+    assert stale.status in {'busy', 'stale', 'already_claimed'}
+    assert stale.evidence is not None
+    # The original owner stays in place — exactly one owner, never replaced.
+    owner = json.loads((first.lock_dir / 'owner.json').read_text(encoding='utf-8'))
+    assert owner['actor'] == 'trigger-newer'
+
+
+def test_stale_lease_renewal_with_older_epoch_is_rejected(tmp_path: Path) -> None:
+    """A lease cannot be renewed with an older custody epoch (old-epoch fencing)."""
+    store = open_lease_store(tmp_path / 'leases')
+    store.acquire(
+        lease_id='lease-fenced',
+        owner_host='host-a',
+        owner_pid='111',
+        owner_boot_id='boot-a',
+        run_authority_grant_id='grant-a',
+        coordinator_fence_token=1,
+        wbc_attempt_reference='wbc:1',
+        occurrence_digest='digest-a',
+        custody_epoch=2,
+        sequence=1,
+        occurred_at='2026-07-10T10:00:00Z',
+        expires_at='2026-07-10T11:00:00Z',
+    )
+    with pytest.raises(LeaseStoreError, match='not strictly greater'):
+        store.renew(
+            lease_id='lease-fenced',
+            owner_host='host-a',
+            owner_pid='111',
+            owner_boot_id='boot-a',
+            custody_epoch=1,
+            occurred_at='2026-07-10T10:01:00Z',
+            expires_at='2026-07-10T11:01:00Z',
+        )
+
+
+def test_duplicate_occurrence_enqueue_coalesces_to_one_request(tmp_path: Path) -> None:
+    """One occurrence coalesces into one request and one claimable identity."""
+    queue_dir = _queue_root(tmp_path)
+    occurrence = _repair_identity(attempt_number=1)
+    signature = _signature(blocked_task_id='occ-dup')
+    first = repair_requests.enqueue_occurrence_bound_repair_request(
+        queue_root=queue_dir,
+        session='demo-session',
+        problem_signature=signature,
+        root_cause_hint='same occurrence',
+        source='watchdog',
+        occurrence_identity=occurrence,
+    )
+    duplicate = repair_requests.enqueue_occurrence_bound_repair_request(
+        queue_root=queue_dir,
+        session='demo-session',
+        problem_signature=signature,
+        root_cause_hint='same occurrence again',
+        source='watchdog',
+        occurrence_identity=occurrence,
+    )
+    assert first['status'] == 'queued'
+    assert duplicate['status'] == 'coalesced'
+    assert duplicate['decision']['related_request_id'] == first['request']['request_id']
+    request_files = sorted(repair_requests.requests_dir(queue_dir).glob('*.json'))
+    assert len(request_files) == 1
+
+
+def test_verified_recurrence_mints_causally_linked_fresh_occurrence(
+    tmp_path: Path,
+) -> None:
+    """A verified recurrence forms a fresh causally linked occurrence, never a rewrite."""
+    queue_dir = _queue_root(tmp_path)
+    signature = _signature(blocked_task_id='recurring-blocker')
+    first = repair_requests.enqueue_occurrence_bound_repair_request(
+        queue_root=queue_dir,
+        session='demo-session',
+        problem_signature=signature,
+        root_cause_hint='initial occurrence',
+        source='watchdog',
+        occurrence_identity=_repair_identity(attempt_number=1),
+    )
+    assert first['status'] == 'queued'
+    first_bytes = Path(first['path']).read_bytes()
+
+    # A verified recurrence (fresh custody epoch, same blocker) is a NEW
+    # occurrence with a causal predecessor link — not a coalesce.
+    recurrence = repair_requests.enqueue_occurrence_bound_repair_request(
+        queue_root=queue_dir,
+        session='demo-session',
+        problem_signature=signature,
+        root_cause_hint='recurrence after verified recovery',
+        source='watchdog',
+        occurrence_identity=_repair_identity(attempt_number=2),
+    )
+    assert recurrence['status'] == 'queued'
+    assert recurrence['request']['request_id'] != first['request']['request_id']
+    # Causally linked: the recurrence shares the same blocker fingerprint and
+    # signature key (same underlying failure) but is a distinct fresh occurrence.
+    assert recurrence['request']['blocker_id'] == first['request']['blocker_id']
+    assert (
+        recurrence['request']['problem_signature_key']
+        == first['request']['problem_signature_key']
+    )
+    # The original occurrence record is untouched (append-only custody).
+    assert Path(first['path']).read_bytes() == first_bytes
+    assert {record['request_id'] for record in repair_requests.iter_repair_requests(queue_dir)} == {
+        first['request']['request_id'],
+        recurrence['request']['request_id'],
+    }
+
+
+def test_correction_replay_is_append_only_and_never_rewrites_history(
+    tmp_path: Path,
+) -> None:
+    """Correction-based replay appends decisions; the original record never changes."""
+    queue_dir = _queue_root(tmp_path)
+    first = _enqueue(
+        queue_root=queue_dir,
+        session='demo-session',
+        source='lifecycle_failure',
+        problem_signature=_signature(blocked_task_id='replay-correct'),
+        root_cause_hint='original misdiagnosis',
+        created_at='2026-07-01T00:00:00Z',
+    )
+    assert first['status'] == 'queued'
+    request_path = Path(first['path'])
+    original_bytes = request_path.read_bytes()
+
+    corrected = _enqueue(
+        queue_root=queue_dir,
+        session='demo-session',
+        source='lifecycle_failure',
+        problem_signature=_signature(blocked_task_id='replay-correct'),
+        root_cause_hint='corrected diagnosis after replay',
+        created_at='2026-07-01T00:05:00Z',
+    )
+    assert corrected['status'] == 'coalesced'
+    assert request_path.read_bytes() == original_bytes
+    decisions = repair_requests.write_decision(
+        queue_dir,
+        request_id=str(first['request']['request_id']),
+        decision='superseded_by_correction',
+        reason='correction replay recorded without rewriting history',
+        created_at='2026-07-01T00:06:00Z',
+    )
+    assert decisions['decision_id']
+    assert request_path.read_bytes() == original_bytes

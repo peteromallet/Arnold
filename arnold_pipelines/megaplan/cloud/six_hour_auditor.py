@@ -24,7 +24,9 @@ from hashlib import sha256
 import json
 import math
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, TypeVar
+
+_ProcessT = TypeVar("_ProcessT")
 
 from arnold_pipelines.megaplan.cloud.repair_contract import append_incident_record
 from arnold_pipelines.megaplan.cloud.repair_requests import (
@@ -171,6 +173,233 @@ def validate_audit_model_inputs(environ: dict[str, str]) -> str:
             f"six-hour auditor model pin conflict: {rendered}; required={AUDIT_CODEX_MODEL}"
         )
     return AUDIT_CODEX_MODEL
+
+
+# ── Step 15C (M1 T12): receipt-derived automatic-launch guards ───────────
+# Automatic maintenance launch is safe only when it is backed by a durable
+# preinitialized dispatch receipt, an exact receipt-proven runtime model, and
+# non-conflicting environment pins.  Once any action has started, report_only
+# is permanently falsified — even when receipt finalization or reconciliation
+# fails, the started action stays factual and the explicit indeterminate
+# receipt state is preserved.
+
+
+class AuditDispatchError(RuntimeError):
+    """A six-hour auditor dispatch guard refused an automatic launch.
+
+    Carries the truthful durable receipt state when one exists so callers can
+    surface the refusal without inventing model or launch facts.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        receipt: "AutomaticDispatchReceipt | None" = None,
+    ) -> None:
+        super().__init__(message)
+        self.receipt = receipt
+
+
+def audit_dispatch_receipt_root(plan_dir: str | Path) -> Path:
+    """Return the durable dispatch-receipt directory for an audit plan."""
+    return Path(plan_dir) / "dispatch_receipts"
+
+
+def require_preinitialized_audit_receipt(
+    plan_dir: str | Path,
+    dispatch_id: str,
+) -> "AutomaticDispatchReceipt":
+    """Return the durable preinitialized receipt or refuse automatic launch.
+
+    A preinitialized receipt is the durable snapshot with ``sequence >= 1``,
+    ``outcome == \"initialized\"`` and ``subprocess_started is False``.  A
+    missing snapshot, an uninitialized snapshot, or a snapshot that already
+    started is a launch-blocking condition: the auditor must never launch a
+    maintenance subprocess from inferred or replayed state.
+    """
+    from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path
+
+    snapshot_path = dispatch_receipt_path(Path(plan_dir), dispatch_id)
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AuditDispatchError(
+            f"six-hour auditor launch refused: no durable preinitialized receipt "
+            f"for dispatch {dispatch_id!r} ({snapshot_path}): {exc}"
+        ) from exc
+    if not isinstance(snapshot, dict):
+        raise AuditDispatchError(
+            f"six-hour auditor launch refused: receipt {dispatch_id!r} is not a mapping"
+        )
+    if int(snapshot.get("sequence") or 0) < 1:
+        raise AuditDispatchError(
+            f"six-hour auditor launch refused: receipt {dispatch_id!r} is not initialized",
+            receipt=snapshot,
+        )
+    if snapshot.get("outcome") != "initialized":
+        raise AuditDispatchError(
+            f"six-hour auditor launch refused: receipt {dispatch_id!r} is not in the "
+            f"preinitialized state (outcome={snapshot.get('outcome')!r})",
+            receipt=snapshot,
+        )
+    if snapshot.get("subprocess_started") is not False:
+        raise AuditDispatchError(
+            f"six-hour auditor launch refused: receipt {dispatch_id!r} already started",
+            receipt=snapshot,
+        )
+    return snapshot
+
+
+def require_receipt_proven_runtime_model(
+    receipt: "AutomaticDispatchReceipt",
+) -> str:
+    """Require the exact receipt-proven runtime model ``gpt-5.6-sol``.
+
+    Profile names, configured-intent strings, and conflicting environment pins
+    are never proof.  Only the resolved runtime model durably recorded in the
+    dispatch receipt at the subprocess-start transition counts, and it must
+    equal exactly ``gpt-5.6-sol``.
+    """
+    resolved = receipt.get("resolved_runtime_model")
+    if resolved != AUDIT_CODEX_MODEL:
+        raise AuditDispatchError(
+            "six-hour auditor launch refused: receipt-proven runtime model must be "
+            f"exactly {AUDIT_CODEX_MODEL!r}, got {resolved!r}",
+            receipt=receipt,
+        )
+    return resolved
+
+
+def validate_audit_launch_guards(
+    plan_dir: str | Path,
+    dispatch_id: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> "AutomaticDispatchReceipt":
+    """Pre-launch guard: non-conflicting pins and a durable preinitialized receipt.
+
+    Raises :class:`AuditDispatchError` (or ``ValueError`` for a model pin
+    conflict) before any launch is attempted.
+    """
+    validate_audit_model_inputs(dict(environ or {}))
+    return require_preinitialized_audit_receipt(plan_dir, dispatch_id)
+
+
+def launch_audit_maintenance_dispatch(
+    plan_dir: str | Path,
+    receipt: "AutomaticDispatchReceipt",
+    launch: Callable[[], _ProcessT],
+    *,
+    resolved_runtime_model: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> tuple["AutomaticDispatchReceipt", _ProcessT]:
+    """Launch an automatic maintenance subprocess only behind all audit guards.
+
+    The receipt must already be durably preinitialized (the wrapper
+    initializes it before dispatch); this boundary then:
+
+    1. rejects conflicting model pins (``ValueError``);
+    2. refuses the launch unless the durable snapshot is preinitialized —
+       ``AuditDispatchError`` blocks before any subprocess effect;
+    3. refuses the launch unless the resolved runtime model is exactly
+       ``gpt-5.6-sol`` — configured intent is never proof;
+    4. only then launches the subprocess and durably records the start
+       transition with the receipt-proven model.
+
+    Any post-launch persistence failure surfaces the explicit indeterminate
+    receipt state (``subprocess_started=True``) through
+    :class:`arnold_pipelines.megaplan.receipts.writer.DispatchFinalizationError`
+    and permanently falsifies ``report_only`` for this dispatch.
+    """
+    from arnold_pipelines.megaplan.cloud.maintenance_dispatch import (
+        record_maintenance_started,
+    )
+
+    validate_audit_model_inputs(dict(environ or {}))
+    require_preinitialized_audit_receipt(plan_dir, receipt["dispatch_id"])
+    if resolved_runtime_model != AUDIT_CODEX_MODEL:
+        raise AuditDispatchError(
+            "six-hour auditor launch refused: resolved runtime model must be exactly "
+            f"{AUDIT_CODEX_MODEL!r}, got {resolved_runtime_model!r}",
+            receipt=receipt,
+        )
+    process = launch()
+    started = record_maintenance_started(
+        Path(plan_dir),
+        receipt,
+        resolved_runtime_model=resolved_runtime_model,
+    )
+    return started, process
+
+
+def audit_reconciliation_receipt(
+    plan_dir: str | Path,
+    dispatch_id: str,
+    *,
+    failure_receipt: "AutomaticDispatchReceipt | None" = None,
+) -> "AutomaticDispatchReceipt | None":
+    """Return the latest durable lifecycle record for a dispatch, unchanged.
+
+    Reconciliation never rewrites history: the latest durable record is
+    returned verbatim.  When a caller caught a post-launch receipt failure
+    (``DispatchFinalizationError``), its explicit indeterminate receipt is
+    preserved and returned instead when it is at least as new as the durable
+    record — the indeterminate state is surfaced, never erased or downgraded
+    to report-only.  ``None`` means no durable record exists (a read-only
+    audit run).
+    """
+    journal_path = audit_dispatch_receipt_root(plan_dir) / "lifecycle.jsonl"
+    latest: "AutomaticDispatchReceipt | None" = None
+    if journal_path.exists():
+        for line in journal_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict) and record.get("dispatch_id") == dispatch_id:
+                latest = record
+    if failure_receipt is not None and failure_receipt.get("dispatch_id") == dispatch_id:
+        durable_sequence = int(latest.get("sequence") or 0) if latest else 0
+        if int(failure_receipt.get("sequence") or 0) >= durable_sequence:
+            return dict(failure_receipt)
+    return latest
+
+
+def audit_report_only(
+    plan_dir: str | Path,
+    dispatch_id: str | None = None,
+) -> bool:
+    """Return whether the six-hour auditor run is still report-only.
+
+    ``report_only`` is ``True`` only while no action has ever started.  Once
+    any durable lifecycle record for the dispatch carries
+    ``subprocess_started=True`` — including an explicit ``indeterminate``
+    record left by a failed finalization or reconciliation — it is permanently
+    falsified and stays ``False`` for every later call.  A missing receipt
+    directory (read-only run) remains ``True``.
+    """
+    journal_path = audit_dispatch_receipt_root(plan_dir) / "lifecycle.jsonl"
+    if not journal_path.exists():
+        return True
+    for line in journal_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        if dispatch_id is not None and record.get("dispatch_id") != dispatch_id:
+            continue
+        if record.get("subprocess_started") is True:
+            return False
+    return True
 
 
 # ── Step 46 (T32): canonical occurrence identity helpers ───────────────

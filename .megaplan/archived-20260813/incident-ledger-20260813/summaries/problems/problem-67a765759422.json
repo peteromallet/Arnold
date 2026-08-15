@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-11T19:35:12.156522+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-maintenance"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 10,
+  "owner_actor": "six_hour_auditor",
+  "problem_id": "problem-67a765759422",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 361,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-67a765759422: repair-data outcome=repairing kind=chain workspace=/workspace/megaplan-maintenance/Arnold"
+}

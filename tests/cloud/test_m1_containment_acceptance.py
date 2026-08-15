@@ -499,3 +499,169 @@ def test_auditor_ordinary_finding_stays_report_only_without_true_stall_gate(
     assert summary["mode"] == "report_only"
     assert summary["model_dispatched"] is False
     assert report["data_quality"]["canonical_launch_disagreements"]
+
+
+# ── NSA-4 static guards (planned exact selectors, SD2) ──────────────────
+# These two nodes are the planned NSA-4 acceptance selectors:
+#   * test_no_cloud_conftest_keyword_collection_hook
+#   * test_mutation_effect_boundaries_are_explicit_at_call_sites
+# They must remain exactly named so the missing-selector bookkeeping in
+# test_blast_radius.missing_test_selectors resolves, and they must stay
+# collectible without any conftest keyword narrowing.
+
+#: Recognized broad or generic allow-all patterns that can never serve as an
+#: explicit mutation-effect boundary.  The static map below must never contain
+#: one of these as a boundary value.
+RECOGNIZED_BROAD_ALLOW_ALL_PATTERNS = frozenset(
+    {
+        "",
+        "*",
+        "**",
+        ".*",
+        "ALL",
+        "ANY",
+        "all",
+        "any",
+        "everything",
+        "allow_all",
+        "allow-all",
+        "allowlist",
+        "permit_all",
+        "permit-all",
+    }
+)
+
+#: Concrete L1/L2/L3 wrapper call sites: level -> wrapper name ->
+#: (gating function name, literal predicate text).  Every value is a literal;
+#: no glob or generic matcher is admitted.
+WRAPPER_MUTATION_CALL_SITES: dict[str, dict[str, tuple[str, str]]] = {
+    "L1": {
+        "arnold-supervise": (
+            "l1_mutation_authorized",
+            "mutation_authorized(MUTATION_PATH_L1)",
+        ),
+        "arnold-repair-trigger": (
+            "requested_mutation_path",
+            "feature_flags.mutation_authorized(path)",
+        ),
+        "arnold-repair-loop": (
+            "l1_mutation_authorized",
+            "mutation_authorized(MUTATION_PATH_L1)",
+        ),
+    },
+    "L2": {
+        "arnold-meta-repair-loop": (
+            "l2_mutation_authorized",
+            "mutation_authorized(MUTATION_PATH_L2)",
+        ),
+        "arnold-watchdog": (
+            "l2_mutation_authorized",
+            "mutation_authorized(MUTATION_PATH_L2)",
+        ),
+    },
+    "L3": {
+        "arnold-progress-auditor": (
+            "audit_autofix_mutation_authorized",
+            "audit_autofix_mutation_authorized",
+        ),
+    },
+}
+
+#: Concrete Python call sites that consume the centralized mutation predicate
+#: at an explicit effect boundary: module path -> literal predicate text.
+#: Each module exists on disk and contains the literal call.
+PYTHON_MUTATION_CALL_SITES: dict[str, str] = {
+    "arnold_pipelines/megaplan/cloud/manual_repair_trigger.py": (
+        "feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1)"
+    ),
+    "arnold_pipelines/megaplan/cloud/supervise.py": (
+        "feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1)"
+    ),
+    "arnold_pipelines/megaplan/cloud/meta_repair_policy.py": (
+        "feature_flags.mutation_authorized(\n        feature_flags.MUTATION_PATH_L2"
+    ),
+    "arnold_pipelines/megaplan/cloud/meta_repair.py": (
+        "feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L2)"
+    ),
+    "arnold_pipelines/megaplan/cloud/feature_flags.py": (
+        "MUTATION_PATH_L3: audit_autofix_enabled"
+    ),
+}
+
+
+def _assert_literal_boundary(level: str, name: str, boundary: str) -> None:
+    """Reject broad or generic allow-all patterns as an effect boundary."""
+    assert boundary not in RECOGNIZED_BROAD_ALLOW_ALL_PATTERNS, (
+        f"{level} boundary {name!r} uses a recognized broad allow-all pattern"
+    )
+    assert "*" not in boundary, (
+        f"{level} boundary {name!r} uses a glob pattern instead of a literal call"
+    )
+
+
+def test_no_cloud_conftest_keyword_collection_hook() -> None:
+    """NSA-4 node 1: no conftest collection narrowing may hide acceptance nodes.
+
+    The planned NSA-4 selectors must remain collectible through the exact
+    module path.  A ``tests/cloud/conftest.py`` that rewrites collection
+    (``pytest_collection_modifyitems``), applies a keyword filter, or sets
+    ``__test__ = False`` would be able to mask them, so none may exist.
+    """
+    conftest_path = REPO_ROOT / "tests" / "cloud" / "conftest.py"
+    if conftest_path.exists():
+        text = conftest_path.read_text(encoding="utf-8")
+        assert "pytest_collection_modifyitems" not in text
+        assert "pytest_collection" not in text
+        assert "__test__ = False" not in text
+        assert "keyword" not in text
+    module = sys.modules[__name__]
+    assert getattr(module, "__test__", True) is not False
+    for selector in (
+        "test_no_cloud_conftest_keyword_collection_hook",
+        "test_mutation_effect_boundaries_are_explicit_at_call_sites",
+    ):
+        assert callable(globals()[selector]), f"planned NSA-4 selector missing: {selector}"
+
+
+def test_mutation_effect_boundaries_are_explicit_at_call_sites() -> None:
+    """NSA-4 node 2: every known L1/L2/L3 effect boundary is explicit.
+
+    The authoritative July 10 audit is unavailable, so this enumeration is the
+    provisional reconciliation bridge recorded in
+    :data:`PROVISIONAL_AUDIT_MAPPING` and must not be reported as exact.  Each
+    wrapper and Python call site below is concrete: a literal gating function
+    and a literal predicate, never a glob or a generic allow-all matcher.
+    """
+    # 1. Every known level has a non-empty concrete wrapper call-site map.
+    assert set(WRAPPER_MUTATION_CALL_SITES) == {"L1", "L2", "L3"}
+    for level, sites in WRAPPER_MUTATION_CALL_SITES.items():
+        assert sites, f"{level} wrapper call-site map must not be empty"
+        for wrapper_name, (gate_function, predicate) in sites.items():
+            _assert_literal_boundary(level, wrapper_name, gate_function)
+            _assert_literal_boundary(level, wrapper_name, predicate)
+            wrapper_path = WRAPPER_DIR / wrapper_name
+            assert wrapper_path.exists(), f"missing shipped wrapper: {wrapper_path}"
+            text = wrapper_path.read_text(encoding="utf-8")
+            assert gate_function in text, (
+                f"{wrapper_path} no longer defines gate function {gate_function!r}"
+            )
+            assert predicate in text, (
+                f"{wrapper_path} no longer contains literal predicate {predicate!r}"
+            )
+
+    # 2. Every known Python call site exists on disk and still contains its
+    #    literal predicate at the effect boundary.
+    for python_path, predicate in PYTHON_MUTATION_CALL_SITES.items():
+        _assert_literal_boundary("python", python_path, predicate)
+        full_path = REPO_ROOT / python_path
+        assert full_path.exists(), f"missing python call site: {full_path}"
+        text = full_path.read_text(encoding="utf-8")
+        assert predicate in text, (
+            f"{full_path} no longer contains literal predicate {predicate!r}"
+        )
+
+    # 3. The mapping is provisional pending the July 10 audit reconciliation.
+    assert PROVISIONAL_AUDIT_MAPPING["rank-1"] == "l1_master_plus_path_gate"
+    assert PROVISIONAL_AUDIT_MAPPING["rank-2"] == "l2_master_plus_path_gate"
+    assert PROVISIONAL_AUDIT_MAPPING["rank-3"] == "l3_master_plus_path_gate"
+    assert "must be reconciled before M1 is declared complete" in " ".join(__doc__.split())

@@ -89,6 +89,10 @@ class AutomaticDispatchReceipt(TypedDict):
     sequence: int
     failure_stage: NotRequired[str | None]
     detail: NotRequired[str | None]
+    # Maintenance-only markers.  Populated only by the strict maintenance
+    # dispatch adapter; the generic writer ignores them.
+    maintenance: NotRequired[bool]
+    required_runtime_model: NotRequired[str | None]
 
 
 def _hash_if_present(path: Path) -> list[str]:

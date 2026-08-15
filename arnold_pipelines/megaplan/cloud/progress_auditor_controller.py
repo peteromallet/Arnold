@@ -19,6 +19,13 @@ import re
 import time
 from typing import Any
 
+from arnold_pipelines.megaplan.cloud.maintenance_dispatch import (
+    MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+    MaintenanceModelEnforcementError,
+    finalize_maintenance_dispatch_receipt,
+    prepare_maintenance_dispatch_receipt,
+    record_maintenance_started,
+)
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     EscalationPolicy,
     bounded_repair_context,
@@ -34,7 +41,15 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
 )
 from arnold_pipelines.megaplan.cloud.repair_contract import append_escalation_record
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+    AUDIT_CODEX_MODEL,
+    AuditDispatchError,
     enqueue_audit_repair_request,
+    validate_audit_model_inputs,
+)
+from arnold_pipelines.megaplan.receipts.writer import (
+    DispatchFinalizationError,
+    DispatchInitializationError,
+    initialize_dispatch_receipt,
 )
 from arnold_pipelines.megaplan.chain.spec import (
     chain_spec_sha256 as _chain_spec_sha256,
@@ -483,6 +498,8 @@ def run_escalation_controller(
     policy: EscalationPolicy | None = None,
     transition_writer: RuntimeTransitionWriter | None = None,
     chain_spec_sha256: str = "",
+    dispatch_receipt_root: Path | None = None,
+    resolved_runtime_model: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate findings and, if authorized, invoke canonical repair custody.
 
@@ -811,7 +828,49 @@ def run_escalation_controller(
                 finalize_record(record)
                 continue
 
+            # T13: prelaunch receipt initialization.  The maintenance
+            # subprocess may launch only behind a durable initialized dispatch
+            # receipt, an exact receipt-proven runtime model, and
+            # non-conflicting pins.  Initialization failure blocks the launch;
+            # conflicting pins and wrong/missing resolved-model evidence fail
+            # visibly before any subprocess effect.
+            dispatch_receipt = None
+            if dispatch_receipt_root is not None:
+                validate_audit_model_inputs(dict(os.environ))
+                if resolved_runtime_model != MAINTENANCE_REQUIRED_RUNTIME_MODEL:
+                    raise AuditDispatchError(
+                        "l3 escalation dispatch refused: receipt-proven runtime "
+                        f"model must be exactly {MAINTENANCE_REQUIRED_RUNTIME_MODEL!r}, "
+                        f"got {resolved_runtime_model!r}",
+                    )
+                dispatch_receipt = initialize_dispatch_receipt(
+                    dispatch_receipt_root,
+                    prepare_maintenance_dispatch_receipt(
+                        action="l3_escalation_dispatch",
+                        configured_model=MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+                    ),
+                )
+                record["dispatch_receipt_root"] = str(dispatch_receipt_root)
+                record["dispatch_id"] = dispatch_receipt["dispatch_id"]
+                finding["dispatch_receipt_root"] = str(dispatch_receipt_root)
+                finding["dispatch_id"] = dispatch_receipt["dispatch_id"]
+
             trigger = runner([*trigger_argv, "--request-id", request_id])
+
+            # The subprocess-start transition is recorded with the resolved
+            # runtime model the moment launch returns.  A persistence failure
+            # surfaces the explicit indeterminate receipt and never downgrades
+            # the started action back to report-only.
+            if dispatch_receipt is not None:
+                try:
+                    dispatch_receipt = record_maintenance_started(
+                        dispatch_receipt_root,
+                        dispatch_receipt,
+                        resolved_runtime_model=resolved_runtime_model,
+                    )
+                except DispatchFinalizationError as exc:
+                    record["dispatch_receipt_error"] = str(exc)
+                    record["dispatch_receipt_indeterminate"] = dict(exc.receipt)
             event = _trigger_event(trigger.stdout, request_id)
             record["trigger_returncode"] = trigger.returncode
             record["trigger_event"] = event
@@ -892,6 +951,42 @@ def run_escalation_controller(
                 active_global += 1
                 session = str(gate.get("session") or "")
                 active_by_session[session] = active_by_session.get(session, 0) + 1
+            # T13: close the dispatch receipt with explicit mutation facts.
+            # The launch itself performed no state/source/commit/push mutation;
+            # those facts are recorded explicitly rather than inferred.  Any
+            # post-launch receipt failure leaves the explicit indeterminate
+            # receipt on the record, so a started action is never downgraded.
+            if dispatch_receipt is not None:
+                receipt_outcome = (
+                    "succeeded"
+                    if (
+                        trigger.returncode == 0
+                        and event.get("status") == "dispatched"
+                        and launch["valid"]
+                    )
+                    else "failed"
+                )
+                try:
+                    finalize_maintenance_dispatch_receipt(
+                        dispatch_receipt_root,
+                        dispatch_receipt,
+                        outcome=receipt_outcome,
+                        resolved_runtime_model=resolved_runtime_model,
+                        mutation_facts={
+                            "state": False,
+                            "source": False,
+                            "commit": False,
+                            "push": False,
+                        },
+                        detail=(
+                            "l3 escalation dispatch subprocess returned "
+                            f"{trigger.returncode}; launch evidence "
+                            f"{'established' if receipt_outcome == 'succeeded' else 'not established'}"
+                        ),
+                    )
+                except (DispatchFinalizationError, MaintenanceModelEnforcementError) as exc:
+                    record["dispatch_receipt_error"] = str(exc)
+                    record["dispatch_receipt_indeterminate"] = dict(exc.receipt)
             _atomic_json(path, state)
             finalize_record(record)
 
@@ -925,6 +1020,8 @@ def run_file_controller(
     trigger_argv: Sequence[str] | None,
     transition_writer: RuntimeTransitionWriter | None = None,
     chain_spec_sha256: str = "",
+    dispatch_receipt_root: Path | None = None,
+    resolved_runtime_model: str | None = None,
 ) -> dict[str, Any]:
     payload = _load_json(findings_path)
     result = run_escalation_controller(
@@ -935,6 +1032,8 @@ def run_file_controller(
         trigger_argv=trigger_argv,
         transition_writer=transition_writer,
         chain_spec_sha256=chain_spec_sha256,
+        dispatch_receipt_root=dispatch_receipt_root,
+        resolved_runtime_model=resolved_runtime_model,
     )
     _atomic_json(findings_path, result)
     return result

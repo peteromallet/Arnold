@@ -1,0 +1,23 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-11T19:35:12.157652+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-maintenance",
+    "inc-megaplan-north-star-sense-checks-revise-design",
+    "inc-superfixer-alive-but-failed-recovery"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 4,
+  "owner_actor": "immediate_repair",
+  "problem_id": "problem-72f87afd3954",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 352,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-72f87afd3954: repair-data outcome=partial_liveness kind=chain workspace=/workspace/superfixer-alive-but-failed-recovery/Arnold"
+}

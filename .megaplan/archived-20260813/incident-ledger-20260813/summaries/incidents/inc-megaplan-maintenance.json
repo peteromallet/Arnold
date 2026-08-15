@@ -1,0 +1,282 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 53,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260711T013229Z-audit.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260711T013229Z-audit.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260711T013229Z-audit.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260711T013229Z-audit.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260711T073231Z-audit.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260711T073231Z-audit.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-maintenance",
+      "status": "2026-07-11T00:24:01.345809+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-maintenance",
+      "status": "2026-07-11T00:24:01.345809+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-maintenance",
+      "status": "2026-07-11T01:42:03.050313+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-maintenance",
+      "status": "2026-07-11T01:42:03.050313+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-maintenance",
+      "status": "2026-07-11T10:31:06.770261+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-maintenance",
+      "status": "2026-07-11T10:31:06.770261+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-maintenance.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-maintenance.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-maintenance.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-maintenance.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-maintenance.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-maintenance.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/2368baa9-9463-4110-a146-509774e98731.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/2368baa9-9463-4110-a146-509774e98731.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stale_active_step"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T011720Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T011720Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T013357Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T013357Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T072625Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T072625Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T073413Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T073413Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T123338Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T123338Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T133411Z.json",
+      "session_id": "megaplan-maintenance"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T133411Z.json",
+      "session_id": "megaplan-maintenance"
+    }
+  ],
+  "generated_at": "2026-07-11T19:35:12.151419+00:00",
+  "incident_id": "inc-megaplan-maintenance",
+  "kind": "incident_summary",
+  "latest_actor": "six_hour_auditor",
+  "next_expected_event": null,
+  "outcome": "auditor_human_escalation",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-67a765759422",
+    "problem-72f87afd3954",
+    "problem-e20c45ae0eb0",
+    "problem-fb07a266e6f8",
+    "problem-fc037a661409"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 361,
+    "projection": "incidents"
+  },
+  "state": "six_hour_auditor.audit_complete",
+  "summary_text": "inc-megaplan-maintenance: Audit found 2 blocking layer(s) for inc-megaplan-maintenance: resolver_confidence:resolver_low_confidence, github_sync:github_sync_publish_due."
+}

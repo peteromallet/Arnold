@@ -1,0 +1,41 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 4,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-11T19:35:12.154404+00:00",
+  "incident_id": "inc-superfixer-alive-but-failed-recovery",
+  "kind": "incident_summary",
+  "latest_actor": "immediate_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "outcome": "partial_liveness",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-72f87afd3954",
+    "problem-bef9405c197d"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 202,
+    "projection": "incidents"
+  },
+  "state": "repair_attempt",
+  "summary_text": "inc-superfixer-alive-but-failed-recovery: repair-data outcome=partial_liveness kind=chain workspace=/workspace/superfixer-alive-but-failed-recovery/Arnold"
+}

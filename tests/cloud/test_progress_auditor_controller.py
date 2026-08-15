@@ -854,3 +854,230 @@ def test_controller_enqueue_with_injected_seam_uses_provided_writer_and_digest(
         "runtime.fallback_considered",
     ]
     assert events[0]["chain_spec_sha256"] == digest
+
+
+# ── T13: prelaunch receipt initialization, exact model truth, explicit
+# ── mutation facts, and non-report-only state after any launch marker.
+
+
+def _receipt_snapshot(receipt_root: Path, dispatch_id: str) -> dict:
+    return json.loads(
+        (receipt_root / "dispatch_receipts" / f"{dispatch_id}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+def test_controller_initializes_maintenance_receipt_before_subprocess(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import audit_report_only
+
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    receipt_root = tmp_path / "receipt-root"
+    finding = _true_stall()
+    manifest_path = tmp_path / "workspace" / "manifest.json"
+    init_observed: list[bool] = []
+
+    def runner(argv):
+        # Receipt must already be durably initialized before the subprocess runs.
+        init_observed.append(
+            bool(list((receipt_root / "dispatch_receipts").glob("*.identity")))
+        )
+        request_id = argv[-1]
+        from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+            classify_true_stall,
+        )
+
+        gate = classify_true_stall(finding)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = _valid_manifest(gate)
+        manifest.update(
+            {
+                "run_id": "managed-receipt-run",
+                "manifest_path": str(manifest_path),
+                "status": "running",
+            }
+        )
+        manifest["links"]["repair_request_id"] = request_id
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return TriggerResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "dispatched",
+                    "request_id": request_id,
+                    "managed_run_id": "managed-receipt-run",
+                    "managed_manifest_path": str(manifest_path),
+                }
+            ),
+            stderr="",
+        )
+
+    result = run_escalation_controller(
+        {"findings": [finding], "green_checks": []},
+        state_root=tmp_path / "audit-escalations",
+        queue_root=queue,
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+        transition_writer=RuntimeTransitionWriter(tmp_path / "ledger-receipt"),
+        chain_spec_sha256="sha256:" + "0" * 64,
+        dispatch_receipt_root=receipt_root,
+        resolved_runtime_model="gpt-5.6-sol",
+    )
+
+    item = result["l3_escalation_summary"]["items"][0]
+    assert item["decision"] == "dispatched"
+    assert item["repair_dispatched"] is True
+    assert init_observed == [True], (
+        "the receipt must be durably initialized before the subprocess launches"
+    )
+    assert item["dispatch_receipt_root"] == str(receipt_root)
+    assert item["dispatch_id"]
+    snapshot = _receipt_snapshot(receipt_root, item["dispatch_id"])
+    assert snapshot["subprocess_started"] is True
+    assert snapshot["resolved_runtime_model"] == "gpt-5.6-sol"
+    assert snapshot["outcome"] == "succeeded"
+    assert snapshot["mutation_facts"] == {
+        "state": False, "source": False, "commit": False, "push": False,
+    }
+    assert audit_report_only(receipt_root, item["dispatch_id"]) is False
+
+
+def test_controller_receipt_initialization_failure_blocks_subprocess(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.receipts.writer import DispatchInitializationError
+
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    receipt_root = tmp_path / "receipt-root"
+    receipt_root.write_text("not a directory", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv):
+        calls.append(list(argv))
+        return TriggerResult(returncode=0, stdout="{}", stderr="")
+
+    with pytest.raises(DispatchInitializationError):
+        run_escalation_controller(
+            {"findings": [_true_stall()], "green_checks": []},
+            state_root=tmp_path / "audit-escalations",
+            queue_root=queue,
+            authorized=True,
+            trigger_argv=["repair-trigger"],
+            trigger_runner=runner,
+            transition_writer=RuntimeTransitionWriter(tmp_path / "ledger-init-block"),
+            chain_spec_sha256="sha256:" + "0" * 64,
+            dispatch_receipt_root=receipt_root,
+            resolved_runtime_model="gpt-5.6-sol",
+        )
+    assert calls == [], (
+        "the subprocess must never launch when receipt initialization fails"
+    )
+
+
+def test_controller_rejects_receipt_unproven_runtime_model(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import AuditDispatchError
+
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    receipt_root = tmp_path / "receipt-root"
+    calls: list[list[str]] = []
+
+    def runner(argv):
+        calls.append(list(argv))
+        return TriggerResult(returncode=0, stdout="{}", stderr="")
+
+    with pytest.raises(AuditDispatchError, match="gpt-5.6-sol"):
+        run_escalation_controller(
+            {"findings": [_true_stall()], "green_checks": []},
+            state_root=tmp_path / "audit-escalations",
+            queue_root=queue,
+            authorized=True,
+            trigger_argv=["repair-trigger"],
+            trigger_runner=runner,
+            transition_writer=RuntimeTransitionWriter(tmp_path / "ledger-model"),
+            chain_spec_sha256="sha256:" + "0" * 64,
+            dispatch_receipt_root=receipt_root,
+            resolved_runtime_model="deepseek:deepseek-v4-pro",
+        )
+    assert calls == [], "a non-gpt-5.6-sol dispatch must never launch"
+    assert not (receipt_root / "dispatch_receipts").exists()
+
+
+def test_controller_rejects_conflicting_model_pins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    receipt_root = tmp_path / "receipt-root"
+    calls: list[list[str]] = []
+    monkeypatch.setenv("CODEX_MODEL", "some-other-model")
+
+    def runner(argv):
+        calls.append(list(argv))
+        return TriggerResult(returncode=0, stdout="{}", stderr="")
+
+    with pytest.raises(ValueError, match="model pin conflict"):
+        run_escalation_controller(
+            {"findings": [_true_stall()], "green_checks": []},
+            state_root=tmp_path / "audit-escalations",
+            queue_root=queue,
+            authorized=True,
+            trigger_argv=["repair-trigger"],
+            trigger_runner=runner,
+            transition_writer=RuntimeTransitionWriter(tmp_path / "ledger-pins"),
+            chain_spec_sha256="sha256:" + "0" * 64,
+            dispatch_receipt_root=receipt_root,
+            resolved_runtime_model="gpt-5.6-sol",
+        )
+    assert calls == [], "conflicting pins must block the subprocess launch"
+    assert not (receipt_root / "dispatch_receipts").exists()
+
+
+def test_controller_launch_failure_finalizes_receipt_failed_with_explicit_facts(
+    tmp_path: Path,
+) -> None:
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    receipt_root = tmp_path / "receipt-root"
+
+    def runner(argv):
+        request_id = argv[-1]
+        return TriggerResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "launch_failed",
+                    "request_id": request_id,
+                    "managed_run_id": "managed-missing",
+                    "managed_manifest_path": str(tmp_path / "missing-manifest.json"),
+                }
+            ),
+            stderr="no manifest",
+        )
+
+    result = run_escalation_controller(
+        {"findings": [_true_stall()], "green_checks": []},
+        state_root=tmp_path / "audit-escalations",
+        queue_root=queue,
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+        transition_writer=RuntimeTransitionWriter(tmp_path / "ledger-launch-fail-receipt"),
+        chain_spec_sha256="sha256:" + "0" * 64,
+        dispatch_receipt_root=receipt_root,
+        resolved_runtime_model="gpt-5.6-sol",
+    )
+
+    item = result["l3_escalation_summary"]["items"][0]
+    assert item["decision"] == "launch_failed"
+    assert item["repair_dispatched"] is False
+    assert item["dispatch_id"]
+    snapshot = _receipt_snapshot(receipt_root, item["dispatch_id"])
+    assert snapshot["subprocess_started"] is True
+    assert snapshot["resolved_runtime_model"] == "gpt-5.6-sol"
+    assert snapshot["outcome"] == "failed"
+    assert snapshot["mutation_facts"] == {
+        "state": False, "source": False, "commit": False, "push": False,
+    }

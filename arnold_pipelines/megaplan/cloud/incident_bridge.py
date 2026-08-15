@@ -24,6 +24,7 @@ Event types covered
 
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -31,6 +32,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+from arnold_pipelines.megaplan.cloud.maintenance_environment import (
+    MAINTENANCE_ENVIRONMENT_ENV_VAR,
+    MaintenanceEnvironmentError,
+    resolve_maintenance_environment,
+)
 
 # ---------------------------------------------------------------------------
 # Event-id prefix per helper so callers can trace provenance without a
@@ -223,8 +229,47 @@ def _resolve_root(root: Path | str | None) -> Path:
     return Path.cwd()
 
 
-def _append(root: Path | str | None, event: dict[str, Any]) -> dict[str, Any]:
-    """Validate and append *event* to the incident ledger, return the envelope."""
+def _resolve_incident_environment(explicit: str | None) -> str:
+    """Resolve the maintenance environment namespace for one bridge write.
+
+    The explicit *maintenance_environment* argument wins, then the
+    ``ARNOLD_MAINTENANCE_ENVIRONMENT`` env value.  A declared namespace that
+    is not ``production`` is rejected by the caller — it must never alias the
+    production incident store.  Legacy pre-M1 callers that declare neither
+    channel keep their production-store lineage via the documented default;
+    every emitted event still carries an explicit
+    ``maintenance_environment`` field so no write is ever identity-less.
+    """
+    if explicit is not None:
+        return resolve_maintenance_environment(explicit=explicit)
+    raw = os.environ.get(MAINTENANCE_ENVIRONMENT_ENV_VAR)
+    if raw:
+        return resolve_maintenance_environment(explicit=raw)
+    return "production"
+
+
+def _append(
+    root: Path | str | None,
+    event: dict[str, Any],
+    *,
+    maintenance_environment: str | None = None,
+) -> dict[str, Any]:
+    """Validate and append *event* to the incident ledger, return the envelope.
+
+    Every write carries explicit maintenance environment identity.  Only the
+    ``production`` namespace may target the central production incident store;
+    a declared test, staging, or fixture namespace fails closed instead of
+    aliasing production, and no write is ever environment-less.
+    """
+    environment = _resolve_incident_environment(maintenance_environment)
+    if environment != "production":
+        raise ValueError(
+            "incident-bridge writes target only the production incident store; "
+            f"maintenance environment {environment!r} is not production and "
+            "cannot alias production custody"
+        )
+    event = dict(event)
+    event["maintenance_environment"] = environment
     writer = IncidentStoreWriter.production(
         _resolve_root(root), identity="production:incident_bridge"
     )
@@ -265,6 +310,7 @@ def append_watchdog_detection(
     next_expected_event: str | None = "watchdog.dispatch",
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a watchdog *detection* event, e.g. failure-marker observed."""
     event: dict[str, Any] = {
@@ -289,7 +335,7 @@ def append_watchdog_detection(
         event["problem_id"] = problem_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_watchdog_dispatch(
@@ -306,6 +352,7 @@ def append_watchdog_dispatch(
     next_expected_event: str | None = "immediate_repair.repair_attempt",
     decision: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a watchdog *dispatch* event, e.g. repair-loop launched."""
     event: dict[str, Any] = {
@@ -330,7 +377,7 @@ def append_watchdog_dispatch(
         event["problem_id"] = problem_id
     if decision is not None:
         event["decision"] = decision
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +397,7 @@ def append_managed_repair_claim(
     next_expected_event: str = "immediate_repair.repair_attempt",
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append the formal claim made by a real managed repair execution."""
 
@@ -376,7 +424,7 @@ def append_managed_repair_claim(
         event["problem_id"] = problem_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_immediate_repair_attempt(
@@ -395,6 +443,7 @@ def append_immediate_repair_attempt(
     actions: list[dict[str, Any]] | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append an immediate-repair *attempt* event."""
     event: dict[str, Any] = {
@@ -424,7 +473,7 @@ def append_immediate_repair_attempt(
         event["actions"] = actions
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +495,7 @@ def append_meta_repair_classification(
     decision: dict[str, Any] | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a meta-repair *classification* event.
 
@@ -476,7 +526,7 @@ def append_meta_repair_classification(
         event["decision"] = decision
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_meta_repair_attempt(
@@ -495,6 +545,7 @@ def append_meta_repair_attempt(
     actions: list[dict[str, Any]] | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a meta-repair *attempt* event (the repair action itself)."""
     event: dict[str, Any] = {
@@ -524,7 +575,7 @@ def append_meta_repair_attempt(
         event["actions"] = actions
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_next_three_hour_auditor_diagnosis(
@@ -542,6 +593,7 @@ def append_next_three_hour_auditor_diagnosis(
     decision: dict[str, Any] | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a next-three-hour auditor diagnosis event.
 
@@ -579,7 +631,7 @@ def append_next_three_hour_auditor_diagnosis(
         event["decision"] = decision
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_next_three_hour_auditor_audit_complete(
@@ -597,6 +649,7 @@ def append_next_three_hour_auditor_audit_complete(
     decision: dict[str, Any] | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a next-three-hour auditor audit_complete handoff event.
 
@@ -638,7 +691,7 @@ def append_next_three_hour_auditor_audit_complete(
         event["decision"] = decision
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ── Legacy six-hour wrappers (compatibility only) ──────────────────────
@@ -659,6 +712,7 @@ def append_six_hour_auditor_diagnosis(
     decision: dict[str, Any] | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Legacy compatibility wrapper — prefer :func:`append_next_three_hour_auditor_diagnosis`.
 
@@ -698,7 +752,7 @@ def append_six_hour_auditor_diagnosis(
         event["decision"] = decision
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_six_hour_auditor_audit_complete(
@@ -716,6 +770,7 @@ def append_six_hour_auditor_audit_complete(
     decision: dict[str, Any] | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Legacy compatibility wrapper — prefer :func:`append_next_three_hour_auditor_audit_complete`.
 
@@ -759,7 +814,7 @@ def append_six_hour_auditor_audit_complete(
         event["decision"] = decision
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +834,7 @@ def append_install_sync_applied(
     deadline_ts: str | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append an *install_sync_applied* event providing runtime-identity evidence.
 
@@ -808,7 +864,7 @@ def append_install_sync_applied(
         event["problem_id"] = problem_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_install_sync_failed(
@@ -823,6 +879,7 @@ def append_install_sync_failed(
     deadline_ts: str | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append an *install_sync_failed* event.
 
@@ -852,7 +909,7 @@ def append_install_sync_failed(
         event["problem_id"] = problem_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ---------------------------------------------------------------------------
@@ -872,6 +929,7 @@ def append_repair_retriggered(
     deadline_ts: str | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a *repair_retriggered* event after install sync succeeded."""
     event: dict[str, Any] = {
@@ -896,7 +954,7 @@ def append_repair_retriggered(
         event["problem_id"] = problem_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ---------------------------------------------------------------------------
@@ -917,6 +975,7 @@ def append_verified_recovered(
     deadline_ts: str | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a *verified_recovered* event only from blocker-specific proof."""
     from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -957,7 +1016,7 @@ def append_verified_recovered(
         event["problem_id"] = problem_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_recovery_observation(
@@ -972,6 +1031,7 @@ def append_recovery_observation(
     trigger_event_id: str | None = None,
     deadline_ts: str | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Project recovery evidence without promoting provisional/unknown states."""
     from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -996,6 +1056,7 @@ def append_recovery_observation(
             trigger_event_id=trigger_event_id,
             deadline_ts=deadline_ts,
             root=root,
+            maintenance_environment=maintenance_environment,
         )
 
     typed_outcome = (
@@ -1017,6 +1078,7 @@ def append_recovery_observation(
         trigger_event_id=trigger_event_id,
         deadline_ts=deadline_ts,
         root=root,
+        maintenance_environment=maintenance_environment,
     )
 
 
@@ -1037,6 +1099,7 @@ def append_github_issue_published(
     next_expected_event: str | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a successful GitHub issue publication event."""
     _require_handoff(
@@ -1077,7 +1140,7 @@ def append_github_issue_published(
         event["session_id"] = session_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_github_issue_publish_failed(
@@ -1096,6 +1159,7 @@ def append_github_issue_publish_failed(
     next_expected_event: str | None = "github_sync.retry",
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a failed GitHub issue publication event."""
     _require_handoff(
@@ -1135,7 +1199,7 @@ def append_github_issue_publish_failed(
         event["session_id"] = session_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1220,7 @@ def append_chain_lifecycle(
     next_expected_event: str | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a chain-runner *lifecycle* event (milestone start, plan prepare, etc.).
 
@@ -1185,7 +1250,7 @@ def append_chain_lifecycle(
         event["session_id"] = session_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 def append_dispatch_expired(
@@ -1199,6 +1264,7 @@ def append_dispatch_expired(
     deadline_ts: str | None = None,
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
+    maintenance_environment: str | None = None,
 ) -> dict[str, Any]:
     """Append a *dispatch_expired* evidence event.
 
@@ -1228,7 +1294,7 @@ def append_dispatch_expired(
         event["session_id"] = session_id
     if links is not None:
         event["links"] = links
-    return _append(root, event)
+    return _append(root, event, maintenance_environment=maintenance_environment)
 
 
 # ---------------------------------------------------------------------------

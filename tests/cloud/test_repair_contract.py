@@ -1190,6 +1190,7 @@ def test_outcome_constants_are_well_defined() -> None:
     assert repair_contract.PROGRESSED == "progressed"
     assert repair_contract.LIVE_WITH_FRESH_ACTIVITY == "live_with_fresh_activity"
     assert repair_contract.TRUE_HUMAN_BLOCKER == "true_human_blocker"
+    assert repair_contract.PROVISIONAL_LIVENESS == "provisional_liveness"
     assert repair_contract.PARTIAL_LIVENESS == "partial_liveness"
     assert repair_contract.REPAIRING == "repairing"
     assert repair_contract.REPAIR_TIMEOUT == "repair_timeout"
@@ -1207,13 +1208,34 @@ def test_success_outcomes_match_planned_lattice() -> None:
 
 def test_non_success_outcomes_include_liveness_and_exhaustion() -> None:
     assert "live_with_fresh_activity" in repair_contract.NON_SUCCESS_OUTCOMES
-    assert "partial_liveness" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "provisional_liveness" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_timeout" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_exhausted" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "needs_human" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repairing" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "discord_escalated" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "environment_gone" in repair_contract.NON_SUCCESS_OUTCOMES
+
+
+def test_provisional_liveness_is_non_success_and_non_terminal() -> None:
+    """The canonical liveness-only outcome never authorizes success or closure."""
+    assert repair_contract.PROVISIONAL_LIVENESS not in repair_contract.SUCCESS_OUTCOMES
+    assert repair_contract.PROVISIONAL_LIVENESS in repair_contract.NON_SUCCESS_OUTCOMES
+    assert repair_contract.PROVISIONAL_LIVENESS in repair_contract.NON_TERMINAL_OUTCOMES
+    assert not repair_contract.is_success_outcome(repair_contract.PROVISIONAL_LIVENESS)
+    assert not repair_contract.is_terminal_outcome(repair_contract.PROVISIONAL_LIVENESS)
+
+
+def test_legacy_partial_liveness_reads_as_provisional() -> None:
+    """Historical ``partial_liveness`` records stay readable, never success."""
+    assert repair_contract.LEGACY_OUTCOME_ALIASES["partial_liveness"] == (
+        repair_contract.PROVISIONAL_LIVENESS
+    )
+    assert repair_contract.normalize_repair_outcome("partial_liveness") == (
+        repair_contract.PROVISIONAL_LIVENESS
+    )
+    assert not repair_contract.is_success_outcome("partial_liveness")
+    assert not repair_contract.is_terminal_outcome("partial_liveness")
 
 
 def test_environment_gone_outcome_is_terminal_and_non_success() -> None:
@@ -1258,6 +1280,7 @@ def test_live_with_fresh_activity_constant_loadable_but_non_success() -> None:
 def test_is_terminal_outcome() -> None:
     assert repair_contract.is_terminal_outcome("complete")
     assert not repair_contract.is_terminal_outcome("partial_liveness")
+    assert not repair_contract.is_terminal_outcome("provisional_liveness")
     assert not repair_contract.is_terminal_outcome("live_with_fresh_activity")
     assert not repair_contract.is_terminal_outcome("recurring_retry_pending")
     assert repair_contract.is_terminal_outcome("repair_timeout")
@@ -1266,6 +1289,76 @@ def test_is_terminal_outcome() -> None:
     assert not repair_contract.is_terminal_outcome("repairing")
     # Unknown values are treated as terminal (not "repairing")
     assert repair_contract.is_terminal_outcome("bogus")
+
+
+def test_normalize_repair_outcome_accepts_canonical_values() -> None:
+    for outcome in repair_contract.ALL_OUTCOMES:
+        assert repair_contract.normalize_repair_outcome(outcome) == outcome
+
+
+def test_normalize_repair_outcome_maps_legacy_alias() -> None:
+    assert (
+        repair_contract.normalize_repair_outcome("partial_liveness")
+        == repair_contract.PROVISIONAL_LIVENESS
+    )
+
+
+@pytest.mark.parametrize("outcome", ["bogus", "", "  ", "success", "fixed", "verified"])
+def test_normalize_repair_outcome_rejects_unknown(outcome: str) -> None:
+    with pytest.raises(ValueError):
+        repair_contract.normalize_repair_outcome(outcome)
+
+
+def test_closed_outcome_lattice_is_partitioned() -> None:
+    assert repair_contract.ALL_OUTCOMES == (
+        repair_contract.SUCCESS_OUTCOMES | repair_contract.NON_SUCCESS_OUTCOMES
+    )
+    assert repair_contract.SUCCESS_OUTCOMES.isdisjoint(
+        repair_contract.NON_SUCCESS_OUTCOMES
+    )
+    # Non-terminal outcomes are a subset of non-success outcomes (nothing
+    # non-terminal may count as success).
+    assert repair_contract.NON_TERMINAL_OUTCOMES <= repair_contract.NON_SUCCESS_OUTCOMES
+    assert repair_contract.PROVISIONAL_LIVENESS in repair_contract.NON_TERMINAL_OUTCOMES
+
+
+def test_current_target_liveness_projects_provisional_liveness(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        observe_current_target_liveness,
+    )
+
+    marker = {
+        "session": "demo",
+        "workspace": str(tmp_path / "workspace"),
+        "pid": 4242,
+        "pid_namespace_id": "pid:[same]",
+        "process_start_identity": "boot-a:10",
+    }
+    observed = observe_current_target_liveness(
+        marker,
+        marker_dir=tmp_path,
+        observer_pid_namespace_id="pid:[same]",
+        pid_is_live=lambda _pid: True,
+        process_start_identity=lambda _pid: "boot-a:10",
+    )
+
+    assert observed["state"] == "live"
+    assert observed["provisional_liveness"] is True
+
+
+def test_unknown_liveness_does_not_project_provisional_liveness(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        observe_current_target_liveness,
+    )
+
+    observed = observe_current_target_liveness(
+        {"session": "demo", "workspace": str(tmp_path / "workspace")},
+        marker_dir=tmp_path,
+        observer_pid_namespace_id="pid:[same]",
+    )
+
+    assert observed["state"] == "unknown"
+    assert observed["provisional_liveness"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1377,13 +1470,13 @@ def test_classify_progressed_beats_fresh_and_blocker() -> None:
 
 
 def test_classify_fresh_activity_beats_blocker_and_liveness() -> None:
-    """Fresh activity is now partial_liveness (non-success), not a success outcome."""
+    """Fresh activity is now provisional_liveness (non-success), not a success outcome."""
     outcome = repair_contract.classify_verification_outcome(
         has_fresh_activity=True,
         has_true_human_blocker=True,
         is_live=True,
     )
-    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert outcome == repair_contract.PROVISIONAL_LIVENESS
     assert not repair_contract.is_success_outcome(outcome)
 
 
@@ -1397,10 +1490,10 @@ def test_classify_true_human_blocker_beats_liveness() -> None:
     )
 
 
-def test_classify_liveness_only_becomes_partial_liveness() -> None:
-    """The critical semantic: held tmux with no delta is partial_liveness, NOT success."""
+def test_classify_liveness_only_becomes_provisional_liveness() -> None:
+    """The critical semantic: held tmux with no delta is provisional_liveness, NOT success."""
     outcome = repair_contract.classify_verification_outcome(is_live=True)
-    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert outcome == repair_contract.PROVISIONAL_LIVENESS
     assert not repair_contract.is_success_outcome(outcome)
 
 
@@ -1412,7 +1505,7 @@ def test_classify_liveness_only_with_no_flags_is_not_success() -> None:
         has_fresh_activity=False,
         has_true_human_blocker=False,
     )
-    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert outcome == repair_contract.PROVISIONAL_LIVENESS
     assert not repair_contract.is_success_outcome(outcome)
 
 
@@ -1440,7 +1533,7 @@ def test_classify_every_outcome_reachable() -> None:
     )
     assert (
         repair_contract.classify_verification_outcome(has_fresh_activity=True)
-        == repair_contract.PARTIAL_LIVENESS
+        == repair_contract.PROVISIONAL_LIVENESS
     )
     assert (
         repair_contract.classify_verification_outcome(has_true_human_blocker=True)
@@ -1448,7 +1541,7 @@ def test_classify_every_outcome_reachable() -> None:
     )
     assert (
         repair_contract.classify_verification_outcome(is_live=True)
-        == repair_contract.PARTIAL_LIVENESS
+        == repair_contract.PROVISIONAL_LIVENESS
     )
     assert (
         repair_contract.classify_verification_outcome()
@@ -2517,3 +2610,43 @@ def test_dispatch_decision_kind_pending_decision_is_registered() -> None:
         "dispatch_l1_repair",
         "broken_superfixer",
     }
+
+
+# ── M1 T14: repair-actor self-verification rejection ────────────────────
+
+
+def test_repair_actor_cannot_verify_itself() -> None:
+    """A repair actor's own liveness/outcome claims never verify recovery."""
+    evidence = _verified_recovery_evidence()
+    # The exact same observation, but the repair actor verifies itself: the
+    # observation is not independent and is not a later blocker-specific proof.
+    self_observation = dict(evidence["observation"])
+    self_observation["actor"] = "arnold-repair-loop"
+    self_observation["independent"] = False
+    result = repair_contract.classify_recovery_verification(
+        original_blocker=evidence["original_blocker"],
+        observation=self_observation,
+        repair_completed_at=evidence["repair_completed_at"],
+    )
+    assert result["status"] == repair_contract.RECOVERY_UNKNOWN
+    assert result["unknown_type"] == "partial"
+    assert result["recovery_verified"] is False
+    assert result["authorizes_verified_recovered"] is False
+    assert "not independent" in result["reason"]
+
+    # PID/tmux/heartbeat/subprocess-success signals from the repair actor are
+    # provisional-only and can never authorize verified recovery either.
+    for signal in (
+        {"kind": "pid", "pid_alive": True},
+        {"kind": "tmux", "session_live": True},
+        {"kind": "heartbeat", "heartbeat_active": True},
+        {"kind": "lease", "lease_live": True},
+        {"kind": "subprocess_success", "returncode": 0},
+    ):
+        provisional = repair_contract.classify_recovery_verification(
+            original_blocker=evidence["original_blocker"],
+            observation=signal,
+            repair_completed_at=evidence["repair_completed_at"],
+        )
+        assert provisional["status"] == repair_contract.RECOVERY_PROVISIONAL
+        assert provisional["authorizes_verified_recovered"] is False

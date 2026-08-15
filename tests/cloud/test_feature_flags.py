@@ -394,6 +394,57 @@ class TestMutationAuthorization:
         with _set_env(ARNOLD_AUTONOMY="1"):
             assert mutation_authorized("unknown") is False
 
+    @pytest.mark.parametrize("path,path_env", _MUTATION_PATHS)
+    def test_observation_predicates_remain_usable_with_autonomy_off(
+        self, path: str, path_env: str
+    ) -> None:
+        """Observation/reporting predicates stay usable with ARNOLD_AUTONOMY=0.
+
+        The master-off release default must block mutation on every known path
+        while resolver observe, redaction, repair-request-queue markers, and
+        resolver enforcement remain available — observation and reporting are
+        deliberately outside the mutation authorization contract.
+        """
+        with _set_env(
+            ARNOLD_AUTONOMY="0",
+            **{path_env: "1"},
+        ):
+            assert mutation_authorized(path) is False
+            assert resolver_observe_enabled() is True
+            assert redaction_enabled() is True
+            assert repair_request_queue_enabled() is True
+            assert resolver_enforcement_enabled() is True
+
+    @pytest.mark.parametrize("path,path_env", _MUTATION_PATHS)
+    def test_rollback_disables_action_without_erasing_observations(
+        self, path: str, path_env: str
+    ) -> None:
+        """Rolling a previously-open gate back to off immediately disables
+        action while observation and reporting predicates stay available."""
+        with _set_env(
+            ARNOLD_AUTONOMY="1",
+            **{path_env: "1"},
+        ):
+            assert mutation_authorized(path) is True
+        # Master rollback: autonomy flipped off, path gate still on.
+        with _set_env(
+            ARNOLD_AUTONOMY="0",
+            **{path_env: "1"},
+        ):
+            assert mutation_authorized(path) is False
+            assert resolver_observe_enabled() is True
+            assert repair_request_queue_enabled() is True
+            assert redaction_enabled() is True
+        # Path rollback: autonomy still on, path gate flipped off.
+        with _set_env(
+            ARNOLD_AUTONOMY="1",
+            **{path_env: "0"},
+        ):
+            assert mutation_authorized(path) is False
+            assert resolver_observe_enabled() is True
+            assert repair_request_queue_enabled() is True
+            assert redaction_enabled() is True
+
 
 # ---------------------------------------------------------------------------
 # Integration: EscalationLedgerWriter respects the centralized flag

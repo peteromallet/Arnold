@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-11T19:35:12.159258+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-maintenance"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 1,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-fc037a661409",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:25a8690ba6f82a87ff3504b4aa4cd28038ae933545094967a11dbe8d969c498e",
+    "last_seq": 355,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-fc037a661409: meta-repair background-dispatched"
+}

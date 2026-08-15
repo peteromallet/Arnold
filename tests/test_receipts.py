@@ -9,6 +9,14 @@ from unittest import mock
 import pytest
 
 from arnold_pipelines.megaplan.receipts import writer
+from arnold_pipelines.megaplan.cloud.maintenance_dispatch import (
+    MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+    MaintenanceModelEnforcementError,
+    finalize_maintenance_dispatch_receipt,
+    initialize_and_launch_maintenance_dispatch,
+    prepare_maintenance_dispatch_receipt,
+    record_maintenance_started,
+)
 
 
 def _prepared(dispatch_id: str = "dispatch-001") -> writer.AutomaticDispatchReceipt:
@@ -267,3 +275,120 @@ def test_unrelated_telemetry_remains_best_effort(
         receipt.to_dict.return_value = {"boundary_id": "automatic-dispatch"}
         receipt.boundary_id = "automatic-dispatch"
         writer.write_boundary_receipt(tmp_path / "plan", receipt)
+
+
+# ---------------------------------------------------------------------------
+# Strict maintenance dispatch adapter
+# ---------------------------------------------------------------------------
+
+
+def _prepared_maintenance(dispatch_id: str = "maint-001") -> writer.AutomaticDispatchReceipt:
+    return prepare_maintenance_dispatch_receipt(
+        action="automatic-maintenance",
+        configured_model="configured-model",
+        dispatch_id=dispatch_id,
+        created_at_utc="2026-07-10T00:00:00+00:00",
+    )
+
+
+def test_maintenance_receipt_marks_required_model() -> None:
+    receipt = _prepared_maintenance()
+    assert receipt["maintenance"] is True
+    assert receipt["required_runtime_model"] == MAINTENANCE_REQUIRED_RUNTIME_MODEL
+    assert receipt["resolved_runtime_model"] is None
+
+
+def test_maintenance_start_records_resolved_model(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    initialized = writer.initialize_dispatch_receipt(plan_dir, _prepared_maintenance())
+    started = record_maintenance_started(
+        plan_dir,
+        initialized,
+        resolved_runtime_model=MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+    )
+    assert started["subprocess_started"] is True
+    assert started["resolved_runtime_model"] == MAINTENANCE_REQUIRED_RUNTIME_MODEL
+
+
+def test_maintenance_success_requires_gpt_5_6_sol(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    initialized = writer.initialize_dispatch_receipt(plan_dir, _prepared_maintenance())
+    started = record_maintenance_started(
+        plan_dir,
+        initialized,
+        resolved_runtime_model=MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+    )
+    final = finalize_maintenance_dispatch_receipt(
+        plan_dir,
+        started,
+        outcome="succeeded",
+        mutation_facts={"state": True, "source": True, "commit": False, "push": False},
+    )
+    assert final["outcome"] == "succeeded"
+    assert final["resolved_runtime_model"] == MAINTENANCE_REQUIRED_RUNTIME_MODEL
+
+
+@pytest.mark.parametrize("model", [None, "gpt-5.4", "gpt-5.6", "claude-sonnet-4"])
+def test_maintenance_success_rejected_unless_gpt_5_6_sol(
+    tmp_path: Path, model: str | None
+) -> None:
+    plan_dir = tmp_path / "plan"
+    initialized = writer.initialize_dispatch_receipt(plan_dir, _prepared_maintenance())
+    started = record_maintenance_started(
+        plan_dir, initialized, resolved_runtime_model=model
+    )
+    with pytest.raises(MaintenanceModelEnforcementError):
+        finalize_maintenance_dispatch_receipt(
+            plan_dir,
+            started,
+            outcome="succeeded",
+            mutation_facts={"state": True, "source": False, "commit": False, "push": False},
+        )
+    # Rejection happens before the durable transition, so no succeeded state.
+    assert [event["outcome"] for event in _journal(plan_dir)] == ["initialized", "running"]
+
+
+def test_maintenance_non_success_outcomes_still_finalize(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    initialized = writer.initialize_dispatch_receipt(plan_dir, _prepared_maintenance())
+    started = record_maintenance_started(
+        plan_dir, initialized, resolved_runtime_model="gpt-5.4"
+    )
+    final = finalize_maintenance_dispatch_receipt(
+        plan_dir,
+        started,
+        outcome="failed",
+        mutation_facts={"state": True, "source": False, "commit": False, "push": False},
+        detail="child exited 1",
+    )
+    assert final["outcome"] == "failed"
+
+
+def test_maintenance_launch_records_model_at_start(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    started, process = initialize_and_launch_maintenance_dispatch(
+        plan_dir,
+        _prepared_maintenance(),
+        lambda: object(),
+        resolved_runtime_model=MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+    )
+    assert process is not None
+    assert started["subprocess_started"] is True
+    assert started["resolved_runtime_model"] == MAINTENANCE_REQUIRED_RUNTIME_MODEL
+
+
+def test_generic_receipts_remain_reusable(tmp_path: Path) -> None:
+    """Non-maintenance dispatch still certifies success with any resolved model."""
+    plan_dir = tmp_path / "plan"
+    initialized = writer.initialize_dispatch_receipt(plan_dir, _prepared())
+    started = writer.record_dispatch_started(
+        plan_dir, initialized, resolved_runtime_model="some-other-model"
+    )
+    final = writer.finalize_dispatch_receipt(
+        plan_dir,
+        started,
+        outcome="succeeded",
+        mutation_facts={"state": True, "source": False, "commit": False, "push": False},
+    )
+    assert final["outcome"] == "succeeded"
+    assert final["resolved_runtime_model"] == "some-other-model"

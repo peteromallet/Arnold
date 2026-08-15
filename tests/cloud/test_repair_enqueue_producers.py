@@ -559,3 +559,136 @@ def test_bridge_and_native_human_gate_enqueue_bind_occurrence_identity(tmp_path)
     # Custody evidence must still be present.
     assert evidence_c.get("plan_name") == "test-plan"
     assert evidence_c.get("artifact_stage") == "review"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M1 T8 — incident-bridge producers: explicit environment identity, central
+# production-store targeting, and test/staging/fixture aliasing rejection
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _ledger_events(root):
+    path = Path(root) / ".megaplan" / "incident-ledger" / "events.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _minimal_incident_event(**overrides):
+    event = {
+        "schema_version": 1,
+        "event_id": "legacy-ev-1",
+        "ts": "2026-08-01T00:00:00+00:00",
+        "type": "detection",
+        "actor": "watchdog",
+        "scope": "repair_system",
+        "outcome": "detected",
+        "summary": "legacy event without environment identity",
+        "evidence": [],
+        "parent_event_ids": [],
+        "next_expected_event": None,
+        "deadline_ts": None,
+        "trigger_event_id": None,
+        "incident_id": "inc-legacy",
+    }
+    event.update(overrides)
+    return event
+
+
+def test_incident_bridge_producer_attaches_explicit_environment_identity(tmp_path):
+    """Every producer write carries the resolved maintenance environment."""
+    from arnold_pipelines.megaplan.cloud.incident_bridge import (
+        append_watchdog_detection,
+    )
+
+    result = append_watchdog_detection(
+        incident_id="inc-env-1",
+        summary="watchdog detection with environment identity",
+        root=tmp_path,
+        maintenance_environment="production",
+    )
+    assert result["payload"]["maintenance_environment"] == "production"
+
+    events = _ledger_events(tmp_path)
+    assert len(events) == 1
+    assert events[0]["payload"]["maintenance_environment"] == "production"
+
+
+def test_incident_bridge_producer_resolves_environment_from_env_var(tmp_path, monkeypatch):
+    """ARNOLD_MAINTENANCE_ENVIRONMENT is an explicit identity channel."""
+    from arnold_pipelines.megaplan.cloud.incident_bridge import (
+        append_watchdog_dispatch,
+    )
+
+    monkeypatch.setenv("ARNOLD_MAINTENANCE_ENVIRONMENT", "production")
+    result = append_watchdog_dispatch(
+        incident_id="inc-env-2",
+        summary="watchdog dispatch via env identity",
+        root=tmp_path,
+    )
+    assert result["payload"]["maintenance_environment"] == "production"
+
+
+@pytest.mark.parametrize("namespace", ["staging", "test", "fixture"])
+def test_incident_bridge_producer_rejects_non_production_aliasing(tmp_path, namespace):
+    """Test/staging/fixture namespaces can never write the production store."""
+    from arnold_pipelines.megaplan.cloud.incident_bridge import (
+        append_watchdog_detection,
+    )
+
+    with pytest.raises(ValueError, match="cannot alias production"):
+        append_watchdog_detection(
+            incident_id="inc-alias",
+            summary="must be rejected",
+            root=tmp_path,
+            maintenance_environment=namespace,
+        )
+    # Fail closed: zero events written.
+    assert _ledger_events(tmp_path) == []
+
+
+def test_incident_bridge_producer_rejects_invalid_environment(tmp_path):
+    """An unrecognized namespace fails closed through the env resolver."""
+    from arnold_pipelines.megaplan.cloud.incident_bridge import (
+        append_watchdog_detection,
+    )
+
+    with pytest.raises(ValueError):
+        append_watchdog_detection(
+            incident_id="inc-invalid",
+            summary="must be rejected",
+            root=tmp_path,
+            maintenance_environment="prod",
+        )
+    assert _ledger_events(tmp_path) == []
+
+
+def test_incident_bridge_legacy_events_keep_lineage_after_environment_writes(tmp_path):
+    """Pre-identity legacy events are never rewritten; new events link lineage
+    and carry explicit environment identity (migration lineage preserved)."""
+    from arnold_pipelines.megaplan.cloud.incident_bridge import (
+        append_watchdog_dispatch,
+    )
+    from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+
+    legacy = IncidentLedger(tmp_path).append_event(_minimal_incident_event())
+    assert "maintenance_environment" not in legacy["payload"]
+
+    result = append_watchdog_dispatch(
+        incident_id="inc-migrate",
+        summary="new environment-bound write with legacy lineage",
+        parent_event_ids=[legacy["payload"]["event_id"]],
+        root=tmp_path,
+        maintenance_environment="production",
+    )
+    assert result["payload"]["maintenance_environment"] == "production"
+    assert legacy["payload"]["event_id"] in result["payload"]["parent_event_ids"]
+
+    events = _ledger_events(tmp_path)
+    assert len(events) == 2
+    # The legacy record is byte-for-byte preserved (never rewritten).
+    assert "maintenance_environment" not in events[0]["payload"]
+    assert events[0]["payload"]["event_id"] == "legacy-ev-1"
+    # The successor carries explicit identity and causal lineage.
+    assert events[1]["payload"]["maintenance_environment"] == "production"
+    assert events[1]["payload"]["parent_event_ids"] == ["legacy-ev-1"]
