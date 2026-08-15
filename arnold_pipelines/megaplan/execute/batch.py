@@ -3331,6 +3331,15 @@ def _run_and_merge_batch(
             source_path=batch_artifact_path,
         )
     )
+    # Persist the merged payload BEFORE the authority adopt so this batch's
+    # accepted result envelopes are on disk for the kernel projection (grok
+    # consult, astrid deferred-revalidation wedge): the adopt previously only
+    # saw PRIOR batches' envelopes, so a this-batch blocked task kept the
+    # deferred revalidation refusing (task_result_blocked_by_post_merge_policy)
+    # and every resume advanced exactly one batch before blocking again.  The
+    # late write below still produces the complete artifact (audit/deviation
+    # enriched); this early write is the merge-complete crash-recovery point.
+    atomic_write_json(batch_artifact_path, payload)
     # Adopt authority-completed blocked tasks BEFORE the deferred-selector
     # revalidation gate: a task whose accepted-attempt kernel authority is
     # dependency-closed (done) must not keep its stale `blocked` status, or a
