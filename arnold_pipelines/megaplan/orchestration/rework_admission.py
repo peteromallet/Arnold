@@ -8,6 +8,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from arnold_pipelines.megaplan.orchestration.external_gates import (
+    is_external_human_rework_item,
+)
+
 
 PASS_STATUSES = frozenset({"pass", "passed", "success", "succeeded", "green", "0"})
 FAIL_STATUSES = frozenset({"fail", "failed", "failure", "red", "1", "nonzero"})
@@ -185,15 +189,7 @@ def reconcile_review_rework(
             # EXTERNAL gates, not bounded validation jobs: their deterministic check
             # fails by design until a human records an acceptance decision, and they
             # must not pre-empt runnable actionable rework or open the quality circuit.
-            flag_id = str(raw.get("flag_id") or "").strip().lower()
-            raw_source = str(raw.get("source") or "").strip().lower()
-            human_gate = (
-                "human_halt" in job_id
-                or "human_halt" in flag_id
-                or "nsa-1" in flag_id
-                or "nsa-1" in raw_source
-                or "human_halt" in raw_source
-            )
+            human_gate = is_external_human_rework_item(raw)
             if human_gate:
                 external_gates.append(
                     {
