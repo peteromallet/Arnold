@@ -5472,11 +5472,12 @@ def _adopt_authority_completed_blocked_tasks(
     root: Path | None,
     state: PlanState,
 ) -> list[str]:
-    """Promote blocked rows whose accepted-attempt authority is dependency-closed.
+    """Promote blocked/pending rows whose accepted-attempt authority is dependency-closed.
 
     A task can be terminal-success in the kernel authority (accepted attempt,
-    dependencies closed) while finalize.json still shows ``blocked`` from a stale
-    harness projection (e.g. ``task_test_budget_exhausted``). The authority reader
+    dependencies closed) while finalize.json still shows ``blocked`` (stale
+    harness projection, e.g. ``task_test_budget_exhausted``) or ``pending``
+    (finalize status lags a substantively-complete batch). The authority reader
     is the source of truth: promote those rows to ``done`` so the milestone
     completion evidence can satisfy.
     """
@@ -5498,7 +5499,16 @@ def _adopt_authority_completed_blocked_tasks(
             continue
         task_id = task.get("id")
         raw_status = task.get("status")
-        if not isinstance(task_id, str) or raw_status != "blocked":
+        if not isinstance(task_id, str):
+            continue
+        # Promote rows whose accepted-attempt kernel authority is satisfied:
+        # blocked (stale harness projection) AND pending (the finalize status
+        # lags a substantively-complete batch — the worktree + accepted
+        # envelopes satisfy the contract while finalize.json still shows
+        # pending, e.g. astrid m1 batch-22 T41 dependency record).  The
+        # authority reader is the source of truth; a pending task with NO
+        # accepted envelope stays pending.
+        if raw_status not in {"blocked", "pending"}:
             continue
         if task_id not in completed_ids:
             continue
