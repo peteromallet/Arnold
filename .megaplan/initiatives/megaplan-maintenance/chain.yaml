@@ -92,7 +92,7 @@ driver:
   # measures ~66 min critical path / ~67 min dispatch, which exceeds 80% of
   # the engine default (3600s). Declare a 2h envelope so the feasibility
   # checker admits the plan's real graph instead of rejecting every candidate.
-  phase_timeout: 7200
+  phase_timeout: 21600
   execution_binding: required
   intended_initiative_revision: 592901c296df73a97f0b04cf4dcb270925917b8c
   initiative_path: .megaplan/initiatives/megaplan-maintenance
