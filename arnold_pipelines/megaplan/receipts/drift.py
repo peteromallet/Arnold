@@ -10,6 +10,9 @@ from typing import Literal
 
 BENIGN_PATTERNS = (
     ".megaplan/**",
+    ".vscode/**",
+    ".idea/**",
+    ".editorconfig",
     "execution.json",
     "final.md",
     "review.json",
