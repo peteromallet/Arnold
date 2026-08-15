@@ -94,7 +94,7 @@ driver:
   # checker admits the plan's real graph instead of rejecting every candidate.
   phase_timeout: 21600
   execution_binding: required
-  intended_initiative_revision: 592901c296df73a97f0b04cf4dcb270925917b8c
+  intended_initiative_revision: cc5d8e8c5574ec9e0c9cda42339bd238347b9cc5
   initiative_path: .megaplan/initiatives/megaplan-maintenance
   require_editable_runtime_match: true
   execution_binding_assets:
