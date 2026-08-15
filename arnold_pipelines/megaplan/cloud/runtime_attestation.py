@@ -1053,7 +1053,12 @@ def validate_runtime_launch_seed(
     *,
     component: str,
 ) -> dict[str, Any]:
-    """Revalidate a launch seed against files, imports, and current interpreter."""
+    """Revalidate a launch seed against files, imports, and current interpreter.
+
+    Only modules the validating worker actually imported are compared; seed
+    entries absent from the worker (e.g. chain-CLI-only builder imports) are
+    allowed.  Modules present in both sides must match identically.
+    """
 
     _verify_seed_digest(seed)
     if not bool(seed.get("ready")) or seed.get("errors"):
@@ -1120,7 +1125,8 @@ def validate_runtime_launch_seed(
                 "runtime launch seed contains an invalid module identity",
             )
         name = str(expected_module.get("module") or "")
-        if current_by_name.get(name) != expected_module:
+        current = current_by_name.get(name)
+        if current is not None and current != expected_module:
             raise CliError(
                 RUNTIME_ATTESTATION_ERROR,
                 f"loaded module identity changed: {name or '<missing>'}",
