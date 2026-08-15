@@ -120,7 +120,15 @@ def reconcile_review_rework(
         task_ids, kind = target_task_ids(raw)
         requested.extend(task_ids)
         missing = [task_id for task_id in task_ids if task_id not in known_task_ids]
-        if not task_ids or missing:
+        check = raw.get("deterministic_check")
+        check = check if isinstance(check, Mapping) else None
+        command = str(check.get("command") or "").strip() if check else ""
+        post_status = str(check.get("post_status") or "").strip().lower() if check else ""
+        # Taskless manifest/bulk/global items carrying a deterministic check are
+        # verifiable as validation jobs (e.g. a dangling artifact anchor whose
+        # file now exists). Only items with NO derivable target AND no check are
+        # structurally unroutable -> rework_target_unknown.
+        if (not task_ids or missing) and not (kind in {"bulk", "manifest", "global"} and command):
             blockers.append(
                 {
                     "code": "rework_target_unknown",
@@ -130,11 +138,6 @@ def reconcile_review_rework(
                 }
             )
             continue
-
-        check = raw.get("deterministic_check")
-        check = check if isinstance(check, Mapping) else None
-        command = str(check.get("command") or "").strip() if check else ""
-        post_status = str(check.get("post_status") or "").strip().lower() if check else ""
         accepted_ids = [task_id for task_id in task_ids if task_id in accepted_task_ids]
         open_ids = [task_id for task_id in task_ids if task_id not in accepted_task_ids]
 

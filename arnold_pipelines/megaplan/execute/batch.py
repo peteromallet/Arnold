@@ -6301,7 +6301,6 @@ def handle_execute_auto_loop(
                                 {
                                     "id": job["id"],
                                     "command": _shlex.split(str(job["command"])),
-                                    "cwd": ".",
                                     "environment": {},
                                     "timeout_seconds": 600,
                                     "expected_output_paths": [],
