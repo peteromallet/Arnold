@@ -2149,7 +2149,15 @@ def _replay_proven_batch_artifacts(
             known_sense_check_ids=known_sense_check_ids,
             mode=mode,
             state=state,
-            preserve_accepted=False,
+            # preserve_accepted=True: an authority-adopted task (blocked or
+            # pending promoted to done by _adopt_authority_completed_blocked_
+            # tasks) must NOT be demoted back to its stale pre-adopt status
+            # when the proven artifact is replayed on resume (grok consult,
+            # astrid m1 batch-22): replay with preserve_accepted=False demoted
+            # adopted T41 to pending, re-derived its incomplete-record
+            # deviation, and reopened the quality-gate circuit every execute
+            # despite a clean 43/43-done finalize.
+            preserve_accepted=True,
             require_dispatch_wbc=False,
         )
         if merge_result.quarantine is not None:
@@ -4952,6 +4960,16 @@ def handle_execute_one_batch(
     if drift is not None:
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
+    # Drop quality-gate blockers whose root cause is resolved (grok consult,
+    # astrid m1): the one-batch path previously missed the drop that the
+    # aggregate path applies, so an operator-resolved blocker (accepted_with_
+    # debt / fixed) re-blocked the final batch on every execute even with a
+    # clean 43/43-done finalize.  Mirrors the aggregate call after all
+    # blocking_reasons (incl. scope drift) are built.
+    blocking_reasons = _drop_resolved_quality_blocking_reasons(
+        blocking_reasons,
+        state=state,
+    )
     routing_blocked = any(
         reason in blocking_reasons for reason in result.routing_degradations
     )
