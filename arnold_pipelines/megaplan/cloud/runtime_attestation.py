@@ -851,12 +851,33 @@ def _launch_seed_current(
     *,
     root: Path,
     expected_revision: str,
+    marker_path: Path,
 ) -> bool:
-    """True when the on-disk seed is release-ready and still pinned to root/revision."""
+    """True when the on-disk seed is release-ready and still pinned to root/revision.
+
+    The seed must also embed the live marker launch binding: a marker rebind
+    with unchanged root+revision (e.g. weak→strong identity shape cutover)
+    must invalidate a stale seed, otherwise every worker fails
+    ``validate_runtime_launch_seed`` with "cloud marker launch binding
+    drifted".  The comparison mirrors the worker-side gate exactly.
+    """
     try:
         seed = _json_file(seed_path, label="runtime launch seed")
         _verify_seed_digest(seed)
     except CliError:
+        return False
+    expected_marker = seed.get("marker")
+    expected_marker = expected_marker if isinstance(expected_marker, Mapping) else {}
+    if not isinstance(expected_marker.get("launch_binding"), Mapping):
+        return False
+    try:
+        marker = _json_file(marker_path, label="cloud session marker")
+    except CliError:
+        return False
+    if (
+        str(marker_path.resolve(strict=False)) != str(expected_marker.get("path") or "")
+        or _marker_launch_binding(marker) != expected_marker.get("launch_binding")
+    ):
         return False
     return (
         bool(seed.get("ready"))
@@ -958,7 +979,12 @@ def ensure_runtime_launch_seed(
     )
     seed_path = (seed_dir or _launch_seed_store_dir()) / f"{manifest.runtime_id}.json"
     seed_path = seed_path.resolve(strict=False)
-    if _launch_seed_current(seed_path, root=root, expected_revision=expected_revision):
+    if _launch_seed_current(
+        seed_path,
+        root=root,
+        expected_revision=expected_revision,
+        marker_path=marker_path,
+    ):
         return seed_path
     payload = build_runtime_launch_seed(
         expected_root=root,
