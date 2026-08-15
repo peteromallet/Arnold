@@ -61,6 +61,12 @@ from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
     TaskSatisfactionResult,
     is_task_satisfied,
 )
+
+# Terminal worker-reported receipt statuses that constitute a durable accepted
+# attempt (mirrors execute/batch.py ACCEPTED_RECEIPT_STATUSES).
+ACCEPTED_RECEIPT_STATUSES: frozenset[str] = frozenset(
+    {"done", "completed", "skipped"}
+)
 from arnold_pipelines.run_authority import (
     CASExpectation,
     ContractError,
@@ -679,7 +685,7 @@ def _collect_accepted_attempt_authority(
     saw_validation_projection = False
 
     collected_subject_ids: set[str] = set()
-    for artifact_path in _all_batch_artifact_waves_sorted(plan_dir):
+    for artifact_path in list_batch_artifacts(plan_dir):
         try:
             payload = json.loads(artifact_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -720,6 +726,11 @@ def _collect_accepted_attempt_authority(
             try:
                 decision = _accepted_projection_decision(envelope, validation, source)
             except ContractError:
+                continue
+            if decision is None:
+                # Validation-only (hollow) row: no explicit grant-aware
+                # accepted decision — must not suppress dispatch or clear
+                # authority gates.
                 continue
             # CAS expectations are dispatch-time preconditions, not durable
             # run-authority ledger facts. Feeding one to reduce_run_authority
@@ -806,13 +817,32 @@ def _accepted_projection_decision(
     envelope: ResultEnvelope,
     validation: Mapping[str, Any],
     source: str,
-) -> TaskValidationDecision:
+) -> TaskValidationDecision | None:
+    """Return the explicit grant-aware decision for an envelope, or ``None``.
+
+    Acceptance is never synthesized from validation alone: a durable accepted
+    attempt requires a canonical terminal attempt status (done/completed/
+    skipped) carried by the envelope's own evidence/claim payload **and** an
+    explicit grant-aware decision whose outcome is ``accepted``.  The
+    grant-aware decision is the merge-time ``authority_validation`` mapping
+    recorded on the task row (``GrantAwareValidationDecision``); the
+    envelope-level ``decision`` field is used when present but is *not*
+    required (the runtime does not stamp envelope-level decisions).  A
+    validation-only row whose envelope lacks a canonical terminal status is a
+    hollow shadow-wave artifact and is rejected so it cannot suppress dispatch
+    or clear authority gates.
+    """
+    if _envelope_terminal_attempt_status(envelope) is None:
+        return None
     if envelope.decision is not None:
-        return (
+        decision = (
             envelope.decision
             if isinstance(envelope.decision, TaskValidationDecision)
             else TaskValidationDecision.from_dict(envelope.decision.to_dict())
         )
+        if decision.outcome != "accepted":
+            return None
+        return decision
     payload = {
         "reason": _optional_str(validation.get("reason")) or "accepted_attempt_projection",
         "source_path": source,
@@ -828,13 +858,47 @@ def _accepted_projection_decision(
         attempt_id=envelope.attempt.attempt_id,
         grant_id=envelope.dispatch_id,
         coordinator_attempt_id=envelope.dispatch.coordinator_attempt_id,
-        fence_token=envelope.dispatch.fence_token,
+        fence_token=envelope.dispatch.fence.token,
         claim_id=envelope.claim.claim_id,
         outcome="accepted",
         evidence_ids=envelope.evidence_ids,
         idempotency_key=decision_id,
         payload=payload,
     )
+
+
+def _envelope_terminal_attempt_status(
+    envelope: ResultEnvelope,
+) -> str | None:
+    """Canonical worker attempt status from the envelope's claim/evidence.
+
+    Mirrors ``batch._persisted_envelope_dict_status``: the durable status is the
+    worker-reported result status carried in the evidence payload (with the
+    claim payload status as a fallback).  Only terminal statuses
+    (done/completed/skipped) satisfy the accepted-attempt projection.
+    """
+    for candidate in (
+        _evidence_result_status(envelope),
+        _optional_str(envelope.claim.payload.get("status")),
+    ):
+        if candidate in ACCEPTED_RECEIPT_STATUSES:
+            return candidate
+    return None
+
+
+def _evidence_result_status(envelope: ResultEnvelope) -> str | None:
+    for evidence in envelope.evidence:
+        payload = evidence.payload
+        if not isinstance(payload, Mapping):
+            continue
+        result = payload.get("result")
+        if not isinstance(result, Mapping):
+            continue
+        status = _optional_str(result.get("status"))
+        if status is not None:
+            return status
+    return None
+
 
 
 def _json_safe_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
