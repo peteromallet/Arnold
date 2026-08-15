@@ -16,6 +16,13 @@ from arnold_pipelines.megaplan.review import checks as review_checks
 from arnold_pipelines.megaplan.execute.quality import _check_done_task_evidence
 from arnold_pipelines.megaplan.execute.batch import build_monitor_hint
 from arnold_pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
+from arnold_pipelines.megaplan.orchestration.external_gates import (
+    as_external_gate,
+    contains_human_gate_marker,
+    dedupe_external_gates,
+    is_external_human_north_star_action,
+    is_external_human_rework_item,
+)
 from arnold_pipelines.megaplan.orchestration.evidence_contract import (
     EvidenceRef,
     TransitionDecision,
@@ -1087,6 +1094,80 @@ def _force_proceed_blockers(
     return blockers
 
 
+def _blocking_rework_items(
+    rework_items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return the rework items that count as blockers."""
+    return [
+        item for item in (rework_items or [])
+        if isinstance(item, dict) and _rework_item_is_blocker(item)
+    ]
+
+
+def _partition_review_blockers(
+    rework_items: list[dict[str, Any]] | None,
+    north_star_actions: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split blocking review items into machine blockers and external human gates.
+
+    Human gates (``human_halt`` / ``add_human_halt`` / ``nsa-1`` rework items
+    and unresolved North Star actions) are external obligations: they fail by
+    design until an operator records a real acceptance decision, so they must
+    never consume the machine rework budget. Machine blockers retain the
+    existing behavior.
+    """
+    machine_blockers: list[dict[str, Any]] = []
+    external_gates: list[dict[str, Any]] = []
+    for item in _blocking_rework_items(rework_items):
+        if is_external_human_rework_item(item):
+            external_gates.append(as_external_gate(item))
+        else:
+            machine_blockers.append(item)
+    for action in north_star_actions or []:
+        if not isinstance(action, dict):
+            continue
+        if is_external_human_north_star_action(action):
+            external_gates.append(
+                as_external_gate(action, criterion_id=action.get("id"))
+            )
+    return machine_blockers, dedupe_external_gates(external_gates)
+
+
+def _drop_external_gate_blocker_strings(
+    raw_blockers: list[str],
+    rework_items: list[dict[str, Any]] | None,
+) -> list[str]:
+    """Strip raw blocker strings attributable to classified external human gates.
+
+    Only ``unresolved blocking rework: <label>`` strings whose item is an
+    external human gate (by item label or marker) are removed. Failed
+    must-criteria are NOT touched here — they are attributed in
+    ``_resolve_review_outcome`` only when no machine rework evidence exists.
+    """
+    kept: list[str] = []
+    for blocker in raw_blockers:
+        if not blocker.startswith("unresolved blocking rework: "):
+            kept.append(blocker)
+            continue
+        label = blocker[len("unresolved blocking rework: "):]
+        attributed = False
+        for item in _blocking_rework_items(rework_items):
+            if not is_external_human_rework_item(item):
+                continue
+            item_label = str(
+                item.get("issue") or item.get("task_id") or item.get("flag_id") or ""
+            ).strip()
+            if item_label and item_label in label:
+                attributed = True
+                break
+            if contains_human_gate_marker(label):
+                attributed = True
+                break
+        if not attributed:
+            kept.append(blocker)
+    return kept
+
+
 def _normalize_failed_detail_rows(
     evidence: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1244,6 +1325,7 @@ class ReviewRouteDecision:
     result: ReviewDecisionResult
     next_state: str
     route_signal: ReviewOutcome
+    external_gates: tuple[dict[str, Any], ...] = ()
 
 
 def _require_review_policy_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
@@ -1375,6 +1457,24 @@ def _review_deferred_human_decision() -> ReviewRouteDecision:
     )
 
 
+def _review_external_human_gate_decision(
+    external_gates: list[dict[str, Any]],
+) -> ReviewRouteDecision:
+    """Park at human verification when only external human gates remain.
+
+    Mirrors the model-produced ``deferred_human`` route but is driven by
+    structural classification, so it works even when the model returns
+    ``needs_rework`` with an exhausted rework budget. Never reaches ``done``.
+    """
+    base = _review_deferred_human_decision()
+    return ReviewRouteDecision(
+        result=base.result,
+        next_state=base.next_state,
+        route_signal=base.route_signal,
+        external_gates=tuple(external_gates),
+    )
+
+
 def _review_pass_decision(
     state: PlanState,
     *,
@@ -1427,6 +1527,7 @@ def _resolve_review_outcome(
     criteria: list[dict[str, Any]] | None = None,
     infrastructure_failure: bool = False,
     rework_items: list[dict[str, Any]] | None = None,
+    north_star_actions: list[dict[str, Any]] | None = None,
 ) -> ReviewRouteDecision:
     """Determine review result, next state, and review route signal."""
     robustness = normalize_robustness(robustness)
@@ -1457,7 +1558,34 @@ def _resolve_review_outcome(
             and entry.get("result") == ReviewDecisionResult.NEEDS_REWORK.value
         )
         if prior_rework_count >= max_review_rework_cycles:
-            blockers = _force_proceed_blockers(criteria, rework_items)
+            machine_rework, external_gates = _partition_review_blockers(
+                rework_items, north_star_actions,
+            )
+            raw_blockers = _force_proceed_blockers(criteria, rework_items)
+            blockers = _drop_external_gate_blocker_strings(
+                raw_blockers, rework_items,
+            )
+            # Bare failed must-criteria are attributable to a human gate only
+            # when there is NO machine rework evidence and their count does not
+            # exceed the number of external gates. Any machine rework item keeps
+            # the plan blocked (fail-closed).
+            if (
+                blockers
+                and not machine_rework
+                and external_gates
+                and all(
+                    blocker == "failed must-criterion: must criterion"
+                    for blocker in blockers
+                )
+                and len(blockers) <= len(external_gates)
+            ):
+                blockers = []
+            if not blockers and external_gates:
+                issues.append(
+                    "Only external human gates remain; parking at human "
+                    "verification instead of blocking (agent_actionable:false)."
+                )
+                return _review_external_human_gate_decision(external_gates)
             if blockers:
                 blocker_list = "; ".join(blockers[:10])
                 more = "" if len(blockers) <= 10 else f" (+{len(blockers) - 10} more)"
@@ -1490,6 +1618,18 @@ def _resolve_review_outcome(
             # until the plan actually reaches done (via the existing interactive
             # 'megaplan feedback edit' path after verification).
             return _review_deferred_human_decision()
+
+    # Invariant: unresolved external human gates park at human verification —
+    # never silently proceed to done.
+    machine_rework, external_gates = _partition_review_blockers(
+        rework_items, north_star_actions,
+    )
+    if not machine_rework and external_gates:
+        issues.append(
+            "Only external human gates remain; parking at human verification "
+            "(agent_actionable:false)."
+        )
+        return _review_external_human_gate_decision(external_gates)
 
     return _review_pass_decision(state)
 
@@ -2018,7 +2158,19 @@ def _finalize_review_outcome(
         criteria=worker.payload.get("criteria", []),
         infrastructure_failure=infrastructure_failure,
         rework_items=worker.payload.get("rework_items", []),
+        north_star_actions=worker.payload.get("north_star_actions", []),
     )
+    if decision.external_gates:
+        worker.payload["external_gates"] = [dict(gate) for gate in decision.external_gates]
+        if decision.next_state == STATE_AWAITING_HUMAN_VERIFY:
+            worker.payload["human_verification_criteria"] = [
+                {
+                    "criterion_id": gate.get("criterion_id") or gate.get("id"),
+                    "pass": "deferred_human",
+                    "agent_actionable": False,
+                }
+                for gate in decision.external_gates
+            ]
     result = decision.result
     next_state = decision.next_state
     next_step = _compat_next_step_for_review_route(decision)
