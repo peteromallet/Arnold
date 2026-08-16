@@ -41,6 +41,7 @@ Approve numeric stage SLOs, schedule timezone/offset, allowed lateness, minimum 
 - Same immutable inputs reproduce the same hash and included event IDs; every metric exposes numerator, denominator, unknown count, and coverage.
 - Zero unauthorized plan/chain mutations, duplicate repairs, or self-verifications; 100% action/receipt reconciliation in test/canary evidence, including the known `finalize_audit_dispatch_receipt` and repair-runner sidecar false-success paths.
 - Shadow mode measures false-positive and missed-blocker rates. Canary requires demonstrated kill switch/rollback and explicit human approval; this milestone does not grant it.
+- **Review-quality dispatch acceptance (closes the F3 manual-review-halt class)**: a `review_quality_blocked_unknown` block with repairable evidence (a concrete quality blocker, recoverable via the unified fixer seam) MUST create exactly ONE custody-bound fixer request through the canonical repair path — it must not be silently parked at `manual_review` with no dispatch. A GENUINE human gate (e.g. awaiting_human_verify with a human-only decision) must remain undispatched. This is an acceptance case distinguishing repairable review-quality blocks from true human gates.
 - Handoff to M5: closed watermarks, operational occurrence history, censored durations, cost/outcome facts, and immutable report references suitable for read-only daily analysis. M4 does not create the daily schedule, ticket store, or efficiency ledger.
 
 ## Players and authority

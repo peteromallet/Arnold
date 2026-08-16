@@ -121,6 +121,14 @@ effect boundary has one deterministic continuation.
   import gates, every CAS participant, process crash/restart, rollback/replay,
   duplicate requests, stale grants/leases/fences, resume failure, and verifier
   handoff. Receipts make every attempted and completed effect auditable.
+- **Chain-spec pin preflight (closes the F4 execution-binding-drift class)**: before
+  any promotion transaction, every relevant `chain.yaml` revision must carry a
+  validated `intended_initiative_revision` pin (the exact initiative-spec commit the
+  milestone is bound to) and that spec/pin digest must be included in the CAS vector
+  alongside manifest/marker/chain/seed. A chain spec whose HEAD does not match its
+  declared `intended_initiative_revision`, or that omits the pin, fails the preflight
+  with a typed `chain_spec_not_at_intended_revision` refusal and zero mutation — it
+  must never be rebound against an unpinned/edited spec.
 
 ## Out of scope
 
