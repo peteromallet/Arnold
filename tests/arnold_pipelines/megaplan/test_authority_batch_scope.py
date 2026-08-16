@@ -813,3 +813,146 @@ def test_blocked_by_prereq_emits_prereq_blocked_task_ids_when_active_blocked_emp
     )
     assert result.blocked_tasks
     assert result.blocked_tasks[0].task_id == "X"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Dependency-aware execute frontier (occurrence 0ae19cc17afd, shipped in
+# b2aaab3f "fix(execute): drain dependency-independent frontier after task
+# block"). A sole task-level block must park the blocked rows with a typed
+# disposition and continue with the dependency-independent frontier; the
+# blocked row and its transitive dependents stay out of the runnable queue
+# and are never flipped back to pending within the same invocation.
+# ═══════════════════════════════════════════════════════════════════════════
+
+import argparse as _argparse
+
+from arnold_pipelines.megaplan.execute.batch import (
+    _dependency_closed_blocked_task_ids,
+    _has_genuine_task_level_blocker,
+    _park_blocked_task_dispositions,
+    _recompute_runnable_batches,
+)
+
+
+def _frontier_task(
+    task_id: str,
+    *,
+    status: str = "pending",
+    depends_on: list[str] | None = None,
+    complexity: int = 1,
+) -> dict[str, object]:
+    return {
+        "id": task_id,
+        "status": status,
+        "depends_on": list(depends_on or []),
+        "complexity": complexity,
+        "estimated_minutes": 3,
+        "executor_notes": "",
+        "files_changed": [],
+        "commands_run": [],
+        "evidence_files": [],
+    }
+
+
+def _frontier_state_and_args() -> tuple[dict[str, object], _argparse.Namespace]:
+    state: dict[str, object] = {"config": {"max_tasks_per_batch": 5}}
+    return state, _argparse.Namespace()
+
+
+def test_validation_block_does_not_strand_independent_batches() -> None:
+    """DAG A -> C with independent B: A blocks, B dispatches, C never does."""
+    tasks = [
+        _frontier_task("A"),
+        _frontier_task("B"),
+        _frontier_task("C", depends_on=["A"]),
+    ]
+    finalize_data = {"tasks": tasks}
+
+    # Worker reports A blocked in the first wave (merge layer sets
+    # status=blocked); park it with a typed disposition (no explicit blocker
+    # fields -> validation_blocked).
+    tasks[0]["status"] = "blocked"
+    _park_blocked_task_dispositions(
+        finalize_data,
+        newly_blocked_task_ids=["A"],
+        current_invocation_id="inv-1",
+    )
+    assert tasks[0]["status"] == "blocked"
+    assert tasks[0]["blocked_reason"] == "validation_blocked"
+    assert tasks[0]["recorded_invocation_id"] == "inv-1"
+
+    # The runnable frontier must exclude A and its transitive dependent C,
+    # leaving only independent B.
+    state, args = _frontier_state_and_args()
+    runnable = _recompute_runnable_batches(
+        finalize_data,
+        completed_task_ids=set(),
+        state=state,  # type: ignore[arg-type]
+        args=args,
+    )
+    assert runnable == [["B"]]
+
+    # B dispatches and completes; the frontier is now empty, so the loop
+    # breaks with the phase still blocked (A parked, C never dispatched).
+    tasks[1]["status"] = "done"
+    runnable_after = _recompute_runnable_batches(
+        finalize_data,
+        completed_task_ids={"B"},
+        state=state,  # type: ignore[arg-type]
+        args=args,
+    )
+    assert runnable_after == []
+    assert tasks[2]["status"] == "pending"  # C never dispatched
+    assert tasks[0]["status"] == "blocked"  # A never flipped back to pending
+
+
+def test_validation_blocked_ids_and_transitive_dependents_stay_out_of_runnable_queue() -> None:
+    """Closure, persistent typed kind, and no within-session pending flip."""
+    tasks = [
+        _frontier_task("A", complexity=7),
+        _frontier_task("B", depends_on=["A"]),
+        _frontier_task("C", depends_on=["B"]),
+        _frontier_task("D"),
+    ]
+    finalize_data = {"tasks": tasks}
+
+    # Both blocked rows carry status=blocked from the merge layer; the
+    # explicit user-action blocker on D -> prerequisite_blocked (genuine).
+    tasks[0]["status"] = "blocked"
+    tasks[3]["status"] = "blocked"
+    tasks[3]["blocked_by_user_action_ids"] = ["UA-1"]
+    _park_blocked_task_dispositions(
+        finalize_data,
+        newly_blocked_task_ids=["A", "D"],
+        current_invocation_id="inv-7",
+    )
+    assert tasks[0]["blocked_reason"] == "validation_blocked"
+    assert tasks[3]["blocked_reason"] == "prerequisite_blocked"
+    assert _has_genuine_task_level_blocker(tasks[3]) is True
+    assert _has_genuine_task_level_blocker(tasks[0]) is False
+
+    # Transitive closure of the validation block: A plus B and C. D is a
+    # genuine prerequisite block and stays parked too.
+    closed = _dependency_closed_blocked_task_ids(tasks, ["A"])
+    assert closed == {"A", "B", "C"}
+
+    state, args = _frontier_state_and_args()
+    runnable = _recompute_runnable_batches(
+        finalize_data,
+        completed_task_ids=set(),
+        state=state,  # type: ignore[arg-type]
+        args=args,
+    )
+    # No runnable frontier remains: A/B/C in the closure, D parked.
+    assert runnable == []
+
+    # Re-parking the same invocation must not flip rows back to pending.
+    _park_blocked_task_dispositions(
+        finalize_data,
+        newly_blocked_task_ids=["A"],
+        current_invocation_id="inv-7",
+    )
+    assert tasks[0]["status"] == "blocked"
+    assert tasks[0]["blocked_reason"] == "validation_blocked"
+    assert tasks[3]["status"] == "blocked"
+    assert tasks[3]["blocked_reason"] == "prerequisite_blocked"

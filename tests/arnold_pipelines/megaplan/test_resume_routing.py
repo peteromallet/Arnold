@@ -1188,3 +1188,92 @@ class TestNoMegaplanSpecialCasesInExecutor:
                 f"{func.__name__} must not reference Megaplan stage names "
                 f"as string literals: {found}"
             )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Result-aware execute resume gate (occurrence 0ae19cc17afd, shipped in
+# b2aaab3f). A blocked execute phase must preserve the cursor and report the
+# phase's own typed outcome instead of being mislabeled
+# execute_authority_diverged; a fresh SUCCESSFUL execute still requires the
+# completion authority to corroborate every finalized task before the cursor
+# clears.
+# ═══════════════════════════════════════════════════════════════════════════
+
+from arnold_pipelines.megaplan._core.workflow import (
+    _phase_result_file_fingerprint,
+    _resume_execute_phase_result_gate,
+)
+
+
+def _write_phase_result(plan_dir: Path, *, exit_kind: str, blocked_tasks: list[str] | None = None) -> None:
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            {
+                "phase": "execute",
+                "invocation_id": "inv-gate-test",
+                "exit_kind": exit_kind,
+                "blocked_tasks": blocked_tasks or [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_resume_blocked_execute_preserves_cursor_without_completion_authority(
+    tmp_path: Path,
+) -> None:
+    """Fresh blocked PhaseResult bypasses authority and returns typed block."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    # No finalize.json at all: authority evidence is entirely absent. A blocked
+    # phase must not consult the completion authority.
+    _write_phase_result(
+        plan_dir,
+        exit_kind="blocked_by_prereq",
+        blocked_tasks=["T6_impl"],
+    )
+    cursor = {"phase": "execute", "retry_strategy": "repair_phase_contract"}
+
+    result = _resume_execute_phase_result_gate(
+        plan_dir,
+        cursor=cursor,
+        guard="before_cursor_clear",
+        pre_dispatch_fingerprint=None,  # fresh result from this dispatch
+    )
+
+    assert result is not None
+    assert result["reason"] == "execute_phase_blocked"
+    assert result["guard"] == "before_cursor_clear"
+    assert result["resume_cursor"] == cursor
+    assert result["blocked_tasks"] == ["T6_impl"]
+    # No execute_authority_diverged mislabel, and the phase did not claim
+    # success, so the completion authority was never consulted.
+    assert "execute_authority_diverged" not in result["reason"]
+
+
+def test_resume_successful_execute_still_requires_completion_authority(
+    tmp_path: Path,
+) -> None:
+    """Fresh success with missing authority still fails closed at the gate."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    _write_phase_result(plan_dir, exit_kind="success")
+    # A task marked done WITHOUT accepted authority evidence: completion
+    # authority must refuse to corroborate it.
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+    cursor = {"phase": "execute", "retry_strategy": "repair_phase_contract"}
+
+    result = _resume_execute_phase_result_gate(
+        plan_dir,
+        cursor=cursor,
+        guard="before_cursor_clear",
+        pre_dispatch_fingerprint=None,  # fresh success from this dispatch
+    )
+
+    assert result is not None
+    assert result["reason"] == "execute_authority_diverged"
+    assert result["resume_cursor"] == cursor
+    assert result["missing_task_ids"] == ["T1"]
