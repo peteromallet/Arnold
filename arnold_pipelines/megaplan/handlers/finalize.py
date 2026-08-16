@@ -1928,6 +1928,25 @@ def _route_finalize_task_feasibility_failure_to_revise(
 
     diagnostics = error.report.get("diagnostics", [])
     codes = [str(item.get("code")) for item in diagnostics if isinstance(item, Mapping)]
+    # ── astrid-first fixer: carry the STRUCTURED feasibility report forward so a
+    # retry can actually repair. The full report (paths, task IDs, budget numbers)
+    # already exists in ``error.report``; only codes were forwarded before, which
+    # made every retry a blind re-roll of the same prompt.
+    structured_diagnostics = [
+        item.as_dict() if hasattr(item, "as_dict") else dict(item)
+        for item in diagnostics
+        if isinstance(item, Mapping) or hasattr(item, "as_dict")
+    ]
+    feasibility_budget = {
+        key: error.report.get(key)
+        for key in (
+            "critical_path_minutes",
+            "critical_path_task_ids",
+            "estimated_dispatch_minutes",
+            "execute_phase_timeout_minutes",
+            "batches",
+        )
+    }
     message = (
         "Finalize rejected a candidate task graph before publication "
         f"({', '.join(codes)}). The last admitted graph and accepted task "
@@ -2005,6 +2024,8 @@ def _route_finalize_task_feasibility_failure_to_revise(
             "message": message,
             "next_step": next_step,
             "diagnostic_codes": codes,
+            "diagnostics": structured_diagnostics,
+            "feasibility": feasibility_budget,
             "candidate_id": repair.get("candidate_id"),
             "failure_fingerprint": repair.get("failure_fingerprint"),
             "occurrences": repair.get("occurrences"),
