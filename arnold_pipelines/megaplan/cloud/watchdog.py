@@ -96,6 +96,17 @@ class WatchdogResult:
     matched_expected: bool = True
     """True if the output matched expected structure."""
 
+    maintenance_shadow: Optional[dict[str, Any]] = None
+    """M2 read-only Maintenance shadow comparison (data only, never authority).
+
+    When a coherent Maintenance envelope is available, the normalized legacy
+    watchdog verdict is compared against it and the replayable comparison row
+    (bucket, digests, denominators, diagnostics) is attached here.  This field
+    never escalates, never launches repair, never dispatches, and never
+    mutates any state; process/activity evidence is never treated as recovery.
+    ``None`` when no Maintenance shadow was attached.
+    """
+
     @property
     def requires_escalation(self) -> bool:
         return self.escalation in (
@@ -842,11 +853,271 @@ def run_watchdog_check(
     )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# M2 (T15): strict DetectionEvent references and Maintenance shadow comparison
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# These helpers attach a *read-only, replayable* Maintenance shadow comparison
+# to a watchdog result.  They preserve every existing escalation and
+# repair-launch outcome byte-for-behavior: the result's ``ok``/``escalation``/
+# ``evidence_level``/``detail``/``child_present``/``matched_expected`` fields
+# are never modified, the function never launches repair, never dispatches,
+# and never mutates plan/chain/ledger truth beyond the explicit best-effort
+# ledger append described below.  PID/tmux/activity/status evidence is never
+# treated as recovery: the normalized legacy verdict derives ``green`` ONLY
+# from the watchdog's own structured verdict (``ok`` and escalation), never
+# from process presence or mutable status fields.
+
+
+def watchdog_legacy_verdict(result: WatchdogResult) -> dict[str, bool]:
+    """Return the normalized read-only legacy verdict for *result*.
+
+    ``green`` is derived ONLY from the watchdog's structured verdict
+    (``ok`` and escalation).  Process presence (``child_present``),
+    ``matched_expected``, and raw output are observation data, never
+    recovery evidence — they cannot turn a non-green verdict green.
+    The watchdog never dispatches and never terminates on its own, so
+    ``dispatchable`` and ``terminal`` are always ``False``.
+    """
+    return {
+        "green": bool(result.ok) and not result.requires_escalation,
+        "dispatchable": False,
+        "terminal": False,
+    }
+
+
+def build_watchdog_detection_event(
+    *,
+    check_name: str,
+    occurrence_id: str,
+    event_id: Optional[str] = None,
+    observed_at: Optional[Any] = None,
+    event_time: Optional[Any] = None,
+    window: Optional[Any] = None,
+    watermark: Optional[Any] = None,
+    severity: Optional[str] = None,
+    description: Optional[str] = None,
+    evidence_refs: tuple[Any, ...] = (),
+    classifier_version: str = "watchdog-seam/1",
+    confidence: Optional[float] = None,
+    impact: Optional[str] = None,
+    environment: Optional[str] = None,
+    run: Optional[str] = None,
+    chain: Optional[str] = None,
+    plan: Optional[str] = None,
+    stage: Optional[str] = None,
+    max_attempts: int = 1,
+) -> Any:
+    """Build a strict Maintenance ``DetectionEvent`` for one watchdog detection.
+
+    The payload is the closed :class:`DetectionEvent` (detection_kind,
+    subject, severity, description, and locator-only immutable
+    ``evidence_refs``) wrapped in the common strict ``MaintenanceEvent``
+    envelope with occurrence-scoped identity (SD2: occurrence_id is the
+    idempotency/lease/budget scope).  Defaults are deterministic:
+    ``observed_at == event_time == now`` (UTC), the watermark is one second
+    in the past (so the event is ON_TIME), and the window is the past hour
+    containing the event time.  Owner payloads are never embedded — only
+    immutable references (``OwnerRef``) may be passed as ``evidence_refs``.
+
+    This function performs no I/O, no dispatch, and no mutation.
+    """
+    # Lazy import keeps the watchdog module import-light and avoids any
+    # import cycle with the Maintenance package (same pattern as the
+    # existing local imports of incident/chain modules above).
+    from datetime import datetime, timedelta, timezone
+
+    from arnold_pipelines.megaplan.maintenance.events import (
+        ClassifierInfo,
+        DetectionEvent,
+        MaintenanceEvent,
+        OccurrenceBudget,
+        RootCauseCluster,
+    )
+    from arnold_pipelines.megaplan.maintenance.identity import (
+        EventWindow,
+        UtcTime,
+        utc_now,
+    )
+
+    now = utc_now() if observed_at is None else observed_at
+    if isinstance(now, datetime) and now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    instant = now
+    if isinstance(instant, datetime) and instant.tzinfo is not None:
+        instant = instant.astimezone(timezone.utc)
+    effective_event_time = instant if event_time is None else event_time
+    effective_watermark = (
+        (instant - timedelta(seconds=1)) if watermark is None else watermark
+    )
+    effective_window = (
+        EventWindow(
+            start=UtcTime(instant - timedelta(hours=1)),
+            end=UtcTime(instant + timedelta(seconds=1)),
+        )
+        if window is None
+        else window
+    )
+    detection_kind = f"watchdog:{check_name}"
+    return MaintenanceEvent.build(
+        event_id=event_id or f"watchdog-{check_name}-{occurrence_id}",
+        occurrence_id=occurrence_id,
+        observed_at=now,
+        event_time=effective_event_time,
+        window=effective_window,
+        watermark=effective_watermark,
+        classifier=ClassifierInfo(
+            classifier_version=classifier_version,
+            confidence=confidence,
+            impact=impact,
+        ),
+        cluster=RootCauseCluster(signature=detection_kind),
+        budget=OccurrenceBudget(max_attempts=max_attempts),
+        payload=DetectionEvent(
+            detection_kind=detection_kind,
+            subject=check_name,
+            severity=severity,
+            description=description,
+            evidence_refs=tuple(evidence_refs),
+        ),
+        environment=environment,
+        run=run,
+        chain=chain,
+        plan=plan,
+        stage=stage,
+    )
+
+
+def attach_maintenance_shadow_to_result(
+    result: WatchdogResult,
+    *,
+    envelope: Optional[Any] = None,
+    ledger: Optional[Any] = None,
+    detection_event: Optional[Any] = None,
+    observed_at: Optional[Any] = None,
+) -> WatchdogResult:
+    """Attach a replayable Maintenance shadow comparison to *result*.
+
+    * When ``envelope`` is ``None`` (no coherent capture available) the
+      result is returned unchanged with ``maintenance_shadow=None`` — the
+      legacy watchdog verdict and escalation path are untouched.
+    * Otherwise the normalized legacy verdict is compared to the coherent
+      envelope through the shared shadow comparator; the digest-stable
+      comparison row is attached as data.  A non-eligible envelope
+      (UNKNOWN/PARTIAL/INCOHERENT, stale, cross-environment, stale
+      projection, or digest mismatch) can never yield a green/dispatchable/
+      terminal shadow row — the discrepancy stays visible in the attached
+      diagnostics and is never promoted.
+    * When ``ledger`` is supplied, a strict ``DetectionEvent`` (built from
+      the result, or passed as ``detection_event``) is appended to the
+      Maintenance ledger best-effort.  An append failure surfaces a typed
+      diagnostic (``append_status="failed"``) and never changes the
+      escalation outcome, never launches repair, and never dispatches.
+
+    The returned result is a new frozen :class:`WatchdogResult` carrying the
+    same verdict fields as *result*; only ``maintenance_shadow`` differs.
+    """
+    if envelope is None:
+        return result
+    from arnold_pipelines.megaplan.maintenance.shadow import compare_shadow
+
+    legacy = watchdog_legacy_verdict(result)
+    comparison = compare_shadow(legacy, envelope)
+    shadow: dict[str, Any] = {
+        "schema_version": 1,
+        "present": True,
+        "envelope_digest": comparison.envelope_digest,
+        "bucket": comparison.bucket.value,
+        "reasons": list(comparison.reasons),
+        "legacy_green": comparison.legacy_green,
+        "green": comparison.green,
+        "dispatchable": comparison.dispatchable,
+        "terminal": comparison.terminal,
+        "envelope_eligible": comparison.envelope_eligible,
+        "envelope_green": comparison.envelope_green,
+        "envelope_dispatchable": comparison.envelope_dispatchable,
+        "envelope_terminal": comparison.envelope_terminal,
+        "cross_environment": comparison.cross_environment,
+        "comparison_digest": comparison.digest,
+        "legacy_hash": comparison.legacy_hash,
+        "denominator": comparison.denominator,
+        "covered_count": comparison.covered_count,
+        "coverage": comparison.coverage,
+        "stale_projection": comparison.stale_projection,
+        "digest_mismatch": comparison.digest_mismatch,
+        "missing_denominator": comparison.missing_denominator,
+        "detection_event_id": None,
+        "detection_event_digest": None,
+        "append_status": None,
+        "diagnostics": [],
+    }
+    diagnostics: list[str] = []
+    if not comparison.envelope_eligible:
+        diagnostics.append(
+            "envelope_not_eligible: maintenance evidence cannot promote "
+            "watchdog recovery (process/activity/status evidence is never "
+            "treated as recovery)"
+        )
+    if comparison.cross_environment:
+        diagnostics.append("cross_environment_evidence")
+    if comparison.stale_projection:
+        diagnostics.append("stale_projection")
+    if comparison.digest_mismatch:
+        diagnostics.append("digest_mismatch")
+
+    if ledger is not None:
+        event = detection_event
+        if event is None:
+            event = build_watchdog_detection_event(
+                check_name=result.check_name,
+                occurrence_id=f"{result.check_name}:{result.detail or 'ok'}",
+                observed_at=observed_at,
+                severity=result.escalation.value,
+                description=result.detail or None,
+            )
+        try:
+            from arnold_pipelines.megaplan.maintenance.events import (
+                event_digest,
+            )
+
+            ledger.append(event)
+            shadow["detection_event_id"] = event.event_id
+            shadow["detection_event_digest"] = event_digest(event)
+            shadow["append_status"] = "appended"
+        except Exception as exc:  # best-effort: never re-raise from shadow
+            shadow["append_status"] = "failed"
+            diagnostics.append(
+                f"detection_append_failed:{type(exc).__name__}"
+            )
+            LOGGER.warning(
+                "watchdog %s: Maintenance detection append failed (%s); "
+                "escalation/repair-launch outcome unchanged",
+                result.check_name,
+                type(exc).__name__,
+            )
+    shadow["diagnostics"] = diagnostics
+    return dataclasses_replace(
+        result,
+        maintenance_shadow=shadow,
+    )
+
+
+def dataclasses_replace(
+    result: WatchdogResult, **changes: Any
+) -> WatchdogResult:
+    """Rebuild a frozen :class:`WatchdogResult` with only *changes* applied."""
+    from dataclasses import replace
+
+    return replace(result, **changes)
+
+
 __all__ = [
     "EscalationLevel",
     "EvidenceLevel",
     "WatchdogResult",
     "assess_watchdog_accepted_progress",
+    "attach_maintenance_shadow_to_result",
+    "build_watchdog_detection_event",
     "expired_manifestless_permit",
     "invalid_failure_class_events",
     "iter_incident_runtime_events",
@@ -855,4 +1126,5 @@ __all__ = [
     "record_observed_runtime_transition",
     "run_watchdog_check",
     "runtime_transition_absences",
+    "watchdog_legacy_verdict",
 ]

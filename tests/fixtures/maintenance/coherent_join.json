@@ -1,0 +1,45 @@
+{
+  "attempt": "attempt-coherent",
+  "chain": null,
+  "coherence": "coherent",
+  "coherence_reasons": [],
+  "completeness": "complete",
+  "dispatchable": true,
+  "environment": "production",
+  "extensions": null,
+  "freshness": "fresh",
+  "green": true,
+  "model": null,
+  "observed_at": "2026-08-15T12:00:00Z",
+  "plan": null,
+  "profile": null,
+  "references": [
+    {
+      "cursor": "journal:1",
+      "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "locator": "grant://g-coherent",
+      "owner": "run_authority"
+    }
+  ],
+  "run": "run-coherent",
+  "schema_version": 1,
+  "stage": null,
+  "tenant": null,
+  "terminal": true,
+  "version_vectors": [
+    {
+      "after": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "environment": "production",
+      "owner": "run_authority",
+      "source": "run_authority"
+    },
+    {
+      "after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "before": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "environment": "production",
+      "owner": "wbc",
+      "source": "wbc"
+    }
+  ]
+}

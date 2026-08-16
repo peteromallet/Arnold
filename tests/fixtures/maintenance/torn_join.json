@@ -1,0 +1,33 @@
+{
+  "attempt": "attempt-torn",
+  "chain": null,
+  "coherence": "incoherent",
+  "coherence_reasons": [
+    "version_tear"
+  ],
+  "completeness": "complete",
+  "dispatchable": false,
+  "environment": "production",
+  "extensions": null,
+  "freshness": "fresh",
+  "green": false,
+  "model": null,
+  "observed_at": "2026-08-15T12:00:00Z",
+  "plan": null,
+  "profile": null,
+  "references": [],
+  "run": null,
+  "schema_version": 1,
+  "stage": null,
+  "tenant": null,
+  "terminal": false,
+  "version_vectors": [
+    {
+      "after": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "before": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "environment": "production",
+      "owner": "wbc",
+      "source": "wbc"
+    }
+  ]
+}
