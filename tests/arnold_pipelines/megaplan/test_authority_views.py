@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
-from typing import Any, Mapping
+import os
+from typing import Any, Mapping, Sequence
 
 import pytest
 
@@ -20,7 +21,10 @@ from arnold_pipelines.megaplan.authority import (
     derive_publication_view,
     derive_runner_view,
 )
-from arnold_pipelines.megaplan._core import execute_batch_artifact_path
+from arnold_pipelines.megaplan._core import (
+    execute_batch_artifact_path,
+    stable_task_id_digest,
+)
 from arnold_pipelines.megaplan.authority.batch_scope import (
     DISPATCH_IDENTITY_KEY,
     RESULT_ENVELOPES_KEY,
@@ -149,6 +153,342 @@ def _write_validated_attempt_artifact(
         encoding="utf-8",
     )
     return envelope
+
+
+def _write_wave(
+    plan_dir,
+    *,
+    task_ids: Sequence[str],
+    batch_number: int,
+    fence_token: int,
+    coordinator_attempt_id: str = "coord-1",
+    rows: Mapping[str, Mapping[str, Any]] | None = None,
+    prerequisite_digest: str = "prereq-digest",
+    worker_id: str = "worker-1",
+    mtime_ns: int | None = None,
+):
+    """Write one batch-artifact wave with full control over fence/mtime/statuses.
+
+    ``task_ids`` fix the artifact path (``tasks_{stable_task_id_digest}.json``)
+    and the dispatch grant scope. ``rows`` maps task_id -> overrides:
+      status          row status ("done"/"blocked"/"pending")     [default "done"]
+      outcome         authority_validation.outcome or None (omit) [default "accepted"]
+      envelope_status claim payload + evidence result status      [default "done"]
+      with_envelope   emit a result envelope for the row          [default outcome=="accepted"]
+      files_changed / commands_run                                [defaults]
+    Envelope ordinals are assigned per-envelope (1-based) so attempt ids read
+    ``{wave_digest}:{task_id}:attempt:{n}`` exactly like real artifacts.
+    """
+    rows = dict(rows or {})
+    digest = stable_task_id_digest(task_ids)
+    grant = DispatchGrant(
+        f"run:execute:batch:{batch_number}:{digest}",
+        RUN,
+        REVISION,
+        coordinator_attempt_id,
+        fence_token,
+        tuple(task_ids),
+        (TASK_RESULT_CAPABILITY,),
+        (),
+    )
+    fence = CoordinatorFence(
+        RUN, REVISION, coordinator_attempt_id, fence_token
+    )
+    dispatch = DispatchIdentity.from_records(
+        grant,
+        fence,
+        prerequisite_digest=prerequisite_digest,
+        worker_id=worker_id,
+    )
+    envelopes: list[ResultEnvelope] = []
+    entries: list[dict[str, Any]] = []
+    envelope_ordinal = 0
+
+    for task_id in task_ids:
+        spec = dict(rows.get(task_id) or {})
+        status = spec.get("status", "done")
+        outcome = spec.get("outcome", "accepted")
+        envelope_status = spec.get("envelope_status", "done")
+        with_envelope = spec.get(
+            "with_envelope", outcome == "accepted"
+        )
+        entry = {
+            "task_id": task_id,
+            "status": status,
+            "files_changed": spec.get(
+                "files_changed", [f"src/{task_id}.py"]
+            ),
+            "commands_run": spec.get("commands_run", ["pytest"]),
+        }
+
+        if with_envelope:
+            envelope_ordinal += 1
+            evidence = EvidenceEnvelope(
+                f"{digest}:{task_id}:evidence",
+                RUN,
+                REVISION,
+                "pytest",
+                f"reports/{task_id}.json",
+                {
+                    "entry": {
+                        "task_id": task_id,
+                        "status": envelope_status,
+                        "files_changed": entry["files_changed"],
+                        "commands_run": entry["commands_run"],
+                    },
+                    "result": {"status": envelope_status},
+                },
+            )
+            attempt = TaskAttempt(
+                f"{digest}:{task_id}:attempt:{envelope_ordinal}",
+                RUN,
+                REVISION,
+                task_id,
+                grant.grant_id,
+                coordinator_attempt_id,
+                fence_token,
+                envelope_ordinal,
+            )
+            claim = TaskClaim(
+                f"{digest}:{task_id}:claim:{envelope_ordinal}",
+                RUN,
+                REVISION,
+                task_id,
+                attempt.attempt_id,
+                grant.grant_id,
+                coordinator_attempt_id,
+                fence_token,
+                TASK_COMPLETION_CLAIM,
+                (evidence.evidence_id,),
+                f"{digest}:{task_id}:claim:{envelope_ordinal}",
+                {"status": envelope_status},
+            )
+            envelope = ResultEnvelope(
+                dispatch=dispatch,
+                attempt=attempt,
+                claim=claim,
+                evidence=(evidence,),
+            )
+            envelopes.append(envelope)
+            entry["authority"] = {
+                "envelope_digest": envelope.digest()
+            }
+
+        if outcome is not None:
+            claim_key = (
+                f"{digest}:{task_id}:claim:"
+                f"{envelope_ordinal if with_envelope else 1}"
+            )
+            entry["authority_validation"] = {
+                "outcome": outcome,
+                "entry_kind": "task_update",
+                "entry_index": 0,
+                "subject_id": task_id,
+                "reason": (
+                    "task_update_authority_valid"
+                    if outcome == "accepted"
+                    else "worker_identity_mismatch"
+                ),
+                "idempotency_key": claim_key,
+                "envelope_digest": (
+                    envelopes[-1].digest()
+                    if with_envelope
+                    else claim_key
+                ),
+            }
+        entries.append(entry)
+
+    path = execute_batch_artifact_path(
+        plan_dir, batch_number, task_ids
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "task_updates": entries,
+                DISPATCH_IDENTITY_KEY: dispatch.to_dict(),
+                RESULT_ENVELOPES_KEY: [
+                    envelope.to_dict() for envelope in envelopes
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    if mtime_ns is not None:
+        os.utime(path, ns=(mtime_ns, mtime_ns))
+    return path
+
+
+def test_accepted_attempt_projection_unions_disjoint_same_batch_waves(
+    tmp_path,
+) -> None:
+    _write_wave(
+        tmp_path,
+        task_ids=["T20", "T21", "T24"],
+        batch_number=13,
+        fence_token=2,
+        coordinator_attempt_id="coord-2",
+        mtime_ns=1_000,
+        rows={
+            "T21": {},
+            "T24": {},
+            "T20": {
+                "status": "blocked",
+                "outcome": None,
+                "with_envelope": False,
+                "files_changed": [],
+                "commands_run": [],
+            },
+        },
+    )
+    _write_wave(
+        tmp_path,
+        task_ids=["T20"],
+        batch_number=13,
+        fence_token=2,
+        coordinator_attempt_id="coord-3",
+        mtime_ns=2_000,
+        rows={"T20": {}},
+    )
+    tasks = [
+        {"id": "T20", "status": "pending", "depends_on": []},
+        {"id": "T21", "status": "pending", "depends_on": []},
+        {"id": "T24", "status": "pending", "depends_on": []},
+    ]
+    projection = accepted_attempt_execution_projection(
+        tasks, plan_dir=tmp_path
+    )
+    assert projection is not None
+    assert set(projection.view.accepted_task_ids) == {
+        "T20", "T21", "T24"
+    }
+    assert set(
+        projection.view.dependency_closed_completed_task_ids
+    ) == {"T20", "T21", "T24"}
+    attempts = {
+        attempt.task_id: attempt
+        for attempt in projection.view.accepted_task_attempts
+    }
+    assert (
+        attempts["T20"].attempt_id
+        == "aa6fa6f11e1c:T20:attempt:1"
+    )
+    assert (
+        attempts["T21"].attempt_id
+        == "617257055a4c:T21:attempt:1"
+    )
+    assert (
+        attempts["T24"].attempt_id
+        == "617257055a4c:T24:attempt:2"
+    )
+    assert projection.source_paths == (
+        "execute_batches/batch_13/tasks_617257055a4c.json",
+        "execute_batches/batch_13/tasks_aa6fa6f11e1c.json",
+    )
+    assert effective_execute_completed_task_ids(
+        tasks, plan_dir=tmp_path
+    ) == {"T20", "T21", "T24"}
+
+
+def test_accepted_attempt_projection_newer_hollow_row_shadows_older_accepted(
+    tmp_path,
+) -> None:
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=12,
+        fence_token=2,
+        rows={"T21": {}},
+    )
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=13,
+        fence_token=3,
+        rows={
+            "T21": {
+                "status": "done",
+                "outcome": "accepted",
+                "envelope_status": "pending",
+            }
+        },
+    )
+    tasks = [
+        {"id": "T21", "status": "pending", "depends_on": []}
+    ]
+    projection = accepted_attempt_execution_projection(
+        tasks, plan_dir=tmp_path
+    )
+    assert projection is not None
+    assert projection.view.accepted_task_ids == ()
+    assert (
+        projection.view.dependency_closed_completed_task_ids == ()
+    )
+    task = projection.view.tasks[0]
+    assert task.accepted is False
+    assert task.dependency_closed is False
+    assert task.accepted_attempt_ids == ()
+    decisions: dict[str, AuthorityDecision] = {}
+    assert effective_execute_completed_task_ids(
+        tasks, plan_dir=tmp_path, decisions=decisions
+    ) == set()
+    assert decisions["T21"].status is EvidenceStatus.unknown
+    assert (
+        decisions["T21"].diagnostics["reason"]
+        == "no_accepted_attempt"
+    )
+    assert (
+        decisions["T21"].diagnostics["execute_completion"]
+        == "accepted_attempt_projection"
+    )
+
+
+def test_accepted_attempt_projection_newer_pending_redispatch_shadows_older_accepted(
+    tmp_path,
+) -> None:
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=12,
+        fence_token=2,
+        rows={"T21": {}},
+    )
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=13,
+        fence_token=3,
+        rows={
+            "T21": {
+                "status": "pending",
+                "outcome": "rejected",
+                "with_envelope": False,
+            }
+        },
+    )
+    tasks = [
+        {"id": "T21", "status": "pending", "depends_on": []}
+    ]
+    projection = accepted_attempt_execution_projection(
+        tasks, plan_dir=tmp_path
+    )
+    assert projection is not None
+    assert projection.view.accepted_task_ids == ()
+    assert (
+        projection.view.dependency_closed_completed_task_ids == ()
+    )
+    task = projection.view.tasks[0]
+    assert task.accepted is False
+    assert task.accepted_attempt_ids == ()
+    decisions: dict[str, AuthorityDecision] = {}
+    assert effective_execute_completed_task_ids(
+        tasks, plan_dir=tmp_path, decisions=decisions
+    ) == set()
+    assert decisions["T21"].status is EvidenceStatus.unknown
+    assert (
+        decisions["T21"].diagnostics["reason"]
+        == "no_accepted_attempt"
+    )
 
 
 def test_megaplan_wrappers_retain_generic_wire_contract_and_reject_other_policy() -> None:
