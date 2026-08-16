@@ -14,6 +14,8 @@ from arnold_pipelines.megaplan.chain import (
     _chain_completion_guard,
     _handle_completion_guard_failure,
     _mark_plan_completed_by_chain,
+    chain_direct_write_finding,
+    evaluate_completion_guard_with_maintenance,
     load_chain_state,
     run_chain,
     save_chain_state,
@@ -3564,3 +3566,300 @@ def test_handle_completion_guard_failure_shadow_preserves_legacy_behavior(
     assert len(targets) >= 1
     assert targets[0]["kind"] == "unknown_acceptance_failure"
     assert targets[0]["details"].get("legacy") is True
+
+
+# ---------------------------------------------------------------------------
+# M2 (T21): chain completion guard shadow diagnostics never change the guard
+# or any plan/chain writer behavior.
+# ---------------------------------------------------------------------------
+
+
+def _eligible_maintenance_envelope() -> Any:
+    """A coherent/complete/fresh single-environment Maintenance envelope.
+
+    ``ObservationEnvelope.build`` derives green/dispatchable/terminal from the
+    states, so an eligible envelope agrees with a green guard verdict.
+    """
+    from datetime import datetime, timezone
+
+    from arnold_pipelines.megaplan.maintenance.contracts import (
+        CoherenceState,
+        CompletenessState,
+        FreshnessState,
+        ObservationEnvelope,
+        SourceVersionVector,
+    )
+    from arnold_pipelines.megaplan.maintenance.identity import EnvironmentId
+
+    def _vector(owner: str, env: str, version: str) -> SourceVersionVector:
+        return SourceVersionVector(
+            owner=owner,
+            source=owner,
+            environment=EnvironmentId(env),
+            before=version,
+            after=version,
+        )
+
+    return ObservationEnvelope.build(
+        observed_at=datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+        environment="production",
+        version_vectors=[
+            _vector("run_authority", "production", "a" * 64),
+            _vector("wbc", "production", "b" * 64),
+        ],
+        completeness=CompletenessState.COMPLETE,
+        freshness=FreshnessState.FRESH,
+        coherence=CoherenceState.COHERENT,
+    )
+
+
+def _incoherent_maintenance_envelope() -> Any:
+    from datetime import datetime, timezone
+
+    from arnold_pipelines.megaplan.maintenance.contracts import (
+        CoherenceReason,
+        CoherenceState,
+        CompletenessState,
+        FreshnessState,
+        ObservationEnvelope,
+        SourceVersionVector,
+    )
+    from arnold_pipelines.megaplan.maintenance.identity import EnvironmentId
+
+    return ObservationEnvelope.build(
+        observed_at=datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+        environment="production",
+        version_vectors=[
+            SourceVersionVector(
+                owner="run_authority",
+                source="run_authority",
+                environment=EnvironmentId("production"),
+                before="a" * 64,
+                after="a" * 64,
+            )
+        ],
+        completeness=CompletenessState.UNKNOWN,
+        freshness=FreshnessState.FRESH,
+        coherence=CoherenceState.INCOHERENT,
+        coherence_reasons=(CoherenceReason.UNKNOWN,),
+    )
+
+
+def _green_guard_root(tmp_path: Path) -> Path:
+    """A repo whose completion guard returns (True, ...) — legacy green."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+    return tmp_path
+
+
+def test_evaluate_completion_guard_with_maintenance_match_preserves_guard_return(
+    tmp_path: Path,
+) -> None:
+    root = _green_guard_root(tmp_path)
+    baseline_ok, baseline_reason = _chain_completion_guard(
+        root, _record(), implementation_milestone=True
+    )
+    assert baseline_ok is True
+
+    diagnostics: list[dict[str, Any]] = []
+    ok, reason = evaluate_completion_guard_with_maintenance(
+        root,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_eligible_maintenance_envelope(),
+        diagnostics=diagnostics,
+    )
+    # The original guard return value is unchanged, byte for byte.
+    assert (ok, reason) == (baseline_ok, baseline_reason)
+    assert len(diagnostics) == 1
+    row = diagnostics[0]
+    assert row["bucket"] == "match"
+    assert row["guard_ok"] is True
+    assert row["terminal"] is True
+    assert row["envelope_eligible"] is True
+
+
+def test_evaluate_completion_guard_with_maintenance_would_block_for_incoherent(
+    tmp_path: Path,
+) -> None:
+    root = _green_guard_root(tmp_path)
+    baseline_ok, baseline_reason = _chain_completion_guard(
+        root, _record(), implementation_milestone=True
+    )
+    assert baseline_ok is True
+
+    diagnostics: list[dict[str, Any]] = []
+    ok, reason = evaluate_completion_guard_with_maintenance(
+        root,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_incoherent_maintenance_envelope(),
+        diagnostics=diagnostics,
+    )
+    assert (ok, reason) == (baseline_ok, baseline_reason)
+    row = diagnostics[0]
+    assert row["bucket"] == "would_block"
+    assert row["terminal"] is False  # stale/incoherent evidence can never be terminal
+    assert row["envelope_eligible"] is False
+    assert row["green"] is False
+
+
+def test_evaluate_completion_guard_with_maintenance_guard_fail_stays_fail(
+    tmp_path: Path,
+) -> None:
+    root = _green_guard_root(tmp_path)
+    # Force a non-green guard: a blocked plan with no merged PR.
+    _write_plan(tmp_path, current_state="blocked")
+    baseline_ok, baseline_reason = _chain_completion_guard(
+        root, _record(), implementation_milestone=True
+    )
+    assert baseline_ok is False
+
+    diagnostics: list[dict[str, Any]] = []
+    ok, reason = evaluate_completion_guard_with_maintenance(
+        root,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_eligible_maintenance_envelope(),
+        diagnostics=diagnostics,
+    )
+    assert (ok, reason) == (baseline_ok, baseline_reason)
+    row = diagnostics[0]
+    # Legacy non-green vs eligible green envelope: verdict disagreement with a
+    # TYPED legacy_conservative_non_promotion explanation → explained_difference.
+    assert row["bucket"] == "explained_difference"
+    assert row["terminal"] is False
+
+
+def test_evaluate_completion_guard_with_maintenance_writes_no_plan_chain_truth(
+    tmp_path: Path,
+) -> None:
+    root = _green_guard_root(tmp_path)
+    megaplan_dir = root / ".megaplan"
+
+    def _snapshot_bytes() -> dict[str, bytes]:
+        return {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in sorted(megaplan_dir.rglob("*"))
+            if path.is_file()
+        }
+
+    before = _snapshot_bytes()
+    assert before, "expected plan/chain truth files under .megaplan"
+
+    evaluate_completion_guard_with_maintenance(
+        root,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_incoherent_maintenance_envelope(),
+    )
+    evaluate_completion_guard_with_maintenance(
+        root,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_eligible_maintenance_envelope(),
+    )
+
+    after = _snapshot_bytes()
+    # Active truth (and no new files) is byte-identical after both evaluations.
+    assert after == before
+
+
+def test_evaluate_completion_guard_with_maintenance_paused_plan_truth_unchanged(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, current_state="paused", base_sha=base, finalize_tasks=[{"id": "T1"}])
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    state_path = plan_dir / "state.json"
+    before = state_path.read_bytes()
+
+    ok, reason = evaluate_completion_guard_with_maintenance(
+        tmp_path,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_eligible_maintenance_envelope(),
+    )
+    # A paused plan is not terminal-success: the guard still fails closed and
+    # the plan truth is untouched.
+    assert ok is False
+    assert "paused" in reason or "current_state" in reason
+    assert state_path.read_bytes() == before
+
+
+def test_maintenance_guard_path_never_calls_lifecycle_or_raw_writers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import arnold_pipelines.megaplan._core.state as core_state
+    import arnold_pipelines.megaplan.chain.spec as chain_spec
+    import arnold_pipelines.megaplan.incident.ledger as incident_ledger
+    import arnold_pipelines.megaplan.orchestration.transition_policy as transition_policy
+
+    calls: list[str] = []
+
+    def _boom(name: str):
+        def _raise(*args: Any, **kwargs: Any) -> Any:
+            calls.append(name)
+            raise AssertionError(f"{name} must never be called from a Maintenance path")
+
+        return _raise
+
+    monkeypatch.setattr(core_state, "write_plan_state", _boom("write_plan_state"))
+    monkeypatch.setattr(chain_spec, "save_chain_state", _boom("save_chain_state"))
+    monkeypatch.setattr(
+        transition_policy, "TransitionWriter", _boom("TransitionWriter")
+    )
+    monkeypatch.setattr(
+        incident_ledger, "RuntimeTransitionWriter", _boom("RuntimeTransitionWriter")
+    )
+
+    root = _green_guard_root(tmp_path)
+    evaluate_completion_guard_with_maintenance(
+        root,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_eligible_maintenance_envelope(),
+    )
+    evaluate_completion_guard_with_maintenance(
+        root,
+        _record(),
+        implementation_milestone=True,
+        maintenance_envelope=_incoherent_maintenance_envelope(),
+    )
+    chain_direct_write_finding("plan", "direct plan write attempt")
+    chain_direct_write_finding("chain", "direct chain write attempt")
+    assert calls == []
+
+
+def test_chain_direct_write_finding_is_typed_m7_bypass_and_inert() -> None:
+    from arnold_pipelines.megaplan.maintenance.boundaries import (
+        FORBIDDEN_DIRECT_WRITERS,
+        M7_SEAM,
+        M7BypassFinding,
+    )
+
+    plan_finding = chain_direct_write_finding("plan", "plan truth write attempt")
+    assert isinstance(plan_finding, M7BypassFinding)
+    assert plan_finding.kind.value == "plan_write"
+    assert plan_finding.seam == M7_SEAM
+    assert plan_finding.mutation_attempted is False
+    assert plan_finding.request == "plan truth write attempt"
+    assert all(
+        plan_finding.writer_call_counts.get(writer, 0) == 0
+        for writer in FORBIDDEN_DIRECT_WRITERS
+    )
+    assert plan_finding.matching_writers
+
+    chain_finding = chain_direct_write_finding("chain", "chain truth write attempt")
+    assert isinstance(chain_finding, M7BypassFinding)
+    assert chain_finding.kind.value == "chain_write"
+    assert chain_finding.mutation_attempted is False
+    assert all(
+        chain_finding.writer_call_counts.get(writer, 0) == 0
+        for writer in FORBIDDEN_DIRECT_WRITERS
+    )
+
+    with pytest.raises(ValueError):
+        chain_direct_write_finding("ledger", "invalid kind")
