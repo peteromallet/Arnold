@@ -2206,8 +2206,15 @@ def _latest_execution_batch_all_tasks_done(
 
     if authoritative_finalize_records:
         finalize_decisions: dict[str, AuthorityDecision] = {}
+        # Dependency closure must run over the COMPLETE canonical finalize
+        # universe (including baseline-unavailable checkpoints such as
+        # T11_impl/T11_proof). A partial universe (baseline-unavailable tasks
+        # excluded) makes every dependent task fail closure with a false
+        # accepted_attempt_dependency_unresolved cascade. Baseline-unavailable
+        # tasks stay excluded from the authoritative REPORTING set below, so
+        # they are never reported as pending.
         finalize_completed = effective_execute_completed_task_ids(
-            authoritative_finalize_records,
+            finalize_records,
             plan_dir=plan_dir,
             project_dir=project_dir,
             state=state_payload,
