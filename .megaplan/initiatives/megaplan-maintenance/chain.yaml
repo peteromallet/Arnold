@@ -40,6 +40,18 @@ milestones:
   notes: Overall plan difficulty 5/5; partnered-5/full/high @codex because custody,
     fencing, recurrence, terminal verification, canary install, and rollback are non-local
     production-safety contracts.
+- label: m3b-custody-bound-repair-promotion
+  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m3b-custody-bound-repair-promotion.md
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  depth: high
+  depends_on:
+  - m3-independent-verification
+  prep_clarify: false
+  notes: Overall plan difficulty 5/5; partnered-5/full/high @codex because exact-commit
+    publication, immutable runtime promotion, multi-artifact CAS cutover, and preserved
+    repair lineage form one production-safety transaction across Git and runtime custody.
 - label: m4-six-hour-product-and-rollout
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md
   profile: partnered-4
@@ -47,7 +59,7 @@ milestones:
   robustness: full
   depth: high
   depends_on:
-  - m3-independent-verification
+  - m3b-custody-bound-repair-promotion
   prep_clarify: false
   notes: Overall plan difficulty 4/5; partnered-4/full/high @codex because the six-hour
     loop has subtle event-time, custody, and false-intervention behavior, while its
