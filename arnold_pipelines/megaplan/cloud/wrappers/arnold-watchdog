@@ -1348,12 +1348,25 @@ PY
 # same initiative directory (the standard layout).
 
 # babysitter_parked_chain_stall: True when the session's chain is STOPPED in a
-# pre-execute state — a milestone plan born but never driven (initialized /
-# planned / finalized / critiqued / gated, NO active step, NO live driver).
-# Such a chain is not failed and carries no latest_failure, so the ordinary
-# blocked/failed trigger never sees it; without this the milestone sits parked
-# forever (astrid-first m2 case). mode=off disables REPAIR dispatch, but a
-# parked stall is a DRIVE, not a repair — the fixer must still pick it up.
+# state with NO active step and NO live driver — a milestone plan that was
+# born but never driven (initialized / planned / finalized / critiqued /
+# gated), OR a plan that STOPPED in a failure state (blocked / failed) with
+# no worker live on it. Such a chain is a genuine stoppage the fixer must
+# pick up: pre-execute it is a DRIVE, failed it is a REPAIR (the fixer's job
+# is to diagnose, fix, ship, rebind, resume). A plan with a live active-step
+# worker is NOT parked. mode=off disables REPAIR dispatch, but a parked stall
+# is a drive the fixer must still pick up.
+#
+# Why failed/blocked are included (grok strategy consult 2026-08-16): a
+# blocked/failed plan with no live driver and no lease sits behind the
+# liveness fence (PID/lease-based, not marker-SHA-based) -> watchdog reports
+# 'liveness unavailable; fenced' -> NO babysitter dispatches -> the fixer
+# that would rebind the stale marker (consumer lag) never runs -> catch-22,
+# chain strands forever. Extending the pre-fence dispatch exception (which
+# already exists for parked pre-execute stalls because a parked chain has no
+# live driver by definition) to stopped failed plans gives the fixer the
+# occurrence. The dispatch is still the single-flash babysitter; mechanical
+# relaunch remains fenced; the drive/repair is never --fresh and never wipes.
 babysitter_parked_chain_stall() {
   local session="$1"
   local workspace="$2"
@@ -1390,12 +1403,15 @@ try:
 except (OSError, ValueError):
     sys.exit(1)
 current = state.get("current_state")
-if current not in {"initialized", "planned", "finalized", "critiqued", "gated"}:
+if current not in {
+    "initialized", "planned", "finalized", "critiqued", "gated",
+    "blocked", "failed",
+}:
     sys.exit(1)
 active = state.get("active_step")
 if active and isinstance(active, dict) and active.get("phase"):
     sys.exit(1)  # a worker is live; not parked
-# No active step in a pre-execute state: parked unless a driver is live.
+# No active step in a stoppage state: parked unless a driver is live.
 sys.exit(0)
 PY
 }
