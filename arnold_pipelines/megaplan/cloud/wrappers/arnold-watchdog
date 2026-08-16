@@ -7291,6 +7291,21 @@ PY
   fi
   log "current-target canonical-control session=$session state=$canonical_control_state evidence=$current_target_observation"
 
+  # STOPPED PRE-EXECUTE STALL (drive, NOT repair): a milestone plan born but
+  # never driven (initialized/planned/finalized, no active step, no live
+  # driver) is a genuine stoppage the fixer must DRIVE via chain start /
+  # resume.  This runs BEFORE the liveness fence because a parked chain has no
+  # live driver by definition (that is why it is parked) — fencing it on
+  # unknown liveness would keep it parked forever.  The drive is non-
+  # destructive (never --fresh, never a state wipe), so it is exempt from the
+  # mutation fence.
+  if babysitter_parked_chain_stall "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
+    log "session $session parked pre-execute; dispatching babysitter to drive (non-fenced)"
+    babysitter_policy_dispatch "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$report_items" \
+      "parked pre-execute stall (plan born, no driver)"
+    return 0
+  fi
+
   canonical_mutation_fenced() {
     local action="${1:-mutation}"
     if [[ "$canonical_mutation_permitted" == "1" ]]; then
