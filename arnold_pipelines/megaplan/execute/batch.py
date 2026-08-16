@@ -2806,6 +2806,17 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
     )
 
 
+def _pending_left_behind_reason(task_ids: Iterable[str]) -> str | None:
+    pending_ids = sorted({task_id for task_id in task_ids if task_id})
+    if not pending_ids:
+        return None
+    return (
+        "task(s) remained non-complete after their execute batch: "
+        f"{', '.join(pending_ids)}. Stopping before dispatching later "
+        "batches; retry execute."
+    )
+
+
 def _drop_resolved_quality_blocking_reasons(
     blocking_reasons: list[str],
     *,
@@ -4356,6 +4367,45 @@ def _sweep_persisted_deferred_selector_jobs(
                 },
             )
         if lifecycle.status == SELECTOR_DEFERRED:
+            task_status = task.get("status") if isinstance(task, Mapping) else None
+            if task_status not in {"done", "completed"}:
+                # Abort-recovery park: the declaring task never completed
+                # (e.g. a worker aborted mid-batch), so the missing selector is
+                # not yet evidence of a broken write-set contract.  Keep the
+                # deferred evidence parked; the next resume re-dispatches the
+                # pending task and this sweep only fires after every admitted
+                # task of the run has been processed.
+                log.info(
+                    "validation job %s remains deferred at final sweep: "
+                    "owner task %s not complete (status=%r), parked",
+                    job_id,
+                    task_id,
+                    task_status,
+                )
+                continue
+            missing_selectors = set(lifecycle.missing_selectors)
+            incomplete_declaring_task_ids = sorted(
+                str(candidate.get("id"))
+                for candidate in finalize_data.get("tasks", [])
+                if isinstance(candidate, Mapping)
+                and isinstance(candidate.get("id"), str)
+                and candidate.get("status") not in {"done", "completed"}
+                and missing_selectors.intersection(
+                    declared_task_output_paths(candidate)
+                )
+            )
+            if incomplete_declaring_task_ids:
+                # A cross-task producer of this selector is still unfinished;
+                # parking is correct until every declaring producer completes.
+                # Only then can a still-missing selector be judged a write-set
+                # contract break.
+                log.info(
+                    "validation job %s remains deferred at final sweep: "
+                    "declaring task(s) %s not complete, parked",
+                    job_id,
+                    incomplete_declaring_task_ids,
+                )
+                continue
             # Every admitted task has run; a still-missing graph-declared
             # selector means the declaring task broke its write-set contract.
             raise CliError(
@@ -4446,7 +4496,24 @@ def _rerun_deferred_selector_validation_jobs(
                 task_id=task_id,
                 reason="task_or_validation_job_missing_from_finalize_contract",
             )
+        task_status = task.get("status") if isinstance(task, Mapping) else None
         if accepted_row_and_envelope is None:
+            if task_status not in {"done", "completed"}:
+                # Abort-recovery park: the worker aborted mid-batch (e.g. a
+                # provider/transport failure) before minting an accepted result
+                # envelope, so the declaring task is still pending.  Raising a
+                # terminal block here would wedge the whole plan on a task that
+                # was never completed.  Keep the persisted deferred evidence
+                # untouched; the next resume re-dispatches the task and this
+                # recheck re-runs once an accepted envelope appears.
+                log.info(
+                    "validation job %s remains deferred: task %s not complete "
+                    "(status=%r), no accepted result envelope",
+                    job_id,
+                    task_id,
+                    task_status,
+                )
+                continue
             _raise_deferred_selector_result_block(
                 job_id=job_id,
                 task_id=task_id,
@@ -4457,7 +4524,6 @@ def _rerun_deferred_selector_validation_jobs(
         # task-policy/write/test guardrails run.  A policy-blocked target must
         # therefore not release a deferred selector merely because that
         # earlier authority check said ``accepted``.
-        task_status = task.get("status") if isinstance(task, Mapping) else None
         if task_status not in {"done", "completed"}:
             _raise_deferred_selector_result_block(
                 job_id=job_id,
@@ -4939,6 +5005,23 @@ def handle_execute_one_batch(
     blocked_task_reason = _blocked_task_reason(batch_blocked_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
+    # Abort-recovery park (single-batch path): a batch task left non-terminal
+    # after merge (worker aborted mid-batch, no accepted envelope) must surface
+    # as a blocker, never as success with unfinished tasks.
+    batch_blocked_id_set = set(batch_blocked_ids)
+    batch_pending_left_behind_ids = [
+        task.get("id")
+        for task in tracked_tasks
+        if task.get("id") in set(batch_task_ids)
+        and task.get("status") not in {"done", "completed"}
+        and task.get("id") not in effective_completed_id_set
+        and task.get("id") not in batch_blocked_id_set
+    ]
+    pending_left_behind_reason = _pending_left_behind_reason(
+        batch_pending_left_behind_ids
+    )
+    if pending_left_behind_reason:
+        blocking_reasons.append(pending_left_behind_reason)
     if result.routing_degradations:
         blocking_reasons.extend(result.routing_degradations)
     all_tracked = all(task.get("id") in effective_completed_ids for task in tracked_tasks)
@@ -6973,6 +7056,7 @@ def handle_execute_auto_loop(
     latest_auth_metadata: dict[str, Any] | None = None
     latest_rendered_prompt: str | None = None
     blocking_reasons: list[str] = []
+    pending_left_behind_task_ids: set[str] = set()
     routing_degradations: list[str] = []
     timeout_recovery: StepResponse | None = None
     # Per-batch tier routing: track the previous batch's resolved (agent, model)
@@ -7289,6 +7373,29 @@ def handle_execute_auto_loop(
         blocked_task_reason = _blocked_task_reason(newly_blocked_task_ids)
         if blocked_task_reason:
             blocking_reasons.append(blocked_task_reason)
+        # Abort-recovery stop: a batch task that is still non-terminal after
+        # merge (worker aborted mid-batch, no accepted envelope, not
+        # authority-completed) must not silently pass.  Park it and stop the
+        # loop so dependent chunks are not dispatched against a still-pending
+        # prerequisite; the next resume recomputes the frontier and re-dispatches
+        # the pending task.
+        current_batch_noncomplete_ids = {
+            task["id"]
+            for task in finalize_data.get("tasks", [])
+            if isinstance(task, Mapping)
+            and isinstance(task.get("id"), str)
+            and task["id"] in set(batch_task_ids)
+            and task.get("status") not in {"done", "completed"}
+        }
+        current_batch_pending_left_behind = (
+            current_batch_noncomplete_ids - newly_blocked_task_ids
+        )
+        pending_left_behind_task_ids.update(current_batch_pending_left_behind)
+        pending_left_behind_reason = _pending_left_behind_reason(
+            current_batch_pending_left_behind
+        )
+        if pending_left_behind_reason:
+            blocking_reasons.append(pending_left_behind_reason)
         # Break only on aggregate quality reasons (untracked task updates,
         # sense-check gaps, missing evidence) or when no runnable frontier
         # remains. A sole task-level block (worker reported status=blocked for
@@ -7472,6 +7579,17 @@ def handle_execute_auto_loop(
         blocking_reasons,
         state=state,
     )
+    # Carry the abort-recovery park into the phase-final decision: the in-loop
+    # blocking_reasons list is rebuilt above, so a pending-left-behind task must
+    # be re-appended here or the phase would report success with unfinished
+    # tasks.  ``completed_task_ids`` was recomputed from the merged finalize
+    # data, so tasks that completed during the loop are dropped from the set.
+    pending_left_behind_task_ids.difference_update(completed_task_ids)
+    pending_left_behind_reason = _pending_left_behind_reason(
+        pending_left_behind_task_ids
+    )
+    if pending_left_behind_reason:
+        blocking_reasons.append(pending_left_behind_reason)
     active_blocked_task_ids = {
         task["id"]
         for task in finalize_data.get("tasks", [])
