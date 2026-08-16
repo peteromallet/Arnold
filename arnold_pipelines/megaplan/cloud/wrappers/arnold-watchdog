@@ -7891,11 +7891,16 @@ PY
     fi
     if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" ]] \
       || [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]] \
+      || [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "review_quality_blocked_unknown" ]] \
       || [[ "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
       # manual_review classified for repair dispatch (blocked_recovery,
-      # dispatch_l1_repair, auto_stall). The ONLY repair dispatch is the
-      # single-flash babysitter; a durable needs-human marker that survives
-      # the fresh-classifier checks below is reported as-is.
+      # dispatch_l1_repair, review_quality_blocked_unknown, auto_stall).
+      # review_quality_blocked_unknown is a typed review-quality block with
+      # repairable evidence (unresolved quality blockers), NOT a genuine
+      # human gate: it must reach the single-flash babysitter instead of
+      # parking at needs-human observe (F3 dispatch-gap; codex rec #4). A
+      # durable needs-human marker that survives the fresh-classifier checks
+      # below is reported as-is.
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         local stale_marker_plans
         stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" 2>/dev/null)" || {
