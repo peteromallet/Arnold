@@ -240,6 +240,32 @@ Mandatory flow — follow the five steps exactly:
   source_revision, binding drift, stale seed), DO NOT hand the rebind back:
   re-run step (c) (manifest -> marker -> chain -> seed resync) and retry the
   resume.  Iterate until the resume runs or you hit a genuinely external gate.
+  EXECUTE-PHASE RESUME LOOP (grok strategy 2026-08-16, astrid m2): if the
+  resume repeatedly dies mid-execute and restarts from batch 1, the blocker is
+  the DEFERRED VALIDATION refusal — the resume agent hits its iteration cap,
+  the execute driver then fails the deferred revalidation
+  (``task_result_blocked_by_post_merge_policy`` /
+  ``deferred_validation_result_missing``) and writes STATE_BLOCKED, and the
+  watchdog relaunches from scratch. The canonical strategy:
+  1. DO NOT raise the agent iteration cap. DO NOT staple ``batch_index`` onto
+     resume_cursor to skip batches. Those mask the underlying defect.
+  2. PARK the deferred-validation row (VJ12) as a TYPED block: record the
+     blocked task as a typed ``validation_blocked`` disposition and STOP auto
+     from flipping that row back to pending on every epoch.
+  3. PUBLISH the merge BEFORE the recheck: the refusal fires because the
+     recheck runs against a pre-merge state — get the accepted task result
+     through the authority-adopt seam (``batch.py`` authority-adopt) and
+     publish, THEN run the deferred recheck against the merged state.
+  4. Then diagnose whether that row is an ADOPT MISS (the accepted result
+     exists but the deferred recheck mis-reads it) or a REAL policy failure.
+     If it is an adopt miss, fix the read path; if it is a real policy
+     failure, the task genuinely failed and must be reworked — do not exempt
+     the validation.
+  5. Bug A (heartbeat projection cursor mismatch storm — state.json is a
+     single JSON doc but the cursor counts newlines) is COSMETIC for this
+     loop: the reap decision never reads the heartbeat projection. Do not
+     spend this session on it; the one-liner (stop passing ``source_path`` to
+     the heartbeat append) is a later cleanup.
 - STEP 5 — PROVE MOVEMENT: from canonical state, the chain-*.json last_state
   must leave blocked and the same failure_fingerprint must not recur, with
   matching identities (runtime/request/grant/claim/WBC) and exactly one
