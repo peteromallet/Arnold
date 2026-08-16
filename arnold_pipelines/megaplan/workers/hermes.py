@@ -2221,6 +2221,18 @@ def run_hermes_step(
             session_id=session_id,
             session_db=SessionDB(db_path=_hermes_db_path),
             max_tokens=agent_max_tokens,
+            # Completion-driven, NOT turn-capped (2026-08-16): the fixed
+            # 90-turn default killed execute workers mid-batch — a real
+            # implementation batch (edits + 3-4 test runs per task) needs
+            # more than 90 tool-call turns, the worker died at the cap, no
+            # authority envelopes were stamped, and the frontier never
+            # advanced (astrid m2 reap loop). The batch/authority machinery
+            # is the real runaway guard (budget, timeout, authority
+            # validation, fail-closed gates); a turn count is redundant and
+            # strangles legitimate work. None = completion-driven (shared
+            # with subagents; the caller may still pass an explicit cap via
+            # extra_kwargs, which AIAgent honors as authoritative).
+            max_iterations=None,
             reasoning_config=_reasoning_off,
             output_stream=activity_stderr,
             **extra_kwargs,
