@@ -2594,6 +2594,49 @@ def _default_max_tasks_per_batch() -> int:
     )
 
 
+def _weight_aware_max_tasks_per_batch(
+    base: int,
+    tasks: Iterable[Mapping[str, Any]],
+) -> int:
+    """Shrink the batch for heavy tasks so one worker can finish it.
+
+    The execute worker runs under a fixed tool-iteration budget (Hermes
+    max_turns, default 90). A batch whose tasks each need many tool calls
+    (implementation + multiple test runs) exhausts that budget mid-batch: the
+    worker dies, no authority envelopes are stamped, the pending frontier
+    never advances, and resume restarts from the top (astrid m2 reap loop,
+    2026-08-16 — 5-task batches of 9-12min tasks never completed; mega m3's
+    2-task batches of 3-4min tasks completed cleanly).
+
+    Heavy tasks (estimated_minutes >= 8 or complexity >= 6) batch at most 2;
+    light tasks keep the configured default. This preserves the fast path for
+    simple work and prevents guaranteed worker-budget exhaustion for heavy
+    work, without raising the worker cap (which would mask the underlying
+    budget mismatch).
+    """
+    base = max(1, int(base))
+    if base <= 1:
+        return base
+    try:
+        tasks_list = list(tasks)
+    except TypeError:
+        return base
+    if not tasks_list:
+        return base
+    heavy = sum(
+        1
+        for task in tasks_list
+        if isinstance(task, Mapping)
+        and (
+            (isinstance(task.get("estimated_minutes"), (int, float)) and task["estimated_minutes"] >= 8)
+            or (isinstance(task.get("complexity"), (int, float)) and task["complexity"] >= 6)
+        )
+    )
+    if heavy >= 1 and len(tasks_list) >= 2:
+        return min(base, 2)
+    return base
+
+
 def _resolve_max_tasks_per_batch(state: PlanState, args: argparse.Namespace) -> int:
     default = _default_max_tasks_per_batch()
     cli_value = getattr(args, "max_tasks_per_batch", None)
@@ -4589,7 +4632,10 @@ def handle_execute_one_batch(
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
-    max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
+    max_tasks_per_batch = _weight_aware_max_tasks_per_batch(
+        _resolve_max_tasks_per_batch(state, args),
+        (finalize_data.get("tasks") or []),
+    )
     global_batches = _split_high_complexity(
         split_oversized_batches(
             compute_global_batches(finalize_data),
@@ -6642,7 +6688,10 @@ def handle_execute_auto_loop(
     pending_batches = compute_task_batches(
         pending_tasks, completed_ids=completed_task_ids
     )
-    max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
+    max_tasks_per_batch = _weight_aware_max_tasks_per_batch(
+        _resolve_max_tasks_per_batch(state, args),
+        (finalize_data.get("tasks") or []) if isinstance(finalize_data, Mapping) else pending_tasks,
+    )
     split_batches = _split_high_complexity(
         split_oversized_batches(pending_batches, max_tasks_per_batch),
         finalize_data,
