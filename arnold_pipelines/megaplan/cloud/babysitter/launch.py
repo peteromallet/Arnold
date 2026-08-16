@@ -544,6 +544,43 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
             if managed_terminal == "interrupted"
             else "failed"
         )
+        # False-success guard (J2/grok consult 2026-08-16): a managed fixer
+        # that exits 0 while the target chain/plan is STILL in the failure
+        # state is a false success — the watchdog will not re-dispatch a
+        # `completed` run, so the chain strands. Downgrade to `failed` when
+        # the plan the babysitter was dispatched for is still blocked/failed
+        # with a matching failure kind, so the next watchdog scan relaunches
+        # the repair for the same occurrence.
+        false_success_reason = ""
+        if terminal_status == "completed":
+            try:
+                plan_name = str(ctx.get("plan") or "").strip()
+                workspace = str(ctx.get("workspace") or "").strip()
+                if plan_name and workspace:
+                    plan_state_path = (
+                        Path(workspace) / ".megaplan" / "plans" / plan_name / "state.json"
+                    )
+                    if plan_state_path.is_file():
+                        plan_payload = json.loads(
+                            plan_state_path.read_text(encoding="utf-8")
+                        )
+                        state = str(plan_payload.get("current_state") or "")
+                        if state in {"blocked", "failed"}:
+                            failure = plan_payload.get("latest_failure") or {}
+                            failure_kind = str(failure.get("kind") or "")
+                            false_success_reason = (
+                                f"plan still {state} after fixer exit; "
+                                f"failure_kind={failure_kind or 'unknown'}"
+                            )
+            except (OSError, json.JSONDecodeError):
+                pass
+        if false_success_reason:
+            terminal_status = "failed"
+            _eprint(
+                f"[babysitter] FALSE SUCCESS downgraded to failed "
+                f"session={ctx.get('session', '?')} occurrence={ctx.get('occurrence', '?')} "
+                f"reason={false_success_reason}"
+            )
         _write_receipts(
             ctx,
             _receipt_payload(
@@ -552,6 +589,7 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
                 finished_at=_utcnow_iso(),
                 returncode=rc,
                 managed_terminal_status=managed_terminal,
+                false_success_reason=false_success_reason or None,
             ),
         )
         return rc
