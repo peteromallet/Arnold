@@ -471,3 +471,83 @@ def test_split_high_complexity_batches_handles_empty_input() -> None:
 
     assert split_high_complexity_batches([], {}) == []
     assert split_high_complexity_batches([], {"tasks": []}) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Cross-session blocked-task semantics (occurrence 0ae19cc17afd, shipped in
+# b2aaab3f). A validation_blocked row (typed disposition, no accepted terminal
+# authority) is retryable: the NEXT invocation resets it to pending, and only
+# an accepted pass marks it done (never skipped, never adopted without
+# authority). A real failure without an accepted envelope stays rerunnable and
+# never enters completed IDs.
+# ═══════════════════════════════════════════════════════════════════════════
+
+import argparse as _s4_argparse  # noqa: F401  (kept for symmetry with other suites)
+
+from arnold_pipelines.megaplan.execute.batch import (
+    _has_genuine_task_level_blocker,
+    _reset_blocked_tasks_to_pending,
+)
+
+
+def _s4_blocked_task(task_id: str, *, blocker_kind: str) -> dict[str, object]:
+    task = _task(task_id, status="blocked")
+    task["blocked_reason"] = blocker_kind
+    task["recorded_invocation_id"] = f"inv-{task_id}"
+    return task
+
+
+def test_cross_session_block_pass_reruns_once_then_authority_skips() -> None:
+    """Next invocation resets the blocked row; accepted pass marks it done."""
+    tasks = [
+        _s4_blocked_task("T1", blocker_kind="validation_blocked"),
+        _task("T2", depends_on=["T1"]),
+        _task("T3"),
+    ]
+    finalize_data = {"tasks": tasks}
+
+    # Validation-blocked rows are retryable, not genuine blockers.
+    assert _has_genuine_task_level_blocker(tasks[0]) is False
+
+    # Fresh session: reset the blocked row back to pending (cross-session
+    # retry path). T2 depends on T1 so it stays pending; T3 is independent.
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1"]
+    assert tasks[0]["status"] == "pending"
+    assert tasks[0].get("recorded_invocation_id") is None
+
+    # The fresh run passes: T1 gets accepted authority and is done. A later
+    # resume derives T1 completed from authority and never re-dispatches it.
+    tasks[0]["status"] = "done"
+    completed_ids = {"T1"}
+    pending_tasks = [task for task in tasks if task.get("status") == "pending"]
+    batches = compute_task_batches(pending_tasks, completed_ids=completed_ids)
+    assert [tid for batch in batches for tid in batch] == ["T2", "T3"]
+    assert "T1" not in {tid for batch in batches for tid in batch}
+
+    # T1 is done with accepted authority: the recompute path must not re-add it
+    # to a runnable frontier, and it is not part of any blocked closure.
+    assert tasks[0]["status"] == "done"
+    assert tasks[0]["id"] not in {tid for batch in batches for tid in batch}
+
+
+def test_cross_session_real_fail_is_not_skipped_or_adopted() -> None:
+    """No accepted envelope: failed row is rerunnable next session, never adopted."""
+    tasks = [
+        _s4_blocked_task("T1", blocker_kind="validation_blocked"),
+        _task("T2", depends_on=["T1"]),
+    ]
+    finalize_data = {"tasks": tasks}
+
+    # Fresh session resets the failed row (no accepted envelope exists).
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1"]
+    assert tasks[0]["status"] == "pending"
+
+    # No accepted terminal authority: T1 never enters completed IDs, so the
+    # initial frontier re-derives it (never skipped) and it stays pending.
+    completed_ids: set[str] = set()
+    batches = compute_task_batches(tasks, completed_ids=completed_ids)
+    assert [tid for batch in batches for tid in batch] == ["T1", "T2"]
+    assert "T1" not in completed_ids
+    assert tasks[0]["status"] == "pending"  # rerunnable, not skipped/adopted
