@@ -76,6 +76,16 @@ milestones:
   notes: Overall plan difficulty 4/5; partnered-4/full/high @codex because censored
     analytics, cohort baselines, recurrence clustering, and recommendation precision
     need careful planning, but the loop is read-only and cannot reshape active chains.
+- label: reconcile
+  kind: reconcile
+  idea: .megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md
+  branch: reconcile/megaplan-maintenance-20260816
+  target_branch: main
+  merge_policy: review
+  phase_model:
+  - execute=codex
+  depends_on:
+  - m5-daily-efficiency-auditor
 on_failure:
   abort: stop_chain
 on_escalate:
@@ -94,4 +104,4 @@ driver:
   initiative_path: .megaplan/initiatives/megaplan-maintenance
   require_editable_runtime_match: true
   execution_binding_assets:
-    - .megaplan/initiatives/megaplan-maintenance/decisions/authority-ledger-and-loop-boundaries.md
+  - .megaplan/initiatives/megaplan-maintenance/decisions/authority-ledger-and-loop-boundaries.md
