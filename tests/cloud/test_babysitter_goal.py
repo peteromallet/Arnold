@@ -169,7 +169,10 @@ def test_renderer_embeds_prior_fixer_occurrences(tmp_path: pathlib.Path) -> None
     assert "a102d8d24045" in result.stdout
     assert "continue the lineage" in result.stdout
     assert "ship it (cherry-pick/apply + regression) instead of re-authoring" in result.stdout
-    assert "PERSIST THE FIX" in result.stdout
+    assert "PERSIST AND SHIP THE FIX" in result.stdout
+    assert "finish delivery" in result.stdout
+    assert "push origin" in result.stdout
+    assert "REBIND: advance the manifest" in result.stdout
     assert "write handoff.md here" in result.stdout
 
 

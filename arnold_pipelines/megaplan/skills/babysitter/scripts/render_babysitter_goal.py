@@ -191,13 +191,27 @@ Mandatory flow — follow the five steps exactly:
   failed attempt) until the occurrence advances.  Escalate back to codex after
   three distinct verified fix attempts.  agent_actionable: false is reserved
   for a genuinely external gate.
-  PERSIST THE FIX (the runtime candidate is push-blocked by design — your
-  commit lives only there until shipped): after a fix passes its regression,
-  (a) record the commit SHA plus the full ``git show``/patch of the change in
-  your evidence pack, and (b) write ``handoff.md`` at the recovery evidence
-  root naming the commit SHA, the changed files, the regression that passed,
-  and the exact next step (resume/rebind).  A fix that is only in the
-  candidate is not durable — it must be shippable by the next incarnation.
+  PERSIST AND SHIP THE FIX (do NOT hand the ship back — you finish delivery):
+  after a fix passes its regression, drive it onto main and rebind the runtime
+  so the NEXT resume runs the fixed source.  The operator has authorized
+  pushing fixer branches to main.  The exact delivery sequence:
+  (a) commit the fix in the runtime candidate, record the commit SHA + full
+      ``git show``/patch in your evidence pack;
+  (b) SHIP: ``git -C <candidate> format-patch -1 <sha> --stdout`` -> apply to
+      the Arnold repo -> commit -> ``git push origin
+      fixer/megaplan-maintenance-20260813:main`` (for megaplan-maintenance) or
+      the astrid repo's m1/m2 branch (for astrid-first) -> then
+      ``git -C <candidate> fetch origin main && git -C <candidate> reset
+      --hard origin/main``;
+  (c) REBIND: advance the manifest ``epic.expected_head`` to the new main
+      SHA, then resync marker + chain record runtime_binding.current_identity
+      (recompute via runtime_provenance normalized_runtime_identity with the
+      canonical worktree-first shape: editable_root/pth/direct_url/imports
+      NULLED) and rebuild the launch seed via ensure_runtime_launch_seed
+      (the seed must be ``ready: true`` with no errors);
+  (d) write ``handoff.md`` at the recovery evidence root naming the shipped
+      SHA, changed files, the regression that passed, and the rebind evidence.
+      A fix that is only in the candidate is NOT a completed delivery.
 - STEP 4 — RELAUNCH: restart the chain through the supported seam — megaplan
   resume / chain start as the evidence requires — never --fresh, never a state
   wipe.  The relaunch must carry the same occurrence identity and the fixed
@@ -208,6 +222,10 @@ Mandatory flow — follow the five steps exactly:
   chain/__init__.py run_chain does. A bare `megaplan plan`/`resume` worker
   fails with "canonical runtime launch seed is required but missing" when the
   seed env is absent (chain start exports it; direct phase commands do not).
+  If the resume fails on an identity/attestation mismatch (editable_*,
+  source_revision, binding drift, stale seed), DO NOT hand the rebind back:
+  re-run step (c) (manifest -> marker -> chain -> seed resync) and retry the
+  resume.  Iterate until the resume runs or you hit a genuinely external gate.
 - STEP 5 — PROVE MOVEMENT: from canonical state, the chain-*.json last_state
   must leave blocked and the same failure_fingerprint must not recur, with
   matching identities (runtime/request/grant/claim/WBC) and exactly one
