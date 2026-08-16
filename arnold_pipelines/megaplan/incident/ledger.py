@@ -5,8 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 import argparse
+import fcntl
 import hashlib
 import json
+import os
 import sys
 import uuid
 from typing import Any, Callable
@@ -113,6 +115,156 @@ class _IncidentEventJournal(NdjsonEventJournal):
         super().__init__(artifact_root)
         self._ndjson_path = self._root / _EVENTS_FILE
 
+    # ── Maintenance routing: atomic lookup/append keyed by occurrence ──────
+
+    def _read_records(self) -> list[dict[str, Any]]:
+        """Parse every committed record from ``events.jsonl`` (append order)."""
+        if not self._ndjson_path.exists():
+            return []
+        records: list[dict[str, Any]] = []
+        with open(self._ndjson_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return records
+
+    def _emit_locked(
+        self,
+        seq_fd: int,
+        *,
+        kind: str,
+        payload: dict[str, Any],
+        idempotency_key: str,
+        init_ts: datetime | None,
+    ) -> dict[str, Any]:
+        """Append one record while the caller holds the seq-sidecar flock."""
+        try:
+            raw = os.read(seq_fd, 128)
+            current = (
+                int(raw.strip()) if raw.strip() else self._recover_durable_sequence()
+            )
+        except (ValueError, FileNotFoundError):
+            current = self._recover_durable_sequence()
+        new_seq = current + 1
+        os.lseek(seq_fd, 0, os.SEEK_SET)
+        os.write(seq_fd, str(new_seq).encode("ascii"))
+        os.ftruncate(seq_fd, os.lseek(seq_fd, 0, os.SEEK_CUR))
+        os.fsync(seq_fd)
+
+        ts_utc = datetime.now(timezone.utc)
+        event: dict[str, Any] = {
+            "seq": new_seq,
+            "schema_version": 1,
+            "ts_utc": ts_utc.isoformat(),
+            "ts_rel_init_s": (
+                (ts_utc - init_ts).total_seconds() if init_ts is not None else None
+            ),
+            "kind": kind,
+            "payload": payload,
+            "idempotency_key": idempotency_key,
+        }
+        line = json.dumps(
+            event,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        with open(self._ndjson_path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        return event
+
+    def lookup_maintenance(self, idempotency_key: str) -> dict[str, Any] | None:
+        """Return the committed record for *idempotency_key*, or ``None``.
+
+        ``idempotency_key`` is the Maintenance occurrence identity (SD2):
+        the sole idempotency scope.  Only strict Maintenance records (payloads
+        carrying ``occurrence_id``) are considered; legacy records are skipped.
+        """
+        for record in self._read_records():
+            stored = record.get("payload") or {}
+            if stored.get("occurrence_id") == idempotency_key:
+                return record
+        return None
+
+    def append_maintenance(
+        self,
+        *,
+        kind: str,
+        payload: dict[str, Any],
+        idempotency_key: str,
+        digest: str,
+    ) -> dict[str, Any]:
+        """Atomically append one strict Maintenance payload with dedupe.
+
+        Runs the full lookup → decide → append critical section under the
+        journal's ``fcntl.flock`` on the seq sidecar, so concurrent writers
+        cannot interleave between the duplicate check and the append.
+
+        * an exact duplicate (same idempotency key AND same canonical digest)
+          returns the PRIOR committed record — nothing is appended;
+        * a divergent duplicate (same idempotency key, different canonical
+          digest) raises :class:`MaintenanceEventConflict` — nothing is
+          appended;
+        * otherwise the record is appended once and returned.
+        """
+        from arnold_pipelines.megaplan.maintenance.events import MaintenanceEvent
+        from arnold_pipelines.megaplan.maintenance.identity import (
+            canonical_digest,
+            strict_loads,
+        )
+
+        # Canonical validation up front: the payload must strict-decode and
+        # its digest must be reproducible from the canonical codec.
+        canonical_digest(strict_loads(MaintenanceEvent, payload))
+
+        init_ts = self._load_init_ts()
+        seq_fd = os.open(str(self._seq_path), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(seq_fd, fcntl.LOCK_EX)
+            for record in self._read_records():
+                stored = record.get("payload") or {}
+                if stored.get("occurrence_id") != idempotency_key:
+                    continue
+                stored_digest = canonical_digest(strict_loads(MaintenanceEvent, stored))
+                if stored_digest == digest:
+                    return record
+                raise MaintenanceEventConflict(
+                    f"maintenance idempotency conflict for occurrence "
+                    f"{idempotency_key!r}: stored digest {stored_digest} "
+                    f"!= incoming digest {digest}; nothing appended"
+                )
+            appended = self._emit_locked(
+                seq_fd,
+                kind=kind,
+                payload=payload,
+                idempotency_key=idempotency_key,
+                init_ts=init_ts,
+            )
+            fcntl.flock(seq_fd, fcntl.LOCK_UN)
+        finally:
+            try:
+                os.close(seq_fd)
+            except OSError:
+                pass
+        if init_ts is None:
+            self._write_init_ts(datetime.now(timezone.utc))
+        return appended
+
+
+class MaintenanceEventConflict(ValueError):
+    """Raised when a Maintenance event reuses an occurrence idempotency
+    identity with a different canonical digest.
+
+    The conflicting event is NOT appended; the ledger is left unchanged.
+    """
+
 
 class IncidentLedger:
     """Append-only incident ledger rooted at ``<root>/.megaplan/incident-ledger``."""
@@ -133,10 +285,61 @@ class IncidentLedger:
     def append_event(self, event: dict[str, Any]) -> dict[str, Any]:
         """Redact, validate, and append one incident event to the canonical ledger."""
         payload = validate_incident_event(event)
+        kind = payload.get("type") or payload.get("event_kind") or "event"
         return self._journal.emit(
-            f"incident.{payload['type']}",
+            f"incident.{kind}",
             payload=payload,
         )
+
+    def append_maintenance_event(
+        self,
+        event: dict[str, Any] | Any,
+    ) -> dict[str, Any]:
+        """Strict-route one Maintenance event with atomic idempotency.
+
+        *event* may be a :class:`MaintenanceEvent` model or its canonical
+        dict form.  It is strict-decoded through the shared Maintenance codec
+        (unknown/missing fields and identity mismatches fail before any
+        write), then appended atomically keyed by the occurrence idempotency
+        identity plus canonical digest:
+
+        * an exact duplicate returns the PRIOR committed record (same seq);
+        * a divergent duplicate raises :class:`MaintenanceEventConflict`
+          without appending;
+        * otherwise exactly one record is appended.
+
+        Never touches runtime ``.megaplan/incident-ledger`` data: the caller
+        supplies the root.
+        """
+        from arnold_pipelines.megaplan.maintenance.events import MaintenanceEvent
+        from arnold_pipelines.megaplan.maintenance.identity import (
+            MaintenanceCodecError,
+            canonical_digest,
+            canonical_dumps,
+            strict_loads,
+        )
+
+        if isinstance(event, MaintenanceEvent):
+            model = event
+        else:
+            try:
+                model = strict_loads(MaintenanceEvent, event)
+            except MaintenanceCodecError as exc:
+                raise ValueError(
+                    f"maintenance event strict decode failed: {exc}"
+                ) from exc
+        payload = json.loads(canonical_dumps(model))
+        digest = canonical_digest(model)
+        return self._journal.append_maintenance(
+            kind=f"incident.{model.event_kind.value}",
+            payload=payload,
+            idempotency_key=model.occurrence_id,
+            digest=digest,
+        )
+
+    def lookup_maintenance_event(self, occurrence_id: str) -> dict[str, Any] | None:
+        """Return the committed record for *occurrence_id*, or ``None``."""
+        return self._journal.lookup_maintenance(occurrence_id)
 
     def append_authorized_lifecycle_event(
         self,
@@ -644,6 +847,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "IncidentLedger",
+    "MaintenanceEventConflict",
     "RuntimeTransitionWriter",
     "EVENT_MANIFEST_SELECTED",
     "EVENT_DEVIATION_DECLARED",
