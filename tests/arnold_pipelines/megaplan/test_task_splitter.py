@@ -726,3 +726,47 @@ class TestEdgeCases:
         assert proof["write_set"]["paths"] == []
         assert proof["write_set"]["complete"] is True
         assert proof["complexity"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Weight-aware batch sizing (execute/batch.py) — astrid reap loop regression
+# ---------------------------------------------------------------------------
+
+class TestWeightAwareBatchSize:
+    """Heavy tasks must shrink the batch so one worker can finish it."""
+
+    def _call(self, base, tasks):
+        from arnold_pipelines.megaplan.execute.batch import (
+            _weight_aware_max_tasks_per_batch,
+        )
+
+        return _weight_aware_max_tasks_per_batch(base, tasks)
+
+    def test_light_tasks_keep_default(self):
+        tasks = [
+            {"id": f"T{i}", "complexity": 3, "estimated_minutes": 3}
+            for i in range(6)
+        ]
+        assert self._call(5, tasks) == 5
+
+    def test_heavy_tasks_shrink_to_two(self):
+        tasks = [
+            {"id": f"T{i}", "complexity": 6, "estimated_minutes": 10}
+            for i in range(5)
+        ]
+        assert self._call(5, tasks) == 2
+
+    def test_mixed_heavy_and_light_shrinks(self):
+        tasks = [
+            {"id": "T1", "complexity": 3, "estimated_minutes": 3},
+            {"id": "T2", "complexity": 6, "estimated_minutes": 10},
+            {"id": "T3", "complexity": 4, "estimated_minutes": 5},
+        ]
+        assert self._call(5, tasks) == 2
+
+    def test_empty_and_small_lists_keep_base(self):
+        assert self._call(5, []) == 5
+        tasks = [{"id": "T1", "complexity": 6, "estimated_minutes": 10}]
+        # single heavy task: no shrink below 1 needed at this layer
+        assert self._call(5, tasks) == 5
+        assert self._call(1, tasks) == 1
