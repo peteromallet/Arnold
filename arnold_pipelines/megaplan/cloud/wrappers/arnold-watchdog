@@ -7638,6 +7638,16 @@ PY
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-191" "authority-risk bypass converted to typed evidence gap"
       write_partial_liveness_tick "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$health"
     fi
+    # STOPPED PRE-EXECUTE STALL: a milestone plan born but never driven
+    # (initialized/planned/finalized with no active step and no live driver)
+    # is a genuine stoppage the fixer must DRIVE, even though the session is
+    # 'alive' and carries no failure. Without this it parks forever.
+    if babysitter_parked_chain_stall "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
+      log "session $session parked pre-execute; dispatching babysitter to drive"
+      babysitter_policy_dispatch "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$report_items" \
+        "parked pre-execute stall (plan born, no driver)"
+      return 0
+    fi
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
     return 0
