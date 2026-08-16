@@ -1,0 +1,90 @@
+"""Maintenance observations and authority joins (M2 bridge).
+
+The Maintenance package is the M2 substrate for coherent maintenance
+observations over the accepted Run Authority, WBC, Custody, M11 conformance,
+and Native Parity sources.  It ships in shadow/report mode only: enforcement,
+autonomy, repair policy, daily baselines, and lifecycle mutation stay disabled.
+
+This package exposes the strict foundation (one canonical serializer / strict
+decoder, typed nullable identities, locator-only immutable owner references,
+and validated UTC event times, half-open windows, watermarks, lateness, and
+correction links) from :mod:`identity`.  Later M2 modules add the closed
+observation/event contracts, owner adapters, the coherent join, ledger
+integration, projections, and shadow consumers on top of this foundation.
+"""
+
+from arnold_pipelines.megaplan.maintenance.identity import (
+    MAINTENANCE_ENVIRONMENTS,
+    MAINTENANCE_SCHEMA_VERSION,
+    MAX_IDENTITY_LENGTH,
+    AnyMaintenanceId,
+    AttemptId,
+    ChainId,
+    CorrectionLink,
+    EnvironmentId,
+    EventWindow,
+    Extensions,
+    IdentityComparison,
+    IdentityMismatchError,
+    InvalidIdentityError,
+    InvalidTimeError,
+    Lateness,
+    MaintenanceCodecError,
+    MaintenanceError,
+    ModelId,
+    OwnerKind,
+    OwnerRef,
+    PlanId,
+    ProfileId,
+    RunId,
+    StageId,
+    TenantId,
+    UtcTime,
+    Watermark,
+    canonical_digest,
+    canonical_dumps,
+    canonical_json,
+    classify_lateness,
+    compare_identities,
+    require_identical,
+    strict_loads,
+    utc_now,
+)
+
+__all__ = [
+    "MAINTENANCE_ENVIRONMENTS",
+    "MAINTENANCE_SCHEMA_VERSION",
+    "MAX_IDENTITY_LENGTH",
+    "AnyMaintenanceId",
+    "AttemptId",
+    "ChainId",
+    "CorrectionLink",
+    "EnvironmentId",
+    "EventWindow",
+    "Extensions",
+    "IdentityComparison",
+    "IdentityMismatchError",
+    "InvalidIdentityError",
+    "InvalidTimeError",
+    "Lateness",
+    "MaintenanceCodecError",
+    "MaintenanceError",
+    "ModelId",
+    "OwnerKind",
+    "OwnerRef",
+    "PlanId",
+    "ProfileId",
+    "RunId",
+    "StageId",
+    "TenantId",
+    "UtcTime",
+    "Watermark",
+    "canonical_digest",
+    "canonical_dumps",
+    "canonical_json",
+    "classify_lateness",
+    "compare_identities",
+    "require_identical",
+    "strict_loads",
+    "utc_now",
+]

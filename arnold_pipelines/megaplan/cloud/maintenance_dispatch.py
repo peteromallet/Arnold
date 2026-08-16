@@ -166,9 +166,106 @@ def initialize_and_launch_maintenance_dispatch(
     return started, process
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# M2 (T18): non-authorizing Maintenance shadow data on dispatch receipts
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# These helpers attach coherent-envelope identity and the shared shadow
+# comparison to maintenance dispatch receipts as READ-ONLY data.  Authorization
+# stays exclusively with the existing Run Authority / Custody / WBC gates (the
+# generic receipt writer and the model-enforcement checks above); a shadow pass
+# can never authorize an effect.  Stale or incoherent Maintenance evidence is
+# serialized as non-dispatchable, and any attempted direct plan/chain write
+# returns the typed M7 bypass finding with zero writer invocations.
+
+
+def attach_maintenance_shadow_to_receipt(
+    receipt: schema.AutomaticDispatchReceipt,
+    *,
+    envelope: Any | None = None,
+    comparison: Any | None = None,
+) -> schema.AutomaticDispatchReceipt:
+    """Attach Maintenance shadow data to *receipt* without touching authority.
+
+    * When neither ``envelope`` nor ``comparison`` is supplied the receipt is
+      returned unchanged.
+    * Otherwise a ``maintenance_shadow`` key is added with the envelope
+      digest, the comparison bucket/reasons/digest, and the fail-closed
+      derived ``dispatchable``/``green``/``terminal`` flags.  The flags are
+      derived by the shared comparator and can NEVER be True for stale or
+      incoherent evidence; the receipt's own authorization fields
+      (``maintenance``, ``required_runtime_model``, subprocess state) are
+      never modified by this function.
+    """
+    if envelope is None and comparison is None:
+        return receipt
+    if comparison is None:
+        from arnold_pipelines.megaplan.maintenance.shadow import compare_shadow
+
+        comparison = compare_shadow(
+            {
+                "green": False,
+                "dispatchable": False,
+                "terminal": False,
+            },
+            envelope,
+        )
+    shadow: dict[str, Any] = {
+        "schema_version": 1,
+        "envelope_digest": comparison.envelope_digest,
+        "bucket": comparison.bucket.value,
+        "reasons": list(comparison.reasons),
+        "comparison_digest": comparison.digest,
+        "green": comparison.green,
+        "dispatchable": comparison.dispatchable,
+        "terminal": comparison.terminal,
+        "envelope_eligible": comparison.envelope_eligible,
+        "cross_environment": comparison.cross_environment,
+        "stale_projection": comparison.stale_projection,
+        "digest_mismatch": comparison.digest_mismatch,
+        "missing_denominator": comparison.missing_denominator,
+        "denominator": comparison.denominator,
+        "covered_count": comparison.covered_count,
+        "coverage": comparison.coverage,
+        "shadow_authorizes": False,
+    }
+    updated = dict(receipt)
+    updated["maintenance_shadow"] = shadow
+    return updated
+
+
+def direct_write_bypass_finding(
+    kind: str,
+    request: str,
+    *,
+    finding_id: str | None = None,
+) -> Any:
+    """Return the typed M7 bypass finding for a direct plan/chain write attempt.
+
+    ``kind`` is ``"plan"`` or ``"chain"``.  The finding names the M7
+    controlled-writer-inventory seam, is data-only, and guarantees zero
+    invocations of ``write_plan_state`` / ``save_chain_state`` /
+    ``TransitionWriter`` / raw plan/chain writers.  Maintenance code never
+    calls a plan/chain truth writer directly — an attempted direct write is
+    routed here and returns the inert finding instead.
+    """
+    from arnold_pipelines.megaplan.maintenance.boundaries import (
+        chain_write_finding,
+        plan_write_finding,
+    )
+
+    if kind == "plan":
+        return plan_write_finding(request, finding_id=finding_id)
+    if kind == "chain":
+        return chain_write_finding(request, finding_id=finding_id)
+    raise ValueError(f"direct write kind must be 'plan' or 'chain', got {kind!r}")
+
+
 __all__ = [
     "MAINTENANCE_REQUIRED_RUNTIME_MODEL",
     "MaintenanceModelEnforcementError",
+    "attach_maintenance_shadow_to_receipt",
+    "direct_write_bypass_finding",
     "finalize_maintenance_dispatch_receipt",
     "initialize_and_launch_maintenance_dispatch",
     "prepare_maintenance_dispatch_receipt",

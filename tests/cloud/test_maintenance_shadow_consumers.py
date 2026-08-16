@@ -663,7 +663,9 @@ def test_attach_shadow_to_receipt_adds_data_without_authorizing() -> None:
         receipt, envelope=_eligible_envelope()
     )
     shadow = updated["maintenance_shadow"]
-    assert shadow["bucket"] == "unexplained_difference"
+    # Legacy conservative non-promotion is a TYPED explanation: the shadow
+    # bucket is explained_difference (never unexplained_difference).
+    assert shadow["bucket"] == "explained_difference"
     assert shadow["green"] is False
     assert shadow["dispatchable"] is False
     assert shadow["shadow_authorizes"] is False

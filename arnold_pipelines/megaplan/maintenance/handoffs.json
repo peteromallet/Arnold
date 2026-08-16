@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "rows": [
+    {
+      "id": "M6A",
+      "source_path": "wbc/attempt_ledger_store",
+      "schema_identity": "wbc.attempt_ledger_store.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": true,
+      "wbc_coordinates": null
+    },
+    {
+      "id": "M7",
+      "source_path": "megaplan/controlled_writers",
+      "schema_identity": "megaplan.controlled_writers.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": false,
+      "wbc_coordinates": null
+    },
+    {
+      "id": "M10",
+      "source_path": "megaplan/watchdog_auditor",
+      "schema_identity": "megaplan.watchdog_auditor.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": false,
+      "wbc_coordinates": null
+    },
+    {
+      "id": "M11",
+      "source_path": "megaplan/conformance",
+      "schema_identity": "megaplan.conformance.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": false,
+      "wbc_coordinates": null
+    },
+    {
+      "id": "C1",
+      "source_path": "native/completion/c1",
+      "schema_identity": "native.completion.c1.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": false,
+      "wbc_coordinates": null
+    },
+    {
+      "id": "C2",
+      "source_path": "native/completion/c2",
+      "schema_identity": "native.completion.c2.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": false,
+      "wbc_coordinates": null
+    },
+    {
+      "id": "S1",
+      "source_path": "native/runtime/s1",
+      "schema_identity": "native.runtime.s1.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": false,
+      "wbc_coordinates": null
+    },
+    {
+      "id": "S2R",
+      "source_path": "native/runtime/s2r",
+      "schema_identity": "native.runtime.s2r.v1",
+      "digest": null,
+      "approval": "pending_human_approval",
+      "requires_wbc_coordinates": false,
+      "wbc_coordinates": null
+    }
+  ]
+}
