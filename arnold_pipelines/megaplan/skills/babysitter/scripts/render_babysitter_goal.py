@@ -203,12 +203,26 @@ Mandatory flow — follow the five steps exactly:
       the astrid repo's m1/m2 branch (for astrid-first) -> then
       ``git -C <candidate> fetch origin main && git -C <candidate> reset
       --hard origin/main``;
-  (c) REBIND: advance the manifest ``epic.expected_head`` to the new main
-      SHA, then resync marker + chain record runtime_binding.current_identity
+      CONCURRENT-PUSH GUARD (grok post-fix verdict 2026-08-16): the shared
+      engine moves under you — another epic's fixer may push origin/main while
+      you are mid-delivery. After EVERY push/reset, RE-READ the live rev:
+      ``git -C <candidate> rev-parse origin/main`` and use THAT as the rebind
+      target, never a SHA you captured before shipping. If the rev moved
+      between your push and your reset, do not panic and do not hand back —
+      just re-run (b)+(c) against the NEW rev (your fix is still in the
+      history; it did not vanish because the tip advanced).
+  (c) REBIND: advance the manifest ``epic.expected_head`` to the CURRENT
+      origin/main SHA (re-read it fresh — see the guard in (b)), then resync
+      marker + chain record runtime_binding.current_identity
       (recompute via runtime_provenance normalized_runtime_identity with the
       canonical worktree-first shape: editable_root/pth/direct_url/imports
       NULLED) and rebuild the launch seed via ensure_runtime_launch_seed
-      (the seed must be ``ready: true`` with no errors);
+      (the seed must be ``ready: true`` with no errors). If any CAS step
+      refuses (stale digest, moved tip, interpreter mismatch), re-read the
+      live origin/main + current marker/manifest digests and retry the whole
+      (c) sequence against the live values — iterate up to 5 times before
+      handing back, and record every refusal + the live digest at each retry
+      in your evidence pack.
   (d) write ``handoff.md`` at the recovery evidence root naming the shipped
       SHA, changed files, the regression that passed, and the rebind evidence.
       A fix that is only in the candidate is NOT a completed delivery.
