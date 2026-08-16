@@ -5514,9 +5514,16 @@ def _has_genuine_task_level_blocker(task: Mapping[str, Any]) -> bool:
     exhaustion) are recorded without a specific blocker reason/by set and are
     retryable.  Prereq/user-action blocks carry a concrete reason or by-set and
     must not be silently reset.
+
+    ``validation_blocked`` is the typed disposition for a task-scoped
+    worker/policy block with no accepted terminal authority (e.g. a
+    verification-budget artifact: implemented but unverified).  It is NOT a
+    genuine blocker: the row must return to the runnable frontier on a fresh
+    session so a new worker session can re-verify it.  Only
+    ``prerequisite_blocked`` (or explicit by/user-action/dependency fields)
+    keeps a row parked across sessions.
     """
     for key in (
-        "blocked_reason",
         "blocked_by",
         "blocked_by_user_action_ids",
         "unresolved_dependency_ids",
@@ -5526,6 +5533,9 @@ def _has_genuine_task_level_blocker(task: Mapping[str, Any]) -> bool:
             return True
         if isinstance(value, (list, tuple, set)) and value:
             return True
+    reason = task.get("blocked_reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip() != "validation_blocked"
     return False
 
 
@@ -6086,6 +6096,137 @@ def _escalate_persistent_unroutable_rework(
     )
     response["result"] = "blocked"
     return response
+
+
+def _dependency_closed_blocked_task_ids(
+    tasks: Iterable[Mapping[str, Any]],
+    blocked_task_ids: Iterable[str],
+) -> set[str]:
+    """Return blocked ids plus every task that transitively depends on them.
+
+    The execute auto-loop parks task-level blocks (kept at status=blocked with
+    a typed disposition) and continues with the dependency-independent
+    runnable frontier. Tasks whose dependency closure contains a parked block
+    must stay out of that frontier because their prerequisites are
+    unsatisfied; they remain pending so a later session can retry them once
+    the block resolves.
+    """
+    blocked = {str(task_id) for task_id in blocked_task_ids if task_id}
+    dependents: dict[str, set[str]] = {}
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("id")
+        if isinstance(task_id, str) and task_id:
+            dependents.setdefault(task_id, set())
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or task_id not in dependents:
+            continue
+        deps = task.get("depends_on")
+        if not isinstance(deps, list):
+            continue
+        for dep in deps:
+            if isinstance(dep, str) and dep in dependents:
+                dependents[dep].add(task_id)
+    closed = set(blocked)
+    changed = True
+    while changed:
+        changed = False
+        for dep, dependent_ids in dependents.items():
+            if dep not in closed:
+                continue
+            for dependent_id in dependent_ids:
+                if dependent_id not in closed:
+                    closed.add(dependent_id)
+                    changed = True
+    return closed
+
+
+def _park_blocked_task_dispositions(
+    finalize_data: Mapping[str, Any],
+    newly_blocked_task_ids: Iterable[str],
+    current_invocation_id: str,
+) -> None:
+    """Stamp typed blocker dispositions onto newly blocked tasks.
+
+    Each task the worker reported status=blocked for gets a typed
+    ``blocked_reason``: ``prerequisite_blocked`` when it carries an explicit
+    prereq/user-action blocker (``_has_genuine_task_level_blocker``), otherwise
+    ``validation_blocked`` (a task-scoped worker/policy block with no accepted
+    terminal authority — e.g. a verification-budget artifact). The row also
+    keeps its ``recorded_invocation_id`` so the cross-session reset path can
+    distinguish within-session from fresh-session blocks. Dispositions are
+    never flipped back to pending within the same invocation.
+    """
+    blocked_set = {str(task_id) for task_id in newly_blocked_task_ids if task_id}
+    if not blocked_set:
+        return
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        if task.get("id") not in blocked_set:
+            continue
+        if _has_genuine_task_level_blocker(task):
+            task["blocked_reason"] = "prerequisite_blocked"
+        else:
+            task["blocked_reason"] = "validation_blocked"
+        if current_invocation_id:
+            task["recorded_invocation_id"] = current_invocation_id
+
+
+def _recompute_runnable_batches(
+    finalize_data: Mapping[str, Any],
+    *,
+    completed_task_ids: set[str],
+    state: PlanState,
+    args: argparse.Namespace,
+) -> list[list[str]]:
+    """Recompute the runnable batch frontier after task-level blocks.
+
+    Blocked tasks (parked at status=blocked with a typed disposition) and
+    their transitive dependents are excluded; the remaining pending tasks are
+    re-batched with the same pipeline used for the initial frontier
+    (topological batches, oversized split, weight-aware cap, high-complexity
+    isolation). Returns an empty list when no runnable frontier remains.
+    """
+    tasks = finalize_data.get("tasks") or []
+    if not isinstance(tasks, list):
+        return []
+    blocked_ids = {
+        task["id"]
+        for task in tasks
+        if isinstance(task, Mapping)
+        and isinstance(task.get("id"), str)
+        and task.get("status") == "blocked"
+        and task["id"] not in completed_task_ids
+    }
+    if not blocked_ids:
+        return []
+    excluded = _dependency_closed_blocked_task_ids(tasks, blocked_ids)
+    runnable = [
+        task
+        for task in tasks
+        if isinstance(task, Mapping)
+        and isinstance(task.get("id"), str)
+        and task.get("status") != "blocked"
+        and task["id"] not in completed_task_ids
+        and task["id"] not in excluded
+    ]
+    if not runnable:
+        return []
+    pending_batches = compute_task_batches(runnable, completed_ids=completed_task_ids)
+    max_tasks_per_batch = _weight_aware_max_tasks_per_batch(
+        _resolve_max_tasks_per_batch(state, args),
+        tasks,
+    )
+    return _split_high_complexity(
+        split_oversized_batches(pending_batches, max_tasks_per_batch),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
+    )
 
 
 def handle_execute_auto_loop(
@@ -6846,7 +6987,16 @@ def handle_execute_auto_loop(
     # Batch-to-tier mapping for the aggregate history entry summary.
     batch_to_tier: list[dict[str, Any]] = []
 
-    for batch_index, batch_task_ids in enumerate(batches_to_run, start=1):
+    # Dependency-aware continuation: the loop is a re-derivable frontier
+    # queue. When a task-level block parks one or more tasks, the remaining
+    # runnable frontier is recomputed and the loop continues, so a single
+    # budget-blocked task cannot strand dependency-independent batches.
+    # ``batch_index`` is a monotonic dispatch ordinal (never reset), so
+    # re-derived batches always receive fresh artifact slots.
+    batch_index = 0
+    while batch_index < len(batches_to_run):
+        batch_index += 1
+        batch_task_ids = batches_to_run[batch_index - 1]
         batch_number_for_artifact = 1 if single_batch_mode else _resolve_batch_artifact_number(
             batch_task_ids,
             global_batch_lookup=global_batch_lookup,
@@ -7118,16 +7268,17 @@ def handle_execute_auto_loop(
             and task["id"] in set(batch_task_ids)
             and task["id"] not in completed_task_ids
         }
-        # Stamp each newly-blocked task with the current invocation_id so the
-        # short-circuit can distinguish within-session from cross-session blocks.
+        # Stamp each newly-blocked task with the current invocation_id and a
+        # typed blocker disposition so the short-circuit can distinguish
+        # within-session from cross-session blocks and the phase result can
+        # carry the blocker kind.
         current_inv_id = (state.get("meta") or {}).get("current_invocation_id", "")
-        if newly_blocked_task_ids and current_inv_id:
-            for task in finalize_data.get("tasks", []):
-                if (
-                    isinstance(task, dict)
-                    and task.get("id") in newly_blocked_task_ids
-                ):
-                    task["recorded_invocation_id"] = current_inv_id
+        if newly_blocked_task_ids:
+            _park_blocked_task_dispositions(
+                finalize_data,
+                newly_blocked_task_ids,
+                current_inv_id,
+            )
         blocking_reasons = build_blocking_reasons(
             tracked_tasks=result.merged_task_count,
             total_tasks=result.total_task_count,
@@ -7138,11 +7289,39 @@ def handle_execute_auto_loop(
         blocked_task_reason = _blocked_task_reason(newly_blocked_task_ids)
         if blocked_task_reason:
             blocking_reasons.append(blocked_task_reason)
-        if blocking_reasons:
+        # Break only on aggregate quality reasons (untracked task updates,
+        # sense-check gaps, missing evidence) or when no runnable frontier
+        # remains. A sole task-level block (worker reported status=blocked for
+        # task(s) in this batch) parks the blocked tasks with a typed
+        # disposition and continues with the dependency-independent frontier
+        # instead of halting the whole phase.
+        if blocking_reasons and not (
+            blocked_task_reason is not None and len(blocking_reasons) == 1
+        ):
             agent = result.agent
             mode = result.mode
             refreshed = result.refreshed
             break
+        if newly_blocked_task_ids:
+            recomputed = _recompute_runnable_batches(
+                finalize_data,
+                completed_task_ids=completed_task_ids,
+                state=state,
+                args=args,
+            )
+            if recomputed:
+                batches_to_run = recomputed
+                log.info(
+                    "task-level block(s) %s parked; continuing with %d "
+                    "runnable batch(es) excluding their dependents",
+                    sorted(newly_blocked_task_ids),
+                    len(recomputed),
+                )
+            else:
+                agent = result.agent
+                mode = result.mode
+                refreshed = result.refreshed
+                break
         agent = result.agent
         mode = result.mode
         refreshed = result.refreshed
@@ -7469,6 +7648,7 @@ def handle_execute_auto_loop(
 
     # Collect blocked task notes for blocked_by_prereq path
     blocked_task_notes: dict[str, str] = {}
+    blocked_task_kinds: dict[str, str] = {}
     if prereq_blocked_task_ids:
         for task in finalize_data.get("tasks", []):
             tid = task.get("id")
@@ -7476,6 +7656,9 @@ def handle_execute_auto_loop(
                 notes = task.get("executor_notes") or ""
                 if notes:
                     blocked_task_notes[tid] = str(notes)
+                reason = task.get("blocked_reason")
+                if isinstance(reason, str) and reason:
+                    blocked_task_kinds[tid] = reason
 
     # ``execution.json`` is intentionally cumulative evidence.  The phase
     # result drives retry policy, so it must only carry diagnostics produced by
@@ -7518,5 +7701,7 @@ def handle_execute_auto_loop(
         response["result"] = "blocked"
     if blocked_task_notes:
         response["blocked_task_notes"] = blocked_task_notes
+    if blocked_task_kinds:
+        response["blocked_task_kinds"] = blocked_task_kinds
     _attach_next_step_runtime(response)
     return response

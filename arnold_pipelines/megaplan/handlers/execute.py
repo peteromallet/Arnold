@@ -1202,9 +1202,13 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 pass
             else:
                 bt_notes = {}
+            bt_kinds: dict[str, str] = response.get("blocked_task_kinds", {})
+            if not isinstance(bt_kinds, dict):
+                bt_kinds = {}
             blocked = tuple(
                 BlockedTask(task_id=tid, reason="blocked_by_prereq",
-                            notes=bt_notes.get(tid, ""))
+                            notes=bt_notes.get(tid, ""),
+                            blocker_kind=bt_kinds.get(tid))
                 for tid in bt_ids
             ) if outcome == "blocked_by_prereq" else ()
 
