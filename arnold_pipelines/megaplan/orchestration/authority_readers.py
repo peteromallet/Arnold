@@ -684,8 +684,12 @@ def _collect_accepted_attempt_authority(
     run_identity: tuple[str, str] | None = None
     saw_validation_projection = False
 
-    collected_subject_ids: set[str] = set()
-    for artifact_path in list_batch_artifacts(plan_dir):
+    # Newest-wave-first shadow set: every subject row seen so far (newest
+    # waves first).  A newer dispatch row shadows older rows for the same
+    # subject even when the newer row is hollow/nonterminal, so an older
+    # accepted attempt can never outrank newer authority.
+    seen_subject_ids: set[str] = set()
+    for artifact_path in _all_batch_artifact_waves_sorted(plan_dir):
         try:
             payload = json.loads(artifact_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -708,23 +712,40 @@ def _collect_accepted_attempt_authority(
         for envelope in envelopes:
             by_subject.setdefault(envelope.subject_id, []).append(envelope)
         for entry in _task_entries(payload):
-            validation = entry.get("authority_validation")
-            if not isinstance(validation, Mapping):
+            # Newest-wave-first ordering: a newer dispatch row for a subject
+            # shadows ANY older row for the same subject, even when the newer
+            # row is pending/hollow/nonterminal — an older accepted attempt
+            # must never outrank newer authority.  Shadowing happens before
+            # the acceptance filter so a hollow newer row suppresses fallback
+            # to an older accepted terminal row.
+            raw_validation = entry.get("authority_validation")
+            if isinstance(raw_validation, Mapping):
+                entry_subject = _optional_str(
+                    raw_validation.get("subject_id")
+                    or entry.get("task_id")
+                    or entry.get("id")
+                )
+            else:
+                entry_subject = _optional_str(entry.get("task_id") or entry.get("id"))
+            if entry_subject is None:
                 continue
-            outcome = _optional_str(validation.get("outcome"))
+            if entry_subject in seen_subject_ids:
+                continue
+            seen_subject_ids.add(entry_subject)
+            if not isinstance(raw_validation, Mapping):
+                continue
+            outcome = _optional_str(raw_validation.get("outcome"))
             if outcome:
                 saw_validation_projection = True
             if outcome != "accepted":
                 continue
-            envelope = _entry_envelope(entry, validation, by_digest, by_subject)
+            envelope = _entry_envelope(entry, raw_validation, by_digest, by_subject)
             if envelope is None or not isinstance(envelope.claim, TaskClaim):
-                continue
-            if envelope.subject_id in collected_subject_ids:
                 continue
             if (envelope.run_id, envelope.run_revision) != run_identity:
                 continue
             try:
-                decision = _accepted_projection_decision(envelope, validation, source)
+                decision = _accepted_projection_decision(envelope, raw_validation, source)
             except ContractError:
                 continue
             if decision is None:
@@ -742,7 +763,6 @@ def _collect_accepted_attempt_authority(
                 if not isinstance(record, CASExpectation)
             )
             authority_records.extend((decision.idempotency, decision))
-            collected_subject_ids.add(envelope.subject_id)
             evidence_decisions[envelope.subject_id] = AuthorityDecision(
                 task_id=envelope.subject_id,
                 status=EvidenceStatus.satisfied,
@@ -751,7 +771,7 @@ def _collect_accepted_attempt_authority(
                     "execute_completion": "accepted_attempt_projection",
                     "source_path": source,
                     "envelope_digest": envelope.digest(),
-                    "authority_validation": dict(validation),
+                    "authority_validation": dict(raw_validation),
                 },
             )
 
