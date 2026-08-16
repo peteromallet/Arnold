@@ -266,6 +266,27 @@ Mandatory flow — follow the five steps exactly:
      loop: the reap decision never reads the heartbeat projection. Do not
      spend this session on it; the one-liner (stop passing ``source_path`` to
      the heartbeat append) is a later cleanup.
+  ENGINE-REPAIR AUTHORITY (grok deep-fix consult 2026-08-16): when the
+  diagnosis names an ENGINE-layer defect (shared code: execute/batch.py,
+  finalize, validation, watchdog, CAS — NOT the per-epic workspace), the
+  accepted repair IS a reviewed engine patch, and workspace-only closure is
+  FAILURE. The fixer is authorized to edit and ship engine code for the
+  occurrence it owns. Requirements for an engine patch:
+  - The diagnosis must name the layer (file + mechanism) and the patch must
+    land THERE — a workspace workaround that papers over an engine gate does
+    not complete delivery.
+  - For the VJ12 execute reap loop specifically: split ADOPT-MISS from
+    POLICY-FAIL. The deferred recheck must read the merged candidate
+    INCLUDING the current batch (the early post-merge persist at
+    batch.py:3342-3350 already writes this-batch envelopes as crash-recovery
+    evidence) and persist authority IDs ONLY on pass. Do NOT persist-before-
+    pass (launders policy failure into completed work) and do NOT recheck a
+    snapshot that omits this batch (same loop, renamed). Tests must prove:
+    envelopes visible -> recheck passes; real post-merge contradiction ->
+    still blocks and IDs stay out; resume after pass does not redo; resume
+    after real fail does not skip.
+  - Ship the engine patch through the same (b) ship path with the
+    concurrent-push guard; rebind + resume per (c)/STEP 4.
 - STEP 5 — PROVE MOVEMENT: from canonical state, the chain-*.json last_state
   must leave blocked and the same failure_fingerprint must not recur, with
   matching identities (runtime/request/grant/claim/WBC) and exactly one
