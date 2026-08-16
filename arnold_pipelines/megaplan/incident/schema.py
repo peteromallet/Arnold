@@ -52,6 +52,63 @@ OPTIONAL_NULLABLE_STRING_FIELDS: tuple[str, ...] = (
     "attempt_id",
 )
 
+#: Maintenance event kinds routed through the strict Maintenance codec.
+#: These exactly mirror the closed Maintenance ``EventKind`` vocabulary
+#: (detection / efficiency_analysis / audit_report).  An incident event whose
+#: ``type`` is one of these AND whose payload carries the canonical
+#: Maintenance occurrence identity is routed through the strict codec
+#: (``strict_loads`` on the Maintenance event contract) instead of the legacy
+#: permissive M1 validation; every other event keeps the legacy behavior
+#: unchanged, including unknown-field preservation.
+MAINTENANCE_EVENT_TYPES: frozenset[str] = frozenset(
+    {"detection", "efficiency_analysis", "audit_report"}
+)
+
+
+def is_maintenance_event(event: dict[str, Any]) -> bool:
+    """Return whether *event* is a strict Maintenance event (codec-routed).
+
+    A Maintenance event is recognized by its closed kind vocabulary plus the
+    canonical occurrence identity / event-kind markers that only the strict
+    Maintenance contract carries.  Legacy incident events (including watchdog
+    detections that predate the Maintenance contract) never carry
+    ``occurrence_id``/``event_kind`` and therefore keep the legacy path.
+    """
+    return (
+        isinstance(event, dict)
+        and (
+            event.get("type") in MAINTENANCE_EVENT_TYPES
+            or event.get("event_kind") in MAINTENANCE_EVENT_TYPES
+        )
+        and "occurrence_id" in event
+    )
+
+
+def validate_maintenance_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Strict-route *event* through the canonical Maintenance codec.
+
+    The event is decoded with ``strict_loads`` against the closed
+    Maintenance event contract (missing/unknown fields and identity
+    mismatches fail) and re-encoded canonically, so the stored payload is
+    byte-stable and the canonical digest is reproducible.  Unknown fields
+    are accepted ONLY inside the explicit ``extensions`` map.
+    """
+    from arnold_pipelines.megaplan.maintenance.events import MaintenanceEvent
+    from arnold_pipelines.megaplan.maintenance.identity import (
+        MaintenanceCodecError,
+        canonical_dumps,
+        strict_loads,
+    )
+
+    try:
+        model = strict_loads(MaintenanceEvent, event)
+    except MaintenanceCodecError as exc:
+        raise ValueError(
+            "maintenance event strict decode failed for type "
+            f"{event.get('type')!r}: {exc}"
+        ) from exc
+    return json.loads(canonical_dumps(model))
+
 MAX_SUMMARY_LENGTH: int = 2048
 MAX_COMMITTED_OUTPUT_BYTES: int = 50 * 1024
 MAX_STRUCTURED_FIELD_BYTES: int = 64 * 1024
@@ -242,6 +299,10 @@ def validate_incident_event(event: dict[str, Any]) -> dict[str, Any]:
     """
     if not isinstance(event, dict):
         raise ValueError("incident event must be a dict")
+    # Route only Maintenance event kinds through the strict codec; everything
+    # else (including legacy extensions) keeps the permissive M1 path below.
+    if is_maintenance_event(event):
+        return validate_maintenance_event(event)
     # Reject expanding evidence before recursive regex redaction. This keeps a
     # malformed historical auditor event from consuming gigabytes while the
     # projection layer validates it, and prevents recursive report/decision

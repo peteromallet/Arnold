@@ -2710,6 +2710,10 @@ __all__ = [
     "THREE_HOURS_SECONDS",
     "AUDITOR_RECONCILIATION_INTERVAL",
     "LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY",
+    # M2 (T16): strict operational AuditReport shadow adaptation
+    "adapt_six_hour_audit_report",
+    "build_six_hour_audit_report_event",
+    "six_hour_audit_legacy_verdict",
     "LOGGER",
 ]
 
@@ -3084,3 +3088,256 @@ class SixHourAuditor:
                 except (ValueError, TypeError):
                     pass
         return findings
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# M2 (T16): strict operational AuditReport shadow adaptation
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# The six-hour operational product is mapped onto the strict Maintenance
+# ``AuditReport`` payload and appended through the existing incident-ledger
+# path (the same Maintenance ledger facade used by every M2 shadow producer).
+# The adapter is strictly OPERATIONAL and shadow-only:
+#
+# * it can NEVER emit an ``EfficiencyAnalysis`` (a daily-efficiency decision
+#   is out of scope for the six-hour product) — the payload kind is always
+#   ``audit_report`` with ``report_type="six_hour_operational"``;
+# * it NEVER overwrites operational custody, verification, or any projection
+#   state — it only appends immutable event references to the ledger and
+#   returns read-only data;
+# * every existing mutation gate stays intact: the only write path is the
+#   ``MaintenanceLedger.append`` dead-letter/replay boundary, and a failure
+#   surfaces warn/dead-letter diagnostics without changing the auditor's
+#   shadow-mode control flow.
+
+
+def six_hour_audit_legacy_verdict(report: SixHourAuditReport) -> dict[str, bool]:
+    """Normalized read-only legacy verdict for one :class:`SixHourAuditReport`.
+
+    ``green`` derives ONLY from the report's own structured verdict
+    (all findings ``OK``).  The auditor is a detection-and-escalation
+    backstop: it never dispatches effects and never terminates anything,
+    so ``dispatchable`` and ``terminal`` are always ``False``.  Process/
+    activity evidence is never treated as recovery here.
+    """
+    return {
+        "green": bool(report.ok),
+        "dispatchable": False,
+        "terminal": False,
+    }
+
+
+def build_six_hour_audit_report_event(
+    report: SixHourAuditReport,
+    *,
+    observed_at: Optional[Any] = None,
+    environment: Optional[str] = None,
+    run: Optional[str] = None,
+    chain: Optional[str] = None,
+    plan: Optional[str] = None,
+    stage: Optional[str] = None,
+    classifier_version: str = "six-hour-auditor/1",
+) -> Any:
+    """Map a :class:`SixHourAuditReport` to a strict Maintenance ``AuditReport``.
+
+    The strict event carries the operational product identity
+    (``report_type="six_hour_operational"``), a typed verdict derived from
+    the report's severities, one strict finding per legacy finding
+    (finding_id / severity / message / immutable evidence refs), and the
+    occurrence-scoped identity (``occurrence_id == report.audit_id``, the
+    idempotency scope).  Only immutable references are embedded — owner
+    payloads are never copied.
+
+    This builder performs no I/O, no dispatch, and no mutation; it can
+    never produce an ``EfficiencyAnalysis`` payload.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from arnold_pipelines.megaplan.maintenance.events import (
+        AuditFinding as StrictAuditFinding,
+        AuditReport,
+        ClassifierInfo,
+        MaintenanceEvent,
+        OccurrenceBudget,
+        RootCauseCluster,
+    )
+    from arnold_pipelines.megaplan.maintenance.identity import (
+        EventWindow,
+        UtcTime,
+        Watermark,
+        utc_now,
+    )
+
+    def _parse(iso: str) -> datetime:
+        try:
+            value = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            value = utc_now()
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    started = _parse(report.started_at)
+    completed = _parse(report.completed_at)
+    if completed <= started:
+        completed = started + timedelta(seconds=1)
+    if report.ok:
+        verdict = "ok"
+    elif report.requires_attention:
+        verdict = "attention"
+    else:
+        verdict = "anomaly"
+    strict_findings = tuple(
+        StrictAuditFinding(
+            finding_id=finding.finding_id,
+            severity=finding.severity.value,
+            message=finding.detail,
+        )
+        for finding in report.findings
+    )
+    return MaintenanceEvent.build(
+        event_id=f"six-hour-audit:{report.audit_id}",
+        occurrence_id=report.audit_id,
+        observed_at=observed_at or started,
+        event_time=started,
+        window=EventWindow(
+            start=UtcTime(started),
+            end=UtcTime(completed),
+        ),
+        watermark=Watermark(started - timedelta(seconds=1)),
+        classifier=ClassifierInfo(classifier_version=classifier_version),
+        cluster=RootCauseCluster(signature="six_hour_operational"),
+        budget=OccurrenceBudget(max_attempts=1),
+        payload=AuditReport(
+            report_type="six_hour_operational",
+            verdict=verdict,
+            summary=(
+                f"{len(report.findings)} findings, {report.escalated_count} "
+                f"escalated, {report.events_checked} events checked, "
+                f"{report.slo_violations} slo violations"
+            ),
+            findings=strict_findings,
+        ),
+        environment=environment,
+        run=run,
+        chain=chain,
+        plan=plan,
+        stage=stage,
+    )
+
+
+def adapt_six_hour_audit_report(
+    report: SixHourAuditReport,
+    *,
+    envelope: Optional[Any] = None,
+    ledger: Optional[Any] = None,
+    detection_event: Optional[Any] = None,
+    observed_at: Optional[Any] = None,
+    environment: Optional[str] = None,
+    run: Optional[str] = None,
+    chain: Optional[str] = None,
+    plan: Optional[str] = None,
+    stage: Optional[str] = None,
+) -> dict[str, Any]:
+    """Adapt *report* to a strict operational ``AuditReport`` and shadow-append it.
+
+    Returns a read-only dict:
+
+    * ``event`` — the strict ``MaintenanceEvent`` as a canonical dict
+      (payload kind is always ``audit_report``; never ``efficiency_analysis``);
+    * ``event_digest`` — canonical sha256 of the event (replayable);
+    * ``efficiency_analysis`` — always ``False`` (the six-hour product can
+      never emit a daily-efficiency decision);
+    * ``custody_overwrite`` — always ``False`` (no custody/verification
+      mutation surface exists on this path);
+    * ``shadow`` — the shared Maintenance shadow comparison row when
+      ``envelope`` is supplied, else ``None`` (fail-closed: non-eligible
+      evidence stays non-green and non-dispatchable);
+    * ``append_status`` — ``"appended"``, ``"skipped"`` (no ledger), or
+      ``"failed"`` (never ``"ok"`` on failure);
+    * ``diagnostics`` — typed warn/dead-letter diagnostics (append failure
+      types, envelope non-eligibility) — data only, never exceptions.
+
+    The adapter preserves the current shadow-mode control flow: the only
+    write path is ``ledger.append`` through the Maintenance dead-letter/
+    replay facade, and a failure never raises and never changes any
+    mutation gate.
+    """
+    from arnold_pipelines.megaplan.maintenance.events import event_digest
+    from arnold_pipelines.megaplan.maintenance.identity import canonical_dumps
+
+    event = (
+        detection_event
+        if detection_event is not None
+        else build_six_hour_audit_report_event(
+            report,
+            observed_at=observed_at,
+            environment=environment,
+            run=run,
+            chain=chain,
+            plan=plan,
+            stage=stage,
+        )
+    )
+    result: dict[str, Any] = {
+        "event": json.loads(canonical_dumps(event)),
+        "event_digest": event_digest(event),
+        "efficiency_analysis": False,
+        "custody_overwrite": False,
+        "shadow": None,
+        "append_status": "skipped",
+        "diagnostics": [],
+    }
+    diagnostics: list[str] = []
+
+    if envelope is not None:
+        from arnold_pipelines.megaplan.maintenance.shadow import compare_shadow
+
+        comparison = compare_shadow(six_hour_audit_legacy_verdict(report), envelope)
+        result["shadow"] = {
+            "schema_version": 1,
+            "present": True,
+            "envelope_digest": comparison.envelope_digest,
+            "bucket": comparison.bucket.value,
+            "reasons": list(comparison.reasons),
+            "legacy_green": comparison.legacy_green,
+            "green": comparison.green,
+            "dispatchable": comparison.dispatchable,
+            "terminal": comparison.terminal,
+            "envelope_eligible": comparison.envelope_eligible,
+            "cross_environment": comparison.cross_environment,
+            "comparison_digest": comparison.digest,
+            "legacy_hash": comparison.legacy_hash,
+            "denominator": comparison.denominator,
+            "covered_count": comparison.covered_count,
+            "coverage": comparison.coverage,
+        }
+        if not comparison.envelope_eligible:
+            diagnostics.append(
+                "envelope_not_eligible: maintenance evidence cannot promote "
+                "the six-hour operational verdict"
+            )
+        if comparison.cross_environment:
+            diagnostics.append("cross_environment_evidence")
+
+    if ledger is not None:
+        try:
+            ledger.append(event)
+            result["append_status"] = "appended"
+        except Exception as exc:
+            # Typed, best-effort: never re-raise from the shadow adapter and
+            # never reinterpret a failed append as success.  A dead-lettered
+            # primary failure (MaintenanceAppendFailure) or a failed dead-letter
+            # sink (DeadLetterSinkFailure) is reported as data.
+            result["append_status"] = "failed"
+            diagnostics.append(
+                f"audit_append_failed:{type(exc).__name__}:{str(exc)[:200]}"
+            )
+            LOGGER.warning(
+                "six-hour audit %s: Maintenance AuditReport append failed (%s); "
+                "operational handoff and mutation gates unchanged",
+                report.audit_id,
+                type(exc).__name__,
+            )
+    result["diagnostics"] = diagnostics
+    return result
