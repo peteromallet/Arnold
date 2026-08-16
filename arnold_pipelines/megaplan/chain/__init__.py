@@ -4899,8 +4899,7 @@ def _promote_done_plan_to_executed(
         plan_dir = resolve_plan_dir(root, plan)
     except CliError:
         return False
-    state = _plan_state_from_payload(root, plan)
-    current_state = state.get("current_state") if isinstance(state, dict) else None
+    current_state = _plan_current_state_from_payload(root, plan)
     if current_state in {"executed", "done", "review", "awaiting_human_verify"}:
         return True
     if current_state not in {"finalized", "planned"}:
