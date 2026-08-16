@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Mapping
 from pathlib import Path
 
 from arnold_pipelines.megaplan._core import (
@@ -106,6 +107,8 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         Critique custody clearance (handler-owned, immutable input):
         {json_dump(critique_clearance).strip()}
 
+        {_finalize_retry_feedback(plan_dir)}
+
         Your output template is at: {output_path}
         Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
         Fill the JSON structure with your results and write the file back.
@@ -200,6 +203,47 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, run bounded narrow verification, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. Narrow verification should consume at most 2 minutes of the turn under normal conditions; a slower integration or full-suite command belongs to the harness. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) and "migrate consumer B + parity tests" (T3, depends_on T1) when the consumers are independent. A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
         - {task_field_guidance}
         """
+    ).strip()
+
+
+def _finalize_retry_feedback(plan_dir: Path) -> str:
+    """Render structured feasibility feedback from the prior rejected attempt.
+
+    The repair loop persists ``finalize_revise_feedback.json`` with the full
+    diagnostics (task pairs + paths) and the budget numbers. Without this the
+    retry prompt is byte-identical to the failed attempt, so the model cannot
+    repair the graph. Returns an empty string when no prior failure exists.
+    """
+    feedback_path = plan_dir / "finalize_revise_feedback.json"
+    if not feedback_path.exists():
+        return ""
+    feedback = read_json(feedback_path)
+    if not isinstance(feedback, Mapping) or not feedback.get("diagnostics"):
+        return ""
+    lines = ["PRIOR FINALIZE ATTEMPT FAILED FEASIBILITY — repair the candidate graph only:"]
+    for diagnostic in feedback.get("diagnostics", []):
+        if isinstance(diagnostic, Mapping):
+            code = diagnostic.get("code")
+            detail = diagnostic.get("message") or ""
+            lines.append(f"- {code}: {detail}")
+    feasibility = feedback.get("feasibility")
+    if isinstance(feasibility, Mapping):
+        timeout = feasibility.get("execute_phase_timeout_minutes")
+        if timeout:
+            budget = float(timeout) * 0.8
+            lines.append(
+                f"- Budget: execute phase timeout is {timeout:.0f} min; critical path "
+                f"({feasibility.get('critical_path_minutes')} min) and total sequential "
+                f"batch dispatch ({feasibility.get('estimated_dispatch_minutes')} min) "
+                f"must each stay under 80% ({budget:.0f} min)."
+            )
+    lines.append(
+        "- Repair rules: tasks writing the same path must share a `routing_group` OR be "
+        "ordered by `depends_on` with `dependency_reasons` kind `write_conflict`; keep "
+        "the whole graph within the budget above (merge or parallelize tasks if needed)."
+    )
+    return textwrap.dedent(
+        "\n".join(lines)
     ).strip()
 
 
