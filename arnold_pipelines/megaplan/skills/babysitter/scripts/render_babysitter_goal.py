@@ -234,9 +234,11 @@ Mandatory flow — follow the five steps exactly:
   summarize the session.
 
 Operator contract:
-- NO-OP GUARD: FIRST enumerate blocked/failed chains via megaplan cloud status
-  / introspect.  If none are blocked or failed, report "No blocked/failed
-  chains found; nothing to fix", write the no-action receipt, and end.
+- NO-OP GUARD: FIRST enumerate ALL active chains via megaplan cloud status
+  / introspect — blocked, failed, AND stopped/parked (pre-execute with no
+  active step and no driver).  If none are blocked/failed/stopped, report
+  "No blocked/failed/stopped chains found; nothing to fix", write the
+  no-action receipt, and end.
   REAL CONDITION (do not trust latest_failure alone — the auto-driver CLEARS
   it on stall, so null latest_failure with a blocked chain is a FALSE
   "healthy"). A chain is GENUINELY STUCK and agent-actionable when ANY of:
@@ -249,10 +251,20 @@ Operator contract:
         latest_failure is null;
     (c) state is blocked AND events.ndjson is not advancing AND no live
         driver process is making progress (driver-alive is NOT health;
-        driver-alive + flat events + blocked = wedged).
-  Verify (a)-(c) from CURRENT state before declaring no-action: read
+        driver-alive + flat events + blocked = wedged);
+    (d) STOPPED PRE-EXECUTE STALL: the plan is in a NON-TERMINAL pre-execute
+        state (initialized, planned, finalized, critiqued, gated) with NO
+        active step AND NO live driver process AND events.ndjson has not
+        advanced (e.g. a fresh m2 plan born by chain start but never driven
+        into prep — the astrid-first m2 case).  The chain is parked, not
+        healthy: drive it forward through the supported seam (chain start /
+        resume) so the milestone actually progresses.  A plan that is simply
+        between milestones with a completed milestone is NOT a stoppage —
+        verify the current milestone has a born-but-unstarted plan and no
+        worker/driver before acting.
+  Verify (a)-(d) from CURRENT state before declaring no-action: read
   manifest.epic.expected_head vs the seed file, tail the plan history, and
-  compare events.ndjson growth. Only when all three are clean is
+  compare events.ndjson growth. Only when all four are clean is
   "nothing to fix" the honest verdict.
 - COORDINATION GUARD: before any recovery, check whether another fixer/repair
   is already active for the target chain (fresh managed subagent dir, held

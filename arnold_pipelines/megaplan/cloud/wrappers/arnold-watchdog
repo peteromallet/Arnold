@@ -1346,6 +1346,60 @@ PY
 # parses: resolve remote_spec itself first (a deploy spec may be passed
 # directly), then the sibling ``cloud.yaml`` / ``<stem>.cloud.yaml`` in the
 # same initiative directory (the standard layout).
+
+# babysitter_parked_chain_stall: True when the session's chain is STOPPED in a
+# pre-execute state — a milestone plan born but never driven (initialized /
+# planned / finalized / critiqued / gated, NO active step, NO live driver).
+# Such a chain is not failed and carries no latest_failure, so the ordinary
+# blocked/failed trigger never sees it; without this the milestone sits parked
+# forever (astrid-first m2 case). mode=off disables REPAIR dispatch, but a
+# parked stall is a DRIVE, not a repair — the fixer must still pick it up.
+babysitter_parked_chain_stall() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$plan_name" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+session, workspace_raw, remote_spec_raw, plan_name = sys.argv[1:]
+workspace = Path(workspace_raw)
+
+def _find_plan_dir() -> Path | None:
+    plans_root = workspace / ".megaplan" / "plans"
+    if not plans_root.is_dir():
+        return None
+    if plan_name:
+        candidate = plans_root / plan_name
+        if (candidate / "state.json").is_file():
+            return candidate
+    dirs = sorted(plans_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    for d in dirs:
+        if (d / "state.json").is_file():
+            return d
+    return None
+
+plan_dir = _find_plan_dir()
+if plan_dir is None:
+    sys.exit(1)
+try:
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    sys.exit(1)
+current = state.get("current_state")
+if current not in {"initialized", "planned", "finalized", "critiqued", "gated"}:
+    sys.exit(1)
+active = state.get("active_step")
+if active and isinstance(active, dict) and active.get("phase"):
+    sys.exit(1)  # a worker is live; not parked
+# No active step in a pre-execute state: parked unless a driver is live.
+sys.exit(0)
+PY
+}
+
 babysitter_effective_mode() {
   local remote_spec="$1"
   local workspace="$2"
@@ -1863,11 +1917,21 @@ babysitter_policy_dispatch() {
   after="${mode_after#*$'\t'}"
   [[ -n "$mode" ]] || mode="superfixer"
   if [[ "$mode" == "off" ]]; then
-    log "babysitter mode=off; observing without babysitter dispatch session=$session reason=$reason"
-    report_item "$report_items" "$session" "repair" "babysitter_off" \
-      "babysitter disabled for this chain (driver.babysitter.mode=off); $reason" \
-      "$workspace" "$remote_spec"
-    return 0
+    # mode=off disables REPAIR dispatch for this chain, but a STOPPED
+    # PRE-EXECUTE STALL (plan born, no active step, no live driver — e.g.
+    # a fresh m2 milestone never driven into prep) is not a repair; it is a
+    # chain the fixer must DRIVE.  Dispatch the babysitter for the parked
+    # stall even when mode=off, so a healthy-but-unstarted milestone cannot
+    # sit forever (astrid-first m2 case, grok/codex fixer-gap family B).
+    if babysitter_parked_chain_stall "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
+      log "babysitter mode=off but parked-chain stall detected; dispatching drive session=$session reason=$reason"
+    else
+      log "babysitter mode=off; observing without babysitter dispatch session=$session reason=$reason"
+      report_item "$report_items" "$session" "repair" "babysitter_off" \
+        "babysitter disabled for this chain (driver.babysitter.mode=off); $reason" \
+        "$workspace" "$remote_spec"
+      return 0
+    fi
   fi
   digest="$(babysitter_occurrence_digest "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}" || true)"
   if [[ -n "$digest" ]] && babysitter_running_for_occurrence "$session" "$digest"; then
