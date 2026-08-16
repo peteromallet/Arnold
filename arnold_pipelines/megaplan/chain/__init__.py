@@ -4875,6 +4875,66 @@ def _handle_missing_base_ref(
     )
 
 
+def _promote_done_plan_to_executed(
+    root: Path,
+    plan: str,
+    *,
+    writer,
+) -> bool:
+    """Promote a pre-execute plan to executed when its work is provably done.
+
+    The execute-reentry loop (grok consult, astrid/mega-main): an operator
+    recover-blocked leaves the plan finalized, and the chain driver re-enters
+    execute — re-running stale batch artifacts and reopening the quality-gate
+    circuit — even when every finalize task is done and execution.json is
+    complete.  The existing `_recover_blocked_execute_if_tasks_done` only
+    fires when the history's last execute result is literally 'blocked', which
+    an adopted/recovered plan no longer shows.  This helper is history-
+    independent: it promotes finalized plans whose finalize tasks are all done
+    AND whose execution.json task updates are all done.  Returns True when the
+    plan was promoted (or was already executed/done), False when there is real
+    remaining execute work.
+    """
+    try:
+        plan_dir = resolve_plan_dir(root, plan)
+    except CliError:
+        return False
+    state = _plan_state_from_payload(root, plan)
+    current_state = state.get("current_state") if isinstance(state, dict) else None
+    if current_state in {"executed", "done", "review", "awaiting_human_verify"}:
+        return True
+    if current_state not in {"finalized", "planned"}:
+        return False
+    finalize_path = plan_dir / "finalize.json"
+    execution_path = plan_dir / "execution.json"
+    if not finalize_path.exists():
+        return False
+    try:
+        finalize = json.loads(finalize_path.read_text(encoding="utf-8"))
+        tasks = finalize.get("tasks") or []
+        if not isinstance(tasks, list) or not tasks:
+            return False
+        if not all(isinstance(t, dict) and t.get("status") == "done" for t in tasks):
+            return False
+        if execution_path.exists():
+            execution = json.loads(execution_path.read_text(encoding="utf-8"))
+            updates = execution.get("task_updates") or []
+            if isinstance(updates, list) and updates:
+                if not all(
+                    isinstance(u, dict) and u.get("status") == "done" for u in updates
+                ):
+                    return False
+    except (OSError, ValueError, TypeError):
+        return False
+    # All finalize tasks done + execution updates done: promote to executed.
+    _mark_blocked_execute_as_executed(plan_dir)
+    writer(
+        f"[chain] plan {plan} finalize+execution fully done; promoting to executed "
+        "before drive (no re-execute)\n"
+    )
+    return True
+
+
 def _recover_blocked_execute_if_tasks_done(
     root: Path,
     spec_path: Path,
@@ -5439,6 +5499,16 @@ def _drive_plan_with_blocked_execute_recovery(
     writer,
 ) -> DriverOutcome:
     _recover_failed_plan_before_drive(root, plan, writer=writer)
+    # Done-first (grok consult, astrid/mega-main execute-reentry loop): when the
+    # plan was operator-recovered (blocked -> finalized) but its finalize tasks
+    # are ALL done + execution.json is complete, promote to executed BEFORE the
+    # drive so the chain advances to review instead of re-entering execute.  The
+    # previous order ran the done-check only AFTER a blocked drive, so a
+    # recover-blocked plan re-entered execute every time and re-opened the
+    # quality-gate circuit on stale artifacts — the mechanically-inevitable loop
+    # that required manual adopt-execution to break.
+    if _promote_done_plan_to_executed(root, plan, writer=writer):
+        pass  # promoted (or already executed/done); drive below advances naturally
     outcome = _drive_plan(
         root,
         plan,
