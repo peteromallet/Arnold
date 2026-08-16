@@ -105,6 +105,13 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         # every post-review execute aborts with FinalizeFieldOwnershipError
         # before finalize.json is updated (recurring scope-drift blocker).
         "scope_reconciled_files",
+        # Typed blocker disposition stamped by the execute auto-loop when a
+        # worker reports a task status=blocked: "prerequisite_blocked" (explicit
+        # prereq/user-action blocker) or "validation_blocked" (task-scoped
+        # worker/policy block with no accepted terminal authority). The loop
+        # parks these rows and continues with the dependency-independent
+        # frontier; the kind is surfaced in phase_result BlockedTask.blocker_kind.
+        "blocked_reason",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})
