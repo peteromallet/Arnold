@@ -815,6 +815,124 @@ def test_blocked_by_prereq_emits_prereq_blocked_task_ids_when_active_blocked_emp
     assert result.blocked_tasks[0].task_id == "X"
 
 
+def test_auto_loop_pending_left_behind_blocks_phase_and_skips_later_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Abort-recovery stop: a batch leaving non-complete tasks parks the phase.
+
+    If a dispatched batch leaves any task non-terminal (worker aborted
+    mid-batch, no accepted envelope, not authority-completed), the auto loop
+    must stop BEFORE dispatching later batches, and the phase-final decision
+    must surface the park (blocked_by_quality), never success.
+    """
+    import argparse
+    import json
+    import types as _types
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        handle_execute_auto_loop,
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._guard_execute_batch_admission",
+        lambda **kwargs: None,
+    )
+
+    calls: list[list[str]] = []
+    _zero = 0
+
+    def _fake_run_and_merge_batch(**kwargs):
+        # Worker "aborts": batch tasks stay pending, no accepted envelopes.
+        fin = kwargs["finalize_data"]
+        batch_ids = list(kwargs["batch_task_ids"])
+        calls.append(batch_ids)
+        worker = _types.SimpleNamespace(
+            duration_ms=0,
+            cost_usd=0.0,
+            prompt_tokens=_zero,
+            completion_tokens=_zero,
+            total_tokens=_zero,
+            rate_limit=None,
+            session_id=None,
+            model_actual=None,
+            worker_channel=None,
+            auth_channel=None,
+            auth_metadata=None,
+            rendered_prompt=None,
+            trace_output=None,
+        )
+        return _types.SimpleNamespace(
+            worker=worker,
+            agent=kwargs.get("agent", "shadow"),
+            mode=kwargs.get("mode", "code"),
+            refreshed=kwargs.get("refreshed", False),
+            payload={"task_updates": [], "sense_check_acknowledgments": []},
+            batch_number=kwargs.get("batch_number", 1),
+            batch_task_ids=batch_ids,
+            batch_sense_check_ids=kwargs.get("batch_sense_check_ids", []),
+            merged_task_count=len(batch_ids),
+            total_task_count=len(batch_ids),
+            acknowledged_sense_check_count=0,
+            total_sense_check_count=0,
+            missing_task_evidence=[],
+            execution_audit={},
+            finalize_hash="",
+            attribution_records=[],
+            routing_degradations=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._run_and_merge_batch",
+        _fake_run_and_merge_batch,
+    )
+
+    # Three independent tasks split into two batches of <=2.
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "pending", "depends_on": [], "description": "t1"},
+            {"id": "T2", "status": "pending", "depends_on": [], "description": "t2"},
+            {"id": "T3", "status": "pending", "depends_on": [], "description": "t3"},
+        ],
+        "sense_checks": [],
+        "baseline_test_failures": None,
+        "user_actions": [],
+    }
+    (tmp_path / "finalize.json").write_text(
+        json.dumps(finalize_data), encoding="utf-8"
+    )
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "finalized",
+        "iteration": 1,
+        "config": {"mode": "code", "project_dir": str(tmp_path), "max_tasks_per_batch": 2},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    response = handle_execute_auto_loop(
+        root=tmp_path,
+        plan_dir=tmp_path,
+        state=state,
+        args=argparse.Namespace(),
+        auto_approve=False,
+        agent="shadow",
+        mode="code",
+        refreshed=False,
+    )
+
+    # Only the first batch was dispatched; the loop stopped on pending-left-
+    # behind instead of cascading into batch 2.
+    assert calls == [["T1", "T2"]]
+    assert response["success"] is False
+    assert response["_phase_outcome"] == "blocked_by_quality"
+    assert "remained non-complete after their execute batch" in response["summary"]
+    assert state["current_state"] != "executed"
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Dependency-aware execute frontier (occurrence 0ae19cc17afd, shipped in
 # b2aaab3f "fix(execute): drain dependency-independent frontier after task
