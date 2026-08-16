@@ -2107,22 +2107,34 @@ def _latest_execution_batch_all_tasks_done(
                     for task in finalize_records
                     if str(task.get("id") or "") not in baseline_unavailable_task_ids
                 ]
-                if authoritative_batch_overrides:
-                    overlaid_finalize_records: list[dict[str, Any]] = []
-                    for task in authoritative_finalize_records:
+
+                def _overlay_authoritative_batch_updates(
+                    records: list[dict[str, Any]],
+                ) -> list[dict[str, Any]]:
+                    """Apply guarded authoritative batch overrides to finalize rows.
+
+                    A later execution batch may supersede stale per-task finalize
+                    rows, but durable terminal evidence already reconciled into
+                    finalize.json is never erased by a replayed/partial batch.
+                    """
+                    if not authoritative_batch_overrides:
+                        return list(records)
+                    from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                        has_durable_terminal_task_evidence,
+                    )
+
+                    overlaid: list[dict[str, Any]] = []
+                    for task in records:
                         task_id = str(task.get("id") or "")
                         override = authoritative_batch_overrides.get(task_id)
                         if override is None:
-                            overlaid_finalize_records.append(task)
+                            overlaid.append(task)
                             continue
-                        from arnold_pipelines.megaplan.orchestration.authority_readers import (
-                            has_durable_terminal_task_evidence,
-                        )
                         if has_durable_terminal_task_evidence(task):
                             # A replayed/partial batch may omit outputs already
                             # reconciled into finalize.json. Never let that erase
                             # terminal corroboration at chain completion.
-                            overlaid_finalize_records.append(task)
+                            overlaid.append(task)
                             continue
                         merged = dict(task)
                         for field in (
@@ -2138,8 +2150,19 @@ def _latest_execution_batch_all_tasks_done(
                             if key == "task_id":
                                 continue
                             merged[key] = value
-                        overlaid_finalize_records.append(merged)
-                    authoritative_finalize_records = overlaid_finalize_records
+                        overlaid.append(merged)
+                    return overlaid
+
+                # Closure must see the COMPLETE canonical finalize universe
+                # (including baseline-unavailable checkpoints, per 7416687dd)
+                # WITH authoritative batch overrides applied, so stale finalize
+                # rows never contradict the batch-authority contract.
+                complete_finalize_records = _overlay_authoritative_batch_updates(
+                    finalize_records
+                )
+                authoritative_finalize_records = _overlay_authoritative_batch_updates(
+                    authoritative_finalize_records
+                )
 
     from arnold_pipelines.megaplan.orchestration.authority_readers import (
         has_durable_terminal_task_evidence,
@@ -2214,7 +2237,7 @@ def _latest_execution_batch_all_tasks_done(
         # tasks stay excluded from the authoritative REPORTING set below, so
         # they are never reported as pending.
         finalize_completed = effective_execute_completed_task_ids(
-            finalize_records,
+            complete_finalize_records,
             plan_dir=plan_dir,
             project_dir=project_dir,
             state=state_payload,
