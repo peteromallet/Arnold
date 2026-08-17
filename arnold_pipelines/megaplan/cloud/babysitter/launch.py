@@ -497,6 +497,16 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     ctx = _collect_context(args)
     ctx["launched_at"] = _utcnow_iso()
+    # ROOT FIX (grok consult 2026-08-17): assert session-identity consistency
+    # before any worker spawn. If ARNOLD_REPAIR_SESSION disagrees with the
+    # babysitter --session, a stale box-global env would leak into the
+    # agent's resume/execute workers and hijack another session's liveness
+    # lock/marker/lease (astrid -> mega collision observed 2026-08-17).
+    _babysitter_session = str(ctx.get("session") or "").strip()
+    _repair_env_session = str(os.environ.get("ARNOLD_REPAIR_SESSION") or "").strip()
+    if _babysitter_session and _repair_env_session and _babysitter_session != _repair_env_session:
+        os.environ["ARNOLD_REPAIR_SESSION"] = _babysitter_session
+    os.environ["ARNOLD_BABYSITTER_SESSION"] = _babysitter_session
     try:
         if _dedup_already_running(ctx):
             _eprint(

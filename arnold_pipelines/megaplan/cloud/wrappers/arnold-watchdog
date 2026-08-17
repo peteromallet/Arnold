@@ -2022,6 +2022,18 @@ try:
         ":" + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
     )
     child_env["ARNOLD_BABYSITTER_SESSION"] = session
+    # ROOT FIX (grok consult 2026-08-17): the inherited box-global
+    # ARNOLD_REPAIR_SESSION leaked into cross-session babysitter dispatches -
+    # an astrid babysitter spawned by the mega watchdog's env carried
+    # ARNOLD_REPAIR_SESSION=megaplan-maintenance into its resume/execute
+    # workers, which hijacked the MEGA liveness lock/marker/lease. Remap the
+    # repair session to the babysitter's target session so the liveness
+    # resolver (liveness_lease.resolve_managed_session) sees consistency and
+    # publishes under the correct session. Also clear the inherited owner pid
+    # so the child never defers to a foreign live publisher.
+    child_env["ARNOLD_REPAIR_SESSION"] = session
+    child_env.pop("ARNOLD_LIVENESS_OWNER_PID", None)
+    child_env.pop("ARNOLD_LIVENESS_OWNER_PROCESS_START", None)
     child_env["ARNOLD_BABYSITTER_WORKSPACE"] = str(workspace)
     child_env["ARNOLD_BABYSITTER_PLAN"] = resolved_plan_name
     child_env["ARNOLD_BABYSITTER_RUN_KIND"] = run_kind

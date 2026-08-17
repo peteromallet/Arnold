@@ -256,3 +256,63 @@ def test_child_inheriting_exact_live_owner_never_starts_competing_publisher(
 
     assert ll.start_from_environment() is None
     assert not ll.lease_path("run", marker_dir=tmp_path).exists()
+
+
+def test_babysitter_session_wins_over_repair_session(tmp_path: Path, monkeypatch) -> None:
+    """Per-dispatch ARNOLD_BABYSITTER_SESSION is authoritative for publishing.
+
+    ROOT FIX (grok consult 2026-08-17): the box-global ARNOLD_REPAIR_SESSION
+    leaked into cross-session babysitter dispatches and hijacked another
+    session's lock/marker/lease. The watchdog now remaps ARNOLD_REPAIR_SESSION
+    to the babysitter session, so a consistent env resolves to the babysitter
+    session (which equals repair after the remap).
+    """
+    _marker(tmp_path, "astrid-first")
+    monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "astrid-first")
+    monkeypatch.setenv("ARNOLD_BABYSITTER_SESSION", "astrid-first")
+    monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(tmp_path))
+
+    assert ll.resolve_managed_session() == "astrid-first"
+    publisher = ll.start_from_environment()
+    try:
+        assert publisher is not None
+        assert publisher.session == "astrid-first"
+        assert not ll.lease_path("megaplan-maintenance", marker_dir=tmp_path).exists()
+    finally:
+        if publisher is not None:
+            publisher.close()
+
+
+def test_mismatched_babysitter_and_repair_session_refuses_publish(tmp_path: Path, monkeypatch) -> None:
+    """A foreign identity leak (babysitter session != repair session) must NOT publish.
+
+    ROOT FIX (grok consult 2026-08-17): publishing under either session when
+    they disagree would either hijack the other session (repair) or leave the
+    stale repair lease lying about liveness (babysitter). Refuse both.
+    """
+    _marker(tmp_path, "megaplan-maintenance")
+    monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "megaplan-maintenance")
+    monkeypatch.setenv("ARNOLD_BABYSITTER_SESSION", "astrid-first")
+    monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(tmp_path))
+
+    assert ll.resolve_managed_session() == ""
+    assert ll.start_from_environment() is None
+    assert not ll.lease_path("astrid-first", marker_dir=tmp_path).exists()
+    assert not ll.lease_path("megaplan-maintenance", marker_dir=tmp_path).exists()
+
+
+def test_repair_session_fallback_when_no_babysitter_env(tmp_path: Path, monkeypatch) -> None:
+    """Standalone runners (no babysitter dispatch) still publish under repair session."""
+    _marker(tmp_path, "megaplan-maintenance")
+    monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "megaplan-maintenance")
+    monkeypatch.delenv("ARNOLD_BABYSITTER_SESSION", raising=False)
+    monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(tmp_path))
+
+    assert ll.resolve_managed_session() == "megaplan-maintenance"
+    publisher = ll.start_from_environment()
+    try:
+        assert publisher is not None
+        assert publisher.session == "megaplan-maintenance"
+    finally:
+        if publisher is not None:
+            publisher.close()

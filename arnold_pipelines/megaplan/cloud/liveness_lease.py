@@ -541,8 +541,43 @@ def observe_liveness_lease(
     }
 
 
+def resolve_managed_session() -> str:
+    """Resolve the session identity this process may publish liveness for.
+
+    ROOT FIX (grok consult 2026-08-17, DeepSeek swarm evidence): session
+    identity was split across two env vars with different semantics -
+    ARNOLD_REPAIR_SESSION (box-global, set once at provisioning) vs
+    ARNOLD_BABYSITTER_SESSION (per-dispatch, correct). The liveness layer
+    read only the box-global one, so an astrid babysitter spawned by the
+    mega watchdog's env inherited ARNOLD_REPAIR_SESSION=megaplan-maintenance
+    and hijacked the MEGA lock/marker/lease (flock on mega lock, overwrote
+    mega marker, persisted runner_lease.session=megaplan-maintenance into
+    the astrid plan state, recursive superfixer collisions).
+
+    Rules:
+    - If ARNOLD_BABYSITTER_SESSION is set (per-dispatch, authoritative),
+      it wins.
+    - If ARNOLD_REPAIR_SESSION is set and differs from the babysitter
+      session, the process is a FOREIGN identity leak: refuse to publish
+      (return "") so it cannot hijack another session's lock/marker/lease.
+    - Otherwise fall back to ARNOLD_REPAIR_SESSION (standalone runner).
+    """
+    babysitter = str(os.environ.get("ARNOLD_BABYSITTER_SESSION") or "").strip()
+    repair = str(os.environ.get("ARNOLD_REPAIR_SESSION") or "").strip()
+    if babysitter and repair and babysitter != repair:
+        # Foreign identity leak: a per-dispatch babysitter session is present
+        # and disagrees with the inherited box-global repair session. Never
+        # publish under either - publishing under repair would hijack another
+        # session; publishing under babysitter while the env claims repair
+        # leaves the stale repair lease lying about liveness.
+        return ""
+    if babysitter:
+        return babysitter
+    return repair
+
+
 def start_from_environment() -> LivenessLeasePublisher | None:
-    session = str(os.environ.get("ARNOLD_REPAIR_SESSION") or "").strip()
+    session = resolve_managed_session()
     if not session:
         return None
     marker_dir = Path(
@@ -598,7 +633,7 @@ def start_from_environment() -> LivenessLeasePublisher | None:
 def managed_runner_lifecycle():
     """Publish exactly once for one managed CLI process and all its children."""
 
-    session = str(os.environ.get("ARNOLD_REPAIR_SESSION") or "").strip()
+    session = resolve_managed_session()
     existing = _ACTIVE_PUBLISHERS.get((os.getpid(), session)) if session else None
     publisher = start_from_environment()
     owns_lifecycle = publisher is not None and publisher is not existing
