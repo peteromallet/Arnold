@@ -5789,9 +5789,25 @@ def _adopt_authority_completed_blocked_tasks(
 
 _BASELINE_VERIFICATION_MARKER = "introduce no new failures vs the recorded baseline"
 _BASELINE_UNAVAILABLE_BLOCKER_KIND = "baseline-unavailable-no-new-failures-checkpoint"
+# The baseline-unavailable deferral is a VERIFICATION-only disposition: it
+# exists for tasks whose contract is "introduce no new failures vs the
+# recorded baseline". Implementation (code) tasks must never be deferred by
+# it, even when their description happens to carry the boilerplate marker —
+# deferring them launders real implementation work into a fake "skipped"
+# completion (observed: m3 T4, kind=code, was marked skipped by
+# _defer_baseline_unavailable_checkpoints with no authority/envelope
+# evidence, leaving the projection to re-work it while finalize accounting
+# mislabeled it done). "audit" is the kind used for *_proof tasks in current
+# plans; "proof"/"verification" are accepted aliases for other naming
+# conventions. The description marker must still match, so this can only
+# NARROW the set of deferrable tasks.
+_BASELINE_VERIFICATION_KINDS = frozenset({"audit", "proof", "verification"})
 
 
 def _is_baseline_dependent_verification_task(task: dict[str, Any]) -> bool:
+    kind = task.get("kind")
+    if not isinstance(kind, str) or kind not in _BASELINE_VERIFICATION_KINDS:
+        return False
     description = task.get("description")
     if not isinstance(description, str):
         return False
