@@ -248,6 +248,45 @@ def test_complete_loaded_module_vector_rejects_mixed_and_late_modules(
         attestation.validate_runtime_launch_seed(seed, component="worker")
 
 
+def test_worker_with_fewer_modules_than_seed_validates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Builder-only seed modules (chain-CLI imports) are not worker requirements.
+
+    Occurrence prep-retry-20260815T0020Z: the seed was rebuilt by the fat
+    chain CLI (325 loaded_modules incl. relaunch_resolution/runtime_cutover/
+    runtime_manifest/shadow_attestation) and the thin prep worker imports
+    none of those.  Presence is optional; identity, when present, is strict.
+    """
+    seed, _paths = _release_seed(tmp_path, monkeypatch)
+    # A worker that imports none of the seed-listed modules (strictly weaker
+    # than the real 321/325 case) must still validate.
+    monkeypatch.setattr(attestation, "_module_vector", lambda _root: ([], []))
+
+    result = attestation.validate_runtime_launch_seed(seed, component="worker")
+    assert result["status"] == "ready"
+
+
+def test_worker_module_identity_drift_still_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Presence is optional, but a present module must match exactly."""
+    seed, _paths = _release_seed(tmp_path, monkeypatch)
+    drifted = [
+        {
+            "module": "arnold_pipelines.megaplan.cloud.runtime_attestation",
+            "path": "/other/arnold_pipelines/megaplan/cloud/runtime_attestation.py",
+            "root": "/other",
+        }
+    ]
+    monkeypatch.setattr(attestation, "_module_vector", lambda _root: (drifted, []))
+
+    with pytest.raises(CliError, match="loaded module identity changed"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+
+
 def test_unowned_executable_pth_is_recorded_and_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -913,12 +952,17 @@ def test_ensure_runtime_launch_seed_rebuilds_on_head_change(
         supervisor_receipt_path=paths["receipt"],
         hot_env_path=paths["hot_env"],
     )
-    expected_path = seed_dir / "runtime-test-1.json"
-    assert first == expected_path
-    assert expected_path.exists()
-    assert json.loads(expected_path.read_text(encoding="utf-8"))[
+    # T-0303 immutable content-addressed seed: <generation>-<rev>-<seed-sha>.json
+    # plus a dispatch-current.json pointer. Not the old mutable per-runtime slot.
+    assert first.name != "runtime-test-1.json"
+    assert first.parent == seed_dir / "runtime-test-1"
+    assert first.exists()
+    assert json.loads(first.read_text(encoding="utf-8"))[
         "expected_revision"
     ] == revision
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert pointer.exists()
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(first)
 
     # unchanged pin -> reuse the existing seed (no rebuild, no marker churn)
     second = attestation.ensure_runtime_launch_seed(
@@ -930,7 +974,7 @@ def test_ensure_runtime_launch_seed_rebuilds_on_head_change(
         supervisor_receipt_path=paths["receipt"],
         hot_env_path=paths["hot_env"],
     )
-    assert second == expected_path
+    assert second == first  # immutable seed reused, pointer unchanged
 
     # head advances: manifest pin, live HEAD, and the chain identity move.
     # The marker's relaunch command was regenerated to bind the current
@@ -952,9 +996,19 @@ def test_ensure_runtime_launch_seed_rebuilds_on_head_change(
         supervisor_receipt_path=paths["receipt"],
         hot_env_path=paths["hot_env"],
     )
-    assert third == expected_path
-    rebuilt = json.loads(expected_path.read_text(encoding="utf-8"))
+    # A new generation -> a NEW immutable seed (content-addressed by the new
+    # revision); the old seed file is never rewritten.
+    assert third != first
+    assert third.parent == seed_dir / "runtime-test-1"
+    assert third.exists()
+    rebuilt = json.loads(third.read_text(encoding="utf-8"))
     assert rebuilt["expected_revision"] == new_revision
+    assert json.loads(first.read_text(encoding="utf-8"))[
+        "expected_revision"
+    ] == revision  # old seed untouched (immutability)
+    # dispatch pointer now targets the new generation
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(third)
     # the stale marker was CAS-rebound to the new identity
     marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
     marker_identity = marker["runtime_binding"]["current_identity"]
@@ -1118,43 +1172,15 @@ def test_build_cli_records_explicit_manifest_pointer(
     assert manifest.resolve(strict=False).as_posix() in captured.out
 
 
-def test_validate_pointerless_seed_follows_manifest_from_environment(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Codex consult 0ae19cc17afd (b.2): a LEGACY pointerless seed (CLI build
-    without --manifest) falls back to ARNOLD_RUNTIME_MANIFEST to resolve the
-    accepted head, so it follows the accepted generation after an engine
-    advance instead of wedging with source_revision_mismatch."""
-    seed, paths = _release_seed(tmp_path, monkeypatch)
-    assert seed["input_paths"]["manifest"] == ""
-    new_head = "c" * 40
-    manifest = tmp_path / "env-manifest.json"
-    _write_json(manifest, {"epic": {"expected_head": new_head}})
-    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
-    monkeypatch.delenv("ARNOLD_ACCEPTED_RUNTIME_HEAD", raising=False)
-
-    def _advanced_provenance(**_kwargs: object) -> dict[str, object]:
-        prov = dict(seed["runtime_provenance"])  # type: ignore[arg-type]
-        prov["source_revision"] = new_head
-        prov["ok"] = True
-        return prov
-
-    monkeypatch.setattr(attestation, "runtime_provenance", _advanced_provenance)
-
-    result = attestation.validate_runtime_launch_seed(seed, component="worker")
-    assert result["status"] == "ready"
-    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") == new_head
-
-
 def test_validate_pointerless_seed_without_manifest_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Codex consult 0ae19cc17afd (b.2 fail-closed): with neither a seed
-    pointer nor ARNOLD_RUNTIME_MANIFEST, an engine advance still fails closed
-    with the typed source_revision_mismatch refusal — the env fallback is
-    strictly additive."""
+    """T-0303 (Codex design): a seed whose revision differs from the live
+    head FAILS CLOSED with source_revision_mismatch. Validation NEVER follows
+    a manifest/environment head - the seed is immutable evidence and is
+    validated exactly as issued (no ARNOLD_ACCEPTED_RUNTIME_HEAD reinterpret).
+    """
     seed, _paths = _release_seed(tmp_path, monkeypatch)
     assert seed["input_paths"]["manifest"] == ""
     monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
@@ -1167,6 +1193,26 @@ def test_validate_pointerless_seed_without_manifest_fails_closed(
 
     with pytest.raises(CliError, match="source_revision_mismatch"):
         attestation.validate_runtime_launch_seed(seed, component="worker")
+
+    # Even with ARNOLD_RUNTIME_MANIFEST pointing at a NEWER accepted head, the
+    # stale seed must NOT follow it - the follow behavior is removed.
+    new_head = "c" * 40
+    manifest = tmp_path / "env-manifest.json"
+    _write_json(manifest, {"epic": {"expected_head": new_head}})
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+
+    def _drifted_advanced(**_kwargs: object) -> dict[str, object]:
+        prov = dict(seed["runtime_provenance"])  # type: ignore[arg-type]
+        prov["source_revision"] = new_head
+        prov["ok"] = False
+        prov["errors"] = ["source_revision_mismatch"]
+        return prov
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _drifted_advanced)
+    with pytest.raises(CliError, match="source_revision_mismatch"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+    # No accepted-head env was set by validation (follow removed).
+    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") is None
 
 
 def test_validate_seed_manifest_pointer_wins_over_environment(
@@ -1210,8 +1256,9 @@ def test_validate_seed_manifest_pointer_wins_over_environment(
         seed_with_pointer, component="worker"
     )
     assert result["status"] == "ready"
-    # the SEED pointer supplied the accepted head, not the conflicting env
-    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") == seed_head
+    # T-0303: validation does NOT set an accepted-head env (follow removed) -
+    # the seed is validated exactly as issued against the live provenance.
+    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") is None
 
     # nonempty-but-invalid seed pointer: must NOT fall through to the env.
     broken = tmp_path / "missing-manifest.json"
@@ -1262,21 +1309,28 @@ def test_ensure_runtime_launch_seed_rebuilds_pointerless_or_wrong_pointer_seed(
         supervisor_receipt_path=paths["receipt"],
         hot_env_path=paths["hot_env"],
     )
-    expected_path = seed_dir / "runtime-test-1.json"
-    assert first == expected_path
-    built = json.loads(expected_path.read_text(encoding="utf-8"))
+    # T-0303: content-addressed immutable seed + dispatch-current pointer.
+    assert first.name != "runtime-test-1.json"
+    assert first.parent == seed_dir / "runtime-test-1"
+    assert first.exists()
+    built = json.loads(first.read_text(encoding="utf-8"))
     assert built["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert pointer.exists()
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(first)
 
-    # rewrite on-disk seed with a VALID recomputed digest but an EMPTY pointer
+    # rewrite the CURRENT immutable seed with a VALID digest but EMPTY pointer:
+    # it is no longer the dispatch-current target (content changed), so the
+    # next ensure builds a NEW immutable seed and re-points dispatch-current.
     pointerless = dict(built)
     pointerless["input_paths"] = dict(built["input_paths"])
     pointerless["input_paths"]["manifest"] = ""
     pointerless["content_sha256"] = attestation._canonical_sha256(
         {k: v for k, v in pointerless.items() if k != "content_sha256"}
     )
-    _write_json(expected_path, pointerless)
+    _write_json(first, pointerless)
     attestation._verify_seed_digest(
-        json.loads(expected_path.read_text(encoding="utf-8"))
+        json.loads(first.read_text(encoding="utf-8"))
     )
 
     second = attestation.ensure_runtime_launch_seed(
@@ -1288,9 +1342,14 @@ def test_ensure_runtime_launch_seed_rebuilds_pointerless_or_wrong_pointer_seed(
         supervisor_receipt_path=paths["receipt"],
         hot_env_path=paths["hot_env"],
     )
-    assert second == expected_path
-    rebuilt = json.loads(expected_path.read_text(encoding="utf-8"))
+    # The pointerless mutation was rejected: ensure rebuilds the seed with the
+    # canonical manifest pointer (content-identical to the original -> may land
+    # at the same content-addressed path). The dispatch seed is never the
+    # empty-pointer mutation.
+    assert second.exists()
+    rebuilt = json.loads(second.read_text(encoding="utf-8"))
     assert rebuilt["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(second)
 
     # wrong pointer (another manifest path) is also not current -> rebuilt
     other = tmp_path / "other-manifest.json"
@@ -1301,7 +1360,7 @@ def test_ensure_runtime_launch_seed_rebuilds_pointerless_or_wrong_pointer_seed(
     wrong["content_sha256"] = attestation._canonical_sha256(
         {k: v for k, v in wrong.items() if k != "content_sha256"}
     )
-    _write_json(expected_path, wrong)
+    _write_json(second, wrong)
 
     third = attestation.ensure_runtime_launch_seed(
         manifest_path=manifest,
@@ -1312,6 +1371,10 @@ def test_ensure_runtime_launch_seed_rebuilds_pointerless_or_wrong_pointer_seed(
         supervisor_receipt_path=paths["receipt"],
         hot_env_path=paths["hot_env"],
     )
-    assert third == expected_path
-    final = json.loads(expected_path.read_text(encoding="utf-8"))
+    assert third.exists()
+    final = json.loads(third.read_text(encoding="utf-8"))
+    # The wrong-pointer mutation was rejected: the dispatch seed carries the
+    # canonical manifest pointer (rebuilt), never the foreign one.
     assert final["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    assert final["input_paths"]["manifest"] != str(other.resolve(strict=False))
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(third)

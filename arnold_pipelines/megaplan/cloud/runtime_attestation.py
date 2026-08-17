@@ -23,6 +23,12 @@ from arnold_pipelines.megaplan.types import CliError
 
 RUNTIME_LAUNCH_SEED_SCHEMA = "arnold.megaplan.runtime_launch_seed.v1"
 RUNTIME_PROCESS_ATTESTATION_SCHEMA = "arnold.megaplan.runtime_process_attestation.v1"
+# Codex fix 2026-08-17: the mutable per-runtime seed slot is retired. Seeds
+# are content-addressed per accepted generation and a separate atomic pointer
+# (``dispatch-current.json``) selects the newest ready seed. Running workers
+# retain the absolute immutable seed path they were dispatched with.
+DISPATCH_POINTER_SCHEMA = "arnold.megaplan.runtime_dispatch_pointer.v1"
+DISPATCH_CURRENT_FILENAME = "dispatch-current.json"
 RUNTIME_ATTESTATION_ERROR = "runtime_launch_attestation_mismatch"
 # Canonical box-side paths for the per-epic launch-seed build (G14): the
 # supervisor prepare receipt, the box hot-env file, and the launch-seed store
@@ -549,6 +555,9 @@ def build_runtime_launch_seed(
     expected_ancestry_base: str | None = None,
     manifest_path: Path | None = None,
     chain_runtime_identity: Mapping[str, Any] | None = None,
+    manifest_generation: int | None = None,
+    manifest_sha256: str | None = None,
+    dependency_generation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one strict release seed from current runtime and durable inputs.
 
@@ -709,6 +718,15 @@ def build_runtime_launch_seed(
         "schema": RUNTIME_LAUNCH_SEED_SCHEMA,
         "expected_root": str(root),
         "expected_revision": expected_revision,
+        # Codex fix 2026-08-17: the seed is bound to ONE accepted manifest
+        # generation (immutable). These fields are the provenance of that
+        # binding; dispatch never mutates them and validation never reads a
+        # NEWER manifest to reinterpret them.
+        "manifest_generation": manifest_generation,
+        "manifest_sha256": manifest_sha256 or "",
+        "dependency_generation": (
+            dict(dependency_generation) if dependency_generation else {}
+        ),
         "revision_components": revision_components,
         "expected_branch": expected_branch,
         "expected_ancestry_base": expected_ancestry_base,
@@ -853,6 +871,7 @@ def _launch_seed_current(
     expected_revision: str,
     marker_path: Path,
     manifest_path: Path,
+    generation: int | None = None,
 ) -> bool:
     """True when the on-disk seed is release-ready and still pinned to root/revision.
 
@@ -872,6 +891,11 @@ def _launch_seed_current(
         seed = _json_file(seed_path, label="runtime launch seed")
         _verify_seed_digest(seed)
     except CliError:
+        return False
+    # Codex fix 2026-08-17: a seed built for an EARLIER accepted generation
+    # is never reused to dispatch after a promotion. When *generation* is
+    # provided it must equal the seed's bound manifest_generation.
+    if generation is not None and seed.get("manifest_generation") != generation:
         return False
     input_paths = seed.get("input_paths")
     input_paths = input_paths if isinstance(input_paths, Mapping) else {}
@@ -901,6 +925,86 @@ def _launch_seed_current(
         and str(seed.get("expected_root") or "") == str(root)
         and str(seed.get("expected_revision") or "") == expected_revision
     )
+
+
+def _exclusive_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    """Write *payload* to *path* with exclusive-create (``O_EXCL``) semantics.
+
+    Codex fix 2026-08-17: an issued generation seed is IMMUTABLE. The file is
+    created only if it does not already exist; a concurrent writer that won
+    the race leaves the existing seed intact and the caller treats
+    :class:`FileExistsError` as "already dispatched" (the on-disk seed is the
+    one to use).
+    """
+    path = path.resolve(strict=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(
+        str(path),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o644,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+
+
+def _write_dispatch_pointer(
+    store_dir: Path,
+    seed_path: Path,
+    *,
+    generation: int,
+    expected_revision: str,
+    seed_sha256: str,
+) -> Path:
+    """Atomically point ``dispatch-current.json`` at the newest ready seed."""
+    pointer = store_dir / DISPATCH_CURRENT_FILENAME
+    _atomic_write(
+        pointer,
+        {
+            "schema": DISPATCH_POINTER_SCHEMA,
+            "seed_path": str(seed_path),
+            "manifest_generation": generation,
+            "expected_revision": expected_revision,
+            "seed_sha256": seed_sha256,
+        },
+    )
+    return pointer
+
+
+def _find_current_seed(
+    store_dir: Path,
+    *,
+    root: Path,
+    expected_revision: str,
+    marker_path: Path,
+    manifest_path: Path,
+    generation: int,
+) -> Path | None:
+    """Return an existing, still-valid immutable seed for this generation."""
+    if not store_dir.is_dir():
+        return None
+    for candidate in sorted(store_dir.glob("*.json")):
+        if candidate.name == DISPATCH_CURRENT_FILENAME:
+            continue
+        if _launch_seed_current(
+            candidate,
+            root=root,
+            expected_revision=expected_revision,
+            marker_path=marker_path,
+            manifest_path=manifest_path,
+            generation=generation,
+        ):
+            return candidate
+    return None
 
 
 def ensure_runtime_launch_seed(
@@ -994,16 +1098,30 @@ def ensure_runtime_launch_seed(
         live_identity=live_identity,
         source_branch=str(epic.get("branch") or ""),
     )
-    seed_path = (seed_dir or _launch_seed_store_dir()) / f"{manifest.runtime_id}.json"
-    seed_path = seed_path.resolve(strict=False)
-    if _launch_seed_current(
-        seed_path,
+    # Codex fix 2026-08-17: content-address the accepted generation. The seed
+    # lives at runtime-launch-seeds/<runtime-id>/<generation>-<head>-<sha>.json
+    # and is written once (O_EXCL); a separate atomic dispatch-current.json
+    # pointer selects the newest ready seed. Running workers retain the
+    # absolute immutable path they were dispatched with.
+    store_dir = ((seed_dir or _launch_seed_store_dir()) / manifest.runtime_id).resolve(
+        strict=False
+    )
+    generation = int(manifest.generation)
+    manifest_sha256 = _canonical_sha256(manifest.to_dict())
+    dep_generation = manifest.epic.get("dependency_generation")
+    dep_generation = (
+        dict(dep_generation) if isinstance(dep_generation, Mapping) else None
+    )
+    existing = _find_current_seed(
+        store_dir,
         root=root,
         expected_revision=expected_revision,
         marker_path=marker_path,
         manifest_path=manifest_path,
-    ):
-        return seed_path
+        generation=generation,
+    )
+    if existing is not None:
+        return existing
     payload = build_runtime_launch_seed(
         expected_root=root,
         expected_revision=expected_revision,
@@ -1017,6 +1135,9 @@ def ensure_runtime_launch_seed(
         expected_ancestry_base=expected_ancestry_base,
         manifest_path=manifest_path,
         chain_runtime_identity=bound_identity,
+        manifest_generation=generation,
+        manifest_sha256=manifest_sha256,
+        dependency_generation=dep_generation,
     )
     if not bool(payload.get("ready")):
         raise CliError(
@@ -1024,7 +1145,20 @@ def ensure_runtime_launch_seed(
             "runtime launch seed is not release-ready: "
             + ", ".join(str(item) for item in payload.get("errors") or []),
         )
-    _atomic_write(seed_path, payload)
+    seed_sha = str(payload.get("content_sha256") or "")
+    seed_path = store_dir / f"{generation}-{expected_revision}-{seed_sha}.json"
+    try:
+        _exclusive_write_json(seed_path, payload)
+    except FileExistsError:
+        # A concurrent dispatcher already wrote this exact immutable seed.
+        pass
+    _write_dispatch_pointer(
+        store_dir,
+        seed_path,
+        generation=generation,
+        expected_revision=expected_revision,
+        seed_sha256=seed_sha,
+    )
     return seed_path
 
 
@@ -1106,49 +1240,15 @@ def validate_runtime_launch_seed(
         expected_modules = expected_runtime.get("loaded_modules")
         module_root = Path(str(supervisor.get("runtime") or "")).resolve(strict=False)
     else:
-        # T-0302 follow_accepted_generation (grok consult 2026-08-17): an
-        # engine advance through the accepted path (manifest expected_head ==
-        # live HEAD) is normal development. Read the accepted head from the
-        # per-session manifest and let the provenance follow it, so a worker
-        # T-0302 follow_accepted_generation (grok consult 2026-08-17): resolve
-        # the accepted head from the SEED's own input_paths.manifest (the
-        # canonical pointer the seed was built from), NOT the env. The failing
-        # path is a fixer-spawned direct plan/execute/resume in a fresh
-        # process that carries the seed env but NOT ARNOLD_RUNTIME_MANIFEST -
-        # an env-only read made the follow a no-op there and every worker
-        # after an engine commit failed with source_revision_mismatch. The
-        # seed alone must be sufficient.
-        # Legacy compatibility (codex consult 0ae19cc17afd): a canonical seed
-        # is always self-sufficient via input_paths.manifest. A LEGACY seed
-        # whose pointer is empty (built by the CLI before --manifest existed)
-        # may fall back to ARNOLD_RUNTIME_MANIFEST so it follows the accepted
-        # generation instead of wedging on the next engine advance. The env is
-        # used ONLY when the seed pointer is empty; a nonempty-but-invalid
-        # seed pointer still fails closed (seed-first authority, never
-        # silently replaced by the environment).
-        accepted_head = ""
-        manifest_path = ""
-        input_paths = seed.get("input_paths")
-        input_paths = input_paths if isinstance(input_paths, Mapping) else {}
-        manifest_path = str(input_paths.get("manifest") or "").strip()
-        if not manifest_path:
-            manifest_path = str(os.environ.get("ARNOLD_RUNTIME_MANIFEST") or "").strip()
-        if manifest_path:
-            try:
-                manifest_payload = json.loads(
-                    Path(manifest_path).read_text(encoding="utf-8")
-                )
-                accepted_head = str(
-                    (manifest_payload.get("epic") or {}).get("expected_head") or ""
-                ).strip()
-            except (OSError, ValueError):
-                accepted_head = ""
-        if accepted_head:
-            os.environ["ARNOLD_ACCEPTED_RUNTIME_HEAD"] = accepted_head
+        # Codex fix 2026-08-17: exact provenance check restored. The seed's
+        # ``expected_revision`` is IMMUTABLE once issued — validation must
+        # never read the seed's manifest path and silently replace it with a
+        # newer accepted head (that mutates the meaning of the signed seed
+        # after issuance). The live checkout revision, import root, module
+        # identities, and direct_url must equal the seed exactly.
         provenance = runtime_provenance(
             expected_root=root,
             expected_revision=revision,
-            follow_accepted_generation=bool(accepted_head),
         )
         if not provenance.get("ok"):
             raise CliError(
@@ -1156,30 +1256,10 @@ def validate_runtime_launch_seed(
                 f"runtime provenance changed: {provenance.get('errors')}",
             )
         if provenance != seed.get("runtime_provenance"):
-            # When following the accepted generation, the revision fields
-            # legitimately moved (old seed revision -> new accepted head). The
-            # CUSTODY check is that the import root, module identities, and
-            # editable/pth vectors still match the seed - a revision-only
-            # difference on an accepted follow is the intended outcome.
-            seed_prov = seed.get("runtime_provenance")
-            seed_prov = seed_prov if isinstance(seed_prov, Mapping) else {}
-            revision_only = False
-            if accepted_head and isinstance(seed_prov, Mapping):
-                revision_only = all(
-                    provenance.get(key) == seed_prov.get(key)
-                    for key in (
-                        "import_root",
-                        "editable_root",
-                        "direct_url",
-                        "pth",
-                        "imports",
-                    )
-                )
-            if not revision_only:
-                raise CliError(
-                    RUNTIME_ATTESTATION_ERROR,
-                    "runtime provenance or direct_url identity drifted",
-                )
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                "runtime provenance or direct_url identity drifted",
+            )
         expected_modules = seed.get("loaded_modules")
         module_root = root
     modules, module_errors = (
@@ -1262,19 +1342,10 @@ def validate_runtime_launch_seed(
             "active site .pth vector changed or is unsafe: " + ", ".join(pth_errors),
         )
     wrappers, wrapper_errors = _wrapper_vector(root)
-    # T-0302 follow_accepted_generation (grok consult 2026-08-17): wrapper
-    # content is part of the engine generation that legitimately moved on an
-    # accepted follow. Compare the wrapper NAME SET (the custody surface: no
-    # wrapper silently added/removed) and tolerate content diffs, mirroring
-    # the pth treatment.
-    wrapper_names = {w.get("path", "").rsplit("/", 1)[-1] for w in wrappers if isinstance(w, Mapping)}
-    seed_wrappers = seed.get("wrappers")
-    seed_wrapper_names = {
-        w.get("path", "").rsplit("/", 1)[-1]
-        for w in seed_wrappers
-        if isinstance(w, Mapping)
-    } if isinstance(seed_wrappers, list) else set()
-    if wrapper_errors or wrapper_names != seed_wrapper_names:
+    # Codex fix 2026-08-17: wrapper CONTENT identities must match the seed
+    # exactly (digests). The name-only comparison was insufficient — modified
+    # wrapper contents could pass an old seed. No revision tolerance.
+    if wrapper_errors or wrappers != seed.get("wrappers"):
         raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime wrapper manifest drifted")
     expected_interpreter = seed.get("interpreter")
     if is_supervisor:
@@ -1298,6 +1369,20 @@ def validate_runtime_launch_seed(
             raise CliError(
                 RUNTIME_ATTESTATION_ERROR, "runtime interpreter identity drifted"
             )
+        # Codex fix 2026-08-17: the live interpreter must belong to the seed's
+        # dependency generation (when the seed carries one). A worker running
+        # under a different dependency generation fails closed.
+        dep_generation = seed.get("dependency_generation")
+        dep_generation = dep_generation if isinstance(dep_generation, Mapping) else {}
+        if dep_generation:
+            dep_interpreter = str(dep_generation.get("interpreter_path") or "")
+            if not dep_interpreter or Path(dep_interpreter).expanduser().resolve(
+                strict=False
+            ) != Path(sys.executable).resolve(strict=True):
+                raise CliError(
+                    RUNTIME_ATTESTATION_ERROR,
+                    "runtime interpreter does not match the seed's dependency generation",
+                )
     paths = seed.get("input_paths")
     paths = paths if isinstance(paths, Mapping) else {}
     manifest_paths = [
@@ -1422,7 +1507,17 @@ def validate_runtime_process_attestation(
     component: str,
     target_pid: int,
 ) -> dict[str, Any]:
-    validation = validate_runtime_launch_seed(seed, component=component)
+    """Re-confirm a process attestation WITHOUT re-reading a mutable manifest.
+
+    Codex fix 2026-08-17: the full seed validation runs EXACTLY ONCE per
+    process, at :func:`create_runtime_process_attestation` (the admission
+    point). Subsequent checks in the same process validate only that (a) the
+    immutable seed digest still matches, (b) the attestation belongs to the
+    same PID/process-start identity, and (c) no Arnold module from a foreign
+    root has since been imported. They must NEVER compare against the current
+    manifest, the current remote head, or a newly published generation.
+    """
+    _verify_seed_digest(seed)
     core = {
         key: attestation.get(key)
         for key in (
@@ -1437,16 +1532,41 @@ def validate_runtime_process_attestation(
         attestation.get("schema") != RUNTIME_PROCESS_ATTESTATION_SCHEMA
         or attestation.get("content_sha256") != _canonical_sha256(core)
         or attestation.get("component") != component
-        or attestation.get("seed_sha256") != validation["seed_sha256"]
+        or attestation.get("seed_sha256") != seed.get("content_sha256")
         or attestation.get("runtime_vector_sha256")
-        != validation["runtime_vector_sha256"]
+        != _component_runtime_vector_sha256(seed, component=component)
         or attestation.get("process") != _proc_identity(target_pid)
     ):
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
             "runtime process attestation is stale or belongs to another process",
         )
-    return validation
+    # No mixed-root Arnold modules may have been imported since admission.
+    root = Path(str(seed.get("expected_root") or "")).resolve(strict=False)
+    is_supervisor = component in _SUPERVISOR_COMPONENTS
+    if is_supervisor:
+        supervisor = seed.get("supervisor_receipt")
+        supervisor = supervisor if isinstance(supervisor, Mapping) else {}
+        module_root = Path(str(supervisor.get("runtime") or "")).resolve(strict=False)
+        _modules, module_errors = _supervisor_module_vector(module_root)
+    else:
+        _modules, module_errors = _module_vector(root)
+    if module_errors:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "loaded Arnold modules escaped the expected root: "
+            + ", ".join(module_errors),
+        )
+    return {
+        "status": "ready",
+        "seed_sha256": seed["content_sha256"],
+        "expected_root": str(root),
+        "expected_revision": str(seed.get("expected_revision") or ""),
+        "runtime_vector_sha256": _component_runtime_vector_sha256(
+            seed,
+            component=component,
+        ),
+    }
 
 
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
