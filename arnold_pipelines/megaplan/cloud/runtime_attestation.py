@@ -1092,16 +1092,23 @@ def validate_runtime_launch_seed(
         # engine advance through the accepted path (manifest expected_head ==
         # live HEAD) is normal development. Read the accepted head from the
         # per-session manifest and let the provenance follow it, so a worker
-        # dispatched against an accepted generation does not fail with
-        # source_revision_mismatch. The follow only accepts the live HEAD
-        # when it equals the manifest's accepted head (never unpublished
-        # code); a torn generation still fails closed.
+        # T-0302 follow_accepted_generation (grok consult 2026-08-17): resolve
+        # the accepted head from the SEED's own input_paths.manifest (the
+        # canonical pointer the seed was built from), NOT the env. The failing
+        # path is a fixer-spawned direct plan/execute/resume in a fresh
+        # process that carries the seed env but NOT ARNOLD_RUNTIME_MANIFEST -
+        # an env-only read made the follow a no-op there and every worker
+        # after an engine commit failed with source_revision_mismatch. The
+        # seed alone must be sufficient.
         accepted_head = ""
-        manifest_env = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "")
-        if manifest_env:
+        manifest_path = ""
+        input_paths = seed.get("input_paths")
+        input_paths = input_paths if isinstance(input_paths, Mapping) else {}
+        manifest_path = str(input_paths.get("manifest") or "").strip()
+        if manifest_path:
             try:
                 manifest_payload = json.loads(
-                    Path(manifest_env).read_text(encoding="utf-8")
+                    Path(manifest_path).read_text(encoding="utf-8")
                 )
                 accepted_head = str(
                     (manifest_payload.get("epic") or {}).get("expected_head") or ""
