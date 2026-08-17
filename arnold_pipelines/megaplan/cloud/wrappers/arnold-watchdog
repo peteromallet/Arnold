@@ -1540,6 +1540,7 @@ import json
 import os
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
 
 session, digest, repair_data_raw = sys.argv[1:]
 repair_data = pathlib.Path(repair_data_raw)
@@ -1554,6 +1555,35 @@ def pid_live(pid):
         return False
     except PermissionError:
         return True
+    return True
+
+
+def babysitter_wedged(payload, run_root):
+    """A live-pid fixer that has made NO progress is wedged.
+
+    The dedup only checked kill(pid, 0), so a hung babysitter (hermes agent at
+    0% CPU, no run-log growth) blocked the chain indefinitely — the watchdog
+    never re-dispatched (astrid/mega 2026-08-17, I18). A fixer is wedged when:
+    its launch is older than 45 minutes, and either the managed run.log is
+    absent (never wrote anything) or its mtime is older than 30 minutes. The
+    watchdog then treats it as NOT live so a fresh dispatch fires.
+    """
+    try:
+        launched_raw = payload.get("launched_at")
+        if not launched_raw:
+            return False
+        launched = datetime.fromisoformat(str(launched_raw).replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) - launched < timedelta(minutes=45):
+            return False
+    except Exception:
+        return False
+    run_logs = []
+    if run_root and run_root.is_dir():
+        run_logs = list(run_root.rglob("run.log"))
+    if run_logs:
+        newest = max(p.stat().st_mtime for p in run_logs)
+        if datetime.now(timezone.utc).timestamp() - newest < 30 * 60:
+            return False
     return True
 
 
@@ -1574,7 +1604,12 @@ for name in (
     # fix changed d58701026410 -> 4f5b449cfd75 while the old babysitter was
     # still running), spawning competing fixers for the same chain.
     if str(payload.get("status") or "") in {"launched", "running"}:
-        if pid_live(payload.get("babysitter_pid")) or pid_live(payload.get("supervisor_pid")):
+        run_root_raw = payload.get("run_root")
+        run_root = pathlib.Path(run_root_raw) if isinstance(run_root_raw, str) else None
+        if (
+            pid_live(payload.get("babysitter_pid"))
+            or pid_live(payload.get("supervisor_pid"))
+        ) and not babysitter_wedged(payload, run_root):
             raise SystemExit(0)
 raise SystemExit(1)
 PY
