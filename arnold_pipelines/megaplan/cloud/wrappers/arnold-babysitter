@@ -17,5 +17,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
 # and hands back a truncated final status (observed 2026-08-17: mega m3b
 # fixer investigator hit the cap before finishing its rebind verification).
 export ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1
+# Bound the model-call join (grok consult 2026-08-17): after the SSE stream
+# dies, the agent thread joins the _call thread for DEFAULT_DEEPSEEK_API_TIMEOUT
+# (1200s) or inf -> a wedged agent sits 20+ min with 0 sockets, 0 state.db
+# writes, and the babysitter never re-dispatches. Cap the join at 600s so a
+# stalled stream fails the agent cleanly and the watchdog re-dispatches.
+export HERMES_DEEPSEEK_API_TIMEOUT=600
 PYTHONPATH="$ROOT:${PYTHONPATH:-}" python3 -P -m \
   arnold_pipelines.megaplan.cloud.babysitter.launch "$@"
