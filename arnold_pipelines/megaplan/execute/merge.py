@@ -816,14 +816,25 @@ def _merge_validated_entries(
             and id_field == "task_id"
             and str(target.get("status", "")) in ACCEPTED_TASK_STATUSES
         ):
-            # The entry has already passed scoped/grant-aware validation. Only a
-            # terminal accepted incoming row may corroborate an accepted target.
-            # Never copy status or executor_notes, and never replace durable
-            # evidence that the target already carries (occurrence 4c0190500877:
-            # replay of the proven terminal wave backfills evidence into
-            # evidence-empty accepted rows so chain phase-coverage and the
-            # execute-end done-evidence check do not re-block a completed plan).
-            if str(entry.get("status", "")) in ACCEPTED_TASK_STATUSES:
+            # The entry has already passed scoped/grant-aware validation. A
+            # terminal-status row (legacy/proven-wave compatibility) or an
+            # explicitly authority-accepted row may corroborate an accepted
+            # target.  Never copy status or executor_notes, and never replace
+            # durable evidence that the target already carries (occurrence
+            # 4c0190500877: replay of the proven terminal wave backfills
+            # evidence into evidence-empty accepted rows so chain
+            # phase-coverage and the execute-end done-evidence check do not
+            # re-block a completed plan; a stale 'blocked' status projection on
+            # an authority-accepted row is the same class of adopt-miss).
+            authority_validation = entry.get("authority_validation")
+            authority_accepted = bool(
+                isinstance(authority_validation, Mapping)
+                and authority_validation.get("outcome") == "accepted"
+            )
+            if (
+                str(entry.get("status", "")) in ACCEPTED_TASK_STATUSES
+                or authority_accepted
+            ):
                 for _field in _ACCEPTED_EVIDENCE_BACKFILL_FIELDS:
                     if not target.get(_field) and entry.get(_field):
                         target[_field] = entry[_field]

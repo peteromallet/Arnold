@@ -1361,3 +1361,87 @@ def test_replay_leaves_evidence_empty_accepted_tasks_durable(
     assert tasks["T12_impl"]["status"] == "skipped"
     # The stale shadow never leaked in.
     assert "stale.py" not in tasks["T10_impl"]["files_changed"]
+
+
+def test_authority_accepted_blocked_row_backfills_evidence_without_demotion() -> None:
+    """Authority-accepted row with a stale 'blocked' projection backfills
+    evidence into an evidence-empty accepted target without demoting it
+    (occurrence 4c0190500877: batch-6 T10_impl row is authority-accepted)."""
+    target = {"id": "T10_impl", "status": "done"}
+    targets = {"T10_impl": target}
+    issues = _merge_entries(
+        targets,
+        [
+            {
+                "task_id": "T10_impl",
+                "status": "blocked",
+                "executor_notes": "stale projection, authority accepted",
+                "files_changed": ["arnold_pipelines/megaplan/cloud/a.py"],
+                "commands_run": ["pytest -q tests/cloud"],
+                "head_sha": "15b881cb4",
+                "authority_validation": {"outcome": "accepted"},
+            }
+        ],
+    )
+    assert target["status"] == "done"  # never demoted
+    assert target["files_changed"] == ["arnold_pipelines/megaplan/cloud/a.py"]
+    assert target["commands_run"] == ["pytest -q tests/cloud"]
+    assert target["head_sha"] == "15b881cb4"
+    assert "executor_notes" not in target  # notes never copied
+    assert any("status preserved; missing terminal evidence backfilled" in i for i in issues)
+
+
+@pytest.mark.parametrize("outcome", ["rejected", "quarantined", "superseded-or-conflicting"])
+def test_authority_rejected_or_quarantined_blocked_row_does_not_backfill(
+    outcome: str,
+) -> None:
+    """A blocked row whose authority did NOT accept it stays inert: no evidence
+    leaks, target stays terminal and evidence-empty."""
+    target = {"id": "T13_impl", "status": "done"}
+    targets = {"T13_impl": target}
+    issues = _merge_entries(
+        targets,
+        [
+            {
+                "task_id": "T13_impl",
+                "status": "blocked",
+                "executor_notes": "real policy failure",
+                "files_changed": ["leak.py"],
+                "commands_run": ["leak-cmd"],
+                "head_sha": "deadbeef",
+                "authority_validation": {"outcome": outcome},
+            }
+        ],
+    )
+    assert target["status"] == "done"
+    assert target.get("files_changed") is None
+    assert target.get("commands_run") is None
+    assert target.get("head_sha") is None
+
+
+def test_authority_accepted_blocked_row_never_overwrites_existing_evidence() -> None:
+    """Field-local guard: existing target evidence wins; empty target fields may
+    still be backfilled from an authority-accepted blocked row."""
+    target = {
+        "id": "T10_impl",
+        "status": "done",
+        "files_changed": ["existing.py"],
+        "commands_run": [],
+    }
+    targets = {"T10_impl": target}
+    _merge_entries(
+        targets,
+        [
+            {
+                "task_id": "T10_impl",
+                "status": "blocked",
+                "files_changed": ["intruder.py"],
+                "commands_run": ["pytest -q tests/cloud"],
+                "head_sha": "15b881cb4",
+                "authority_validation": {"outcome": "accepted"},
+            }
+        ],
+    )
+    assert target["files_changed"] == ["existing.py"]  # never replaced
+    assert target["commands_run"] == ["pytest -q tests/cloud"]  # empty field filled
+    assert target["head_sha"] == "15b881cb4"
