@@ -23,6 +23,7 @@ Coverage matrix (per the T23 task):
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime, timezone
 
@@ -31,25 +32,36 @@ import pytest
 from arnold_pipelines.megaplan.maintenance.contracts import SourceVersionVector
 from arnold_pipelines.megaplan.maintenance.handoffs import (
     HANDOFF_IDS,
+    ApprovalEvidence,
     ApprovalState,
+    HandoffAcceptedEntry,
+    HandoffDriftEntry,
     HandoffRegistry,
     HandoffResolutionReason,
     HandoffResolutionState,
     HandoffRow,
+    MaintenanceHandoffView,
     WbcCoordinates,
     build_handoff_view,
     default_handoff_registry,
+    verify_handoff_drift,
 )
 from arnold_pipelines.megaplan.maintenance.identity import (
     OwnerRef,
     canonical_digest,
     canonical_dumps,
+    strict_loads,
 )
 from arnold_pipelines.megaplan.maintenance.sources import (
     ConformanceAdapter,
     CustodyAdapter,
     NativeManifestAdapter,
+    ProofAdapter,
+    ProofRead,
+    RUNTIME_SOURCE_PATHS,
     RunAuthorityAdapter,
+    RuntimeAdapter,
+    RuntimeRead,
     WbcAdapter,
 )
 
@@ -339,7 +351,9 @@ def _registry(accepted: dict[str, HandoffRow] | None = None) -> HandoffRegistry:
                 HandoffRow(
                     id=hid,
                     source_path=f"pending/{hid}",
-                    schema_identity=f"schema-{hid}",
+                    schema_identity=f"schema-{hid}.v1",
+                    owner_api_identity=f"owner.api.{hid}",
+                    schema_version="v1",
                     digest=None,
                     approval=ApprovalState.PENDING_HUMAN_APPROVAL,
                     requires_wbc_coordinates=(hid == "M6A"),
@@ -355,15 +369,36 @@ def _accepted_row(
     schema_identity: str,
     digest: str,
     wbc: WbcCoordinates | None = None,
+    owner_api_identity: str | None = None,
+    schema_version: str = "v1",
+    approval_evidence: ApprovalEvidence | None = None,
 ) -> HandoffRow:
     return HandoffRow(
         id=handoff_id,
         source_path=source_path,
         schema_identity=schema_identity,
+        owner_api_identity=owner_api_identity or f"owner.api.{handoff_id}",
+        schema_version=schema_version,
         digest=digest,
         approval=ApprovalState.APPROVED,
         requires_wbc_coordinates=(handoff_id == "M6A"),
         wbc_coordinates=wbc,
+        approval_evidence=approval_evidence
+        or ApprovalEvidence(
+            approver="approver-1",
+            approved_at=_ts(),
+            evidence_ref=f"approval://{handoff_id}/1",
+            digest="c" * 64,
+        ),
+    )
+
+
+def _evidence(handoff_id: str, *, approver: str = "approver-1") -> ApprovalEvidence:
+    return ApprovalEvidence(
+        approver=approver,
+        approved_at=_ts(),
+        evidence_ref=f"approval://{handoff_id}/1",
+        digest="c" * 64,
     )
 
 
@@ -609,6 +644,8 @@ def test_native_accepted_manifest_emits_reference_with_coordinates() -> None:
     assert read.manifest_ref.record_type == "manifest"
     assert read.manifest_ref.identity == "subject-1"
     assert read.schema_identity == "native.completion.c1.v1"
+    assert read.owner_api_identity == "owner.api.C1"
+    assert read.owner_schema_version == "v1"
     assert read.version_vector.before == "a" * 64
     assert read.version_vector.after == "a" * 64
     assert read.torn is False
@@ -641,6 +678,8 @@ def test_custody_accepted_read_emits_coordinates_and_before_after() -> None:
     assert read.current_lease_ref is not None
     assert read.current_lease_ref.record_type == "current_lease"
     assert read.current_lease_ref.identity == "lease-1"
+    assert read.owner_api_identity == "owner.api.M7"
+    assert read.owner_schema_version == "v1"
     assert read.history_refs and read.history_refs[0].record_type == "lease_event"
     assert read.version_vector.before == read.version_vector.after
     assert read.torn is False
@@ -671,6 +710,8 @@ def test_conformance_accepted_read_emits_coordinates_and_before_after() -> None:
     )
     read = adapter.read("subject-1")
     assert all(h.state is HandoffResolutionState.ACCEPTED for h in read.handoffs)
+    assert read.owner_api_identities == ("owner.api.M10", "owner.api.M11")
+    assert read.owner_schema_versions == ("v1", "v1")
     assert read.validation_refs and read.validation_refs[0].record_type == "validation"
     assert read.validation_refs[0].identity == "subject-1"
     assert read.version_vector.before == read.version_vector.after
@@ -737,3 +778,374 @@ def test_m3_handoff_view_reports_accepted_handoffs() -> None:
     assert "M6A" not in view.pending_handoff_ids
     assert view.pending_blocker_count == len(HANDOFF_IDS) - 1
     assert view.enforcement_blocked is True  # still blocked by the remaining 7
+
+
+# ---------------------------------------------------------------------------
+# M3 Step 1: exact owner identity / schema version / digest / approval
+# evidence; frozen accepted vector and drift (T1)
+# ---------------------------------------------------------------------------
+
+
+def test_handoff_row_records_exact_owner_coordinates_and_round_trips() -> None:
+    row = HandoffRow(
+        id="M6A",
+        source_path="wbc/attempt_ledger_store",
+        schema_identity="wbc.attempt_ledger_store.v1",
+        owner_api_identity="arnold.workflow.attempt_ledger_store.AttemptLedgerStore",
+        schema_version="v1",
+        digest="a" * 64,
+        approval=ApprovalState.APPROVED,
+        requires_wbc_coordinates=True,
+        wbc_coordinates=WbcCoordinates(
+            incarnation="inc-1", restore_generation="gen-1", high_water="hw-1"
+        ),
+        approval_evidence=_evidence("M6A"),
+    )
+    assert row.owner_api_identity == (
+        "arnold.workflow.attempt_ledger_store.AttemptLedgerStore"
+    )
+    assert row.schema_version == "v1"
+    assert row.digest == "a" * 64
+    assert row.approval_evidence is not None
+    assert row.approval_evidence.approver == "approver-1"
+    assert row.is_complete is True
+    assert row.acceptance_eligible is True
+    decoded = strict_loads(HandoffRow, canonical_dumps(row))
+    assert decoded == row
+    assert canonical_digest(decoded) == canonical_digest(row)
+
+
+def test_handoff_row_rejects_pending_row_with_production_data() -> None:
+    with pytest.raises(ValueError, match="must not carry digest"):
+        HandoffRow(
+            id="M6A",
+            source_path="wbc/attempt_ledger_store",
+            schema_identity="wbc.attempt_ledger_store.v1",
+            owner_api_identity="wbc.AttemptLedgerStore",
+            schema_version="v1",
+            digest="a" * 64,  # production data on a pending row
+            approval=ApprovalState.PENDING_HUMAN_APPROVAL,
+            requires_wbc_coordinates=True,
+        )
+    with pytest.raises(ValueError, match="requires approval=approved"):
+        HandoffRow(
+            id="M7",
+            source_path="megaplan/controlled_writers",
+            schema_identity="megaplan.controlled_writers.v1",
+            owner_api_identity="megaplan.CustodyLeaseStore",
+            schema_version="v1",
+            approval=ApprovalState.PENDING_HUMAN_APPROVAL,
+            approval_evidence=_evidence("M7"),  # evidence on a pending row
+        )
+
+
+def test_handoff_row_rejects_approval_evidence_without_approved_state() -> None:
+    with pytest.raises(ValueError, match="requires approval=approved"):
+        HandoffRow(
+            id="M7",
+            source_path="megaplan/controlled_writers",
+            schema_identity="megaplan.controlled_writers.v1",
+            owner_api_identity="megaplan.CustodyLeaseStore",
+            schema_version="v1",
+            approval=ApprovalState.UNKNOWN,
+            approval_evidence=_evidence("M7"),
+        )
+
+
+def test_handoff_row_rejects_contradictory_schema_version() -> None:
+    with pytest.raises(ValueError, match="must end with"):
+        HandoffRow(
+            id="M7",
+            source_path="megaplan/controlled_writers",
+            schema_identity="megaplan.controlled_writers.v1",
+            owner_api_identity="megaplan.CustodyLeaseStore",
+            schema_version="v2",  # contradicts schema_identity .v1
+            approval=ApprovalState.PENDING_HUMAN_APPROVAL,
+        )
+
+
+def test_handoff_registry_resolves_missing_handoff_to_typed_unknown() -> None:
+    registry = _registry()
+    resolution = registry.resolve("NOPE")
+    assert resolution.state is HandoffResolutionState.UNKNOWN
+    assert resolution.reason is HandoffResolutionReason.MISSING_HANDOFF
+    assert resolution.approval is ApprovalState.UNKNOWN
+    assert resolution.row is None
+    # Missing is never acceptance: no accepted-vector entry appears.
+    assert registry.accepted_vector() == ()
+
+
+def test_approved_row_without_approval_evidence_is_missing_field() -> None:
+    # A claimed approval without its recorded evidence is never acceptance:
+    # the row is complete only when digest AND approval evidence are present.
+    row = HandoffRow(
+        id="C1",
+        source_path="native/completion/c1",
+        schema_identity="native.completion.c1.v1",
+        owner_api_identity="native.completion.c1.kernel",
+        schema_version="v1",
+        digest="a" * 64,
+        approval=ApprovalState.APPROVED,
+        approval_evidence=None,
+    )
+    assert row.acceptance_eligible is False
+    resolution = _registry(accepted={"C1": row}).resolve("C1")
+    assert resolution.state is HandoffResolutionState.UNKNOWN
+    assert resolution.reason is HandoffResolutionReason.MISSING_FIELD
+    # Non-dispatchable: no reference may be emitted for a MISSING_FIELD row.
+    adapter = NativeManifestAdapter(
+        manifest_provider=lambda _hid, _sub: _Manifest(
+            "a" * 64, schema_identity="native.completion.c1.v1", identity="subject-1"
+        ),
+        registry=_registry(accepted={"C1": row}),
+    )
+    read = adapter.read("C1", "subject-1")
+    assert read.manifest_ref is None
+    assert read.owner_api_identity is None
+
+
+def test_m3_view_exposes_frozen_accepted_vector_and_drift() -> None:
+    registry = _registry(
+        accepted={
+            "M6A": _accepted_row(
+                "M6A",
+                source_path="wbc/attempt_ledger_store",
+                schema_identity="wbc.attempt_ledger_store.v1",
+                digest="a" * 64,
+                owner_api_identity="arnold.workflow.attempt_ledger_store.AttemptLedgerStore",
+                wbc=WbcCoordinates(
+                    incarnation="inc-1", restore_generation="gen-1", high_water="hw-1"
+                ),
+            )
+        }
+    )
+    view = build_handoff_view(registry=registry)
+    # The frozen accepted vector exposes the exact accepted coordinates.
+    assert len(view.accepted_vector) == 1
+    entry = view.accepted_vector[0]
+    assert isinstance(entry, HandoffAcceptedEntry)
+    assert entry.handoff_id == "M6A"
+    assert entry.owner_api_identity == (
+        "arnold.workflow.attempt_ledger_store.AttemptLedgerStore"
+    )
+    assert entry.schema_identity == "wbc.attempt_ledger_store.v1"
+    assert entry.schema_version == "v1"
+    assert entry.digest == "a" * 64
+    assert entry.wbc_coordinates is not None
+    assert entry.wbc_coordinates.incarnation == "inc-1"
+    assert entry.approval_evidence.approver == "approver-1"
+    assert view.approved_handoff_ids == ("M6A",)
+    # Drift covers every consumed source; pending rows never match.
+    assert len(view.drift) == len(HANDOFF_IDS)
+    by_id = {entry.handoff_id: entry for entry in view.drift}
+    assert set(by_id) == set(HANDOFF_IDS)
+    assert all(isinstance(e, HandoffDriftEntry) for e in view.drift)
+    assert by_id["M6A"].recorded_digest == "a" * 64
+    assert by_id["M6A"].matches is False  # no live artifact read in the pure view
+    assert by_id["M7"].recorded_digest is None
+    # The view is deterministic and round-trips through the strict codec.
+    assert view.digest == canonical_digest(strict_loads(MaintenanceHandoffView, canonical_dumps(view)))
+
+
+def test_verify_handoff_drift_reports_live_match_and_mismatch(tmp_path) -> None:
+    artifact = tmp_path / "wbc" / "attempt_ledger_store"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("owner-artifact-bytes", encoding="utf-8")
+    matching = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    registry = _registry(
+        accepted={
+            "M6A": _accepted_row(
+                "M6A",
+                source_path="wbc/attempt_ledger_store",
+                schema_identity="wbc.attempt_ledger_store.v1",
+                digest=matching,
+                owner_api_identity="arnold.workflow.attempt_ledger_store.AttemptLedgerStore",
+                wbc=WbcCoordinates(
+                    incarnation="inc-1", restore_generation="gen-1", high_water="hw-1"
+                ),
+            )
+        }
+    )
+    drift = verify_handoff_drift(registry, project_root=tmp_path)
+    by_id = {entry.handoff_id: entry for entry in drift}
+    assert by_id["M6A"].recorded_digest == matching
+    assert by_id["M6A"].live_digest == matching
+    assert by_id["M6A"].matches is True
+    # Missing artifacts and pending rows report drift without promotion.
+    assert by_id["M7"].live_digest is None
+    assert by_id["M7"].matches is False
+    # A digest mismatch is reported as data — never accepted.
+    artifact.write_text("changed-bytes", encoding="utf-8")
+    drift2 = verify_handoff_drift(registry, project_root=tmp_path)
+    by_id2 = {entry.handoff_id: entry for entry in drift2}
+    assert by_id2["M6A"].live_digest != matching
+    assert by_id2["M6A"].matches is False
+    # The live drift can be injected into the view.
+    view = build_handoff_view(registry=registry, drift=drift2)
+    view_by_id = {entry.handoff_id: entry for entry in view.drift}
+    assert view_by_id["M6A"].matches is False
+    assert view_by_id["M6A"].live_digest is not None
+
+
+# ---------------------------------------------------------------------------
+# C2 proof and S1/S2R runtime/source adapters (T6_impl, M3 Step 5)
+# ---------------------------------------------------------------------------
+
+
+def _proof_record(digest: str, *, schema_identity: str | None = None, identity: str | None = None) -> _Manifest:
+    return _Manifest(digest, schema_identity=schema_identity, identity=identity)
+
+
+def _accepted_c2_row(digest: str = "d" * 64) -> HandoffRow:
+    return _accepted_row(
+        "C2",
+        source_path="native/completion/c2",
+        schema_identity="native.completion.c2.v1",
+        digest=digest,
+    )
+
+
+def _accepted_runtime_row(handoff_id: str, digest: str = "d" * 64) -> HandoffRow:
+    source_path = RUNTIME_SOURCE_PATHS[handoff_id]
+    return _accepted_row(
+        handoff_id,
+        source_path=source_path,
+        schema_identity=f"native.runtime.{handoff_id.lower()}.v1",
+        digest=digest,
+    )
+
+
+def test_proof_adapter_unapproved_handoff_is_unknown_with_no_refs() -> None:
+    adapter = ProofAdapter(
+        proof_provider=lambda proof_id: _proof_record("d" * 64),
+        registry=_registry(),
+        environment="production",
+    )
+    read = adapter.read("proof-1", "chain:session")
+    assert isinstance(read, ProofRead)
+    assert read.handoff is not None
+    assert read.handoff.state is HandoffResolutionState.UNKNOWN
+    assert read.proof_ref is None
+    assert read.control_refs == ()
+    assert adapter.probe("proof-1") is None
+
+
+def test_proof_adapter_accepted_read_emits_refs_and_versions() -> None:
+    adapter = ProofAdapter(
+        proof_provider=lambda proof_id: _proof_record("d" * 64),
+        control_provider=lambda proof_id: [_Evidence("control-1")],
+        registry=_registry({"C2": _accepted_c2_row()}),
+        environment="production",
+    )
+    read = adapter.read("proof-1", "chain:session")
+    assert read.handoff.state is HandoffResolutionState.ACCEPTED
+    assert read.proof_ref is not None
+    assert read.proof_ref.owner == "native_manifest"
+    assert read.proof_ref.digest == "d" * 64
+    assert len(read.control_refs) == 1
+    assert read.owner_api_identity == "owner.api.C2"
+    assert read.version_vector.before == read.version_vector.after == "d" * 64
+    assert read.torn is False
+    assert adapter.probe("proof-1") == "d" * 64
+    _assert_no_mutation_surface(adapter)
+
+
+def test_proof_adapter_schema_identity_digest_mismatches_are_typed_unknown() -> None:
+    adapter = ProofAdapter(
+        proof_provider=lambda proof_id: _proof_record("e" * 64),
+        registry=_registry({"C2": _accepted_c2_row()}),
+        environment="production",
+    )
+    read = adapter.read("proof-1", "chain:session")
+    assert read.handoff.reason is HandoffResolutionReason.DIGEST_MISMATCH
+    assert read.proof_ref is None
+
+    schema_wrong = ProofAdapter(
+        proof_provider=lambda proof_id: _proof_record(
+            "d" * 64, schema_identity="native.completion.c2.v9"
+        ),
+        registry=_registry({"C2": _accepted_c2_row()}),
+    )
+    read2 = schema_wrong.read("proof-1", "chain:session")
+    assert read2.handoff.reason is HandoffResolutionReason.SCHEMA_MISMATCH
+    assert read2.proof_ref is None
+
+    identity_wrong = ProofAdapter(
+        proof_provider=lambda proof_id: _proof_record(
+            "d" * 64, identity="chain:other"
+        ),
+        registry=_registry({"C2": _accepted_c2_row()}),
+    )
+    read3 = identity_wrong.read("proof-1", "chain:session")
+    assert read3.handoff.reason is HandoffResolutionReason.IDENTITY_MISMATCH
+    assert read3.proof_ref is None
+
+
+def test_proof_adapter_torn_proof_read_is_flagged() -> None:
+    calls = {"n": 0}
+
+    def provider(proof_id: str):
+        calls["n"] += 1
+        return _proof_record("d" * 64) if calls["n"] <= 2 else _proof_record("e" * 64)
+
+    adapter = ProofAdapter(
+        proof_provider=provider,
+        registry=_registry({"C2": _accepted_c2_row()}),
+    )
+    read = adapter.read("proof-1", "chain:session")
+    assert read.torn is True
+    assert read.version_vector.before != read.version_vector.after
+
+
+def test_runtime_adapter_unapproved_handoff_is_unknown_with_no_refs() -> None:
+    adapter = RuntimeAdapter(
+        runtime_provider=lambda hid, subject: _proof_record("d" * 64),
+        registry=_registry(),
+        environment="production",
+    )
+    for handoff_id in ("S1", "S2R"):
+        read = adapter.read(handoff_id, "chain:session")
+        assert isinstance(read, RuntimeRead)
+        assert read.handoff.state is HandoffResolutionState.UNKNOWN
+        assert read.runtime_ref is None and read.source_ref is None
+        assert adapter.probe(handoff_id, "chain:session") is None
+
+
+def test_runtime_adapter_accepted_read_emits_runtime_and_source_refs() -> None:
+    adapter = RuntimeAdapter(
+        runtime_provider=lambda hid, subject: _proof_record("d" * 64),
+        source_provider=lambda hid, subject: _Evidence("source-manifest"),
+        registry=_registry(
+            {
+                "S1": _accepted_runtime_row("S1"),
+                "S2R": _accepted_runtime_row("S2R"),
+            }
+        ),
+        environment="production",
+    )
+    for handoff_id in ("S1", "S2R"):
+        read = adapter.read(handoff_id, "chain:session")
+        assert read.handoff.state is HandoffResolutionState.ACCEPTED
+        assert read.runtime_ref is not None
+        assert read.runtime_ref.locator == f"{RUNTIME_SOURCE_PATHS[handoff_id]}//chain:session"
+        assert read.source_ref is not None
+        assert read.torn is False
+        assert adapter.probe(handoff_id, "chain:session") == "d" * 64
+    _assert_no_mutation_surface(adapter)
+
+
+def test_runtime_adapter_rejects_unknown_handoff_id() -> None:
+    adapter = RuntimeAdapter(
+        runtime_provider=lambda hid, subject: _proof_record("d" * 64),
+        registry=_registry(),
+    )
+    with pytest.raises(ValueError, match="unknown runtime handoff id"):
+        adapter.read("S9", "chain:session")
+    assert adapter.probe("S9", "chain:session") is None
+
+
+def test_view_rejects_drift_that_does_not_cover_every_source() -> None:
+    registry = _registry()
+    incomplete = list(registry.recorded_drift())[:-1]
+    with pytest.raises(ValueError, match="drift must cover exactly"):
+        build_handoff_view(registry=registry, drift=incomplete)

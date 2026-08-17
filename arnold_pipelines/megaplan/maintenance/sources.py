@@ -737,6 +737,19 @@ class CustodyRead(BaseModel):
     lease_id: StrictStr
     environment: EnvironmentId | None = None
     handoff: HandoffResolution | None = None
+    #: Exact accepted owner coordinates from the approved M7 row; typed
+    #: UNKNOWN reads carry ``None`` (never inferred, never guessed).
+    owner_api_identity: StrictStr | None = None
+    owner_schema_version: StrictStr | None = None
+    #: M7 RepairOccurrenceKey bound to this lease (explicit ``None`` when the
+    #: lease record does not expose it).  The coherent join requires the
+    #: occurrence identity to match the declared occurrence across every
+    #: source; a cross-occurrence read is typed INCOHERENT.
+    occurrence_id: StrictStr | None = None
+    #: Current lease fencing token (explicit ``None`` when unavailable).  A
+    #: fence is an identity dimension of the occurrence-bound join: matching
+    #: lease/fence coordinates are required for a coherent envelope.
+    fencing_token: StrictStr | None = None
     current_lease_ref: OwnerRef | None = None
     history_refs: tuple[OwnerRef, ...] = ()
     validator_evidence_refs: tuple[OwnerRef, ...] = ()
@@ -750,6 +763,25 @@ class CustodyRead(BaseModel):
             raise ValueError(
                 f"unsupported Maintenance schema version {value}; expected "
                 f"{MAINTENANCE_SCHEMA_VERSION}"
+            )
+        return value
+
+    @field_validator("owner_api_identity", "owner_schema_version")
+    @classmethod
+    def _validate_owner_coordinates(cls, value: str | None) -> str | None:
+        if value is not None and not value:
+            raise ValueError(
+                "owner api identity/schema version must be non-empty strings "
+                "when present"
+            )
+        return value
+
+    @field_validator("occurrence_id", "fencing_token")
+    @classmethod
+    def _validate_occurrence_coordinates(cls, value: str | None) -> str | None:
+        if value is not None and not value:
+            raise ValueError(
+                "occurrence_id/fencing_token must be non-empty strings when present"
             )
         return value
 
@@ -887,6 +919,10 @@ class CustodyAdapter:
             lease_id=lease_id,
             environment=self._environment,
             handoff=m7,
+            owner_api_identity=row.owner_api_identity,
+            owner_schema_version=row.schema_version,
+            occurrence_id=getattr(current, "occurrence_id", None),
+            fencing_token=getattr(current, "fencing_token", None),
             current_lease_ref=current_ref,
             history_refs=history_refs,
             validator_evidence_refs=evidence_refs,
@@ -939,6 +975,10 @@ class ConformanceRead(BaseModel):
     subject: StrictStr
     environment: EnvironmentId | None = None
     handoffs: tuple[HandoffResolution, ...] = ()
+    #: Exact accepted owner coordinates from the approved M10/M11 rows
+    #: (canonical handoff-id order); typed UNKNOWN reads carry ``()``.
+    owner_api_identities: tuple[str, ...] = ()
+    owner_schema_versions: tuple[str, ...] = ()
     validation_refs: tuple[OwnerRef, ...] = ()
     predecessor_wrapper_refs: tuple[OwnerRef, ...] = ()
     version_vector: SourceVersionVector
@@ -1039,11 +1079,23 @@ class ConformanceAdapter:
             else ()
         )
         after = self._version(subject)
+        accepted_rows = {
+            resolution.handoff_id: resolution.row
+            for resolution in (m10, m11)
+            if resolution.state is HandoffResolutionState.ACCEPTED
+            and resolution.row is not None
+        }
         return ConformanceRead(
             schema_version=MAINTENANCE_SCHEMA_VERSION,
             subject=subject,
             environment=self._environment,
             handoffs=handoffs,
+            owner_api_identities=tuple(
+                accepted_rows[hid].owner_api_identity for hid in ("M10", "M11")
+            ),
+            owner_schema_versions=tuple(
+                accepted_rows[hid].schema_version for hid in ("M10", "M11")
+            ),
             validation_refs=_sort_refs(
                 OwnerRef(
                     owner="conformance",
@@ -1115,6 +1167,10 @@ class NativeManifestRead(BaseModel):
     subject: StrictStr
     environment: EnvironmentId | None = None
     handoff: HandoffResolution | None = None
+    #: Exact accepted owner coordinates from the approved row; typed
+    #: UNKNOWN reads carry ``None`` (never inferred, never guessed).
+    owner_api_identity: StrictStr | None = None
+    owner_schema_version: StrictStr | None = None
     manifest_ref: OwnerRef | None = None
     schema_identity: StrictStr | None = None
     version_vector: SourceVersionVector
@@ -1288,6 +1344,8 @@ class NativeManifestAdapter:
             subject=subject,
             environment=self._environment,
             handoff=resolution,
+            owner_api_identity=row.owner_api_identity,
+            owner_schema_version=row.schema_version,
             manifest_ref=OwnerRef(
                 owner="native_manifest",
                 record_type="manifest",
@@ -1324,6 +1382,515 @@ def read_native_manifest(
     ).read(handoff_id, subject)
 
 
+# ---------------------------------------------------------------------------
+# C2 negative-control proof and S1/S2R runtime/source adapters (M3 Step 5)
+# ---------------------------------------------------------------------------
+
+
+class ProofRead(BaseModel):
+    """Immutable read-only C2 negative-control proof capture.
+
+    Emits only a locator reference to the accepted proof record plus its
+    negative-control references — never a copy of the proof.  Until the C2
+    handoff is accepted, the result is typed UNKNOWN with the resolution
+    reason preserved and no references.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: int = Field(default=MAINTENANCE_SCHEMA_VERSION, frozen=True)
+    proof_id: StrictStr
+    subject: StrictStr
+    environment: EnvironmentId | None = None
+    handoff: HandoffResolution | None = None
+    owner_api_identity: StrictStr | None = None
+    owner_schema_version: StrictStr | None = None
+    proof_ref: OwnerRef | None = None
+    control_refs: tuple[OwnerRef, ...] = ()
+    version_vector: SourceVersionVector
+    torn: bool = False
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: int) -> int:
+        if value != MAINTENANCE_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported Maintenance schema version {value}; expected "
+                f"{MAINTENANCE_SCHEMA_VERSION}"
+            )
+        return value
+
+    @field_validator("proof_id", "subject")
+    @classmethod
+    def _validate_nonempty(cls, value: str) -> str:
+        if not value:
+            raise ValueError("proof_id/subject must be non-empty strings")
+        return value
+
+    @field_validator("owner_api_identity", "owner_schema_version")
+    @classmethod
+    def _validate_owner_coordinates(cls, value: str | None) -> str | None:
+        if value is not None and not value:
+            raise ValueError(
+                "owner api identity/schema version must be non-empty strings "
+                "when present"
+            )
+        return value
+
+    @field_validator("control_refs")
+    @classmethod
+    def _sort_refs(cls, value: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
+        return _sort_refs(value)
+
+    @property
+    def digest(self) -> str:
+        """Canonical digest of the whole read result (replayable)."""
+        return canonical_digest(self)
+
+
+class ProofAdapter:
+    """Read-only adapter over the C2 negative-control proof surface.
+
+    Consumes the exact read APIs (proof record read, optional negative
+    control reads) through injected providers; it NEVER submits, approves,
+    or writes a proof, and never instantiates a competing completion engine.
+    Every read is gated by the C2 handoff registry row: until the row is
+    complete AND approved, the result stays typed UNKNOWN.
+    """
+
+    def __init__(
+        self,
+        *,
+        proof_provider: Callable[[str], Any],
+        control_provider: Callable[[str], Sequence[Any]] | None = None,
+        registry: HandoffRegistry | None = None,
+        environment: EnvironmentId | str | None = None,
+    ) -> None:
+        self._proof_provider = proof_provider
+        self._control_provider = control_provider
+        self._registry = registry if registry is not None else default_handoff_registry()
+        self._environment = environment
+
+    def _version(self, proof_id: str) -> str | None:
+        """Owner version coordinate: the proof record digest."""
+        proof = self._proof_provider(proof_id)
+        return _record_digest(proof) if proof is not None else None
+
+    def probe(self, proof_id: str) -> str | None:
+        """Owner-backed version probe consumed by the coherent join.
+
+        Returns ``None`` while the C2 handoff is unaccepted (typed UNKNOWN);
+        otherwise the proof digest, so a mid-read proof change tears.
+        """
+        if self._registry.resolve("C2").state is not HandoffResolutionState.ACCEPTED:
+            return None
+        return self._version(proof_id)
+
+    def read(self, proof_id: str, subject: str) -> ProofRead:
+        c2 = self._registry.resolve("C2")
+        if c2.state is not HandoffResolutionState.ACCEPTED or c2.row is None:
+            return ProofRead(
+                schema_version=MAINTENANCE_SCHEMA_VERSION,
+                proof_id=proof_id,
+                subject=subject,
+                environment=self._environment,
+                handoff=c2,
+                version_vector=SourceVersionVector(
+                    owner="native_manifest",
+                    source="native/completion/c2",
+                    environment=self._environment,
+                    before=None,
+                    after=None,
+                ),
+            )
+        row = c2.row
+        if row.source_path != "native/completion/c2":
+            return self._unknown(
+                proof_id, subject, c2, HandoffResolutionReason.PATH_MISMATCH
+            )
+        before = self._version(proof_id)
+        proof = self._proof_provider(proof_id)
+        controls = (
+            tuple(self._control_provider(proof_id))
+            if self._control_provider is not None
+            else ()
+        )
+        after = self._version(proof_id)
+        if proof is None:
+            return ProofRead(
+                schema_version=MAINTENANCE_SCHEMA_VERSION,
+                proof_id=proof_id,
+                subject=subject,
+                environment=self._environment,
+                handoff=c2,
+                version_vector=SourceVersionVector(
+                    owner="native_manifest",
+                    source="native/completion/c2",
+                    environment=self._environment,
+                    before=before,
+                    after=after,
+                ),
+                torn=(before != after),
+            )
+        proof_schema = getattr(proof, "schema_identity", None)
+        if proof_schema is not None and proof_schema != row.schema_identity:
+            return self._unknown(
+                proof_id, subject, c2, HandoffResolutionReason.SCHEMA_MISMATCH
+            )
+        proof_identity = getattr(proof, "identity", None)
+        if proof_identity is not None and proof_identity != subject:
+            return self._unknown(
+                proof_id, subject, c2, HandoffResolutionReason.IDENTITY_MISMATCH
+            )
+        digest = _record_digest(proof)
+        if row.digest is not None and digest != row.digest:
+            return self._unknown(
+                proof_id, subject, c2, HandoffResolutionReason.DIGEST_MISMATCH
+            )
+        return ProofRead(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            proof_id=proof_id,
+            subject=subject,
+            environment=self._environment,
+            handoff=c2,
+            owner_api_identity=row.owner_api_identity,
+            owner_schema_version=row.schema_version,
+            proof_ref=OwnerRef(
+                owner="native_manifest",
+                record_type="negative_control_proof",
+                identity=subject,
+                schema_version=row.schema_identity,
+                locator=f"native/completion/c2//{subject}",
+                digest=digest,
+            ),
+            control_refs=_sort_refs(
+                OwnerRef(
+                    owner="native_manifest",
+                    record_type="negative_control",
+                    identity=subject,
+                    schema_version=row.schema_identity,
+                    locator=f"native/completion/c2//{subject}/control/{index}",
+                    digest=_record_digest(control),
+                )
+                for index, control in enumerate(controls)
+            ),
+            version_vector=SourceVersionVector(
+                owner="native_manifest",
+                source="native/completion/c2",
+                environment=self._environment,
+                before=before,
+                after=after,
+            ),
+            torn=(before != after),
+        )
+
+    def _unknown(
+        self,
+        proof_id: str,
+        subject: str,
+        resolution: HandoffResolution,
+        reason: HandoffResolutionReason,
+    ) -> ProofRead:
+        return ProofRead(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            proof_id=proof_id,
+            subject=subject,
+            environment=self._environment,
+            handoff=HandoffResolution(
+                handoff_id="C2",
+                state=HandoffResolutionState.UNKNOWN,
+                approval=resolution.approval,
+                reason=reason,
+            ),
+            version_vector=SourceVersionVector(
+                owner="native_manifest",
+                source="native/completion/c2",
+                environment=self._environment,
+                before=None,
+                after=None,
+            ),
+        )
+
+
+def read_proof(
+    proof_id: str,
+    subject: str,
+    *,
+    proof_provider: Callable[[str], Any],
+    control_provider: Callable[[str], Sequence[Any]] | None = None,
+    registry: HandoffRegistry | None = None,
+    environment: EnvironmentId | str | None = None,
+) -> ProofRead:
+    """Convenience read-only C2 capture (see :class:`ProofAdapter`)."""
+    return ProofAdapter(
+        proof_provider=proof_provider,
+        control_provider=control_provider,
+        registry=registry,
+        environment=environment,
+    ).read(proof_id, subject)
+
+
+class RuntimeRead(BaseModel):
+    """Immutable read-only S1/S2R runtime/source capture.
+
+    Emits only locator references to the accepted runtime and source
+    manifests — never copies of them.  Until the S1/S2R handoff is accepted,
+    the result is typed UNKNOWN with the resolution reason preserved and no
+    references.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: int = Field(default=MAINTENANCE_SCHEMA_VERSION, frozen=True)
+    runtime_id: StrictStr
+    subject: StrictStr
+    environment: EnvironmentId | None = None
+    handoff: HandoffResolution | None = None
+    owner_api_identity: StrictStr | None = None
+    owner_schema_version: StrictStr | None = None
+    runtime_ref: OwnerRef | None = None
+    source_ref: OwnerRef | None = None
+    version_vector: SourceVersionVector
+    torn: bool = False
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: int) -> int:
+        if value != MAINTENANCE_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported Maintenance schema version {value}; expected "
+                f"{MAINTENANCE_SCHEMA_VERSION}"
+            )
+        return value
+
+    @field_validator("runtime_id", "subject")
+    @classmethod
+    def _validate_nonempty(cls, value: str) -> str:
+        if not value:
+            raise ValueError("runtime_id/subject must be non-empty strings")
+        return value
+
+    @field_validator("owner_api_identity", "owner_schema_version")
+    @classmethod
+    def _validate_owner_coordinates(cls, value: str | None) -> str | None:
+        if value is not None and not value:
+            raise ValueError(
+                "owner api identity/schema version must be non-empty strings "
+                "when present"
+            )
+        return value
+
+    @property
+    def digest(self) -> str:
+        """Canonical digest of the whole read result (replayable)."""
+        return canonical_digest(self)
+
+
+#: Exact owner source path per S1/S2R handoff id (the Native Parity runtime
+#: schema surface).  Unknown ids are rejected — a runtime source is never
+#: guessed.
+RUNTIME_SOURCE_PATHS: dict[str, str] = {
+    "S1": "native/runtime/s1",
+    "S2R": "native/runtime/s2r",
+}
+
+
+class RuntimeAdapter:
+    """Read-only adapter over the S1/S2R runtime/source manifest surface.
+
+    Consumes the exact read APIs (runtime manifest read, optional source
+    manifest read) through injected providers; it NEVER installs, restarts,
+    or writes a runtime, and never instantiates a competing runtime engine.
+    Every read is gated by the S1/S2R handoff registry row: until the row is
+    complete AND approved, the result stays typed UNKNOWN.
+    """
+
+    def __init__(
+        self,
+        *,
+        runtime_provider: Callable[[str, str], Any],
+        source_provider: Callable[[str, str], Any] | None = None,
+        registry: HandoffRegistry | None = None,
+        environment: EnvironmentId | str | None = None,
+    ) -> None:
+        self._runtime_provider = runtime_provider
+        self._source_provider = source_provider
+        self._registry = registry if registry is not None else default_handoff_registry()
+        self._environment = environment
+
+    def _version(self, handoff_id: str, subject: str) -> str | None:
+        """Owner version coordinate: the runtime manifest digest."""
+        runtime = self._runtime_provider(handoff_id, subject)
+        return _record_digest(runtime) if runtime is not None else None
+
+    def probe(self, handoff_id: str, subject: str) -> str | None:
+        """Owner-backed version probe consumed by the coherent join.
+
+        Returns ``None`` while the S1/S2R handoff is unaccepted (typed
+        UNKNOWN); otherwise the runtime digest, so a mid-read runtime change
+        tears.
+        """
+        if handoff_id not in RUNTIME_SOURCE_PATHS:
+            return None
+        if self._registry.resolve(handoff_id).state is not HandoffResolutionState.ACCEPTED:
+            return None
+        return self._version(handoff_id, subject)
+
+    def read(self, handoff_id: str, subject: str) -> RuntimeRead:
+        expected_path = RUNTIME_SOURCE_PATHS.get(handoff_id)
+        if expected_path is None:
+            raise ValueError(
+                f"unknown runtime handoff id {handoff_id!r}; expected one of "
+                f"{sorted(RUNTIME_SOURCE_PATHS)}"
+            )
+        resolution = self._registry.resolve(handoff_id)
+        if resolution.state is not HandoffResolutionState.ACCEPTED or resolution.row is None:
+            return RuntimeRead(
+                schema_version=MAINTENANCE_SCHEMA_VERSION,
+                runtime_id=handoff_id,
+                subject=subject,
+                environment=self._environment,
+                handoff=resolution,
+                version_vector=SourceVersionVector(
+                    owner="native_manifest",
+                    source=expected_path,
+                    environment=self._environment,
+                    before=None,
+                    after=None,
+                ),
+            )
+        row = resolution.row
+        if row.source_path != expected_path:
+            return self._unknown(
+                handoff_id, subject, expected_path, resolution,
+                HandoffResolutionReason.PATH_MISMATCH,
+            )
+        before = self._version(handoff_id, subject)
+        runtime = self._runtime_provider(handoff_id, subject)
+        source = (
+            self._source_provider(handoff_id, subject)
+            if self._source_provider is not None
+            else None
+        )
+        after = self._version(handoff_id, subject)
+        if runtime is None:
+            return RuntimeRead(
+                schema_version=MAINTENANCE_SCHEMA_VERSION,
+                runtime_id=handoff_id,
+                subject=subject,
+                environment=self._environment,
+                handoff=resolution,
+                version_vector=SourceVersionVector(
+                    owner="native_manifest",
+                    source=expected_path,
+                    environment=self._environment,
+                    before=before,
+                    after=after,
+                ),
+                torn=(before != after),
+            )
+        runtime_schema = getattr(runtime, "schema_identity", None)
+        if runtime_schema is not None and runtime_schema != row.schema_identity:
+            return self._unknown(
+                handoff_id, subject, expected_path, resolution,
+                HandoffResolutionReason.SCHEMA_MISMATCH,
+            )
+        runtime_identity = getattr(runtime, "identity", None)
+        if runtime_identity is not None and runtime_identity != subject:
+            return self._unknown(
+                handoff_id, subject, expected_path, resolution,
+                HandoffResolutionReason.IDENTITY_MISMATCH,
+            )
+        digest = _record_digest(runtime)
+        if row.digest is not None and digest != row.digest:
+            return self._unknown(
+                handoff_id, subject, expected_path, resolution,
+                HandoffResolutionReason.DIGEST_MISMATCH,
+            )
+        source_ref = None
+        if source is not None:
+            source_ref = OwnerRef(
+                owner="native_manifest",
+                record_type="runtime_source",
+                identity=subject,
+                schema_version=row.schema_identity,
+                locator=f"{expected_path}//{subject}/source",
+                digest=_record_digest(source),
+            )
+        return RuntimeRead(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            runtime_id=handoff_id,
+            subject=subject,
+            environment=self._environment,
+            handoff=resolution,
+            owner_api_identity=row.owner_api_identity,
+            owner_schema_version=row.schema_version,
+            runtime_ref=OwnerRef(
+                owner="native_manifest",
+                record_type="runtime_manifest",
+                identity=subject,
+                schema_version=row.schema_identity,
+                locator=f"{expected_path}//{subject}",
+                digest=digest,
+            ),
+            source_ref=source_ref,
+            version_vector=SourceVersionVector(
+                owner="native_manifest",
+                source=expected_path,
+                environment=self._environment,
+                before=before,
+                after=after,
+            ),
+            torn=(before != after),
+        )
+
+    def _unknown(
+        self,
+        handoff_id: str,
+        subject: str,
+        expected_path: str,
+        resolution: HandoffResolution,
+        reason: HandoffResolutionReason,
+    ) -> RuntimeRead:
+        return RuntimeRead(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            runtime_id=handoff_id,
+            subject=subject,
+            environment=self._environment,
+            handoff=HandoffResolution(
+                handoff_id=handoff_id,
+                state=HandoffResolutionState.UNKNOWN,
+                approval=resolution.approval,
+                reason=reason,
+            ),
+            version_vector=SourceVersionVector(
+                owner="native_manifest",
+                source=expected_path,
+                environment=self._environment,
+                before=None,
+                after=None,
+            ),
+        )
+
+
+def read_runtime(
+    handoff_id: str,
+    subject: str,
+    *,
+    runtime_provider: Callable[[str, str], Any],
+    source_provider: Callable[[str, str], Any] | None = None,
+    registry: HandoffRegistry | None = None,
+    environment: EnvironmentId | str | None = None,
+) -> RuntimeRead:
+    """Convenience read-only S1/S2R capture (see :class:`RuntimeAdapter`)."""
+    return RuntimeAdapter(
+        runtime_provider=runtime_provider,
+        source_provider=source_provider,
+        registry=registry,
+        environment=environment,
+    ).read(handoff_id, subject)
+
+
 __all__ = [
     "ConformanceAdapter",
     "ConformanceRead",
@@ -1332,8 +1899,13 @@ __all__ = [
     "CustodyRead",
     "NativeManifestAdapter",
     "NativeManifestRead",
+    "ProofAdapter",
+    "ProofRead",
+    "RUNTIME_SOURCE_PATHS",
     "RunAuthorityAdapter",
     "RunAuthorityRead",
+    "RuntimeAdapter",
+    "RuntimeRead",
     "SourceCursorRef",
     "WbcAdapter",
     "WbcEventRef",
@@ -1341,6 +1913,8 @@ __all__ = [
     "read_conformance",
     "read_custody",
     "read_native_manifest",
+    "read_proof",
     "read_run_authority",
+    "read_runtime",
     "read_wbc_attempt",
 ]

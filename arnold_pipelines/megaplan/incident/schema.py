@@ -12,10 +12,15 @@ Exports
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
+from arnold_pipelines.megaplan.maintenance.identity import (
+    MAINTENANCE_SCHEMA_VERSION,
+    canonical_json,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -64,6 +69,29 @@ MAINTENANCE_EVENT_TYPES: frozenset[str] = frozenset(
     {"detection", "efficiency_analysis", "audit_report"}
 )
 
+#: Legacy occurrence-only row kinds.  Detection / efficiency_analysis /
+#: audit_report rows keep the occurrence-only idempotency key so legacy M2
+#: detection, analysis, and audit consumers (and M2 replay) remain
+#: byte-compatible.  Only Operational lifecycle rows (see
+#: :func:`is_operational_lifecycle_row`) derive the strict action key.
+LEGACY_OCCURRENCE_ONLY_KINDS: frozenset[str] = frozenset(
+    {"detection", "efficiency_analysis", "audit_report"}
+)
+
+#: The five frozen coordinates every canonical operational action key binds:
+#: schema version, canonical occurrence digest, action type, policy version,
+#: and target identity.  The tuple is the persisted compatibility contract;
+#: it must never be reordered or re-keyed.
+OPERATIONAL_KEY_COORDINATES: tuple[str, ...] = (
+    "schema_version",
+    "occurrence_digest",
+    "action_kind",
+    "policy_version",
+    "target",
+)
+
+_SHA256_HEX = frozenset("0123456789abcdef")
+
 
 def is_maintenance_event(event: dict[str, Any]) -> bool:
     """Return whether *event* is a strict Maintenance event (codec-routed).
@@ -82,6 +110,216 @@ def is_maintenance_event(event: dict[str, Any]) -> bool:
         )
         and "occurrence_id" in event
     )
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle action idempotency keys (M3 Step 2, incident schema boundary)
+# ---------------------------------------------------------------------------
+# Operational lifecycle records (repair request, source change, installation,
+# retrigger, progress observation, checkpoint verification, terminal
+# verification, recurrence, human escalation) coexist for one canonical
+# occurrence.  Their persisted idempotency keys are derived from the five
+# frozen coordinates — schema version, canonical occurrence digest, action
+# type, policy version, and target identity — so distinct actions for one
+# occurrence get distinct keys while an exact retry reproduces the same key.
+# Legacy detection / efficiency_analysis / audit_report rows keep the
+# occurrence-only key (M2 compatibility): exactly one record per occurrence.
+
+
+def _require_operational_coordinate(value: Any, *, what: str) -> str:
+    """Return *value* when it is a non-empty string, else fail closed."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"operational lifecycle row requires {what}")
+    return value
+
+
+def operational_action_key(
+    *,
+    schema_version: int,
+    occurrence_digest: str,
+    action_kind: str,
+    policy_version: str,
+    target: str,
+) -> str:
+    """Derive the canonical lifecycle action idempotency key.
+
+    The key is the sha256 of the canonical JSON encoding of the five frozen
+    coordinates (:data:`OPERATIONAL_KEY_COORDINATES`): schema version,
+    canonical occurrence digest, action type, policy version, and target
+    identity.  Distinct lifecycle actions for one occurrence therefore
+    coexist with distinct keys, an exact retry reproduces the same key, and a
+    change in any coordinate produces a different key.  Malformed or missing
+    coordinates raise ``ValueError`` — a key is never derived from guessed
+    values.
+
+    This is the persisted compatibility contract consumed by the shared
+    incident journal (T4): legacy rows keep occurrence-only keys via
+    :func:`legacy_occurrence_idempotency_key`.
+    """
+    if schema_version != MAINTENANCE_SCHEMA_VERSION:
+        raise ValueError(
+            "operational action key requires schema_version "
+            f"{MAINTENANCE_SCHEMA_VERSION}, got {schema_version!r}"
+        )
+    occurrence_digest = _require_operational_coordinate(
+        occurrence_digest, what="occurrence digest"
+    )
+    if len(occurrence_digest) != 64 or any(
+        char not in _SHA256_HEX for char in occurrence_digest
+    ):
+        raise ValueError(
+            "operational action key requires a 64-character lowercase "
+            "sha256 occurrence digest"
+        )
+    action_kind = _require_operational_coordinate(action_kind, what="action kind")
+    policy_version = _require_operational_coordinate(
+        policy_version, what="policy version"
+    )
+    target = _require_operational_coordinate(target, what="target identity")
+    material = canonical_json(
+        {
+            "schema_version": schema_version,
+            "occurrence_digest": occurrence_digest,
+            "action_kind": action_kind,
+            "policy_version": policy_version,
+            "target": target,
+        }
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def is_operational_lifecycle_row(event: Any) -> bool:
+    """Return whether *event* is a persisted operational lifecycle row.
+
+    An operational row carries the closed ``action_kind`` plus the canonical
+    ``occurrence`` coordinate object (with ``canonical_digest``); legacy
+    detection / efficiency_analysis / audit_report rows carry a plain
+    occurrence-only ``occurrence_id`` and are never misread as operational.
+    """
+    return (
+        isinstance(event, dict)
+        and isinstance(event.get("action_kind"), str)
+        and isinstance(event.get("occurrence"), dict)
+        and isinstance(event["occurrence"].get("canonical_digest"), str)
+    )
+
+
+def legacy_occurrence_idempotency_key(event: Any) -> str:
+    """Return the occurrence-only key retained for legacy rows.
+
+    Legacy detection / efficiency_analysis / audit_report rows stay keyed by
+    the occurrence identity alone (M2 compatibility): exactly one record per
+    occurrence, and detection/analysis/audit consumers keep their lookups.
+    A malformed row raises ``ValueError`` instead of guessing.
+    """
+    if not isinstance(event, dict):
+        raise ValueError(
+            "legacy occurrence idempotency key requires a dict event"
+        )
+    occurrence_id = event.get("occurrence_id")
+    if not isinstance(occurrence_id, str) or not occurrence_id:
+        raise ValueError(
+            "legacy occurrence idempotency key requires a non-empty "
+            "occurrence_id"
+        )
+    return occurrence_id
+
+
+def _checkpoint_window_key(base_key: str, window: str) -> str:
+    """Fold one canonical checkpoint window into a checkpoint action key.
+
+    A policy-required checkpoint window is a distinct stable lifecycle
+    identity: the four ``checkpoint_verification`` actions for one occurrence
+    coexist (immediate / five_minute / one_hour / next_three_hour), while an
+    exact retry of the SAME window reproduces the SAME key (dedup by window
+    identity, never rewrite).  Applies ONLY to ``checkpoint_verification``
+    rows; the five-coordinate action-key contract is unchanged for every
+    other action and for direct callers.
+    """
+    return hashlib.sha256(
+        canonical_json(
+            {"base_key": base_key, "checkpoint_window": window}
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def lifecycle_idempotency_key(event: Any) -> str:
+    """Return the canonical persisted lifecycle idempotency key for *event*.
+
+    Operational lifecycle rows derive the strict action key from schema
+    version, canonical occurrence digest, action type, policy version, and
+    target identity (see :func:`operational_action_key`); legacy
+    detection / efficiency_analysis / audit_report rows keep the
+    occurrence-only key.  The discriminator is exact: an operational row
+    always carries ``action_kind`` plus the canonical ``occurrence``
+    coordinate object, so a legacy row can never be routed to the strict key
+    and an operational row can never collapse onto the occurrence-only key.
+    """
+    if is_operational_lifecycle_row(event):
+        occurrence = event["occurrence"]
+        policy = event.get("policy")
+        target = event.get("target")
+        if not isinstance(policy, dict) or not isinstance(target, dict):
+            raise ValueError(
+                "operational lifecycle row requires policy and target "
+                "coordinate objects"
+            )
+        schema_version = event.get("schema_version")
+        if schema_version != MAINTENANCE_SCHEMA_VERSION:
+            raise ValueError(
+                "operational lifecycle row requires schema_version "
+                f"{MAINTENANCE_SCHEMA_VERSION}, got {schema_version!r}"
+            )
+        key = operational_action_key(
+            schema_version=schema_version,
+            occurrence_digest=occurrence["canonical_digest"],
+            action_kind=event["action_kind"],
+            policy_version=_require_operational_coordinate(
+                policy.get("policy_version"), what="policy version"
+            ),
+            target=_require_operational_coordinate(
+                target.get("target"), what="target identity"
+            ),
+        )
+        if event["action_kind"] == "checkpoint_verification":
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    "checkpoint verification requires a payload object"
+                )
+            return _checkpoint_window_key(
+                key,
+                _require_operational_coordinate(
+                    payload.get("checkpoint"), what="checkpoint window"
+                ),
+            )
+        return key
+    return legacy_occurrence_idempotency_key(event)
+
+
+def operational_event_action_key(event: Any) -> str:
+    """Derive the canonical action key for an ``OperationalEvent`` model.
+
+    *event* must expose the frozen operational coordinates (``schema_version``,
+    ``occurrence.canonical_digest``, ``action_kind.value``,
+    ``policy.policy_version``, ``target.target``).  The function is
+    duck-typed so the incident schema never imports the operational event
+    envelope at module scope.
+    """
+    key = operational_action_key(
+        schema_version=event.schema_version,
+        occurrence_digest=event.occurrence.canonical_digest,
+        action_kind=event.action_kind.value,
+        policy_version=event.policy.policy_version,
+        target=event.target.target,
+    )
+    if event.action_kind.value == "checkpoint_verification":
+        return _checkpoint_window_key(
+            key, _require_operational_coordinate(
+                event.payload.checkpoint.value, what="checkpoint window"
+            )
+        )
+    return key
 
 
 def validate_maintenance_event(event: dict[str, Any]) -> dict[str, Any]:
