@@ -69,6 +69,19 @@ from arnold_pipelines.megaplan.maintenance.identity import (
     canonical_digest,
     classify_lateness,
 )
+from arnold_pipelines.megaplan.maintenance.operations import (
+    ActionTarget,
+    EscalationReference,
+    LeaseCoordinates,
+    OccurrenceCoordinates,
+    OwnerReceipts,
+    PolicyVersionCoordinates,
+    ProducerPrincipal,
+    ProducerRole,
+    RecurrenceReference,
+    RunAuthorityCoordinates,
+    WbcAttemptCoordinates,
+)
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -755,20 +768,435 @@ def event_digest(event: MaintenanceEvent) -> str:
     return canonical_digest(event)
 
 
+# ---------------------------------------------------------------------------
+# M3 Step 2: closed operational lifecycle vocabulary and occurrence-bound
+# operational event (reference-only contracts; see maintenance.operations)
+# ---------------------------------------------------------------------------
+# The operational lifecycle is a CLOSED vocabulary: repair request, source
+# change, installation, retrigger, progress observation, checkpoint
+# verification, terminal verification, recurrence, and human escalation are
+# DISTINCT actions that can never be collapsed into a generic success
+# receipt (locked decision).  Every owner coordinate is an immutable
+# reference from maintenance.operations; Maintenance never constructs an
+# owner authority record.
+
+
+class OperationalActionKind(str, Enum):
+    """Closed operational lifecycle actions (M3 Step 2).
+
+    Source change, installation, retrigger, progress observation,
+    checkpoint verification, and terminal verification are separate events
+    for one occurrence; there is deliberately NO generic success action.
+    """
+
+    REPAIR_REQUEST = "repair_request"
+    SOURCE_CHANGE = "source_change"
+    INSTALLATION = "installation"
+    RETRIGGER = "retrigger"
+    PROGRESS_OBSERVATION = "progress_observation"
+    CHECKPOINT_VERIFICATION = "checkpoint_verification"
+    TERMINAL_VERIFICATION = "terminal_verification"
+    RECURRENCE = "recurrence"
+    HUMAN_ESCALATION = "human_escalation"
+
+
+class CheckpointWindowKind(str, Enum):
+    """Canonical checkpoint windows (M3 Step 6 vocabulary).
+
+    ``next_three_hour`` is the canonical horizon; legacy ``six_hour`` naming
+    maps to it as a read-only compatibility alias (see
+    :func:`canonical_checkpoint_window`) and never schedules a separate
+    six-hour authority window.
+    """
+
+    IMMEDIATE = "immediate"
+    FIVE_MINUTE = "five_minute"
+    ONE_HOUR = "one_hour"
+    NEXT_THREE_HOUR = "next_three_hour"
+
+
+#: Legacy six-hour naming — a compatibility alias for NEXT_THREE_HOUR only.
+SIX_HOUR_ALIAS: str = "six_hour"
+
+
+def canonical_checkpoint_window(name: str) -> CheckpointWindowKind:
+    """Resolve *name* to the canonical checkpoint window.
+
+    ``six_hour`` maps to :attr:`CheckpointWindowKind.NEXT_THREE_HOUR` (read
+    alias only); any other unknown name is rejected — a window is never
+    guessed.
+    """
+    if name == SIX_HOUR_ALIAS:
+        return CheckpointWindowKind.NEXT_THREE_HOUR
+    try:
+        return CheckpointWindowKind(name)
+    except ValueError as exc:
+        raise ValueError(
+            f"unknown checkpoint window {name!r}; expected one of "
+            f"{sorted(window.value for window in CheckpointWindowKind)} "
+            f"or the alias {SIX_HOUR_ALIAS!r}"
+        ) from exc
+
+
+class VerifierProvenance(BaseModel):
+    """Durable provenance of the distinct independent verifier principal.
+
+    A verifier is distinct from the repair producer and carries durable
+    provenance: the exact principal, the runtime/source digests it ran
+    under, a locator reference to its credential/runtime envelope, the UTC
+    observation instant, and direct owner-source read references.  A label,
+    a separate PID, or liveness alone is never sufficient provenance.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    principal: StrictStr
+    runtime_digest: StrictStr
+    source_digest: StrictStr
+    credential_envelope_ref: OwnerRef | None = None
+    observed_at: UtcTime
+    direct_read_refs: tuple[OwnerRef, ...] = ()
+
+    @field_validator("principal")
+    @classmethod
+    def _validate_principal(cls, value: str) -> str:
+        if not value:
+            raise ValueError("verifier principal must be a non-empty string")
+        return value
+
+    @field_validator("runtime_digest", "source_digest")
+    @classmethod
+    def _validate_digests(cls, value: str) -> str:
+        return _validate_sha256_hex(value, what="verifier digest")
+
+    @field_validator("direct_read_refs")
+    @classmethod
+    def _sort_refs(cls, value: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
+        return _sort_refs(value)
+
+
+class RepairRequestPayload(BaseModel):
+    """Closed payload for a canonical repair-request action."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["repair_request"] = "repair_request"
+    request_id: StrictStr
+    request_ref: OwnerRef | None = None
+
+    @field_validator("request_id")
+    @classmethod
+    def _validate_request(cls, value: str) -> str:
+        if not value:
+            raise ValueError("request_id must be a non-empty string")
+        return value
+
+
+class SourceChangePayload(BaseModel):
+    """Closed payload for a source-change action (distinct from install)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["source_change"] = "source_change"
+    change_ref: OwnerRef | None = None
+    source_digest: StrictStr | None = None
+
+    @field_validator("source_digest")
+    @classmethod
+    def _validate_digest(cls, value: str | None) -> str | None:
+        return _validate_sha256_hex(value, what="source-change digest")
+
+
+class InstallationPayload(BaseModel):
+    """Closed payload for an installation action (distinct from retrigger)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["installation"] = "installation"
+    install_ref: OwnerRef | None = None
+    install_digest: StrictStr | None = None
+
+    @field_validator("install_digest")
+    @classmethod
+    def _validate_digest(cls, value: str | None) -> str | None:
+        return _validate_sha256_hex(value, what="installation digest")
+
+
+class RetriggerPayload(BaseModel):
+    """Closed payload for a retrigger action (distinct from install)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["retrigger"] = "retrigger"
+    retrigger_ref: OwnerRef | None = None
+    reason: StrictStr | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, value: str | None) -> str | None:
+        if value is not None and not value:
+            raise ValueError("retrigger reason must be a non-empty string when present")
+        return value
+
+
+class ProgressObservationPayload(BaseModel):
+    """Closed payload for a progress-observation action.
+
+    Progress is durable authoritative evidence only when independently
+    verified; observation references never close custody by themselves.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["progress_observation"] = "progress_observation"
+    progress_refs: tuple[OwnerRef, ...] = ()
+    observation_ref: OwnerRef | None = None
+
+    @field_validator("progress_refs")
+    @classmethod
+    def _sort_refs(cls, value: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
+        return _sort_refs(value)
+
+
+class CheckpointVerificationPayload(BaseModel):
+    """Closed payload for one checkpoint-verification action."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["checkpoint_verification"] = "checkpoint_verification"
+    checkpoint: CheckpointWindowKind
+    checkpoint_ref: OwnerRef | None = None
+    evidence_refs: tuple[OwnerRef, ...] = ()
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def _sort_refs(cls, value: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
+        return _sort_refs(value)
+
+
+class TerminalVerificationPayload(BaseModel):
+    """Closed payload for the terminal-verification action.
+
+    Only a durable distinct verifier with direct owner-source reads and
+    accepted blocker-specific negative controls may author terminal
+    verification (epic invariant); the repair producer can never carry this
+    payload.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["terminal_verification"] = "terminal_verification"
+    verifier: VerifierProvenance
+    terminal_reason: StrictStr
+    negative_control_refs: tuple[OwnerRef, ...] = ()
+    verification_ref: OwnerRef | None = None
+
+    @field_validator("terminal_reason")
+    @classmethod
+    def _validate_reason(cls, value: str) -> str:
+        if not value:
+            raise ValueError("terminal_reason must be a non-empty string")
+        return value
+
+    @field_validator("negative_control_refs")
+    @classmethod
+    def _sort_refs(cls, value: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
+        return _sort_refs(value)
+
+
+class RecurrencePayload(BaseModel):
+    """Closed payload for a verified-recurrence action."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["recurrence"] = "recurrence"
+    recurrence: RecurrenceReference
+
+
+class HumanEscalationPayload(BaseModel):
+    """Closed payload for a human-escalation action (never a waiver)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["human_escalation"] = "human_escalation"
+    escalation: EscalationReference
+
+
+OperationalPayload = Annotated[
+    RepairRequestPayload
+    | SourceChangePayload
+    | InstallationPayload
+    | RetriggerPayload
+    | ProgressObservationPayload
+    | CheckpointVerificationPayload
+    | TerminalVerificationPayload
+    | RecurrencePayload
+    | HumanEscalationPayload,
+    Field(discriminator="kind"),
+]
+
+
+class OperationalEvent(BaseModel):
+    """Closed occurrence-bound operational lifecycle event (reference-only).
+
+    Binds the canonical M7 occurrence and lease coordinates, Run Authority
+    grant/fence, M6A WBC attempt, policy version, action target, producer
+    principal, and owner receipts to exactly one closed action kind and its
+    discriminated payload.  ``action_kind`` must match the payload's
+    ``kind`` exactly — a generic success receipt does not exist, and every
+    distinct action (source change, installation, retrigger, progress,
+    checkpoint verification, terminal verification, recurrence, escalation)
+    remains a separate event for one occurrence.  A recurrence payload must
+    name a DIFFERENT predecessor occurrence.  All models are frozen, forbid
+    unknown fields, and round-trip through the single canonical codec.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: int = Field(default=MAINTENANCE_SCHEMA_VERSION, frozen=True)
+    event_id: StrictStr
+    action_kind: OperationalActionKind
+    occurrence: OccurrenceCoordinates
+    lease: LeaseCoordinates
+    run_authority: RunAuthorityCoordinates
+    wbc_attempt: WbcAttemptCoordinates | None = None
+    policy: PolicyVersionCoordinates
+    target: ActionTarget
+    producer: ProducerPrincipal
+    owner_receipts: OwnerReceipts = Field(default_factory=OwnerReceipts)
+    observed_at: UtcTime
+    payload: OperationalPayload
+    extensions: Extensions | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: int) -> int:
+        if value != MAINTENANCE_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported Maintenance schema version {value}; expected "
+                f"{MAINTENANCE_SCHEMA_VERSION}"
+            )
+        return value
+
+    @field_validator("event_id")
+    @classmethod
+    def _validate_event_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("operational event_id must be a non-empty string")
+        return value
+
+    @model_validator(mode="after")
+    def _enforce_operational_invariants(self) -> OperationalEvent:
+        # 1. The discriminated payload kind must match the action kind: a
+        #    generic success receipt does not exist and action kinds can
+        #    never be collapsed.
+        if self.payload.kind != self.action_kind.value:
+            raise ValueError(
+                f"action_kind {self.action_kind.value!r} does not match payload "
+                f"kind {self.payload.kind!r}"
+            )
+        # 2. A recurrence must create a FRESH canonical occurrence: the
+        #    predecessor occurrence must differ from the enclosing one.
+        if (
+            self.action_kind is OperationalActionKind.RECURRENCE
+            and self.payload.kind == "recurrence"
+            and self.payload.recurrence.predecessor_occurrence_id
+            == self.occurrence.occurrence_id
+        ):
+            raise ValueError(
+                "a verified recurrence requires a fresh canonical occurrence; "
+                "predecessor_occurrence_id equals the enclosing occurrence_id"
+            )
+        # 3. Terminal verification can never be authored by the repair
+        #    producer (epic invariant: a repair actor cannot verify itself).
+        if (
+            self.action_kind is OperationalActionKind.TERMINAL_VERIFICATION
+            and self.producer.role is ProducerRole.REPAIR_PRODUCER
+        ):
+            raise ValueError(
+                "terminal verification cannot be authored by a repair producer; "
+                "a distinct verifier principal is required"
+            )
+        return self
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        event_id: str,
+        occurrence: OccurrenceCoordinates,
+        lease: LeaseCoordinates,
+        run_authority: RunAuthorityCoordinates,
+        policy: PolicyVersionCoordinates,
+        target: ActionTarget,
+        producer: ProducerPrincipal,
+        payload: OperationalPayload,
+        observed_at: UtcTime | datetime,
+        wbc_attempt: WbcAttemptCoordinates | None = None,
+        owner_receipts: OwnerReceipts | None = None,
+        extensions: Extensions | None = None,
+    ) -> OperationalEvent:
+        """Construct an operational event with the action kind derived.
+
+        ``action_kind`` is derived from the payload's ``kind`` so callers
+        can never mismatch them; all invariants are enforced by the model
+        validator.
+        """
+        return cls(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            event_id=event_id,
+            action_kind=OperationalActionKind(payload.kind),
+            occurrence=occurrence,
+            lease=lease,
+            run_authority=run_authority,
+            wbc_attempt=wbc_attempt,
+            policy=policy,
+            target=target,
+            producer=producer,
+            owner_receipts=owner_receipts if owner_receipts is not None else OwnerReceipts(),
+            observed_at=observed_at,
+            payload=payload,
+            extensions=extensions,
+        )
+
+
+def operational_event_digest(event: OperationalEvent) -> str:
+    """Return the canonical content digest of *event*."""
+    return canonical_digest(event)
+
+
 __all__ = [
     "AuditFinding",
     "AuditReport",
+    "CheckpointVerificationPayload",
+    "CheckpointWindowKind",
     "ClassifierInfo",
     "DetectionEvent",
     "EfficiencyAnalysis",
+    "EscalationReference",
     "EventKind",
+    "HumanEscalationPayload",
+    "InstallationPayload",
     "MaintenanceEvent",
     "MaintenancePayload",
     "OccurrenceBudget",
+    "OperationalActionKind",
+    "OperationalEvent",
+    "OperationalPayload",
+    "ProgressObservationPayload",
     "ProjectionCoordinates",
     "RecurrenceLink",
+    "RecurrencePayload",
+    "RepairRequestPayload",
+    "RetriggerPayload",
     "RootCauseCluster",
+    "SIX_HOUR_ALIAS",
+    "SourceChangePayload",
+    "TerminalVerificationPayload",
+    "VerifierProvenance",
+    "canonical_checkpoint_window",
     "event_digest",
     "occurrence_idempotency_key",
+    "operational_event_digest",
     "verified_recurrence",
 ]

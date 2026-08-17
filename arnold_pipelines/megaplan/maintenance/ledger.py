@@ -21,11 +21,13 @@ three failure-boundary guarantees that the plain journal does not provide:
    (``DeadLetterSinkFailure``) rather than written unbounded.
 
 3. **At-most-once replay.**  Replaying dead letters validates the original
-   schema and digest, reuses the occurrence idempotency key, appends the
-   original logical event at most once (the journal's atomic
-   lookup→append deduplicates exact duplicates and rejects divergent ones),
-   and records each disposition append-only in a separate dispositions file.
-   A dead-letter sink failure is reported as an exception — never as success.
+   schema and digest, reuses the canonical lifecycle idempotency key (the
+   strict action key for operational rows, ``occurrence_id`` fallback for
+   legacy M2 rows), appends the original logical event at most once (the
+   journal's atomic lookup→append deduplicates exact duplicates and rejects
+   divergent ones), and records each disposition append-only in a separate
+   dispositions file.  A dead-letter sink failure is reported as an exception
+   — never as success.
 
 Fail-closed contract (SC12)
 ---------------------------
@@ -60,8 +62,12 @@ from arnold_pipelines.megaplan.cloud.redact import redact_text
 from arnold_pipelines.megaplan.incident.ledger import (
     IncidentLedger,
     MaintenanceEventConflict,
+    strict_maintenance_model,
 )
-from arnold_pipelines.megaplan.maintenance.events import MaintenanceEvent
+from arnold_pipelines.megaplan.maintenance.events import (
+    MaintenanceEvent,
+    OperationalEvent,
+)
 from arnold_pipelines.megaplan.maintenance.identity import (
     MaintenanceCodecError,
     canonical_digest,
@@ -69,6 +75,7 @@ from arnold_pipelines.megaplan.maintenance.identity import (
     canonical_json,
     strict_loads,
 )
+from arnold_pipelines.megaplan.incident.schema import lifecycle_idempotency_key
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -218,16 +225,39 @@ class ReplayReport:
 
 
 def _replay_id(idempotency_key: str, digest: str) -> str:
-    """Deterministic replay identity for one (occurrence, content) pair.
+    """Deterministic replay identity for one (idempotency key, content) pair.
 
-    The replay identity is derived from the idempotency key plus the canonical
-    digest, so two dead letters for the same occurrence but different content
-    (a divergent duplicate) receive distinct identities while identical dead
-    letters share one identity and are replayed at most once.
+    The replay identity is derived from the lifecycle idempotency key plus the
+    canonical digest, so two dead letters for the same lifecycle key but
+    different content (a divergent duplicate) receive distinct identities
+    while identical dead letters share one identity and are replayed at most
+    once.
     """
     return hashlib.sha256(
         canonical_json([idempotency_key, digest]).encode("utf-8")
     ).hexdigest()
+
+
+def _model_lifecycle_key(model: MaintenanceEvent | OperationalEvent) -> str:
+    """Canonical lifecycle idempotency key of a strict Maintenance model.
+
+    Operational lifecycle rows derive the strict action key; legacy M2 rows
+    fall back to ``occurrence_id`` (see :func:`lifecycle_idempotency_key`).
+    """
+    payload = json.loads(canonical_dumps(model))
+    return lifecycle_idempotency_key(payload)
+
+
+def _model_kind_name(model: MaintenanceEvent | OperationalEvent) -> Any:
+    """The closed event/action kind of a strict Maintenance model."""
+    return getattr(model, "event_kind", None) or getattr(model, "action_kind", None)
+
+
+def _model_occurrence_id(model: MaintenanceEvent | OperationalEvent) -> str:
+    """The canonical occurrence identity carried by a strict Maintenance model."""
+    if isinstance(model, OperationalEvent):
+        return model.occurrence.occurrence_id
+    return model.occurrence_id
 
 
 def _read_ndjson(path: Path) -> list[dict[str, Any]]:
@@ -294,10 +324,12 @@ class MaintenanceLedger:
     def append(self, event: MaintenanceEvent | dict[str, Any]) -> dict[str, Any]:
         """Persist one strict Maintenance event, dead-lettering I/O failures.
 
-        *event* may be a :class:`MaintenanceEvent` model or its canonical dict
-        form.  It is strict-decoded through the shared codec (unknown/missing
-        fields and identity mismatches fail before any write), then appended
-        atomically keyed by occurrence idempotency identity plus digest.
+        *event* may be a :class:`MaintenanceEvent` or :class:`OperationalEvent`
+        model, or its canonical dict form.  It is strict-decoded through the
+        shared codec (unknown/missing fields and identity mismatches fail
+        before any write), then appended atomically keyed by the canonical
+        lifecycle idempotency key plus digest (strict action key for
+        operational rows, ``occurrence_id`` fallback for legacy M2 rows).
 
         Return / raise semantics
         ------------------------
@@ -346,27 +378,36 @@ class MaintenanceLedger:
             ) from exc
 
     def _coerce_strict(
-        self, event: MaintenanceEvent | dict[str, Any]
-    ) -> MaintenanceEvent:
-        """Strict-decode *event* into a :class:`MaintenanceEvent` (no writes)."""
-        if isinstance(event, MaintenanceEvent):
+        self, event: MaintenanceEvent | OperationalEvent | dict[str, Any]
+    ) -> MaintenanceEvent | OperationalEvent:
+        """Strict-decode *event* into a Maintenance model (no writes).
+
+        Accepts a :class:`MaintenanceEvent` or :class:`OperationalEvent` model
+        or the canonical dict form of either; anything else fails closed
+        before any write.
+        """
+        if isinstance(event, (MaintenanceEvent, OperationalEvent)):
             return event
         if isinstance(event, dict):
             try:
                 return strict_loads(MaintenanceEvent, event)
-            except MaintenanceCodecError as exc:
-                raise ValueError(
-                    f"maintenance event strict decode failed: {exc}"
-                ) from exc
+            except MaintenanceCodecError:
+                try:
+                    return strict_loads(OperationalEvent, event)
+                except MaintenanceCodecError as exc:
+                    raise ValueError(
+                        f"maintenance event strict decode failed: {exc}"
+                    ) from exc
         raise ValueError(
-            "maintenance event must be a MaintenanceEvent or a canonical dict"
+            "maintenance event must be a MaintenanceEvent, OperationalEvent, "
+            "or a canonical dict"
         )
 
     # ── dead letter ───────────────────────────────────────────────────
 
     def _build_dead_letter(
         self,
-        model: MaintenanceEvent,
+        model: MaintenanceEvent | OperationalEvent,
         *,
         canonical_bytes: str,
         digest: str,
@@ -378,14 +419,17 @@ class MaintenanceLedger:
         The record preserves the ORIGINAL canonical bytes and digest so replay
         can re-validate them; only the diagnostic ``failure_detail`` is
         redacted (secret-scrubbed).  The canonical bytes are not redacted
-        because replay must recompute their digest exactly.
+        because replay must recompute their digest exactly.  The recorded
+        idempotency key is the canonical lifecycle key of the event (strict
+        action key for operational rows, occurrence_id fallback for legacy
+        rows).
         """
         return {
             "schema_version": DEAD_LETTER_SCHEMA_VERSION,
             "ts_utc": datetime.now(timezone.utc).isoformat(),
-            "replay_id": _replay_id(model.idempotency_key, digest),
-            "idempotency_key": model.idempotency_key,
-            "event_kind": model.event_kind.value,
+            "replay_id": _replay_id(_model_lifecycle_key(model), digest),
+            "idempotency_key": _model_lifecycle_key(model),
+            "event_kind": _model_kind_name(model).value,
             "digest": digest,
             "failure_type": failure_type.value,
             "failure_detail": redact_text(
@@ -476,7 +520,7 @@ class MaintenanceLedger:
                 seq=None,
                 detail=redact_text(str(exc)),
             )
-        if model.occurrence_id != idempotency_key:
+        if _model_lifecycle_key(model) != idempotency_key:
             return ReplayDisposition(
                 replay_id=replay_id,
                 idempotency_key=idempotency_key,
@@ -484,16 +528,18 @@ class MaintenanceLedger:
                 seq=None,
                 detail=(
                     "dead-letter idempotency key does not match the "
-                    "canonical event occurrence_id"
+                    "canonical lifecycle key of the event"
                 ),
             )
 
-        existing = self._incident.lookup_maintenance_event(model.occurrence_id)
+        existing = self._incident.lookup_maintenance_event(
+            _model_lifecycle_key(model)
+        )
         if existing is not None:
             stored = existing.get("payload") or {}
             try:
                 stored_digest = canonical_digest(
-                    strict_loads(MaintenanceEvent, stored)
+                    strict_maintenance_model(stored)
                 )
             except Exception:
                 stored_digest = None
@@ -511,8 +557,8 @@ class MaintenanceLedger:
                 outcome=ReplayOutcome.CONFLICT,
                 seq=None,
                 detail=(
-                    "divergent duplicate already committed for this occurrence; "
-                    "history not rewritten"
+                    "divergent duplicate already committed for this lifecycle "
+                    "key; history not rewritten"
                 ),
             )
 
@@ -544,12 +590,14 @@ class MaintenanceLedger:
 
     def _validate_dead_letter(
         self, record: dict[str, Any], *, digest: str
-    ) -> MaintenanceEvent:
+    ) -> MaintenanceEvent | OperationalEvent:
         """Strict-decode a dead letter's canonical bytes and verify its digest.
 
         Raises ``ValueError`` when the record is malformed, the canonical bytes
-        do not strict-decode, or the recomputed digest differs from the stored
-        digest.  This is the "validate original schema/digest" gate for replay.
+        do not strict-decode (as a :class:`MaintenanceEvent` or an
+        :class:`OperationalEvent`), or the recomputed digest differs from the
+        stored digest.  This is the "validate original schema/digest" gate for
+        replay.
         """
         canonical_bytes = record.get("canonical_bytes")
         if not isinstance(canonical_bytes, str) or not canonical_bytes:
@@ -565,7 +613,7 @@ class MaintenanceLedger:
                 f"dead letter canonical bytes are not valid JSON: {exc}"
             ) from exc
         try:
-            model = strict_loads(MaintenanceEvent, raw)
+            model = strict_maintenance_model(raw)
         except MaintenanceCodecError as exc:
             raise ValueError(
                 f"dead letter canonical bytes do not strict-decode: {exc}"

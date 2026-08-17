@@ -48,7 +48,9 @@ from arnold_pipelines.megaplan.maintenance.observation import (
     conformance_source,
     custody_source,
     native_manifest_source,
+    proof_source,
     run_authority_source,
+    runtime_source,
     wbc_source,
 )
 
@@ -197,6 +199,190 @@ def test_stable_capture_returns_one_coherent_eligible_envelope() -> None:
     ranks = [precedence_rank(ref.owner) for ref in envelope.references]
     assert all(rank is not None for rank in ranks)
     assert ranks == sorted(rank for rank in ranks if rank is not None)
+
+
+# ---------------------------------------------------------------------------
+# T6_impl: occurrence-bound owner-source join (M3 Step 5)
+# ---------------------------------------------------------------------------
+
+
+def _occurrence_read(
+    owner: str = "custody",
+    *,
+    occurrence_id: str = "occ-1",
+    target: str = "chain:session",
+    lease_id: str = "lease-1",
+    fence: str = "tok-1",
+    env: str = "production",
+) -> SimpleNamespace:
+    """A read exposing the M7 occurrence/lease/fence/target coordinates."""
+    return SimpleNamespace(
+        environment=EnvironmentId(env),
+        occurrence_id=occurrence_id,
+        target=target,
+        lease_id=lease_id,
+        fencing_token=fence,
+        version_vector=_vector(owner, "a" * 64, "a" * 64),
+        torn=False,
+    )
+
+
+def _occurrence_source(
+    key: str,
+    owner: str,
+    read: Any,
+) -> JoinSource:
+    return JoinSource(
+        key=key,
+        owner=owner,  # type: ignore[arg-type]
+        required=True,
+        probe=lambda: "f" * 64,
+        read=lambda: read,
+        stale_probe=lambda _read: False,
+    )
+
+
+def test_occurrence_bound_join_requires_matching_coordinates() -> None:
+    sources = [
+        _occurrence_source("run_authority", "run_authority", _fake_read("run_authority")),
+        _occurrence_source("custody", "custody", _occurrence_read()),
+    ]
+    envelope = capture_observation(
+        sources,
+        observed_at=_ts(),
+        environment="production",
+        run="run-1",
+        occurrence_id="occ-1",
+        target="chain:session",
+        lease_id="lease-1",
+        fence="tok-1",
+    )
+    assert envelope.coherence is CoherenceState.COHERENT
+    assert envelope.dispatchable is True
+    assert envelope.terminal is True
+
+
+def test_cross_occurrence_read_fails_closed() -> None:
+    sources = [
+        _occurrence_source("run_authority", "run_authority", _fake_read("run_authority")),
+        _occurrence_source(
+            "custody", "custody", _occurrence_read(occurrence_id="occ-OTHER")
+        ),
+    ]
+    envelope = capture_observation(
+        sources,
+        observed_at=_ts(),
+        environment="production",
+        run="run-1",
+        occurrence_id="occ-1",
+        target="chain:session",
+        lease_id="lease-1",
+        fence="tok-1",
+    )
+    assert envelope.coherence is CoherenceState.INCOHERENT
+    assert CoherenceReason.CONTRADICTORY_EVIDENCE in envelope.coherence_reasons
+    assert envelope.dispatchable is False
+    assert envelope.terminal is False
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        dict(target="chain:other"),
+        dict(lease_id="lease-OTHER"),
+        dict(fence="tok-OTHER"),
+        dict(env="staging"),
+    ],
+)
+def test_occurrence_bound_dimension_mismatch_fails_closed(overrides: dict) -> None:
+    sources = [
+        _occurrence_source("run_authority", "run_authority", _fake_read("run_authority")),
+        _occurrence_source("custody", "custody", _occurrence_read(**overrides)),
+    ]
+    envelope = capture_observation(
+        sources,
+        observed_at=_ts(),
+        environment="production",
+        run="run-1",
+        occurrence_id="occ-1",
+        target="chain:session",
+        lease_id="lease-1",
+        fence="tok-1",
+    )
+    assert envelope.coherence is CoherenceState.INCOHERENT
+    assert envelope.dispatchable is False
+    assert envelope.terminal is False
+
+
+def test_missing_occurrence_coordinate_source_fails_closed() -> None:
+    # A required source that carries NO occurrence coordinates (a torn or
+    # missing read) keeps the envelope non-dispatchable: coordinates are
+    # never inferred from the other sources.
+    sources = [
+        _occurrence_source("run_authority", "run_authority", _fake_read("run_authority")),
+        _occurrence_source("custody", "custody", None),
+    ]
+    envelope = capture_observation(
+        sources,
+        observed_at=_ts(),
+        environment="production",
+        run="run-1",
+        occurrence_id="occ-1",
+        target="chain:session",
+        lease_id="lease-1",
+        fence="tok-1",
+    )
+    assert envelope.coherence is CoherenceState.INCOHERENT
+    assert CoherenceReason.MISSING_REQUIRED_SOURCE in envelope.coherence_reasons
+
+
+def test_proof_and_runtime_source_factories_build_join_sources() -> None:
+    proof = proof_source(
+        "proof-1",
+        "chain:session",
+        proof_provider=lambda proof_id: SimpleNamespace(digest=lambda: "d" * 64),
+        registry=None,
+        environment="production",
+    )
+    assert proof.key == "proof"
+    assert proof.owner == "native_manifest"
+    runtime = runtime_source(
+        "S2R",
+        "chain:session",
+        runtime_provider=lambda hid, subject: SimpleNamespace(digest=lambda: "d" * 64),
+        environment="production",
+    )
+    assert runtime.key == "runtime:S2R"
+    assert runtime.owner == "native_manifest"
+
+
+def test_unapproved_proof_source_is_unknown_and_fails_closed() -> None:
+    # The default registry marks every handoff pending: the C2 proof read is
+    # typed UNKNOWN and the envelope is non-dispatchable.
+    source = proof_source(
+        "proof-1",
+        "chain:session",
+        proof_provider=lambda proof_id: SimpleNamespace(digest=lambda: "d" * 64),
+        environment="production",
+    )
+    envelope = capture_observation(
+        [
+            _occurrence_source("run_authority", "run_authority", _fake_read("run_authority")),
+            _occurrence_source("custody", "custody", _occurrence_read()),
+            source,
+        ],
+        observed_at=_ts(),
+        environment="production",
+        run="run-1",
+        occurrence_id="occ-1",
+        target="chain:session",
+        lease_id="lease-1",
+        fence="tok-1",
+    )
+    assert envelope.coherence is CoherenceState.INCOHERENT
+    assert CoherenceReason.UNKNOWN in envelope.coherence_reasons
+    assert envelope.dispatchable is False
+    assert envelope.terminal is False
 
 
 def test_join_validates_run_and_attempt_identity_dimensions() -> None:

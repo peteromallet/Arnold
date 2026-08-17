@@ -5,73 +5,97 @@
       "id": "M6A",
       "source_path": "wbc/attempt_ledger_store",
       "schema_identity": "wbc.attempt_ledger_store.v1",
+      "owner_api_identity": "arnold.workflow.attempt_ledger_store.AttemptLedgerStore",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": true,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     },
     {
       "id": "M7",
       "source_path": "megaplan/controlled_writers",
       "schema_identity": "megaplan.controlled_writers.v1",
+      "owner_api_identity": "arnold_pipelines.megaplan.custody.lease_store.CustodyLeaseStore",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": false,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     },
     {
       "id": "M10",
       "source_path": "megaplan/watchdog_auditor",
       "schema_identity": "megaplan.watchdog_auditor.v1",
+      "owner_api_identity": "arnold_pipelines.megaplan.cloud.repair_requests.enqueue_occurrence_bound_repair_request",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": false,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     },
     {
       "id": "M11",
       "source_path": "megaplan/conformance",
       "schema_identity": "megaplan.conformance.v1",
+      "owner_api_identity": "arnold_pipelines.megaplan.orchestration.m11_acceptance",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": false,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     },
     {
       "id": "C1",
       "source_path": "native/completion/c1",
       "schema_identity": "native.completion.c1.v1",
+      "owner_api_identity": "native.completion.c1.kernel",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": false,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     },
     {
       "id": "C2",
       "source_path": "native/completion/c2",
       "schema_identity": "native.completion.c2.v1",
+      "owner_api_identity": "native.completion.c2.kernel",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": false,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     },
     {
       "id": "S1",
       "source_path": "native/runtime/s1",
       "schema_identity": "native.runtime.s1.v1",
+      "owner_api_identity": "native.runtime.s1.primitive",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": false,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     },
     {
       "id": "S2R",
       "source_path": "native/runtime/s2r",
       "schema_identity": "native.runtime.s2r.v1",
+      "owner_api_identity": "native.runtime.s2r.primitive",
+      "schema_version": "v1",
       "digest": null,
       "approval": "pending_human_approval",
       "requires_wbc_coordinates": false,
-      "wbc_coordinates": null
+      "wbc_coordinates": null,
+      "approval_evidence": null
     }
   ]
 }

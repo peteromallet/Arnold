@@ -15,7 +15,10 @@ from typing import Any, Callable
 
 from arnold.runtime.event_journal import NdjsonEventJournal
 
-from arnold_pipelines.megaplan.incident.schema import validate_incident_event
+from arnold_pipelines.megaplan.incident.schema import (
+    lifecycle_idempotency_key,
+    validate_incident_event,
+)
 
 _INCIDENT_LEDGER_DIR = Path(".megaplan") / "incident-ledger"
 _EVENTS_FILE = "events.jsonl"
@@ -91,7 +94,7 @@ def is_retryable_failure_class(failure_class: str | None) -> bool:
 
 
 def _normalize_chain_digest(digest: str) -> str:
-    """Normalize a ``chain_spec_sha256`` contract digest, or ``""`` when empty."""
+    """Normalize a ``chain_spec_sha256`` contract digest, or ``\"\"`` when empty."""
     digest = str(digest).strip()
     if not digest:
         return ""
@@ -106,6 +109,66 @@ def _normalize_chain_digest(digest: str) -> str:
             )
         return "sha256:" + hex_part.lower()
     return digest
+
+
+# ---------------------------------------------------------------------------
+# M3 — lifecycle idempotency across the journal boundary (T4)
+# ---------------------------------------------------------------------------
+# The strict Maintenance journal compares the canonical lifecycle idempotency
+# key recorded at the append boundary (:func:`lifecycle_idempotency_key`):
+# operational lifecycle rows (repair request, source change, installation,
+# retrigger, progress, checkpoint, terminal, recurrence, escalation) compare
+# their strict action key — so DISTINCT actions for ONE occurrence coexist —
+# while legacy M2 rows (detection / efficiency_analysis / audit_report) fall
+# back to ``occurrence_id`` and keep the exact historical behavior.  Exact
+# retries deduplicate (same key + same canonical digest), divergent reuse
+# raises :class:`MaintenanceEventConflict` without advancing the journal, and
+# the atomic lookup → decide → append critical section is unchanged.
+
+
+def strict_maintenance_model(payload: dict[str, Any]) -> Any:
+    """Strict-decode *payload* as ``MaintenanceEvent`` or ``OperationalEvent``.
+
+    Legacy M2 rows decode as :class:`MaintenanceEvent`; M3 operational
+    lifecycle rows decode as :class:`OperationalEvent`.  A malformed payload
+    raises ``MaintenanceCodecError`` — a model/digest is never derived from
+    guessed values.
+    """
+    from arnold_pipelines.megaplan.maintenance.events import (
+        MaintenanceEvent,
+        OperationalEvent,
+    )
+    from arnold_pipelines.megaplan.maintenance.identity import (
+        MaintenanceCodecError,
+        strict_loads,
+    )
+
+    try:
+        return strict_loads(MaintenanceEvent, payload)
+    except MaintenanceCodecError:
+        return strict_loads(OperationalEvent, payload)
+
+
+def strict_maintenance_digest(payload: dict[str, Any]) -> str:
+    """Return the canonical content digest of a strict Maintenance payload."""
+    from arnold_pipelines.megaplan.maintenance.identity import canonical_digest
+
+    return canonical_digest(strict_maintenance_model(payload))
+
+
+def record_matches_lifecycle_key(stored: dict[str, Any], idempotency_key: str) -> bool:
+    """Return whether a stored record's payload carries *idempotency_key*.
+
+    The comparison uses the canonical lifecycle idempotency key recorded at
+    the journal boundary (:func:`lifecycle_idempotency_key`): operational
+    rows compare their strict action key, legacy rows fall back to
+    ``occurrence_id``.  Records that cannot carry a lifecycle key (legacy
+    non-Maintenance incident events) never match.
+    """
+    try:
+        return lifecycle_idempotency_key(stored) == idempotency_key
+    except ValueError:
+        return False
 
 
 class _IncidentEventJournal(NdjsonEventJournal):
@@ -183,13 +246,16 @@ class _IncidentEventJournal(NdjsonEventJournal):
     def lookup_maintenance(self, idempotency_key: str) -> dict[str, Any] | None:
         """Return the committed record for *idempotency_key*, or ``None``.
 
-        ``idempotency_key`` is the Maintenance occurrence identity (SD2):
-        the sole idempotency scope.  Only strict Maintenance records (payloads
-        carrying ``occurrence_id``) are considered; legacy records are skipped.
+        *idempotency_key* is the canonical lifecycle idempotency key recorded
+        at the journal boundary (SD2 + M3 Step 2): the strict action key for
+        operational lifecycle rows, with a legacy fallback to ``occurrence_id``
+        for M2 detection / efficiency_analysis / audit_report rows.  Only
+        records whose payload carries the exact lifecycle key are considered;
+        other records (legacy non-Maintenance incident events) are skipped.
         """
         for record in self._read_records():
             stored = record.get("payload") or {}
-            if stored.get("occurrence_id") == idempotency_key:
+            if record_matches_lifecycle_key(stored, idempotency_key):
                 return record
         return None
 
@@ -207,22 +273,25 @@ class _IncidentEventJournal(NdjsonEventJournal):
         journal's ``fcntl.flock`` on the seq sidecar, so concurrent writers
         cannot interleave between the duplicate check and the append.
 
-        * an exact duplicate (same idempotency key AND same canonical digest)
+        *idempotency_key* is the canonical lifecycle idempotency key of
+        *payload* (strict action key for operational rows, ``occurrence_id``
+        fallback for legacy M2 rows):
+
+        * an exact duplicate (same lifecycle key AND same canonical digest)
           returns the PRIOR committed record — nothing is appended;
-        * a divergent duplicate (same idempotency key, different canonical
+        * a divergent duplicate (same lifecycle key, different canonical
           digest) raises :class:`MaintenanceEventConflict` — nothing is
           appended;
         * otherwise the record is appended once and returned.
-        """
-        from arnold_pipelines.megaplan.maintenance.events import MaintenanceEvent
-        from arnold_pipelines.megaplan.maintenance.identity import (
-            canonical_digest,
-            strict_loads,
-        )
 
-        # Canonical validation up front: the payload must strict-decode and
-        # its digest must be reproducible from the canonical codec.
-        canonical_digest(strict_loads(MaintenanceEvent, payload))
+        Distinct lifecycle actions for one occurrence carry distinct action
+        keys, so they append as separate records while exact retries of the
+        same action deduplicate.
+        """
+        # Canonical validation up front: the payload must strict-decode (as a
+        # MaintenanceEvent or an OperationalEvent) and its digest must be
+        # reproducible from the canonical codec.
+        strict_maintenance_digest(payload)
 
         init_ts = self._load_init_ts()
         seq_fd = os.open(str(self._seq_path), os.O_RDWR | os.O_CREAT, 0o644)
@@ -230,13 +299,13 @@ class _IncidentEventJournal(NdjsonEventJournal):
             fcntl.flock(seq_fd, fcntl.LOCK_EX)
             for record in self._read_records():
                 stored = record.get("payload") or {}
-                if stored.get("occurrence_id") != idempotency_key:
+                if not record_matches_lifecycle_key(stored, idempotency_key):
                     continue
-                stored_digest = canonical_digest(strict_loads(MaintenanceEvent, stored))
+                stored_digest = strict_maintenance_digest(stored)
                 if stored_digest == digest:
                     return record
                 raise MaintenanceEventConflict(
-                    f"maintenance idempotency conflict for occurrence "
+                    f"maintenance idempotency conflict for lifecycle key "
                     f"{idempotency_key!r}: stored digest {stored_digest} "
                     f"!= incoming digest {digest}; nothing appended"
                 )
@@ -297,12 +366,18 @@ class IncidentLedger:
     ) -> dict[str, Any]:
         """Strict-route one Maintenance event with atomic idempotency.
 
-        *event* may be a :class:`MaintenanceEvent` model or its canonical
-        dict form.  It is strict-decoded through the shared Maintenance codec
-        (unknown/missing fields and identity mismatches fail before any
-        write), then appended atomically keyed by the occurrence idempotency
-        identity plus canonical digest:
+        *event* may be a :class:`MaintenanceEvent` or
+        :class:`OperationalEvent` model, or its canonical dict form.  It is
+        strict-decoded through the shared Maintenance codec (unknown/missing
+        fields and identity mismatches fail before any write), then appended
+        atomically keyed by the canonical lifecycle idempotency key plus
+        digest:
 
+        * the recorded key is the strict action key for operational lifecycle
+          rows (so distinct request/source-change/installation/retrigger/
+          progress/checkpoint/terminal/recurrence/escalation records coexist
+          for ONE occurrence) with the legacy ``occurrence_id`` fallback for
+          M2 detection / efficiency_analysis / audit_report rows;
         * an exact duplicate returns the PRIOR committed record (same seq);
         * a divergent duplicate raises :class:`MaintenanceEventConflict`
           without appending;
@@ -311,7 +386,10 @@ class IncidentLedger:
         Never touches runtime ``.megaplan/incident-ledger`` data: the caller
         supplies the root.
         """
-        from arnold_pipelines.megaplan.maintenance.events import MaintenanceEvent
+        from arnold_pipelines.megaplan.maintenance.events import (
+            MaintenanceEvent,
+            OperationalEvent,
+        )
         from arnold_pipelines.megaplan.maintenance.identity import (
             MaintenanceCodecError,
             canonical_digest,
@@ -319,27 +397,38 @@ class IncidentLedger:
             strict_loads,
         )
 
-        if isinstance(event, MaintenanceEvent):
+        if isinstance(event, (MaintenanceEvent, OperationalEvent)):
             model = event
         else:
             try:
                 model = strict_loads(MaintenanceEvent, event)
-            except MaintenanceCodecError as exc:
-                raise ValueError(
-                    f"maintenance event strict decode failed: {exc}"
-                ) from exc
+            except MaintenanceCodecError:
+                try:
+                    model = strict_loads(OperationalEvent, event)
+                except MaintenanceCodecError as exc:
+                    raise ValueError(
+                        f"maintenance event strict decode failed: {exc}"
+                    ) from exc
         payload = json.loads(canonical_dumps(model))
         digest = canonical_digest(model)
+        kind_name = getattr(model, "event_kind", None) or getattr(
+            model, "action_kind", None
+        )
         return self._journal.append_maintenance(
-            kind=f"incident.{model.event_kind.value}",
+            kind=f"incident.{kind_name.value}",
             payload=payload,
-            idempotency_key=model.occurrence_id,
+            idempotency_key=lifecycle_idempotency_key(payload),
             digest=digest,
         )
 
-    def lookup_maintenance_event(self, occurrence_id: str) -> dict[str, Any] | None:
-        """Return the committed record for *occurrence_id*, or ``None``."""
-        return self._journal.lookup_maintenance(occurrence_id)
+    def lookup_maintenance_event(self, idempotency_key: str) -> dict[str, Any] | None:
+        """Return the committed record for *idempotency_key*, or ``None``.
+
+        *idempotency_key* is the canonical lifecycle idempotency key: the
+        strict action key for operational lifecycle rows, or ``occurrence_id``
+        for legacy M2 rows.
+        """
+        return self._journal.lookup_maintenance(idempotency_key)
 
     def append_authorized_lifecycle_event(
         self,

@@ -692,3 +692,130 @@ def test_incident_bridge_legacy_events_keep_lineage_after_environment_writes(tmp
     # The successor carries explicit identity and causal lineage.
     assert events[1]["payload"]["maintenance_environment"] == "production"
     assert events[1]["payload"]["parent_event_ids"] == ["legacy-ev-1"]
+
+
+# ---------------------------------------------------------------------------
+# terminal_receipt_expectations persistence (occurrence-bound enqueue)
+# ---------------------------------------------------------------------------
+
+
+def _occurrence_bound_kwargs(
+    tmp_path: Path,
+    *,
+    expectations: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "queue_root": tmp_path / ".megaplan" / "repair-queue",
+        "session": "sess-1",
+        "problem_signature": _problem_sig(),
+        "root_cause_hint": {"summary": "blocker"},
+        "source": "maintenance_recovery",
+        "marker_dir": tmp_path / "markers",
+        "target": {"plan_dir": str(tmp_path), "plan_name": "plan-1"},
+        "workspace": tmp_path,
+        "run_kind": "maintenance",
+        "occurrence_identity": {
+            "schema_version": 2,
+            "occurrence": {
+                "contract_type": "repair_occurrence_key",
+                "target": {
+                    "environment": "production",
+                    "session": "sess-1",
+                    "chain": "plan-1",
+                    "plan_revision": "plan-1",
+                    "phase": "repair",
+                    "task": "target-1",
+                    "attempt": "att-1",
+                    "normalized_failure_kind": "maintenance_effect",
+                    "blocker_or_phase_result_hash": "req-1",
+                    "fence": "7",
+                },
+                "run_id": "run-1",
+                "run_revision": "rev-1",
+                "coordinator_attempt_id": "att-1",
+                "fence_token": 7,
+                "wbc_attempt_reference": "att-1",
+                "occurrence_digest": "1" * 64,
+            },
+            "run_incarnation_id": "inc-1",
+            "run_authority_grant_id": "g-1",
+            "lease_id": "lease-1",
+            "custody_epoch": 3,
+        },
+        "terminal_receipt_expectations": expectations,
+    }
+
+
+def test_occurrence_bound_enqueue_persists_normalized_terminal_receipt_expectations(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        enqueue_occurrence_bound_repair_request,
+    )
+
+    result = enqueue_occurrence_bound_repair_request(
+        **_occurrence_bound_kwargs(
+            tmp_path,
+            expectations=[" immediate ", "five_minute", "immediate", "", "one_hour", "next_three_hour"],
+        )
+    )
+    assert result["status"] == "queued"
+    record = result["request"]
+    assert record["terminal_receipt_expectations"] == [
+        "immediate", "five_minute", "one_hour", "next_three_hour",
+    ]
+    # Top-level immutable field, never inside repair_identity.
+    assert "terminal_receipt_expectations" not in record["repair_identity"]
+
+
+def test_occurrence_bound_enqueue_omits_empty_terminal_receipt_expectations(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        enqueue_occurrence_bound_repair_request,
+    )
+
+    result = enqueue_occurrence_bound_repair_request(
+        **_occurrence_bound_kwargs(tmp_path, expectations=None)
+    )
+    assert result["status"] == "queued"
+    assert "terminal_receipt_expectations" not in result["request"]
+
+
+def test_occurrence_bound_enqueue_coalesces_identical_terminal_receipt_expectations(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        enqueue_occurrence_bound_repair_request,
+    )
+
+    kwargs = _occurrence_bound_kwargs(
+        tmp_path, expectations=["immediate", "five_minute"]
+    )
+    first = enqueue_occurrence_bound_repair_request(**kwargs)
+    assert first["status"] == "queued"
+    second = enqueue_occurrence_bound_repair_request(**kwargs)
+    assert second["status"] == "coalesced"
+    assert second["request"]["terminal_receipt_expectations"] == [
+        "immediate", "five_minute",
+    ]
+
+
+def test_occurrence_bound_enqueue_rejects_divergent_terminal_receipt_expectations(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        enqueue_occurrence_bound_repair_request,
+    )
+
+    first = enqueue_occurrence_bound_repair_request(
+        **_occurrence_bound_kwargs(tmp_path, expectations=["immediate"])
+    )
+    assert first["status"] == "queued"
+    second = enqueue_occurrence_bound_repair_request(
+        **_occurrence_bound_kwargs(
+            tmp_path, expectations=["immediate", "five_minute"]
+        )
+    )
+    assert second["status"] == "divergent_reuse"
+    assert second["evidence"]["reason"] == "terminal_receipt_expectations mismatch"

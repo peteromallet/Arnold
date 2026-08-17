@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -47,6 +48,7 @@ from pydantic import (
 from arnold_pipelines.megaplan.maintenance.contracts import EVIDENCE_PRECEDENCE_VERSION
 from arnold_pipelines.megaplan.maintenance.identity import (
     MAINTENANCE_SCHEMA_VERSION,
+    UtcTime,
     canonical_digest,
     canonical_dumps,
     strict_loads,
@@ -75,6 +77,45 @@ class ApprovalState(str, Enum):
     APPROVED = "approved"
     PENDING_HUMAN_APPROVAL = "pending_human_approval"
     UNKNOWN = "unknown"
+
+
+class ApprovalEvidence(BaseModel):
+    """Exact approval evidence for an accepted handoff row.
+
+    A row may resolve to ACCEPTED only when the human approval is recorded
+    as evidence: the approver principal, the UTC approval instant, a
+    locator/artifact reference to the durable approval record, and the
+    optional canonical digest of that record.  Maintenance never infers
+    acceptance from a status label or repository ancestry — an APPROVED row
+    without :class:`ApprovalEvidence` stays typed UNKNOWN with reason
+    MISSING_FIELD.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    approver: StrictStr
+    approved_at: UtcTime
+    evidence_ref: StrictStr
+    digest: StrictStr | None = None
+
+    @field_validator("approver", "evidence_ref")
+    @classmethod
+    def _validate_nonempty(cls, value: str) -> str:
+        if not value:
+            raise ValueError("approval evidence approver/evidence_ref must be non-empty")
+        return value
+
+    @field_validator("digest")
+    @classmethod
+    def _validate_digest(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not _SHA256_HEX_RE.fullmatch(value):
+            raise ValueError(
+                "approval evidence digest must be a 64-character lowercase "
+                "sha256 hex digest"
+            )
+        return value
 
 
 # ---------------------------------------------------------------------------
@@ -120,11 +161,19 @@ class WbcCoordinates(BaseModel):
 class HandoffRow(BaseModel):
     """One declarative handoff candidate row.
 
-    ``digest`` and ``wbc_coordinates`` are the production values that require
-    human approval; they stay ``None`` (explicit unknown) until approved.
-    ``requires_wbc_coordinates`` declares whether acceptance of this row also
-    requires approved WBC incarnation/restore/high-water coordinates (true
-    for the M6A WBC store row, false for the other source paths).
+    The row records the EXACT owner coordinates for the consumed source —
+    the owner API identity (``owner_api_identity``), the owner schema
+    identity (``schema_identity``) and its explicit version
+    (``schema_version``), the content digest (``digest``), and the approval
+    evidence (``approval_evidence``) — so acceptance is never inferred from
+    a status label or repository ancestry.
+
+    ``digest``, ``wbc_coordinates``, and ``approval_evidence`` are the
+    production values that require human approval; they stay ``None``
+    (explicit unknown) until approved.  ``requires_wbc_coordinates``
+    declares whether acceptance of this row also requires approved WBC
+    incarnation/restore/high-water coordinates (true for the M6A WBC store
+    row, false for the other source paths).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -132,16 +181,34 @@ class HandoffRow(BaseModel):
     id: StrictStr
     source_path: StrictStr
     schema_identity: StrictStr
+    #: Exact owner API identity of the consumed source (the seam the
+    #: Maintenance adapters call).  Recorded explicitly; never inferred.
+    owner_api_identity: StrictStr
+    #: Exact owner schema version (the version component of
+    #: ``schema_identity``).  Recorded explicitly; ``schema_identity`` must
+    #: end with ``"." + schema_version`` so the pair is never contradictory.
+    schema_version: StrictStr
     digest: StrictStr | None = None
     approval: ApprovalState
     requires_wbc_coordinates: bool = False
     wbc_coordinates: WbcCoordinates | None = None
+    approval_evidence: ApprovalEvidence | None = None
 
-    @field_validator("id", "source_path", "schema_identity")
+    @field_validator("id", "source_path", "schema_identity", "owner_api_identity")
     @classmethod
     def _validate_nonempty(cls, value: str) -> str:
         if not value:
-            raise ValueError("handoff id/source_path/schema_identity must be non-empty")
+            raise ValueError(
+                "handoff id/source_path/schema_identity/owner_api_identity "
+                "must be non-empty"
+            )
+        return value
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if not value:
+            raise ValueError("handoff schema_version must be a non-empty string")
         return value
 
     @field_validator("digest")
@@ -155,15 +222,49 @@ class HandoffRow(BaseModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def _check_row_invariants(self) -> HandoffRow:
+        # 1. The recorded schema version must be the exact version component
+        #    of the recorded schema identity (never inferred, never silent).
+        if not self.schema_identity.endswith("." + self.schema_version):
+            raise ValueError(
+                f"handoff schema_identity {self.schema_identity!r} must end "
+                f"with '.{self.schema_version}' to match schema_version"
+            )
+        # 2. Approval evidence without an APPROVED state is incoherent.
+        if (
+            self.approval_evidence is not None
+            and self.approval is not ApprovalState.APPROVED
+        ):
+            raise ValueError(
+                "handoff approval_evidence requires approval=approved; "
+                f"got approval={self.approval.value!r}"
+            )
+        # 3. A non-approved row must never carry approved production data:
+        #    a pending/unknown label cannot coexist with a content digest or
+        #    recorded approval evidence (the loader never guesses either way).
+        if self.approval is not ApprovalState.APPROVED and (
+            self.digest is not None or self.approval_evidence is not None
+        ):
+            raise ValueError(
+                "a non-approved handoff row must not carry digest or "
+                "approval_evidence; approval is not accepted yet"
+            )
+        return self
+
     @property
     def is_complete(self) -> bool:
         """Whether every required production value for this row is present.
 
         The row's own identity fields are always present (enforced at
         validation); completeness here means the *approved production data*
-        (digest, plus WBC coordinates when required) is present.
+        (content digest, recorded approval evidence, plus WBC coordinates
+        when required) is present.  A claimed approval without its recorded
+        evidence is never complete.
         """
         if self.digest is None:
+            return False
+        if self.approval_evidence is None:
             return False
         if self.requires_wbc_coordinates and self.wbc_coordinates is None:
             return False
@@ -220,6 +321,60 @@ class HandoffResolution(BaseModel):
     approval: ApprovalState
     reason: HandoffResolutionReason
     row: HandoffRow | None = None
+
+
+class HandoffAcceptedEntry(BaseModel):
+    """One frozen accepted-vector entry for a consumed source.
+
+    Exposes the EXACT accepted coordinates — owner API identity, schema
+    identity and version, content digest, WBC coordinates (when required),
+    and the recorded approval evidence — for one handoff id.  Entries exist
+    only for ACCEPTED resolutions; every other row is absent from the
+    accepted vector (typed UNKNOWN, non-dispatchable).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    handoff_id: StrictStr
+    source_path: StrictStr
+    schema_identity: StrictStr
+    owner_api_identity: StrictStr
+    schema_version: StrictStr
+    digest: StrictStr
+    wbc_coordinates: WbcCoordinates | None = None
+    approval_evidence: ApprovalEvidence
+
+
+class HandoffDriftEntry(BaseModel):
+    """One frozen drift entry for a consumed source.
+
+    Compares the recorded (approved) content digest against the live
+    artifact digest at ``artifact_path``.  ``matches`` is ``True`` only when
+    both digests are present and equal; a missing recorded digest (pending),
+    a missing artifact, or any mismatch reports ``matches=False`` so
+    consumers fail closed.  ``live_digest`` stays ``None`` when the artifact
+    is unavailable — drift is reported as data, never guessed.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    handoff_id: StrictStr
+    artifact_path: StrictStr
+    recorded_digest: StrictStr | None = None
+    live_digest: StrictStr | None = None
+    matches: bool = False
+
+    @field_validator("recorded_digest", "live_digest")
+    @classmethod
+    def _validate_digests(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not _SHA256_HEX_RE.fullmatch(value):
+            raise ValueError(
+                "handoff drift digest must be a 64-character lowercase "
+                "sha256 hex digest"
+            )
+        return value
 
 
 def _resolve_row(row: HandoffRow | None, handoff_id: str) -> HandoffResolution:
@@ -316,6 +471,58 @@ class HandoffRegistry(BaseModel):
         """Resolve every known handoff id in canonical registry order."""
         return tuple(self.resolve(handoff_id) for handoff_id in HANDOFF_IDS)
 
+    def accepted_vector(self) -> tuple[HandoffAcceptedEntry, ...]:
+        """Return the frozen accepted vector in canonical handoff-id order.
+
+        Only complete AND approved rows appear; every other row is absent
+        from the vector (typed UNKNOWN, non-dispatchable).  The vector
+        carries the exact accepted owner coordinates recorded in the rows.
+        """
+        entries: list[HandoffAcceptedEntry] = []
+        for handoff_id in HANDOFF_IDS:
+            resolution = self.resolve(handoff_id)
+            if (
+                resolution.state is HandoffResolutionState.ACCEPTED
+                and resolution.row is not None
+            ):
+                row = resolution.row
+                assert row.digest is not None
+                assert row.approval_evidence is not None
+                entries.append(
+                    HandoffAcceptedEntry(
+                        handoff_id=handoff_id,
+                        source_path=row.source_path,
+                        schema_identity=row.schema_identity,
+                        owner_api_identity=row.owner_api_identity,
+                        schema_version=row.schema_version,
+                        digest=row.digest,
+                        wbc_coordinates=row.wbc_coordinates,
+                        approval_evidence=row.approval_evidence,
+                    )
+                )
+        return tuple(entries)
+
+    def recorded_drift(self) -> tuple[HandoffDriftEntry, ...]:
+        """Return the frozen recorded drift baseline (pure, no file I/O).
+
+        Each entry carries the row's recorded digest (``None`` while
+        pending) and ``matches=False``: without a live artifact read the
+        drift is unverified.  :func:`verify_handoff_drift` computes the
+        live-digest variant.
+        """
+        return tuple(
+            HandoffDriftEntry(
+                handoff_id=handoff_id,
+                artifact_path=row.source_path,
+                recorded_digest=row.digest,
+                live_digest=None,
+                matches=False,
+            )
+            for handoff_id in HANDOFF_IDS
+            for row in self.rows
+            if row.id == handoff_id
+        )
+
     def registry_digest(self) -> str:
         """Canonical digest of the registry (stable, content-addressed)."""
         return canonical_digest(self)
@@ -362,19 +569,24 @@ M3_VIEW_VERSION: str = "m3.handoff.v1"
 #: coordinate rework and the T9/T7 follow-through rework landed).
 #: ``verify_frozen_digests`` recomputes the live digests and reports drift as
 #: data — the frozen view never mutates and never guesses a changed schema.
+#: M3 Step 15 (T16, 2026-08-17) refreshed the events/handoffs/sources/
+#: observation/projections/ledger digests AFTER the T1..T15 contract changes
+#: landed; the refresh was driven by the reported drift (never guessed), and
+#: every other digest (identity/contracts/boundaries/authority.coherence and
+#: all fixtures) still matches its live artifact.
 FROZEN_SCHEMA_DIGESTS: dict[str, str] = {
     "identity": "0ea6f35d77fdef6a8d664ec863a37e68c5fd070750235c672b1b4642132c4834",
     "contracts": "8743c5d94219b564883c10edcff8cd6f3754e145a5b1ecb71af9109a2fe031c3",
-    "events": "7e195df8281d7a643360f9f22cc9209ea21fb678b6fbca90ea1a5aae9077573d",
+    "events": "c130736d215bf947755160dd3dec4729984665f2f6d81d54b53341a7d366cb5b",
     #: ``handoffs`` is content-addressed over the declarative registry data
     #: (handoffs.json) — the registry schema is a data file, and a module
     #: digest would be self-referential (the constant lives in the module).
-    "handoffs": "0e042e393a9e250b29b2643a6df579b7ed11bf046eed94377df4944a52e3b44e",
-    "sources": "524eba40df9aff8892ee89a6a71a56d8d91169aae19539e16938484978f41d70",
+    "handoffs": "1a5872754afc9073287beb452dc1b9f5e29d7f39d9c19f7dd28cdcc04c773d1f",
+    "sources": "e2ece168591190c470d4eef10c824874724c83685e525074883d20f90889160b",
     "boundaries": "85e84195b5e6662f87effde7749ab70b791a12378d16b0bd6b0a626f5f8fac04",
-    "observation": "446f50b2345c03afa2a62e1912db1037b68d8beffd914f02664f465599ea9ef1",
-    "projections": "5f7faddc45e856deb057db2fa668e76158a9889c198b6b09ff7208273525f4d6",
-    "ledger": "52391679c6727de7f6ff9c49d0b6b88a35176ba2cb8bbef7af5ce06a4982d208",
+    "observation": "62039424ae301dcb8dd0d6529523c5d16d577b556a560d79c4c98e884531f5b6",
+    "projections": "499282bcd47bd5e47a6ededc61bf0c90708af1642ae23af37b4ae94f75f6f273",
+    "ledger": "f15027f711d4a2da5cc52ebd1347447cf49c6e30ceaf1eb6d53b6e530b317ce3",
     #: T10 compatibility facade module (replaces the old coherence algorithm).
     "authority.coherence": "d8a51d34e9607a849ebfb792f6db3ed6e2d92d459219789b85d8c2e2cac6b77e",
 }
@@ -475,6 +687,56 @@ def verify_frozen_digests(
     return report
 
 
+def verify_handoff_drift(
+    registry: HandoffRegistry | None = None,
+    *,
+    project_root: Path | None = None,
+) -> tuple[HandoffDriftEntry, ...]:
+    """Recompute every consumed source's live artifact digest and report drift.
+
+    Read-only and never raises: for each handoff row, the live artifact is
+    resolved at ``project_root / source_path`` and its sha256 digest is
+    compared against the recorded (approved) digest.  A missing artifact
+    reports ``live_digest=None`` with ``matches=False``; a pending row
+    reports ``recorded_digest=None`` with ``matches=False``; only an exact
+    recorded==live match reports ``matches=True``.  Drift is reported as
+    data — this function never writes, never guesses a replacement digest,
+    and never promotes a mismatched row.
+    """
+    handoffs = registry if registry is not None else default_handoff_registry()
+    root = project_root if project_root is not None else _project_root()
+    entries: list[HandoffDriftEntry] = []
+    for handoff_id in HANDOFF_IDS:
+        resolution = handoffs.resolve(handoff_id)
+        row = resolution.row
+        if row is None:
+            entries.append(
+                HandoffDriftEntry(
+                    handoff_id=handoff_id,
+                    artifact_path="",
+                    recorded_digest=None,
+                    live_digest=None,
+                    matches=False,
+                )
+            )
+            continue
+        artifact = root / row.source_path
+        live = _file_sha256(artifact) if artifact.is_file() else None
+        recorded = row.digest
+        entries.append(
+            HandoffDriftEntry(
+                handoff_id=handoff_id,
+                artifact_path=row.source_path,
+                recorded_digest=recorded,
+                live_digest=live,
+                matches=(
+                    recorded is not None and live is not None and live == recorded
+                ),
+            )
+        )
+    return tuple(entries)
+
+
 class MaintenanceHandoffView(BaseModel):
     """Canonical read-only M3-facing view over the Maintenance handoff state.
 
@@ -510,6 +772,12 @@ class MaintenanceHandoffView(BaseModel):
     pending_handoff_ids: tuple[str, ...] = ()
     unknown_handoff_ids: tuple[str, ...] = ()
     handoff_resolutions: tuple[HandoffResolution, ...] = ()
+
+    #: The frozen accepted vector: exact accepted owner coordinates per
+    #: consumed source (empty while every handoff stays pending).
+    accepted_vector: tuple[HandoffAcceptedEntry, ...] = ()
+    #: Frozen drift per consumed source (recorded vs live artifact digest).
+    drift: tuple[HandoffDriftEntry, ...] = ()
 
     #: All open (non-accepted) production approvals — enforcement-only
     #: blockers.  Shadow/report operation is never disabled by these.
@@ -610,6 +878,45 @@ class MaintenanceHandoffView(BaseModel):
             raise ValueError(
                 "enforcement_blocked must equal whether any pending blocker exists"
             )
+        # 4. The frozen accepted vector must be derived EXACTLY from the
+        #    accepted resolutions' rows, in canonical handoff-id order.
+        if len({entry.handoff_id for entry in self.accepted_vector}) != len(
+            self.accepted_vector
+        ):
+            raise ValueError("handoff view accepted_vector must not repeat handoff ids")
+        if {entry.handoff_id for entry in self.accepted_vector} != accepted:
+            raise ValueError(
+                "accepted_vector must cover exactly the accepted handoff resolutions"
+            )
+        for entry in self.accepted_vector:
+            resolution = next(
+                resolution
+                for resolution in self.handoff_resolutions
+                if resolution.handoff_id == entry.handoff_id
+            )
+            row = resolution.row
+            if row is None:
+                raise ValueError(
+                    f"accepted_vector entry {entry.handoff_id!r} has no row"
+                )
+            if (
+                entry.source_path != row.source_path
+                or entry.schema_identity != row.schema_identity
+                or entry.owner_api_identity != row.owner_api_identity
+                or entry.schema_version != row.schema_version
+                or entry.digest != row.digest
+                or entry.wbc_coordinates != row.wbc_coordinates
+                or entry.approval_evidence != row.approval_evidence
+            ):
+                raise ValueError(
+                    f"accepted_vector entry {entry.handoff_id!r} does not match "
+                    "its handoff resolution row"
+                )
+        # 5. Drift must cover exactly every consumed source (closed).
+        if {entry.handoff_id for entry in self.drift} != set(HANDOFF_IDS):
+            raise ValueError(
+                "handoff view drift must cover exactly every consumed source"
+            )
         return self
 
     @property
@@ -631,12 +938,15 @@ class MaintenanceHandoffView(BaseModel):
 def build_handoff_view(
     *,
     registry: HandoffRegistry | None = None,
+    drift: Sequence[HandoffDriftEntry] | None = None,
 ) -> MaintenanceHandoffView:
     """Build the canonical read-only M3 handoff view from a strict registry.
 
     Deterministic: the view is a pure function of the registry rows plus the
     frozen digest/version constants above.  It performs no file I/O, no
-    mutation, and no dispatch.
+    mutation, and no dispatch.  ``drift`` optionally carries the live
+    drift report (see :func:`verify_handoff_drift`); when omitted the view
+    carries the pure recorded-drift baseline (every entry ``matches=False``).
     """
     handoffs = registry if registry is not None else default_handoff_registry()
     resolutions = handoffs.resolve_all()
@@ -660,6 +970,11 @@ def build_handoff_view(
         for resolution in resolutions
         if resolution.state is not HandoffResolutionState.ACCEPTED
     )
+    drift_entries = (
+        tuple(drift)
+        if drift is not None
+        else handoffs.recorded_drift()
+    )
     return MaintenanceHandoffView(
         schema_version=MAINTENANCE_SCHEMA_VERSION,
         view_version=M3_VIEW_VERSION,
@@ -674,6 +989,8 @@ def build_handoff_view(
         pending_handoff_ids=pending,
         unknown_handoff_ids=unknown,
         handoff_resolutions=resolutions,
+        accepted_vector=handoffs.accepted_vector(),
+        drift=drift_entries,
         pending_blockers=blockers,
         enforcement_blocked=bool(blockers),
         enforcement_enabled=False,
@@ -684,11 +1001,14 @@ def build_handoff_view(
 
 __all__ = [
     "ADAPTER_VERSIONS",
+    "ApprovalEvidence",
     "ApprovalState",
     "COMPATIBILITY_FACADE_IDENTITY",
     "FROZEN_FIXTURE_DIGESTS",
     "FROZEN_SCHEMA_DIGESTS",
     "HANDOFF_IDS",
+    "HandoffAcceptedEntry",
+    "HandoffDriftEntry",
     "HandoffRegistry",
     "HandoffResolution",
     "HandoffResolutionReason",
@@ -702,4 +1022,5 @@ __all__ = [
     "default_handoff_registry",
     "load_handoff_registry",
     "verify_frozen_digests",
+    "verify_handoff_drift",
 ]

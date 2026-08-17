@@ -1299,6 +1299,60 @@ def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
     return not repair_request_contract_violations(request)
 
 
+def _normalize_terminal_receipt_expectations(
+    raw: list[str] | None,
+) -> list[str]:
+    """Normalize declared terminal receipt expectations.
+
+    Strips whitespace, drops empty values, and deduplicates while preserving
+    order.  ``None`` / empty input normalizes to ``[]`` (nothing persisted).
+    """
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        value = str(item).strip()
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _terminal_expectations_divergent(
+    existing: Mapping[str, Any] | None,
+    normalized: list[str],
+) -> bool:
+    """True when a persisted request's expectations differ from *normalized*.
+
+    An exact retry reproduces the identical expectation set and coalesces;
+    any difference (including one side empty) is a divergent reuse of the
+    declared terminal contract and must fail closed.
+    """
+    if existing is None:
+        return False
+    persisted = _normalize_terminal_receipt_expectations(
+        existing.get("terminal_receipt_expectations")
+    )
+    return persisted != normalized
+
+
+def _terminal_expectations_divergent_result(
+    existing: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Typed fail-closed result for a divergent terminal-expectation retry.
+
+    Never creates a successor request and never appends a coalesced
+    decision; the persisted request is returned read-only as evidence.
+    """
+    return {
+        "status": "divergent_reuse",
+        "outcome": "divergent_reuse",
+        "request": dict(existing),
+        "evidence": {"reason": "terminal_receipt_expectations mismatch"},
+    }
+
+
 def enqueue_repair_request(
     *,
     queue_root: str | Path,
@@ -1318,6 +1372,7 @@ def enqueue_repair_request(
     acceptance_snapshot_hash: str = "",
     lease_store_dir: str | Path | None = None,
     repair_identity: Mapping[str, Any] | None = None,
+    terminal_receipt_expectations: list[str] | None = None,
 ) -> dict[str, Any]:
     """Write a request marker once, recording any rejection/coalescing separately.
 
@@ -1501,6 +1556,12 @@ def enqueue_repair_request(
     record["repair_identity"] = normalized_identity
     record["repair_identity_key"] = repair_identity_key(normalized_identity)
 
+    normalized_expectations = _normalize_terminal_receipt_expectations(
+        terminal_receipt_expectations
+    )
+    if normalized_expectations:
+        record["terminal_receipt_expectations"] = normalized_expectations
+
     if stale_reason:
         _write_once_json(request_path, record)
         decision = write_decision(
@@ -1531,6 +1592,8 @@ def enqueue_repair_request(
         repair_identity=normalized_identity,
     )
     if existing is not None and existing["request_id"] != request_id:
+        if _terminal_expectations_divergent(existing, normalized_expectations):
+            return _terminal_expectations_divergent_result(existing)
         decision = write_decision(
             queue_root,
             request_id=request_id,
@@ -1542,6 +1605,13 @@ def enqueue_repair_request(
 
     wrote = _write_once_json(request_path, record)
     if not wrote:
+        raced_request: Mapping[str, Any] = {}
+        try:
+            raced_request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            raced_request = {}
+        if _terminal_expectations_divergent(raced_request, normalized_expectations):
+            return _terminal_expectations_divergent_result(raced_request)
         decision = write_decision(
             queue_root,
             request_id=request_id,
@@ -3105,6 +3175,7 @@ def enqueue_occurrence_bound_repair_request(
         acceptance_snapshot_hash=acceptance_snapshot_hash,
         lease_store_dir=lease_store_dir,
         repair_identity=normalized_identity,
+        terminal_receipt_expectations=terminal_receipt_expectations,
     )
 
 
