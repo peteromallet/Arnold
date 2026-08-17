@@ -11,5 +11,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+# Completion-driven fixer agents (user directive 2026-08-17 "NO turn limit";
+# mirrors the megaplan worker max_iterations=None fix 6a61613962). Without
+# this, the hermes agent hits the default 90-tool-call cap mid-investigation
+# and hands back a truncated final status (observed 2026-08-17: mega m3b
+# fixer investigator hit the cap before finishing its rebind verification).
+export ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1
 PYTHONPATH="$ROOT:${PYTHONPATH:-}" python3 -P -m \
   arnold_pipelines.megaplan.cloud.babysitter.launch "$@"
