@@ -276,6 +276,27 @@ def _collect_finalized_task_claimed_paths(
             for path in raw_files
             if isinstance(path, str) and path.strip()
         }
+        # Adopt-miss read-path fix: a terminal task's ADMITTED write_set is
+        # durable ownership evidence even when FLAG-006 softening left
+        # ``files_changed`` empty (task verified an existing implementation or
+        # completed without a fresh edit).  Without this, a committed file in
+        # the milestone window that only appears in a done task's write_set is
+        # mis-read as unclaimed and trips scope-drift ``high`` on EVERY
+        # closeout -> permanent ``blocked_by_quality`` (the astrid m2
+        # kit.py / output_result_exemptions.json loop).
+        raw_write_set = task.get("write_set")
+        write_set_paths: list[str] = []
+        if isinstance(raw_write_set, dict):
+            raw_paths = raw_write_set.get("paths", [])
+            if isinstance(raw_paths, list):
+                write_set_paths = [p for p in raw_paths if isinstance(p, str)]
+        elif isinstance(raw_write_set, list):
+            write_set_paths = [p for p in raw_write_set if isinstance(p, str)]
+        claimed |= {
+            _normalize_execute_claimed_path(path, project_dir)
+            for path in write_set_paths
+            if path.strip()
+        }
     return claimed
 
 

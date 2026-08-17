@@ -99,7 +99,17 @@ def _parse_numstat_count(value: str) -> int:
 
 
 def collect_loc_by_file(project_dir: Path, candidate_paths: set[str]) -> dict[str, int]:
-    """Return added LOC by changed path, including untracked files."""
+    """Return added LOC by changed path, including untracked files.
+
+    A tracked file that is CLEAN in the working tree (no diff vs HEAD) has
+    ZERO added lines: the numstat produces no row for it and the fallback must
+    NOT count the full file.  Counting committed-clean files as fully-added
+    inflated ``loc_added_outside_claimed`` and made the scope-drift gate trip
+    ``high`` on every closeout for milestone-window files that were committed
+    by the fixer/repair lineage but claimed by no task (permanent
+    ``blocked_by_quality``).  Only UNTRACKED files (no numstat row AND not
+    tracked at HEAD) fall back to a full-file line count.
+    """
     if not candidate_paths:
         return {}
     loc_by_file: dict[str, int] = {}
@@ -121,8 +131,25 @@ def collect_loc_by_file(project_dir: Path, candidate_paths: set[str]) -> dict[st
                 continue
             added, _removed, path = parts[0], parts[1], parts[2]
             loc_by_file[path] = _parse_numstat_count(added)
+    try:
+        tracked = set(
+            subprocess.run(
+                ["git", "ls-files", "--", *paths],
+                cwd=project_dir,
+                text=True,
+                capture_output=True,
+                check=False,
+            ).stdout.splitlines()
+        )
+    except Exception:
+        tracked = set()
     for path in paths:
         if path in loc_by_file:
+            continue
+        if path in tracked:
+            # Tracked but no numstat row -> committed-clean (or intent-to-add
+            # with no content): zero added lines, never the full file.
+            loc_by_file[path] = 0
             continue
         try:
             loc_by_file[path] = (project_dir / path).read_text(encoding="utf-8").count("\n")
