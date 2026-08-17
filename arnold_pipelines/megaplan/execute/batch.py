@@ -3096,6 +3096,10 @@ def _run_and_merge_batch(
         finalize_data=finalize_data,
         batch_task_ids=batch_task_ids,
         is_final_batch=_is_final_batch_flag,
+        # Admission-only: the execute admission gate may accept pytest exit
+        # code 1 when every failed node ID is a plan-baseline-known failure.
+        # Deferred/final rechecks and sweeps never opt into subtraction.
+        admission=True,
     )
     _dispatch_start = time.monotonic()
     # M8A T16 - under opt-in canary enforcement, when repair adoption
@@ -3818,7 +3822,69 @@ def _persist_validation_recovery_receipt(
         )
 
 
-def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None):
+def _validation_failure_ids(raw: object) -> list[str] | None:
+    """Normalize baseline/failure payloads to canonical pytest node IDs.
+
+    Accepts a list of plain node-ID strings or a list of records carrying a
+    canonical ``node_id`` key.  Returns ``None`` (fail-closed) for null,
+    empty, malformed, or partially-blank input so callers never subtract on
+    ambiguous evidence.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    ids: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            node_id = item
+        elif isinstance(item, Mapping) and isinstance(item.get("node_id"), str):
+            node_id = item["node_id"]
+        else:
+            return None
+        if not node_id.strip():
+            return None
+        ids.append(node_id)
+    return ids
+
+
+def _baseline_known_failures_only(
+    *,
+    exit_code: int | None,
+    failed_test_ids: object,
+    baseline_test_failures: object,
+    collection_errors: object,
+    timeout_reason: object,
+    status: object,
+) -> list[str] | None:
+    """Return the baseline-known failure IDs to admit, or ``None`` to block.
+
+    Pre-dispatch admission (``admission=True`` at the execute admission
+    gate) accepts pytest exit code 1 ONLY when every observed failed node ID
+    is a member of the plan's non-empty baseline.  Everything else fails
+    closed: exit codes 2-5, runner errors, timeouts, collection errors, and
+    any new failure keep the strict blocking path.  This is admission, not
+    enforcement: the real ``exit_code`` and failure list stay in the
+    evidence, and deferred/final rechecks never opt into subtraction.
+    """
+    if exit_code != 1:
+        return None
+    if status != "failed":
+        return None
+    if timeout_reason not in (None, ""):
+        return None
+    if collection_errors:
+        return None
+    baseline_ids = _validation_failure_ids(baseline_test_failures)
+    observed_ids = _validation_failure_ids(failed_test_ids)
+    if baseline_ids is None or observed_ids is None:
+        return None
+    if not baseline_ids or not observed_ids:
+        return None
+    if set(observed_ids) - set(baseline_ids):
+        return None
+    return sorted(set(observed_ids))
+
+
+def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None, admission: bool = False):
     """Run deterministic harness validation jobs outside model dispatch (M8A T10).
 
     Returns a list of content-addressed evidence dicts (one per applicable
@@ -4110,6 +4176,42 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 },
             )
         if result.exit_code not in expected_exit_codes:
+            _subtracted_test_ids: list[str] | None = None
+            if admission and kind == "narrow_recheck":
+                _subtracted_test_ids = _baseline_known_failures_only(
+                    exit_code=result.exit_code,
+                    failed_test_ids=list(result.failures or []),
+                    baseline_test_failures=finalize_data.get(
+                        "baseline_test_failures"
+                    ),
+                    collection_errors=list(result.collection_errors or []),
+                    timeout_reason=result.timeout_reason,
+                    status=result.status,
+                )
+            if _subtracted_test_ids is not None:
+                # Admission-only pre-dispatch gate: the job failed ONLY on
+                # node IDs the plan baseline already records as failing.
+                # Keep the real exit_code + failures in the evidence and mark
+                # the admission explicitly; deferred/final rechecks stay
+                # strict and never subtract.
+                evidence["status"] = "baseline_known_failures_only"
+                evidence["admission"] = "pre_dispatch"
+                evidence["subtracted_test_ids"] = _subtracted_test_ids
+                evidence["new_failed_test_ids"] = []
+                _baseline_ids = _validation_failure_ids(
+                    finalize_data.get("baseline_test_failures")
+                )
+                evidence["baseline_test_failures_count"] = (
+                    len(_baseline_ids) if _baseline_ids is not None else 0
+                )
+                log.warning(
+                    "validation job %s admitted on baseline-known failures "
+                    "only (exit_code=%s, subtracted=%s)",
+                    job_id,
+                    result.exit_code,
+                    _subtracted_test_ids,
+                )
+                continue
             _shadow_backstop = False
             try:
                 _ps = _json.loads(
