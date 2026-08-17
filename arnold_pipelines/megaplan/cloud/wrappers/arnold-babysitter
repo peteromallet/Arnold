@@ -23,5 +23,13 @@ export ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1
 # writes, and the babysitter never re-dispatches. Cap the join at 600s so a
 # stalled stream fails the agent cleanly and the watchdog re-dispatches.
 export HERMES_DEEPSEEK_API_TIMEOUT=600
+# Persistent terminal shell (codex consult 2026-08-17): Hermes' local
+# terminal is STATELESS by default (every command spawns a fresh bash -lic),
+# so an agent that issues a standalone `cd` has its cwd reset next call ->
+# it cd's again -> infinite cd-loop wedge (5+ recurrences today despite
+# timeouts/wedged-redispatch). Enable the persistent shell so cwd survives
+# between tool calls; the persistent implementation updates self.cwd after
+# every command (persistent_shell.py).
+export TERMINAL_LOCAL_PERSISTENT=1
 PYTHONPATH="$ROOT:${PYTHONPATH:-}" python3 -P -m \
   arnold_pipelines.megaplan.cloud.babysitter.launch "$@"
