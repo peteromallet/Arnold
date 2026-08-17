@@ -35,6 +35,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import urllib.parse
@@ -91,6 +92,8 @@ RECEIPT_ALIASES_PROTECTED_STATE = "receipt_aliases_protected_state"
 RECEIPT_POST_VERIFY_FAILED = "receipt_post_verify_failed"
 
 _FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+_GIT_SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
 _VALID_STATES = frozenset({"active", "closed"})
 
@@ -174,6 +177,64 @@ def _require_keys(label: str, mapping: Any, required: tuple[str, ...]) -> None:
     missing = [key for key in required if key not in mapping]
     if missing:
         raise ManifestError(f"{label} missing required keys: {', '.join(missing)}")
+
+
+def _require_git_sha40(value: object, *, label: str) -> str:
+    """Shape-check *value* as a 40-char lowercase hex git commit SHA.
+
+    This is a pure shape check — it does NOT verify the object exists in any
+    repository.  It rejects the observed corruption pattern (41-char heads
+    built from a 10-char real prefix plus a fabricated tail) at the boundary
+    before any git lookup.
+    """
+    head = str(value or "").strip()
+    if not _GIT_SHA40.fullmatch(head):
+        raise ManifestError(
+            f"{label} must be a 40-char lowercase hex git SHA, got {value!r}"
+        )
+    return head
+
+
+def _require_resolvable_head(runtime_root: str | Path, head: str) -> str:
+    """Require *head* to be a 40-hex SHA that RESOLVES to that exact commit
+    in the git repository at *runtime_root*.
+
+    The equality check is deliberate: ``^{commit}`` must resolve to the exact
+    supplied commit ID, not merely peel some other object such as an
+    annotated tag.  Raises :class:`ManifestError` on shape failure, a missing
+    runtime root, or an unresolvable head — callers must treat that as a
+    hard refusal BEFORE any manifest/pointer write.
+    """
+    value = _require_git_sha40(head, label="head")
+    root_text = str(runtime_root or "").strip()
+    if not root_text:
+        raise ManifestError("runtime root is required to verify head")
+    root = Path(root_text).expanduser().resolve(strict=False)
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                f"{value}^{{commit}}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise ManifestError(
+            f"cannot verify head {value!r} in {root}: {exc}"
+        ) from exc
+    resolved = proc.stdout.strip() if proc.returncode == 0 else ""
+    if resolved != value:
+        raise ManifestError(
+            f"head {value!r} does not resolve to that commit in {root}"
+        )
+    return value
 
 
 def _parse_utc_timestamp(value: Any, label: str) -> datetime:
@@ -799,6 +860,11 @@ def advance_generation(
             "dependency_generation proof; unknown dependency state blocks "
             "publication (T-0301)"
         )
+    # Git-object head guard: the new commit must be a 40-hex SHA that
+    # RESOLVES to that exact commit in the runtime root.  This rejects the
+    # recurring fake-head corruption (10-char real prefix + fabricated tail)
+    # BEFORE any promotion record or pointer write (codex fix 2026-08-17).
+    _require_resolvable_head(manifest.epic.get("runtime_root"), new_commit)
     previous_commit = str(manifest.epic.get("expected_head", ""))
     now = _utc_now()
     promotions = list(manifest.promotions) + [
@@ -908,6 +974,13 @@ def cutover_runtime_manifest(
             "cutover refused: from-expected-head does not match "
             "manifest epic.expected_head"
         )
+    # Git-object head guard: the TARGET head must be a 40-hex SHA that
+    # RESOLVES to that exact commit in the TARGET runtime root.  This rejects
+    # the recurring fake-head corruption (10-char real prefix + fabricated
+    # tail) BEFORE any promotion record or manifest write (codex fix
+    # 2026-08-17).  The FROM side is CAS-guarded above by equality; only the
+    # TO side is git-verified (a from-side fake head is historical evidence).
+    _require_resolvable_head(to_runtime_root, to_expected_head)
     now = _utc_now()
     promotions = list(manifest.promotions) + [
         {
@@ -1001,9 +1074,21 @@ def set_state(manifest: RuntimeManifest, state: str) -> RuntimeManifest:
 def append_promotion(
     manifest: RuntimeManifest, record: dict[str, Any]
 ) -> RuntimeManifest:
-    """Return a NEW manifest with *record* appended to ``promotions``."""
+    """Return a NEW manifest with *record* appended to ``promotions``.
+
+    Present, non-empty commit fields (``previous_commit``, ``from_sha``,
+    ``to_sha``) are shape-checked as 40-hex git SHAs; a record that omits
+    them (or leaves them empty) is still accepted, and no git lookup is
+    performed here — a journal record can legitimately describe a commit in
+    a source repository other than the manifest's current runtime root
+    (codex fix 2026-08-17).
+    """
     if not isinstance(record, dict):
         raise ManifestError("promotion record must be an object")
+    for key in ("previous_commit", "from_sha", "to_sha"):
+        value = record.get(key)
+        if value not in (None, ""):
+            _require_git_sha40(value, label=key)
     return _reconstruct(manifest, promotions=list(manifest.promotions) + [record])
 
 

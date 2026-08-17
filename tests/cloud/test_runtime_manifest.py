@@ -149,6 +149,36 @@ def _make_deviation(**overrides: object) -> dict[str, object]:
     return record
 
 
+def _real_git_repo(tmp_path: Path) -> tuple[Path, str]:
+    """Create a REAL temporary git repository with one commit.
+
+    Returns ``(root, head_sha)``.  Used by tests that exercise the
+    git-object head guard (advance_generation / cutover success paths and
+    their rejection tests) — the guard rejects correctly shaped but
+    non-object 40-hex heads, so fake SHAs can no longer pass those paths.
+    """
+    root = tmp_path / "real-repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.name", "Test"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    (root / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "seed"], check=True)
+    sha = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return root, sha
+
+
 def _make_attestation_tree(tmp_path: Path) -> Path:
     """Minimal importable-layout tree so the tree-search fallback resolves the
     module file inside the tree (mirrors test_shadow_attestation)."""
@@ -284,36 +314,38 @@ def test_index_skips_non_manifest_json(tmp_path: Path) -> None:
 # ── transitions ─────────────────────────────────────────────────────────────
 
 
-def test_advance_generation_bumps_and_records_promotion() -> None:
+def test_advance_generation_bumps_and_records_promotion(tmp_path: Path) -> None:
+    root, head = _real_git_repo(tmp_path)
     manifest = _make_manifest_obj(
         generation=2,
-        epic={"expected_head": "aaaa1111"},
-        indirection={"verified_head": "aaaa1111"},
+        epic={"runtime_root": str(root), "expected_head": head},
+        indirection={"verified_head": head},
     )
-    advanced = advance_generation(manifest, "bbbb2222", reason="promote durable fix")
+    advanced = advance_generation(manifest, head, reason="promote durable fix")
     assert advanced is not manifest
     assert advanced.generation == 3
-    assert advanced.epic["expected_head"] == "bbbb2222"
-    assert advanced.indirection["verified_head"] == "bbbb2222"
+    assert advanced.epic["expected_head"] == head
+    assert advanced.indirection["verified_head"] == head
     assert advanced.timestamps["updated"]
     assert len(advanced.promotions) == 1
     record = advanced.promotions[0]
     assert record["previous_generation"] == 2
-    assert record["previous_commit"] == "aaaa1111"
+    assert record["previous_commit"] == head
     assert record["reason"] == "promote durable fix"
     assert record["at"]
     # original manifest untouched (rollback source retained on the new one)
     assert manifest.generation == 2
-    assert manifest.epic["expected_head"] == "aaaa1111"
+    assert manifest.epic["expected_head"] == head
     assert manifest.promotions == []
 
 
 # ── T-0301: content-addressed dependency generation ─────────────────────────
 
 
-def test_advance_generation_carries_the_generation_proof() -> None:
-    manifest = _make_manifest_obj()
-    advanced = advance_generation(manifest, "bbbb2222", reason="carry proof")
+def test_advance_generation_carries_the_generation_proof(tmp_path: Path) -> None:
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
+    advanced = advance_generation(manifest, head, reason="carry proof")
     assert (
         advanced.epic["dependency_generation"]
         == manifest.epic["dependency_generation"]
@@ -330,19 +362,51 @@ def test_advance_generation_refuses_without_proof() -> None:
         advance_generation(manifest, "bbbb2222", reason="no proof")
 
 
-def test_advance_generation_accepts_explicit_override_proof() -> None:
-    manifest = _make_manifest_obj()
+def test_advance_generation_accepts_explicit_override_proof(tmp_path: Path) -> None:
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
     del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
     override = _generation_proof(
         "/opt/elsewhere/venv/bin/python", id="f" * 64, frozen_spec_sha256="f" * 64
     )
     advanced = advance_generation(
         manifest,
-        "bbbb2222",
+        head,
         reason="explicit rebuilt generation",
         dependency_generation=override,
     )
     assert advanced.epic["dependency_generation"] == override
+
+
+def test_advance_generation_rejects_non_object_head_and_accepts_real_commit(
+    tmp_path: Path,
+) -> None:
+    """Git-object head guard (codex fix 2026-08-17): a correctly SHAPED but
+    fabricated 40-hex head (real prefix + invented tail — the recurring
+    corruption pattern) is REFUSED before any promotion record is built, and
+    the input manifest is untouched; the REAL commit SHA advances."""
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(
+        generation=2,
+        epic={"runtime_root": str(root), "expected_head": head},
+        indirection={"verified_head": head},
+    )
+    fake = head[:10] + "a" * 30  # 40-hex, correct shape, not a git object
+    with pytest.raises(ManifestError, match="does not resolve"):
+        advance_generation(manifest, fake, reason="fake head must refuse")
+    # zero mutation: no promotion record, same generation, same head
+    assert manifest.generation == 2
+    assert manifest.epic["expected_head"] == head
+    assert manifest.promotions == []
+    # and the 41-char prefix+tail pattern is rejected at shape (not git)
+    with pytest.raises(ManifestError, match="40-char lowercase hex"):
+        advance_generation(manifest, head[:10] + "a" * 31, reason="41-char fake")
+    assert manifest.promotions == []
+    # the REAL commit advances
+    advanced = advance_generation(manifest, head, reason="real head advances")
+    assert advanced.generation == 3
+    assert advanced.epic["expected_head"] == head
+    assert len(advanced.promotions) == 1
 
 
 def test_validate_dependency_generation_rejects_malformed_records() -> None:
@@ -418,19 +482,62 @@ def test_set_state_validates_and_stamps_closed_timestamp() -> None:
     assert reopened.timestamps["closed"] == closed.timestamps["closed"]
 
 
-def test_append_promotion() -> None:
+def test_append_promotion(tmp_path: Path) -> None:
+    _, head = _real_git_repo(tmp_path)
     manifest = _make_manifest_obj()
     record = {
         "previous_generation": 1,
-        "previous_commit": "c1",
-        "reason": "manual rollback record",
+        "previous_commit": head,
+        "reason": "rollback record",
         "at": "2026-08-07T12:00:00+00:00",
     }
     updated = append_promotion(manifest, record)
     assert updated.promotions == [record]
     assert manifest.promotions == []
+    # a record WITHOUT commit fields (journal-only) is still accepted
+    journal_only = append_promotion(manifest, {"previous_generation": 1})
+    assert journal_only.promotions == [{"previous_generation": 1}]
     with pytest.raises(ManifestError, match="record"):
         append_promotion(manifest, ["not", "a", "dict"])
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("previous_commit", "c1"),
+        ("previous_commit", "ZZ" * 20),
+        ("from_sha", "short"),
+        ("from_sha", "x" * 40),
+        ("to_sha", "d" * 39),
+    ],
+)
+def test_append_promotion_rejects_malformed_commit_fields(
+    field: str, bad_value: str
+) -> None:
+    """Codex fix 2026-08-17: present, non-empty commit fields in a promotion
+    record must be 40-char lowercase hex — short / non-hex / wrong-length
+    values are refused; records that omit the fields (or leave them empty)
+    stay accepted."""
+    manifest = _make_manifest_obj()
+    record = {"previous_generation": 1, field: bad_value}
+    with pytest.raises(ManifestError, match=field):
+        append_promotion(manifest, record)
+    assert manifest.promotions == []
+
+
+def test_append_promotion_accepts_40hex_commit_fields() -> None:
+    """Codex fix 2026-08-17: 40-hex commit fields pass the shape check
+    (no git lookup at append time — a journal record may reference another
+    repository)."""
+    manifest = _make_manifest_obj()
+    record = {
+        "previous_commit": "a" * 40,
+        "from_sha": "b" * 40,
+        "to_sha": "c" * 40,
+        "reason": "rolled back",
+    }
+    updated = append_promotion(manifest, record)
+    assert updated.promotions == [record]
 
 
 # ── deviations (expiring exception records) ─────────────────────────────────
@@ -459,20 +566,22 @@ def test_deviations_round_trip_preserved(tmp_path: Path) -> None:
     assert load_manifest(path).deviations == [record]
 
 
-def test_all_transitions_preserve_deviations() -> None:
+def test_all_transitions_preserve_deviations(tmp_path: Path) -> None:
     record = _make_deviation()
-    manifest = _make_manifest_obj(deviations=[record])
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(
+        deviations=[record], epic={"runtime_root": str(root)}
+    )
     closed = set_state(manifest, "closed")
     assert closed.deviations == [record]
-    advanced = advance_generation(manifest, "newsha001", reason="preserve check")
+    advanced = advance_generation(manifest, head, reason="preserve check")
     assert advanced.deviations == [record]
     promoted = append_promotion(
         manifest,
         {
             "previous_generation": 1,
-            "previous_commit": "c1",
+            "previous_commit": head,
             "reason": "rollback record",
-            "at": "2026-08-07T12:00:00+00:00",
         },
     )
     assert promoted.deviations == [record]
@@ -946,11 +1055,14 @@ def test_write_manifest_does_not_force_marker_on_per_slug_path(
     assert is_compatibility_only_pointer(pointer) is True
 
 
-def test_reconstruct_preserves_compatibility_only() -> None:
+def test_reconstruct_preserves_compatibility_only(tmp_path: Path) -> None:
     """Every immutable transition (advance_generation / set_state) carries the
     marker — promote and close cannot strip it from the pointer."""
-    marked = _make_manifest_obj(compatibility_only=True)
-    advanced = advance_generation(marked, "newsha001", reason="preserve marker")
+    root, head = _real_git_repo(tmp_path)
+    marked = _make_manifest_obj(
+        compatibility_only=True, epic={"runtime_root": str(root)}
+    )
+    advanced = advance_generation(marked, head, reason="preserve marker")
     assert advanced.compatibility_only is True
     closed = set_state(advanced, "closed")
     assert closed.compatibility_only is True
@@ -1091,7 +1203,9 @@ def test_cli_append_promotion_inline_and_file(tmp_path: Path) -> None:
     path = tmp_path / "m.json"
     write_manifest(_make_manifest_obj(), path)
     env = _cli_env(tmp_path)
-    record = '{"from_sha": "abc123", "to_sha": "def456", "result": "pushed"}'
+    sha_a = "a" * 40
+    sha_b = "b" * 40
+    record = f'{{"from_sha": "{sha_a}", "to_sha": "{sha_b}", "result": "pushed"}}'
     proc = _run_cli(env, "append_promotion", str(path), record)
     assert proc.returncode == 0, proc.stderr
     record_file = tmp_path / "record.json"
@@ -1099,7 +1213,7 @@ def test_cli_append_promotion_inline_and_file(tmp_path: Path) -> None:
     proc_file = _run_cli(env, "append_promotion", str(path), f"@{record_file}")
     assert proc_file.returncode == 0, proc_file.stderr
     manifest = load_manifest(path)
-    assert [p["to_sha"] for p in manifest.promotions] == ["def456", "def456"]
+    assert [p["to_sha"] for p in manifest.promotions] == [sha_b, sha_b]
 
 
 def test_cli_append_promotion_rejects_bad_record(tmp_path: Path) -> None:
@@ -1117,39 +1231,45 @@ def test_cli_append_promotion_rejects_bad_record(tmp_path: Path) -> None:
 def test_cli_advance_generation_switches_pointer_and_retains_previous(
     tmp_path: Path,
 ) -> None:
+    root, head = _real_git_repo(tmp_path)
     pointer = tmp_path / "runtime-manifest.json"
     path = tmp_path / "m.json"
-    manifest = _make_manifest_obj(generation=1, epic={"expected_head": "abc123def"})
+    manifest = _make_manifest_obj(
+        generation=1,
+        epic={"runtime_root": str(root), "expected_head": head},
+        indirection={"verified_head": head},
+    )
     write_manifest(manifest, path)
     # pointer already holds gen 1 (as runtime-create writes it at creation)
     write_active_pointer(manifest, pointer)
     env = _cli_env(tmp_path)
     proc = _run_cli(
-        env, "advance_generation", str(path), "newsha001", "--reason", "cli test"
+        env, "advance_generation", str(path), head, "--reason", "cli test"
     )
     assert proc.returncode == 0, proc.stderr
     advanced = load_manifest(path)
     assert advanced.generation == 2
-    assert advanced.epic["expected_head"] == "newsha001"
+    assert advanced.epic["expected_head"] == head
     # pointer switched to the new generation
     pointer_manifest = load_manifest(pointer)
     assert pointer_manifest.generation == 2
-    assert pointer_manifest.epic["expected_head"] == "newsha001"
+    assert pointer_manifest.epic["expected_head"] == head
     # previous generation retained for rollback
     retention = tmp_path / "runtime-manifest.json.previous-1.json"
     assert retention.exists()
     assert load_manifest(retention).generation == 1
-    assert load_manifest(retention).epic["expected_head"] == "abc123def"
+    assert load_manifest(retention).epic["expected_head"] == head
     # bootstrap resolves through the pointer to the ACTIVE generation
     assert bootstrap_manifest(pointer) == advanced
 
 
 def test_cli_advance_generation_creates_pointer_when_absent(tmp_path: Path) -> None:
+    root, head = _real_git_repo(tmp_path)
     path = tmp_path / "m.json"
-    write_manifest(_make_manifest_obj(), path)
+    write_manifest(_make_manifest_obj(epic={"runtime_root": str(root)}), path)
     env = _cli_env(tmp_path)
     proc = _run_cli(
-        env, "advance_generation", str(path), "newsha002", "--reason", "first promotion"
+        env, "advance_generation", str(path), head, "--reason", "first promotion"
     )
     assert proc.returncode == 0, proc.stderr
     assert (tmp_path / "runtime-manifest.json").exists()
@@ -1279,6 +1399,7 @@ def test_compatibility_only_survives_create_promote_close_lifecycle(
     survives promote (``advance_generation``) and close (``set_state``)
     through the real CLI pointer path, and the pointer stays
     NON-AUTHORITATIVE at every step (G2 correction 1 + second re-run)."""
+    _stub_git_head_guard(monkeypatch)
     pointer = tmp_path / "runtime-manifest.json"
     monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
 
@@ -1460,6 +1581,21 @@ def _make_cutover_runtime_tree(tmp_path: Path) -> tuple[str, str, str]:
     return str(to_root), str(venv), str(repair)
 
 
+def _stub_git_head_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Narrowly bypass the git-object head guard (codex fix 2026-08-17) in
+    tests whose sole subject is NOT the guard — field relocation, receipt
+    handling, and error precedence.  The dedicated real-repo tests
+    (``test_advance_generation_rejects_non_object_head_*``,
+    ``test_cutover_runtime_manifest_rejects_non_object_target_head``, and
+    ``test_runtime_manifest_cli_rejects_fake_sha_generation_advance`` in the
+    lifecycle suite) exercise the REAL guard; this is a per-test stub only.
+    """
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest._require_resolvable_head",
+        lambda runtime_root, head: head,
+    )
+
+
 def _cutover_cli_args(
     path: Path,
     *,
@@ -1553,7 +1689,10 @@ def _self_asserting_identity_and_receipt(
     return identity_path, receipt_path
 
 
-def test_cutover_runtime_manifest_moves_runtime_facts_and_bumps_generation() -> None:
+def test_cutover_runtime_manifest_moves_runtime_facts_and_bumps_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_git_head_guard(monkeypatch)
     manifest = _make_manifest_obj(
         generation=2,
         base={"commit": _FROM_EXPECTED_HEAD},  # schema-consistent base pin
@@ -1597,7 +1736,10 @@ def test_cutover_runtime_manifest_moves_runtime_facts_and_bumps_generation() -> 
     assert manifest.promotions == []
 
 
-def test_cutover_runtime_manifest_preserves_base_pin_and_markers() -> None:
+def test_cutover_runtime_manifest_preserves_base_pin_and_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_git_head_guard(monkeypatch)
     manifest = _make_manifest_obj(
         base={"commit": "87a912beb"},  # NOT the from-head — a foreign pin
         deviations=[_make_deviation()],
@@ -1662,7 +1804,10 @@ def test_cutover_runtime_manifest_rejects_guard_mismatch() -> None:
 # ── T-0301 cutover publication gate ─────────────────────────────────────────
 
 
-def test_cutover_runtime_manifest_carries_the_generation_proof() -> None:
+def test_cutover_runtime_manifest_carries_the_generation_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_git_head_guard(monkeypatch)
     manifest = _make_manifest_obj()
     updated = cutover_runtime_manifest(
         manifest,
@@ -1681,9 +1826,12 @@ def test_cutover_runtime_manifest_carries_the_generation_proof() -> None:
     assert dependency_generation_proof(updated) is not None
 
 
-def test_cutover_runtime_manifest_refuses_without_proof() -> None:
+def test_cutover_runtime_manifest_refuses_without_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """T-0301 publication gate: a manifest with NO dependency-generation
     proof cannot be cut over — unknown dependency state blocks publication."""
+    _stub_git_head_guard(monkeypatch)
     manifest = _make_manifest_obj()
     del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
     with pytest.raises(ManifestError, match="dependency_generation proof"):
@@ -1699,7 +1847,10 @@ def test_cutover_runtime_manifest_refuses_without_proof() -> None:
         )
 
 
-def test_cutover_runtime_manifest_accepts_explicit_proof_override() -> None:
+def test_cutover_runtime_manifest_accepts_explicit_proof_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_git_head_guard(monkeypatch)
     manifest = _make_manifest_obj()
     del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
     override = _generation_proof(
@@ -1717,6 +1868,48 @@ def test_cutover_runtime_manifest_accepts_explicit_proof_override() -> None:
         to_dependency_generation=override,
     )
     assert updated.epic["dependency_generation"] == override
+
+
+def test_cutover_runtime_manifest_rejects_non_object_target_head(
+    tmp_path: Path,
+) -> None:
+    """Git-object head guard (codex fix 2026-08-17): the cutover's TARGET
+    head must be a 40-hex SHA that RESOLVES to that exact commit in the
+    TARGET runtime root.  A correctly shaped but fabricated head (real
+    prefix + invented tail) is REFUSED before a new manifest is returned."""
+    to_root, _head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(
+        epic={"runtime_root": _FROM_RUNTIME_ROOT},
+    )
+    fake = _head[:10] + "b" * 30  # 40-hex, correct shape, not a git object
+    with pytest.raises(ManifestError, match="does not resolve"):
+        cutover_runtime_manifest(
+            manifest,
+            from_runtime_root=_FROM_RUNTIME_ROOT,
+            from_expected_head=_FROM_EXPECTED_HEAD,
+            to_runtime_root=str(to_root),
+            to_expected_head=fake,
+            to_venv_path=_TO_VENV_PATH,
+            to_repair_bin=_TO_REPAIR_BIN,
+            reason="fake target head must refuse",
+        )
+    # zero mutation: the input manifest is untouched
+    assert manifest.generation == 3
+    assert manifest.epic["runtime_root"] == _FROM_RUNTIME_ROOT
+    assert manifest.promotions == []
+    # a REAL commit in the target root passes
+    updated = cutover_runtime_manifest(
+        manifest,
+        from_runtime_root=_FROM_RUNTIME_ROOT,
+        from_expected_head=_FROM_EXPECTED_HEAD,
+        to_runtime_root=str(to_root),
+        to_expected_head=_head,
+        to_venv_path=_TO_VENV_PATH,
+        to_repair_bin=_TO_REPAIR_BIN,
+        reason="real target head advances",
+    )
+    assert updated.generation == 4
+    assert updated.epic["expected_head"] == _head
 
 
 def test_cli_cutover_refuses_without_proof_zero_mutation(
@@ -1756,6 +1949,7 @@ def test_cli_cutover_accepts_explicit_to_dependency_generation(
     """T-0301: --to-dependency-generation supplies the rebuilt proof for a
     manifest that has none (the normal migration path for pre-T-0301
     manifests), and the cutover succeeds."""
+    _stub_git_head_guard(monkeypatch)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     path = tmp_path / "m.json"
@@ -1791,6 +1985,7 @@ def test_cli_cutover_happy_path(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    _stub_git_head_guard(monkeypatch)
     path = tmp_path / "m.json"
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
@@ -1872,6 +2067,7 @@ def test_cli_cutover_happy_path(
 
 
 def test_cli_cutover_honors_custom_receipt_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_git_head_guard(monkeypatch)
     path = tmp_path / "m.json"
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
@@ -2031,6 +2227,7 @@ def test_cli_cutover_receipt_symlink_not_followed(
     NOT followed — the hardened write replaces the link entry with a real
     receipt file at the literal path, and the link's former target stays
     byte-identical."""
+    _stub_git_head_guard(monkeypatch)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     path, expected_sha = _write_cutover_manifest(
@@ -2078,6 +2275,7 @@ def test_cli_cutover_receipt_post_verify_failed_when_receipt_write_fails(
     (injected no-op emitter) the manifest write still happens, but the
     post-verify refuses instead of reporting success without durable
     rollback evidence — a typed post-condition check."""
+    _stub_git_head_guard(monkeypatch)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     path, expected_sha = _write_cutover_manifest(
@@ -2121,6 +2319,7 @@ def test_apply_cutover_receipt_post_verify_failed_typed_code(
 ) -> None:
     """T-0101h round-5 blocker 3: the post-verify refusal is TYPED
     (``receipt_post_verify_failed``) at the API level."""
+    _stub_git_head_guard(monkeypatch)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     path, expected_sha = _write_cutover_manifest(
@@ -2164,6 +2363,7 @@ def test_cli_cutover_happy_path_receipt_post_verify_passes(
     durable rollback receipt exists at the literal ``--receipt-out`` path, is
     parseable, and carries the exact pre-cutover manifest SHA-256 (the
     internal post-verify passes and the command reports success)."""
+    _stub_git_head_guard(monkeypatch)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     path, expected_sha = _write_cutover_manifest(
@@ -2396,11 +2596,14 @@ def test_cli_cutover_rejects_stale_editable_install_path_zero_mutation(
     assert not (tmp_path / f"m.json{CUTOVER_RECEIPT_SUFFIX}").exists()
 
 
-def test_cutover_relocates_root_relative_fields() -> None:
+def test_cutover_relocates_root_relative_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """T-0101h round-2: root-relative fields (deps_lockfile, base.venv_path,
     base.editable_install_path) are RELOCATED to the same relative offset
     under the new root; shared paths outside the runtime root and the
     source-based base.ref are untouched."""
+    _stub_git_head_guard(monkeypatch)
     manifest = _make_manifest_obj(
         base={
             "commit": _FROM_EXPECTED_HEAD,
@@ -2429,9 +2632,12 @@ def test_cutover_relocates_root_relative_fields() -> None:
     assert updated.base["ref"] == manifest.base["ref"]
 
 
-def test_cutover_preserves_shared_non_root_relative_fields() -> None:
+def test_cutover_preserves_shared_non_root_relative_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Shared paths OUTSIDE the runtime root (a base checkout) do not go stale
     when the root moves: the cutover leaves them byte-identical."""
+    _stub_git_head_guard(monkeypatch)
     manifest = _make_manifest_obj()  # factory: base/venv/editable under /opt/arnold/base
     updated = cutover_runtime_manifest(
         manifest,
@@ -2456,6 +2662,7 @@ def test_cli_cutover_rewrites_root_relative_fields_end_to_end(
     deps_lockfile / base.venv_path, empty editable_install_path) is rewritten
     coherently through the REAL CLI cutover — no stale root-relative field
     survives the root move."""
+    _stub_git_head_guard(monkeypatch)
     identity, receipt = _fake_identity_files(tmp_path)
     to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
     path, expected_sha = _write_cutover_manifest(
