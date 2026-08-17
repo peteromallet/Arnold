@@ -7611,10 +7611,6 @@ def handle_execute_auto_loop(
             else None
         ),
     )
-    blocking_reasons = _drop_resolved_quality_blocking_reasons(
-        blocking_reasons,
-        state=state,
-    )
     # Carry the abort-recovery park into the phase-final decision: the in-loop
     # blocking_reasons list is rebuilt above, so a pending-left-behind task must
     # be re-appended here or the phase would report success with unfinished
@@ -7649,6 +7645,19 @@ def handle_execute_auto_loop(
     _append_scope_drift_blocker(blocking_reasons, state, drift)
     if routing_degradations:
         blocking_reasons.extend(routing_degradations)
+
+    # Drop quality-gate blockers whose root cause the operator resolved as
+    # non-terminal debt (accepted_with_debt / fixed).  This MUST run after the
+    # blocked-task and scope-drift reasons are appended: the one-batch path
+    # drops after drift (see the grok astrid m1 consult) and the aggregate
+    # auto-loop path must mirror it, otherwise an operator resolution can never
+    # clear the two recurring auto-loop park reasons (blocked task carried in
+    # blocked_task_ids + scope_drift_severity=high) and the plan loops
+    # blocked -> recover-blocked -> execute -> same deviation forever.
+    blocking_reasons = _drop_resolved_quality_blocking_reasons(
+        blocking_reasons,
+        state=state,
+    )
 
     routing_blocked = any(reason in blocking_reasons for reason in routing_degradations)
     blocked = bool(blocking_reasons)
