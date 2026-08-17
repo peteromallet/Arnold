@@ -1102,6 +1102,15 @@ PY
   if [[ "$diagnostic_status" == "launched" && -n "$diagnostic_run_id" ]]; then
     log "needs-human resident diagnostic launched session=$session plan=${PLAN_STATUS_PLAN_NAME:-} run_id=$diagnostic_run_id"
     report_item "$report_items" "$session" "notify" "diagnostic_agent_launched" "resident diagnostic launched; terminal result will use durable Discord delivery" "$workspace" "$remote_spec"
+    if [[ -s "$payload_tmp" && -n "${DISCORD_BOT_TOKEN:-}" ]]; then
+      # Surface the human gate to Discord NOW (grok plan 2026-08-17): the
+      # diagnostic launch is confirmed but the terminal Discord delivery is
+      # deferred - a human gate must not park silently. Pipe the admitted
+      # payload to the arnold-discord-dm wrapper (fails closed without config
+      # or adapter). Dedup is the WBC admission idempotency key in the payload.
+      "$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm" < "$payload_tmp" > "$dm_result_tmp" 2>>"$LOG" || log "discord-dm send failed session=$session"
+      log "needs-human surfaced to Discord session=$session"
+    fi
     rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
     return 0
   fi
@@ -1136,6 +1145,12 @@ PY
   # provider calls and receipts; there is no observer fallback route.
   report_item "$report_items" "$session" "observe" "needs_human" "$summary" "$workspace" "$remote_spec"
   report_item "$report_items" "$session" "notify" "notification_intent_pending" "notification intent admitted to canonical WBC/outbox custody; provider delivery is deferred" "$workspace" "$remote_spec"
+  if [[ -s "$payload_tmp" && -n "${DISCORD_BOT_TOKEN:-}" ]]; then
+    # Fallback: no resident diagnostic launch confirmed, but the human gate
+    # must still be surfaced to Discord (grok plan 2026-08-17). Fail closed.
+    "$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm" < "$payload_tmp" > "$dm_result_tmp" 2>>"$LOG" || log "discord-dm send failed session=$session"
+    log "needs-human fallback surfaced to Discord session=$session"
+  fi
   rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
 }
 
