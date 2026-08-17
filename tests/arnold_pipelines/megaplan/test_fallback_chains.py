@@ -108,11 +108,105 @@ def test_provider_family_classification(spec: str, family: str) -> None:
         ({"code": "semantic"}, "semantic", False),
         ({"retryable": False}, "permanent", False),
         (SimpleNamespace(retryable=True), "infrastructure", True),
+        # Non-transient billing exhaustion reported as HTTP 429 must classify
+        # as quota (not rate_limit) so the configured fallback chain advances.
+        (
+            {"status_code": 429, "message": "credit balance is too low"},
+            "quota",
+            False,
+        ),
+        (
+            {
+                "status_code": 429,
+                "error_kind": "balance",
+                "message": "余额不足或无可用资源包,请充值。",
+            },
+            "quota",
+            False,
+        ),
+        (
+            {"status_code": 429, "message": "余额不足或无可用资源包,请充值。"},
+            "quota",
+            False,
+        ),
     ],
 )
 def test_retryability_boundaries(value: object, classification: str, retryable: bool) -> None:
     assert classify_retryability(value) == classification
     assert is_retryable_failure(value) is retryable
+
+
+def test_classify_retryability_reads_nested_extra_external_error() -> None:
+    # workers/hermes.py wraps provider failures as
+    # CliError("worker_error", ..., extra={"_external_error": <dict>}); the
+    # structured status_code/error_kind live nested there.  classify_retryability
+    # must see them (previously "unknown" for every wrapped provider error).
+    from arnold_pipelines.megaplan.types import CliError
+
+    wrapped = CliError(
+        "worker_error",
+        "Hermes worker failed for step 'plan': Error code: 429 - ...",
+        extra={
+            "_external_error": {
+                "provider": "zhipu",
+                "error_kind": "balance",
+                "message": "余额不足或无可用资源包,请充值。",
+                "status_code": 429,
+            }
+        },
+    )
+    assert classify_retryability(wrapped) == "quota"
+    # A genuine transient rate limit stays rate_limit even when wrapped.
+    wrapped_rate = CliError(
+        "worker_error",
+        "Hermes worker failed for step 'plan'",
+        extra={
+            "_external_error": {
+                "provider": "zhipu",
+                "error_kind": "rate_limit",
+                "message": "rate limit hit",
+                "status_code": 429,
+            }
+        },
+    )
+    assert classify_retryability(wrapped_rate) == "rate_limit"
+
+
+def test_cross_family_advance_membership() -> None:
+    from arnold_pipelines.megaplan.fallback_chains import (
+        is_cross_family_retryable_classification,
+    )
+
+    assert is_cross_family_retryable_classification("availability")
+    assert is_cross_family_retryable_classification("infrastructure")
+    # Non-transient billing exhaustion may advance to a different family.
+    assert is_cross_family_retryable_classification("quota")
+    # Transient rate limits deliberately do NOT advance cross-family.
+    assert not is_cross_family_retryable_classification("rate_limit")
+    assert not is_cross_family_retryable_classification("auth")
+    assert not is_cross_family_retryable_classification("unknown")
+
+
+def test_explicit_nonretryable_stays_permanent_despite_quota_words() -> None:
+    # Explicit nonretryable/provider-contract evidence outranks quota words.
+    value = {
+        "nonretryable": True,
+        "error_kind": "provider_contract",
+        "error_layer": "schema_error",
+        "message": "quota limit exceeded while validating provider contract",
+        "status_code": 429,
+    }
+    assert classify_retryability(value) == "permanent"
+
+
+def test_same_family_quota_stays_fail_closed() -> None:
+    from arnold_pipelines.megaplan.fallback_chains import (
+        is_same_family_operational_classification,
+    )
+
+    # quota is NOT in the same-family operational set: a same-family retry
+    # hits the same exhausted provider.
+    assert not is_same_family_operational_classification("quota")
 
 
 def test_execute_fallback_unsafe_carries_selected_attempt_metadata() -> None:

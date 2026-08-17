@@ -29,6 +29,48 @@ def test_codex_usage_limit_classifies_as_provider_quota() -> None:
     assert error.error_layer == "provider_quota"
 
 
+def test_zhipu_429_balance_message_classifies_as_balance() -> None:
+    # Zhipu error code 1113 "余额不足或无可用资源包,请充值。" (insufficient
+    # balance) arrives as HTTP 429.  It must be recorded as "balance" (a
+    # non-transient billing condition), NOT "rate_limit" (a transient limit),
+    # so operators and the fallback machinery see the truth.
+    error = ExternalError.from_exception(
+        CliError(
+            "worker_error",
+            "Hermes worker failed for step 'plan': "
+            "Error code: 429 - {'error': {'code': '1113', "
+            "'message': '余额不足或无可用资源包,请充值。'}}",
+        ),
+        provider="zhipu",
+    )
+
+    assert error is not None
+    assert error.provider == "zhipu"
+    assert error.error_kind == "balance"
+    assert error.status_code == 429
+
+
+def test_english_insufficient_balance_429_classifies_as_balance() -> None:
+    error = ExternalError.from_exception(
+        CliError(
+            "worker_error",
+            "Error code: 429 - insufficient balance, please top up",
+        ),
+        provider="zhipu",
+    )
+    assert error is not None
+    assert error.error_kind == "balance"
+
+
+def test_plain_429_rate_limit_stays_rate_limit() -> None:
+    error = ExternalError.from_exception(
+        CliError("worker_error", "Error code: 429 - rate limit hit"),
+        provider="zhipu",
+    )
+    assert error is not None
+    assert error.error_kind == "rate_limit"
+
+
 # ── T63: M5 structured-failed replay fixtures ──────────────────────────────
 
 
