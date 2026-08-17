@@ -1183,7 +1183,45 @@ def validate_runtime_launch_seed(
         if is_supervisor
         else seed.get("site_pth")
     )
-    if pth_errors or pth != expected_pth:
+    # T-0302 (grok consult 2026-08-17): the seed's site_pth may have been
+    # recorded by an older builder with a different dict shape (lines[].raw
+    # vs path/sha256/site_dir). The CUSTODY property is: no active .pth
+    # resolves to a DIFFERENT Arnold root than the expected module root, and
+    # nothing executable is unowned. Compare that semantic predicate instead
+    # of exact dict equality, so a shape-drift seed still validates.
+    pth_semantic_mismatch = False
+    if pth != expected_pth:
+        expected_root_resolved = module_root.resolve(strict=False)
+
+        def _pth_targets(records):
+            targets = set()
+            if not isinstance(records, list):
+                return targets
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                for entry in record.get("lines", []):
+                    if not isinstance(entry, dict):
+                        continue
+                    kind = entry.get("kind")
+                    resolved = str(entry.get("resolved") or "")
+                    if kind == "path" and resolved:
+                        targets.add(resolved)
+                    elif kind in ("executable", None):
+                        targets.add("executable")
+            return targets
+
+        live_targets = _pth_targets(pth)
+        seed_targets = _pth_targets(expected_pth)
+        foreign = [
+            t
+            for t in live_targets
+            if t != "executable" and not Path(t).is_relative_to(expected_root_resolved)
+        ]
+        pth_semantic_mismatch = bool(foreign) or (
+            bool(seed_targets) and live_targets != seed_targets
+        )
+    if pth_errors or pth_semantic_mismatch:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
             "active site .pth vector changed or is unsafe: " + ", ".join(pth_errors),
