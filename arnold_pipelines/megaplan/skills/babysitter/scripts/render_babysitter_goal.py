@@ -240,6 +240,19 @@ Mandatory flow — follow the five steps exactly:
   source_revision, binding drift, stale seed), DO NOT hand the rebind back:
   re-run step (c) (manifest -> marker -> chain -> seed resync) and retry the
   resume.  Iterate until the resume runs or you hit a genuinely external gate.
+  IMMUTABLE-GENERATION ENGINE FIX (2026-08-17, c0d430668e): a plan blocked
+  with ``runtime_launch_attestation_mismatch`` / ``source_revision_mismatch``
+  whose failure was RECORDED BEFORE the immutable-seed engine deployed is a
+  STALE failure — the fix already landed. The engine now binds every worker
+  to an immutable content-addressed generation seed at dispatch
+  (refresh_runtime_launch_seed_for_worker_dispatch); the manual
+  manifest->marker->chain->seed rebind ceremony is NO LONGER needed for an
+  engine advance. If you find such a stale failure, do NOT re-investigate the
+  attestation machinery: just DRIVE the chain forward (chain start / resume
+  with the canonical env) so the next worker picks up the current generation
+  automatically. Only investigate if the NEW dispatch produces a fresh
+  failure that is genuinely new (different error class, recorded after the
+  deploy).
   EXECUTE-PHASE RESUME LOOP (grok strategy 2026-08-16, astrid m2): if the
   resume repeatedly dies mid-execute and restarts from batch 1, the blocker is
   the DEFERRED VALIDATION refusal — the resume agent hits its iteration cap,
