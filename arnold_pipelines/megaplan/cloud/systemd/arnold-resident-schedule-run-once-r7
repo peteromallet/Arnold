@@ -137,8 +137,34 @@ if [[ ! -s "$CODEX_HOME/auth.json" ]]; then
     echo "schedule-run-once: $CODEX_HOME/auth.json missing or empty" >&2
     exit 1
 fi
-if [[ ! -f /root/.hermes/.env ]] || [[ "$(stat -c %a /root/.hermes/.env 2>/dev/null || true)" != "600" ]]; then
-    echo "schedule-run-once: /root/.hermes/.env missing or not mode 600" >&2
+# Expiry guard (grok consult 2026-08-17): a non-empty auth.json can still
+# hold an EXPIRED id_token (the Jul-29 stale auth at /workspace/.codex caused
+# 401 connection_error on every codex child until the deepseek swarm found
+# it). Decode the id_token exp and fail closed when it is in the past, so a
+# stale credential never dispatches a doomed codex worker.
+if ! python3 - "$CODEX_HOME/auth.json" 2>/dev/null <<'PY'
+import base64
+import json
+import sys
+import time
+
+try:
+    auth = json.load(open(sys.argv[1]))
+    tokens = auth.get("tokens") or {}
+    idt = tokens.get("id_token") or ""
+    if not idt:
+        sys.exit(1)
+    payload = idt.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload))
+    exp = int(claims.get("exp") or 0)
+    if exp <= time.time():
+        sys.exit(1)
+except Exception:
+    sys.exit(1)
+PY
+then
+    echo "schedule-run-once: $CODEX_HOME/auth.json id_token expired or unreadable" >&2
     exit 1
 fi
 
