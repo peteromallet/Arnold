@@ -2770,6 +2770,28 @@ sync_editable_source_branch() {
 
   after="$(cd "$SRC_DIR" && git rev-parse --short HEAD 2>/dev/null || true)"
   report_item "$report_items" "editable-install" "sync" "synced" "editable source branch synced and refreshed ($before -> $after)" "$SRC_DIR" "$SYNC_BRANCH"
+
+  # ROOT FIX (grok consult + user directive 2026-08-17): auto-advance the
+  # runtime manifest expected_head whenever the engine moved via the ACCEPTED
+  # path (origin/<SYNC_BRANCH> pull -- the fixer's authorized pushes). The
+  # recurring blocker was provenance churn: the fixer ships engine fixes ->
+  # engine HEAD advances -> manifest expected_head lags -> every subsequent
+  # worker sees HEAD != accepted head -> source_revision_mismatch -> plan
+  # re-blocks (m3b execute attempt 4 died at 19:48 when the fixer pushed
+  # f57867239d mid-run). follow_accepted_generation then has a CURRENT
+  # accepted head to follow instead of a stale pin.
+  if [[ -n "$before" && -n "$after" && "$before" != "$after" && -n "${ARNOLD_RUNTIME_MANIFEST:-}" && -f "${ARNOLD_RUNTIME_MANIFEST:-}" ]]; then
+    new_head="$(cd "$SRC_DIR" && git rev-parse HEAD 2>/dev/null || true)"
+    if [[ -n "$new_head" && ${#new_head} -eq 40 ]]; then
+      if PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest \
+          advance_generation "$ARNOLD_RUNTIME_MANIFEST" "$new_head" \
+          --reason "auto-advance after engine sync ($before -> $after)" >> "$LOG" 2>&1; then
+        log "manifest auto-advanced to $after after engine sync"
+      else
+        log "manifest auto-advance FAILED after engine sync (head=$after); plan binding may lag"
+      fi
+    fi
+  fi
 }
 
 codex_repair_editable_install() {
