@@ -819,8 +819,10 @@ def _merge_validated_entries(
             # The entry has already passed scoped/grant-aware validation. A
             # terminal-status row (legacy/proven-wave compatibility) or an
             # explicitly authority-accepted row may corroborate an accepted
-            # target.  Never copy status or executor_notes, and never replace
-            # durable evidence that the target already carries (occurrence
+            # target. Never copy status, and never replace evidence that the
+            # target already carries. Empty executor_notes may be backfilled
+            # because they are the durable evidence for audit/research tasks
+            # (occurrence
             # 4c0190500877: replay of the proven terminal wave backfills
             # evidence into evidence-empty accepted rows so chain
             # phase-coverage and the execute-end done-evidence check do not
@@ -1108,9 +1110,9 @@ ACCEPTED_TASK_STATUSES: frozenset[str] = frozenset({"done", "completed", "skippe
 
 #: Evidence fields that may be backfilled into an already-accepted target row
 #: from a terminal accepted incoming entry without demoting its status.  The
-#: accepted receipt is never overwritten (status/executor_notes stay), but a
-#: later replay of the proven terminal wave can corroborate durable evidence
-#: (files_changed / commands_run / head_sha / code_hash) that the original
+#: accepted receipt is never demoted (status stays), and existing evidence is
+#: never overwritten. A later replay may fill omitted durable evidence,
+#: including executor_notes for audit/research tasks, that the original
 #: publish omitted — otherwise the chain overlay re-applies a stale batch
 #: shadow (chain_authority_shadow) and the execute-end done-evidence check
 #: re-blocks a completed plan (occurrence 4c0190500877, codex consult
@@ -1121,6 +1123,7 @@ _ACCEPTED_EVIDENCE_BACKFILL_FIELDS: tuple[str, ...] = (
     "evidence_files",
     "head_sha",
     "code_hash",
+    "executor_notes",
 )
 
 
