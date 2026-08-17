@@ -253,6 +253,11 @@ Mandatory flow — follow the five steps exactly:
   automatically. Only investigate if the NEW dispatch produces a fresh
   failure that is genuinely new (different error class, recorded after the
   deploy).
+  TERMINAL CONTRACT (codex consult 2026-08-17): each terminal call must pass
+  an explicit ``workdir`` — NEVER issue a standalone ``cd`` as a command. The
+  shell is persistent (cwd survives), but a bare cd is treated as non-progress
+  and can trip the non-progress breaker. Use absolute paths in commands when
+  you need a different directory.
   EXECUTE-PHASE RESUME LOOP (grok strategy 2026-08-16, astrid m2): if the
   resume repeatedly dies mid-execute and restarts from batch 1, the blocker is
   the DEFERRED VALIDATION refusal — the resume agent hits its iteration cap,
