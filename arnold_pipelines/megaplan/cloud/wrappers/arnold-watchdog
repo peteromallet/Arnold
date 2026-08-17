@@ -1397,21 +1397,66 @@ def _find_plan_dir() -> Path | None:
 
 plan_dir = _find_plan_dir()
 if plan_dir is None:
-    sys.exit(1)
-try:
-    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-except (OSError, ValueError):
-    sys.exit(1)
+    # No plan at all yet: a chain that has never born a plan for its first
+    # milestone is parked (needs a DRIVE) unless the chain is fully
+    # terminal. Fall through to the chain-record check below.
+    plan_dir = None
+state: dict = {}
+if plan_dir is not None:
+    try:
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
 current = state.get("current_state")
 if current not in {
     "initialized", "planned", "finalized", "critiqued", "gated",
     "blocked", "failed",
 }:
-    sys.exit(1)
+    # The newest plan is terminal (done/executed/reviewed) or absent. A chain
+    # that still has PENDING milestones (current_milestone_index < the total
+    # milestone sequence) is parked BETWEEN milestones - the next plan is
+    # unborn and nothing will drive it unless the fixer picks it up. Read the
+    # chain record from the remote spec's .chains dir; if the chain has
+    # pending milestones and no current plan, treat it as parked (a DRIVE).
+    chain_pending = False
+    if remote_spec_raw:
+        spec_path = Path(remote_spec_raw)
+        if not spec_path.is_absolute():
+            spec_path = workspace / spec_path
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        import hashlib
+        chain_digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+        for candidate in (
+            chain_dir / f"chain-{chain_digest}.json",
+            chain_dir / f"{spec_path.stem}-{chain_digest}.json",
+        ):
+            if not candidate.is_file():
+                continue
+            try:
+                chain = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            idx = chain.get("current_milestone_index")
+            completed = chain.get("completed") or []
+            total = 0
+            try:
+                spec_text = spec_path.read_text(encoding="utf-8")
+                # chain.yaml is YAML: count top-level "- label:" milestone entries.
+                total = sum(1 for line in spec_text.splitlines() if line.startswith("- label:"))
+            except Exception:
+                total = 0
+            if isinstance(idx, int) and idx >= 0 and (total == 0 or idx < total):
+                chain_pending = True
+            elif completed and (total == 0 or len(completed) < total):
+                chain_pending = True
+            break
+    if not chain_pending:
+        sys.exit(1)
 active = state.get("active_step")
 if active and isinstance(active, dict) and active.get("phase"):
     sys.exit(1)  # a worker is live; not parked
-# No active step in a stoppage state: parked unless a driver is live.
+# No active step in a stoppage state (or between milestones with no plan):
+# parked unless a driver is live.
 sys.exit(0)
 PY
 }
