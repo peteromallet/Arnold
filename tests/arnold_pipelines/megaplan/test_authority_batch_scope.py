@@ -1387,7 +1387,9 @@ def test_authority_accepted_blocked_row_backfills_evidence_without_demotion() ->
     assert target["files_changed"] == ["arnold_pipelines/megaplan/cloud/a.py"]
     assert target["commands_run"] == ["pytest -q tests/cloud"]
     assert target["head_sha"] == "15b881cb4"
-    assert "executor_notes" not in target  # notes never copied
+    # executor_notes is durable audit/research evidence: an authority-accepted
+    # row's notes backfill into the empty target field (occurrence 4c1e5073ca7c).
+    assert target["executor_notes"] == "stale projection, authority accepted"
     assert any("status preserved; missing terminal evidence backfilled" in i for i in issues)
 
 
@@ -1417,6 +1419,7 @@ def test_authority_rejected_or_quarantined_blocked_row_does_not_backfill(
     assert target.get("files_changed") is None
     assert target.get("commands_run") is None
     assert target.get("head_sha") is None
+    assert target.get("executor_notes") is None  # notes never leak from rejected rows
 
 
 def test_authority_accepted_blocked_row_never_overwrites_existing_evidence() -> None:
@@ -1427,6 +1430,7 @@ def test_authority_accepted_blocked_row_never_overwrites_existing_evidence() -> 
         "status": "done",
         "files_changed": ["existing.py"],
         "commands_run": [],
+        "executor_notes": "existing substantive notes already on target",
     }
     targets = {"T10_impl": target}
     _merge_entries(
@@ -1438,6 +1442,7 @@ def test_authority_accepted_blocked_row_never_overwrites_existing_evidence() -> 
                 "files_changed": ["intruder.py"],
                 "commands_run": ["pytest -q tests/cloud"],
                 "head_sha": "15b881cb4",
+                "executor_notes": "different incoming notes must not win",
                 "authority_validation": {"outcome": "accepted"},
             }
         ],
@@ -1445,3 +1450,257 @@ def test_authority_accepted_blocked_row_never_overwrites_existing_evidence() -> 
     assert target["files_changed"] == ["existing.py"]  # never replaced
     assert target["commands_run"] == ["pytest -q tests/cloud"]  # empty field filled
     assert target["head_sha"] == "15b881cb4"
+    # existing notes win; the field-local empty-target guard is preserved
+    assert target["executor_notes"] == "existing substantive notes already on target"
+
+
+def test_authority_accepted_audit_row_backfills_substantive_executor_notes() -> None:
+    """A done kind=audit target with empty notes receives the authority-accepted
+    entry's substantive executor_notes (occurrence 4c1e5073ca7c: T8_proof)."""
+    target = {"id": "T8_proof", "status": "done", "kind": "audit"}
+    targets = {"T8_proof": target}
+    source_notes = (
+        "Verified T8_impl against its contract with the full narrow selector "
+        "(1 run of max_runs=2, timeout 120s): "
+        "tests/arnold_pipelines/megaplan/test_maintenance_verification.py => "
+        "27 passed, 0 failures in 0.16s; byte-matching the T8_impl receipt "
+        "baseline (27/27), so no new failures were introduced and no "
+        "pre-existing baseline failures were chased. The implementation "
+        "satisfies the Plan Step 7 contract: evaluate_verification returns "
+        "only the closed outcomes open/unknown/incoherent/failed_control/"
+        "verified with typed reasons."
+    )
+    issues = _merge_entries(
+        targets,
+        [
+            {
+                "task_id": "T8_proof",
+                "status": "done",
+                "executor_notes": source_notes,
+                "commands_run": [
+                    "timeout 120s python -m pytest tests/arnold_pipelines/megaplan/test_maintenance_verification.py"
+                ],
+                "head_sha": "43142b0e3",
+                "authority_validation": {"outcome": "accepted"},
+            }
+        ],
+    )
+    assert target["status"] == "done"  # never demoted
+    assert target["executor_notes"] == source_notes  # byte-equal backfill
+    assert len(target["executor_notes"].strip()) >= 100  # audit evidence shape
+    assert target["commands_run"]
+    from arnold_pipelines.megaplan.execute.quality import _has_audit_or_research_evidence
+
+    assert _has_audit_or_research_evidence(target)
+    assert any("status preserved; missing terminal evidence backfilled" in i for i in issues)
+
+
+def test_authority_rejected_audit_row_notes_do_not_reach_scoped_validator(tmp_path: Path) -> None:
+    """Scoped-validator integration: a rejected or quarantined row with long
+    notes must NOT reach the merge backfill even when terminal (codex §B)."""
+    import pytest as _pytest
+
+    from arnold_pipelines.megaplan.execute.merge import (
+        _merge_scoped_batch_artifact_through_validator,
+    )
+
+    for outcome, reason in (
+        ("rejected", "grant_denied"),
+        ("quarantined", "missing_dispatch_identity"),
+    ):
+        state = {
+            "name": "megaplan-run",
+            "created_at": "2026-08-17T00:00:00Z",
+            "current_state": "finalized",
+            "iteration": 3,
+            "config": {"mode": "code"},
+            "sessions": {},
+            "history": [],
+            "meta": {},
+            "plan_versions": [{"hash": "sha256:plan-revision"}],
+            "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+        }
+        finalize_data = {
+            "tasks": [{"id": "T8_proof", "status": "done", "kind": "audit"}],
+            "sense_checks": [],
+            "user_actions": [],
+        }
+        from arnold_pipelines.megaplan.execute.batch import (
+            _prepare_scoped_batch_checkpoint,
+        )
+
+        artifact_path = _prepare_scoped_batch_checkpoint(
+            tmp_path / outcome,
+            batch_number=7,
+            task_ids=["T8_proof"],
+            sense_check_ids=[],
+            state=state,
+            finalize_data=finalize_data,
+        )
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        payload["task_updates"] = [
+            {
+                "task_id": "T8_proof",
+                "status": "done",
+                "executor_notes": "x" * 300,  # long notes, but not authority-accepted
+                "files_changed": [],
+                "commands_run": ["pytest -q tests/cloud"],
+            }
+        ]
+        # Force the validator to reject/quarantine this row (no valid envelope).
+        artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+        result = _merge_scoped_batch_artifact_through_validator(
+            plan_dir=tmp_path / outcome,
+            artifact_path=artifact_path,
+            payload=payload,
+            finalize_data=finalize_data,
+            known_task_ids=["T8_proof"],
+            known_sense_check_ids=[],
+            mode="code",
+            state=state,
+            preserve_accepted=True,
+            require_dispatch_wbc=False,
+        )
+        # Either quarantined (never merged) or merged without notes leaking.
+        if result.quarantine is not None:
+            continue
+        task = finalize_data["tasks"][0]
+        assert task.get("executor_notes") is None
+        assert task.get("commands_run") is None
+
+
+def test_replay_backfills_audit_notes_via_scoped_enveloped_row(tmp_path: Path) -> None:
+    """End-to-end replay: a scoped, enveloped batch-7 done update for an
+    audit-kind target lands substantive executor_notes and the per-kind quality
+    predicate passes — the recovery-critical regression for T8_proof."""
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-08-17T00:00:00Z",
+        "current_state": "finalized",
+        "iteration": 3,
+        "config": {"mode": "code"},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    finalize_data = {
+        "tasks": [
+            {"id": "T8_proof", "status": "done", "kind": "audit"},
+            {"id": "T9", "status": "done"},
+        ],
+        "sense_checks": [],
+        "user_actions": [],
+    }
+    source_notes = (
+        "Verified T8_impl against its contract with the full narrow selector: "
+        "27 passed, 0 failures; byte-matching the T8_impl receipt baseline "
+        "(27/27); no new failures introduced; the harness-owned post-execute "
+        "verification remains authoritative; the suite was not looped. The "
+        "implementation satisfies the Plan Step 7 contract with typed reasons."
+    )
+    artifact_path = _prepare_scoped_batch_checkpoint(
+        tmp_path,
+        batch_number=7,
+        task_ids=["T8_proof"],
+        sense_check_ids=[],
+        state=state,
+        finalize_data=finalize_data,
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = DispatchIdentity.create(
+        dispatch_id="megaplan-run:execute:batch:7:8e8a64d621ef",
+        run_id="megaplan-run",
+        run_revision="sha256:plan-revision",
+        coordinator_attempt_id="coordinator-attempt",
+        fence_token=2,
+        subject_ids=("T8_proof",),
+        capabilities=(TASK_RESULT_CAPABILITY,),
+        prerequisite_digest="T8_proof-prerequisite-digest",
+        worker_id="megaplan-execute-batch-7",
+    )
+    entry = {
+        "task_id": "T8_proof",
+        "status": "done",
+        "executor_notes": source_notes,
+        "files_changed": [],
+        "commands_run": [
+            "timeout 120s python -m pytest tests/arnold_pipelines/megaplan/test_maintenance_verification.py"
+        ],
+        "head_sha": "43142b0e3",
+    }
+    evidence = EvidenceEnvelope(
+        evidence_id="T8_proof:evidence",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        evidence_type="megaplan.task_update",
+        source="test",
+        payload={"entry": entry},
+    )
+    attempt = TaskAttempt(
+        attempt_id="T8_proof:attempt",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T8_proof",
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence.token,
+        ordinal=1,
+    )
+    claim = TaskClaim(
+        claim_id="T8_proof:claim",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T8_proof",
+        attempt_id=attempt.attempt_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence.token,
+        claim_type=TASK_COMPLETION_CLAIM,
+        evidence_ids=(evidence.evidence_id,),
+        idempotency_key="T8_proof:claim",
+        payload={"entry": entry},
+    )
+    envelope = ResultEnvelope(
+        dispatch=identity,
+        attempt=attempt,
+        claim=claim,
+        evidence=(evidence,),
+    )
+    entry["authority"] = {
+        "envelope_digest": envelope.digest(),
+        "dispatch_id": envelope.dispatch_id,
+        "run_revision": envelope.run_revision,
+        "plan_revision": envelope.plan_revision,
+        "fence": envelope.dispatch.fence.to_dict(),
+        "scope": {
+            "subject_ids": list(envelope.dispatch.subject_ids),
+            "capabilities": list(envelope.dispatch.capabilities),
+        },
+        "prerequisite_digest": envelope.prerequisite_digest,
+        "worker_id": envelope.worker_id,
+        "attempt": envelope.attempt.to_dict(),
+    }
+    payload[DISPATCH_IDENTITY_KEY] = identity.to_dict()
+    payload[RESULT_ENVELOPES_KEY] = [envelope.to_dict()]
+    payload["task_updates"] = [entry]
+    payload["sense_check_acknowledgments"] = []
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    _replay_proven_batch_artifacts(
+        plan_dir=tmp_path,
+        finalize_data=finalize_data,
+        known_task_ids=["T8_proof", "T9"],
+        known_sense_check_ids=[],
+        mode="code",
+        state=state,
+    )
+    tasks = {task["id"]: task for task in finalize_data["tasks"]}
+    assert tasks["T8_proof"]["status"] == "done"
+    assert tasks["T8_proof"]["executor_notes"] == source_notes
+    assert len(tasks["T8_proof"]["executor_notes"].strip()) >= 100
+    assert tasks["T8_proof"]["commands_run"]
+    from arnold_pipelines.megaplan.execute.quality import _has_audit_or_research_evidence
+
+    assert _has_audit_or_research_evidence(tasks["T8_proof"])
