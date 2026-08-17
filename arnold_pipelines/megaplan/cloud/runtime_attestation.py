@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import importlib
 import importlib.metadata
@@ -1150,8 +1151,30 @@ def ensure_runtime_launch_seed(
     try:
         _exclusive_write_json(seed_path, payload)
     except FileExistsError:
-        # A concurrent dispatcher already wrote this exact immutable seed.
-        pass
+        # A concurrent dispatcher may have written this exact immutable seed.
+        # Do not mistake a damaged/tampered occupant of the content-addressed
+        # pathname for that winner: preserve it as evidence, then recreate the
+        # canonical payload with O_EXCL semantics.
+        try:
+            incumbent = _json_file(seed_path, label="runtime launch seed")
+        except CliError:
+            incumbent = {}
+        if incumbent != payload:
+            quarantine = seed_path.with_name(
+                f"{seed_path.stem}.invalid-{os.getpid()}.json"
+            )
+            try:
+                os.replace(seed_path, quarantine)
+                _exclusive_write_json(seed_path, payload)
+            except FileNotFoundError:
+                _exclusive_write_json(seed_path, payload)
+            except FileExistsError:
+                winner = _json_file(seed_path, label="runtime launch seed")
+                if winner != payload:
+                    raise CliError(
+                        RUNTIME_ATTESTATION_ERROR,
+                        "content-addressed runtime launch seed collision",
+                    )
     _write_dispatch_pointer(
         store_dir,
         seed_path,
@@ -1160,6 +1183,51 @@ def ensure_runtime_launch_seed(
         seed_sha256=seed_sha,
     )
     return seed_path
+
+
+def refresh_runtime_launch_seed_for_worker_dispatch() -> Path | None:
+    """Select the accepted generation immediately before a worker dispatch.
+
+    The chain's configured seed remains its orchestration seed.  Each worker
+    dispatch re-reads the accepted manifest under the promotion lock, resolves
+    or creates that generation's immutable seed, and updates the exact seed
+    path inherited by the child worker process.
+    """
+    manifest_value = str(os.environ.get("ARNOLD_RUNTIME_MANIFEST") or "").strip()
+    current_path = configured_seed_path()
+    if not manifest_value or current_path is None:
+        return current_path
+    current = _json_file(current_path, label="runtime launch seed")
+    input_paths = current.get("input_paths")
+    input_paths = input_paths if isinstance(input_paths, Mapping) else {}
+    chain_spec_value = str(input_paths.get("chain_spec") or "").strip()
+    marker_value = str(input_paths.get("marker") or "").strip()
+    if not chain_spec_value or not marker_value:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "orchestration seed lacks chain_spec or marker dispatch inputs",
+        )
+    manifest_path = Path(manifest_value).expanduser().resolve(strict=False)
+    lock_path = Path(f"{manifest_path}.promotion.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_SH)
+        selected = ensure_runtime_launch_seed(
+            manifest_path=manifest_path,
+            chain_spec_path=Path(chain_spec_value),
+            marker_path=Path(marker_value),
+            chain_runtime_identity=(
+                current.get("chain_runtime_binding", {}).get("runtime_identity")
+                if isinstance(current.get("chain_runtime_binding"), Mapping)
+                else None
+            ),
+        )
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+    os.environ["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = str(selected)
+    return selected
 
 
 def _verify_seed_digest(seed: Mapping[str, Any]) -> None:
