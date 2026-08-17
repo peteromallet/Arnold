@@ -105,6 +105,7 @@ from arnold_pipelines.megaplan.user_actions import action_resolution_status
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_PR_MERGE,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -349,6 +350,7 @@ def _write_chain_policy_into_plan_meta(
         "prerequisite_policy": effective["prerequisite_policy"],
         "validation_policy": effective["validation_policy"],
         "review_policy": effective["review_policy"],
+        "driver_auto_approve": bool(spec.auto_approve),
         "source": effective["source"],
         "milestone_label": milestone_label,
     }
@@ -651,6 +653,47 @@ def _seed_plan_phase_timeout(root: Path, plan: str, timeout_seconds: float) -> N
     atomic_write_json(state_path, state)
 
 
+def _sync_plan_auto_approve(root: Path, plan: str, auto_approve: bool) -> None:
+    """Synchronize the chain-owned plan's ``config.auto_approve`` with the spec.
+
+    ``driver.auto_approve`` is chain-authoritative (``_init_plan`` passes it at
+    birth; there is no supported per-plan override).  A plan resumed after the
+    chain adopted a successor spec can carry a stale pre-adoption snapshot that
+    would wrongly suppress the auto-approve discharge
+    (``auto._auto_verify_deferred_must_criteria``).  Synchronize BOTH directions
+    (false -> true and true -> false) so this is policy propagation, not guard
+    weakening.  Idempotent: writes only when a value differs; preserves any
+    existing ``meta.chain_policy`` provenance.
+    """
+    try:
+        state_path = root / ".megaplan" / "plans" / plan / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    config = state.get("config")
+    if not isinstance(config, dict):
+        return
+    target = bool(auto_approve)
+    changed = config.get("auto_approve") != target
+    meta = state.get("meta")
+    if not isinstance(meta, dict):
+        meta = None
+    chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
+    if not isinstance(chain_policy, dict):
+        chain_policy = None
+    if chain_policy is not None and chain_policy.get("driver_auto_approve") != target:
+        changed = True
+    if not changed:
+        return
+    config["auto_approve"] = target
+    if isinstance(meta, dict):
+        cp = meta.setdefault("chain_policy", {})
+        if not isinstance(cp, dict):
+            meta["chain_policy"] = cp = {}
+        cp["driver_auto_approve"] = target
+    atomic_write_json(state_path, state)
+
+
 def _drive_plan(
     root: Path,
     plan: str,
@@ -674,6 +717,7 @@ def _drive_plan(
         # Align the plan's execute-phase budget with the chain-authoritative
         # driver.phase_timeout before any phase runs (idempotent seeding).
         _seed_plan_phase_timeout(root, plan, spec.phase_timeout)
+        _sync_plan_auto_approve(root, plan, bool(getattr(spec, "auto_approve", False)))
         return auto_drive(
             plan,
             cwd=root,
@@ -5751,7 +5795,7 @@ def _awaiting_human_can_retry(root: Path, plan: str | None) -> bool:
     if not isinstance(raw, dict):
         return False
     current_state = raw.get("current_state")
-    if current_state not in {"awaiting_human", "finalized"}:
+    if current_state not in {STATE_AWAITING_HUMAN_VERIFY, STATE_FINALIZED}:
         return False
     if not isinstance(finalize, dict):
         return False
