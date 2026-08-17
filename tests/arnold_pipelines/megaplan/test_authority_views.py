@@ -491,6 +491,81 @@ def test_accepted_attempt_projection_newer_pending_redispatch_shadows_older_acce
     )
 
 
+def test_accepted_attempt_projection_out_of_scope_newer_rejected_row_does_not_shadow_older_accepted(
+    tmp_path,
+) -> None:
+    # Older wave: T8 accepted (batch 1, fence 4, older mtime).
+    _write_wave(
+        tmp_path,
+        task_ids=["T8"],
+        batch_number=1,
+        fence_token=4,
+        mtime_ns=1_000,
+    )
+    # Newer wave: dispatched scope [T14] ONLY (fence 5, newer mtime — sorts
+    # first).  Its task_updates also carry an OUT-OF-SCOPE REJECTED row for T8
+    # (subject_outside_dispatched_batch, no envelope, digest null) — merge
+    # noise exactly like the run-7 wave in occurrence 0ae19cc17afd.  That row
+    # holds no dispatch authority over T8 and must NOT shadow the older
+    # accepted envelope.
+    path = _write_wave(
+        tmp_path,
+        task_ids=["T14"],
+        batch_number=2,
+        fence_token=5,
+        mtime_ns=2_000,
+        rows={"T14": {"outcome": "rejected", "with_envelope": False}},
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["task_updates"].append(
+        {
+            "task_id": "T8",
+            "status": "done",
+            "files_changed": ["arnold_pipelines/megaplan/maintenance/verification.py"],
+            "authority_generation_error": "attempt subject is outside dispatch scope",
+            "authority_validation": {
+                "outcome": "rejected",
+                "entry_kind": "task_update",
+                "entry_index": 1,
+                "subject_id": "T8",
+                "reason": "subject_outside_dispatched_batch",
+                "idempotency_key": None,
+                "envelope_digest": None,
+                "source_path": str(path),
+            },
+        }
+    )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    tasks = [
+        {"id": "T8", "status": "pending", "depends_on": []},
+        {"id": "T14", "status": "pending", "depends_on": []},
+    ]
+    projection = accepted_attempt_execution_projection(
+        tasks, plan_dir=tmp_path
+    )
+    assert projection is not None
+    assert projection.view.accepted_task_ids == ("T8",)
+    assert set(
+        projection.view.dependency_closed_completed_task_ids
+    ) == {"T8"}
+    decisions: dict[str, AuthorityDecision] = {}
+    assert effective_execute_completed_task_ids(
+        tasks, plan_dir=tmp_path, decisions=decisions
+    ) == {"T8"}
+    assert decisions["T8"].status is EvidenceStatus.satisfied
+    assert (
+        decisions["T8"].diagnostics["execute_completion"]
+        == "accepted_attempt_projection"
+    )
+    # T14 is in-scope rejected: it shadows nothing older and mints nothing.
+    assert decisions["T14"].status is EvidenceStatus.unknown
+    assert (
+        decisions["T14"].diagnostics["reason"]
+        == "no_accepted_attempt"
+    )
+
+
 def test_megaplan_wrappers_retain_generic_wire_contract_and_reject_other_policy() -> None:
     records = _records()
     grant, attempt, claim, decision = records[2], records[3], records[5], records[7]

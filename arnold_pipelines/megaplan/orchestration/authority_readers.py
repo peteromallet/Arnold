@@ -706,6 +706,10 @@ def _collect_accepted_attempt_authority(
             continue
         identity = resolution.metadata.dispatch_identity
         run_identity = run_identity or (identity.run_id, identity.run_revision)
+        wave_scope = set(identity.subject_ids)
+        batch_scope = payload.get("batch_scope")
+        if isinstance(batch_scope, Mapping):
+            wave_scope.update(_string_values(batch_scope.get("task_ids")))
         envelopes = resolution.metadata.result_envelopes
         by_digest = {envelope.digest(): envelope for envelope in envelopes}
         by_subject: dict[str, list[ResultEnvelope]] = {}
@@ -729,14 +733,22 @@ def _collect_accepted_attempt_authority(
                 entry_subject = _optional_str(entry.get("task_id") or entry.get("id"))
             if entry_subject is None:
                 continue
+            # Any durable validation selects the strict projection, including
+            # rejected off-scope rows; off-scope rows must not shadow subjects
+            # (they hold no dispatch authority over that subject).
+            if (
+                isinstance(raw_validation, Mapping)
+                and _optional_str(raw_validation.get("outcome"))
+            ):
+                saw_validation_projection = True
+            if entry_subject not in wave_scope:
+                continue
             if entry_subject in seen_subject_ids:
                 continue
             seen_subject_ids.add(entry_subject)
             if not isinstance(raw_validation, Mapping):
                 continue
             outcome = _optional_str(raw_validation.get("outcome"))
-            if outcome:
-                saw_validation_projection = True
             if outcome != "accepted":
                 continue
             envelope = _entry_envelope(entry, raw_validation, by_digest, by_subject)
