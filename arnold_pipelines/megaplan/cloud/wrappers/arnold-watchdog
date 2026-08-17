@@ -1712,8 +1712,8 @@ def babysitter_wedged(payload, run_root):
         launched_raw = payload.get("launched_at")
         if not launched_raw:
             return False
-        launched = dt.datetime.fromisoformat(str(launched_raw).replace("Z", "+00:00"))
-        if dt.datetime.now(dt.timezone.utc) - launched < dt.timedelta(minutes=launch_stall_minutes):
+        launched = datetime.fromisoformat(str(launched_raw).replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) - launched < timedelta(minutes=launch_stall_minutes):
             return False
     except Exception:
         return False
@@ -1722,7 +1722,7 @@ def babysitter_wedged(payload, run_root):
         run_logs = list(run_root.rglob("run.log"))
     if run_logs:
         newest = max(p.stat().st_mtime for p in run_logs)
-        if dt.datetime.now(dt.timezone.utc).timestamp() - newest < log_stall_minutes * 60:
+        if datetime.now(timezone.utc).timestamp() - newest < log_stall_minutes * 60:
             return False
     return True
 
