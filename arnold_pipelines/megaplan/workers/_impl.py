@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ import uuid
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -3633,6 +3635,141 @@ def _apply_worker_state_isolation(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
+# Canonical codex OAuth seeds, freshest-first. Mirrors cloud/auth.py OAUTH_SEEDS:
+# the persistent volume copy (/workspace/.creds) is written on every deploy and
+# the root copy is re-seeded by the entrypoint on boot.
+_CODEX_AUTH_SEED_PATHS = (
+    Path("/workspace/.creds/codex-auth.json"),
+    Path("/root/.codex/auth.json"),
+)
+# Fallback freshness bound when the JWT access token carries no decodable exp.
+_CODEX_AUTH_FALLBACK_MAX_AGE = 30 * 24 * 60 * 60
+# Skew so a token that expires within 5 minutes is treated as stale.
+_CODEX_AUTH_EXPIRY_SKEW = 5 * 60
+
+
+def _seed_codex_auth_into_env(env: dict[str, str]) -> None:
+    """Best-effort repair of the auth file used by the final Codex child env.
+
+    The normal dispatch path inherits ``CODEX_HOME`` unchanged (the orchestrator
+    unit exports ``CODEX_HOME=/workspace/.codex``), so a stale ``auth.json`` there
+    makes every Codex child fail with 401 on the realtime backend. This helper
+    validates the file the child will actually read and, when it is missing or its
+    credential is expired, atomically replaces it with a canonical seed that
+    independently passes the same validation.
+
+    Best-effort contract: never raises, never prints tokens, never touches
+    ``config.toml``, and leaves the child environment/files unchanged when no
+    valid seed exists (a genuinely external credential gate must still surface
+    truthfully as the original connection error).
+    """
+    now = time.time()
+
+    def warn(reason: str) -> None:
+        print(f"[megaplan] Codex auth self-heal skipped: {reason}", file=sys.stderr)
+
+    def read_valid(path: Path) -> bytes | None:
+        fd = -1
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            opened = os.fstat(fd)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or stat.S_IMODE(opened.st_mode) & 0o077
+            ):
+                return None
+            raw = os.read(fd, 1_048_577)
+            if not raw or len(raw) > 1_048_576:
+                return None
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                return None
+            if payload.get("auth_mode") == "apikey":
+                key = payload.get("OPENAI_API_KEY")
+                return raw if isinstance(key, str) and key.strip() else None
+            tokens = payload.get("tokens")
+            tokens = tokens if isinstance(tokens, dict) else {}
+            access_token = tokens.get("access_token")
+            if not isinstance(access_token, str) or not access_token.strip():
+                return None
+            exp: int | float | None = None
+            try:
+                part = access_token.split(".")[1]
+                part += "=" * (-len(part) % 4)
+                claims = json.loads(base64.urlsafe_b64decode(part))
+                candidate = claims.get("exp") if isinstance(claims, dict) else None
+                if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                    exp = candidate
+            except (IndexError, ValueError, TypeError, json.JSONDecodeError):
+                pass
+            if exp is not None:
+                return raw if float(exp) > now + _CODEX_AUTH_EXPIRY_SKEW else None
+            refreshed = payload.get("last_refresh")
+            if not isinstance(refreshed, str):
+                return None
+            stamp = datetime.fromisoformat(refreshed.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            age = now - stamp.timestamp()
+            return raw if -_CODEX_AUTH_EXPIRY_SKEW <= age <= _CODEX_AUTH_FALLBACK_MAX_AGE else None
+        except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+    try:
+        home = Path(env.get("CODEX_HOME") or Path(env.get("HOME") or Path.home()) / ".codex")
+        home_stat = os.lstat(home)
+        if (
+            not stat.S_ISDIR(home_stat.st_mode)
+            or stat.S_ISLNK(home_stat.st_mode)
+            or home_stat.st_uid not in {0, os.geteuid()}
+            or home_stat.st_mode & 0o022
+        ):
+            warn("unsafe CODEX_HOME")
+            return
+        target = home / "auth.json"
+        if read_valid(target) is not None:
+            return
+        try:
+            target_stat = os.lstat(target)
+            if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_nlink != 1:
+                warn("unsafe existing auth.json")
+                return
+        except FileNotFoundError:
+            pass
+        seed = next((data for path in _CODEX_AUTH_SEED_PATHS if (data := read_valid(path)) is not None), None)
+        if seed is None:
+            warn("no valid canonical seed")
+            return
+        temporary = home / f".auth.json.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            view = memoryview(seed)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short Codex auth write")
+                view = view[written:]
+            os.fchmod(fd, 0o600)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temporary, target)
+    except Exception as exc:
+        warn(type(exc).__name__)
+        try:
+            temporary.unlink(missing_ok=True)
+        except (NameError, OSError):
+            pass
+
+
 def _codex_child_env(
     turn_id: str | None = None,
     actor_id: str | None = None,
@@ -3648,6 +3785,9 @@ def _codex_child_env(
     if actor_id is not None:
         env["MEGAPLAN_ACTOR_ID"] = actor_id
     _apply_worker_state_isolation(env)
+    # Seed AFTER worker-state isolation so the final CODEX_HOME the child will
+    # read (possibly redirected to a per-worker temp dir) carries valid auth.
+    _seed_codex_auth_into_env(env)
     return env
 
 
