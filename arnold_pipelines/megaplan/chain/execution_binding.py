@@ -917,7 +917,19 @@ def _bound_import_root_covers_editable_metadata_mismatch(
     expected_import = str(expected_runtime.get("import_root") or "").strip()
     expected_editable = str(expected_runtime.get("editable_root") or "").strip()
     active_import = str(active_runtime.get("import_root") or "").strip()
-    if not expected_import or not expected_editable or not active_import:
+    active_editable = str(active_runtime.get("editable_root") or "").strip()
+    if not expected_import or not active_import:
+        return False
+    # T-0301 worktree-first: BOTH identities with empty editable_root (no
+    # editable install at all) and the same import root are the pure
+    # worktree-first shape - the editable_import_root_mismatch error is a
+    # stale diagnostic from a leftover candidate .venv, not a real mismatch.
+    if not expected_editable and not active_editable:
+        return (
+            Path(expected_import).resolve(strict=False)
+            == Path(active_import).resolve(strict=False)
+        )
+    if not expected_editable or not active_import:
         return False
     return (
         Path(expected_import).resolve(strict=False)
