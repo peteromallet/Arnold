@@ -929,6 +929,19 @@ def _bound_import_root_covers_editable_metadata_mismatch(
             Path(expected_import).resolve(strict=False)
             == Path(active_import).resolve(strict=False)
         )
+    # Expected worktree-first (empty editable) but active carries the
+    # leftover candidate .venv's editable self-install pointing at the SAME
+    # import root: the active editable metadata is the candidate venv's own
+    # direct_url, not a different runtime - the bound import root is still
+    # the execution fact. Accept when the active editable root equals the
+    # active import root and the expected import matches.
+    if not expected_editable and active_editable:
+        return (
+            Path(active_editable).resolve(strict=False)
+            == Path(active_import).resolve(strict=False)
+            and Path(expected_import).resolve(strict=False)
+            == Path(active_import).resolve(strict=False)
+        )
     if not expected_editable or not active_import:
         return False
     return (
