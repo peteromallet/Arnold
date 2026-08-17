@@ -1751,6 +1751,17 @@ for name in (
             or pid_live(payload.get("supervisor_pid"))
         ) and not babysitter_wedged(payload, run_root):
             raise SystemExit(0)
+        # Wedged (or dead): terminate the stale babysitter + its agent tree so
+        # the fresh dispatch below does not race a zombie fixer on the same
+        # chain (observed 2026-08-17 I35: wedged 15:38 agents lingered beside
+        # 16:46 re-dispatches, both alive, competing). Best-effort SIGTERM;
+        # the receipt is left for the fresh launch to supersede.
+        for stale_pid in (payload.get("babysitter_pid"), payload.get("supervisor_pid")):
+            if isinstance(stale_pid, int) and stale_pid > 0 and pid_live(stale_pid):
+                try:
+                    os.kill(stale_pid, 15)
+                except OSError:
+                    pass
 raise SystemExit(1)
 PY
 }
