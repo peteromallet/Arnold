@@ -1709,7 +1709,7 @@ def babysitter_wedged(payload, run_root):
         os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LOG_STALL_MINUTES", "10")
     )
     try:
-        launched_raw = payload.get("launched_at")
+        launched_raw = payload.get("launched_at") or payload.get("dispatched_at")
         if not launched_raw:
             return False
         launched = datetime.fromisoformat(str(launched_raw).replace("Z", "+00:00"))
