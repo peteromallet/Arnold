@@ -1234,7 +1234,19 @@ def validate_runtime_launch_seed(
             "active site .pth vector changed or is unsafe: " + ", ".join(pth_errors),
         )
     wrappers, wrapper_errors = _wrapper_vector(root)
-    if wrapper_errors or wrappers != seed.get("wrappers"):
+    # T-0302 follow_accepted_generation (grok consult 2026-08-17): wrapper
+    # content is part of the engine generation that legitimately moved on an
+    # accepted follow. Compare the wrapper NAME SET (the custody surface: no
+    # wrapper silently added/removed) and tolerate content diffs, mirroring
+    # the pth treatment.
+    wrapper_names = {w.get("path", "").rsplit("/", 1)[-1] for w in wrappers if isinstance(w, Mapping)}
+    seed_wrappers = seed.get("wrappers")
+    seed_wrapper_names = {
+        w.get("path", "").rsplit("/", 1)[-1]
+        for w in seed_wrappers
+        if isinstance(w, Mapping)
+    } if isinstance(seed_wrappers, list) else set()
+    if wrapper_errors or wrapper_names != seed_wrapper_names:
         raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime wrapper manifest drifted")
     expected_interpreter = seed.get("interpreter")
     if is_supervisor:
