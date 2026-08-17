@@ -1044,6 +1044,26 @@ payload.update(
         "next_action": "Needs human review. Inspect the workspace, review the failure, and decide whether to resume, repair, or clean up.",
     }
 )
+# Stable gate idempotency key (grok plan 2026-08-17): the same human gate must
+# surface to Discord ONCE, not on every watchdog scan. send_discord_dm derives
+# the idempotency key from the payload hash - which changes per scan (summary
+# timestamps) - so pin an explicit stable key from the gate identity: session +
+# plan name + current state + failure kind (all tick-stable). The
+# delivery-effects adapter dedups on this key (Duplicate -> suppressed), so a
+# re-parked gate does not spam the resident. Resolution of the gate (new plan
+# state) changes the key -> a NEW gate may notify again, which is correct.
+import hashlib as _hashlib
+_plan = payload.get("plan") or {}
+_gate_salt = "|".join(
+    str(x)
+    for x in (
+        payload.get("session") or "",
+        _plan.get("name") or "",
+        _plan.get("current_state") or "",
+        ((_plan.get("latest_failure") or {}).get("kind") if isinstance(_plan.get("latest_failure"), dict) else "") or "",
+    )
+)
+payload["idempotency_key"] = f"human-gate:{_hashlib.sha256(_gate_salt.encode('utf-8')).hexdigest()[:32]}"
 payload = redact_payload(payload)
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
