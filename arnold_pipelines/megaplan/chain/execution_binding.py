@@ -1543,10 +1543,21 @@ def rebind_runtime_identity(
             active_identity=externally_verified_active,
         )
     if spec_report.get("status") not in {"match", "reconcile_required"}:
-        raise CliError(
-            RUNTIME_DRIFT_ERROR,
-            "runtime rebind refused while the immutable spec binding is not accepted",
+        # T-0301 worktree-first waiver (grok consult 2026-08-17): a bound
+        # chain whose ONLY active error is editable_runtime_import_root_mismatch
+        # (leftover candidate .venv editable metadata on a genuinely
+        # worktree-first runtime) must still be runtime-rebindable after an
+        # engine advance. Without this the chain can never rebind its runtime
+        # once the bundle is accepted.
+        bound_match = _bound_import_root_covers_editable_metadata_mismatch(
+            spec_report.get("expected") or {},
+            spec_report.get("active") or {},
         )
+        if not bound_match:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused while the immutable spec binding is not accepted",
+            )
     if external_identity is None:
         report = spec_report["runtime_binding"]
     else:
