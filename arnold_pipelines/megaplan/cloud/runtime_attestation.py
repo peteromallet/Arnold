@@ -1088,17 +1088,63 @@ def validate_runtime_launch_seed(
         expected_modules = expected_runtime.get("loaded_modules")
         module_root = Path(str(supervisor.get("runtime") or "")).resolve(strict=False)
     else:
-        provenance = runtime_provenance(expected_root=root, expected_revision=revision)
+        # T-0302 follow_accepted_generation (grok consult 2026-08-17): an
+        # engine advance through the accepted path (manifest expected_head ==
+        # live HEAD) is normal development. Read the accepted head from the
+        # per-session manifest and let the provenance follow it, so a worker
+        # dispatched against an accepted generation does not fail with
+        # source_revision_mismatch. The follow only accepts the live HEAD
+        # when it equals the manifest's accepted head (never unpublished
+        # code); a torn generation still fails closed.
+        accepted_head = ""
+        manifest_env = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "")
+        if manifest_env:
+            try:
+                manifest_payload = json.loads(
+                    Path(manifest_env).read_text(encoding="utf-8")
+                )
+                accepted_head = str(
+                    (manifest_payload.get("epic") or {}).get("expected_head") or ""
+                ).strip()
+            except (OSError, ValueError):
+                accepted_head = ""
+        if accepted_head:
+            os.environ["ARNOLD_ACCEPTED_RUNTIME_HEAD"] = accepted_head
+        provenance = runtime_provenance(
+            expected_root=root,
+            expected_revision=revision,
+            follow_accepted_generation=bool(accepted_head),
+        )
         if not provenance.get("ok"):
             raise CliError(
                 RUNTIME_ATTESTATION_ERROR,
                 f"runtime provenance changed: {provenance.get('errors')}",
             )
         if provenance != seed.get("runtime_provenance"):
-            raise CliError(
-                RUNTIME_ATTESTATION_ERROR,
-                "runtime provenance or direct_url identity drifted",
-            )
+            # When following the accepted generation, the revision fields
+            # legitimately moved (old seed revision -> new accepted head). The
+            # CUSTODY check is that the import root, module identities, and
+            # editable/pth vectors still match the seed - a revision-only
+            # difference on an accepted follow is the intended outcome.
+            seed_prov = seed.get("runtime_provenance")
+            seed_prov = seed_prov if isinstance(seed_prov, Mapping) else {}
+            revision_only = False
+            if accepted_head and isinstance(seed_prov, Mapping):
+                revision_only = all(
+                    provenance.get(key) == seed_prov.get(key)
+                    for key in (
+                        "import_root",
+                        "editable_root",
+                        "direct_url",
+                        "pth",
+                        "imports",
+                    )
+                )
+            if not revision_only:
+                raise CliError(
+                    RUNTIME_ATTESTATION_ERROR,
+                    "runtime provenance or direct_url identity drifted",
+                )
         expected_modules = seed.get("loaded_modules")
         module_root = root
     modules, module_errors = (
