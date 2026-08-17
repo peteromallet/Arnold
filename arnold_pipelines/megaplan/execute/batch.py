@@ -7429,6 +7429,42 @@ def handle_execute_auto_loop(
                 mode = result.mode
                 refreshed = result.refreshed
                 break
+        # Success-path frontier rescan (grok consult 2026-08-16, astrid m2
+        # T19-T27 never dispatched): after a batch that COMPLETED tasks,
+        # newly-eligible dependents (their deps now done) must be dispatched
+        # in THIS invocation. Previously the loop walked a FROZEN batch list —
+        # compute_task_batches put T19/T22/... in later layers of the initial
+        # split, the auto-loop never rescanned after a successful merge, and
+        # the quality gate then flagged them as "executor never started them".
+        # The only mid-run rescan was the task-level-block path above, which
+        # replaces batches_to_run with the independent remainder while
+        # batch_index stays ahead of the shorter list -> zero of the new
+        # queue ran. Recompute the frontier with the updated completed set and
+        # APPEND the newly-eligible batches (deduped) so the loop cursor
+        # naturally continues onto them.
+        else:
+            frontier = _recompute_runnable_batches(
+                finalize_data,
+                completed_task_ids=completed_task_ids,
+                state=state,
+                args=args,
+            )
+            if frontier:
+                existing = {
+                    task_id for batch in batches_to_run for task_id in batch
+                }
+                fresh = [
+                    batch
+                    for batch in frontier
+                    if any(task_id not in existing for task_id in batch)
+                ]
+                if fresh:
+                    batches_to_run = batches_to_run + fresh
+                    log.info(
+                        "frontier rescan: %d newly-eligible dependent "
+                        "batch(es) appended after completed batch",
+                        len(fresh),
+                    )
         agent = result.agent
         mode = result.mode
         refreshed = result.refreshed
