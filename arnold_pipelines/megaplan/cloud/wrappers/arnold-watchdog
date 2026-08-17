@@ -1691,16 +1691,29 @@ def babysitter_wedged(payload, run_root):
     The dedup only checked kill(pid, 0), so a hung babysitter (hermes agent at
     0% CPU, no run-log growth) blocked the chain indefinitely — the watchdog
     never re-dispatched (astrid/mega 2026-08-17, I18). A fixer is wedged when:
-    its launch is older than 45 minutes, and either the managed run.log is
-    absent (never wrote anything) or its mtime is older than 30 minutes. The
-    watchdog then treats it as NOT live so a fresh dispatch fires.
+    its launch is older than the stall threshold, and either the managed
+    run.log is absent (never wrote anything) or its mtime is older than the
+    log-stall threshold. The watchdog then treats it as NOT live so a fresh
+    dispatch fires.
     """
+    # Configurable stall thresholds (default 15 min launch + 10 min no log
+    # growth). Tightened from 45/30 (I32/I34, 2026-08-17): the hermes agent
+    # wedge (model-call join hang) surfaced repeatedly; 45 min per wedge
+    # stalled the epics far longer than the underlying repair. 15+10 keeps
+    # the false-positive window wide for legitimate long tool calls while
+    # re-dispatching a wedged fixer ~3x faster.
+    launch_stall_minutes = float(
+        os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LAUNCH_STALL_MINUTES", "15")
+    )
+    log_stall_minutes = float(
+        os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LOG_STALL_MINUTES", "10")
+    )
     try:
         launched_raw = payload.get("launched_at")
         if not launched_raw:
             return False
-        launched = datetime.fromisoformat(str(launched_raw).replace("Z", "+00:00"))
-        if datetime.now(timezone.utc) - launched < timedelta(minutes=45):
+        launched = dt.datetime.fromisoformat(str(launched_raw).replace("Z", "+00:00"))
+        if dt.datetime.now(dt.timezone.utc) - launched < dt.timedelta(minutes=launch_stall_minutes):
             return False
     except Exception:
         return False
@@ -1709,7 +1722,7 @@ def babysitter_wedged(payload, run_root):
         run_logs = list(run_root.rglob("run.log"))
     if run_logs:
         newest = max(p.stat().st_mtime for p in run_logs)
-        if datetime.now(timezone.utc).timestamp() - newest < 30 * 60:
+        if dt.datetime.now(dt.timezone.utc).timestamp() - newest < log_stall_minutes * 60:
             return False
     return True
 
