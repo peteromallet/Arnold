@@ -7576,11 +7576,16 @@ def _run_step_with_worker_legacy(
     # a chain execution binding is available, verifies them against the bound
     # identity.  A mismatch raises CliError and blocks the worker.
     from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        refresh_runtime_launch_seed_for_worker_dispatch as _refresh_runtime_launch_seed,
         require_configured_runtime_launch as _require_runtime_launch,
         runtime_vector_sha256 as _runtime_vector_sha256,
     )
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance as _rp
 
+    # Select the currently accepted immutable generation at the actual worker
+    # dispatch boundary.  The long-lived chain parent keeps its orchestration
+    # seed; publication only changes workers started after this point.
+    _refresh_runtime_launch_seed()
     _launch_seed = _require_runtime_launch("worker", create=True)
     _runtime = _rp()
     _source_ref = str(_runtime.get("source_revision") or "")
