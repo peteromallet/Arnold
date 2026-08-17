@@ -53,6 +53,31 @@ SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-run
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi
+# The wrapper snapshots itself to a temp file (mktemp /tmp/arnold-watchdog.XXX)
+# before exec, so BASH_SOURCE points at /tmp and the lib is not beside it.
+# Resolve the lib from the MANIFEST-bound runtime root before falling back to
+# the shared /usr/local/bin copy — the shared copy is a bootstrapped snapshot
+# and drifts stale (missing arnold_runtime_manifest_epic_field), which made the
+# relaunch preflight fail closed with "chain_runtime_binding_drift" on every
+# scan. Parsing the manifest here needs no lib: it is a plain JSON field read.
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" && -n "${ARNOLD_RUNTIME_MANIFEST:-}" ]]; then
+  _manifest_runtime_root="$(python3 - "$ARNOLD_RUNTIME_MANIFEST" <<'PY' 2>/dev/null || true
+import json, pathlib, sys
+try:
+    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+    print((payload.get("epic") or {}).get("runtime_root") or "")
+except Exception:
+    pass
+PY
+)"
+  if [[ -n "$_manifest_runtime_root" && -d "$_manifest_runtime_root" ]]; then
+    _manifest_lib="$_manifest_runtime_root/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+    if [[ -f "$_manifest_lib" ]]; then
+      SUPERVISOR_RUNTIME_LIB="$_manifest_lib"
+    fi
+  fi
+  unset _manifest_runtime_root _manifest_lib
+fi
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
 fi
