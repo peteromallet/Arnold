@@ -18,7 +18,19 @@ if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   exec bash "$watchdog_snapshot" "$@"
 fi
 ARNOLD_WATCHDOG_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
-trap 'rm -f -- "$ARNOLD_WATCHDOG_SNAPSHOT_PATH"' EXIT
+# The snapshot may be re-exec'd by the relaunch materializer (exec via
+# arnold-supervise) while ARNOLD_WATCHDOG_ORIGIN still names the shared
+# origin file.  The EXIT trap must NEVER remove the origin: it is a tracked
+# engine file every future launch depends on.  Only ever remove a real
+# mktemp snapshot under the temp dir, and only when it is not the origin.
+trap '
+  case "$ARNOLD_WATCHDOG_SNAPSHOT_PATH" in
+    "${TMPDIR:-/tmp}"/arnold-watchdog.*)
+      if [[ -n "${ARNOLD_WATCHDOG_ORIGIN:-}" && "$ARNOLD_WATCHDOG_SNAPSHOT_PATH" != "$ARNOLD_WATCHDOG_ORIGIN" ]]; then
+        rm -f -- "$ARNOLD_WATCHDOG_SNAPSHOT_PATH"
+      fi ;;
+  esac
+' EXIT
 
 # Caller-provided supervisor runtime controls are an explicit invocation
 # contract (and are used by readiness probes).  The shared hot-env supplies
