@@ -852,6 +852,7 @@ def _launch_seed_current(
     root: Path,
     expected_revision: str,
     marker_path: Path,
+    manifest_path: Path,
 ) -> bool:
     """True when the on-disk seed is release-ready and still pinned to root/revision.
 
@@ -860,11 +861,27 @@ def _launch_seed_current(
     must invalidate a stale seed, otherwise every worker fails
     ``validate_runtime_launch_seed`` with "cloud marker launch binding
     drifted".  The comparison mirrors the worker-side gate exactly.
+
+    The seed's ``input_paths.manifest`` must resolve to the SAME canonical
+    manifest path as *manifest_path*: a pointerless legacy seed (CLI build
+    without --manifest) or a pointer for another session must never be
+    treated as current, so the next chain start rebuilds it (codex consult
+    0ae19cc17afd).
     """
     try:
         seed = _json_file(seed_path, label="runtime launch seed")
         _verify_seed_digest(seed)
     except CliError:
+        return False
+    input_paths = seed.get("input_paths")
+    input_paths = input_paths if isinstance(input_paths, Mapping) else {}
+    seed_manifest = str(input_paths.get("manifest") or "").strip()
+    if not seed_manifest:
+        return False
+    if (
+        Path(seed_manifest).expanduser().resolve(strict=False)
+        != manifest_path.expanduser().resolve(strict=False)
+    ):
         return False
     expected_marker = seed.get("marker")
     expected_marker = expected_marker if isinstance(expected_marker, Mapping) else {}
@@ -984,6 +1001,7 @@ def ensure_runtime_launch_seed(
         root=root,
         expected_revision=expected_revision,
         marker_path=marker_path,
+        manifest_path=manifest_path,
     ):
         return seed_path
     payload = build_runtime_launch_seed(
@@ -1100,11 +1118,21 @@ def validate_runtime_launch_seed(
         # an env-only read made the follow a no-op there and every worker
         # after an engine commit failed with source_revision_mismatch. The
         # seed alone must be sufficient.
+        # Legacy compatibility (codex consult 0ae19cc17afd): a canonical seed
+        # is always self-sufficient via input_paths.manifest. A LEGACY seed
+        # whose pointer is empty (built by the CLI before --manifest existed)
+        # may fall back to ARNOLD_RUNTIME_MANIFEST so it follows the accepted
+        # generation instead of wedging on the next engine advance. The env is
+        # used ONLY when the seed pointer is empty; a nonempty-but-invalid
+        # seed pointer still fails closed (seed-first authority, never
+        # silently replaced by the environment).
         accepted_head = ""
         manifest_path = ""
         input_paths = seed.get("input_paths")
         input_paths = input_paths if isinstance(input_paths, Mapping) else {}
         manifest_path = str(input_paths.get("manifest") or "").strip()
+        if not manifest_path:
+            manifest_path = str(os.environ.get("ARNOLD_RUNTIME_MANIFEST") or "").strip()
         if manifest_path:
             try:
                 manifest_payload = json.loads(
@@ -1517,6 +1545,7 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--marker", type=Path, required=True)
     build.add_argument("--chain-spec", type=Path, required=True)
     build.add_argument("--seed-doc", type=Path, action="append", default=[])
+    build.add_argument("--manifest", type=Path, default=None)
     build.add_argument("--output", type=Path, required=True)
     startup = sub.add_parser("startup")
     startup.add_argument("--component", required=True)
@@ -1539,6 +1568,7 @@ def main(argv: list[str] | None = None) -> int:
             marker_path=args.marker,
             chain_spec_path=args.chain_spec,
             seed_doc_paths=args.seed_doc,
+            manifest_path=args.manifest,
         )
         _atomic_write(args.output, payload)
         print(json.dumps(payload, sort_keys=True))
