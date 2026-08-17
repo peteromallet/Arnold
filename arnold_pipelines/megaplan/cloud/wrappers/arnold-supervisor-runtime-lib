@@ -262,7 +262,7 @@ arnold_runtime_manifest_is_compatibility_only() {
   # and authoritative manifests.  Dependency-independent (stdlib JSON only).
   local manifest_path="${1:-}"
   [[ -n "$manifest_path" && -f "$manifest_path" ]] || return 1
-  "${MEGAPLAN_SUPERVISOR_STDLIB_PYTHON:-python3}" - "$manifest_path" <<'PY'
+  "${MEGAPLAN_SUPERVISOR_STDLIB_PYTHON:-python3}" -P - "$manifest_path" <<'PY'
 import json
 import pathlib
 import sys
@@ -289,7 +289,12 @@ arnold_runtime_manifest_epic_field() {
   # correction 1): field reads must never let the global pointer select a
   # runtime — permit-admitted manifestless runs keep the legacy fallback.
   arnold_runtime_manifest_is_compatibility_only "$manifest_path" && return 0
-  python3 - "$manifest_path" "$field" <<'PY'
+  # -P (safe path): the pyenv shim without -P resolves arnold_pipelines from a
+  # stale /workspace/arnold partial tree before PYTHONPATH, breaking
+  # bootstrap_manifest import (watchdog "manifest failed to load" after the
+  # resident-only container recreate on 2026-08-17). -P pins the import to
+  # PYTHONPATH, which the launch script sets to the manifest-bound runtime.
+  "${MEGAPLAN_SUPERVISOR_STDLIB_PYTHON:-python3}" -P - "$manifest_path" "$field" <<'PY'
 import pathlib
 import sys
 
