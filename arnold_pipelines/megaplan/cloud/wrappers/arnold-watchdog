@@ -1438,17 +1438,27 @@ if current not in {
                 continue
             idx = chain.get("current_milestone_index")
             completed = chain.get("completed") or []
-            total = 0
-            try:
-                spec_text = spec_path.read_text(encoding="utf-8")
-                # chain.yaml is YAML: count top-level "- label:" milestone entries.
-                total = sum(1 for line in spec_text.splitlines() if line.startswith("- label:"))
-            except Exception:
+            last_state = str(chain.get("last_state") or "")
+            # A chain parked at a HUMAN GATE (awaiting_human_verify /
+            # awaiting_human) must NOT be driven - the fixer would re-run the
+            # same milestone, re-emit the same product-safety user_actions,
+            # and park again (grok consult 2026-08-17: the between-milestones
+            # drive in a85e968a88 was the mechanical generator of the mega m3
+            # U1/U2 loop). Human gates are resolved by a human, not a drive.
+            if last_state in {"awaiting_human", "awaiting_human_verify"}:
+                chain_pending = False
+            else:
                 total = 0
-            if isinstance(idx, int) and idx >= 0 and (total == 0 or idx < total):
-                chain_pending = True
-            elif completed and (total == 0 or len(completed) < total):
-                chain_pending = True
+                try:
+                    spec_text = spec_path.read_text(encoding="utf-8")
+                    # chain.yaml is YAML: count top-level "- label:" milestone entries.
+                    total = sum(1 for line in spec_text.splitlines() if line.startswith("- label:"))
+                except Exception:
+                    total = 0
+                if isinstance(idx, int) and idx >= 0 and (total == 0 or idx < total):
+                    chain_pending = True
+                elif completed and (total == 0 or len(completed) < total):
+                    chain_pending = True
             break
     if not chain_pending:
         sys.exit(1)
