@@ -148,7 +148,6 @@ def runtime_provenance(
     *,
     expected_root: Path | None = None,
     expected_revision: str = "",
-    follow_accepted_generation: bool = False,
 ) -> dict[str, Any]:
     import arnold
     import arnold_pipelines
@@ -208,25 +207,12 @@ def runtime_provenance(
         if any(not bool(record.get("readable")) for record in pth):
             errors.append("editable_pth_unreadable")
     if expected_revision and source_revision != expected_revision:
-        # T-0302 follow_accepted_generation (grok consult 2026-08-17): an
-        # engine advance through the ACCEPTED path (advance_generation set
-        # expected_head == live HEAD) is normal development, not drift. When
-        # follow_accepted_generation is requested, accept the LIVE revision
-        # only if it equals the accepted manifest head (never unpublished
-        # code) and record the moved revision in the provenance. The caller
-        # (validate_runtime_launch_seed) still refuses a torn generation
-        # where the stores disagree.
-        if follow_accepted_generation:
-            accepted_head = str(
-                os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD", "")
-            ).strip()
-            if accepted_head and source_revision == accepted_head:
-                errors = [e for e in errors if e != "source_revision_mismatch"]
-                expected_revision = source_revision
-            else:
-                errors.append("source_revision_mismatch")
-        else:
-            errors.append("source_revision_mismatch")
+        # Codex fix 2026-08-17: exact revision check restored. A worker's
+        # seed binds ONE immutable generation; the live checkout revision must
+        # equal the seed's expected_revision exactly. There is no
+        # "follow_accepted_generation" path — a newer accepted manifest head
+        # must never silently re-interpret an already-issued seed.
+        errors.append("source_revision_mismatch")
     return {
         "ok": not errors,
         "errors": errors,

@@ -49,6 +49,15 @@ from arnold_pipelines.megaplan.cloud.runtime_provenance import (
     emit_runtime_manifest_cutover_rollback_receipt,
     verify_runtime_manifest_cutover_rollback_receipt,
 )
+# Codex fix 2026-08-17: dependency-generation proof carry-forward is now
+# CONDITIONAL — the proof must bind to the NEW commit's frozen dependency
+# spec (recomputed digest) and its interpreter/venv must still verify.
+# These are imported at module level so tests can monkeypatch them.
+from arnold_pipelines.megaplan.cloud.install_sync import (
+    GenerationError,
+    compute_venv_digest,
+    frozen_spec_sha256,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 MANIFEST_SCHEMA_VERSION = "1"
@@ -860,6 +869,16 @@ def advance_generation(
             "dependency_generation proof; unknown dependency state blocks "
             "publication (T-0301)"
         )
+    # Codex fix 2026-08-17: conditional dependency-proof carry-forward. The
+    # proposed OR carried proof must bind to the NEW commit's frozen
+    # dependency spec — carrying a proof merely because it was valid for the
+    # previous source commit is a proof-substitution hole. Recompute the
+    # frozen-spec digest from the runtime root and verify the interpreter path
+    # and venv digest still resolve to that generation.
+    _verify_dependency_generation_binding(
+        proof,
+        runtime_root=str(manifest.epic.get("runtime_root") or ""),
+    )
     # Git-object head guard: the new commit must be a 40-hex SHA that
     # RESOLVES to that exact commit in the runtime root.  This rejects the
     # recurring fake-head corruption (10-char real prefix + fabricated tail)
@@ -887,6 +906,67 @@ def advance_generation(
         promotions=promotions,
         timestamps=dict(manifest.timestamps, updated=now),
     )
+
+
+def _verify_dependency_generation_binding(
+    proof: Mapping[str, Any],
+    *,
+    runtime_root: str,
+) -> None:
+    """Fail-closed proof→commit binding (Codex fix 2026-08-17).
+
+    Recompute the frozen dependency-spec digest from *runtime_root* (the
+    checkout AT the new commit) and require the proposed/carried proof to bind
+    to it: ``proof["frozen_spec_sha256"] == candidate``, the proof's
+    ``interpreter_path`` must live inside the content-addressed generation
+    directory named by that digest, and the recomputed ``venv_digest`` must
+    match the recorded one.  Any mismatch is :class:`ManifestError` — a proof
+    valid only for a previous commit is never carried forward.
+    """
+    if not runtime_root:
+        raise ManifestError(
+            "advance_generation refused: epic.runtime_root is empty; cannot "
+            "verify the dependency-generation binding"
+        )
+    try:
+        candidate = frozen_spec_sha256(runtime_root)
+    except GenerationError as exc:
+        raise ManifestError(
+            "advance_generation refused: cannot compute the frozen dependency-"
+            f"spec digest at {runtime_root}: {exc}"
+        ) from exc
+    if str(proof.get("frozen_spec_sha256") or "") != candidate:
+        raise ManifestError(
+            "advance_generation refused: dependency-generation proof is bound "
+            f"to frozen_spec_sha256 {proof.get('frozen_spec_sha256')!r} but the "
+            f"new commit's frozen spec digest is {candidate!r}; rebuild or "
+            "select the matching content-addressed generation before advancing"
+        )
+    interpreter = Path(str(proof.get("interpreter_path") or "")).expanduser()
+    generation_dir = interpreter.resolve(strict=False).parent.parent
+    if generation_dir.name != candidate:
+        raise ManifestError(
+            "advance_generation refused: dependency-generation "
+            f"interpreter_path {interpreter} does not live inside the "
+            f"content-addressed generation dir named {candidate!r}"
+        )
+    if not interpreter.is_file():
+        raise ManifestError(
+            "advance_generation refused: dependency-generation interpreter "
+            f"is missing: {interpreter}"
+        )
+    try:
+        observed = compute_venv_digest(interpreter)
+    except Exception as exc:  # noqa: BLE001 - any failure blocks publication
+        raise ManifestError(
+            f"advance_generation refused: cannot recompute venv_digest: {exc}"
+        ) from exc
+    if observed != str(proof.get("venv_digest") or ""):
+        raise ManifestError(
+            "advance_generation refused: dependency-generation venv_digest "
+            f"mismatch (recorded {proof.get('venv_digest')!r}, observed "
+            f"{observed!r}); the immutable generation was modified or rebuilt"
+        )
 
 
 def cutover_runtime_manifest(
@@ -1781,6 +1861,15 @@ def main(argv: list[str] | None = None) -> int:
     adv_p.add_argument(
         "--reason", required=True, help="reason recorded in the rollback record"
     )
+    adv_p.add_argument(
+        "--dependency-generation",
+        help=(
+            "the new commit's content-addressed dependency-generation proof "
+            "(inline JSON or @FILE). When omitted the manifest's current "
+            "complete proof is validated against the new commit's frozen spec "
+            "and carried forward ONLY if it binds (T-0301/Codex 2026-08-17)"
+        ),
+    )
     cut_p = sub.add_parser(
         "cutover",
         help=(
@@ -1857,7 +1946,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(updated.to_dict(), sort_keys=True))
         elif args.action == "advance_generation":
             manifest = load_manifest(args.path)
-            advanced = advance_generation(manifest, args.new_commit, reason=args.reason)
+            advanced = advance_generation(
+                manifest,
+                args.new_commit,
+                reason=args.reason,
+                dependency_generation=(
+                    _parse_json_record(args.dependency_generation)
+                    if args.dependency_generation
+                    else None
+                ),
+            )
             pointer = active_manifest_path()
             if Path(args.path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
                 # The caller passed the pointer itself — the switch IS the write.
