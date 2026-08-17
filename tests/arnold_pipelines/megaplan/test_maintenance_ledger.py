@@ -18,12 +18,27 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.incident.ledger import MaintenanceEventConflict
+from arnold_pipelines.megaplan.incident.schema import lifecycle_idempotency_key
 from arnold_pipelines.megaplan.maintenance.events import (
     ClassifierInfo,
     DetectionEvent,
     MaintenanceEvent,
     OccurrenceBudget,
+    OperationalActionKind,
+    OperationalEvent,
+    RepairRequestPayload,
     RootCauseCluster,
+    SourceChangePayload,
+)
+from arnold_pipelines.megaplan.maintenance.operations import (
+    ActionTarget,
+    LeaseCoordinates,
+    OccurrenceCoordinates,
+    PolicyVersionCoordinates,
+    ProducerPrincipal,
+    ProducerRole,
+    RunAuthorityCoordinates,
+    WbcAttemptCoordinates,
 )
 from arnold_pipelines.megaplan.maintenance.identity import (
     EventWindow,
@@ -149,7 +164,9 @@ def test_append_rejects_non_strict_event_before_writing(tmp_path: Path) -> None:
 def test_append_rejects_non_event_types(tmp_path: Path) -> None:
     ledger = MaintenanceLedger(tmp_path)
 
-    with pytest.raises(ValueError, match="MaintenanceEvent or a canonical dict"):
+    with pytest.raises(
+        ValueError, match="MaintenanceEvent, OperationalEvent, or a canonical dict"
+    ):
         ledger.append("not-an-event")  # type: ignore[arg-type]
 
     assert not ledger.events_path.exists()
@@ -283,9 +300,14 @@ def test_primary_and_sink_failure_raises_dead_letter_sink_failure(
 # ---------------------------------------------------------------------------
 
 
+def _event_lifecycle_key(event: MaintenanceEvent | OperationalEvent) -> str:
+    """Canonical lifecycle idempotency key of a strict Maintenance model."""
+    return lifecycle_idempotency_key(json.loads(canonical_dumps(event)))
+
+
 def _write_dead_letter_for(
     ledger: MaintenanceLedger,
-    event: MaintenanceEvent,
+    event: MaintenanceEvent | OperationalEvent,
     *,
     tamper_digest: bool = False,
     tamper_bytes: bool = False,
@@ -296,12 +318,13 @@ def _write_dead_letter_for(
         digest = "0" * 64
     if tamper_bytes:
         canonical_bytes = canonical_bytes.replace("occ-m1", "occ-x", 1)
+    idempotency_key = _event_lifecycle_key(event)
     record = {
         "schema_version": DEAD_LETTER_SCHEMA_VERSION,
         "ts_utc": datetime.now(timezone.utc).isoformat(),
-        "replay_id": _recompute_replay_id(event.occurrence_id, digest),
-        "idempotency_key": event.occurrence_id,
-        "event_kind": event.event_kind.value,
+        "replay_id": _recompute_replay_id(idempotency_key, digest),
+        "idempotency_key": idempotency_key,
+        "event_kind": _kind_name(event),
         "digest": digest,
         "failure_type": FailureType.WRITE_FAILURE.value,
         "failure_detail": "OSError: disk full",
@@ -314,6 +337,12 @@ def _write_dead_letter_for(
         ),
     )
     return record
+
+
+def _kind_name(event: MaintenanceEvent | OperationalEvent) -> str:
+    """Closed event/action kind of a strict Maintenance model."""
+    kind = getattr(event, "event_kind", None) or getattr(event, "action_kind", None)
+    return kind.value
 
 
 def test_replay_appends_original_event_at_most_once(
@@ -478,3 +507,175 @@ def test_crash_reopen_replays_durably(tmp_path: Path, monkeypatch: pytest.Monkey
     # The dead letter and disposition both survive across reopen.
     assert len(_read_ndjson(reopened.dead_letter_path)) == 1
     assert len(_read_ndjson(reopened.disposition_path)) == 1
+
+
+# ---------------------------------------------------------------------------
+# T4: operational lifecycle events through the facade (Plan Step 3)
+# ---------------------------------------------------------------------------
+
+
+def _operational_event(
+    action: OperationalActionKind,
+    *,
+    occurrence_id: str = "occ-op",
+    occurrence_digest: str = "f" * 64,
+    event_id: str | None = None,
+) -> OperationalEvent:
+    """``OperationalEvent`` model for one occurrence-bound lifecycle action."""
+    payload = (
+        RepairRequestPayload(request_id="req-1")
+        if action is OperationalActionKind.REPAIR_REQUEST
+        else SourceChangePayload()
+    )
+    return OperationalEvent.build(
+        event_id=event_id or f"op-{action.value}-1",
+        occurrence=OccurrenceCoordinates(
+            occurrence_id=occurrence_id,
+            canonical_digest=occurrence_digest,
+        ),
+        lease=LeaseCoordinates(lease_id="lease-1", custody_epoch=1),
+        run_authority=RunAuthorityCoordinates(run_id="run-1", satisfied=True),
+        policy=PolicyVersionCoordinates(policy_version="policy-1"),
+        target=ActionTarget(target="chain:session"),
+        producer=ProducerPrincipal(
+            principal="producer-1", role=ProducerRole.REPAIR_PRODUCER
+        ),
+        payload=payload,
+        observed_at=datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+        wbc_attempt=WbcAttemptCoordinates(attempt_id="att-1"),
+    )
+
+
+def test_append_persists_operational_event_with_lifecycle_key(tmp_path: Path) -> None:
+    ledger = MaintenanceLedger(tmp_path)
+    request = _operational_event(OperationalActionKind.REPAIR_REQUEST)
+    request_key = lifecycle_idempotency_key(
+        json.loads(canonical_dumps(request))
+    )
+
+    appended = ledger.append(request)
+
+    assert appended["kind"] == "incident.repair_request"
+    # The recorded journal key is the strict action key, not the occurrence id.
+    assert appended["idempotency_key"] == request_key
+    assert appended["idempotency_key"] != "occ-op"
+    assert ledger._incident.lookup_maintenance_event(request_key)["seq"] == 0
+    assert not ledger.dead_letter_path.exists()
+
+
+def test_operational_distinct_actions_coexist_and_exact_retry_deduplicates(
+    tmp_path: Path,
+) -> None:
+    ledger = MaintenanceLedger(tmp_path)
+    request = _operational_event(OperationalActionKind.REPAIR_REQUEST)
+    source_change = _operational_event(
+        OperationalActionKind.SOURCE_CHANGE, occurrence_id="occ-op"
+    )
+
+    first = ledger.append(request)
+    second = ledger.append(source_change)
+    retry = ledger.append(request)
+
+    # Distinct actions for ONE occurrence coexist; exact retry deduplicates.
+    assert [first["seq"], second["seq"]] == [0, 1]
+    assert retry["seq"] == first["seq"]
+    assert len(_read_ndjson(ledger.events_path)) == 2
+
+
+def test_operational_divergent_reuse_raises_conflict_without_dead_letter(
+    tmp_path: Path,
+) -> None:
+    ledger = MaintenanceLedger(tmp_path)
+    ledger.append(_operational_event(OperationalActionKind.REPAIR_REQUEST))
+
+    divergent = _operational_event(
+        OperationalActionKind.REPAIR_REQUEST,
+        event_id="op-repair_request-2",
+    )
+
+    with pytest.raises(MaintenanceEventConflict, match="lifecycle key"):
+        ledger.append(divergent)
+
+    # Nothing advanced and nothing was dead-lettered (policy conflict).
+    records = _read_ndjson(ledger.events_path)
+    assert len(records) == 1
+    assert records[0]["payload"]["event_id"] == "op-repair_request-1"
+    assert not ledger.dead_letter_path.exists()
+
+
+def test_operational_primary_failure_dead_letters_and_replays_at_most_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = MaintenanceLedger(tmp_path)
+    event = _operational_event(OperationalActionKind.REPAIR_REQUEST)
+    request_key = lifecycle_idempotency_key(json.loads(canonical_dumps(event)))
+    digest = canonical_digest(event)
+    _fail_primary(monkeypatch, ledger)
+
+    with pytest.raises(MaintenanceAppendFailure):
+        ledger.append(event)
+    monkeypatch.undo()
+
+    dead_letters = _read_ndjson(ledger.dead_letter_path)
+    assert len(dead_letters) == 1
+    record = dead_letters[0]
+    assert record["idempotency_key"] == request_key
+    assert record["event_kind"] == "repair_request"
+    assert record["digest"] == digest
+
+    first = ledger.replay_dead_letters()
+    assert first.dispositions[0].outcome is ReplayOutcome.REPLAYED
+    records = _read_ndjson(ledger.events_path)
+    assert len(records) == 1
+    assert records[0]["idempotency_key"] == request_key
+    assert records[0]["payload"]["occurrence"]["occurrence_id"] == "occ-op"
+
+    second = ledger.replay_dead_letters()
+    assert second.dispositions == ()
+    assert len(_read_ndjson(ledger.events_path)) == 1
+
+
+def test_operational_crash_reopen_replays_dead_letter_durably(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = MaintenanceLedger(tmp_path)
+    event = _operational_event(OperationalActionKind.REPAIR_REQUEST)
+    _fail_primary(monkeypatch, ledger)
+    with pytest.raises(MaintenanceAppendFailure):
+        ledger.append(event)
+    monkeypatch.undo()
+
+    # Simulate a crash and reopen the SAME root.
+    reopened = MaintenanceLedger(tmp_path)
+    report = reopened.replay_dead_letters()
+
+    assert report.dispositions[0].outcome is ReplayOutcome.REPLAYED
+    records = _read_ndjson(reopened.events_path)
+    assert len(records) == 1
+    assert records[0]["payload"]["occurrence"]["occurrence_id"] == "occ-op"
+    assert len(_read_ndjson(reopened.dead_letter_path)) == 1
+    assert len(_read_ndjson(reopened.disposition_path)) == 1
+
+
+def test_operational_replay_reports_conflict_for_divergent_committed_event(
+    tmp_path: Path,
+) -> None:
+    ledger = MaintenanceLedger(tmp_path)
+    # Commit one operational event for the action key first.
+    ledger.append(_operational_event(OperationalActionKind.REPAIR_REQUEST))
+    # Dead-letter a DIFFERENT event that reuses the same action key.
+    _write_dead_letter_for(
+        ledger,
+        _operational_event(
+            OperationalActionKind.REPAIR_REQUEST,
+            event_id="op-repair_request-other",
+        ),
+    )
+
+    report = ledger.replay_dead_letters()
+
+    assert report.dispositions[0].outcome is ReplayOutcome.CONFLICT
+    # History was NOT rewritten: the original committed event is still there.
+    records = _read_ndjson(ledger.events_path)
+    assert len(records) == 1
+    assert records[0]["payload"]["event_id"] == "op-repair_request-1"

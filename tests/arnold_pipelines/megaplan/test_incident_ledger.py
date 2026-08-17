@@ -23,6 +23,39 @@ from arnold_pipelines.megaplan.incident.schema import (
     MAX_COMMITTED_OUTPUT_BYTES,
     MAX_STRUCTURED_FIELD_BYTES,
     cap_committed_output_text,
+    is_operational_lifecycle_row,
+    lifecycle_idempotency_key,
+    operational_event_action_key,
+)
+from arnold_pipelines.megaplan.maintenance.events import (
+    AuditReport,
+    ClassifierInfo,
+    DetectionEvent,
+    EfficiencyAnalysis,
+    MaintenanceEvent,
+    OccurrenceBudget,
+    OperationalActionKind,
+    OperationalEvent,
+    RepairRequestPayload,
+    RootCauseCluster,
+    SourceChangePayload,
+)
+from arnold_pipelines.megaplan.maintenance.identity import (
+    EventWindow,
+    UtcTime,
+    Watermark,
+    canonical_dumps,
+    strict_loads,
+)
+from arnold_pipelines.megaplan.maintenance.operations import (
+    ActionTarget,
+    LeaseCoordinates,
+    OccurrenceCoordinates,
+    PolicyVersionCoordinates,
+    ProducerPrincipal,
+    ProducerRole,
+    RunAuthorityCoordinates,
+    WbcAttemptCoordinates,
 )
 
 
@@ -716,3 +749,209 @@ def test_incident_ledger_legacy_extension_behavior_preserved(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="maintenance event strict decode failed"):
         ledger.append_event(data)
     assert ledger.lookup_maintenance_event("occ-legacy-1") is None
+
+
+# ---------------------------------------------------------------------------
+# T3: incident-schema lifecycle action idempotency keys
+# ---------------------------------------------------------------------------
+
+
+def _operational_event_dict(
+    action: OperationalActionKind,
+    *,
+    occurrence_id: str = "occ-m2",
+    occurrence_digest: str = "f" * 64,
+    event_id: str | None = None,
+) -> dict:
+    """Canonical dict of one occurrence-bound operational lifecycle event."""
+    event = OperationalEvent.build(
+        event_id=event_id or f"op-{action.value}-1",
+        occurrence=OccurrenceCoordinates(
+            occurrence_id=occurrence_id,
+            canonical_digest=occurrence_digest,
+        ),
+        lease=LeaseCoordinates(lease_id="lease-1", custody_epoch=1),
+        run_authority=RunAuthorityCoordinates(run_id="run-1", satisfied=True),
+        policy=PolicyVersionCoordinates(policy_version="policy-1"),
+        target=ActionTarget(target="chain:session"),
+        producer=ProducerPrincipal(principal="producer-1", role=ProducerRole.REPAIR_PRODUCER),
+        payload=(
+            RepairRequestPayload(request_id="req-1")
+            if action is OperationalActionKind.REPAIR_REQUEST
+            else SourceChangePayload()
+        ),
+        observed_at=datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+        wbc_attempt=WbcAttemptCoordinates(attempt_id="att-1"),
+    )
+    return json.loads(canonical_dumps(event))
+
+
+def test_incident_schema_retains_occurrence_only_keys_for_legacy_rows() -> None:
+    """Legacy detection/analysis/audit rows keep occurrence-only keys (M2)."""
+    payloads = [
+        DetectionEvent(detection_kind="watchdog", subject="chain:session"),
+        EfficiencyAnalysis(product="operational_custody"),
+        AuditReport(report_type="six_hour"),
+    ]
+    for index, payload in enumerate(payloads):
+        event = _maintenance_event(occurrence_id=f"occ-legacy-{index}", event_id=f"evt-legacy-{index}")
+        # Swap in the closed payload for each legacy kind.
+        legacy = MaintenanceEvent.build(
+            event_id=event.event_id,
+            occurrence_id=event.occurrence_id,
+            observed_at=event.observed_at,
+            event_time=event.event_time,
+            window=event.window,
+            watermark=event.watermark,
+            classifier=event.classifier,
+            cluster=event.cluster,
+            budget=event.budget,
+            payload=payload,
+            environment="production",
+        )
+        row = json.loads(canonical_dumps(legacy))
+        assert is_operational_lifecycle_row(row) is False
+        assert lifecycle_idempotency_key(row) == f"occ-legacy-{index}"
+        # The incident schema still strict-routes the legacy row canonically.
+        canonical = validate_incident_event(row)
+        assert canonical["occurrence_id"] == f"occ-legacy-{index}"
+
+
+def test_incident_schema_distinct_operational_keys_for_one_occurrence() -> None:
+    """Separate lifecycle records for one occurrence derive distinct keys."""
+    request = _operational_event_dict(OperationalActionKind.REPAIR_REQUEST)
+    source_change = _operational_event_dict(OperationalActionKind.SOURCE_CHANGE)
+    assert is_operational_lifecycle_row(request) is True
+    assert is_operational_lifecycle_row(source_change) is True
+    assert request["occurrence"]["occurrence_id"] == source_change["occurrence"]["occurrence_id"]
+    assert lifecycle_idempotency_key(request) != lifecycle_idempotency_key(source_change)
+    # An exact retry reproduces the same persisted key.
+    retry = _operational_event_dict(OperationalActionKind.REPAIR_REQUEST)
+    assert lifecycle_idempotency_key(retry) == lifecycle_idempotency_key(request)
+
+
+def test_incident_schema_operational_key_stable_across_strict_round_trip() -> None:
+    """The persisted action key survives the strict codec round trip."""
+    row = _operational_event_dict(OperationalActionKind.REPAIR_REQUEST)
+    decoded = strict_loads(OperationalEvent, canonical_dumps(
+        strict_loads(OperationalEvent, json.dumps(row))
+    ))
+    assert canonical_dumps(decoded) == canonical_dumps(
+        strict_loads(OperationalEvent, json.dumps(row))
+    )
+    assert operational_event_action_key(decoded) == lifecycle_idempotency_key(row)
+
+
+# ---------------------------------------------------------------------------
+# T4: lifecycle-idempotent journal boundary (Plan Step 3)
+# ---------------------------------------------------------------------------
+
+
+def _operational_event_model(
+    action: OperationalActionKind,
+    *,
+    occurrence_id: str = "occ-op",
+    occurrence_digest: str = "f" * 64,
+    event_id: str | None = None,
+) -> OperationalEvent:
+    """``OperationalEvent`` model for one occurrence-bound lifecycle action."""
+    payload = (
+        RepairRequestPayload(request_id="req-1")
+        if action is OperationalActionKind.REPAIR_REQUEST
+        else SourceChangePayload()
+    )
+    return OperationalEvent.build(
+        event_id=event_id or f"op-{action.value}-1",
+        occurrence=OccurrenceCoordinates(
+            occurrence_id=occurrence_id,
+            canonical_digest=occurrence_digest,
+        ),
+        lease=LeaseCoordinates(lease_id="lease-1", custody_epoch=1),
+        run_authority=RunAuthorityCoordinates(run_id="run-1", satisfied=True),
+        policy=PolicyVersionCoordinates(policy_version="policy-1"),
+        target=ActionTarget(target="chain:session"),
+        producer=ProducerPrincipal(
+            principal="producer-1", role=ProducerRole.REPAIR_PRODUCER
+        ),
+        payload=payload,
+        observed_at=datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc),
+        wbc_attempt=WbcAttemptCoordinates(attempt_id="att-1"),
+    )
+
+
+def test_incident_ledger_appends_operational_events_with_lifecycle_keys(
+    tmp_path: Path,
+) -> None:
+    """Distinct lifecycle actions for ONE occurrence coexist at the journal."""
+    ledger = IncidentLedger(tmp_path)
+    request = _operational_event_model(OperationalActionKind.REPAIR_REQUEST)
+    request_key = lifecycle_idempotency_key(json.loads(canonical_dumps(request)))
+    source_change = _operational_event_model(
+        OperationalActionKind.SOURCE_CHANGE, occurrence_id="occ-op"
+    )
+
+    request_record = ledger.append_maintenance_event(request)
+    change_record = ledger.append_maintenance_event(source_change)
+
+    # Distinct actions for one occurrence append as separate records with
+    # distinct recorded lifecycle keys and distinct sequences.
+    assert request_record["seq"] == 0
+    assert change_record["seq"] == 1
+    assert request_record["idempotency_key"] == request_key
+    assert change_record["idempotency_key"] != request_key
+    assert request_record["kind"] == "incident.repair_request"
+    assert change_record["kind"] == "incident.source_change"
+    # The recorded key is the strict action key, never the occurrence id.
+    assert request_record["idempotency_key"] != "occ-op"
+    assert change_record["idempotency_key"] != "occ-op"
+    # Lookup by the recorded lifecycle key finds the exact record.
+    assert ledger.lookup_maintenance_event(request_key)["seq"] == 0
+    assert (
+        ledger.lookup_maintenance_event(change_record["idempotency_key"])["seq"]
+        == 1
+    )
+
+
+def test_incident_ledger_operational_exact_retry_deduplicates(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    request = _operational_event_model(OperationalActionKind.REPAIR_REQUEST)
+
+    first = ledger.append_maintenance_event(request)
+    retry = ledger.append_maintenance_event(request)
+
+    assert retry["seq"] == first["seq"]
+    assert len(_read_records(ledger)) == 1
+
+
+def test_incident_ledger_operational_divergent_reuse_rejected_without_advancing(
+    tmp_path: Path,
+) -> None:
+    """Reusing an action key with different content fails without advancing."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_maintenance_event(
+        _operational_event_model(OperationalActionKind.REPAIR_REQUEST)
+    )
+
+    divergent = _operational_event_model(
+        OperationalActionKind.REPAIR_REQUEST,
+        event_id="op-repair_request-2",
+    )
+
+    with pytest.raises(MaintenanceEventConflict, match="lifecycle key"):
+        ledger.append_maintenance_event(divergent)
+
+    records = _read_records(ledger)
+    assert len(records) == 1
+    assert records[0]["payload"]["event_id"] == "op-repair_request-1"
+
+
+def test_incident_ledger_operational_dict_form_round_trip(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    request = _operational_event_model(OperationalActionKind.REPAIR_REQUEST)
+    as_dict = json.loads(canonical_dumps(request))
+
+    appended = ledger.append_maintenance_event(as_dict)
+
+    assert appended["payload"] == json.loads(canonical_dumps(request))
+    assert appended["kind"] == "incident.repair_request"
+    assert appended["idempotency_key"] == lifecycle_idempotency_key(as_dict)

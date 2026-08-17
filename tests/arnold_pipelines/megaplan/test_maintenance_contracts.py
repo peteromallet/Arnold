@@ -26,10 +26,20 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from arnold_pipelines.megaplan.incident.schema import (
+    LEGACY_OCCURRENCE_ONLY_KINDS,
+    OPERATIONAL_KEY_COORDINATES,
+    is_operational_lifecycle_row,
+    legacy_occurrence_idempotency_key,
+    lifecycle_idempotency_key,
+    operational_action_key,
+    operational_event_action_key,
+)
 from arnold_pipelines.megaplan.maintenance.contracts import (
     CompletenessState,
     CoherenceReason,
@@ -45,15 +55,30 @@ from arnold_pipelines.megaplan.maintenance.contracts import (
 from arnold_pipelines.megaplan.maintenance.events import (
     AuditFinding,
     AuditReport,
+    CheckpointVerificationPayload,
+    CheckpointWindowKind,
     ClassifierInfo,
     DetectionEvent,
     EfficiencyAnalysis,
+    EscalationReference,
     EventKind,
+    HumanEscalationPayload,
+    InstallationPayload,
     MaintenanceEvent,
     OccurrenceBudget,
+    OperationalActionKind,
+    OperationalEvent,
+    OperationalPayload,
+    ProgressObservationPayload,
     ProjectionCoordinates,
     RecurrenceLink,
+    RecurrencePayload,
+    RepairRequestPayload,
+    RetriggerPayload,
     RootCauseCluster,
+    SourceChangePayload,
+    TerminalVerificationPayload,
+    VerifierProvenance,
     event_digest,
     occurrence_idempotency_key,
     verified_recurrence,
@@ -88,6 +113,17 @@ from arnold_pipelines.megaplan.maintenance.identity import (
     compare_identities,
     require_identical,
     strict_loads,
+)
+from arnold_pipelines.megaplan.maintenance.operations import (
+    ActionTarget,
+    LeaseCoordinates,
+    OccurrenceCoordinates,
+    PolicyVersionCoordinates,
+    ProducerPrincipal,
+    ProducerRole,
+    RecurrenceReference,
+    RunAuthorityCoordinates,
+    WbcAttemptCoordinates,
 )
 
 # ---------------------------------------------------------------------------
@@ -823,3 +859,648 @@ def test_unknown_states_never_promoted() -> None:
     assert envelope.dispatchable is False
     # Explicit null environment is preserved on the wire (never guessed).
     assert '"environment":null' in canonical_dumps(envelope)
+
+
+# ---------------------------------------------------------------------------
+# T3: lifecycle action idempotency keys (incident schema boundary)
+# ---------------------------------------------------------------------------
+
+
+def _operational_payload(
+    action: OperationalActionKind,
+    *,
+    event_id: str,
+) -> OperationalPayload:
+    """Build the closed discriminated payload for *action*."""
+    if action is OperationalActionKind.REPAIR_REQUEST:
+        return RepairRequestPayload(request_id=f"req-{event_id}")
+    if action is OperationalActionKind.SOURCE_CHANGE:
+        return SourceChangePayload()
+    if action is OperationalActionKind.INSTALLATION:
+        return InstallationPayload()
+    if action is OperationalActionKind.RETRIGGER:
+        return RetriggerPayload()
+    if action is OperationalActionKind.PROGRESS_OBSERVATION:
+        return ProgressObservationPayload()
+    if action is OperationalActionKind.CHECKPOINT_VERIFICATION:
+        return CheckpointVerificationPayload(checkpoint=CheckpointWindowKind.IMMEDIATE)
+    if action is OperationalActionKind.TERMINAL_VERIFICATION:
+        return TerminalVerificationPayload(
+            verifier=VerifierProvenance(
+                principal="verifier-1",
+                runtime_digest="a" * 64,
+                source_digest="b" * 64,
+                observed_at=UtcTime(_ts(hour=12)),
+            ),
+            terminal_reason="original blocker absent",
+        )
+    if action is OperationalActionKind.RECURRENCE:
+        return RecurrencePayload(
+            recurrence=RecurrenceReference(
+                predecessor_occurrence_id="occ-0",
+                predecessor_event_id="evt-0",
+            )
+        )
+    if action is OperationalActionKind.HUMAN_ESCALATION:
+        return HumanEscalationPayload(
+            escalation=EscalationReference(
+                reason="ambiguous blocker",
+                escalation_owner="human-owner-1",
+            )
+        )
+    raise AssertionError(f"unhandled operational action {action}")
+
+
+def _operational_event(
+    *,
+    event_id: str = "op-evt-1",
+    action: OperationalActionKind = OperationalActionKind.REPAIR_REQUEST,
+    occurrence_id: str = "occ-1",
+    occurrence_digest: str = "d" * 64,
+    policy_version: str = "policy-1",
+    target: str = "chain:session",
+    lease_id: str = "lease-1",
+    custody_epoch: int = 1,
+    run_id: str = "run-1",
+    attempt_id: str | None = "att-1",
+    payload: OperationalPayload | None = None,
+) -> OperationalEvent:
+    """Build one closed occurrence-bound operational lifecycle event."""
+    role = (
+        ProducerRole.VERIFIER
+        if action is OperationalActionKind.TERMINAL_VERIFICATION
+        else ProducerRole.REPAIR_PRODUCER
+    )
+    return OperationalEvent.build(
+        event_id=event_id,
+        occurrence=OccurrenceCoordinates(
+            occurrence_id=occurrence_id,
+            canonical_digest=occurrence_digest,
+        ),
+        lease=LeaseCoordinates(lease_id=lease_id, custody_epoch=custody_epoch),
+        run_authority=RunAuthorityCoordinates(run_id=run_id, satisfied=True),
+        policy=PolicyVersionCoordinates(policy_version=policy_version),
+        target=ActionTarget(target=target),
+        producer=ProducerPrincipal(principal=f"principal-{role.value}", role=role),
+        payload=payload if payload is not None else _operational_payload(action, event_id=event_id),
+        observed_at=_ts(hour=12),
+        wbc_attempt=(
+            WbcAttemptCoordinates(attempt_id=attempt_id) if attempt_id is not None else None
+        ),
+    )
+
+
+def test_operational_action_key_distinct_for_every_lifecycle_action() -> None:
+    keys = {
+        action: operational_event_action_key(
+            _operational_event(
+                event_id=f"op-evt-{index}",
+                action=action,
+            )
+        )
+        for index, action in enumerate(OperationalActionKind)
+    }
+    # The closed lifecycle vocabulary never collapses into a generic success
+    # receipt: all nine distinct actions for ONE occurrence derive distinct
+    # keys, so request/source-change/installation/retrigger/progress/
+    # verification records coexist while exact retries deduplicate.
+    assert len(keys) == len(OperationalActionKind)
+    assert len(set(keys.values())) == len(OperationalActionKind)
+
+
+def test_operational_action_key_exact_retry_reproduces_same_key() -> None:
+    first = _operational_event()
+    second = _operational_event()  # exact retry: identical coordinates
+    assert operational_event_action_key(first) == operational_event_action_key(second)
+    assert (
+        lifecycle_idempotency_key(first.model_dump(mode="json"))
+        == lifecycle_idempotency_key(second.model_dump(mode="json"))
+    )
+
+
+def test_operational_action_key_changes_with_every_coordinate() -> None:
+    base = operational_action_key(
+        schema_version=MAINTENANCE_SCHEMA_VERSION,
+        occurrence_digest="d" * 64,
+        action_kind="repair_request",
+        policy_version="policy-1",
+        target="chain:session",
+    )
+    variants = [
+        dict(action_kind="source_change"),
+        dict(policy_version="policy-2"),
+        dict(target="chain:other"),
+        dict(occurrence_digest="e" * 64),
+    ]
+    base_kwargs: dict[str, object] = dict(
+        schema_version=MAINTENANCE_SCHEMA_VERSION,
+        occurrence_digest="d" * 64,
+        action_kind="repair_request",
+        policy_version="policy-1",
+        target="chain:session",
+    )
+    for variant in variants:
+        kwargs = dict(base_kwargs)
+        kwargs.update(variant)
+        changed = operational_action_key(**kwargs)  # type: ignore[arg-type]
+        assert changed != base
+    # The exact retry reproduces the base key; coordinate ORDER is frozen by
+    # the OPERATIONAL_KEY_COORDINATES contract.
+    assert operational_action_key(
+        schema_version=MAINTENANCE_SCHEMA_VERSION,
+        occurrence_digest="d" * 64,
+        action_kind="repair_request",
+        policy_version="policy-1",
+        target="chain:session",
+    ) == base
+    assert OPERATIONAL_KEY_COORDINATES == (
+        "schema_version",
+        "occurrence_digest",
+        "action_kind",
+        "policy_version",
+        "target",
+    )
+
+
+def test_operational_action_key_fails_closed_on_malformed_coordinates() -> None:
+    with pytest.raises(ValueError, match="schema_version"):
+        operational_action_key(
+            schema_version=2,
+            occurrence_digest="d" * 64,
+            action_kind="repair_request",
+            policy_version="policy-1",
+            target="chain:session",
+        )
+    with pytest.raises(ValueError, match="sha256"):
+        operational_action_key(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            occurrence_digest="not-a-digest",
+            action_kind="repair_request",
+            policy_version="policy-1",
+            target="chain:session",
+        )
+    with pytest.raises(ValueError, match="action kind"):
+        operational_action_key(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            occurrence_digest="d" * 64,
+            action_kind="",
+            policy_version="policy-1",
+            target="chain:session",
+        )
+    with pytest.raises(ValueError, match="policy version"):
+        operational_action_key(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            occurrence_digest="d" * 64,
+            action_kind="repair_request",
+            policy_version="",
+            target="chain:session",
+        )
+    with pytest.raises(ValueError, match="target identity"):
+        operational_action_key(
+            schema_version=MAINTENANCE_SCHEMA_VERSION,
+            occurrence_digest="d" * 64,
+            action_kind="repair_request",
+            policy_version="policy-1",
+            target="",
+        )
+
+
+def test_strict_codec_keeps_separate_lifecycle_records_distinct() -> None:
+    # Distinct lifecycle actions for ONE occurrence survive the strict codec
+    # as distinct records with distinct canonical dumps, digests, and keys.
+    records = [
+        _operational_event(event_id=f"op-evt-{index}", action=action)
+        for index, action in enumerate(OperationalActionKind)
+    ]
+    decoded = [
+        strict_loads(OperationalEvent, canonical_dumps(record)) for record in records
+    ]
+    assert len({canonical_dumps(record) for record in decoded}) == len(records)
+    assert len({canonical_digest(record) for record in decoded}) == len(records)
+    assert (
+        len({operational_event_action_key(record) for record in decoded}) == len(records)
+    )
+    # Every record round-trips byte-stably through the single canonical codec.
+    for record in decoded:
+        assert (
+            canonical_dumps(strict_loads(OperationalEvent, canonical_dumps(record)))
+            == canonical_dumps(record)
+        )
+
+
+def test_lifecycle_idempotency_key_discriminates_legacy_and_operational() -> None:
+    # Legacy detection rows keep the occurrence-only key (M2 compatibility).
+    legacy = _event(occurrence_id="occ-legacy").model_dump(mode="json")
+    assert is_operational_lifecycle_row(legacy) is False
+    assert legacy_occurrence_idempotency_key(legacy) == "occ-legacy"
+    assert lifecycle_idempotency_key(legacy) == "occ-legacy"
+
+    # Operational rows derive the strict action key from the five coordinates.
+    operational = _operational_event().model_dump(mode="json")
+    assert is_operational_lifecycle_row(operational) is True
+    assert lifecycle_idempotency_key(operational) == operational_event_action_key(
+        _operational_event()
+    )
+    # The legacy occurrence-only kinds are exactly the closed M2 vocabulary.
+    assert LEGACY_OCCURRENCE_ONLY_KINDS == frozenset(
+        {"detection", "efficiency_analysis", "audit_report"}
+    )
+
+
+def test_operational_action_key_rejects_truncated_operational_rows() -> None:
+    operational = _operational_event().model_dump(mode="json")
+    del operational["target"]
+    with pytest.raises(ValueError, match="target"):
+        lifecycle_idempotency_key(operational)
+    bad_digest = _operational_event().model_dump(mode="json")
+    bad_digest["occurrence"]["canonical_digest"] = "short"
+    with pytest.raises(ValueError, match="sha256"):
+        lifecycle_idempotency_key(bad_digest)
+
+
+# ---------------------------------------------------------------------------
+# T16 (Plan Step 15): the frozen M4-facing API surface
+# ---------------------------------------------------------------------------
+# The package exports the stable owner-source join, occurrence-bound request
+# reference, checkpoint scheduler, recurrence, and verification APIs M4 will
+# consume, plus the M3 handoff view.  These assertions pin that surface: the
+# exported names resolve, are the SAME objects as their source-module
+# definitions (no shadowing/duplication), never include an owner authority
+# substrate, and round-trip through the single canonical strict codec.
+
+
+def test_m4_api_surface_is_frozen_and_resolvable() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+
+    api = maintenance_pkg.M4_API
+    assert isinstance(api, tuple) and api
+    missing = [name for name in api if not hasattr(maintenance_pkg, name)]
+    assert missing == [], f"M4_API names missing from the package: {missing}"
+    # Every required category of the M4 handoff is present.
+    names = set(api)
+    for required in (
+        # owner-source join (T6)
+        "ObservationEnvelope",
+        "capture_observation",
+        "JoinSource",
+        "read_custody",
+        # occurrence-bound request reference (T2/T3/T10)
+        "OperationalEvent",
+        "RepairRequestPayload",
+        "OccurrenceCoordinates",
+        "LeaseCoordinates",
+        # checkpoint scheduler (T7)
+        "due_checkpoints",
+        "CheckpointDueItem",
+        "CANONICAL_CHECKPOINT_ORDER",
+        # recurrence / escalation (T13)
+        "verified_recurrence",
+        "RecurrenceLink",
+        "RecurrenceReference",
+        "EscalationReference",
+        # independent verification (T8)
+        "evaluate_verification",
+        "VerificationResult",
+        "NegativeControlResult",
+        # M4 handoff view (T1): accepted vector + drift, never guessed
+        "MaintenanceHandoffView",
+        "build_handoff_view",
+        "verify_frozen_digests",
+        "verify_handoff_drift",
+    ):
+        assert required in names, required
+
+
+def test_m4_api_exports_are_the_same_objects_as_their_source_modules() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+    import arnold_pipelines.megaplan.maintenance.checkpoints as _checkpoints
+    import arnold_pipelines.megaplan.maintenance.contracts as _contracts
+    import arnold_pipelines.megaplan.maintenance.events as _events
+    import arnold_pipelines.megaplan.maintenance.handoffs as _handoffs
+    import arnold_pipelines.megaplan.maintenance.observation as _observation
+    import arnold_pipelines.megaplan.maintenance.operations as _operations
+    import arnold_pipelines.megaplan.maintenance.sources as _sources
+    import arnold_pipelines.megaplan.maintenance.verification as _verification
+
+    expected: dict[str, tuple[Any, str]] = {
+        "ObservationEnvelope": (_contracts, "ObservationEnvelope"),
+        "SourceVersionVector": (_contracts, "SourceVersionVector"),
+        "OperationalEvent": (_events, "OperationalEvent"),
+        "OperationalActionKind": (_events, "OperationalActionKind"),
+        "RepairRequestPayload": (_events, "RepairRequestPayload"),
+        "CheckpointWindowKind": (_events, "CheckpointWindowKind"),
+        "SIX_HOUR_ALIAS": (_events, "SIX_HOUR_ALIAS"),
+        "canonical_checkpoint_window": (_events, "canonical_checkpoint_window"),
+        "verified_recurrence": (_events, "verified_recurrence"),
+        "RecurrenceLink": (_events, "RecurrenceLink"),
+        "OccurrenceCoordinates": (_operations, "OccurrenceCoordinates"),
+        "LeaseCoordinates": (_operations, "LeaseCoordinates"),
+        "RunAuthorityCoordinates": (_operations, "RunAuthorityCoordinates"),
+        "WbcAttemptCoordinates": (_operations, "WbcAttemptCoordinates"),
+        "PolicyVersionCoordinates": (_operations, "PolicyVersionCoordinates"),
+        "ActionTarget": (_operations, "ActionTarget"),
+        "ProducerPrincipal": (_operations, "ProducerPrincipal"),
+        "OwnerReceipts": (_operations, "OwnerReceipts"),
+        "RecurrenceReference": (_operations, "RecurrenceReference"),
+        "EscalationReference": (_operations, "EscalationReference"),
+        "CheckpointDueItem": (_checkpoints, "CheckpointDueItem"),
+        "due_checkpoints": (_checkpoints, "due_checkpoints"),
+        "checkpoint_window_bounds": (_checkpoints, "checkpoint_window_bounds"),
+        "completed_checkpoint_windows": (_checkpoints, "completed_checkpoint_windows"),
+        "CANONICAL_CHECKPOINT_ORDER": (_checkpoints, "CANONICAL_CHECKPOINT_ORDER"),
+        "CHECKPOINT_WINDOW_DELTAS": (_checkpoints, "CHECKPOINT_WINDOW_DELTAS"),
+        "VerificationResult": (_verification, "VerificationResult"),
+        "VerificationOutcome": (_verification, "VerificationOutcome"),
+        "VerificationRejectReason": (_verification, "VerificationRejectReason"),
+        "NegativeControlResult": (_verification, "NegativeControlResult"),
+        "ExpectedAuthority": (_verification, "ExpectedAuthority"),
+        "evaluate_verification": (_verification, "evaluate_verification"),
+        "required_checkpoint_set": (_verification, "required_checkpoint_set"),
+        "checkpoint_set_complete": (_verification, "checkpoint_set_complete"),
+        "MaintenanceHandoffView": (_handoffs, "MaintenanceHandoffView"),
+        "build_handoff_view": (_handoffs, "build_handoff_view"),
+        "default_handoff_registry": (_handoffs, "default_handoff_registry"),
+        "verify_frozen_digests": (_handoffs, "verify_frozen_digests"),
+        "verify_handoff_drift": (_handoffs, "verify_handoff_drift"),
+        "HandoffRegistry": (_handoffs, "HandoffRegistry"),
+        "HandoffResolution": (_handoffs, "HandoffResolution"),
+        "HandoffResolutionState": (_handoffs, "HandoffResolutionState"),
+        "capture_observation": (_observation, "capture_observation"),
+        "JoinSource": (_observation, "JoinSource"),
+        "read_custody": (_sources, "read_custody"),
+        "read_run_authority": (_sources, "read_run_authority"),
+        "read_wbc_attempt": (_sources, "read_wbc_attempt"),
+        "CustodyRead": (_sources, "CustodyRead"),
+        "RunAuthorityRead": (_sources, "RunAuthorityRead"),
+        "WbcRead": (_sources, "WbcRead"),
+    }
+    for name, (module, attr) in expected.items():
+        assert getattr(maintenance_pkg, name) is getattr(module, attr), name
+
+
+def test_m4_api_never_exports_owner_authority_substrate() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+
+    forbidden = (
+        # lease stores
+        "CustodyLeaseStore",
+        "CapacityLease",
+        "ExecutionLease",
+        "LivenessLeasePublisher",
+        # attempt stores
+        "AttemptLedgerStore",
+        "SqliteAttemptLedgerStore",
+        # validators
+        "ActionBoundaryResult",
+        "RollbackValidator",
+        "validate_action_boundary_simple",
+        # effect ledger / repair queue / simple_fixer
+        "RepairEffectLedger",
+        "MutationReservation",
+        "enqueue_occurrence_bound_repair_request",
+        "delegate_to_simple_fixer",
+        # completion engines
+        "CompletionSubject",
+        "ManagedCompletionTurnResult",
+        # queues
+        "ManagedAgentQueueSweepResult",
+        "QueueSprintsInput",
+        # lifecycle writers
+        "TransitionWriter",
+        "RuntimeTransitionWriter",
+        "write_plan_state",
+        "save_chain_state",
+    )
+    exported = set(maintenance_pkg.__all__) | set(dir(maintenance_pkg))
+    hits = sorted(name for name in forbidden if name in exported)
+    assert hits == [], f"M4 API exports owner authority substrate: {hits}"
+    assert not (set(maintenance_pkg.M4_API) & set(forbidden))
+
+
+def test_m4_request_reference_api_is_occurrence_bound_and_reference_only() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+
+    m = maintenance_pkg
+    event = m.OperationalEvent.build(
+        event_id="m4-req-1",
+        occurrence=m.OccurrenceCoordinates(
+            occurrence_id="occ-1", canonical_digest="d" * 64
+        ),
+        lease=m.LeaseCoordinates(lease_id="lease-1", custody_epoch=1),
+        run_authority=m.RunAuthorityCoordinates(run_id="run-1", satisfied=True),
+        policy=m.PolicyVersionCoordinates(policy_version="policy-1"),
+        target=m.ActionTarget(target="chain:session"),
+        producer=m.ProducerPrincipal(
+            principal="producer-1", role=m.ProducerRole.REPAIR_PRODUCER
+        ),
+        payload=m.RepairRequestPayload(request_id="req-1"),
+        observed_at=_ts(hour=12),
+        wbc_attempt=m.WbcAttemptCoordinates(attempt_id="att-1"),
+    )
+    decoded = strict_loads(m.OperationalEvent, canonical_dumps(event))
+    assert decoded == event
+    # M4 consumes the FIXED lifecycle encoding: the exported event derives the
+    # same idempotency key as the frozen incident-schema codec.
+    assert lifecycle_idempotency_key(decoded.model_dump(mode="json")) == (
+        operational_event_action_key(event)
+    )
+    # Reference-only: the exported request reference never constructs an owner
+    # authority record or a second queue/store.
+    assert not hasattr(m, "CustodyLeaseStore")
+    assert not hasattr(m, "enqueue_occurrence_bound_repair_request")
+
+
+def test_m4_checkpoint_api_round_trips_through_strict_codec() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+
+    m = maintenance_pkg
+    due = m.due_checkpoints(
+        anchor_at=_ts(hour=12),
+        now=_ts(hour=12, minute=10),
+        completed=[m.CheckpointWindowKind.IMMEDIATE],
+        occurrence_id="occ-1",
+        lease_id="lease-1",
+        custody_epoch=1,
+        fencing_token="fence-1",
+    )
+    # Half-open windows anchored to the durable effect receipt: with the
+    # immediate window completed and ten minutes elapsed, five_minute is the
+    # only due window (one_hour opens at 13:00).
+    assert [item.window for item in due] == [m.CheckpointWindowKind.FIVE_MINUTE]
+    decoded = [
+        strict_loads(m.CheckpointDueItem, canonical_dumps(item)) for item in due
+    ]
+    assert decoded == list(due)
+    # The schedule is canonical: next_three_hour is the unbounded horizon and
+    # six_hour is only a read alias — never a separate window.
+    assert tuple(m.CANONICAL_CHECKPOINT_ORDER) == (
+        m.CheckpointWindowKind.IMMEDIATE,
+        m.CheckpointWindowKind.FIVE_MINUTE,
+        m.CheckpointWindowKind.ONE_HOUR,
+        m.CheckpointWindowKind.NEXT_THREE_HOUR,
+    )
+    assert m.canonical_checkpoint_window("six_hour") is m.CheckpointWindowKind.NEXT_THREE_HOUR
+    # The due item carries the inherited M7 lease/epoch/fence so the executor
+    # must reacquire current authority before acting.
+    for item in decoded:
+        assert item.lease_id == "lease-1"
+        assert item.custody_epoch == 1
+        assert item.fencing_token == "fence-1"
+    # Delayed catch-up returns every overdue window once, in event-time order,
+    # with next_three_hour the unbounded horizon.
+    late = m.due_checkpoints(
+        anchor_at=_ts(hour=12),
+        now=_ts(hour=16),
+        completed=[m.CheckpointWindowKind.IMMEDIATE],
+    )
+    assert [item.window for item in late] == [
+        m.CheckpointWindowKind.FIVE_MINUTE,
+        m.CheckpointWindowKind.ONE_HOUR,
+        m.CheckpointWindowKind.NEXT_THREE_HOUR,
+    ]
+    assert all(item.delayed for item in late[:-1])
+    assert late[-1].close_at is None
+
+
+def test_m4_verification_api_round_trips_and_fails_closed() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+
+    m = maintenance_pkg
+    unknown = m.VerificationResult(
+        schema_version=m.MAINTENANCE_SCHEMA_VERSION,
+        outcome=m.VerificationOutcome.UNKNOWN,
+        reasons=(m.VerificationRejectReason.UNKNOWN_EVIDENCE,),
+        terminal=False,
+    )
+    decoded = strict_loads(m.VerificationResult, canonical_dumps(unknown))
+    assert decoded == unknown
+    assert decoded.terminal is False
+    # Only a VERIFIED outcome may be terminal; the strict codec round-trips it.
+    verified = m.VerificationResult(
+        schema_version=m.MAINTENANCE_SCHEMA_VERSION,
+        outcome=m.VerificationOutcome.VERIFIED,
+        reasons=(),
+        terminal=True,
+        verified_windows=tuple(m.required_checkpoint_set()),
+    )
+    assert strict_loads(m.VerificationResult, canonical_dumps(verified)) == verified
+    # The required set is exactly the canonical schedule through the exported
+    # API, and an incomplete set can never close custody.
+    assert tuple(m.required_checkpoint_set()) == tuple(m.CANONICAL_CHECKPOINT_ORDER)
+    assert m.checkpoint_set_complete(m.required_checkpoint_set()) is True
+    assert m.checkpoint_set_complete([m.CheckpointWindowKind.IMMEDIATE]) is False
+
+
+def test_m4_recurrence_api_requires_fresh_linked_occurrence() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+
+    m = maintenance_pkg
+    predecessor = _event(
+        event_id="evt-1", occurrence_id="occ-1", payload=_detection()
+    )
+    with pytest.raises(ValueError, match="fresh occurrence"):
+        m.verified_recurrence(
+            predecessor=predecessor,
+            new_event_id="evt-2",
+            new_occurrence_id="occ-1",  # same occurrence -> rejected
+            observed_at=_ts(hour=13),
+            event_time=_ts(hour=12, minute=45),
+            window=_window(),
+            watermark=_watermark(),
+            budget=_budget(),
+            payload=_detection(),
+        )
+    recurrence = m.verified_recurrence(
+        predecessor=predecessor,
+        new_event_id="evt-2",
+        new_occurrence_id="occ-2",
+        observed_at=_ts(hour=13),
+        event_time=_ts(hour=12, minute=45),
+        window=_window(),
+        watermark=_watermark(),
+        budget=_budget(),
+        payload=_detection(),
+    )
+    assert recurrence.recurrence is not None
+    assert recurrence.recurrence.verified is True
+    assert recurrence.recurrence.predecessor_occurrence_id == "occ-1"
+    decoded = strict_loads(m.MaintenanceEvent, canonical_dumps(recurrence))
+    assert decoded.recurrence == recurrence.recurrence
+    # A fresh recurrence never reuses the prior occurrence/event identity.
+    assert decoded.occurrence_id == "occ-2"
+    assert decoded.event_id == "evt-2"
+
+
+def test_m4_handoff_view_reports_frozen_digests_without_guessing() -> None:
+    import arnold_pipelines.megaplan.maintenance as maintenance_pkg
+
+    m = maintenance_pkg
+    # The frozen schema/fixture digests match their live artifacts exactly
+    # after the T16 refresh (real drift only; never guessed).
+    report = m.verify_frozen_digests()
+    assert set(report) == {"schema", "fixtures"}
+    drifting = {
+        f"{group}.{key}"
+        for group, entries in report.items()
+        for key, entry in entries.items()
+        if not entry["matches"]
+    }
+    assert drifting == set(), f"frozen digests drifted: {sorted(drifting)}"
+    # The view is canonical, read-only, and round-trips through the strict
+    # codec; all handoffs stay pending (report-only mode), so the accepted
+    # vector is empty and drift is reported as data, never promoted.
+    view = m.build_handoff_view()
+    assert view.accepted_handoff_count == 0
+    assert view.enforcement_enabled is False
+    assert view.shadow_operation_enabled is True
+    assert view.enforcement_blocked is True
+    decoded = strict_loads(m.MaintenanceHandoffView, canonical_dumps(view))
+    assert decoded == view
+
+
+def test_checkpoint_window_fold_distinguishes_all_four_windows_and_matches_dict_model() -> None:
+    """Four checkpoint windows yield four distinct lifecycle keys; an exact
+    retry of the same window reproduces the same key; dict and model
+    derivations are mirror-identical."""
+    from arnold_pipelines.megaplan.maintenance.events import (
+        CheckpointWindowKind,
+        OperationalEvent,
+    )
+
+    base = {
+        "schema_version": 1,
+        "event_id": "checkpoint_verification:occ-1:immediate",
+        "occurrence": {"occurrence_id": "occ-1", "canonical_digest": "1" * 64},
+        "lease": {"lease_id": "lease-1", "custody_epoch": 3},
+        "run_authority": {"run_id": "run-1", "satisfied": True},
+        "policy": {"policy_version": "p1", "policy_digest": "2" * 64},
+        "target": {"target": "target-1", "target_type": "path"},
+        "producer": {
+            "principal": "verifier-1",
+            "role": "verifier",
+        },
+        "action_kind": "checkpoint_verification",
+        "payload": {
+            "kind": "checkpoint_verification",
+            "checkpoint": "immediate",
+            "checkpoint_ref": None,
+            "evidence_refs": [],
+        },
+        "observed_at": "2026-08-17T00:00:00Z",
+    }
+    keys: set[str] = set()
+    for window in CheckpointWindowKind:
+        event = dict(base)
+        event["event_id"] = f"checkpoint_verification:occ-1:{window.value}"
+        event["payload"] = dict(base["payload"])
+        event["payload"]["checkpoint"] = window.value
+        model = OperationalEvent.model_validate(event)
+        dict_key = lifecycle_idempotency_key(event)
+        model_key = operational_event_action_key(model)
+        assert dict_key == model_key
+        keys.add(dict_key)
+        # Exact retry reproduces the same key.
+        retry = dict(event)
+        retry["event_id"] = f"checkpoint_verification:occ-1:{window.value}-retry"
+        assert lifecycle_idempotency_key(retry) == dict_key
+    assert len(keys) == len(CheckpointWindowKind)

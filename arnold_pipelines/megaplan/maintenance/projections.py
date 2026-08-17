@@ -1,48 +1,66 @@
-"""Independent, deterministic Maintenance projections (M2, T13).
+"""Independent, deterministic Maintenance projections (M2/M3, T13/T5).
 
 This module materializes three *independent* projections over the strict
-:class:`~arnold_pipelines.megaplan.maintenance.events.MaintenanceEvent` stream:
+Maintenance event stream — legacy :class:`MaintenanceEvent` rows AND M3
+operational :class:`OperationalEvent` lifecycle rows:
 
 * :class:`CustodyProjection` — ``operational_custody``: the active
   custody/lease/fence state for a detection occurrence (``custody_refs`` +
-  ``fence_refs`` + occurrence-scoped budget + recurrence chain).
+  ``fence_refs`` + occurrence-scoped budget + recurrence chain) extended with
+  the M3 operational custody state: canonical occurrence/lease/Run Authority/
+  WBC/policy/target references, request/effect state, the current checkpoint
+  set, open/terminal status, recurrence links, and escalation references.
 * :class:`VerificationProjection` — ``verification``: resolution-proof and
   audit-report state (``resolution_proof`` from detection events, ``verdict`` /
-  ``report_type`` from audit reports).
+  ``report_type`` from audit reports) extended with the M3 independent
+  verification state: verifier provenance, proof mode, negative-control
+  result, resumed-progress evidence, checkpoint outcomes, terminal reason,
+  and a typed coherence that can never be green on UNKNOWN/INCOHERENT.
 * :class:`EfficiencyProjection` — ``efficiency_analysis``: censoring,
   denominators, unknowns, coverage, bucket counts, classifier version, and the
-  half-open reporting window / watermark.
+  half-open reporting window / watermark.  It advances independently and M3
+  operational events never alter it.
 
 Each projection advances independently with its own monotonic ``sequence``,
 source ``cursor``, chained ``source_digest``, canonical ``output_digest``,
-``lag`` (distance behind the global source cursor), and ``freshness``
-(``fresh``/``stale``/``unknown`` derived from the event's lateness against its
-watermark).  Replaying the same event order byte-for-byte reproduces the same
-sequences and digests.
+``lag`` (distance behind the global source cursor), and ``freshness``.
+Replaying the same event order byte-for-byte reproduces the same sequences
+and digests.
 
-Locked semantics (SD2 + the fail-closed correction rule):
+Locked semantics (SD2 + M3 Step 2/4 + the fail-closed correction rule):
 
-* **Occurrence dedupe vs. verified recurrence.**  ``occurrence_id`` is the
-  sole idempotency scope.  An exact duplicate (same occurrence + same
-  canonical digest) is *deduped*: no projection advances, no budget is
-  consumed, and no correction is appended.  A *verified recurrence* always
-  carries a fresh ``occurrence_id`` (enforced by the event contract), so it is
-  a distinct, causally linked occurrence with a fresh occurrence-scoped budget;
-  its root-cause cluster grouping is preserved.
+* **Lifecycle-key dedupe vs. verified recurrence.**  The engine deduplicates
+  by the canonical lifecycle idempotency key recorded at the journal boundary
+  (:func:`lifecycle_idempotency_key`): legacy rows keep the occurrence-only
+  key (exactly one record per occurrence, M2 compatible) while M3 operational
+  rows derive the strict action key — so distinct request/source-change/
+  installation/retrigger/progress/checkpoint/terminal/recurrence/escalation
+  records for ONE occurrence coexist, an exact retry is deduped, and a
+  divergent reuse of the same action key raises
+  :class:`ProjectionConflictError` without advancing.  A *verified recurrence*
+  always carries a fresh occurrence id, so it is a distinct, causally linked
+  occurrence with a fresh occurrence-scoped budget; its root-cause cluster
+  grouping is preserved.
 * **Efficiency isolation.**  ``efficiency_analysis`` events are routed only to
   the efficiency projection.  They can never alter the custody or verification
   projections (the reducers return the prior state unchanged for any
   non-relevant event kind).
-* **Half-open watermarked windows.**  Latency/freshness is taken from the
-  event's already-validated ``lateness`` (``classify_lateness(event_time,
-  watermark)`` — half-open windows are enforced by the event contract).  The
-  efficiency projection retains the half-open window ``[start, end)`` and the
-  watermark so windowing is digest-visible and never inferred.
-* **Append-only late-evidence corrections.**  A *late* event never rewrites a
-  prior projection result.  When there is a prior result to amend, the reducer
-  appends a :class:`CorrectionRecord` (``kind="late_evidence"``) that links the
-  new sequence to the corrected sequence and preserves the corrected result's
-  ``output_digest``.  The prior result is immutable.
+* **Half-open watermarked windows.**  Latency/freshness for legacy events is
+  taken from the event's already-validated ``lateness``.  Operational events
+  carry no watermark, so their freshness is explicitly ``unknown`` — never
+  guessed green.
+* **UNKNOWN/INCOHERENT never closes custody.**  Terminal verification is
+  terminal only when a terminal event is observed with durable
+  negative-control references AND the complete policy-required checkpoint set
+  (immediate, five-minute, one-hour, next-three-hour).  A terminal event with
+  an incomplete set or missing negative controls derives
+  ``INCOHERENT``/open; absent terminal evidence is ``UNKNOWN``/open.
+* **Append-only late-evidence corrections.**  A *late* legacy event never
+  rewrites a prior projection result; the reducer appends a
+  :class:`CorrectionRecord`` (``kind="late_evidence"``) that links the new
+  sequence to the corrected sequence and preserves the corrected result's
+  ``output_digest``.  Operational events have no watermark/lateness and never
+  append corrections.
 
 No module here performs any ledger, plan, or chain mutation: projections are
 pure, deterministic reducers over strict events.
@@ -51,6 +69,7 @@ pure, deterministic reducers over strict events.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -58,21 +77,28 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from arnold_pipelines.megaplan.incident.schema import lifecycle_idempotency_key
 from arnold_pipelines.megaplan.maintenance.events import (
+    CheckpointWindowKind,
     EventKind,
     MaintenanceEvent,
     OccurrenceBudget,
+    OperationalActionKind,
+    OperationalEvent,
     ProjectionCoordinates,
     RecurrenceLink,
+    VerifierProvenance,
 )
 from arnold_pipelines.megaplan.maintenance.identity import (
     Lateness,
     MaintenanceCodecError,
     OwnerRef,
     canonical_digest,
+    canonical_dumps,
     canonical_json,
     strict_loads,
 )
+from arnold_pipelines.megaplan.maintenance.operations import EscalationReference
 
 # ---------------------------------------------------------------------------
 # Closed vocabularies
@@ -99,6 +125,69 @@ class CorrectionKind(str, Enum):
     """Closed correction vocabulary (append-only; never rewrites a result)."""
 
     LATE_EVIDENCE = "late_evidence"
+
+
+class VerificationCoherence(str, Enum):
+    """Typed coherence of the independent verification projection (M3).
+
+    * ``UNKNOWN`` — no terminal verification evidence has been observed;
+    * ``INCOHERENT`` — terminal evidence exists but the required checkpoint
+      set is incomplete or durable negative controls are missing
+      (contradictory evidence);
+    * ``COHERENT`` — terminal evidence with the complete policy-required
+      checkpoint set and durable negative-control references.
+
+    Only ``COHERENT`` may close custody; ``UNKNOWN`` and ``INCOHERENT``
+    always leave it open.
+    """
+
+    UNKNOWN = "unknown"
+    INCOHERENT = "incoherent"
+    COHERENT = "coherent"
+
+
+#: The complete policy-required checkpoint set.  Terminal verification is
+#: eligible only when every canonical window has a checkpoint outcome.
+REQUIRED_CHECKPOINT_WINDOWS: frozenset[CheckpointWindowKind] = frozenset(
+    {
+        CheckpointWindowKind.IMMEDIATE,
+        CheckpointWindowKind.FIVE_MINUTE,
+        CheckpointWindowKind.ONE_HOUR,
+        CheckpointWindowKind.NEXT_THREE_HOUR,
+    }
+)
+
+
+class CheckpointOutcome(BaseModel):
+    """One durable checkpoint-verification outcome (M3 Step 4).
+
+    Records the canonical checkpoint window, the checkpoint reference, the
+    evidence references, and the event that produced it.  The projection
+    derives the *current checkpoint set* from these outcomes; a terminal
+    event only closes custody when every window in
+    :data:`REQUIRED_CHECKPOINT_WINDOWS` is present.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    window: CheckpointWindowKind
+    checkpoint_ref: OwnerRef | None = None
+    evidence_refs: tuple[OwnerRef, ...] = ()
+    event_id: str
+
+    @field_validator("event_id")
+    @classmethod
+    def _validate_event_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError(
+                "checkpoint outcome event_id must be a non-empty string"
+            )
+        return value
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def _sort_evidence(cls, value: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
+        return _sort_owner_refs(value)
 
 
 class ApplyDisposition(str, Enum):
@@ -227,9 +316,13 @@ class _ProjectionState(BaseModel):
 class CustodyProjection(_ProjectionState):
     """``operational_custody``: active custody/lease/fence state.
 
-    Fed by ``detection`` events only.  Retains the active occurrence, its
-    classifier version, root-cause cluster grouping, custody/fence references,
-    occurrence-scoped budget, and any verified recurrence links.
+    Fed by ``detection`` events and M3 operational lifecycle events.  Retains
+    the active occurrence, its classifier version, root-cause cluster
+    grouping, custody/fence references, occurrence-scoped budget, and any
+    verified recurrence links, plus the M3 operational custody state: the
+    canonical occurrence/lease/Run Authority/WBC/policy/target references,
+    request/effect state, the current checkpoint set, open/terminal status,
+    and escalation references.
     """
 
     projection: Literal["operational_custody"] = "operational_custody"
@@ -245,13 +338,63 @@ class CustodyProjection(_ProjectionState):
     recurrences: tuple[RecurrenceLink, ...] = ()
     corrections: tuple[CorrectionRecord, ...] = ()
 
+    # ── M3 operational custody state (Plan Step 4) ─────────────────────
+    occurrence_digest: str | None = None
+    occurrence_ref: OwnerRef | None = None
+    lease_id: str | None = None
+    custody_epoch: int | None = None
+    lease_digest: str | None = None
+    lease_ref: OwnerRef | None = None
+    run_id: str | None = None
+    run_authority_satisfied: bool | None = None
+    grant_ref: OwnerRef | None = None
+    fence_ref: OwnerRef | None = None
+    decision_ref: OwnerRef | None = None
+    wbc_attempt_id: str | None = None
+    attempt_ref: OwnerRef | None = None
+    ledger_ref: OwnerRef | None = None
+    policy_version: str | None = None
+    policy_digest: str | None = None
+    target: str | None = None
+    target_type: str | None = None
+    producer_principal: str | None = None
+    producer_role: str | None = None
+    request_id: str | None = None
+    request_ref: OwnerRef | None = None
+    source_change_ref: OwnerRef | None = None
+    effect_source_digest: str | None = None
+    install_ref: OwnerRef | None = None
+    install_digest: str | None = None
+    retrigger_ref: OwnerRef | None = None
+    progress_refs: tuple[OwnerRef, ...] = ()
+    checkpoints: tuple[CheckpointOutcome, ...] = ()
+    terminal: bool = False
+    terminal_reason: str | None = None
+    escalated: bool = False
+    escalations: tuple[EscalationReference, ...] = ()
+
+    @property
+    def open(self) -> bool:
+        """``True`` while canonical custody is NOT terminal.
+
+        Custody closes only on a terminal verification with the complete
+        policy-required checkpoint set and durable negative controls;
+        UNKNOWN or INCOHERENT evidence always leaves it open.
+        """
+        return not self.terminal
+
 
 class VerificationProjection(_ProjectionState):
     """``verification``: resolution-proof and audit-report state.
 
-    Fed by ``detection`` events (``resolution_proof``) and ``audit_report``
-    events (``verdict`` / ``report_type`` / finding evidence).  Efficiency
-    events never alter it.
+    Fed by ``detection`` events (``resolution_proof``), ``audit_report``
+    events (``verdict`` / ``report_type`` / finding evidence), and M3
+    operational verification actions (progress observation, checkpoint
+    verification, terminal verification).  Efficiency events and
+    request/effect/recurrence/escalation actions never alter it.  The M3
+    state carries verifier provenance, proof mode, negative-control result,
+    resumed-progress evidence, checkpoint outcomes, terminal reason, and a
+    typed coherence that can never be green on UNKNOWN/INCOHERENT.
     """
 
     projection: Literal["verification"] = "verification"
@@ -266,6 +409,19 @@ class VerificationProjection(_ProjectionState):
     audit_report_type: str | None = None
     recurrences: tuple[RecurrenceLink, ...] = ()
     corrections: tuple[CorrectionRecord, ...] = ()
+
+    # ── M3 operational verification state (Plan Step 4) ────────────────
+    occurrence_digest: str | None = None
+    verifier_principal: str | None = None
+    verifier_provenance: VerifierProvenance | None = None
+    proof_mode: str | None = None
+    negative_control_result: str | None = None
+    resumed_progress: bool | None = None
+    progress_refs: tuple[OwnerRef, ...] = ()
+    checkpoint_outcomes: tuple[CheckpointOutcome, ...] = ()
+    terminal_reason: str | None = None
+    coherence: VerificationCoherence = VerificationCoherence.UNKNOWN
+    terminal: bool = False
 
 
 class EfficiencyProjection(_ProjectionState):
@@ -329,8 +485,24 @@ def _output_digest(state: BaseModel) -> str:
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
-def _freshness_for(event: MaintenanceEvent) -> ProjectionFreshness:
-    """Projection freshness from an event's validated lateness."""
+def _sort_owner_refs(refs: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
+    """Deterministic (owner, locator, digest, cursor) reference order."""
+    return tuple(
+        sorted(
+            refs,
+            key=lambda ref: (ref.owner, ref.locator, ref.digest or "", ref.cursor or ""),
+        )
+    )
+
+
+def _freshness_for(event: MaintenanceEvent | OperationalEvent) -> ProjectionFreshness:
+    """Projection freshness from an event's validated lateness.
+
+    Operational lifecycle events carry no watermark/lateness, so their
+    freshness is explicitly ``unknown`` — never guessed green.
+    """
+    if isinstance(event, OperationalEvent):
+        return ProjectionFreshness.UNKNOWN
     if event.lateness is Lateness.ON_TIME:
         return ProjectionFreshness.FRESH
     return ProjectionFreshness.STALE
@@ -339,11 +511,17 @@ def _freshness_for(event: MaintenanceEvent) -> ProjectionFreshness:
 def _correction_for(
     state: _ProjectionState,
     *,
-    event: MaintenanceEvent,
+    event: MaintenanceEvent | OperationalEvent,
     sequence: int,
     prior_output_digest: str | None,
 ) -> CorrectionRecord | None:
-    """Build an append-only correction for late evidence, if there is a prior result."""
+    """Build an append-only correction for late evidence, if there is a prior result.
+
+    Operational lifecycle events have no watermark/lateness and never append
+    corrections; only late legacy events amend a prior result.
+    """
+    if isinstance(event, OperationalEvent):
+        return None
     if event.lateness is Lateness.LATE and state.sequence >= 1:
         return CorrectionRecord(
             kind=CorrectionKind.LATE_EVIDENCE,
@@ -425,18 +603,262 @@ def _append_recurrence(
     return tuple(existing) + (event.recurrence,)
 
 
+# ---------------------------------------------------------------------------
+# M3 operational reducers (Plan Step 4)
+# ---------------------------------------------------------------------------
+
+
+def _required_checkpoint_windows_complete(
+    outcomes: Sequence[CheckpointOutcome],
+) -> bool:
+    """Return whether every policy-required window has a checkpoint outcome."""
+    return REQUIRED_CHECKPOINT_WINDOWS.issubset(
+        {outcome.window for outcome in outcomes}
+    )
+
+
+def _append_checkpoint_outcome(
+    state: _ProjectionState,
+    event: OperationalEvent,
+    *,
+    field: str,
+) -> tuple[CheckpointOutcome, ...]:
+    """Append one checkpoint outcome (dedupe by canonical window).
+
+    The current checkpoint set holds at most one outcome per canonical
+    window; a second checkpoint verification for an already-recorded window
+    is not appended (the engine already deduped the exact retry).
+    """
+    if event.action_kind is not OperationalActionKind.CHECKPOINT_VERIFICATION:
+        return getattr(state, field)
+    payload = event.payload
+    existing = getattr(state, field)
+    if any(outcome.window == payload.checkpoint for outcome in existing):
+        return existing
+    return existing + (
+        CheckpointOutcome(
+            window=payload.checkpoint,
+            checkpoint_ref=payload.checkpoint_ref,
+            evidence_refs=_sort_owner_refs(payload.evidence_refs),
+            event_id=event.event_id,
+        ),
+    )
+
+
+def _operational_recurrence_link(
+    state: CustodyProjection, event: OperationalEvent
+) -> tuple[RecurrenceLink, ...]:
+    """Extend custody's recurrence chain from a verified-recurrence action."""
+    if event.action_kind is not OperationalActionKind.RECURRENCE:
+        return state.recurrences
+    reference = event.payload.recurrence
+    return state.recurrences + (
+        RecurrenceLink(
+            verified=True,
+            predecessor_event_id=reference.predecessor_event_id,
+            predecessor_occurrence_id=reference.predecessor_occurrence_id,
+        ),
+    )
+
+
+def _append_escalation(
+    state: CustodyProjection, event: OperationalEvent
+) -> tuple[EscalationReference, ...]:
+    """Append one immutable human-escalation reference (never a waiver)."""
+    if event.action_kind is not OperationalActionKind.HUMAN_ESCALATION:
+        return state.escalations
+    return state.escalations + (event.payload.escalation,)
+
+
+def _terminal_eligible(
+    *,
+    checkpoints: Sequence[CheckpointOutcome],
+    negative_controls_present: bool,
+) -> bool:
+    """Terminal eligibility: complete required checkpoint set AND negative
+    controls.  UNKNOWN/INCOHERENT evidence can never close custody."""
+    return negative_controls_present and _required_checkpoint_windows_complete(
+        checkpoints
+    )
+
+
+def _derive_coherence(
+    *,
+    terminal_seen: bool,
+    negative_control_passed: bool,
+    checkpoint_outcomes: Sequence[CheckpointOutcome],
+) -> VerificationCoherence:
+    """Derive verification coherence from durable evidence.
+
+    * no terminal evidence → ``UNKNOWN`` (custody open);
+    * terminal evidence WITH the complete required checkpoint set AND durable
+      negative controls → ``COHERENT`` (may close custody);
+    * terminal evidence with an incomplete set or missing negative controls →
+      ``INCOHERENT`` (contradictory — custody stays open).
+    """
+    if not terminal_seen:
+        return VerificationCoherence.UNKNOWN
+    if negative_control_passed and _required_checkpoint_windows_complete(
+        checkpoint_outcomes
+    ):
+        return VerificationCoherence.COHERENT
+    return VerificationCoherence.INCOHERENT
+
+
+def _operational_custody_updates(
+    event: OperationalEvent, state: CustodyProjection
+) -> dict[str, Any]:
+    """Materialize the M3 operational custody updates for one lifecycle action."""
+    occurrence = event.occurrence
+    lease = event.lease
+    run = event.run_authority
+    wbc = event.wbc_attempt
+    policy = event.policy
+    target = event.target
+    payload = event.payload
+    checkpoints = _append_checkpoint_outcome(state, event, field="checkpoints")
+
+    updates: dict[str, Any] = {
+        "occurrence_id": occurrence.occurrence_id,
+        "occurrence_digest": occurrence.canonical_digest,
+        "occurrence_ref": occurrence.occurrence_ref,
+        "event_id": event.event_id,
+        "lease_id": lease.lease_id,
+        "custody_epoch": lease.custody_epoch,
+        "lease_digest": lease.lease_digest,
+        "lease_ref": lease.lease_ref,
+        "run_id": run.run_id,
+        "run_authority_satisfied": run.satisfied,
+        "grant_ref": run.grant_ref,
+        "fence_ref": run.fence_ref,
+        "decision_ref": run.decision_ref,
+        "wbc_attempt_id": wbc.attempt_id if wbc is not None else None,
+        "attempt_ref": wbc.attempt_ref if wbc is not None else None,
+        "ledger_ref": wbc.ledger_ref if wbc is not None else None,
+        "policy_version": policy.policy_version,
+        "policy_digest": policy.policy_digest,
+        "target": target.target,
+        "target_type": target.target_type,
+        "producer_principal": event.producer.principal,
+        "producer_role": event.producer.role.value,
+        "recurrences": _operational_recurrence_link(state, event),
+        "escalations": _append_escalation(state, event),
+        "escalated": state.escalated
+        or event.action_kind is OperationalActionKind.HUMAN_ESCALATION,
+        "checkpoints": checkpoints,
+        "terminal": state.terminal,
+        "terminal_reason": state.terminal_reason,
+    }
+
+    if event.action_kind is OperationalActionKind.REPAIR_REQUEST:
+        updates["request_id"] = payload.request_id
+        updates["request_ref"] = payload.request_ref
+    elif event.action_kind is OperationalActionKind.SOURCE_CHANGE:
+        updates["source_change_ref"] = payload.change_ref
+        updates["effect_source_digest"] = payload.source_digest
+    elif event.action_kind is OperationalActionKind.INSTALLATION:
+        updates["install_ref"] = payload.install_ref
+        updates["install_digest"] = payload.install_digest
+    elif event.action_kind is OperationalActionKind.RETRIGGER:
+        updates["retrigger_ref"] = payload.retrigger_ref
+    elif event.action_kind is OperationalActionKind.PROGRESS_OBSERVATION:
+        updates["progress_refs"] = _union_refs(
+            state.progress_refs, payload.progress_refs
+        )
+    elif event.action_kind is OperationalActionKind.TERMINAL_VERIFICATION:
+        updates["terminal_reason"] = payload.terminal_reason
+        updates["terminal"] = state.terminal or _terminal_eligible(
+            checkpoints=checkpoints,
+            negative_controls_present=bool(payload.negative_control_refs),
+        )
+    return updates
+
+
+def _operational_verification_updates(
+    event: OperationalEvent, state: VerificationProjection
+) -> dict[str, Any]:
+    """Materialize the M3 verification updates for verification-relevant
+    actions (progress observation, checkpoint verification, terminal
+    verification).  Request/effect/recurrence/escalation actions add no
+    verification evidence and return ``{}`` (a no-op)."""
+    updates: dict[str, Any] = {
+        "occurrence_id": event.occurrence.occurrence_id,
+        "occurrence_digest": event.occurrence.canonical_digest,
+        "event_id": event.event_id,
+    }
+    payload = event.payload
+
+    if event.action_kind is OperationalActionKind.CHECKPOINT_VERIFICATION:
+        outcomes = _append_checkpoint_outcome(
+            state, event, field="checkpoint_outcomes"
+        )
+        updates["checkpoint_outcomes"] = outcomes
+        terminal_seen = state.terminal_reason is not None
+        negative_passed = state.negative_control_result == "passed"
+        updates["coherence"] = _derive_coherence(
+            terminal_seen=terminal_seen,
+            negative_control_passed=negative_passed,
+            checkpoint_outcomes=outcomes,
+        )
+        updates["terminal"] = (
+            updates["coherence"] is VerificationCoherence.COHERENT
+        )
+    elif event.action_kind is OperationalActionKind.PROGRESS_OBSERVATION:
+        updates["progress_refs"] = _union_refs(
+            state.progress_refs, payload.progress_refs
+        )
+        updates["resumed_progress"] = state.resumed_progress or bool(
+            payload.progress_refs
+        )
+    elif event.action_kind is OperationalActionKind.TERMINAL_VERIFICATION:
+        negative_passed = bool(payload.negative_control_refs)
+        updates["verifier_principal"] = payload.verifier.principal
+        updates["verifier_provenance"] = payload.verifier
+        updates["proof_mode"] = (
+            "negative_control" if negative_passed else "unknown"
+        )
+        updates["negative_control_result"] = (
+            "passed" if negative_passed else "unknown"
+        )
+        updates["terminal_reason"] = payload.terminal_reason
+        updates["coherence"] = _derive_coherence(
+            terminal_seen=True,
+            negative_control_passed=negative_passed,
+            checkpoint_outcomes=state.checkpoint_outcomes,
+        )
+        updates["terminal"] = (
+            updates["coherence"] is VerificationCoherence.COHERENT
+        )
+    else:
+        # Repair request / source change / installation / retrigger /
+        # recurrence / escalation carry no verification evidence.
+        return {}
+    return updates
+
+
 def reduce_custody(
-    event: MaintenanceEvent,
+    event: MaintenanceEvent | OperationalEvent,
     state: CustodyProjection,
     *,
     cursor: int,
     event_digest: str,
 ) -> CustodyProjection:
-    """Reduce a detection event into the operational-custody projection.
+    """Reduce a detection or operational lifecycle event into custody.
 
-    Any non-``detection`` event kind — including ``efficiency_analysis`` — is a
-    no-op and leaves the custody state untouched.
+    M3 operational lifecycle events advance the operational custody state
+    (occurrence/authority references, request/effect state, checkpoint set,
+    open/terminal status, recurrences, escalations).  Any non-``detection``
+    legacy event kind — including ``efficiency_analysis`` — is a no-op and
+    leaves the custody state untouched.
     """
+    if isinstance(event, OperationalEvent):
+        return _advance(
+            state,
+            event=event,
+            event_digest=event_digest,
+            cursor=cursor,
+            updates=_operational_custody_updates(event, state),
+        )
     if event.event_kind is not EventKind.DETECTION:
         return state
     return _advance(
@@ -459,16 +881,31 @@ def reduce_custody(
 
 
 def reduce_verification(
-    event: MaintenanceEvent,
+    event: MaintenanceEvent | OperationalEvent,
     state: VerificationProjection,
     *,
     cursor: int,
     event_digest: str,
 ) -> VerificationProjection:
-    """Reduce a detection or audit_report event into the verification projection.
+    """Reduce a detection/audit/operational-verification event.
 
-    ``efficiency_analysis`` events are a no-op (they never alter verification).
+    M3 verification-relevant actions (progress observation, checkpoint
+    verification, terminal verification) advance the verification state;
+    request/effect/recurrence/escalation actions and ``efficiency_analysis``
+    events are a no-op (they never alter verification).  ``UNKNOWN`` or
+    ``INCOHERENT`` verification is never green and never closes custody.
     """
+    if isinstance(event, OperationalEvent):
+        updates = _operational_verification_updates(event, state)
+        if not updates:
+            return state
+        return _advance(
+            state,
+            event=event,
+            event_digest=event_digest,
+            cursor=cursor,
+            updates=updates,
+        )
     if event.event_kind is EventKind.EFFICIENCY_ANALYSIS:
         return state
 
@@ -501,7 +938,7 @@ def reduce_verification(
 
 
 def reduce_efficiency(
-    event: MaintenanceEvent,
+    event: MaintenanceEvent | OperationalEvent,
     state: EfficiencyProjection,
     *,
     cursor: int,
@@ -509,9 +946,11 @@ def reduce_efficiency(
 ) -> EfficiencyProjection:
     """Reduce an efficiency_analysis event into the efficiency projection.
 
-    Detection and audit_report events are a no-op (they never alter the
-    efficiency projection).
+    Detection, audit_report, and M3 operational lifecycle events are a no-op
+    (they never alter the efficiency projection).
     """
+    if isinstance(event, OperationalEvent):
+        return state
     if event.event_kind is not EventKind.EFFICIENCY_ANALYSIS:
         return state
     payload = event.payload
@@ -595,7 +1034,7 @@ class ProjectionEngine:
 
     def apply(
         self,
-        event: MaintenanceEvent | dict[str, Any],
+        event: MaintenanceEvent | OperationalEvent | dict[str, Any],
         *,
         cursor: int | None = None,
     ) -> ProjectionResult:
@@ -603,20 +1042,28 @@ class ProjectionEngine:
 
         * ``cursor`` is the source ledger sequence; when omitted it
           auto-increments from the previous source cursor.
-        * An exact duplicate (same occurrence + same digest) is deduped: no
-          projection advances and no budget is consumed.
-        * A divergent duplicate (same occurrence, different digest) raises
-          :class:`ProjectionConflictError`.
+        * The engine deduplicates by the canonical lifecycle idempotency key
+          (M3 Step 2/4): legacy rows keep the occurrence-only key, M3
+          operational rows derive the strict action key — so DISTINCT actions
+          for ONE occurrence coexist while an exact retry is deduped.
+        * A divergent duplicate (same lifecycle key, different digest) raises
+          :class:`ProjectionConflictError` — nothing advances.
         * A verified recurrence carries a fresh occurrence id (enforced by the
           event contract), so it is applied as a new, causally linked
           occurrence with a fresh budget.
         """
         model = self._coerce(event)
         digest = canonical_digest(model)
-        occurrence_id = model.occurrence_id
+        payload = json.loads(canonical_dumps(model))
+        lifecycle_key = lifecycle_idempotency_key(payload)
+        occurrence_id = (
+            model.occurrence_id
+            if isinstance(model, MaintenanceEvent)
+            else model.occurrence.occurrence_id
+        )
 
-        if occurrence_id in self._seen:
-            if self._seen[occurrence_id] == digest:
+        if lifecycle_key in self._seen:
+            if self._seen[lifecycle_key] == digest:
                 return ProjectionResult(
                     self._custody,
                     self._verification,
@@ -624,11 +1071,12 @@ class ProjectionEngine:
                     ApplyDisposition.DEDUPED,
                 )
             raise ProjectionConflictError(
-                f"projection idempotency conflict for occurrence "
-                f"{occurrence_id!r}: stored digest {self._seen[occurrence_id]} "
-                f"!= incoming digest {digest}; nothing applied"
+                f"projection idempotency conflict for lifecycle key "
+                f"{lifecycle_key!r} (occurrence {occurrence_id!r}): stored "
+                f"digest {self._seen[lifecycle_key]} != incoming digest "
+                f"{digest}; nothing applied"
             )
-        self._seen[occurrence_id] = digest
+        self._seen[lifecycle_key] = digest
 
         if cursor is None:
             self._source_cursor += 1
@@ -663,18 +1111,25 @@ class ProjectionEngine:
             ApplyDisposition.APPLIED,
         )
 
-    def _coerce(self, event: MaintenanceEvent | dict[str, Any]) -> MaintenanceEvent:
-        """Strict-decode *event* into a :class:`MaintenanceEvent` (no writes)."""
-        if isinstance(event, MaintenanceEvent):
+    def _coerce(
+        self, event: MaintenanceEvent | OperationalEvent | dict[str, Any]
+    ) -> MaintenanceEvent | OperationalEvent:
+        """Strict-decode *event* into a Maintenance model (no writes)."""
+        if isinstance(event, (MaintenanceEvent, OperationalEvent)):
             return event
         if isinstance(event, dict):
             try:
                 return strict_loads(MaintenanceEvent, event)
-            except MaintenanceCodecError as exc:
-                raise ValueError(
-                    f"maintenance event strict decode failed: {exc}"
-                ) from exc
-        raise ValueError("event must be a MaintenanceEvent or a canonical dict")
+            except MaintenanceCodecError:
+                try:
+                    return strict_loads(OperationalEvent, event)
+                except MaintenanceCodecError as exc:
+                    raise ValueError(
+                        f"maintenance event strict decode failed: {exc}"
+                    ) from exc
+        raise ValueError(
+            "event must be a MaintenanceEvent, OperationalEvent, or a canonical dict"
+        )
 
 
 def replay(
@@ -697,6 +1152,7 @@ def replay(
 
 __all__ = [
     "ApplyDisposition",
+    "CheckpointOutcome",
     "CorrectionKind",
     "CorrectionRecord",
     "CustodyProjection",
@@ -706,6 +1162,8 @@ __all__ = [
     "ProjectionFreshness",
     "ProjectionName",
     "ProjectionResult",
+    "REQUIRED_CHECKPOINT_WINDOWS",
+    "VerificationCoherence",
     "VerificationProjection",
     "reduce_custody",
     "reduce_efficiency",

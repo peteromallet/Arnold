@@ -59,6 +59,7 @@ FORBIDDEN_SUBSTRATE_CLASSES: tuple[str, ...] = (
     "LivenessLeasePublisher",
     # validators
     "RollbackValidator",
+    "ActionBoundaryResult",
     # attempt stores
     "AttemptLedgerStore",
     "SqliteAttemptLedgerStore",
@@ -72,9 +73,59 @@ FORBIDDEN_SUBSTRATE_CLASSES: tuple[str, ...] = (
     "ManagedAgentQueueSweepResult",
     "QueueSprintsInput",
     "SubagentQueueError",
+    # effect ledger (M3 Step 15: canonical effect ledger stays cloud-side)
+    "RepairEffectLedger",
+    "MutationReservation",
     # transition writers
     "TransitionWriter",
     "RuntimeTransitionWriter",
+)
+
+#: Canonical owner seam names (M3 Step 15): the repair-queue seam, the
+#: unified-fixer (``simple_fixer``) seam, the M7 action-validator seam, and
+#: the effect-ledger seam.  A Maintenance domain module must never reference
+#: (import, name, attribute, or call) any of these — only the cloud adapters
+#: (``arnold_pipelines.megaplan.cloud.maintenance_recovery`` /
+#: ``maintenance_canary``) may call canonical owner seams (SD1).
+CANONICAL_OWNER_SEAM_NAMES: tuple[str, ...] = (
+    # repair queue seam (exactly one canonical occurrence-bound request)
+    "enqueue_occurrence_bound_repair_request",
+    # unified fixer seam (delegate_to_simple_fixer; never a raw command)
+    "delegate_to_simple_fixer",
+    # M7 action validator seam
+    "validate_action_boundary",
+    "validate_action_boundary_simple",
+    "ActionBoundaryResult",
+    # canonical effect ledger
+    "RepairEffectLedger",
+    "MutationReservation",
+)
+
+#: Owner modules that implement the canonical seams.  A Maintenance domain
+#: module must never import any of these (exact module or submodule): the
+#: lease store, action validator, WBC store, repair queue, effect ledger,
+#: completion engine, and the ``simple_fixer`` delegation wrapper.  The
+#: pre-existing legacy incident-ledger chain may transitively load
+#: ``arnold_pipelines.megaplan.custody.*`` (proven by the AST scans below to
+#: be outside Maintenance source); the cloud seam modules are NOT part of
+#: that chain and must not be loaded by importing Maintenance at all.
+CLOUD_OWNER_SEAM_MODULES: tuple[str, ...] = (
+    "arnold_pipelines.megaplan.cloud.repair_requests",
+    "arnold_pipelines.megaplan.cloud.repair_effect_ledger",
+    "arnold_pipelines.megaplan.cloud.wrappers.repair_delegation",
+    "arnold_pipelines.megaplan.custody.action_validator",
+    "arnold_pipelines.megaplan.custody.lease_store",
+    "arnold_pipelines.megaplan.custody.wbc_runtime",
+    "arnold_pipelines.megaplan.orchestration.completion_contract",
+)
+
+#: The M3 cloud adapters — the ONLY M3 code permitted to call canonical owner
+#: seams (SD1).  ``maintenance_recovery`` translates eligible decisions into
+#: the canonical request/effect/checkpoint/terminal edges; ``maintenance_canary``
+#: drives the installed-runtime canary through the recovery adapter.
+CLOUD_M3_ADAPTERS: tuple[str, ...] = (
+    "arnold_pipelines.megaplan.cloud.maintenance_recovery",
+    "arnold_pipelines.megaplan.cloud.maintenance_canary",
 )
 
 
@@ -262,6 +313,127 @@ def test_no_maintenance_module_imports_custody_or_attempt_store_packages() -> No
 
 
 # ---------------------------------------------------------------------------
+# M3 Step 15: no Maintenance domain module imports or references a canonical
+# owner seam (repair queue, simple_fixer, action validator, effect ledger);
+# only the cloud adapters may call canonical owner seams (SD1).
+# ---------------------------------------------------------------------------
+
+
+def test_maintenance_sources_never_import_cloud_owner_seam_modules() -> None:
+    """No Maintenance module imports a canonical owner-seam module.
+
+    The lease store, action validator, WBC store, repair queue, effect
+    ledger, completion engine, and the ``simple_fixer`` delegation wrapper
+    stay cloud-side (SD1).  The one allowed neutral seam is the pure read
+    helper import in ``sources.py`` (covered by the tests above).
+    """
+    violations: dict[str, list[str]] = {}
+    for source in _maintenance_modules():
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        hits = [
+            name
+            for name in _imported_module_names(tree)
+            if name in CLOUD_OWNER_SEAM_MODULES
+            or any(name.startswith(module + ".") for module in CLOUD_OWNER_SEAM_MODULES)
+        ]
+        if hits:
+            violations[source.name] = hits
+    assert violations == {}, f"Maintenance imports owner seam modules: {violations}"
+
+
+def test_maintenance_sources_never_reference_canonical_owner_seam_names() -> None:
+    """No Maintenance module names, attributes, or calls an owner seam.
+
+    ``enqueue_occurrence_bound_repair_request`` (repair queue),
+    ``delegate_to_simple_fixer`` (simple_fixer), the M7 action-validator
+    entry points, and the effect-ledger types never appear in Maintenance
+    source — not even as an inert string-free name (the name scan is over
+    AST Name/Attribute nodes only, so docstring mentions are irrelevant).
+    """
+    violations: dict[str, list[str]] = {}
+    for source in _maintenance_modules():
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        hits = sorted(
+            {
+                node.id
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Name) and node.id in CANONICAL_OWNER_SEAM_NAMES
+            }
+            | {
+                attr
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Attribute)
+                and node.attr in CANONICAL_OWNER_SEAM_NAMES
+            }
+        )
+        if hits:
+            violations[source.name] = hits
+    assert violations == {}, f"Maintenance references canonical owner seams: {violations}"
+
+
+def test_cloud_m3_adapters_call_canonical_owner_seams() -> None:
+    """Positive control: the M3 cloud adapters call the canonical seams.
+
+    ``maintenance_recovery`` is the ONLY M3 module that imports the repair
+    queue seam, the unified-fixer seam, the M7 action validator, and the
+    effect ledger; ``maintenance_canary`` drives the installed-runtime
+    canary through the recovery adapter (``submit_occurrence_bound_repair_request``
+    / ``route_allowlisted_effect``) and never reimplements an owner seam.
+    """
+    recovery_path = (
+        REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "maintenance_recovery.py"
+    )
+    canary_path = (
+        REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "maintenance_canary.py"
+    )
+    recovery_tree = ast.parse(
+        recovery_path.read_text(encoding="utf-8"), filename=str(recovery_path)
+    )
+    canary_tree = ast.parse(
+        canary_path.read_text(encoding="utf-8"), filename=str(canary_path)
+    )
+
+    def _imported_names(tree: ast.AST) -> set[str]:
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                names.update(alias.name for alias in node.names)
+        return names
+
+    recovery_imports = _imported_names(recovery_tree)
+    # The recovery adapter must import every canonical owner seam it drives.
+    for seam in (
+        "enqueue_occurrence_bound_repair_request",
+        "delegate_to_simple_fixer",
+        "validate_action_boundary_simple",
+        "ActionBoundaryResult",
+        "RepairEffectLedger",
+    ):
+        assert seam in recovery_imports, (
+            f"maintenance_recovery must import the canonical seam {seam!r}"
+        )
+
+    # The canary drives the lifecycle through the recovery adapter only.
+    canary_imports = _imported_names(canary_tree)
+    for driven in ("submit_occurrence_bound_repair_request", "route_allowlisted_effect"):
+        assert driven in canary_imports, (
+            f"maintenance_canary must drive the recovery adapter seam {driven!r}"
+        )
+    # The canary never reimplements a canonical owner seam import itself.
+    for seam in (
+        "enqueue_occurrence_bound_repair_request",
+        "delegate_to_simple_fixer",
+        "validate_action_boundary_simple",
+        "ActionBoundaryResult",
+        "RepairEffectLedger",
+    ):
+        assert seam not in canary_imports, (
+            f"maintenance_canary must not import the owner seam {seam!r} directly; "
+            "it drives canonical calls only through maintenance_recovery"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Dynamic: direct mutation requests produce the typed M7 bypass finding with
 # zero writer calls across every mutation-adjacent seam.
 # ---------------------------------------------------------------------------
@@ -366,6 +538,7 @@ def test_maintenance_import_graph_does_not_load_chain_or_transition_writers() ->
         modules = [
             "identity", "contracts", "events", "handoffs", "sources",
             "observation", "ledger", "projections", "shadow", "boundaries",
+            "checkpoints", "operations", "verification",
         ]
         for name in modules:
             importlib.import_module(
@@ -374,6 +547,14 @@ def test_maintenance_import_graph_does_not_load_chain_or_transition_writers() ->
         forbidden = {
             "arnold_pipelines.megaplan.orchestration.transition_policy",
             "arnold_pipelines.megaplan.chain.spec",
+            # M3 Step 15: importing Maintenance must not load any canonical
+            # owner-seam module outside the pre-existing legacy chain
+            # (custody.* loads transitively via incident.ledger -> _core and
+            # is proven out of Maintenance source by the AST scans above).
+            "arnold_pipelines.megaplan.cloud.repair_requests",
+            "arnold_pipelines.megaplan.cloud.repair_effect_ledger",
+            "arnold_pipelines.megaplan.cloud.wrappers.repair_delegation",
+            "arnold_pipelines.megaplan.orchestration.completion_contract",
         }
         loaded = {name for name in sys.modules if name in forbidden}
         if loaded:

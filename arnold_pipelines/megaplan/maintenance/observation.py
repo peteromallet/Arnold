@@ -84,8 +84,12 @@ from arnold_pipelines.megaplan.maintenance.sources import (
     CustodyRead,
     NativeManifestAdapter,
     NativeManifestRead,
+    ProofAdapter,
+    ProofRead,
     RunAuthorityAdapter,
     RunAuthorityRead,
+    RuntimeAdapter,
+    RuntimeRead,
     WbcAdapter,
     WbcRead,
 )
@@ -272,6 +276,68 @@ def native_manifest_source(
     )
 
 
+def proof_source(
+    proof_id: str,
+    subject: str,
+    *,
+    proof_provider: Callable[[str], Any],
+    control_provider: Callable[[str], Sequence[Any]] | None = None,
+    registry: Any | None = None,
+    environment: EnvironmentId | str | None = None,
+    required: bool = False,
+    stale_probe: Callable[[Any], bool] | None = None,
+) -> JoinSource:
+    """Build an optional C2 negative-control proof source with a version probe."""
+    adapter = ProofAdapter(
+        proof_provider=proof_provider,
+        control_provider=control_provider,
+        registry=registry,
+        environment=environment,
+    )
+
+    return JoinSource(
+        key="proof",
+        owner="native_manifest",
+        required=required,
+        probe=lambda: adapter.probe(proof_id),
+        read=lambda: adapter.read(proof_id, subject),
+        stale_probe=stale_probe,
+    )
+
+
+def runtime_source(
+    handoff_id: str,
+    subject: str,
+    *,
+    runtime_provider: Callable[[str, str], Any],
+    source_provider: Callable[[str, str], Any] | None = None,
+    registry: Any | None = None,
+    environment: EnvironmentId | str | None = None,
+    required: bool = False,
+    stale_probe: Callable[[Any], bool] | None = None,
+) -> JoinSource:
+    """Build an optional S1/S2R runtime/source source with a version probe.
+
+    ``handoff_id`` must be ``S1`` or ``S2R``; any other id is rejected by the
+    underlying :class:`RuntimeAdapter` — a runtime source is never guessed.
+    """
+    adapter = RuntimeAdapter(
+        runtime_provider=runtime_provider,
+        source_provider=source_provider,
+        registry=registry,
+        environment=environment,
+    )
+
+    return JoinSource(
+        key=f"runtime:{handoff_id}",
+        owner="native_manifest",
+        required=required,
+        probe=lambda: adapter.probe(handoff_id, subject),
+        read=lambda: adapter.read(handoff_id, subject),
+        stale_probe=stale_probe,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Internal read-result inspection
 # ---------------------------------------------------------------------------
@@ -290,6 +356,12 @@ def _identity_str(value: Any) -> str | None:
 #: in precedence order (the ``_id`` form first, then the bare form).  The join
 #: compares every present dimension across all sources plus the declared
 #: observation identities; any disagreement is CONTRADICTORY_EVIDENCE.
+#: Occurrence-bound dimensions (M3 Step 5): ``occurrence`` (the M7
+#: RepairOccurrenceKey), ``target`` (the action target identity), ``lease``
+#: (the current M7 lease id), and ``fence`` (the current fencing token) are
+#: required to match exactly across every source that exposes them — a
+#: cross-occurrence, cross-target, cross-lease, or cross-fence read is never
+#: coherent.
 _IDENTITY_DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("tenant_id", "tenant"),
     ("tenant", "tenant"),
@@ -307,6 +379,14 @@ _IDENTITY_DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("profile", "profile"),
     ("attempt_id", "attempt"),
     ("attempt", "attempt"),
+    ("occurrence_id", "occurrence"),
+    ("occurrence", "occurrence"),
+    ("target", "target"),
+    ("lease_id", "lease"),
+    ("lease", "lease"),
+    ("fencing_token", "fence"),
+    ("fence_token", "fence"),
+    ("fence", "fence"),
 )
 
 
@@ -346,14 +426,18 @@ def _read_identity(read: Any) -> dict[str, str]:
 
     A read result (``RunAuthorityRead``, ``WbcRead``, ...) exposes a subset of
     the declared identity dimensions as attributes (``run_id``, ``attempt_id``,
-    ``chain_id``, ...).  This returns the non-null, non-empty values keyed by
-    dimension so the join can detect disagreement exactly — never inferring a
-    missing dimension.
+    ``chain_id``, ``occurrence_id``, ``fencing_token``, ...).  This returns
+    the non-null, non-empty values keyed by dimension so the join can detect
+    disagreement exactly — never inferring a missing dimension.  Ref lists /
+    record payloads (e.g. the Run Authority ``fences`` reference list) are
+    never misread as identity values.
     """
     values: dict[str, str] = {}
     for attr, key in _IDENTITY_DIMENSIONS:
         value = getattr(read, attr, None)
         if value is None or value == "":
+            continue
+        if isinstance(value, (list, tuple, dict)):
             continue
         normalized = _identity_str(value)
         if normalized:
@@ -381,6 +465,10 @@ def _read_refs(read: Any) -> tuple[OwnerRef, ...]:
         "validation_refs",
         "predecessor_wrapper_refs",
         "manifest_ref",
+        "proof_ref",
+        "control_refs",
+        "runtime_ref",
+        "source_ref",
     ):
         value = getattr(read, attr, None)
         if isinstance(value, OwnerRef):
@@ -642,6 +730,10 @@ def capture_observation(
     model: ModelId | str | None = None,
     profile: ProfileId | str | None = None,
     attempt: AttemptId | str | None = None,
+    occurrence_id: str | None = None,
+    target: str | None = None,
+    lease_id: str | None = None,
+    fence: str | None = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     expected_incarnation: str | None = None,
     expected_restore_generation: str | None = None,
@@ -655,6 +747,14 @@ def capture_observation(
     retried up to ``max_attempts``; every other failure mode (missing, stale,
     contradictory, cursor-gap, restore/incarnation, cross-environment,
     unapproved handoff) is permanent and fails closed immediately.
+
+    Occurrence-bound coordinates (M3 Step 5): ``occurrence_id`` (the M7
+    RepairOccurrenceKey), ``target`` (the action target identity),
+    ``lease_id`` (the current M7 lease id), and ``fence`` (the current
+    fencing token) are validated as identity dimensions like environment /
+    run / attempt: every source that exposes them must agree exactly, and a
+    cross-occurrence / cross-target / cross-lease / cross-fence read is typed
+    ``INCOHERENT`` with ``CONTRADICTORY_EVIDENCE``.
     """
     if not sources:
         raise ValueError("capture_observation requires at least one source")
@@ -676,6 +776,10 @@ def capture_observation(
         ("model", _identity_str(model)),
         ("profile", _identity_str(profile)),
         ("attempt", _identity_str(attempt)),
+        ("occurrence", _identity_str(occurrence_id)),
+        ("target", _identity_str(target)),
+        ("lease", _identity_str(lease_id)),
+        ("fence", _identity_str(fence)),
     ):
         if value:
             declared_identities[key] = value
@@ -747,6 +851,8 @@ __all__ = [
     "conformance_source",
     "custody_source",
     "native_manifest_source",
+    "proof_source",
     "run_authority_source",
+    "runtime_source",
     "wbc_source",
 ]

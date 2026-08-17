@@ -25,13 +25,26 @@ import pytest
 from arnold_pipelines.megaplan.maintenance.events import (
     AuditFinding,
     AuditReport,
+    CheckpointVerificationPayload,
+    CheckpointWindowKind,
     ClassifierInfo,
     DetectionEvent,
     EfficiencyAnalysis,
     EventKind,
+    HumanEscalationPayload,
+    InstallationPayload,
     MaintenanceEvent,
     OccurrenceBudget,
+    OperationalActionKind,
+    OperationalEvent,
+    ProgressObservationPayload,
+    RecurrencePayload,
+    RepairRequestPayload,
+    RetriggerPayload,
     RootCauseCluster,
+    SourceChangePayload,
+    TerminalVerificationPayload,
+    VerifierProvenance,
     verified_recurrence,
 )
 from arnold_pipelines.megaplan.maintenance.identity import (
@@ -43,14 +56,33 @@ from arnold_pipelines.megaplan.maintenance.identity import (
     canonical_digest,
     strict_loads,
 )
+from arnold_pipelines.megaplan.maintenance.operations import (
+    ActionTarget,
+    EscalationReference,
+    LeaseCoordinates,
+    OccurrenceCoordinates,
+    PolicyVersionCoordinates,
+    ProducerPrincipal,
+    ProducerRole,
+    RecurrenceReference,
+    RunAuthorityCoordinates,
+    WbcAttemptCoordinates,
+)
 from arnold_pipelines.megaplan.maintenance.projections import (
     ApplyDisposition,
+    CheckpointOutcome,
     CorrectionKind,
+    CustodyProjection,
     ProjectionConflictError,
     ProjectionEngine,
     ProjectionFreshness,
     ProjectionName,
     ProjectionResult,
+    REQUIRED_CHECKPOINT_WINDOWS,
+    VerificationCoherence,
+    VerificationProjection,
+    reduce_custody,
+    reduce_verification,
     replay,
 )
 
@@ -478,7 +510,9 @@ def test_recurrence_replay_fixture_sequence() -> None:
 def test_engine_rejects_non_event_input() -> None:
     engine = ProjectionEngine()
 
-    with pytest.raises(ValueError, match="MaintenanceEvent or a canonical dict"):
+    with pytest.raises(
+        ValueError, match="MaintenanceEvent, OperationalEvent, or a canonical dict"
+    ):
         engine.apply("not-an-event")  # type: ignore[arg-type]
 
 
@@ -491,3 +525,370 @@ def test_engine_accepts_canonical_dict() -> None:
 
     assert engine.custody.sequence == 1
     assert engine.custody.occurrence_id == "occ-1"
+
+
+# ---------------------------------------------------------------------------
+# M3 (T5): operational custody and verification projections (Plan Step 4)
+# ---------------------------------------------------------------------------
+
+
+def _op_ref(tag: str) -> OwnerRef:
+    return OwnerRef(owner="custody", locator=f"loc/{tag}", digest="a" * 64)
+
+
+def _operational_event(
+    action: OperationalActionKind,
+    *,
+    occurrence_id: str = "occ-op",
+    occurrence_digest: str = "f" * 64,
+    event_id: str | None = None,
+    neg_controls: tuple[OwnerRef, ...] = (),
+    checkpoint: CheckpointWindowKind | None = None,
+    cp_ref: OwnerRef | None = None,
+    ev_refs: tuple[OwnerRef, ...] = (),
+    prev_occ: str = "occ-prev",
+    prev_evt: str = "evt-prev",
+) -> OperationalEvent:
+    """``OperationalEvent`` model for one occurrence-bound lifecycle action."""
+    if action is OperationalActionKind.REPAIR_REQUEST:
+        payload = RepairRequestPayload(request_id="req-1", request_ref=_op_ref("req"))
+    elif action is OperationalActionKind.SOURCE_CHANGE:
+        payload = SourceChangePayload(change_ref=_op_ref("change"), source_digest="b" * 64)
+    elif action is OperationalActionKind.INSTALLATION:
+        payload = InstallationPayload(install_ref=_op_ref("install"), install_digest="c" * 64)
+    elif action is OperationalActionKind.RETRIGGER:
+        payload = RetriggerPayload(retrigger_ref=_op_ref("retrigger"), reason="retry")
+    elif action is OperationalActionKind.PROGRESS_OBSERVATION:
+        payload = ProgressObservationPayload(progress_refs=(_op_ref("progress"),))
+    elif action is OperationalActionKind.CHECKPOINT_VERIFICATION:
+        payload = CheckpointVerificationPayload(
+            checkpoint=checkpoint or CheckpointWindowKind.IMMEDIATE,
+            checkpoint_ref=cp_ref,
+            evidence_refs=ev_refs,
+        )
+    elif action is OperationalActionKind.TERMINAL_VERIFICATION:
+        payload = TerminalVerificationPayload(
+            verifier=VerifierProvenance(
+                principal="verifier-1",
+                runtime_digest="d" * 64,
+                source_digest="e" * 64,
+                observed_at=UtcTime("2026-08-15T12:05:00+00:00"),
+                direct_read_refs=(_op_ref("owner-source"),),
+            ),
+            terminal_reason="blocker cleared",
+            negative_control_refs=neg_controls,
+            verification_ref=_op_ref("terminal"),
+        )
+    elif action is OperationalActionKind.RECURRENCE:
+        payload = RecurrencePayload(
+            recurrence=RecurrenceReference(
+                predecessor_occurrence_id=prev_occ,
+                predecessor_event_id=prev_evt,
+                root_cause_cluster="c-1",
+            )
+        )
+    elif action is OperationalActionKind.HUMAN_ESCALATION:
+        payload = HumanEscalationPayload(
+            escalation=EscalationReference(
+                reason="ambiguous blocker",
+                escalation_owner="human-owner",
+                escalation_ref=_op_ref("escalation"),
+            )
+        )
+    else:  # pragma: no cover - closed vocabulary guard
+        raise ValueError(action)
+
+    role = (
+        ProducerRole.VERIFIER
+        if action is OperationalActionKind.TERMINAL_VERIFICATION
+        else ProducerRole.REPAIR_PRODUCER
+    )
+    return OperationalEvent.build(
+        event_id=event_id or f"op-{action.value}-1",
+        occurrence=OccurrenceCoordinates(
+            occurrence_id=occurrence_id,
+            canonical_digest=occurrence_digest,
+        ),
+        lease=LeaseCoordinates(lease_id="lease-1", custody_epoch=1),
+        run_authority=RunAuthorityCoordinates(run_id="run-1", satisfied=True),
+        policy=PolicyVersionCoordinates(policy_version="policy-1"),
+        target=ActionTarget(target="chain:session"),
+        producer=ProducerPrincipal(
+            principal="verifier-1" if role is ProducerRole.VERIFIER else "producer-1",
+            role=role,
+        ),
+        payload=payload,
+        observed_at=datetime(2026, 8, 15, 12, 0, tzinfo=UTC),
+        wbc_attempt=WbcAttemptCoordinates(attempt_id="att-1"),
+    )
+
+
+def test_operational_request_advances_custody_with_canonical_references() -> None:
+    engine = ProjectionEngine()
+    engine.apply(_operational_event(OperationalActionKind.REPAIR_REQUEST))
+
+    custody = engine.custody
+    assert custody.sequence == 1
+    assert custody.occurrence_id == "occ-op"
+    assert custody.occurrence_digest == "f" * 64
+    assert custody.lease_id == "lease-1"
+    assert custody.custody_epoch == 1
+    assert custody.run_id == "run-1"
+    assert custody.run_authority_satisfied is True
+    assert custody.wbc_attempt_id == "att-1"
+    assert custody.policy_version == "policy-1"
+    assert custody.target == "chain:session"
+    assert custody.producer_principal == "producer-1"
+    assert custody.producer_role == ProducerRole.REPAIR_PRODUCER.value
+    assert custody.request_id == "req-1"
+    # Request/effect state is open until independent terminal verification.
+    assert custody.terminal is False
+    assert custody.open is True
+    # Verification and efficiency did NOT advance for a request action.
+    assert engine.verification.sequence == 0
+    assert engine.efficiency.sequence == 0
+
+
+def test_operational_effect_actions_update_custody_state() -> None:
+    engine = ProjectionEngine()
+    engine.apply(_operational_event(OperationalActionKind.SOURCE_CHANGE))
+    engine.apply(_operational_event(OperationalActionKind.INSTALLATION))
+    engine.apply(_operational_event(OperationalActionKind.RETRIGGER))
+
+    custody = engine.custody
+    assert custody.sequence == 3
+    assert custody.source_change_ref == _op_ref("change")
+    assert custody.effect_source_digest == "b" * 64
+    assert custody.install_ref == _op_ref("install")
+    assert custody.install_digest == "c" * 64
+    assert custody.retrigger_ref == _op_ref("retrigger")
+    assert custody.open is True
+
+
+def test_operational_distinct_actions_coexist_while_exact_retry_dedupes() -> None:
+    engine = ProjectionEngine()
+    request = _operational_event(OperationalActionKind.REPAIR_REQUEST)
+    source_change = _operational_event(OperationalActionKind.SOURCE_CHANGE)
+
+    assert engine.apply(request).disposition is ApplyDisposition.APPLIED
+    assert engine.apply(source_change).disposition is ApplyDisposition.APPLIED
+    # Distinct actions for ONE occurrence coexist (lifecycle-key dedupe).
+    assert engine.custody.sequence == 2
+    # An exact retry deduplicates without advancing.
+    assert engine.apply(request).disposition is ApplyDisposition.DEDUPED
+    assert engine.custody.sequence == 2
+
+    # A divergent reuse of the same action key fails without advancing.
+    divergent = _operational_event(
+        OperationalActionKind.REPAIR_REQUEST, event_id="op-repair_request-2"
+    )
+    with pytest.raises(ProjectionConflictError, match="lifecycle key"):
+        engine.apply(divergent)
+    assert engine.custody.sequence == 2
+    assert engine.custody.request_id == "req-1"
+
+
+def test_progress_and_checkpoint_advance_verification_independently() -> None:
+    engine = ProjectionEngine()
+    engine.apply(_operational_event(OperationalActionKind.PROGRESS_OBSERVATION))
+    engine.apply(
+        _operational_event(
+            OperationalActionKind.CHECKPOINT_VERIFICATION,
+            checkpoint=CheckpointWindowKind.IMMEDIATE,
+            cp_ref=_op_ref("immediate"),
+            ev_refs=(_op_ref("evidence"),),
+        )
+    )
+
+    verification = engine.verification
+    assert verification.sequence == 2
+    assert verification.resumed_progress is True
+    assert verification.progress_refs == (_op_ref("progress"),)
+    assert len(verification.checkpoint_outcomes) == 1
+    assert verification.checkpoint_outcomes[0].window is CheckpointWindowKind.IMMEDIATE
+    assert verification.checkpoint_outcomes[0].evidence_refs == (_op_ref("evidence"),)
+    # No terminal evidence yet: coherence is UNKNOWN and custody stays open.
+    assert verification.coherence is VerificationCoherence.UNKNOWN
+    assert verification.terminal is False
+    assert engine.custody.terminal is False
+    # Efficiency was never touched.
+    assert engine.efficiency.sequence == 0
+
+
+def test_terminal_without_complete_checkpoint_set_is_incoherent_and_open() -> None:
+    engine = ProjectionEngine()
+    engine.apply(_operational_event(OperationalActionKind.REPAIR_REQUEST))
+    engine.apply(
+        _operational_event(
+            OperationalActionKind.TERMINAL_VERIFICATION,
+            neg_controls=(_op_ref("negative-control"),),
+        )
+    )
+
+    verification = engine.verification
+    assert verification.coherence is VerificationCoherence.INCOHERENT
+    assert verification.terminal is False
+    assert verification.negative_control_result == "passed"
+    assert verification.proof_mode == "negative_control"
+    assert verification.verifier_principal == "verifier-1"
+    assert verification.verifier_provenance is not None
+    assert verification.terminal_reason == "blocker cleared"
+    # INCOHERENT evidence can never close custody.
+    assert engine.custody.terminal is False
+    assert engine.custody.open is True
+
+
+def test_terminal_without_negative_controls_is_incoherent() -> None:
+    engine = ProjectionEngine()
+    engine.apply(_operational_event(OperationalActionKind.REPAIR_REQUEST))
+    engine.apply(
+        _operational_event(
+            OperationalActionKind.CHECKPOINT_VERIFICATION,
+            checkpoint=CheckpointWindowKind.IMMEDIATE,
+            cp_ref=_op_ref("immediate"),
+        )
+    )
+    engine.apply(
+        _operational_event(OperationalActionKind.TERMINAL_VERIFICATION, neg_controls=())
+    )
+
+    verification = engine.verification
+    assert verification.negative_control_result == "unknown"
+    assert verification.proof_mode == "unknown"
+    assert verification.coherence is VerificationCoherence.INCOHERENT
+    assert verification.terminal is False
+    assert engine.custody.terminal is False
+    assert engine.custody.open is True
+
+
+def test_complete_required_checkpoint_set_and_negative_controls_close_custody() -> None:
+    """A fully verified set closes custody; UNKNOWN/INCOHERENT never does.
+
+    The complete policy-required checkpoint set plus durable negative
+    controls is the ONLY path to terminal verification.  The engine's
+    lifecycle-key contract keeps one checkpoint verification per action key,
+    so the complete set is proven at the reducer level against the exact
+    required windows.
+    """
+    terminal = _operational_event(
+        OperationalActionKind.TERMINAL_VERIFICATION,
+        neg_controls=(_op_ref("negative-control"),),
+    )
+    digest = canonical_digest(terminal)
+
+    verification = VerificationProjection()
+    for window in REQUIRED_CHECKPOINT_WINDOWS:
+        verification = verification.model_copy(
+            update={
+                "checkpoint_outcomes": verification.checkpoint_outcomes
+                + (
+                    CheckpointOutcome(
+                        window=window,
+                        checkpoint_ref=_op_ref(window.value),
+                        evidence_refs=(_op_ref("evidence"),),
+                        event_id=f"cp-{window.value}",
+                    ),
+                )
+            }
+        )
+    result = reduce_verification(
+        terminal, verification, cursor=9, event_digest=digest
+    )
+    assert result.coherence is VerificationCoherence.COHERENT
+    assert result.terminal is True
+    assert result.checkpoint_outcomes and len(result.checkpoint_outcomes) == 4
+
+    custody = CustodyProjection()
+    for window in REQUIRED_CHECKPOINT_WINDOWS:
+        custody = custody.model_copy(
+            update={
+                "checkpoints": custody.checkpoints
+                + (
+                    CheckpointOutcome(
+                        window=window,
+                        checkpoint_ref=_op_ref(window.value),
+                        evidence_refs=(_op_ref("evidence"),),
+                        event_id=f"cp-{window.value}",
+                    ),
+                )
+            }
+        )
+    custody_result = reduce_custody(
+        terminal, custody, cursor=9, event_digest=digest
+    )
+    assert custody_result.terminal is True
+    assert custody_result.open is False
+
+
+def test_human_escalation_keeps_custody_open() -> None:
+    engine = ProjectionEngine()
+    engine.apply(_operational_event(OperationalActionKind.HUMAN_ESCALATION))
+
+    custody = engine.custody
+    assert custody.escalated is True
+    assert len(custody.escalations) == 1
+    assert custody.escalations[0].escalation_owner == "human-owner"
+    assert custody.escalations[0].human_gate is True
+    # Escalation never waives or closes custody.
+    assert custody.terminal is False
+    assert custody.open is True
+
+
+def test_operational_recurrence_links_fresh_occurrence() -> None:
+    engine = ProjectionEngine()
+    engine.apply(_operational_event(OperationalActionKind.RECURRENCE))
+
+    assert len(engine.custody.recurrences) == 1
+    link = engine.custody.recurrences[0]
+    assert link.verified is True
+    assert link.predecessor_occurrence_id == "occ-prev"
+    assert link.predecessor_event_id == "evt-prev"
+    assert engine.custody.occurrence_id == "occ-op"
+
+
+def test_operational_events_never_alter_efficiency() -> None:
+    engine = ProjectionEngine()
+    for action in (
+        OperationalActionKind.REPAIR_REQUEST,
+        OperationalActionKind.SOURCE_CHANGE,
+        OperationalActionKind.INSTALLATION,
+        OperationalActionKind.RETRIGGER,
+        OperationalActionKind.PROGRESS_OBSERVATION,
+        OperationalActionKind.CHECKPOINT_VERIFICATION,
+        OperationalActionKind.HUMAN_ESCALATION,
+    ):
+        engine.apply(_operational_event(action))
+
+    assert engine.efficiency.sequence == 0
+    assert engine.efficiency.product is None
+
+
+def test_operational_replay_is_deterministic_with_independent_cursors() -> None:
+    events = [
+        _operational_event(OperationalActionKind.REPAIR_REQUEST),
+        _operational_event(OperationalActionKind.SOURCE_CHANGE),
+        _operational_event(OperationalActionKind.PROGRESS_OBSERVATION),
+        _operational_event(
+            OperationalActionKind.CHECKPOINT_VERIFICATION,
+            checkpoint=CheckpointWindowKind.IMMEDIATE,
+            cp_ref=_op_ref("immediate"),
+        ),
+    ]
+    engine_a = replay(events)
+    engine_b = replay(events)
+
+    assert engine_a.custody == engine_b.custody
+    assert engine_a.verification == engine_b.verification
+    assert engine_a.efficiency == engine_b.efficiency
+    assert engine_a.custody.output_digest == engine_b.custody.output_digest
+    # Independent cursors: custody advanced on every operational event while
+    # verification advanced only on the progress and checkpoint events.
+    assert engine_a.custody.sequence == 4
+    assert engine_a.custody.cursor == 4
+    assert engine_a.custody.lag == 0
+    assert engine_a.verification.sequence == 2
+    assert engine_a.verification.cursor == 4
+    assert engine_a.efficiency.sequence == 0
+    assert engine_a.efficiency.cursor == 0
+    assert engine_a.efficiency.lag == 4
+    assert engine_a.custody.source_digest is not None
