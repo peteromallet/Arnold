@@ -53,6 +53,25 @@ dependencies = [
     "faster-whisper>=1.0.0",
     "PyJWT[crypto]",
     "discord.py>=2.6,<3",
+    # --- Astrid epic runtime closure (shared-generation contract) ----------
+    # The shared generation venv is built ONLY from this frozen spec and is
+    # used by every epic's validation jobs. Astrid's runtime code imports
+    # these packages (jsonschema via astrid/core/theme/_schema.py,
+    # scenedetect/google-genai/pillow/xxhash via media/reference tooling,
+    # referencing as jsonschema's transitive core). Declaring them here keeps
+    # ANY regeneration of the shared venv content-convergent with the
+    # hand-augmented runtime; omitting them caused validation job VJ2 to exit
+    # 4 (pytest_collection_error: ModuleNotFoundError: jsonschema) after a
+    # spec-faithful rebuild dropped them. Pins mirror Astrid's own pyproject.
+    # banodoco-timeline-schema is intentionally NOT listed: it is not
+    # resolvable from PyPI (verified 404), so it remains a documented
+    # residual gap for any code path that imports it.
+    "jsonschema>=4.0",
+    "referencing>=0.30",
+    "scenedetect[opencv-headless]==0.6.4",
+    "google-genai>=1.15.0",
+    "pillow>=12.2,<13",
+    "xxhash>=3.4",
 ]
 
 [project.scripts]
