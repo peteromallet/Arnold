@@ -1073,3 +1073,245 @@ def test_attestation_disable_without_seed_does_not_authorize_production_launch(
 
     with pytest.raises(CliError, match="required but missing"):
         attestation.require_configured_runtime_launch("resident")
+
+
+def test_build_cli_records_explicit_manifest_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Codex consult 0ae19cc17afd (b.1): the `runtime_attestation build` CLI
+    accepts --manifest and records the resolved path in input_paths.manifest
+    (fixer/rebind parity with the production ensure_runtime_launch_seed path —
+    the structural gap that produced the pointerless seed)."""
+    _seed, paths = _release_seed(tmp_path, monkeypatch)
+    manifest = tmp_path / "runtime-manifest.json"
+    _write_json(manifest, {"epic": {"expected_head": "a" * 40}})
+    output = tmp_path / "cli-seed.json"
+    rc = attestation.main(
+        [
+            "build",
+            "--expected-root",
+            str(paths["root"]),
+            "--expected-revision",
+            "a" * 40,
+            "--supervisor-receipt",
+            str(paths["receipt"]),
+            "--hot-env",
+            str(paths["hot_env"]),
+            "--marker",
+            str(paths["marker"]),
+            "--chain-spec",
+            str(paths["chain_spec"]),
+            "--manifest",
+            str(manifest),
+            "--output",
+            str(output),
+        ]
+    )
+    assert rc == 0
+    assert output.exists()
+    built = json.loads(output.read_text(encoding="utf-8"))
+    assert built["ready"] is True
+    assert built["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    captured = capsys.readouterr()
+    assert manifest.resolve(strict=False).as_posix() in captured.out
+
+
+def test_validate_pointerless_seed_follows_manifest_from_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex consult 0ae19cc17afd (b.2): a LEGACY pointerless seed (CLI build
+    without --manifest) falls back to ARNOLD_RUNTIME_MANIFEST to resolve the
+    accepted head, so it follows the accepted generation after an engine
+    advance instead of wedging with source_revision_mismatch."""
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    assert seed["input_paths"]["manifest"] == ""
+    new_head = "c" * 40
+    manifest = tmp_path / "env-manifest.json"
+    _write_json(manifest, {"epic": {"expected_head": new_head}})
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+    monkeypatch.delenv("ARNOLD_ACCEPTED_RUNTIME_HEAD", raising=False)
+
+    def _advanced_provenance(**_kwargs: object) -> dict[str, object]:
+        prov = dict(seed["runtime_provenance"])  # type: ignore[arg-type]
+        prov["source_revision"] = new_head
+        prov["ok"] = True
+        return prov
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _advanced_provenance)
+
+    result = attestation.validate_runtime_launch_seed(seed, component="worker")
+    assert result["status"] == "ready"
+    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") == new_head
+
+
+def test_validate_pointerless_seed_without_manifest_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex consult 0ae19cc17afd (b.2 fail-closed): with neither a seed
+    pointer nor ARNOLD_RUNTIME_MANIFEST, an engine advance still fails closed
+    with the typed source_revision_mismatch refusal — the env fallback is
+    strictly additive."""
+    seed, _paths = _release_seed(tmp_path, monkeypatch)
+    assert seed["input_paths"]["manifest"] == ""
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_ACCEPTED_RUNTIME_HEAD", raising=False)
+
+    def _drifted_provenance(**_kwargs: object) -> dict[str, object]:
+        return {"ok": False, "errors": ["source_revision_mismatch"]}
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _drifted_provenance)
+
+    with pytest.raises(CliError, match="source_revision_mismatch"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+
+
+def test_validate_seed_manifest_pointer_wins_over_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex consult 0ae19cc17afd (b.2 precedence): a nonempty seed
+    input_paths.manifest is authoritative — a conflicting ARNOLD_RUNTIME_MANIFEST
+    is ignored. And a nonempty-but-invalid seed pointer does NOT fall back to
+    the environment (seed-first authority preserved)."""
+    _seed, paths = _release_seed(tmp_path, monkeypatch)
+    seed_head = "a" * 40
+    env_head = "d" * 40
+    seed_manifest = tmp_path / "seed-manifest.json"
+    env_manifest = tmp_path / "env-manifest.json"
+    _write_json(seed_manifest, {"epic": {"expected_head": seed_head}})
+    _write_json(env_manifest, {"epic": {"expected_head": env_head}})
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(env_manifest))
+    monkeypatch.delenv("ARNOLD_ACCEPTED_RUNTIME_HEAD", raising=False)
+
+    seed_with_pointer = attestation.build_runtime_launch_seed(
+        expected_root=paths["root"],
+        expected_revision=seed_head,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+        marker_path=paths["marker"],
+        chain_spec_path=paths["chain_spec"],
+        manifest_path=seed_manifest,
+    )
+    assert seed_with_pointer["input_paths"]["manifest"] == str(
+        seed_manifest.resolve(strict=False)
+    )
+
+    def _stable_provenance(**_kwargs: object) -> dict[str, object]:
+        prov = dict(seed_with_pointer["runtime_provenance"])  # type: ignore[arg-type]
+        prov["ok"] = True
+        return prov
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _stable_provenance)
+    result = attestation.validate_runtime_launch_seed(
+        seed_with_pointer, component="worker"
+    )
+    assert result["status"] == "ready"
+    # the SEED pointer supplied the accepted head, not the conflicting env
+    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") == seed_head
+
+    # nonempty-but-invalid seed pointer: must NOT fall through to the env.
+    broken = tmp_path / "missing-manifest.json"
+    seed_broken = attestation.build_runtime_launch_seed(
+        expected_root=paths["root"],
+        expected_revision=seed_head,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+        marker_path=paths["marker"],
+        chain_spec_path=paths["chain_spec"],
+        manifest_path=broken,
+    )
+    assert seed_broken["input_paths"]["manifest"] == str(broken.resolve(strict=False))
+
+    def _env_only_provenance(**_kwargs: object) -> dict[str, object]:
+        return {"ok": False, "errors": ["source_revision_mismatch"]}
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _env_only_provenance)
+    with pytest.raises(CliError, match="source_revision_mismatch"):
+        attestation.validate_runtime_launch_seed(seed_broken, component="worker")
+
+
+def test_ensure_runtime_launch_seed_rebuilds_pointerless_or_wrong_pointer_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex consult 0ae19cc17afd (b.3): _launch_seed_current requires the
+    seed's input_paths.manifest to resolve to the SAME canonical manifest path.
+    A pointerless seed or a wrong-pointer seed (even with a valid recomputed
+    digest) is never treated as current and is rebuilt by the next
+    ensure_runtime_launch_seed."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    state = env["state"]
+    assert isinstance(state, dict)
+    seed_dir = env["seed_dir"]
+    assert isinstance(seed_dir, Path)
+
+    first = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=env["identity"],
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    expected_path = seed_dir / "runtime-test-1.json"
+    assert first == expected_path
+    built = json.loads(expected_path.read_text(encoding="utf-8"))
+    assert built["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+
+    # rewrite on-disk seed with a VALID recomputed digest but an EMPTY pointer
+    pointerless = dict(built)
+    pointerless["input_paths"] = dict(built["input_paths"])
+    pointerless["input_paths"]["manifest"] = ""
+    pointerless["content_sha256"] = attestation._canonical_sha256(
+        {k: v for k, v in pointerless.items() if k != "content_sha256"}
+    )
+    _write_json(expected_path, pointerless)
+    attestation._verify_seed_digest(
+        json.loads(expected_path.read_text(encoding="utf-8"))
+    )
+
+    second = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=env["identity"],
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    assert second == expected_path
+    rebuilt = json.loads(expected_path.read_text(encoding="utf-8"))
+    assert rebuilt["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+
+    # wrong pointer (another manifest path) is also not current -> rebuilt
+    other = tmp_path / "other-manifest.json"
+    _write_json(other, {"epic": {"expected_head": state["revision"]}})
+    wrong = dict(rebuilt)
+    wrong["input_paths"] = dict(rebuilt["input_paths"])
+    wrong["input_paths"]["manifest"] = str(other.resolve(strict=False))
+    wrong["content_sha256"] = attestation._canonical_sha256(
+        {k: v for k, v in wrong.items() if k != "content_sha256"}
+    )
+    _write_json(expected_path, wrong)
+
+    third = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=env["identity"],
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    assert third == expected_path
+    final = json.loads(expected_path.read_text(encoding="utf-8"))
+    assert final["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
