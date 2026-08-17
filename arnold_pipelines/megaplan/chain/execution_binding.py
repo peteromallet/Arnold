@@ -1258,11 +1258,23 @@ def rebind_execution_identity(
             "chain rebind refused: active bundle SHA-256 does not match validated source",
         )
     if not active.get("ready"):
-        raise CliError(
-            DRIFT_ERROR,
-            "chain rebind refused: active execution identity is not ready: "
-            + ", ".join(str(item) for item in active.get("errors") or []),
+        # T-0301 worktree-first waiver: the bound import root may carry
+        # unrelated global editable metadata from a leftover candidate .venv
+        # even when the chain runtime is genuinely worktree-first via
+        # PYTHONPATH. execution_binding_report already accepts this exact
+        # single-error shape via _bound_import_root_covers_editable_metadata_mismatch;
+        # the rebind path must apply the same waiver or a bound chain can
+        # never be rebind after a spec edit (grok consult 2026-08-17,
+        # editable_runtime_import_root_mismatch on mega m3 rebind).
+        bound_match = _bound_import_root_covers_editable_metadata_mismatch(
+            previous, active
         )
+        if not bound_match:
+            raise CliError(
+                DRIFT_ERROR,
+                "chain rebind refused: active execution identity is not ready: "
+                + ", ".join(str(item) for item in active.get("errors") or []),
+            )
 
     previous_labels = _identity_labels(previous)
     active_labels = _identity_labels(active)
