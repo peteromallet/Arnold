@@ -816,9 +816,21 @@ def _merge_validated_entries(
             and id_field == "task_id"
             and str(target.get("status", "")) in ACCEPTED_TASK_STATUSES
         ):
+            # The entry has already passed scoped/grant-aware validation. Only a
+            # terminal accepted incoming row may corroborate an accepted target.
+            # Never copy status or executor_notes, and never replace durable
+            # evidence that the target already carries (occurrence 4c0190500877:
+            # replay of the proven terminal wave backfills evidence into
+            # evidence-empty accepted rows so chain phase-coverage and the
+            # execute-end done-evidence check do not re-block a completed plan).
+            if str(entry.get("status", "")) in ACCEPTED_TASK_STATUSES:
+                for _field in _ACCEPTED_EVIDENCE_BACKFILL_FIELDS:
+                    if not target.get(_field) and entry.get(_field):
+                        target[_field] = entry[_field]
             if entry_id not in seen:
                 issues.append(
-                    f"Preserved accepted {label} for '{entry_id}' — existing receipt not overwritten."
+                    f"Preserved accepted {label} for '{entry_id}' — "
+                    "status preserved; missing terminal evidence backfilled."
                 )
             seen.add(entry_id)
             continue
@@ -1082,6 +1094,23 @@ def _enforce_task_write_budgets(
 #: ``blocked`` is terminal but is NOT accepted — a blocked task may legitimately
 #: be retried, so its prior receipt must not freeze out a later attempt.
 ACCEPTED_TASK_STATUSES: frozenset[str] = frozenset({"done", "completed", "skipped"})
+
+#: Evidence fields that may be backfilled into an already-accepted target row
+#: from a terminal accepted incoming entry without demoting its status.  The
+#: accepted receipt is never overwritten (status/executor_notes stay), but a
+#: later replay of the proven terminal wave can corroborate durable evidence
+#: (files_changed / commands_run / head_sha / code_hash) that the original
+#: publish omitted — otherwise the chain overlay re-applies a stale batch
+#: shadow (chain_authority_shadow) and the execute-end done-evidence check
+#: re-blocks a completed plan (occurrence 4c0190500877, codex consult
+#: 2026-08-17T06:4xZ).
+_ACCEPTED_EVIDENCE_BACKFILL_FIELDS: tuple[str, ...] = (
+    "files_changed",
+    "commands_run",
+    "evidence_files",
+    "head_sha",
+    "code_hash",
+)
 
 
 def _enforce_batch_file_ownership(

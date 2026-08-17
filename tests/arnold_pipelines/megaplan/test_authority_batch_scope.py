@@ -1074,3 +1074,290 @@ def test_validation_blocked_ids_and_transitive_dependents_stay_out_of_runnable_q
     assert tasks[0]["blocked_reason"] == "validation_blocked"
     assert tasks[3]["status"] == "blocked"
     assert tasks[3]["blocked_reason"] == "prerequisite_blocked"
+
+
+# ---------------------------------------------------------------------------
+# Occurrence 4c0190500877: accepted-evidence backfill during replay
+# (codex consult 2026-08-17T06:4xZ; engine patch in execute/merge.py
+# _merge_validated_entries preserve_accepted branch).
+# Requirements proven below:
+#   1. an accepted evidence-empty target receives files/commands from a
+#      scoped terminal `done` record;
+#   2. a later `blocked` record cannot demote it or replace its evidence;
+#   3. existing target evidence is never overwritten;
+#   4. replay of the proven terminal wave leaves T10/T13 done with durable
+#      evidence (chain phase-coverage no longer re-blocks).
+# ---------------------------------------------------------------------------
+
+
+def _merge_entries(
+    targets: dict[str, dict],
+    entries: list[dict],
+    *,
+    preserve_accepted: bool = True,
+) -> list[str]:
+    from arnold_pipelines.megaplan.execute.merge import _merge_validated_entries
+
+    issues: list[str] = []
+    _merge_validated_entries(
+        entries,
+        targets_by_id=targets,
+        id_field="task_id",
+        merge_fields=("status", "executor_notes", "files_changed", "commands_run"),
+        issues=issues,
+        label="task_updates",
+        preserve_accepted=preserve_accepted,
+    )
+    return issues
+
+
+def test_accepted_evidence_empty_target_backfills_terminal_done_evidence() -> None:
+    """Requirement 1: terminal accepted incoming row corroborates accepted target."""
+    target = {"id": "T10_impl", "status": "done"}
+    targets = {"T10_impl": target}
+    issues = _merge_entries(
+        targets,
+        [
+            {
+                "task_id": "T10_impl",
+                "status": "done",
+                "executor_notes": "proven terminal wave",
+                "files_changed": ["arnold_pipelines/megaplan/cloud/a.py"],
+                "commands_run": ["pytest -q tests/cloud"],
+                "head_sha": "15b881cb4",
+            }
+        ],
+    )
+    assert target["status"] == "done"  # never demoted
+    assert target["files_changed"] == ["arnold_pipelines/megaplan/cloud/a.py"]
+    assert target["commands_run"] == ["pytest -q tests/cloud"]
+    assert target["head_sha"] == "15b881cb4"
+    assert any("status preserved; missing terminal evidence backfilled" in i for i in issues)
+
+
+def test_later_blocked_shadow_record_cannot_demote_or_replace_evidence() -> None:
+    """Requirement 2: non-terminal shadow (batch-6 blocked) never wins."""
+    target = {"id": "T10_impl", "status": "done", "files_changed": ["a.py"], "commands_run": ["t"]}
+    targets = {"T10_impl": target}
+    issues = _merge_entries(
+        targets,
+        [
+            {
+                "task_id": "T10_impl",
+                "status": "blocked",
+                "executor_notes": "stale batch-6 overlay",
+                "files_changed": ["stale.py"],
+                "commands_run": ["stale-cmd"],
+            }
+        ],
+    )
+    assert target["status"] == "done"
+    assert target["files_changed"] == ["a.py"]
+    assert target["commands_run"] == ["t"]
+    assert "stale.py" not in target["files_changed"]
+    assert any("Preserved accepted" in i for i in issues)
+
+
+def test_accepted_backfill_never_overwrites_existing_durable_evidence() -> None:
+    """Requirement 3: durable evidence already present is left untouched."""
+    target = {
+        "id": "T14_impl",
+        "status": "done",
+        "files_changed": ["existing.py"],
+        "commands_run": ["existing-cmd"],
+    }
+    targets = {"T14_impl": target}
+    _merge_entries(
+        targets,
+        [
+            {
+                "task_id": "T14_impl",
+                "status": "done",
+                "executor_notes": "later wave",
+                "files_changed": ["later.py"],
+                "commands_run": ["later-cmd"],
+                "head_sha": "deadbeef",
+            }
+        ],
+    )
+    assert target["files_changed"] == ["existing.py"]
+    assert target["commands_run"] == ["existing-cmd"]
+    assert "later.py" not in target["files_changed"]
+
+
+def test_replay_leaves_evidence_empty_accepted_tasks_durable(
+    tmp_path: Path,
+) -> None:
+    """Requirement 4: end-to-end replay backfills T10/T13 evidence via the
+    proven terminal wave (batch-1 done records with envelopes) while the stale
+    batch-6 blocked shadow stays inert — exactly the occurrence 4c0190500877
+    case."""
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-08-17T00:00:00Z",
+        "current_state": "finalized",
+        "iteration": 3,
+        "config": {"mode": "code"},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    finalize_data = {
+        "tasks": [
+            {"id": "T10_impl", "status": "done"},
+            {"id": "T13_impl", "status": "done"},
+            {"id": "T12_impl", "status": "skipped"},
+        ],
+        "sense_checks": [],
+        "user_actions": [],
+    }
+
+    def write_terminal_wave(
+        batch_number: int,
+        task_id: str,
+        files_changed: list[str],
+        commands_run: list[str],
+    ) -> None:
+        """Write a scoped, enveloped, proven terminal `done` record."""
+        artifact_path = _prepare_scoped_batch_checkpoint(
+            tmp_path,
+            batch_number=batch_number,
+            task_ids=[task_id],
+            sense_check_ids=[],
+            state=state,
+            finalize_data=finalize_data,
+        )
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        identity = DispatchIdentity.create(
+            dispatch_id=f"megaplan-run:execute:batch:{task_id}",
+            run_id="megaplan-run",
+            run_revision="sha256:plan-revision",
+            coordinator_attempt_id="coordinator-attempt",
+            fence_token=2,
+            subject_ids=(task_id,),
+            capabilities=(TASK_RESULT_CAPABILITY,),
+            prerequisite_digest=f"{task_id}-prerequisite-digest",
+            worker_id=f"megaplan-execute-batch-{task_id}",
+        )
+        entry = {
+            "task_id": task_id,
+            "status": "done",
+            "executor_notes": "terminal wave",
+            "files_changed": files_changed,
+            "commands_run": commands_run,
+            "head_sha": "15b881cb4",
+        }
+        evidence = EvidenceEnvelope(
+            evidence_id=f"{task_id}:evidence",
+            run_id=identity.run_id,
+            run_revision=identity.run_revision,
+            evidence_type="megaplan.task_update",
+            source="test",
+            payload={"entry": entry},
+        )
+        attempt = TaskAttempt(
+            attempt_id=f"{task_id}:attempt",
+            run_id=identity.run_id,
+            run_revision=identity.run_revision,
+            subject_id=task_id,
+            grant_id=identity.dispatch_id,
+            coordinator_attempt_id=identity.coordinator_attempt_id,
+            fence_token=identity.fence_token,
+            ordinal=1,
+        )
+        claim = TaskClaim(
+            claim_id=f"{task_id}:claim",
+            run_id=identity.run_id,
+            run_revision=identity.run_revision,
+            subject_id=task_id,
+            attempt_id=attempt.attempt_id,
+            grant_id=identity.dispatch_id,
+            coordinator_attempt_id=identity.coordinator_attempt_id,
+            fence_token=identity.fence_token,
+            claim_type=TASK_COMPLETION_CLAIM,
+            evidence_ids=(evidence.evidence_id,),
+            idempotency_key=f"{task_id}:claim",
+            payload={"entry": entry},
+        )
+        envelope = ResultEnvelope(
+            dispatch=identity,
+            attempt=attempt,
+            claim=claim,
+            evidence=(evidence,),
+        )
+        entry["authority"] = {
+            "envelope_digest": envelope.digest(),
+            "dispatch_id": envelope.dispatch_id,
+            "run_revision": envelope.run_revision,
+            "plan_revision": envelope.plan_revision,
+            "fence": envelope.dispatch.fence.to_dict(),
+            "scope": {
+                "subject_ids": list(envelope.dispatch.subject_ids),
+                "capabilities": list(envelope.dispatch.capabilities),
+            },
+            "prerequisite_digest": envelope.prerequisite_digest,
+            "worker_id": envelope.worker_id,
+            "attempt": envelope.attempt.to_dict(),
+        }
+        payload[DISPATCH_IDENTITY_KEY] = identity.to_dict()
+        payload[RESULT_ENVELOPES_KEY] = [envelope.to_dict()]
+        payload["task_updates"] = [entry]
+        payload["sense_check_acknowledgments"] = []
+        artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    # Proven terminal wave (batch-1): T10_impl + T13_impl done with evidence.
+    write_terminal_wave(
+        1,
+        "T10_impl",
+        ["cloud/maintenance_recovery.py"],
+        ["pytest -q tests/cloud"],
+    )
+    write_terminal_wave(
+        1,
+        "T13_impl",
+        ["cloud/maintenance_canary.py"],
+        ["pytest -q tests/cloud"],
+    )
+    # Stale shadow (batch-6): T10_impl blocked — must NOT demote or replace.
+    shadow_path = _prepare_scoped_batch_checkpoint(
+        tmp_path,
+        batch_number=6,
+        task_ids=["T10_impl"],
+        sense_check_ids=[],
+        state=state,
+        finalize_data=finalize_data,
+    )
+    shadow_payload = json.loads(shadow_path.read_text(encoding="utf-8"))
+    shadow_payload["task_updates"] = [
+        {
+            "task_id": "T10_impl",
+            "status": "blocked",
+            "executor_notes": "stale shadow",
+            "files_changed": ["stale.py"],
+            "commands_run": ["stale-cmd"],
+        }
+    ]
+    shadow_path.write_text(json.dumps(shadow_payload), encoding="utf-8")
+
+    _replay_proven_batch_artifacts(
+        plan_dir=tmp_path,
+        finalize_data=finalize_data,
+        known_task_ids=["T10_impl", "T13_impl", "T12_impl"],
+        known_sense_check_ids=[],
+        mode="code",
+        state=state,
+    )
+
+    tasks = {task["id"]: task for task in finalize_data["tasks"]}
+    assert tasks["T10_impl"]["status"] == "done"
+    assert tasks["T10_impl"]["files_changed"] == ["cloud/maintenance_recovery.py"]
+    assert tasks["T10_impl"]["commands_run"] == ["pytest -q tests/cloud"]
+    assert tasks["T10_impl"]["head_sha"] == "15b881cb4"
+    assert tasks["T13_impl"]["status"] == "done"
+    assert tasks["T13_impl"]["files_changed"] == ["cloud/maintenance_canary.py"]
+    assert tasks["T13_impl"]["head_sha"] == "15b881cb4"
+    assert tasks["T12_impl"]["status"] == "skipped"
+    # The stale shadow never leaked in.
+    assert "stale.py" not in tasks["T10_impl"]["files_changed"]
