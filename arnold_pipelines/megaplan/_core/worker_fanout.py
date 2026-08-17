@@ -31,7 +31,7 @@ from arnold_pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, Res
 from arnold_pipelines.megaplan.fallback_chains import (
     ExecuteFallbackUnsafe,
     classify_retryability,
-    is_retryable_classification,
+    is_cross_family_retryable_classification,
     is_same_family_operational_classification,
     normalize_fallback_spec_list,
     provider_family,
@@ -484,7 +484,7 @@ def _next_fallback_index(
         )
     return (
         candidate_index
-        if is_retryable_classification(classification)  # type: ignore[arg-type]
+        if is_cross_family_retryable_classification(classification)  # type: ignore[arg-type]
         else None
     )
 
