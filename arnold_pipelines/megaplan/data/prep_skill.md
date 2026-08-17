@@ -362,3 +362,18 @@ This skill covers profile/robustness/depth selection *before* a run. Once a plan
 - **Push-mode observation**: `watcher.sh` (bundled in the same skill) is a bash polling loop that streams phase-transition notifications. Wire it through Claude Code's `Monitor` tool to get told when phases start/end, when cost climbs, and when the plan reaches a terminal state — no manual polling.
 
 When something looks wrong during a run (cost spiking, phase not advancing, iteration counter stuck), `megaplan-observe` is the next stop, not `--max-cost-usd`. The cost-cap and rework-cap flags exist for narrow recovery cases; they are not a default. Trust the defaults; intervene with `override` + tests if a phase fixates.
+
+---
+
+## Review policy — default to AUTO review
+
+**Default posture: review is automatic.** A megaplan run's `review` phase (and PR merge) should auto-approve by default. Do not insert human review gates unless the HUMAN explicitly requests one **for a specific milestone**.
+
+Rules:
+
+- **Auto by default**: `merge_policy: auto` + `auto_approve: true` in `chain.yaml` unless the human overrides for a named milestone. The `review` phase runs the independent verifier; its pass is the gate — a human does not need to rubber-stamp it.
+- **Human review is opt-in per milestone**: a human who wants to review a specific milestone's output says so explicitly (e.g. "hold m3 for my review" / "add a human gate on m4"). That creates a `merge_policy: review` / `awaiting_human_verify` gate ONLY for that milestone. It is never the default.
+- **Product-safety gates stay human (rare, explicit)**: canary promotion, verifier principal, allowlist, rollout/ticket-materialization policy are genuinely human decisions (see the megaplan-maintenance epic North Star). These are NOT auto-approved. But they should be surfaced (Discord to the resident) when hit — see the human-gate surfacing design — and they should be the exception, not the rule.
+- **Why**: human gates that fire on every milestone silently park chains (the astrid/mega m3 U1/U2 loop). Auto-review keeps the harness moving; explicit per-milestone gates keep the human in control exactly where they asked to be.
+
+When authoring a plan or `chain.yaml`: start from `merge_policy: auto` + `auto_approve: true`; only a named human request flips a milestone to `review`.
