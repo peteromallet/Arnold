@@ -515,6 +515,27 @@ def _manifest(paths: Iterable[Path]) -> dict[str, Any]:
     return {**core, "content_sha256": _canonical_sha256(core)}
 
 
+def _manifest_matches(paths: Iterable[Path], stored: Mapping[str, Any]) -> bool:
+    """True iff the live manifest over *paths* equals the stored entries for those paths.
+
+    Shape-tolerant: a stored entry whose path is NOT in *paths* (a pre-fix
+    ``chain_spec`` entry, now advisory) is ignored.  Only a real change to a
+    still-blocking document (hot_env / supervisor_receipt / seed_docs) is drift.
+    This is the seed schema-migration bridge: old seeds (built when chain_spec
+    was pinned) validate against the post-drop validation shape, and a genuine
+    hot_env / supervisor_receipt edit still trips the gate.
+    """
+    live_entries = _manifest(paths)["entries"]
+    stored_entries = stored.get("entries")
+    stored_entries = stored_entries if isinstance(stored_entries, list) else []
+    stored_by_path = {
+        str(entry.get("path")): entry
+        for entry in stored_entries
+        if isinstance(entry, Mapping)
+    }
+    return all(stored_by_path.get(entry["path"]) == entry for entry in live_entries)
+
+
 def _marker_launch_binding(marker: Mapping[str, Any]) -> dict[str, Any]:
     """Return the immutable launch identity carried by a lifecycle marker.
 
@@ -942,7 +963,7 @@ def _launch_seed_current(
         for name in ("supervisor_receipt", "hot_env")
     ]
     doc_paths.extend(Path(str(path)) for path in input_paths.get("seed_docs") or [])
-    if _manifest(doc_paths) != seed.get("seed_document_manifest"):
+    if not _manifest_matches(doc_paths, seed.get("seed_document_manifest") or {}):
         return False
     return (
         bool(seed.get("ready"))
@@ -1485,7 +1506,7 @@ def validate_runtime_launch_seed(
         for name in ("supervisor_receipt", "hot_env")
     ]
     manifest_paths.extend(Path(str(path)) for path in paths.get("seed_docs") or [])
-    if _manifest(manifest_paths) != seed.get("seed_document_manifest"):
+    if not _manifest_matches(manifest_paths, seed.get("seed_document_manifest") or {}):
         raise CliError(RUNTIME_ATTESTATION_ERROR, "seed document manifest drifted")
     if _file_identity(Path(str(paths.get("supervisor_receipt") or ""))) != (
         seed.get("supervisor_receipt") or {}
