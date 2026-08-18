@@ -1013,3 +1013,50 @@ def test_unrelated_asset_drift_remains_unsafe() -> None:
     )
     assert safe is True
     assert changed == ["chain_spec"]
+
+
+def test_legacy_runtime_binding_migration_is_safe() -> None:
+    """A pre-canonical runtime-only chain binding (no chain_spec_sha256,
+    milestone_sequence, assets, initiative_path) migrating to the full
+    canonical binding is the rebind's purpose — always safe, never a spec
+    edit hazard."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    legacy = {
+        "content_sha256": "a" * 64,
+        "source_revision": "b" * 40,
+        "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "pth": [],
+        "editable_root": None,
+        "editable_revision": None,
+        "direct_url": None,
+    }
+    full = {
+        "content_sha256": "c" * 64,
+        "source_revision": "d" * 40,
+        "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "chain_spec_sha256": "e" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "chain_spec", "sha256": "f" * 64}],
+        "intended_initiative_revision": "g" * 40,
+        "revision_verification": {"ok": True},
+    }
+
+    assert eb._looks_like_legacy_runtime_binding(legacy) is True
+    assert eb._looks_like_legacy_runtime_binding(full) is False
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=legacy,
+        active=full,
+        drift_fields=["chain_spec_sha256", "milestone_sequence", "assets",
+                      "intended_initiative_revision", "initiative_path"],
+    )
+    assert safe is True
+    assert changed == []
