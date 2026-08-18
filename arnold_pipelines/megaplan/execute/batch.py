@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -3886,7 +3887,254 @@ def _baseline_known_failures_only(
     return sorted(set(observed_ids))
 
 
-def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None, admission: bool = False):
+# ---------------------------------------------------------------------------
+# No-new-failures delta lifecycle for narrow_recheck (occurrence a07166d38fbc)
+#
+# A pre-dispatch narrow_recheck that demands exit 0 on full-file selectors
+# under a planner probe budget is a deterministic gate for suites whose
+# selectors (a) exceed the probe budget or (b) contain environment-dependent
+# failures that are not task regressions.  The task contract is "introduce no
+# new failures vs the recorded baseline" with the authoritative verdict at
+# post-execute verification — so the pre-dispatch run becomes a COMPLETE
+# pre-execution envelope capture (fail closed on timeout/signal/collection
+# errors/malformed output), and the pass/fail verdict moves to a post-adoption
+# delta recheck that compares the merged state against that envelope.  The
+# enforcement boundary moves from "all selected tests green before dispatch"
+# to "selected files completely observed before dispatch AND no new failures
+# after adoption" — real post-merge contradictions still block, authority IDs
+# persist only on pass, and nothing is exempted.
+# ---------------------------------------------------------------------------
+
+NARROW_RECHECK_DELTA_ACCEPTANCE = "no_new_failures_delta"
+PRE_ENVELOPE_CAPTURED = "pre_envelope_captured"
+POST_DELTA_PASSED = "post_delta_passed"
+POST_DELTA_FAILED = "post_delta_failed"
+_PRE_ENVELOPE_ARTIFACT_SUFFIX = "_pre_envelope.json"
+_POST_DELTA_ARTIFACT_SUFFIX = "_post_delta.json"
+
+
+def _validation_comparison_ceiling(finalize_data: Mapping[str, Any]) -> int | None:
+    """Derive the authoritative comparison ceiling for narrow-recheck runs.
+
+    Prefers the plan's ``post_execute_suite`` budget (the authoritative
+    full-suite ceiling); falls back to the largest validation-job budget.
+    Returns ``None`` when no budget exists — callers must fail closed rather
+    than silently falling back to the planner's probe value.
+    """
+    jobs = finalize_data.get("validation_jobs")
+    if not isinstance(jobs, list):
+        return None
+    ceiling: int | None = None
+    for job in jobs:
+        if not isinstance(job, Mapping):
+            continue
+        ms = job.get("max_seconds") or job.get("timeout_seconds")
+        if not isinstance(ms, (int, float)) or ms <= 0:
+            continue
+        if job.get("kind") == "post_execute_suite":
+            return int(ms)
+        if ceiling is None or int(ms) > ceiling:
+            ceiling = int(ms)
+    return ceiling
+
+
+def _recompile_legacy_narrow_recheck_command(
+    command: object,
+    selectors: object,
+) -> str | None:
+    """Recompile a legacy compiled narrow-recheck command from validated selectors.
+
+    Legacy compiled commands embed ``timeout <N>s pytest <selectors> [opts]``.
+    The embedded GNU timeout duplicates the suite-runner deadline and is the
+    deterministic 124 killer for suites whose planner probe budget is too
+    small.  Rebuild a trusted pytest argv from the *validated structured
+    selectors* — never string-edit or execute the persisted shell command.
+    Returns ``None`` when the command is not the legacy embedded-timeout
+    pytest shape or when the command's selectors drift from the structured
+    selectors (fail closed — keep the original command).
+    """
+    if not isinstance(command, str) or not command.strip():
+        return None
+    if not isinstance(selectors, list) or not selectors:
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if len(parts) < 3 or parts[0] != "timeout" or parts[2] != "pytest":
+        return None
+    selector_tokens: list[str] = []
+    option_tokens: list[str] = []
+    seen_selector = False
+    for tok in parts[3:]:
+        if tok.startswith("-"):
+            option_tokens.append(tok)
+        else:
+            seen_selector = True
+            selector_tokens.append(tok.strip("'\""))
+    expected = {str(s).strip("'\"") for s in selectors}
+    if not seen_selector or not selector_tokens or set(selector_tokens) != expected:
+        return None
+    rebuilt = "pytest " + " ".join(shlex.quote(str(s)) for s in selectors)
+    if option_tokens:
+        rebuilt = f"{rebuilt} " + " ".join(shlex.quote(t) for t in option_tokens)
+    return rebuilt
+
+
+def _narrow_recheck_delta_policy(job: Mapping[str, Any], command: object) -> bool:
+    """True when a narrow_recheck job uses the no-new-failures delta lifecycle.
+
+    Explicitly persisted by the v2 compiler (``acceptance_mode``), or derived
+    for legacy jobs whose command carries the old embedded-timeout pytest
+    shape.  Everything else keeps the strict exit-0 gate.
+    """
+    if job.get("kind") != "narrow_recheck":
+        return False
+    if job.get("acceptance_mode") == NARROW_RECHECK_DELTA_ACCEPTANCE:
+        return True
+    return (
+        _recompile_legacy_narrow_recheck_command(command, job.get("selectors"))
+        is not None
+    )
+
+
+def _pre_envelope_artifact_path(verification_dir: Path, job_id: str) -> Path:
+    return verification_dir / f"validation_{job_id}{_PRE_ENVELOPE_ARTIFACT_SUFFIX}"
+
+
+def _post_delta_artifact_path(verification_dir: Path, job_id: str) -> Path:
+    return verification_dir / f"validation_{job_id}{_POST_DELTA_ARTIFACT_SUFFIX}"
+
+
+def _current_source_digest(project_dir: Path) -> str | None:
+    """Deterministic source-tree digest for the current tree.
+
+    Reuses suite_runner's canonical ``_compute_code_hash`` (git ``ls-tree``
+    primary, deterministic filesystem-hash fallback) so a stored envelope's
+    ``code_hash`` can be compared with the CURRENT tree on resume.  Returns
+    ``None`` only when the digest cannot be computed at all — callers must
+    treat ``None`` as a mismatch and fail closed (never reuse an envelope
+    against an unverifiable tree).
+    """
+    try:
+        from arnold_pipelines.megaplan.orchestration.suite_runner import (
+            _compute_code_hash,
+        )
+
+        return _compute_code_hash(Path(project_dir))
+    except Exception:
+        return None
+
+
+def _current_worktree_digest(project_dir: Path) -> str | None:
+    """Worktree-aware source digest: HEAD tree PLUS working-tree dirtiness.
+
+    ``_compute_code_hash`` hashes ``git ls-tree HEAD`` only, so it cannot see
+    uncommitted task changes (this occurrence's task outputs land uncommitted
+    on the workspace tree).  Resume-reuse decisions must invalidate when the
+    WORKING TREE changes, so this combines the HEAD tree with
+    ``git status --porcelain`` output.  Falls back to the plain source digest
+    when git is unavailable.  ``None`` only when nothing can be computed —
+    callers treat ``None`` as a mismatch and fail closed.
+    """
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(project_dir), "ls-tree", "-r", "HEAD", "--", "."],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if head.returncode == 0 and head.stdout.strip():
+            blob = head.stdout
+            status = subprocess.run(
+                ["git", "-C", str(project_dir), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if status.returncode == 0:
+                blob += "\n" + status.stdout
+            return "sha256:" + hashlib.sha256(
+                blob.encode("utf-8")
+            ).hexdigest()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return _current_source_digest(project_dir)
+
+
+def _envelope_matches_current_tree(
+    env: Mapping[str, Any], project_dir: Path
+) -> bool:
+    """True when a stored envelope/verdict was computed against the CURRENT tree.
+
+    Prefers the worktree-aware digest (records uncommitted task changes);
+    falls back to the plain code hash for legacy artifacts written before the
+    worktree digest existed.  A ``None`` current digest is a mismatch — fail
+    closed, never reuse against an unverifiable tree.
+    """
+    _wt = _current_worktree_digest(project_dir)
+    if env.get("worktree_digest") is not None:
+        return env.get("worktree_digest") == _wt
+    return env.get("code_hash") == _current_source_digest(project_dir)
+
+
+def _raise_artifact_not_durable(
+    *,
+    job_id: str,
+    reason: str,
+    artifact_path: Path,
+    error: Exception,
+) -> None:
+    """Fail closed when a delta-lifecycle artifact cannot be persisted.
+
+    Dispatch may proceed ONLY after the pre-execution envelope (or post-delta
+    verdict) is durable — a swallowed write would let T11 dispatch with no
+    verifiable baseline and would let authority persist without evidence.
+    """
+    raise CliError(
+        "validation_job_failed",
+        f"validation job {job_id} {reason}: {error}",
+        valid_next=["execute", "revise"],
+        extra={
+            "job_id": job_id,
+            "reason": reason,
+            "artifact_path": str(artifact_path),
+        },
+    ) from error
+
+
+def _narrow_recheck_envelope_complete(result: Any) -> bool:
+    """A COMPLETE pre-execution envelope: exit 1, successful collection,
+    parsed failure set, no collection errors, no timeout.
+
+    Anything else (timeout, signal, exit 2-5, collection errors, malformed
+    output, missing failure data) is unknown — never ``[]`` — and stays
+    fail-closed.
+    """
+    return bool(
+        result.exit_code == 1
+        and result.status == "failed"
+        and bool(result.collections_parse_ok)
+        and int(getattr(result, "collected", 0) or 0) > 0
+        and not (result.collection_errors or [])
+        and bool(result.failures)
+        and result.timeout_reason in (None, "")
+    )
+
+
+class _EnvelopeSuiteRun:
+    """Minimal ``SuiteRunProtocol`` adapter over a stored pre-execution envelope.
+
+    Lets the canonical ``compute_delta`` (suite_delta) consume a persisted
+    envelope as its baseline without materializing a synthetic run result.
+    """
+
+    def __init__(self, failures: list[str], collected_ids: list[str]) -> None:
+        self.failures = list(failures or [])
+        self.collected_ids = list(collected_ids or [])
+
+
+def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None, admission: bool = False, delta_baseline_envelope: Mapping[str, Any] | None = None, comparison_ceiling_override: int | None = None):
     """Run deterministic harness validation jobs outside model dispatch (M8A T10).
 
     Returns a list of content-addressed evidence dicts (one per applicable
@@ -3894,6 +4142,13 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
     under ``<plan_dir>/verification/`` and a real ``validation`` work-class
     event is emitted via ``work_ledger``. A runner failure emits an
     ``unavailable_reason`` event instead of aborting dispatch.
+
+    ``delta_baseline_envelope`` activates the post-adoption delta verdict for
+    no-new-failures narrow_recheck jobs: a completed post run with no novel
+    failures passes even when its raw exit remains 1; any new failing node,
+    collection failure, timeout, or malformed result blocks.  When ``None``
+    (pre-dispatch), a completed exit-1 run captures the pre-execution
+    envelope and defers the verdict.
     """
     import hashlib as _hashlib
     import json as _json
@@ -4074,10 +4329,109 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         "reason": "task_contract_missing",
                     },
                 )
+        # ---- no-new-failures delta lifecycle (narrow_recheck) ----
+        # The planner probe budget is a cost hint, not the deadline for a
+        # required full-file differential comparison.  Derive the
+        # authoritative comparison ceiling from the enclosing full-suite
+        # budget; fail closed when none exists rather than silently falling
+        # back to the probe value.
+        _delta_policy = False
+        _comparison_ceiling: int | None = None
+        _recompiled_command: str | None = None
+        if kind == "narrow_recheck":
+            _delta_policy = _narrow_recheck_delta_policy(job, job.get("command"))
+            if _delta_policy:
+                _comparison_ceiling = (
+                    comparison_ceiling_override
+                    if comparison_ceiling_override is not None
+                    else _validation_comparison_ceiling(finalize_data)
+                )
+                if _comparison_ceiling is None:
+                    raise CliError(
+                        "validation_job_failed",
+                        f"validation job {job_id} uses the no-new-failures delta "
+                        "lifecycle but no authoritative comparison budget exists",
+                        valid_next=["finalize", "revise"],
+                        extra={
+                            "job_id": job_id,
+                            "validation_job_kind": kind,
+                            "reason": "comparison_budget_missing",
+                            "expected_exit_codes": job.get("expected_exit_codes", [0]),
+                        },
+                    )
+                _recompiled_command = _recompile_legacy_narrow_recheck_command(
+                    job.get("command"), job.get("selectors")
+                )
+            _effective_command = command.strip()
+            if _recompiled_command is not None:
+                _effective_command = _recompiled_command
+            # Resume reuse: a durable pre-execution envelope is a HISTORICAL
+            # record of the pre-task state.  Reuse it without re-capturing —
+            # re-capturing against a tree that already contains the task's
+            # changes would launder the post-adoption delta.  Completed
+            # envelopes (exit-1 ``pre_envelope_captured`` AND exit-0
+            # ``passed``) are reused ONLY when selectors, effective command,
+            # and the current worktree digest all match; anything else fails
+            # closed — a completed envelope is never re-captured onto a
+            # changed tree.
+            # PRE-DISPATCH ONLY (``delta_baseline_envelope is None``): the
+            # post-adoption rerun must NEVER consume the stored envelope and
+            # skip the comparison — it always re-runs the selectors against
+            # the merged state and computes the delta.
+            if _delta_policy and delta_baseline_envelope is None:
+                _env_artifact = _pre_envelope_artifact_path(verification_dir, job_id)
+                try:
+                    if _env_artifact.exists():
+                        _stored_env = _json.loads(
+                            _env_artifact.read_text(encoding="utf-8")
+                        )
+                    else:
+                        _stored_env = None
+                except Exception:
+                    _stored_env = None
+                _completed_env_statuses = (PRE_ENVELOPE_CAPTURED, "passed")
+                if isinstance(_stored_env, dict) and _stored_env.get(
+                    "status"
+                ) in _completed_env_statuses:
+                    if (
+                        set(_stored_env.get("selectors") or [])
+                        == set(job.get("selectors") or [])
+                        and _stored_env.get("command") == _effective_command
+                        and _envelope_matches_current_tree(_stored_env, project_dir)
+                    ):
+                        evidence_results.append(_stored_env)
+                        log.info(
+                            "validation job %s reusing durable pre-execution envelope %s",
+                            job_id,
+                            _stored_env.get("evidence_hash"),
+                        )
+                        continue
+                    # A COMPLETED envelope whose selectors/command/source no
+                    # longer match must never be overwritten by a re-capture
+                    # against the changed tree — the post-adoption delta would
+                    # self-compare and mask new failures.  Recovery is an
+                    # explicit operator action (remove the stale artifact).
+                    raise CliError(
+                        "validation_job_failed",
+                        f"validation job {job_id} completed pre-envelope no longer "
+                        "matches current selectors/command/source digest; refusing "
+                        "to recapture onto a changed tree",
+                        valid_next=["execute", "revise"],
+                        extra={
+                            "job_id": job_id,
+                            "reason": "pre_envelope_digest_drift",
+                            "stored_status": _stored_env.get("status"),
+                            "stored_code_hash": _stored_env.get("code_hash"),
+                            "current_code_hash": _current_source_digest(project_dir),
+                        },
+                    )
+        _effective_command = command.strip()
+        if _recompiled_command is not None:
+            _effective_command = _recompiled_command
         config = {
             "project_dir": str(project_dir),
             "plan_dir": str(plan_dir),
-            "test_command": command.strip(),
+            "test_command": _effective_command,
         }
         if kind == "post_execute_suite":
             # The compiled suite timeout can be far smaller than the plan's
@@ -4096,17 +4450,40 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     timeout = max(int(timeout), min(int(pb), 14400))
             except Exception:
                 pass
+        _run_deadline_seconds = float(timeout)
+        if _delta_policy and _comparison_ceiling is not None:
+            # The comparison ceiling (authoritative full-suite budget) is the
+            # deadline for the required differential run, NOT the planner's
+            # probe hint.  It ends promptly when the selectors complete.
+            _run_deadline_seconds = float(_comparison_ceiling)
         try:
             result = _suite_runner.run_suite(
                 Path(project_dir),
                 config,
                 phase="m8a_validation",
-                deadline_seconds=time.monotonic() + float(timeout),
+                deadline_seconds=time.monotonic() + _run_deadline_seconds,
                 idle_seconds=None,
             )
         except Exception as exc:
             log.warning("validation job %s failed: %s", job_id, exc)
             error_detail = f"{type(exc).__name__}: {exc}"
+            if _delta_policy:
+                # A runner EXCEPTION in the no-new-failures delta lifecycle is
+                # unknown, not a pass: no envelope, no verdict, no dispatch.
+                # The generic runner_error/continue path would let dispatch or
+                # authority progress without either — fail closed instead.
+                raise CliError(
+                    "validation_job_failed",
+                    f"validation job {job_id} runner error in delta lifecycle: "
+                    f"{error_detail}",
+                    valid_next=["execute", "revise"],
+                    extra={
+                        "job_id": job_id,
+                        "validation_job_kind": kind,
+                        "reason": "delta_runner_error",
+                        "error": error_detail,
+                    },
+                ) from exc
             err_payload = {"job_id": job_id, "kind": kind, "error": error_detail}
             err_canonical = _json.dumps(err_payload, sort_keys=True, separators=(",", ":"))
             err_hash = "sha256:" + _hashlib.sha256(err_canonical.encode("utf-8")).hexdigest()
@@ -4141,6 +4518,10 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             "status": result.status,
             "timeout_reason": result.timeout_reason,
         }
+        if kind == "narrow_recheck":
+            evidence["collected"] = int(getattr(result, "collected", 0) or 0)
+            evidence["collected_ids"] = list(result.collected_ids or [])
+            evidence["selectors"] = list(job.get("selectors") or [])
         canonical = _json.dumps(evidence, sort_keys=True, separators=(",", ":"))
         evidence_hash = "sha256:" + _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         evidence["evidence_hash"] = evidence_hash
@@ -4179,7 +4560,7 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             )
         if result.exit_code not in expected_exit_codes:
             _subtracted_test_ids: list[str] | None = None
-            if admission and kind == "narrow_recheck":
+            if admission and kind == "narrow_recheck" and not _delta_policy:
                 _subtracted_test_ids = _baseline_known_failures_only(
                     exit_code=result.exit_code,
                     failed_test_ids=list(result.failures or []),
@@ -4214,6 +4595,143 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     _subtracted_test_ids,
                 )
                 continue
+            if _delta_policy:
+                if delta_baseline_envelope is None:
+                    # Pre-dispatch envelope capture: a COMPLETE exit-1 run
+                    # records the pre-execution envelope and defers the
+                    # verdict to the post-adoption delta recheck.  Timeouts,
+                    # signals, exit 2-5, collection errors, and malformed
+                    # output stay fail-closed (never an empty envelope).
+                    if _narrow_recheck_envelope_complete(result):
+                        evidence["status"] = PRE_ENVELOPE_CAPTURED
+                        evidence["admission"] = "pre_dispatch_delta_envelope"
+                        evidence["comparison_ceiling"] = _comparison_ceiling
+                        evidence["worktree_digest"] = _current_worktree_digest(
+                            project_dir
+                        )
+                        try:
+                            atomic_write_json(
+                                _pre_envelope_artifact_path(verification_dir, job_id),
+                                evidence,
+                            )
+                        except Exception as _exc:
+                            _raise_artifact_not_durable(
+                                job_id=job_id,
+                                reason="pre_envelope_not_durable",
+                                artifact_path=_pre_envelope_artifact_path(
+                                    verification_dir, job_id
+                                ),
+                                error=_exc,
+                            )
+                        log.warning(
+                            "validation job %s captured pre-execution envelope "
+                            "(exit_code=1, %d failure(s)); verdict deferred to "
+                            "post-adoption delta recheck",
+                            job_id,
+                            len(result.failures or []),
+                        )
+                        continue
+                else:
+                    # Post-adoption delta verdict: compare the merged-state
+                    # run against the pre-execution envelope.  An unchanged
+                    # failure set passes even with raw exit 1; any novel
+                    # failure blocks and never carries authority.
+                    if _narrow_recheck_envelope_complete(result) or (
+                        result.exit_code == 0
+                    ):
+                        _newly_failing: list[str] = []
+                        _deleted_tests: list[str] = []
+                        if result.exit_code == 1:
+                            from arnold_pipelines.megaplan.orchestration.completion_contract import (
+                                compute_delta as _compute_delta,
+                            )
+
+                            _delta = _compute_delta(
+                                _EnvelopeSuiteRun(
+                                    failures=list(
+                                        delta_baseline_envelope.get("failures") or []
+                                    ),
+                                    collected_ids=list(
+                                        delta_baseline_envelope.get("collected_ids")
+                                        or []
+                                    ),
+                                ),
+                                result,
+                            )
+                            _newly_failing = list(_delta.newly_failing)
+                            _deleted_tests = list(_delta.deleted_tests)
+                        if _newly_failing:
+                            evidence["status"] = POST_DELTA_FAILED
+                            evidence["admission"] = "post_dispatch_delta"
+                            evidence["newly_failing"] = _newly_failing
+                            evidence["deleted_tests"] = _deleted_tests
+                            evidence["baseline_envelope_hash"] = (
+                                delta_baseline_envelope.get("evidence_hash")
+                            )
+                            evidence["worktree_digest"] = _current_worktree_digest(
+                                project_dir
+                            )
+                            try:
+                                atomic_write_json(
+                                    _post_delta_artifact_path(verification_dir, job_id),
+                                    evidence,
+                                )
+                            except Exception as _exc:
+                                _raise_artifact_not_durable(
+                                    job_id=job_id,
+                                    reason="post_delta_failed_artifact_not_durable",
+                                    artifact_path=_post_delta_artifact_path(
+                                        verification_dir, job_id
+                                    ),
+                                    error=_exc,
+                                )
+                            log.warning(
+                                "validation job %s post-adoption delta FAILED: "
+                                "%d new failure(s): %s",
+                                job_id,
+                                len(_newly_failing),
+                                _newly_failing,
+                            )
+                            _raise_deferred_selector_result_block(
+                                job_id=job_id,
+                                task_id=str(job.get("task_id") or ""),
+                                reason="post_delta_new_failures",
+                                extra={"newly_failing": _newly_failing},
+                            )
+                        evidence["status"] = POST_DELTA_PASSED
+                        evidence["admission"] = "post_dispatch_delta"
+                        evidence["newly_failing"] = []
+                        evidence["deleted_tests"] = _deleted_tests
+                        evidence["baseline_envelope_hash"] = (
+                            delta_baseline_envelope.get("evidence_hash")
+                        )
+                        evidence["worktree_digest"] = _current_worktree_digest(
+                            project_dir
+                        )
+                        try:
+                            atomic_write_json(
+                                _post_delta_artifact_path(verification_dir, job_id),
+                                evidence,
+                            )
+                        except Exception as _exc:
+                            _raise_artifact_not_durable(
+                                job_id=job_id,
+                                reason="post_delta_passed_artifact_not_durable",
+                                artifact_path=_post_delta_artifact_path(
+                                    verification_dir, job_id
+                                ),
+                                error=_exc,
+                            )
+                        log.warning(
+                            "validation job %s post-adoption delta clean "
+                            "(exit_code=%s, %d failure(s) unchanged vs envelope)",
+                            job_id,
+                            result.exit_code,
+                            len(result.failures or []),
+                        )
+                        continue
+                    # fall through: timeout/signal/exit 2-5/collection
+                    # errors/malformed output stay fail-closed in delta mode.
             _shadow_backstop = False
             try:
                 _ps = _json.loads(
@@ -4251,6 +4769,62 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         "evidence_hash": evidence_hash,
                         "artifact_path": str(artifact_path),
                     },
+                )
+        if _delta_policy and result.exit_code in expected_exit_codes:
+            if delta_baseline_envelope is not None:
+                # POST-ADOPTION green run: exit 0 means the merged state has
+                # NO failures — a delta pass against the pre-execution
+                # envelope, durably tied to the exact envelope hash.  Never
+                # overwrite the pre-envelope with the post-task run (that
+                # would launder the baseline into a self-comparing delta).
+                evidence["status"] = POST_DELTA_PASSED
+                evidence["admission"] = "post_dispatch_delta"
+                evidence["newly_failing"] = []
+                evidence["deleted_tests"] = []
+                evidence["baseline_envelope_hash"] = (
+                    delta_baseline_envelope.get("evidence_hash")
+                )
+                evidence["worktree_digest"] = _current_worktree_digest(project_dir)
+                try:
+                    atomic_write_json(
+                        _post_delta_artifact_path(verification_dir, job_id),
+                        evidence,
+                    )
+                except Exception as _exc:
+                    _raise_artifact_not_durable(
+                        job_id=job_id,
+                        reason="post_delta_passed_artifact_not_durable",
+                        artifact_path=_post_delta_artifact_path(
+                            verification_dir, job_id
+                        ),
+                        error=_exc,
+                    )
+                log.warning(
+                    "validation job %s post-adoption delta clean (exit_code=0, "
+                    "no failures vs envelope)",
+                    job_id,
+                )
+                continue
+            # Known-empty pre-execution envelope (PRE-DISPATCH): persist for
+            # resume reuse and as the post-adoption delta baseline.  A green
+            # pre-dispatch run still gets a post-adoption recheck — the task
+            # may introduce new failures.
+            evidence["admission"] = "pre_dispatch_delta_envelope"
+            evidence["comparison_ceiling"] = _comparison_ceiling
+            evidence["worktree_digest"] = _current_worktree_digest(project_dir)
+            try:
+                atomic_write_json(
+                    _pre_envelope_artifact_path(verification_dir, job_id),
+                    evidence,
+                )
+            except Exception as _exc:
+                _raise_artifact_not_durable(
+                    job_id=job_id,
+                    reason="pre_envelope_not_durable",
+                    artifact_path=_pre_envelope_artifact_path(
+                        verification_dir, job_id
+                    ),
+                    error=_exc,
                 )
     return evidence_results
 
@@ -4525,6 +5099,40 @@ def _sweep_persisted_deferred_selector_jobs(
                     "missing_selectors": sorted(set(lifecycle.missing_selectors)),
                 },
             )
+        # A delta-policy job must never be admitted through the sweep: a
+        # task-output selector has no pre-task state, so a pre-execution
+        # envelope is impossible by construction (same fail-closed rule as
+        # the same-batch deferred path).
+        if _narrow_recheck_delta_policy(job, job.get("command")):
+            raise CliError(
+                "deferred_validation_result_missing",
+                f"deferred validation job {job_id} cannot be revalidated: "
+                "delta_policy_deferred_selector_unsupported",
+                valid_next=["execute", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": "delta_policy_deferred_selector_unsupported",
+                },
+            )
+        # The sweep runs the job as a singleton; carry the authoritative
+        # comparison ceiling from the FULL plan list so the planner probe
+        # budget never becomes a recheck deadline.
+        _sweep_ceiling = _validation_comparison_ceiling(finalize_data)
+        if _sweep_ceiling is None:
+            raise CliError(
+                "deferred_validation_result_missing",
+                f"deferred validation job {job_id} cannot be revalidated: "
+                "comparison_budget_missing",
+                valid_next=["execute", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": "comparison_budget_missing",
+                },
+            )
         # Selector now exists: run the narrow recheck as a singleton job so
         # only THIS job's command is admitted (never sibling jobs of the task).
         rerun_data = dict(finalize_data)
@@ -4537,6 +5145,7 @@ def _sweep_persisted_deferred_selector_jobs(
                 batch_task_ids=[task_id],
                 is_final_batch=False,
                 state=state,
+                comparison_ceiling_override=_sweep_ceiling,
             )
         )
     return sweep_results
@@ -4568,8 +5177,18 @@ def _rerun_deferred_selector_validation_jobs(
         for item in pre_dispatch_results
         if isinstance(item, Mapping) and item.get("status") == SELECTOR_DEFERRED
     ]
-    if not deferred:
+    enveloped = [
+        item
+        for item in pre_dispatch_results
+        if isinstance(item, Mapping)
+        and item.get("admission") == "pre_dispatch_delta_envelope"
+        and item.get("status") in (PRE_ENVELOPE_CAPTURED, "passed", "failed")
+    ]
+    if not deferred and not enveloped:
         return []
+    import json as _json
+
+    verification_dir = Path(plan_dir) / "verification"
 
     jobs_by_id = {
         str(job.get("id")): job
@@ -4761,6 +5380,27 @@ def _rerun_deferred_selector_validation_jobs(
                 extra={"missing_selectors": list(lifecycle.missing_selectors)},
             )
 
+        # A deferred selector is a task-output path that did not exist at
+        # pre-dispatch time; a no-new-failures delta job has no pre-task
+        # state by construction, so a delta-policy job must never be admitted
+        # through the deferred path (it would capture a fake "pre-envelope"
+        # against the post-task tree and launder the post-adoption delta).
+        if _narrow_recheck_delta_policy(job, job.get("command")):
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="delta_policy_deferred_selector_unsupported",
+            )
+        # The rerun list is truncated to this single job; re-derive the
+        # authoritative comparison ceiling from the FULL plan list.  Never
+        # let the planner probe budget (120s) become a recheck deadline.
+        _rerun_ceiling = _validation_comparison_ceiling(finalize_data)
+        if _rerun_ceiling is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="comparison_budget_missing",
+            )
         rerun_data = dict(finalize_data)
         rerun_data["validation_jobs"] = [dict(job)]
         rerun_results.extend(
@@ -4771,6 +5411,145 @@ def _rerun_deferred_selector_validation_jobs(
                 batch_task_ids=[task_id],
                 is_final_batch=False,
                 state=state,
+                comparison_ceiling_override=_rerun_ceiling,
+            )
+        )
+    # ---- post-adoption delta recheck for captured pre-execution envelopes ----
+    # A narrow_recheck whose pre-dispatch run captured a COMPLETE
+    # pre-execution envelope (no-new-failures delta lifecycle) is not a
+    # terminal pass.  After the task's accepted result envelope lands, re-run
+    # the identical selectors against the merged state and compare against the
+    # envelope: an unchanged failure set passes (even with raw exit 1); any
+    # novel failure blocks and never carries authority.  The rerun is strict
+    # (admission=False) — baseline subtraction is a pre-dispatch-only
+    # admission, never a recheck.
+    for envelope_record in enveloped:
+        job_id = str(envelope_record.get("job_id") or "vj")
+        job = jobs_by_id.get(job_id)
+        if job is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id="",
+                reason="task_or_validation_job_missing_from_finalize_contract",
+            )
+        task_id = str(job.get("task_id") or envelope_record.get("task_id") or "")
+        if task_id not in batch_id_set:
+            # The pre-dispatch helper only emits jobs for this batch, but
+            # retain the guard if a caller supplies a mixed evidence list.
+            continue
+        task = tasks_by_id.get(task_id)
+        accepted_row_and_envelope = accepted.get(task_id)
+        if task is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="task_or_validation_job_missing_from_finalize_contract",
+            )
+        task_status = task.get("status") if isinstance(task, Mapping) else None
+        if accepted_row_and_envelope is None:
+            if task_status not in {"done", "completed"}:
+                # Abort-recovery park (same shape as the deferred path): the
+                # task never completed, so keep the envelope untouched; the
+                # next resume re-dispatches the task and this recheck re-runs
+                # once an accepted envelope appears.
+                log.info(
+                    "validation job %s delta recheck pending: task %s not "
+                    "complete (status=%r), no accepted result envelope",
+                    job_id,
+                    task_id,
+                    task_status,
+                )
+                continue
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="accepted_task_result_envelope_missing",
+            )
+        if task_status not in {"done", "completed"}:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="task_result_blocked_by_post_merge_policy"
+                if task_status == "blocked"
+                else "task_result_not_completed_after_merge",
+                extra={"task_status": task_status},
+            )
+        # A post-adoption delta check must fail closed when the task removed
+        # one of its selectors — a missing selector is not a pass.
+        missing_now = sorted(
+            p
+            for p in (job.get("selectors") or [])
+            if isinstance(p, str) and not (Path(project_dir) / p).exists()
+        )
+        if missing_now:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="post_delta_selector_missing",
+                extra={"missing_selectors": missing_now},
+            )
+        # Resume reuse: a durable POST_DELTA_PASSED artifact means this batch's
+        # delta already passed — do not redo it (resume after pass does not
+        # rerun).  A POST_DELTA_FAILED artifact is never reused: the candidate
+        # must be reworked and the check re-run (resume after real fail does
+        # not skip).
+        try:
+            _pd_artifact = _post_delta_artifact_path(verification_dir, job_id)
+            if _pd_artifact.exists():
+                _stored_pd = _json.loads(_pd_artifact.read_text(encoding="utf-8"))
+            else:
+                _stored_pd = None
+        except Exception:
+            _stored_pd = None
+        if (
+            isinstance(_stored_pd, dict)
+            and _stored_pd.get("status") == POST_DELTA_PASSED
+            and set(_stored_pd.get("selectors") or [])
+            == set(job.get("selectors") or [])
+            and _envelope_matches_current_tree(_stored_pd, project_dir)
+            and _stored_pd.get("baseline_envelope_hash")
+            == envelope_record.get("evidence_hash")
+        ):
+            rerun_results.append(_stored_pd)
+            log.info(
+                "validation job %s post-adoption delta already passed; skipping rerun",
+                job_id,
+            )
+            continue
+        # A stored PASS that does not match (selectors/command/source/envelope
+        # drift) is never reused and never skipped: fall through to the strict
+        # rerun against the current pre-envelope so the verdict is recomputed
+        # on the merged state.  POST_DELTA_FAILED is never reused either —
+        # the candidate must be reworked and the check re-run.
+        # The rerun list is truncated to this single job; re-derive the
+        # authoritative comparison ceiling from the persisted pre-envelope
+        # first (recorded at capture time against the FULL job list), then
+        # the full plan list.  Never let the planner probe budget (120s)
+        # become the post-adoption deadline — the selectors take ~254s.
+        _stored_ceiling = envelope_record.get("comparison_ceiling")
+        _rerun_ceiling = (
+            int(_stored_ceiling)
+            if isinstance(_stored_ceiling, (int, float)) and _stored_ceiling > 0
+            else _validation_comparison_ceiling(finalize_data)
+        )
+        if _rerun_ceiling is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="comparison_budget_missing",
+            )
+        rerun_data = dict(finalize_data)
+        rerun_data["validation_jobs"] = [dict(job)]
+        rerun_results.extend(
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=rerun_data,
+                batch_task_ids=[task_id],
+                is_final_batch=False,
+                state=state,
+                delta_baseline_envelope=dict(envelope_record),
+                comparison_ceiling_override=_rerun_ceiling,
             )
         )
     return rerun_results

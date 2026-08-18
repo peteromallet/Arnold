@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import time
 import json
 from pathlib import Path
@@ -15,6 +16,43 @@ FULL_SUITE_BACKSTOP_MODE_SHADOW = "shadow"
 FULL_SUITE_BACKSTOP_MODE_ENFORCE = "enforce"
 
 FullSuiteBackstopMode = Literal["off", "shadow", "enforce"]
+
+
+def _git_tree_has_uncommitted_changes(project_dir: Path) -> bool:
+    """True when the project tree carries uncommitted changes.
+
+    Used to refuse baseline recapture from a post-task tree: a baseline must
+    describe the pre-plan state, and folding the plan's own uncommitted task
+    outputs into it would mask real regressions in the delta.  Only a project
+    dir that is itself a git repo root is evaluated — an unrelated ancestor
+    repo (e.g. a scratch dir under /tmp) must not trip the guard.
+    """
+    try:
+        toplevel = subprocess.run(
+            ["git", "-C", str(project_dir), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if toplevel.returncode != 0:
+            return False
+        try:
+            root = Path(toplevel.stdout.strip())
+        except ValueError:
+            return False
+        if root != Path(project_dir).resolve():
+            return False
+        result = subprocess.run(
+            ["git", "-C", str(project_dir), "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            return bool(result.stdout.strip())
+    except Exception:
+        pass
+    return False
 
 
 def normalize_full_suite_backstop_mode(value: Any) -> FullSuiteBackstopMode:
@@ -117,6 +155,19 @@ def _recapture_missing_baseline(
     baseline: Path | dict[str, Any] | None,
     writer: Callable[[str], None] | None,
 ) -> tuple[dict[str, Any] | None, bool]:
+    # Laundering guard: a baseline must describe the PRE-plan state.  A dirty
+    # tree at recapture time means the plan's own (uncommitted) task outputs
+    # would be folded into the baseline, masking real regressions in the
+    # delta.  Refuse to recapture from a post-task tree; the caller records
+    # the baseline as unavailable and fails closed / records shadow verdicts.
+    if _git_tree_has_uncommitted_changes(project_dir):
+        if writer is not None:
+            writer(
+                "full_suite_backstop baseline recapture refused: project tree "
+                "has uncommitted changes (post-task state); a baseline must "
+                "describe the pre-plan state"
+            )
+        return None, False
     finalize = _read_finalize(plan_dir)
     if isinstance(finalize, dict):
         baseline_payload = _baseline_payload_from_finalize(finalize)
