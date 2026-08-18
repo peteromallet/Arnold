@@ -921,6 +921,21 @@ def _launch_seed_current(
         or _marker_launch_binding(marker) != expected_marker.get("launch_binding")
     ):
         return False
+    # Occurrence 35afd4e47587 (seed document manifest drifted): a seed whose
+    # live seed documents (chain spec / hot-env selector / supervisor receipt /
+    # seed docs) no longer match the bound seed_document_manifest is STALE.
+    # validate_runtime_launch_seed rejects it at worker launch ("seed document
+    # manifest drifted"); the dispatcher must mirror that exact gate here so
+    # ensure_runtime_launch_seed REBUILDS the seed instead of re-issuing one
+    # every worker would refuse. Without this, a supervisor chain-spec edit
+    # wedges the chain: every resume/chain-start re-dispatches the stale seed.
+    doc_paths = [
+        Path(str(input_paths.get(name) or ""))
+        for name in ("supervisor_receipt", "hot_env", "chain_spec")
+    ]
+    doc_paths.extend(Path(str(path)) for path in input_paths.get("seed_docs") or [])
+    if _manifest(doc_paths) != seed.get("seed_document_manifest"):
+        return False
     return (
         bool(seed.get("ready"))
         and str(seed.get("expected_root") or "") == str(root)
