@@ -63,9 +63,10 @@ dependencies = [
     # hand-augmented runtime; omitting them caused validation job VJ2 to exit
     # 4 (pytest_collection_error: ModuleNotFoundError: jsonschema) after a
     # spec-faithful rebuild dropped them. Pins mirror Astrid's own pyproject.
-    # banodoco-timeline-schema is intentionally NOT listed: it is not
-    # resolvable from PyPI (verified 404), so it remains a documented
-    # residual gap for any code path that imports it.
+    # banodoco-timeline-schema is a non-PyPI generation dependency declared
+    # in the local-only dev group below. Keeping it out of published project
+    # metadata preserves plain pip/wheel installs while uv and the pip-strategy
+    # generation builder install the vendored directory from the frozen lock.
     "jsonschema>=4.0",
     "referencing>=0.30",
     "scenedetect[opencv-headless]==0.6.4",
@@ -87,11 +88,19 @@ db = [
 # commands / docs that say `pip install '.[agent]'` keep working as a no-op.
 agent = []
 
+[dependency-groups]
+dev = [
+    "banodoco-timeline-schema==0.0.2",
+]
+
 [tool.uv]
 # The hermes/agent backend's packages are now core [project].dependencies, so a
 # plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
 # longer rely on `default-extras` (some uv versions silently ignore it, which is
 # what produced the confusing mid-prep `agent_deps_missing` failures).
+
+[tool.uv.sources]
+banodoco-timeline-schema = { path = "vendor/timeline-schema/python" }
 
 [tool.hatch.build]
 exclude = [

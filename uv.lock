@@ -218,6 +218,11 @@ db = [
     { name = "psycopg", extra = ["binary"] },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "banodoco-timeline-schema" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.39.0" },
@@ -248,6 +253,9 @@ requires-dist = [
     { name = "xxhash", specifier = ">=3.4" },
 ]
 provides-extras = ["db", "agent"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "banodoco-timeline-schema", directory = "vendor/timeline-schema/python" }]
 
 [[package]]
 name = "attrs"
@@ -337,6 +345,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/59/8676188b72eed09d48ce6cfaf0f22b0bb9f3cfd74d388ee2b7fdf960536d/av-17.0.1-cp314-cp314t-win_amd64.whl", hash = "sha256:b87b98afe971cde123953073bc9c95ab0b7efd2ecc082dd2dbd11f9d9abf190e", size = 29217136, upload-time = "2026-04-18T17:12:29.189Z" },
     { url = "https://files.pythonhosted.org/packages/5f/af/0a6e1d2a845988039f6c197fa7269b5e9abbe17354fb41cc9d75bb260fcb/av-17.0.1-cp314-cp314t-win_arm64.whl", hash = "sha256:a87a42c36e29f75e7dff7281944f2a6876a2c8875e225ccbf6c1ae62748b4caa", size = 22072676, upload-time = "2026-04-18T17:12:31.836Z" },
 ]
+
+[[package]]
+name = "banodoco-timeline-schema"
+version = "0.0.2"
+source = { directory = "vendor/timeline-schema/python" }
+dependencies = [
+    { name = "jsonschema" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "jsonschema", specifier = ">=4.0" }]
 
 [[package]]
 name = "certifi"
