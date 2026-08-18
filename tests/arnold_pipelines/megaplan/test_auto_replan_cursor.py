@@ -60,6 +60,27 @@ def _base_status(*, state: str) -> dict[str, Any]:
     }
 
 
+def _status_with_stale_gate_cursor(*, state: str) -> dict[str, Any]:
+    """Status as built by the driver after a gate success: last_step AND the
+    derived workflow_cursor (dispatch_phase gate, successors finalize/revise/
+    tiebreaker_run/override/halt).  This is the REAL occurrence shape
+    (astrid-first m4, 48d51bc6b31f): the stale status cursor must not survive a
+    newer state-rewinding override even though the last_step fallback is
+    suppressed."""
+    status = _base_status(state=state)
+    status["workflow_cursor"] = {
+        "dispatch_phase": "gate",
+        "next_dispatch_phases": [
+            "finalize",
+            "revise",
+            "tiebreaker_run",
+            "override",
+            "halt",
+        ],
+    }
+    return status
+
+
 def test_replan_after_gate_success_drives_critique_without_cursor_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -153,3 +174,63 @@ def test_irrelevant_override_does_not_suppress_mismatch(tmp_path: Path) -> None:
         status=_base_status(state="planned"),
     )
     assert projection.issue == "workflow_cursor_mismatch", projection
+
+
+def test_replan_with_stale_status_cursor_drives_critique_without_mismatch(
+    tmp_path: Path,
+) -> None:
+    """REAL occurrence shape: status carries the stale gate workflow_cursor
+    (dispatch_phase gate) in addition to last_step.  A newer replan override
+    supersedes BOTH: the projection must drive critique, not mismatch."""
+    state = _base_state(current_state="planned")
+    state["meta"]["overrides"] = [
+        {"action": "replan", "timestamp": REPLAN_TS, "reason": "topology revision"}
+    ]
+    _write_plan_state(tmp_path, state)
+    projection = auto._project_auto_dispatch(
+        "m4-test-plan",
+        plan_dir=tmp_path,
+        status=_status_with_stale_gate_cursor(state="planned"),
+    )
+    assert projection.issue is None, projection.message
+    assert projection.next_step == "critique", projection
+    assert "critique" in projection.valid_next, projection
+
+
+def test_recover_blocked_with_stale_status_cursor_drives_gate_without_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Same stale-status-cursor shape after recover-blocked: critiqued -> gate."""
+    state = _base_state(current_state="critiqued")
+    state["meta"]["overrides"] = [
+        {
+            "action": "recover-blocked",
+            "timestamp": REPLAN_TS,
+            "reason": "recorded gate decision",
+        }
+    ]
+    _write_plan_state(tmp_path, state)
+    projection = auto._project_auto_dispatch(
+        "m4-test-plan",
+        plan_dir=tmp_path,
+        status=_status_with_stale_gate_cursor(state="critiqued"),
+    )
+    assert projection.issue is None, projection.message
+    assert projection.next_step == "gate", projection
+    assert "gate" in projection.valid_next, projection
+
+
+def test_stale_status_cursor_without_rewind_override_preserves_mismatch(
+    tmp_path: Path,
+) -> None:
+    """No rewind override: the stale status cursor must still produce the
+    workflow_cursor_mismatch (fail-closed; do not widen the repair surface)."""
+    state = _base_state(current_state="planned")
+    _write_plan_state(tmp_path, state)
+    projection = auto._project_auto_dispatch(
+        "m4-test-plan",
+        plan_dir=tmp_path,
+        status=_status_with_stale_gate_cursor(state="planned"),
+    )
+    assert projection.issue == "workflow_cursor_mismatch", projection
+    assert projection.next_step is None, projection

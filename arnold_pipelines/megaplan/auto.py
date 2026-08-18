@@ -4363,7 +4363,26 @@ def _project_auto_dispatch(
 ) -> _AutoDispatchProjection:
     state = _projection_state_snapshot(plan, plan_dir, status)
     observed_phase, observed_phase_source = _observed_phase_context(state, status)
-    cursor_payload = _projection_cursor_payload(status, observed_phase)
+    # A state-rewinding override (replan / recover-blocked) recorded after the
+    # last phase-history entry supersedes BOTH the last_step fallback (handled
+    # in _observed_phase_context) AND the status workflow cursor, which the
+    # status builder derives from that same stale history tail (e.g. a prior
+    # gate success whose successors are finalize/revise/tiebreaker_run/
+    # override/halt).  Without this, the stale status cursor would still
+    # mismatch the rewound state's control projection ([critique, plan]) and
+    # manufacture a workflow_cursor_mismatch on the documented replan seam
+    # (astrid-first m4, occurrence 48d51bc6b31f — guard only covered the
+    # observed-phase fallback, not the independent status cursor payload).
+    status_last_step = status.get("last_step")
+    stale_status_cursor = bool(
+        isinstance(status_last_step, Mapping)
+        and _rewound_by_override_after_last_step(state, status_last_step)
+    )
+    cursor_payload = (
+        None
+        if stale_status_cursor
+        else _projection_cursor_payload(status, observed_phase)
+    )
     cursor_dispatch_phase = (
         str(cursor_payload.get("dispatch_phase"))
         if isinstance(cursor_payload, Mapping) and isinstance(cursor_payload.get("dispatch_phase"), str)
