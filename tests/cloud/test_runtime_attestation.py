@@ -1017,6 +1017,91 @@ def test_ensure_runtime_launch_seed_rebuilds_on_head_change(
     assert len(marker["runtime_binding"].get("rebind_events") or []) == 1
 
 
+def test_ensure_runtime_launch_seed_rebuilds_on_seed_document_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 35afd4e47587: a seed whose live seed documents (chain spec /
+    hot-env selector / supervisor receipt) drifted is STALE — the dispatcher
+    must rebuild it (mirroring the worker-side seed-document-manifest gate)
+    instead of re-issuing a seed every worker refuses with 'seed document
+    manifest drifted'."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    seed_dir = env["seed_dir"]
+    assert isinstance(seed_dir, Path)
+    identity = env["identity"]
+    assert isinstance(identity, dict)
+    root = paths["root"]
+
+    def _ensure() -> Path:
+        return attestation.ensure_runtime_launch_seed(
+            manifest_path=manifest,
+            chain_spec_path=paths["chain_spec"],
+            marker_path=paths["marker"],
+            chain_runtime_identity=identity,
+            seed_dir=seed_dir,
+            supervisor_receipt_path=paths["receipt"],
+            hot_env_path=paths["hot_env"],
+        )
+
+    def _current(seed_path: Path) -> bool:
+        return attestation._launch_seed_current(
+            seed_path,
+            root=root,
+            expected_revision=str(env["state"]["revision"]),  # type: ignore[index]
+            marker_path=paths["marker"],
+            manifest_path=manifest,
+            generation=3,
+        )
+
+    first = _ensure()
+    assert _current(first)  # dispatcher gate accepts the fresh seed
+
+    # The chain spec changes after the seed was issued (supervisor edit).
+    chain_spec = paths["chain_spec"]
+    assert isinstance(chain_spec, Path)
+    chain_spec.write_text(
+        chain_spec.read_text(encoding="utf-8") + "# supervisor profile edit\n",
+        encoding="utf-8",
+    )
+
+    # Dispatcher gate now sees the seed as stale (the fix under test).
+    assert not _current(first)
+
+    # ensure_runtime_launch_seed rebuilds a NEW immutable seed for the same
+    # generation, and the dispatch pointer follows it.
+    rebuilt = _ensure()
+    assert rebuilt != first
+    assert rebuilt.parent == first.parent
+    first_doc = json.loads(first.read_text(encoding="utf-8"))[
+        "seed_document_manifest"
+    ]
+    rebuilt_doc = json.loads(rebuilt.read_text(encoding="utf-8"))[
+        "seed_document_manifest"
+    ]
+    rebuilt_entries = {
+        str(entry["path"]): entry for entry in rebuilt_doc["entries"]
+    }
+    chain_entry = rebuilt_entries[str(chain_spec)]
+    assert chain_entry["sha256"] != dict(
+        (str(entry["path"]), entry) for entry in first_doc["entries"]
+    )[str(chain_spec)]["sha256"]
+    assert rebuilt_doc["content_sha256"] != first_doc["content_sha256"]
+    assert _current(rebuilt)  # rebuilt seed passes the dispatcher gate
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(
+        rebuilt
+    )
+    # Old seed untouched (immutability).
+    assert json.loads(first.read_text(encoding="utf-8"))[
+        "seed_document_manifest"
+    ] == first_doc
+
+
 def test_ensure_runtime_launch_seed_refuses_drifted_head(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
