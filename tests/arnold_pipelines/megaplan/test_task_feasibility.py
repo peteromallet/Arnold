@@ -299,6 +299,31 @@ def test_runtime_test_budget_blocks_unbounded_or_widened_evidence() -> None:
     assert issues
 
 
+def test_runtime_test_budget_admits_subshell_wrapped_timeout_prefix() -> None:
+    # Occurrence 2b9fe3d98636: the executor's `time (timeout 120 ...)` subshell
+    # wrapper puts a `(` immediately before `timeout`. The old prefix boundary
+    # `(?:^|\s)` did not admit that shape, so the budget gate saw
+    # `timeout_seconds=None` and force-blocked authority-accepted tasks with
+    # `task_test_budget_exhausted: test command lacks an admitted timeout
+    # wrapper`, which the adopt seam then refuses to promote -> durable
+    # authority divergence. The fixed boundary `(?:^|[\s(])` admits it.
+    from arnold_pipelines.megaplan.execute.merge import _enforce_task_test_budgets
+
+    target = _task("T1")
+    subshell = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": [
+            "cd /workspace/project && time (timeout 120 /venv/bin/python -m pytest -q tests/test_t1.py --tb=short)",
+        ],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([subshell], targets_by_id={"T1": target}, issues=issues)
+    assert subshell["status"] == "done"
+    assert issues == []
+
+
 def test_runtime_write_budget_blocks_undeclared_paths() -> None:
     from arnold_pipelines.megaplan.execute.merge import _enforce_task_write_budgets
 

@@ -929,7 +929,7 @@ def _append_execute_reconciliation_advisories(
 
 
 _TIMEOUT_PREFIX = re.compile(
-    r"(?:^|\s)timeout\s+(?:(?:--[^\s]+)\s+)*(?P<value>\d+)(?P<unit>[sm]?)\s+"
+    r"(?:^|[\s(])timeout\s+(?:(?:--[^\s]+)\s+)*(?P<value>\d+)(?P<unit>[sm]?)\s+"
 )
 
 
