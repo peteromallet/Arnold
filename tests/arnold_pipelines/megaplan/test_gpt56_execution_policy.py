@@ -129,6 +129,195 @@ def test_sequential_same_family_fallback_rejects_semantic_and_writing_failures()
     ) is None
 
 
+_CROSS_FAMILY_METADATA = {
+    "configured_specs": (
+        "hermes:zhipu:glm-5.2",
+        "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+        "codex:gpt-5.5:high",
+    ),
+    "attempt_index": 0,
+    "attempted_specs": ("hermes:zhipu:glm-5.2",),
+    "failed_attempt_reasons": (),
+    "fallback_trigger": None,
+}
+
+
+def test_launch_time_quota_advances_non_read_only_plan() -> None:
+    advanced = _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "quota",
+        mode="persistent",
+        step="plan",
+        read_only=False,
+        pre_tool=True,
+    )
+    assert advanced is not None
+    mode, next_metadata = advanced
+    assert "fireworks" in mode.model or "glm-5p2" in mode.model
+    assert next_metadata["attempt_index"] == 1
+
+
+def test_launch_time_availability_advances_non_read_only_plan() -> None:
+    advanced = _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "availability",
+        mode="persistent",
+        step="plan",
+        read_only=False,
+        pre_tool=True,
+    )
+    assert advanced is not None
+
+
+def test_mid_tool_quota_stays_fail_closed() -> None:
+    assert _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "quota",
+        mode="persistent",
+        step="plan",
+        read_only=False,
+        pre_tool=False,
+    ) is None
+
+
+def test_semantic_never_advances_even_when_pre_tool() -> None:
+    assert _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "semantic",
+        mode="persistent",
+        step="plan",
+        read_only=False,
+        pre_tool=True,
+    ) is None
+
+
+def test_execute_never_advances_even_when_pre_tool() -> None:
+    assert _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "quota",
+        mode="persistent",
+        step="execute",
+        read_only=False,
+        pre_tool=True,
+    ) is None
+
+
+def test_read_only_advance_does_not_require_pre_tool() -> None:
+    advanced = _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "quota",
+        mode="persistent",
+        step="critique",
+        read_only=True,
+        pre_tool=False,
+    )
+    assert advanced is not None
+
+
+def test_missing_attestation_defaults_fail_closed_for_non_read_only() -> None:
+    # pre_tool defaults False when the caller omits it.
+    assert _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "quota",
+        mode="persistent",
+        step="plan",
+        read_only=False,
+    ) is None
+
+
+def test_only_literal_true_is_accepted() -> None:
+    assert _impl._advance_configured_spec_fallback(
+        _CROSS_FAMILY_METADATA,
+        "quota",
+        mode="persistent",
+        step="plan",
+        read_only=False,
+        pre_tool="true",  # type: ignore[arg-type]
+    ) is None
+
+
+# ---------------------------------------------------------------------------
+# Pre-tool attestation helper unit tests (hermes worker)
+# ---------------------------------------------------------------------------
+
+from arnold_pipelines.megaplan.workers.hermes import (  # noqa: E402
+    _message_has_tool_activity,
+    _pre_tool_attested,
+    _with_pre_tool_attestation,
+)
+from arnold_pipelines.megaplan.types import CliError  # noqa: E402
+
+
+def test_baseline_history_with_old_tools_still_attests_when_appended_slice_has_none() -> None:
+    baseline = [
+        {"role": "assistant", "content": "prior turn", "tool_calls": [{"id": "old"}]},
+        {"role": "tool", "tool_call_id": "old", "content": "prior result"},
+    ]
+    observed = [
+        *baseline,
+        {"role": "assistant", "content": "this turn, no tools"},
+    ]
+    assert _pre_tool_attested(baseline, observed) is True
+
+
+def test_new_assistant_tool_calls_make_attestation_false() -> None:
+    baseline = [{"role": "user", "content": "go"}]
+    observed = [
+        *baseline,
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1", "name": "bash"}]},
+    ]
+    assert _pre_tool_attested(baseline, observed) is False
+
+
+def test_new_tool_role_message_makes_attestation_false() -> None:
+    baseline = [{"role": "user", "content": "go"}]
+    observed = [
+        *baseline,
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "out"},
+    ]
+    assert _pre_tool_attested(baseline, observed) is False
+
+
+def test_truncated_or_reordered_history_makes_attestation_false() -> None:
+    baseline = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
+    truncated = baseline[:1]
+    assert _pre_tool_attested(baseline, truncated) is False
+    reordered = [baseline[1], baseline[0]]
+    assert _pre_tool_attested(baseline, reordered) is False
+    # non-list observed evidence cannot attest
+    assert _pre_tool_attested(baseline, None) is False
+    assert _pre_tool_attested(baseline, "not-a-list") is False
+
+
+def test_malformed_message_fails_attestation() -> None:
+    assert _message_has_tool_activity("not-a-dict") is True
+    assert _message_has_tool_activity({"role": "assistant"}) is False
+    assert _message_has_tool_activity({"role": "tool"}) is True
+    assert _message_has_tool_activity({"role": "assistant", "tool_calls": []}) is False
+    assert _message_has_tool_activity({"role": "assistant", "tool_calls": [1]}) is True
+
+
+def test_with_pre_tool_attestation_preserves_existing_extra_and_fields() -> None:
+    original = CliError(
+        "worker_error",
+        "boom",
+        valid_next=["retry"],
+        extra={"session_id": "s1", "_external_error": {"kind": "quota"}},
+        exit_code=7,
+    )
+    annotated = _with_pre_tool_attestation(original, True)
+    assert annotated.code == "worker_error"
+    assert annotated.message == "boom"
+    assert annotated.valid_next == ["retry"]
+    assert annotated.exit_code == 7
+    assert annotated.extra["session_id"] == "s1"
+    assert annotated.extra["_external_error"] == {"kind": "quota"}
+    assert annotated.extra["_pre_tool_attested"] is True
+    # original is untouched
+    assert "_pre_tool_attested" not in original.extra
+
+
 def test_unknown_codex_model_is_explicitly_unpriced() -> None:
     usage = {
         "input_tokens": 1000,
