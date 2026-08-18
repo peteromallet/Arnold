@@ -7475,6 +7475,41 @@ def run_chain(
         _bound_identity = (
             dict(_bound_identity) if isinstance(_bound_identity, Mapping) else None
         )
+        # Blocked-plan auto-adopt (5f34c4a202): when the chain's plan is
+        # blocked with no live worker, the recorded runtime binding may lag
+        # the current manifest head. Nothing is mid-flight to protect, so the
+        # seed should bind to the LIVE manifest-pinned identity instead of the
+        # stale chain binding — the engine advance is a non-event, exactly like
+        # the immutable-seed per-dispatch refresh. An ACTIVE plan keeps the
+        # strict stale-binding check (mid-execution swaps must not silently
+        # rebind).
+        from arnold_pipelines.megaplan.chain.execution_binding import (
+            _state_blocked_no_live_work,
+        )
+
+        if _state_blocked_no_live_work(state):
+            from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+                load_runtime_manifest,
+            )
+
+            try:
+                _manifest_state = load_runtime_manifest(_manifest_pin)
+                _expected_head = str(
+                    (_manifest_state.epic or {}).get("expected_head") or ""
+                )
+                if _expected_head:
+                    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+                        _live_runtime_identity,
+                    )
+
+                    _live = _live_runtime_identity(
+                        root=root,
+                        expected_revision=_expected_head,
+                    )
+                    if isinstance(_live, Mapping) and _live.get("source_revision"):
+                        _bound_identity = dict(_live)
+            except Exception:
+                pass  # fall back to the recorded binding; the strict check will surface any real mismatch
         _launch_seed_path = _ensure_runtime_launch_seed(
             manifest_path=_manifest_pin,
             chain_spec_path=spec_path,
