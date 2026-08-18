@@ -1666,7 +1666,10 @@ def rebind_runtime_identity(
             spec_report.get("expected") or {},
             spec_report.get("active") or {},
         )
-        if not bound_match:
+        # A blocked plan with no live worker may auto-adopt the current
+        # manifest head: the rebind IS the adoption, and nothing is
+        # mid-flight to protect (blocked-plan auto-adopt, 5f34c4a202).
+        if not bound_match and not _state_blocked_no_live_work(state):
             raise CliError(
                 RUNTIME_DRIFT_ERROR,
                 "runtime rebind refused while the immutable spec binding is not accepted",
