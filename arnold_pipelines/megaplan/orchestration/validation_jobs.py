@@ -295,10 +295,21 @@ def _build_pytest_command(
     *,
     timeout_seconds: int,
     extra_args: str = "",
+    embed_timeout: bool = True,
 ) -> str:
-    """Build a deterministic pytest command with a timeout wrapper."""
+    """Build a deterministic pytest command.
+
+    By default the command carries a GNU ``timeout`` wrapper.  Narrow-recheck
+    jobs compile with ``embed_timeout=False``: the structured suite runner
+    owns the sole deadline (the authoritative comparison ceiling), and an
+    embedded probe-budget timeout would deterministically kill a full-file
+    differential run that legitimately exceeds the planner's cost hint.
+    """
     quoted = " ".join(shlex.quote(s) for s in selectors)
-    base = f"timeout {timeout_seconds}s pytest {quoted} --tb=short -q"
+    if embed_timeout:
+        base = f"timeout {timeout_seconds}s pytest {quoted} --tb=short -q"
+    else:
+        base = f"pytest {quoted} --tb=short -q"
     if extra_args:
         base = f"{base} {extra_args}"
     return base
@@ -367,6 +378,7 @@ def _compile_narrow_recheck(
         "command": _build_pytest_command(
             selectors,
             timeout_seconds=max_seconds,
+            embed_timeout=False,
         ),
         "environment": {},
         "expected_exit_codes": [0],
@@ -377,6 +389,7 @@ def _compile_narrow_recheck(
         "selectors": selectors,
         "max_seconds": max_seconds,
         "max_runs": max_runs,
+        "acceptance_mode": "no_new_failures_delta",
         "reason": f"Narrow recheck for task {task_id}: {', '.join(selectors)}",
         "task_id": task_id,
         "writes_files": False,

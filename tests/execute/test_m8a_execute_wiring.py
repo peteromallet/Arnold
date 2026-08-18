@@ -1195,7 +1195,11 @@ def test_execute_validation_deadlines_use_absolute_monotonic_time() -> None:
     for function in (_run_batch_validation_jobs, _run_repair_adoption_check):
         source = inspect.getsource(function)
         assert "deadline_seconds=float(" not in source
-        assert "deadline_seconds=(\n" in source or "time.monotonic() + float(" in source
+        assert (
+            "deadline_seconds=(\n" in source
+            or "time.monotonic() + float(" in source
+            or "time.monotonic() + _run_deadline_seconds" in source
+        )
 
 
 def test_batch_validation_skips_post_execute_on_non_final_batch() -> None:

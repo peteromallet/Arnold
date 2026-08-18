@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shlex
+import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -883,11 +884,132 @@ def _capture_test_baseline_for_plan(
     return baseline
 
 
+def _baseline_source_revision(project_dir: Path) -> str | None:
+    """Committed source revision the baseline suite runs against."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _filter_baseline_command_to_existing(
+    project_dir: Path,
+    command: str,
+) -> tuple[str, list[str]]:
+    """Drop selector tokens that do not exist at baseline-capture time.
+
+    The baseline selection may include planned task outputs (files the tasks
+    will create).  Those cannot be collected pre-execution — running them
+    yields a cryptic exit-4 "file or directory not found" that poisons the
+    whole baseline (``baseline_test_failures=null``).  A selector that does
+    not exist yet has no failing tests to record, so dropping it is truthful
+    evidence, not laundering: the post-execute delta sees the file as an
+    *added* test, and any failure there still counts as newly failing.
+
+    Returns ``(filtered_command, dropped_selectors)``.  The original command
+    is returned unchanged when it is not a recognizable pytest shape or when
+    nothing needs to be dropped.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command, []
+    exec_idx = None
+    for i, tok in enumerate(parts):
+        if tok == "pytest" or (
+            tok.startswith("pytest") and not tok.startswith("-")
+        ):
+            exec_idx = i
+            break
+    if exec_idx is None:
+        return command, []
+    kept: list[str] = []
+    dropped: list[str] = []
+    seen_selector = False
+    kept_selector_count = 0
+    for tok in parts[exec_idx + 1 :]:
+        if tok.startswith("-"):
+            kept.append(tok)
+        else:
+            seen_selector = True
+            path = tok.strip("'\"")
+            exists = (project_dir / path).exists()
+            # Only drop missing selectors that are concrete FILE paths
+            # (planned task outputs are files).  Bare directory selectors are
+            # kept so directory-scoped baseline runs keep their legacy
+            # behavior.
+            file_like = bool(Path(path).suffix) or "/" in path
+            if exists or not file_like:
+                kept.append(tok)
+                if exists:
+                    kept_selector_count += 1
+            else:
+                dropped.append(tok)
+    if not dropped or not seen_selector:
+        return command, []
+    if kept_selector_count == 0:
+        # Every file selector was a not-yet-existing planned output: nothing
+        # file-scoped is collectable.  Signal the caller with an empty
+        # command so it can record a truthful empty baseline instead of a
+        # poisoned null.
+        return "", dropped
+    rebuilt = " ".join(shlex.quote(t) for t in parts[: exec_idx + 1] + kept)
+    return rebuilt, dropped
+
+
 def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     if os.getenv(MOCK_ENV_VAR) == "1":
         return {
             "baseline_test_failures": [],
             "baseline_test_command": "pytest --tb=no -q --no-header -rA",
+            "baseline_cwd": str(project_dir),
+            "baseline_source_revision": _baseline_source_revision(project_dir),
+        }
+
+    # Explicit capture root: the baseline suite must resolve its relative
+    # selectors from the SAME root they were compiled against.  Record the
+    # cwd + source revision in the artifact for provenance.
+    baseline_cwd = str(project_dir)
+    baseline_source_revision = _baseline_source_revision(project_dir)
+    _dropped_note: list[str] = []
+    _baseline_command = config.get("test_command")
+    if isinstance(_baseline_command, str) and _baseline_command.strip():
+        _filtered_command, _dropped = _filter_baseline_command_to_existing(
+            project_dir, _baseline_command
+        )
+        if _dropped:
+            config = dict(config)
+            config["test_command"] = _filtered_command
+            _dropped_note = [
+                "Baseline capture skipped %d selector(s) that did not exist "
+                "yet at capture time (planned task outputs cannot be collected "
+                "pre-execution): %s"
+                % (len(_dropped), ", ".join(_dropped))
+            ]
+            LOGGER.warning(
+                "baseline capture: dropping %d selector(s) that do not exist "
+                "yet at capture time: %s",
+                len(_dropped),
+                _dropped,
+            )
+    if _dropped_note and not (config.get("test_command") or "").strip():
+        # Every selector was a not-yet-existing planned output: there is
+        # nothing collectable to record, so the baseline is a truthful empty
+        # set rather than a poisoned null.
+        return {
+            "baseline_test_failures": [],
+            "baseline_test_command": _baseline_command,
+            "baseline_test_note": " ".join(_dropped_note),
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
 
     # Two caps govern baseline capture (see suite_runner._wait_for_process):
@@ -928,6 +1050,8 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
                 f"test_baseline_timeout config value is invalid ({raw_timeout!r}); "
                 "must be a positive integer."
             ),
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
 
     raw_idle = config.get("test_baseline_idle_timeout")
@@ -1004,25 +1128,36 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
                 f"(suite still producing output but never finished) while running: "
                 f"{result.command}"
             )
+        if _dropped_note:
+            note = f"{note} {' '.join(_dropped_note)}"
         return {
             "baseline_test_failures": None,
             "baseline_test_command": result.command,
             "baseline_test_note": note,
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
     if result.status == "runner_error":
+        note = (
+            f"Baseline capture failed: runner error"
+            + (f" (exit code: {result.exit_code})" if result.exit_code is not None else "")
+        )
+        if _dropped_note:
+            note = f"{note} {' '.join(_dropped_note)}"
         return {
             "baseline_test_failures": None,
             "baseline_test_command": None,
-            "baseline_test_note": (
-                f"Baseline capture failed: runner error"
-                + (f" (exit code: {result.exit_code})" if result.exit_code is not None else "")
-            ),
+            "baseline_test_note": note,
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
     if result.status == "not_applicable":
         return {
             "baseline_test_failures": None,
             "baseline_test_command": result.command,
             "baseline_test_note": "No tests collected (pytest exit code 5).",
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
 
     # ``passed`` or ``failed`` — baseline captures whatever was failing *before*
@@ -1031,6 +1166,8 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
         "baseline_test_failures": result.failures,
         "baseline_test_command": result.command,
         "baseline_test_collection_errors": list(result.collection_errors or []),
+        "baseline_cwd": baseline_cwd,
+        "baseline_source_revision": baseline_source_revision,
     }
 
 def _normalize_task_complexity(payload: dict[str, Any]) -> None:
