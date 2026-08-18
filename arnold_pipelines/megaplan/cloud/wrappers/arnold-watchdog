@@ -7767,6 +7767,18 @@ PY
   if [[ -n "$early_plan_status_env" ]]; then
     eval "$early_plan_status_env"
   fi
+  # A gate escalation (latest_failure.kind=gate_escalated with
+  # resume_cursor.retry_strategy=human_decision) is a REAL human gate that
+  # parks the plan in blocked state — the watchdog previously never
+  # classified it as needs-human, so the user got no DM and the fixer
+  # burned cycles "repairing" a plan awaiting a human decision. Route it
+  # into the existing stable_human_gate notify path (codex consult,
+  # astrid m4 NSA-1 Reigh-authority gate).
+  if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "gate_escalated" \
+    || "${PLAN_STATUS_RETRY_STRATEGY:-}" == "human_decision" ]]; then
+    PLAN_STATUS_AWAITING_HUMAN=1
+    resolver_human_verdict=
+  fi
   if [[ "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_AWAITING_HUMAN:-0}" == "1" ]]; then
     local early_human_summary early_stale_marker_plans
     early_human_summary="awaiting_human halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON:-plan is awaiting human action}"
