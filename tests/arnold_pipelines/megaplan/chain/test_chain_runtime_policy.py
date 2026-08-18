@@ -1238,3 +1238,54 @@ def test_blocked_chain_state_last_state_shape() -> None:
         metadata = {}
 
     assert eb._state_blocked_no_live_work(_RunningChain()) is False
+
+
+def test_blocked_plan_auto_adopts_runtime_drift_after_spec_reconcile() -> None:
+    """A blocked plan with no live worker must auto-adopt RUNTIME drift even
+    when the SPEC check already reconciled (reconcile_required from a safe
+    spec edit). Previously the auto-adopt flag was only set in the
+    spec-drift branch, so a spec-reconcile + runtime-drift combination
+    refused with chain_runtime_binding_drift on a blocked plan (mega m4:
+    revision-pin co-drift reconciled, then runtime identity lag refused)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+    from arnold_pipelines.megaplan.chain.execution_binding import CliError
+
+    class _BlockedState:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        current_state = "blocked"
+        active_step = None
+        active_worker = None
+        completed = None
+        last_state = "blocked"
+        metadata = {}
+
+    # SPEC report reconciles (safe spec edit); runtime binding drifts.
+    def _fake_report(spec_path, state):
+        return {
+            "schema": eb.BINDING_SCHEMA,
+            "required": True,
+            "status": "reconcile_required",
+            "drift_fields": ["chain_spec_sha256", "intended_initiative_revision"],
+            "expected": {"content_sha256": "a" * 64},
+            "active": {"content_sha256": "b" * 64},
+            "runtime_binding": {
+                "required": True,
+                "status": "drift",
+                "expected": {"content_sha256": "c" * 64},
+                "active": {"content_sha256": "d" * 64},
+                "active_errors": ["runtime drift"],
+            },
+        }
+
+    _original_report = eb.execution_binding_report
+    eb.execution_binding_report = _fake_report
+    try:
+        result = eb.assert_execution_binding(
+            __import__("pathlib").Path("/tmp/spec.yaml"),
+            _BlockedState(),
+            operation="chain start",
+        )
+        assert result["status"] == "reconcile_required"
+    finally:
+        eb.execution_binding_report = _original_report
