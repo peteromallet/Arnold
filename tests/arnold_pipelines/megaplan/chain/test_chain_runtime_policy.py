@@ -1099,3 +1099,34 @@ def test_chain_spec_drift_without_asset_change_is_safe() -> None:
     )
     assert safe is True
     assert changed == []
+
+
+def test_blocked_plan_auto_adopts_runtime_drift() -> None:
+    """A blocked plan with no live worker may auto-adopt the current manifest
+    head: nothing is executing, so the engine advance is a non-event
+    (seed-refresh philosophy). Mid-execution swaps stay refused."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        current_state = "blocked"
+        active_step = None
+        active_worker = None
+        completed = None
+        last_state = "blocked"
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_State()) is True
+
+    class _RunningState:
+        current_milestone_index = 4
+        current_plan_name = "m4"
+        current_state = "execute"
+        active_step = {"phase": "execute"}
+        active_worker = "hermes"
+        completed = None
+        last_state = "blocked"
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_RunningState()) is False
