@@ -6,9 +6,22 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan._core import execute_batch_artifact_path
-from arnold_pipelines.megaplan.authority.batch_scope import BATCH_SCOPE_KEY, BatchScope
-from arnold_pipelines.megaplan.execute.batch import _replay_proven_batch_artifacts
+from arnold_pipelines.megaplan.authority.batch_scope import (
+    BATCH_SCOPE_KEY,
+    DISPATCH_IDENTITY_KEY,
+    BatchScope,
+)
+from arnold_pipelines.megaplan.authority.binding import (
+    DispatchIdentity,
+    SENSE_CHECK_RESULT_CAPABILITY,
+    TASK_RESULT_CAPABILITY,
+)
+from arnold_pipelines.megaplan.execute.batch import (
+    _replay_proven_batch_artifacts,
+    _stamp_result_envelopes,
+)
 from arnold_pipelines.megaplan.execute.merge import reconcile_latest_execution_batch
+from arnold_pipelines.megaplan.execute.wbc import EXECUTE_DISPATCH_WBC_KEY
 
 
 FIXTURE_PATH = (
@@ -38,12 +51,53 @@ def _write_dispatch(plan_dir: Path, dispatch: dict[str, Any]) -> Path:
     )
     payload = copy.deepcopy(dispatch["payload"])
     payload[BATCH_SCOPE_KEY] = scope.to_dict()
+    # Proven fixtures carry the S4 dispatch authority contract: a persisted
+    # dispatch identity (grant/fence) for the accepted wave. The entries are
+    # validated through the scope_trusted path; the identity is required by
+    # the S4 pre-filter and the authority resolution. Mirrors production
+    # _stamp_dispatch_metadata (execute/batch.py). (occurrence 0ae19cc17afd)
+    identity = DispatchIdentity.create(
+        dispatch_id=(
+            f"megaplan-run:execute:batch:{dispatch['batch_number']}:proven"
+        ),
+        run_id="megaplan-run",
+        run_revision="sha256:plan-revision",
+        coordinator_attempt_id=f"accepted-wave-{dispatch['batch_number']}",
+        fence_token=2,
+        subject_ids=tuple(dispatch["task_ids"]) + tuple(dispatch["sense_check_ids"]),
+        capabilities=(TASK_RESULT_CAPABILITY, SENSE_CHECK_RESULT_CAPABILITY),
+        prerequisite_digest=f"prereq-batch-{dispatch['batch_number']}",
+        worker_id=f"megaplan-execute-batch-{dispatch['batch_number']}",
+    )
+    payload[DISPATCH_IDENTITY_KEY] = identity.to_dict()
+    # Production artifacts carry the dispatch WBC summary beside the authority
+    # metadata (execute/batch.py dispatch path); merge validates it when the
+    # payload has authority metadata and require_dispatch_wbc is not disabled.
+    payload[EXECUTE_DISPATCH_WBC_KEY] = {
+        "schema_version": 1,
+        "dispatch_id": identity.dispatch_id,
+        "plan_revision": identity.plan_revision,
+        "fence_token": identity.fence_token,
+        "prerequisite_digest": identity.prerequisite_digest,
+        "worker_id": identity.worker_id,
+        "expected_source_version": "sha256:plan-revision",
+        "start_source_lookup_key": f"execute-batch-{dispatch['batch_number']}:start",
+        "terminal_source_lookup_key": f"execute-batch-{dispatch['batch_number']}:complete",
+        "verified_start_sequence": 1,
+        "verified_terminal_sequence": 2,
+        "verified_reread": True,
+    }
     path = execute_batch_artifact_path(
         plan_dir,
         dispatch["batch_number"],
         dispatch["task_ids"],
     )
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Persist worker-result authority echoes + result envelopes for every row,
+    # mirroring production _prepare_scoped_batch_checkpoint. The artifact-level
+    # authority gate refuses scoped rows with no persisted envelopes, and the
+    # per-row validator uses these envelopes (echo + evidence + claim type).
+    _stamp_result_envelopes(payload, identity=identity, artifact_path=path)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 

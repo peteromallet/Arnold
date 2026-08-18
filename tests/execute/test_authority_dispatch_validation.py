@@ -94,12 +94,13 @@ def _task_envelope(
     worker_id: str = "worker-1",
     ordinal: int = 1,
     expected_cursor: int | None = None,
+    coordinator_attempt_id: str = "coordinator-1",
 ) -> ResultEnvelope:
     dispatch = DispatchIdentity.create(
         dispatch_id=dispatch_id,
         run_id="run-1",
         run_revision=run_revision,
-        coordinator_attempt_id="coordinator-1",
+        coordinator_attempt_id=coordinator_attempt_id,
         fence_token=3,
         subject_ids=(subject_id,),
         capabilities=(TASK_RESULT_CAPABILITY,),
@@ -254,6 +255,7 @@ def _validate(
     target_subject_ids: set[str] | None = None,
     state: dict[str, Any] | None = None,
     source_path: str = "<merge-payload>",
+    replay_proven: bool = False,
 ) -> tuple[list[str], tuple[str, ...]]:
     issues: list[str] = []
     result = _grant_aware_validate_entries(
@@ -267,6 +269,7 @@ def _validate(
         issues=issues,
         state=state,
         source_path=source_path,
+        replay_proven=replay_proven,
     )
     return issues, tuple(decision.outcome for decision in result.decisions)
 
@@ -278,6 +281,7 @@ def _validate_sense_checks(
     target_subject_ids: set[str] | None = None,
     state: dict[str, Any] | None = None,
     source_path: str = "<merge-payload>",
+    replay_proven: bool = False,
 ) -> tuple[list[str], tuple[str, ...]]:
     issues: list[str] = []
     result = _grant_aware_validate_entries(
@@ -291,6 +295,7 @@ def _validate_sense_checks(
         issues=issues,
         state=state,
         source_path=source_path,
+        replay_proven=replay_proven,
     )
     return issues, tuple(decision.outcome for decision in result.decisions)
 
@@ -495,6 +500,63 @@ def test_validator_marks_stale_coordinator_fence_superseded_or_conflicting() -> 
     assert outcomes == ("superseded-or-conflicting",)
     assert entry["authority_validation"]["reason"] == "coordinator_fence_mismatch"
     assert any("coordinator_fence_mismatch" in issue for issue in issues)
+
+
+def test_validator_accepts_replayed_accepted_wave_with_divergent_coordinator_attempt() -> None:
+    """Proven replay of an accepted prior wave bypasses ONLY the temporal
+    coordinator/fence comparison (occurrence 0ae19cc17afd): the accepted
+    wave's coordinator_attempt_id belongs to its own dispatch, not to the
+    current resume run. With replay_proven=True the row is accepted; with the
+    default False it must still be rejected as coordinator_fence_mismatch."""
+    entry = _task_entry()
+    envelope = _task_envelope(entry, coordinator_attempt_id="accepted-wave-1")
+    _stamp_entry(entry, envelope)
+
+    current_state = {"active_step": {"run_id": "current-run", "attempt": 2}}
+
+    issues, outcomes = _validate(
+        [entry],
+        payload=_payload([envelope]),
+        state=current_state,
+        replay_proven=True,
+    )
+
+    assert outcomes == ("accepted",)
+    assert entry["authority_validation"]["outcome"] == "accepted"
+
+    # Same input without the flag: the temporal fence must still reject.
+    issues, outcomes = _validate(
+        [entry],
+        payload=_payload([envelope]),
+        state=current_state,
+        replay_proven=False,
+    )
+
+    assert outcomes == ("superseded-or-conflicting",)
+    assert entry["authority_validation"]["reason"] == "coordinator_fence_mismatch"
+    assert any("coordinator_fence_mismatch" in issue for issue in issues)
+
+
+def test_validator_replay_proven_keeps_plan_revision_fence_enforced() -> None:
+    """replay_proven bypasses ONLY the coordinator/fence block: a stale plan
+    revision must still be rejected (no laundering of a genuinely divergent
+    wave)."""
+    entry = _task_entry()
+    envelope = _task_envelope(entry, run_revision="old-revision")
+    _stamp_entry(entry, envelope)
+
+    issues, outcomes = _validate(
+        [entry],
+        payload=_payload([envelope]),
+        state={
+            "active_step": {"run_id": "current-run", "attempt": 2},
+            "plan_revision": "current-revision",
+        },
+        replay_proven=True,
+    )
+
+    assert outcomes == ("superseded-or-conflicting",)
+    assert entry["authority_validation"]["reason"] == "plan_revision_mismatch"
 
 
 def test_validator_marks_stale_prerequisite_digest_superseded_or_conflicting() -> None:

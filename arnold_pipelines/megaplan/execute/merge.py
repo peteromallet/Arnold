@@ -557,6 +557,7 @@ def _validate_entry_against_envelope(
     expected_claim_type: str,
     expected_capability: str,
     state: PlanState | None,
+    replay_proven: bool = False,
 ) -> tuple[GrantAwareValidationOutcome, str]:
     if subject_id not in target_subject_ids:
         return "rejected", "subject_outside_dispatched_batch"
@@ -575,14 +576,20 @@ def _validate_entry_against_envelope(
     if expected_revision is not None and envelope.plan_revision != expected_revision:
         return "superseded-or-conflicting", "plan_revision_mismatch"
     expected_coordinator = _expected_coordinator_attempt_id(state)
-    if (
-        expected_coordinator is not None
-        and envelope.dispatch.coordinator_attempt_id != expected_coordinator
-    ):
-        return "superseded-or-conflicting", "coordinator_fence_mismatch"
-    expected_fence = _expected_fence_token(state)
-    if expected_fence is not None and envelope.dispatch.fence_token != expected_fence:
-        return "superseded-or-conflicting", "coordinator_fence_mismatch"
+    if not replay_proven:
+        # Proven replay of an accepted prior wave bypasses ONLY the temporal
+        # coordinator/fence comparison: the accepted wave's coordinator id and
+        # fence token belong to its own dispatch, not to the current resume
+        # run. All other validation (plan revision, prerequisite, worker,
+        # echo, evidence, CAS) stays enforced. (occurrence 0ae19cc17afd)
+        if (
+            expected_coordinator is not None
+            and envelope.dispatch.coordinator_attempt_id != expected_coordinator
+        ):
+            return "superseded-or-conflicting", "coordinator_fence_mismatch"
+        expected_fence = _expected_fence_token(state)
+        if expected_fence is not None and envelope.dispatch.fence_token != expected_fence:
+            return "superseded-or-conflicting", "coordinator_fence_mismatch"
     expected_prereq = _expected_prerequisite_digest(state)
     if expected_prereq is not None and envelope.prerequisite_digest != expected_prereq:
         return "superseded-or-conflicting", "prerequisite_digest_mismatch"
@@ -620,6 +627,7 @@ def _grant_aware_validate_entries(
     source_path: str | Path = "<merge-payload>",
     off_scope_outcome: GrantAwareValidationOutcome = "rejected",
     scope_trusted: bool = False,
+    replay_proven: bool = False,
 ) -> _GrantAwareValidationResult:
     if not isinstance(entries, list):
         return _GrantAwareValidationResult([], ())
@@ -740,6 +748,7 @@ def _grant_aware_validate_entries(
                 expected_claim_type=expected_claim_type,
                 expected_capability=expected_capability,
                 state=state,
+                replay_proven=replay_proven,
             )
             key = envelope.claim.idempotency_key
             if outcome == "accepted":
@@ -1197,6 +1206,7 @@ def _merge_batch_results(
     preserve_accepted: bool = False,
     require_dispatch_wbc: bool = True,
     trust_scope: bool = False,
+    replay_proven: bool = False,
 ) -> tuple[int, int, int, int]:
     batch_task_id_set = set(batch_task_ids)
     batch_sense_check_id_set = set(batch_sense_check_ids)
@@ -1279,6 +1289,7 @@ def _merge_batch_results(
         source_path=source_path,
         off_scope_outcome="quarantined" if creative_mode else "rejected",
         scope_trusted=trust_scope or True,
+        replay_proven=replay_proven,
     )
     _enforce_task_test_budgets(
         task_authority.entries,
@@ -1357,6 +1368,7 @@ def _merge_batch_results(
         source_path=source_path,
         off_scope_outcome="quarantined" if creative_mode else "rejected",
         scope_trusted=trust_scope or True,
+        replay_proven=replay_proven,
     )
     acknowledged_count, _ = _validate_and_merge_batch(
         sense_check_authority.entries,
@@ -1401,6 +1413,7 @@ def _merge_scoped_batch_artifact_through_validator(
     preserve_accepted: bool = False,
     require_dispatch_wbc: bool = True,
     trust_scope: bool = False,
+    replay_proven: bool = False,
 ) -> _ScopedBatchArtifactMergeResult:
     """Prove compatibility scope, then let the grant-aware validator arbitrate rows."""
 
@@ -1474,6 +1487,7 @@ def _merge_scoped_batch_artifact_through_validator(
         source_path=artifact_path,
         preserve_accepted=preserve_accepted,
         require_dispatch_wbc=require_dispatch_wbc,
+        replay_proven=replay_proven,
     )
     return _ScopedBatchArtifactMergeResult(
         payload=payload,

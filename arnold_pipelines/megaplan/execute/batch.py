@@ -2184,6 +2184,12 @@ def _replay_proven_batch_artifacts(
             # despite a clean 43/43-done finalize.
             preserve_accepted=True,
             require_dispatch_wbc=False,
+            # replay_proven=True: the artifact's dispatch identity is its own
+            # accepted wave (coordinator attempt id / fence token), not the
+            # current resume run's. Bypass ONLY the temporal coordinator/fence
+            # comparison; plan revision, prerequisite, worker, echo, evidence,
+            # and CAS validation stay enforced. (occurrence 0ae19cc17afd)
+            replay_proven=True,
         )
         if merge_result.quarantine is not None:
             _emit_batch_scope_quarantine(plan_dir, merge_result.quarantine)

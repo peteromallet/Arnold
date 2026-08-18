@@ -1845,3 +1845,265 @@ def test_replay_backfills_audit_notes_via_scoped_enveloped_row(tmp_path: Path) -
     from arnold_pipelines.megaplan.execute.quality import _has_audit_or_research_evidence
 
     assert _has_audit_or_research_evidence(tasks["T8_proof"])
+
+
+def test_replay_backfills_accepted_wave_with_divergent_coordinator_attempt(tmp_path: Path) -> None:
+    """Occurrence 0ae19cc17afd end-to-end: an accepted prior wave's artifact
+    carries its OWN coordinator_attempt_id (accepted wave), which differs from
+    the current resume run's id. Replay must bypass ONLY the temporal
+    coordinator/fence comparison and backfill the done target's missing
+    evidence (files_changed/commands_run/executor_notes) plus the sense-check
+    acknowledgment, without touching accepted status."""
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-08-17T00:00:00Z",
+        "current_state": "blocked",
+        "iteration": 3,
+        "config": {"mode": "code"},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "current-run", "attempt": 2},
+    }
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done"},
+            {"id": "T2", "status": "done"},
+        ],
+        "sense_checks": [
+            {"id": "SC1", "task_id": "T1", "question": "q", "verdict": ""},
+        ],
+        "user_actions": [],
+    }
+    artifact_path = _prepare_scoped_batch_checkpoint(
+        tmp_path,
+        batch_number=1,
+        task_ids=["T1"],
+        sense_check_ids=["SC1"],
+        state=state,
+        finalize_data=finalize_data,
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = DispatchIdentity.create(
+        dispatch_id="megaplan-run:execute:batch:1:accepted-wave",
+        run_id="megaplan-run",
+        run_revision="sha256:plan-revision",
+        coordinator_attempt_id="accepted-wave-1",
+        fence_token=2,
+        subject_ids=("T1", "SC1"),
+        capabilities=(TASK_RESULT_CAPABILITY, SENSE_CHECK_RESULT_CAPABILITY),
+        prerequisite_digest="T1-prerequisite-digest",
+        worker_id="megaplan-execute-batch-1",
+    )
+    task_entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "Accepted wave notes for T1.",
+        "files_changed": ["arnold_pipelines/megaplan/maintenance/delivery.py"],
+        "commands_run": ["timeout 120s python -m pytest tests/... -q"],
+        "head_sha": "e3ca2ae814",
+    }
+    sense_entry = {
+        "sense_check_id": "SC1",
+        "executor_note": "Acknowledged by accepted wave.",
+    }
+    evidence = EvidenceEnvelope(
+        evidence_id="T1:evidence",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        evidence_type="megaplan.task_update",
+        source="test",
+        payload={"entry": task_entry},
+    )
+    attempt = TaskAttempt(
+        attempt_id="T1:attempt",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T1",
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        ordinal=1,
+    )
+    claim = TaskClaim(
+        claim_id="T1:claim",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T1",
+        attempt_id=attempt.attempt_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        claim_type=TASK_COMPLETION_CLAIM,
+        evidence_ids=(evidence.evidence_id,),
+        idempotency_key="T1:claim",
+        payload={"entry": task_entry},
+    )
+    envelope = ResultEnvelope(
+        dispatch=identity,
+        attempt=attempt,
+        claim=claim,
+        evidence=(evidence,),
+    )
+    task_entry["authority"] = {
+        "envelope_digest": envelope.digest(),
+        "dispatch_id": envelope.dispatch_id,
+        "run_revision": envelope.run_revision,
+        "plan_revision": envelope.plan_revision,
+        "fence": envelope.dispatch.fence.to_dict(),
+        "scope": {
+            "subject_ids": list(envelope.dispatch.subject_ids),
+            "capabilities": list(envelope.dispatch.capabilities),
+        },
+        "prerequisite_digest": envelope.prerequisite_digest,
+        "worker_id": envelope.worker_id,
+        "attempt": envelope.attempt.to_dict(),
+    }
+    payload[DISPATCH_IDENTITY_KEY] = identity.to_dict()
+    payload[RESULT_ENVELOPES_KEY] = [envelope.to_dict()]
+    payload["task_updates"] = [task_entry]
+    payload["sense_check_acknowledgments"] = [sense_entry]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    _replay_proven_batch_artifacts(
+        plan_dir=tmp_path,
+        finalize_data=finalize_data,
+        known_task_ids=["T1", "T2"],
+        known_sense_check_ids=["SC1"],
+        mode="code",
+        state=state,
+    )
+    tasks = {task["id"]: task for task in finalize_data["tasks"]}
+    assert tasks["T1"]["status"] == "done"
+    assert tasks["T1"]["files_changed"] == [
+        "arnold_pipelines/megaplan/maintenance/delivery.py"
+    ]
+    assert tasks["T1"]["commands_run"]
+    assert tasks["T1"]["executor_notes"] == "Accepted wave notes for T1."
+    checks = {check["id"]: check for check in finalize_data["sense_checks"]}
+    assert checks["SC1"]["executor_note"] == "Acknowledged by accepted wave."
+
+
+def test_replay_still_rejects_genuine_plan_revision_contradiction(tmp_path: Path) -> None:
+    """replay_proven bypasses ONLY the coordinator/fence block: a stale plan
+    revision on the replayed wave must still reject (no laundering of a
+    genuinely divergent wave)."""
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-08-17T00:00:00Z",
+        "current_state": "blocked",
+        "iteration": 3,
+        "config": {"mode": "code"},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:current-revision"}],
+        "active_step": {"run_id": "current-run", "attempt": 2},
+        "plan_revision": "sha256:current-revision",
+    }
+    finalize_data = {
+        "tasks": [{"id": "T1", "status": "done"}],
+        "sense_checks": [],
+        "user_actions": [],
+    }
+    artifact_path = _prepare_scoped_batch_checkpoint(
+        tmp_path,
+        batch_number=1,
+        task_ids=["T1"],
+        sense_check_ids=[],
+        state=state,
+        finalize_data=finalize_data,
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = DispatchIdentity.create(
+        dispatch_id="megaplan-run:execute:batch:1:stale-wave",
+        run_id="megaplan-run",
+        run_revision="sha256:old-revision",
+        coordinator_attempt_id="accepted-wave-1",
+        fence_token=2,
+        subject_ids=("T1",),
+        capabilities=(TASK_RESULT_CAPABILITY,),
+        prerequisite_digest="T1-prerequisite-digest",
+        worker_id="megaplan-execute-batch-1",
+    )
+    task_entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "Stale wave notes.",
+        "files_changed": ["arnold_pipelines/megaplan/maintenance/delivery.py"],
+        "commands_run": ["timeout 120s python -m pytest tests/... -q"],
+        "head_sha": "e3ca2ae814",
+    }
+    evidence = EvidenceEnvelope(
+        evidence_id="T1:evidence",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        evidence_type="megaplan.task_update",
+        source="test",
+        payload={"entry": task_entry},
+    )
+    attempt = TaskAttempt(
+        attempt_id="T1:attempt",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T1",
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        ordinal=1,
+    )
+    claim = TaskClaim(
+        claim_id="T1:claim",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T1",
+        attempt_id=attempt.attempt_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        claim_type=TASK_COMPLETION_CLAIM,
+        evidence_ids=(evidence.evidence_id,),
+        idempotency_key="T1:claim",
+        payload={"entry": task_entry},
+    )
+    envelope = ResultEnvelope(
+        dispatch=identity,
+        attempt=attempt,
+        claim=claim,
+        evidence=(evidence,),
+    )
+    task_entry["authority"] = {
+        "envelope_digest": envelope.digest(),
+        "dispatch_id": envelope.dispatch_id,
+        "run_revision": envelope.run_revision,
+        "plan_revision": envelope.plan_revision,
+        "fence": envelope.dispatch.fence.to_dict(),
+        "scope": {
+            "subject_ids": list(envelope.dispatch.subject_ids),
+            "capabilities": list(envelope.dispatch.capabilities),
+        },
+        "prerequisite_digest": envelope.prerequisite_digest,
+        "worker_id": envelope.worker_id,
+        "attempt": envelope.attempt.to_dict(),
+    }
+    payload[DISPATCH_IDENTITY_KEY] = identity.to_dict()
+    payload[RESULT_ENVELOPES_KEY] = [envelope.to_dict()]
+    payload["task_updates"] = [task_entry]
+    payload["sense_check_acknowledgments"] = []
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    _replay_proven_batch_artifacts(
+        plan_dir=tmp_path,
+        finalize_data=finalize_data,
+        known_task_ids=["T1"],
+        known_sense_check_ids=[],
+        mode="code",
+        state=state,
+    )
+    tasks = {task["id"]: task for task in finalize_data["tasks"]}
+    assert tasks["T1"]["status"] == "done"
+    # Stale plan revision is a real contradiction: evidence must NOT land.
+    assert tasks["T1"].get("files_changed") is None
+    assert tasks["T1"].get("commands_run") is None
+    assert tasks["T1"].get("executor_notes") is None
