@@ -2757,9 +2757,9 @@ def _count_execute_tracking(
     }
     acked_in_batches: set[str] = set()
     if plan_dir is not None:
-        from arnold_pipelines.megaplan._core import list_batch_artifacts
+        from arnold_pipelines.megaplan._core import list_all_batch_artifacts
 
-        for batch_path in list_batch_artifacts(plan_dir):
+        for batch_path in list_all_batch_artifacts(plan_dir):
             try:
                 payload = json.loads(batch_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):

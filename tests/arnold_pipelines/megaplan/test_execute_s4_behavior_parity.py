@@ -8,6 +8,7 @@ with the recorded baseline and harness-level post-execute check.
 from __future__ import annotations
 
 import copy
+import json
 import types as _types
 from pathlib import Path
 
@@ -634,3 +635,67 @@ def test_budget_blocked_row_is_not_adopted_and_resets_on_fresh_retry(
     assert by_id["T1"]["status"] == "pending"
     assert by_id["T1"]["executor_notes"] == ""
     assert by_id["T1"]["files_changed"] == []
+
+
+def test_count_execute_tracking_sees_acks_in_non_preferred_batch_envelope(
+    tmp_path: Path,
+) -> None:
+    """Occurrence 047aff60f06c: the sense-check ack scan must read ALL batch
+    envelopes, not only the preferred attempt per reused batch index.
+
+    In the m3 plan, ``execute_batches/batch_1`` holds 7 distinct task
+    envelopes (the index was reused across dispatch waves). The SC1/SC7
+    acknowledgments live in a non-preferred envelope
+    (``tasks_c47c2a07ab05.json``, fence 2) while the preferred fence-5
+    envelope carries only SC12. ``_count_execute_tracking`` scanned batch
+    artifacts via ``list_batch_artifacts`` (preferred-only), so SC1/SC7 were
+    invisible and execute completion blocked with "2/18 sense checks have no
+    executor acknowledgment" (blocked_by_quality), keeping the chain guard in
+    authority_divergence. The ack scan is an existence set-union, so reading
+    all envelopes is safe (no double counting).
+    """
+    from arnold_pipelines.megaplan.execute.batch import _count_execute_tracking
+
+    finalize_data = {
+        "tasks": [_task("T1", status="done"), _task("T7", status="done")],
+        "sense_checks": [
+            {"id": "SC1", "task_id": "T1"},
+            {"id": "SC7", "task_id": "T7"},
+            {"id": "SC12", "task_id": "T12"},
+        ],
+    }
+    batch_dir = tmp_path / "execute_batches" / "batch_1"
+    batch_dir.mkdir(parents=True)
+    # Preferred attempt (highest fence token) carries only SC12.
+    (batch_dir / "tasks_preferred.json").write_text(
+        json.dumps(
+            {
+                "dispatch_identity": {"fence_token": 5},
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC12", "executor_note": "verified"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Non-preferred attempt carries SC1 + SC7 — hidden by preferred-only scan.
+    (batch_dir / "tasks_c47c2a07ab05.json").write_text(
+        json.dumps(
+            {
+                "dispatch_identity": {"fence_token": 2},
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC1", "executor_note": "verified"},
+                    {"sense_check_id": "SC7", "executor_note": "verified"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    tracked, total_tasks, acked, total_checks = _count_execute_tracking(
+        finalize_data,
+        active_task_ids={"T1", "T7"},
+        active_sense_check_ids={"SC1", "SC7", "SC12"},
+        plan_dir=tmp_path,
+    )
+    assert tracked == total_tasks == 2
+    assert acked == total_checks == 3
