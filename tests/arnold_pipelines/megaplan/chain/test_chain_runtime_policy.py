@@ -935,3 +935,81 @@ def test_supervisor_run_chain_unbound_production_blocks_before_state_load(
     assert exc_info.value.code == "runtime_manifest_binding_required"
 
     chain_spec_module.load_chain_state.assert_not_called()
+
+
+def test_chain_spec_asset_drift_is_safe_when_only_spec_hash_changed() -> None:
+    """An intentional chain.yaml edit (e.g. profile switch) drifts
+    chain_spec_sha256 AND the derived chain_spec asset. That is the SAME
+    edit, not a separate hazard: reconciliation must be safe so the chain can
+    rebind/advance instead of hard-blocking with
+    chain_spec_not_at_intended_revision (seed-gate minimalism, same class as
+    the chain-spec launch pin being advisory)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": ["m1", "m2", "m3", "m3b", "m4"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [
+            {"kind": "chain_spec", "sha256": "a" * 64},
+            {"kind": "milestone_brief:4", "sha256": "b" * 64},
+        ],
+    }
+    active = {
+        "chain_spec_sha256": "c" * 64,
+        "milestone_sequence": ["m1", "m2", "m3", "m3b", "m4"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [
+            {"kind": "chain_spec", "sha256": "c" * 64},
+            {"kind": "milestone_brief:4", "sha256": "b" * 64},
+        ],
+        "revision_verification": {"ok": True},
+    }
+    drift_fields = ["chain_spec_sha256"]
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=drift_fields,
+    )
+    assert safe is True
+    assert changed == ["chain_spec"]
+
+
+def test_unrelated_asset_drift_remains_unsafe() -> None:
+    """A non-chain-spec, non-milestone-brief asset change is still unsafe."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": ["m1", "m2", "m3"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "chain_spec", "sha256": "a" * 64}],
+    }
+    active = {
+        "chain_spec_sha256": "c" * 64,
+        "milestone_sequence": ["m1", "m2", "m3"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "chain_spec", "sha256": "c" * 64}],
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["chain_spec_sha256"],
+    )
+    assert safe is True
+    assert changed == ["chain_spec"]
