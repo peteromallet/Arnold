@@ -185,6 +185,17 @@ Mandatory flow — follow the five steps exactly:
   and get a proper solution proposal: the shortest safe path to durable
   movement AND the deepest complete structural fix for the failure category.
   Persist the proposal before touching the runtime.
+  INVOKE AS ONE BOUNDED FOREGROUND COMMAND — never background ``codex exec``
+  and sleep/tail-poll a supervisor file (I51b: that poll is fake progress and
+  the consult hung 65 min at 0% CPU / 0 sockets):
+    timeout --signal=TERM --kill-after=30s 900s \\
+      codex exec --sandbox danger-full-access --ephemeral \\
+      -m gpt-5.6-sol -c model_reasoning_effort=high \\
+      -C "$PWD" -o "$EVIDENCE_DIR/codex/sol-stage2-proposal.md" \\
+      "$(cat "$EVIDENCE_DIR/codex/sol-stage2-prompt.md")" </dev/null
+  900s is the consult bound. Exit 124 = hung consult. Persist pid + elapsed
+  + exit, retry ONCE with a smaller prompt, then proceed from swarm evidence.
+  A poll loop is not progress. Do not wait unbounded on a child.
 - STEP 3 — IMPLEMENT: apply the narrowest source-level fix for the failure in
   the approved editable runtime.  Run the focused regression, inspect the real
   result, and keep iterating (bounded, with an evidence delta after every

@@ -7462,14 +7462,33 @@ def _fake_proc_pid(
     state: str = "S",
     ppid: int = 1,
     established_inode: str | None = None,
+    comm: str = "python",
+    cmdline: str = "python -",
+    start_seconds_ago: float = 60.0,
 ) -> None:
     pid_dir = proc_root / str(pid)
     fd_dir = pid_dir / "fd"
     fd_dir.mkdir(parents=True, exist_ok=True)
+    # Canonical /proc/<pid>/stat: pid (comm) state ppid pgrp session tty tpgid
+    # flags minflt cminflt majflt cmajflt utime stime cutime cstime priority
+    # nice num_threads itrealvalue starttime ...  After rsplit(") ") the
+    # fields are state(0) ppid(1) ... itrealvalue(18) starttime(19).
+    uptime_secs = 3600.0
+    hz = 100
+    startticks = int((uptime_secs - start_seconds_ago) * hz)
+    fields_after_comm = [
+        state, str(ppid), "0", "0", "0", "0", "0", "0", "0", "0",
+        "0", "0", "0", "0", "0", "0", "0", "0", "0", str(startticks),
+    ]
     (pid_dir / "stat").write_text(
-        f"{pid} (python) {state} {ppid} {pid} {pid} 0 0 0 0 0 0 0 0 0 0\n",
+        f"{pid} ({comm}) " + " ".join(fields_after_comm) + "\n",
         encoding="utf-8",
     )
+    (pid_dir / "comm").write_text(comm + "\n", encoding="utf-8")
+    (pid_dir / "cmdline").write_text(cmdline.replace(" ", "\x00"), encoding="utf-8")
+    uptime_path = proc_root / "uptime"
+    if not uptime_path.exists():
+        uptime_path.write_text(f"{uptime_secs} {uptime_secs - 1}\n", encoding="utf-8")
     if established_inode is None:
         return
     os.symlink(f"socket:[{established_inode}]", fd_dir / "3")
@@ -7711,6 +7730,233 @@ def test_babysitter_wedged_fail_open_without_proc(
         proc_root=missing_proc,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_babysitter_first_call_grace_keeps_silent_12min_run(
+    tmp_path: Path,
+) -> None:
+    """I51b: 12 min in, no [tool] lines, no socket — first model call, keep."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=12)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_babysitter_receipt(
+        repair_data,
+        session=session,
+        digest=digest,
+        pid=os.getpid(),
+        run_root=run_root,
+        launched_at=launched,
+    )
+    # stdout.log exists (created at Popen) but has NO [tool]/[done] lines;
+    # its mtime is as old as the launch (12 min)
+    (run_root / "babysitter.stdout.log").write_text("", encoding="utf-8")
+    old = time.time() - 12 * 60
+    os.utime(run_root / "babysitter.stdout.log", (old, old))
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    _fake_proc_pid(proc_root, os.getpid(), state="S")
+    result = _invoke_babysitter_running(
+        repair_data=repair_data,
+        session=session,
+        digest=digest,
+        proc_root=proc_root,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_babysitter_first_call_grace_expires_after_25min(
+    tmp_path: Path,
+) -> None:
+    """I51b: 25 min in, no [tool] lines, idle tree — still wedged, reap."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=25)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_babysitter_receipt(
+        repair_data,
+        session=session,
+        digest=digest,
+        pid=os.getpid(),
+        run_root=run_root,
+        launched_at=launched,
+    )
+    (run_root / "babysitter.stdout.log").write_text("", encoding="utf-8")
+    # stdout.log is created at Popen, so its mtime is as old as the launch
+    old = time.time() - 25 * 60
+    os.utime(run_root / "babysitter.stdout.log", (old, old))
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        _write_babysitter_receipt(
+            repair_data,
+            session=session,
+            digest=digest,
+            pid=child.pid,
+            run_root=run_root,
+            launched_at=launched,
+        )
+        proc_root = tmp_path / "proc"
+        proc_root.mkdir()
+        _fake_proc_pid(proc_root, child.pid, state="S")
+        result = _invoke_babysitter_running(
+            repair_data=repair_data,
+            session=session,
+            digest=digest,
+            proc_root=proc_root,
+        )
+        assert result.returncode == 1, result.stderr
+        child.wait(timeout=5)
+        assert child.returncode in {-15, 15}
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_hung_codex_child_signaled_parent_kept(
+    tmp_path: Path,
+) -> None:
+    """I51b: hung codex grandchild (S, no socket, old) is SIGTERM'd; parent lives."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=40)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # babysitter pid must be live: use a child of THIS process we can kill
+    # safely — a sleep child of the test process.
+    parent_pid = os.getpid()
+    codex_child = subprocess.Popen(["sleep", "30"])
+    try:
+        _write_babysitter_receipt(
+            repair_data,
+            session=session,
+            digest=digest,
+            pid=parent_pid,
+            run_root=run_root,
+            launched_at=launched,
+        )
+        # fresh poll-loop progress: run.log with [tool] lines (fake progress)
+        stale = time.time() - 2 * 60
+        run_log = run_root / "run.log"
+        run_log.write_text("[tool] sleep 180\n", encoding="utf-8")
+        os.utime(run_log, (stale, stale))
+        # fake proc tree: parent is the babysitter, codex is a real child
+        # registered with comm=codex so signal_hung_fixer_children kills it
+        proc_root = tmp_path / "proc"
+        proc_root.mkdir()
+        _fake_proc_pid(proc_root, parent_pid, state="S", start_seconds_ago=40 * 60)
+        codex_pid = codex_child.pid
+        _fake_proc_pid(
+            proc_root,
+            codex_pid,
+            state="S",
+            ppid=parent_pid,
+            comm="codex",
+            cmdline="codex exec --sandbox danger-full-access",
+            start_seconds_ago=40 * 60,
+        )
+        # babysitter.stdout.log fresh (poll loop writes) — but codex hung
+        stdout_log = run_root / "babysitter.stdout.log"
+        stdout_log.write_text("[tool] sleep 180\n", encoding="utf-8")
+        os.utime(stdout_log, (stale, stale))
+        # override the hung-child bound so the fake 40-min-old codex qualifies
+        result = _run_watchdog_shell(
+            "\n".join(
+                [
+                    _extract_wrapper_function("babysitter_running_for_occurrence"),
+                    f"REPAIR_DATA_DIR={str(repair_data)!r}",
+                    "export CLOUD_WATCHDOG_BABYSITTER_PROC_ROOT="
+                    + shlex.quote(str(proc_root)),
+                    "export CLOUD_WATCHDOG_HUNG_CHILD_MINUTES=5",
+                    (
+                        f"babysitter_running_for_occurrence {shlex.quote(session)} "
+                        f"{shlex.quote(digest)}"
+                    ),
+                ]
+            )
+        )
+        # parent not reaped: exit 0 (already running)
+        assert result.returncode == 0, result.stderr
+        assert "hung fixer child; signaling" in result.stderr, result.stderr
+        assert f"pids=[{codex_pid}]" in result.stderr, result.stderr
+        codex_child.wait(timeout=5)
+        assert codex_child.returncode in {-15, 15}
+    finally:
+        if codex_child.poll() is None:
+            codex_child.kill()
+            codex_child.wait()
+
+
+def test_codex_child_with_socket_left_alone(
+    tmp_path: Path,
+) -> None:
+    """I51b: codex child with ESTABLISHED TCP is thinking — nobody signaled."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=40)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    parent_pid = os.getpid()
+    _write_babysitter_receipt(
+        repair_data,
+        session=session,
+        digest=digest,
+        pid=parent_pid,
+        run_root=run_root,
+        launched_at=launched,
+    )
+    stale = time.time() - 2 * 60
+    run_log = run_root / "run.log"
+    run_log.write_text("[tool] sleep 180\n", encoding="utf-8")
+    os.utime(run_log, (stale, stale))
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    _fake_proc_pid(proc_root, parent_pid, state="S", start_seconds_ago=40 * 60)
+    codex_pid = 424243
+    _fake_proc_pid(
+        proc_root,
+        codex_pid,
+        state="S",
+        ppid=parent_pid,
+        comm="codex",
+        cmdline="codex exec --sandbox danger-full-access",
+        start_seconds_ago=40 * 60,
+        established_inode="777001",
+    )
+    stdout_log = run_root / "babysitter.stdout.log"
+    stdout_log.write_text("[tool] sleep 180\n", encoding="utf-8")
+    os.utime(stdout_log, (stale, stale))
+    result = _run_watchdog_shell(
+        "\n".join(
+            [
+                _extract_wrapper_function("babysitter_running_for_occurrence"),
+                f"REPAIR_DATA_DIR={str(repair_data)!r}",
+                "export CLOUD_WATCHDOG_BABYSITTER_PROC_ROOT="
+                + shlex.quote(str(proc_root)),
+                "export CLOUD_WATCHDOG_HUNG_CHILD_MINUTES=5",
+                (
+                    f"babysitter_running_for_occurrence {shlex.quote(session)} "
+                    f"{shlex.quote(digest)}"
+                ),
+            ]
+        )
+    )
+    assert result.returncode == 0, result.stderr
+    assert "hung fixer child" not in result.stderr, result.stderr
 
 
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:

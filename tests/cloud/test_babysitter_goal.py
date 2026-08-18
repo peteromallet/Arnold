@@ -45,6 +45,8 @@ def test_renderer_requires_single_flash_orchestrator_contract() -> None:
         "prove",
         "last_state",
         "failure_fingerprint",
+        "BOUNDED FOREGROUND COMMAND",
+        "timeout --signal=TERM",
     ):
         assert required in goal, f"goal missing {required!r}"
 

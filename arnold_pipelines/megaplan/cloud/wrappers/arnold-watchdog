@@ -1831,36 +1831,117 @@ def _tree_has_live_work(root_pids):
     return False
 
 
+def _pid_comm(pid, proc):
+    try:
+        return (proc / str(pid) / "comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _pid_cmdline(pid, proc):
+    try:
+        raw = (proc / str(pid) / "cmdline").read_bytes().replace(b"\x00", b" ")
+        return raw.decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _pid_age_seconds(pid, proc):
+    """Seconds since pid start. None if /proc is unreadable."""
+    try:
+        stat = (proc / str(pid) / "stat").read_text(encoding="utf-8")
+        startticks = int(stat.rsplit(") ", 1)[1].split()[19])
+        hz = os.sysconf("SC_CLK_TCK") or 100
+        uptime = float((proc / "uptime").read_text(encoding="utf-8").split()[0])
+    except (OSError, IndexError, ValueError):
+        return None
+    return uptime - (startticks / float(hz))
+
+
+def _is_codex_child(pid, proc):
+    comm = _pid_comm(pid, proc)
+    cmd = _pid_cmdline(pid, proc)
+    return comm == "codex" or comm.startswith("codex") or "codex exec" in cmd
+
+
+def _progress_has_tool_line(paths):
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "[tool]" in text or "[done]" in text:
+            return True
+    return False
+
+
+def signal_hung_fixer_children(root_pids):
+    """SIGTERM hung ``codex exec`` descendants. Does not touch the babysitter.
+
+    I18 signature: process exists, not R/D, no ESTABLISHED TCP, older than
+    the consult bound. A thinking consult has a socket and is left alone.
+    """
+    proc = _proc_root()
+    if not proc.is_dir():
+        return []
+    bound = float(os.environ.get("CLOUD_WATCHDOG_HUNG_CHILD_MINUTES", "20")) * 60
+    pids = [raw for raw in root_pids if isinstance(raw, int) and raw > 0]
+    signaled = []
+    for pid in _descendant_pids(pids, proc):
+        if not _is_codex_child(pid, proc):
+            continue
+        if _pid_runnable(pid, proc) or _pid_has_established_tcp(pid, proc):
+            continue
+        age = _pid_age_seconds(pid, proc)
+        if age is None or age < bound:
+            continue
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            continue
+        signaled.append(pid)
+    return signaled
+
+
 def babysitter_wedged(payload, run_root):
     """A live-pid fixer that has made NO progress is wedged.
 
-    Contract (I51): a busy unbounded babysitter is never reaped. Wedge means
-    the launch is older than the stall threshold AND no progress file has
-    grown AND the process tree shows no live work (no ESTABLISHED TCP, no
-    R/D children). If /proc cannot be inspected, fail open — do not kill.
+    Contract (I51b): a busy unbounded babysitter is never reaped. Wedge
+    means: past newborn/first-call grace, no fresh progress file, and the
+    process tree shows no live work. A hung ``codex`` child is not a reason
+    to reap the parent — signal_hung_fixer_children handles that. If /proc
+    cannot be inspected, fail open.
     """
-    # Launch stall is only a newborn grace period. The previous 15/10
-    # defaults (tightened from 45/30 in I32/I34) were compensating for
-    # watching the wrong file; they imposed an ~18 min wall on legitimate
-    # model calls. 5 min is enough for first-socket / first-log; after that
-    # the tree-work check is the truth. Knobs stay for operator override.
     launch_stall_minutes = float(
         os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LAUNCH_STALL_MINUTES", "5")
     )
     log_stall_minutes = float(
         os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LOG_STALL_MINUTES", "10")
     )
+    # stdout.log is created at Popen, so log-stall starts at launch and
+    # expires at 10 min while the first DeepSeek call (timeout 600s) may
+    # still have no [tool] line and no ESTABLISHED socket. 20 min covers
+    # API timeout + bootstrap + one scan. Applies ONLY when no [tool]/[done]
+    # has ever been written — not a general wall.
+    first_call_grace_minutes = float(
+        os.environ.get("CLOUD_WATCHDOG_BABYSITTER_FIRST_CALL_GRACE_MINUTES", "20")
+    )
     try:
         launched_raw = payload.get("launched_at") or payload.get("dispatched_at")
         if not launched_raw:
             return False
         launched = datetime.fromisoformat(str(launched_raw).replace("Z", "+00:00"))
-        if datetime.now(timezone.utc) - launched < timedelta(minutes=launch_stall_minutes):
+        age = datetime.now(timezone.utc) - launched
+        if age < timedelta(minutes=launch_stall_minutes):
             return False
     except Exception:
         return False
+    paths = list(_progress_logs(payload, run_root))
+    if not _progress_has_tool_line(paths):
+        if age < timedelta(minutes=first_call_grace_minutes):
+            return False
     newest = None
-    for path in _progress_logs(payload, run_root):
+    for path in paths:
         try:
             mtime = path.stat().st_mtime
         except OSError:
@@ -1876,7 +1957,6 @@ def babysitter_wedged(payload, run_root):
     if live_work is True:
         return False
     if live_work is None:
-        # Cannot tell mid-call from hung. JUST LET IT RUN.
         return False
     return True
 
@@ -1900,11 +1980,18 @@ for name in (
     if str(payload.get("status") or "") in {"launched", "running"}:
         run_root_raw = payload.get("run_root")
         run_root = pathlib.Path(run_root_raw) if isinstance(run_root_raw, str) else None
-        if (
-            pid_live(payload.get("babysitter_pid"))
-            or pid_live(payload.get("supervisor_pid"))
-        ) and not babysitter_wedged(payload, run_root):
-            raise SystemExit(0)
+        roots = (payload.get("babysitter_pid"), payload.get("supervisor_pid"))
+        live = pid_live(roots[0]) or pid_live(roots[1])
+        if live:
+            hung = signal_hung_fixer_children(roots)
+            if hung:
+                print(
+                    "hung fixer child; signaling "
+                    f"session={session} pids={hung} run_root={run_root}",
+                    file=sys.stderr,
+                )
+            if not babysitter_wedged(payload, run_root):
+                raise SystemExit(0)
         # Wedged (or dead): terminate the stale babysitter + its agent tree so
         # the fresh dispatch below does not race a zombie fixer on the same
         # chain (observed 2026-08-17 I35: wedged 15:38 agents lingered beside
