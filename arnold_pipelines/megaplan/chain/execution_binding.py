@@ -868,9 +868,11 @@ def _future_source_reconciliation_is_safe(
         # only drift being the safe chain_spec_sha256 field, this is the
         # same intentional spec edit — safe for reconciliation. (mega m4,
         # occurrence 35afd4e47587: changed_asset_kinds=[] drift.)
-        if drift_fields == ["chain_spec_sha256"] or (
-            set(drift_fields) <= {"chain_spec_sha256", "bundle_sha256"}
-        ):
+        if set(drift_fields) <= {
+            "chain_spec_sha256",
+            "bundle_sha256",
+            "intended_initiative_revision",
+        } and "chain_spec_sha256" in drift_fields:
             return True, []
         return False, []
     cutoff = int(getattr(state, "current_milestone_index", -1))
