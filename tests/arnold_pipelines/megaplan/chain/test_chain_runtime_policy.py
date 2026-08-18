@@ -1367,3 +1367,83 @@ def test_rcsu_covered_asset_drift_is_reconcile_required() -> None:
         assert result["status"] == "reconcile_required"
     finally:
         eb.execution_binding_report = _original_report
+
+
+def test_runtime_binding_ignores_rcsu_covered_asset_errors() -> None:
+    """The RUNTIME binding must not refuse when the only active-execution
+    errors are spec-asset revision errors covered by an operator-recorded
+    RCSU (status=reconciled). Previously the runtime check saw
+    ready=False with the propagated asset error and refused with
+    chain_runtime_binding_drift even when expected==active digest (astrid
+    m4: brief amendment 710ed4a4 -> replan -> RCSU reconciled)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        metadata = {
+            "required_canonical_source_updates": {
+                "m4": {
+                    "status": "reconciled",
+                    "milestone_index": 3,
+                    "expected": {"semantic_sha256": "s" * 64},
+                }
+            },
+            "execution_binding": {
+                "runtime_binding": {
+                    "current_identity": {
+                        "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+                        "source_revision": "a" * 40,
+                        "editable_root": None,
+                        "editable_revision": None,
+                        "direct_url": None,
+                        "pth": None,
+                        "imports": None,
+                        "content_sha256": "b" * 64,
+                    }
+                }
+            },
+        }
+
+    state = _State()
+    active = {
+        "ready": False,
+        "errors": ["asset_not_at_intended_revision:milestone_brief:3"],
+        "assets": [{"kind": "milestone_brief:3", "semantic_sha256": "s" * 64}],
+        "runtime": {
+            "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+            "source_revision": "a" * 40,
+            "editable_root": None,
+            "editable_revision": None,
+            "direct_url": None,
+            "pth": None,
+            "imports": None,
+            "content_sha256": "b" * 64,
+        },
+    }
+    assert eb._runtime_errors_covered(state, active) is True
+
+    import tempfile
+    from pathlib import Path
+    spec_path = Path(tempfile.mkdtemp()) / "chain.yaml"
+    spec_path.write_text("driver: {}\n", encoding="utf-8")
+    _orig_required = eb.runtime_binding_required
+    eb.runtime_binding_required = lambda _p: True
+    try:
+        report = eb.runtime_binding_report(
+        spec_path,
+        state,
+        active_identity=active,
+    )
+        assert report["status"] == "match"
+        assert report["active_errors"] == ["asset_not_at_intended_revision:milestone_brief:3"]
+
+        # A genuine runtime error (not RCSU-covered) still refuses.
+        active_runtime_error = dict(active)
+        active_runtime_error["errors"] = ["runtime_provenance_mismatch"]
+        report2 = eb.runtime_binding_report(
+            spec_path,
+            state,
+            active_identity=active_runtime_error,
+        )
+        assert report2["status"] == "invalid"
+    finally:
+        eb.runtime_binding_required = _orig_required

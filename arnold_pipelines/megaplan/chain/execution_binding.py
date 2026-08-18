@@ -1089,6 +1089,40 @@ def execution_binding_report(
     return result
 
 
+def _runtime_errors_covered(state: Any, active_execution: Mapping[str, Any]) -> bool:
+    """True when every active-execution error is a spec-asset revision error
+    covered by an operator-recorded reconciliation.
+
+    active_execution_identity folds SPEC asset errors (e.g.
+    asset_not_at_intended_revision:milestone_brief:3) into the same
+    ``errors`` list the runtime binding reads for ``ready``. Those are
+    reconciled at the SPEC level via required_canonical_source_updates;
+    the RUNTIME binding must not refuse the chain for them (astrid m4:
+    brief amendment 710ed4a4 -> replan -> RCSU reconciled, but the runtime
+    check saw the propagated asset error and refused with
+    chain_runtime_binding_drift even though expected==active digest).
+    """
+    errors = list(active_execution.get("errors") or [])
+    if not errors:
+        return True
+    requirements = (getattr(state, "metadata", {}) or {}).get(
+        "required_canonical_source_updates"
+    )
+    if not isinstance(requirements, Mapping):
+        return False
+    covered: set[str] = set()
+    for requirement in requirements.values():
+        if (
+            not isinstance(requirement, Mapping)
+            or requirement.get("status") != "reconciled"
+        ):
+            continue
+        index = requirement.get("milestone_index")
+        if isinstance(index, int):
+            covered.add(f"asset_not_at_intended_revision:milestone_brief:{index}")
+    return bool(errors) and set(errors).issubset(covered)
+
+
 def runtime_binding_report(
     spec_path: Path,
     state: Any,
@@ -1130,7 +1164,9 @@ def runtime_binding_report(
         status = "drift"
     elif normalized_expected["content_sha256"] != active["content_sha256"]:
         status = "drift"
-    elif not bool(active_execution.get("ready")):
+    elif not bool(active_execution.get("ready")) and not _runtime_errors_covered(
+        state, active_execution
+    ):
         status = "invalid"
     else:
         status = "match"
