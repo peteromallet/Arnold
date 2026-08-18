@@ -1098,3 +1098,144 @@ def test_worktree_digest_is_content_sensitive_for_already_dirty_files(
     d4 = _current_worktree_digest(project_dir)
     assert d4 is not None and d4 != d2 and d4 != d3
     assert _current_worktree_digest(project_dir) == d4
+
+# ---------------------------------------------------------------------------
+# Quiet-run envelope completeness (occurrence a07166d38fbc, second wave)
+# ---------------------------------------------------------------------------
+# The harness recompiles legacy narrow-recheck commands to
+# ``pytest <selectors> --tb=short -q``.  Under ``-q`` pytest does not print
+# the "collected N items" line, so suite_runner's parser leaves ``collected
+# == 0`` while ``collected_ids`` (from the ``-rA`` report) and
+# ``collections_parse_ok`` are complete.  The envelope predicate must accept
+# the complete run via ``collected_ids``; otherwise the pre-dispatch gate
+# fails a complete exit-1 run instead of capturing the envelope and deferring
+# to the post-adoption delta.
+
+
+def test_envelope_complete_accepts_quiet_run_without_collected_count() -> None:
+    """Production -q shape: collected=0 but collected_ids complete and
+    collections_parse_ok -> envelope complete (verdict deferrable)."""
+    from arnold_pipelines.megaplan.execute.batch import (
+        _narrow_recheck_envelope_complete,
+    )
+
+    quiet_shape = SuiteRunResult(
+        run_id="run-vj12-q",
+        phase="narrow_recheck",
+        command=f"pytest {SEL_A} {SEL_B} --tb=short -q",
+        duration=0.1,
+        # Production parser leaves ``collected`` at 0 under -q even though
+        # the -rA report enumerates every node id.
+        collected=0,
+        collected_ids=[
+            "tests/cloud/test_progress_auditor.py::test_a",
+            "tests/cloud/test_progress_auditor.py::test_b",
+        ],
+        failures=["tests/cloud/test_progress_auditor.py::test_a"],
+        passes=["tests/cloud/test_progress_auditor.py::test_b"],
+        status="failed",
+        exit_code=1,
+        raw_log_path=Path("/tmp/raw-q.log"),
+        code_hash="sha256:tree",
+        collections_parse_ok=True,
+        collection_errors=[],
+        timeout_reason=None,
+    )
+    assert _narrow_recheck_envelope_complete(quiet_shape) is True
+
+
+def test_envelope_complete_still_fails_closed_without_collection_proof() -> None:
+    """collected=0 AND collected_ids empty (collection unknown) stays
+    fail-closed: never an empty envelope."""
+    from arnold_pipelines.megaplan.execute.batch import (
+        _narrow_recheck_envelope_complete,
+    )
+
+    unknown = SuiteRunResult(
+        run_id="run-vj12-unknown",
+        phase="narrow_recheck",
+        command=f"pytest {SEL_A} --tb=short -q",
+        duration=0.1,
+        collected=0,
+        collected_ids=[],
+        failures=["tests/cloud/test_progress_auditor.py::test_a"],
+        passes=[],
+        status="failed",
+        exit_code=1,
+        raw_log_path=Path("/tmp/raw-unknown.log"),
+        code_hash="sha256:tree",
+        collections_parse_ok=False,
+        collection_errors=[],
+        timeout_reason=None,
+    )
+    assert _narrow_recheck_envelope_complete(unknown) is False
+
+
+def test_pre_dispatch_quiet_run_captures_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end pre-dispatch: a COMPLETE exit-1 run whose ``collected`` is 0
+    (quiet pytest shape) but whose collected_ids/parse_ok are complete is
+    captured as PRE_ENVELOPE_CAPTURED and dispatch proceeds — the verdict is
+    deferred to the post-adoption delta instead of failing the admission gate.
+    """
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _narrow_recheck_envelope_complete,
+    )
+
+    plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
+    state = _make_state(project_dir)
+    # Production -q shape: collected=0 (no "collected N items" line) with a
+    # fully parsed -rA report.
+    fake = SuiteRunResult(
+        run_id="run-vj12-q",
+        phase="narrow_recheck",
+        command=f"pytest {SEL_A} {SEL_B} --tb=short -q",
+        duration=0.1,
+        collected=0,
+        collected_ids=[
+            "tests/cloud/test_progress_auditor.py::test_a",
+            "tests/cloud/test_progress_auditor.py::test_b",
+        ],
+        failures=["tests/cloud/test_progress_auditor.py::test_a"],
+        passes=["tests/cloud/test_progress_auditor.py::test_b"],
+        status="failed",
+        exit_code=1,
+        raw_log_path=Path("/tmp/raw-q.log"),
+        code_hash="sha256:tree",
+        collections_parse_ok=True,
+        collection_errors=[],
+        timeout_reason=None,
+    )
+    assert _narrow_recheck_envelope_complete(fake) is True
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake,
+    ) as mock_run:
+        with patch(
+            "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+            return_value={"event_id": "ev"},
+        ):
+            with patch(
+                "arnold_pipelines.megaplan.observability.work_ledger.emit_unavailable_reason",
+            ):
+                evidence = _run_batch_validation_jobs(
+                    plan_dir=plan_dir,
+                    project_dir=project_dir,
+                    finalize_data=finalize_data,
+                    batch_task_ids=["T1"],
+                    state=state,
+                    admission=True,
+                )
+    mock_run.assert_called_once()
+    envelope = evidence[0]
+    assert envelope["status"] == PRE_ENVELOPE_CAPTURED
+    assert envelope["admission"] == "pre_dispatch_delta_envelope"
+    # Durable artifact exists for resume reuse / post-adoption delta.
+    artifact = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    assert artifact.exists()
+    stored = artifact.read_text(encoding="utf-8")
+    assert PRE_ENVELOPE_CAPTURED in stored
+    assert stored.count("test_a") >= 1

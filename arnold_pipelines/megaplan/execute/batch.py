@@ -4153,12 +4153,26 @@ def _narrow_recheck_envelope_complete(result: Any) -> bool:
     Anything else (timeout, signal, exit 2-5, collection errors, malformed
     output, missing failure data) is unknown — never ``[]`` — and stays
     fail-closed.
+
+    Collection proof accepts EITHER the ``collected`` count (pytest prints
+    "collected N items" only at verbosity >= 1) OR the parsed
+    ``collected_ids`` list (always populated from the ``-rA`` report).
+    The harness's recompiled narrow-recheck command runs pytest with ``-q``
+    (see ``_recompile_legacy_narrow_recheck_command``), which suppresses the
+    collected-count line and leaves ``collected == 0`` while ``collected_ids``
+    is complete and ``collections_parse_ok`` is true.  Without this the
+    no-new-failures delta lifecycle can never capture its pre-dispatch
+    envelope, so a complete exit-1 run fails the admission gate instead of
+    deferring to the post-adoption delta (occurrence a07166d38fbc).
     """
     return bool(
         result.exit_code == 1
         and result.status == "failed"
         and bool(result.collections_parse_ok)
-        and int(getattr(result, "collected", 0) or 0) > 0
+        and (
+            int(getattr(result, "collected", 0) or 0) > 0
+            or bool(getattr(result, "collected_ids", None) or [])
+        )
         and not (result.collection_errors or [])
         and bool(result.failures)
         and result.timeout_reason in (None, "")
