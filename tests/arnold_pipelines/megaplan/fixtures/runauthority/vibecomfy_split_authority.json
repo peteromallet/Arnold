@@ -3,13 +3,13 @@
     "tasks": [
       {
         "id": "T1",
-        "status": "skipped",
+        "status": "pending",
         "executor_notes": "contradictory finalize label",
         "sections_written": []
       },
       {
         "id": "T2",
-        "status": "done",
+        "status": "pending",
         "executor_notes": "contradictory finalize label",
         "sections_written": []
       },
