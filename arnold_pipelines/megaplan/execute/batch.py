@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -2141,6 +2142,29 @@ def _replay_proven_batch_artifacts(
             _emit_batch_scope_quarantine(plan_dir, quarantine)
             log.warning("skipping unreadable execution artifact %s", artifact_path)
             continue
+        # Stale pre-contract S4 artifacts (written before the versioned
+        # batch_scope / dispatch_identity contract landed) lack the fields the
+        # authority validator requires; replaying them only produces
+        # quarantine noise and stale evidence. Silently exclude them. Legacy
+        # flat execution_batch_*.json artifacts are NOT pruned for lacking S4
+        # fields — they predate the S4 layout by design.
+        is_s4_artifact = (
+            artifact_path.parent.parent.name == "execute_batches"
+            and re.fullmatch(r"batch_\d+", artifact_path.parent.name) is not None
+            and re.fullmatch(r"tasks_[^.]+\.json", artifact_path.name) is not None
+        )
+        if is_s4_artifact and isinstance(payload, dict):
+            scope = payload.get(BATCH_SCOPE_KEY)
+            versioned_scope = (
+                isinstance(scope, dict)
+                and isinstance(scope.get("schema_version"), int)
+                and not isinstance(scope.get("schema_version"), bool)
+            )
+            if not versioned_scope or not isinstance(
+                payload.get(DISPATCH_IDENTITY_KEY), dict
+            ):
+                log.info("ignoring stale pre-contract S4 artifact %s", artifact_path)
+                continue
         merge_result = _merge_scoped_batch_artifact_through_validator(
             plan_dir=plan_dir,
             artifact_path=artifact_path,
@@ -7134,6 +7158,19 @@ def handle_execute_auto_loop(
                 operation="resume-loaded-batches",
                 state=state,
             )
+            # The persisted execution_audit.json may predate the replayed
+            # evidence (e.g. a quality-gate block recorded findings before the
+            # replay backfilled files_changed/commands_run from accepted
+            # waves). Invalidate it so downstream prompts and review never read
+            # stale findings; the aggregate path recomputes and rewrites it
+            # fresh after replay. (chain-gate escalation)
+            stale_audit = plan_dir / "execution_audit.json"
+            if stale_audit.exists():
+                try:
+                    stale_audit.unlink()
+                    log.info("invalidated stale execution_audit.json before replay aggregation")
+                except OSError:
+                    log.warning("could not remove stale execution_audit.json", exc_info=True)
             batch_payloads = loaded_batch_payloads
     active_task_ids = set(
         review_rework_task_ids

@@ -1312,11 +1312,11 @@ def _blocked_plan_replay_would_be_redundant(
     )
 
 
-def _execution_batch_sort_key(path: Path) -> tuple[int, str]:
-    match = re.fullmatch(r"execution_batch_(\d+)\.json", path.name)
-    if match:
-        return (int(match.group(1)), path.name)
-    return (-1, path.name)
+def _execution_batch_sort_key(path: Path) -> tuple[int, int, str]:
+    legacy_match = re.fullmatch(r"execution_batch_(\d+)\.json", path.name)
+    s4_match = re.fullmatch(r"batch_(\d+)", path.parent.name)
+    batch_index = int((s4_match or legacy_match).group(1)) if (s4_match or legacy_match) else -1
+    return (batch_index, path.stat().st_mtime_ns, str(path))
 
 
 def _latest_execute_result(plan_dir: Path) -> str | None:

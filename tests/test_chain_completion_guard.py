@@ -1798,6 +1798,104 @@ def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_updat
     assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
+def test_latest_execution_batch_all_tasks_done_picks_highest_s4_batch_index(
+    tmp_path: Path,
+) -> None:
+    """The authority gate must pick the TRUE latest S4 batch by batch index,
+    not by lexicographic filename across batch dirs (chain-gate escalation:
+    stale batch_1 artifacts with lexicographically-later names previously won
+    the sort and poisoned the authority verdict)."""
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "finalized",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # batch_1 carries a lexicographically-later filename with a NOT-done task.
+    # Under the old (-1, filename) sort this artifact won "latest" and the gate
+    # reported non-authoritative despite batch_2 being fully done.
+    batch1_dir = plan_dir / "execute_batches" / "batch_1"
+    batch1_dir.mkdir(parents=True, exist_ok=True)
+    (batch1_dir / "tasks_zzzz_999999999999.json").write_text(
+        json.dumps(
+            {
+                "batch_scope": {
+                    "schema_version": 1,
+                    "batch_number": 1,
+                    "task_ids": ["T1"],
+                    "sense_check_ids": [],
+                    "task_set_digest": "zzzz_999999999999",
+                },
+                "dispatch_identity": {"fence": {"token": 1}},
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "blocked",
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    batch2_dir = plan_dir / "execute_batches" / "batch_2"
+    batch2_dir.mkdir(parents=True, exist_ok=True)
+    (batch2_dir / "tasks_aaaa000000000000.json").write_text(
+        json.dumps(
+            {
+                "batch_scope": {
+                    "schema_version": 1,
+                    "batch_number": 2,
+                    "task_ids": ["T1"],
+                    "sense_check_ids": [],
+                    "task_set_digest": "aaaa000000000000",
+                },
+                "dispatch_identity": {"fence": {"token": 2}},
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "commands_run": ["pytest -q"],
+                        "head_sha": head,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert "finalize.json" == reason
+
+
 def test_latest_execution_batch_all_tasks_done_blocks_stale_pending_finalize_rows(
     tmp_path: Path,
 ) -> None:
@@ -2002,7 +2100,105 @@ def test_latest_execution_batch_all_tasks_done_falls_back_to_authoritative_final
     assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
-def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_batch_override(
+def test_latest_execution_batch_all_tasks_done_picks_highest_s4_batch_index(
+    tmp_path: Path,
+) -> None:
+    """The authority gate must pick the TRUE latest S4 batch by batch index,
+    not by lexicographic filename across batch dirs (chain-gate escalation:
+    stale batch_1 artifacts with lexicographically-later names previously won
+    the sort and poisoned the authority verdict)."""
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "finalized",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # batch_1 carries a lexicographically-later filename with a NOT-done task.
+    # Under the old (-1, filename) sort this artifact won "latest" and the gate
+    # reported non-authoritative despite batch_2 being fully done.
+    batch1_dir = plan_dir / "execute_batches" / "batch_1"
+    batch1_dir.mkdir(parents=True, exist_ok=True)
+    (batch1_dir / "tasks_zzzz_999999999999.json").write_text(
+        json.dumps(
+            {
+                "batch_scope": {
+                    "schema_version": 1,
+                    "batch_number": 1,
+                    "task_ids": ["T1"],
+                    "sense_check_ids": [],
+                    "task_set_digest": "zzzz_999999999999",
+                },
+                "dispatch_identity": {"fence": {"token": 1}},
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "blocked",
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    batch2_dir = plan_dir / "execute_batches" / "batch_2"
+    batch2_dir.mkdir(parents=True, exist_ok=True)
+    (batch2_dir / "tasks_aaaa000000000000.json").write_text(
+        json.dumps(
+            {
+                "batch_scope": {
+                    "schema_version": 1,
+                    "batch_number": 2,
+                    "task_ids": ["T1"],
+                    "sense_check_ids": [],
+                    "task_set_digest": "aaaa000000000000",
+                },
+                "dispatch_identity": {"fence": {"token": 2}},
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "commands_run": ["pytest -q"],
+                        "head_sha": head,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert "finalize.json" == reason
+
+
+def test_latest_execution_batch_all_tasks_done_blocks_stale_pending_finalize_rows(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
