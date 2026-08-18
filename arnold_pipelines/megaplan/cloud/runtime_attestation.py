@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.parse import unquote, urlparse
 
+from arnold_pipelines.megaplan._core import now_utc
 from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
 from arnold_pipelines.megaplan.types import CliError
 
