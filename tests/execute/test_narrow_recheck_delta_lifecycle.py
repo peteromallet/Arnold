@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.execute.batch import (
     POST_DELTA_FAILED,
     POST_DELTA_PASSED,
     PRE_ENVELOPE_CAPTURED,
+    _current_worktree_digest,
     _narrow_recheck_delta_policy,
     _post_delta_artifact_path,
     _pre_envelope_artifact_path,
@@ -1035,3 +1036,65 @@ def test_post_delta_reruns_suite_even_when_durable_pre_envelope_exists(
     after = __import__("json").loads(env_artifact.read_text(encoding="utf-8"))
     assert after["status"] == PRE_ENVELOPE_CAPTURED
     assert after.get("admission") == "pre_dispatch_delta_envelope"
+
+
+def test_worktree_digest_is_content_sensitive_for_already_dirty_files(
+    tmp_path: Path,
+) -> None:
+    """A re-edit of an ALREADY-dirty file must change the worktree digest.
+
+    Codex ship-verdict item (20260818T2226Z): ``git status --porcelain``
+    records path/status only, so re-editing a file that is already dirty
+    leaves the porcelain line unchanged and a stale pre-envelope or
+    POST_DELTA_PASSED could be reused after the content actually changed.
+    The digest must include actual file content (diff + untracked hashes).
+    """
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    subprocess_run = __import__("subprocess").run
+    for argv in (
+        ["git", "init", "-q", str(project_dir)],
+        ["git", "-C", str(project_dir), "config", "user.email", "t@t"],
+        ["git", "-C", str(project_dir), "config", "user.name", "t"],
+    ):
+        subprocess_run(argv, check=True, capture_output=True)
+    sel = project_dir / "tests" / "cloud" / "test_progress_auditor.py"
+    sel.parent.mkdir(parents=True)
+    sel.write_text("def test_ok(): pass\n", encoding="utf-8")
+    subprocess_run(
+        ["git", "-C", str(project_dir), "add", "."],
+        check=True,
+        capture_output=True,
+    )
+    subprocess_run(
+        ["git", "-C", str(project_dir), "commit", "-qm", "base"],
+        check=True,
+        capture_output=True,
+    )
+    # Dirty edit #1: digest D1.
+    sel.write_text("def test_ok(): return 1\n", encoding="utf-8")
+    d1 = _current_worktree_digest(project_dir)
+    assert d1 is not None
+    # Re-edit the SAME already-dirty path with different content: the
+    # porcelain status line is identical (" M tests/..."), so a
+    # path/status-only digest would NOT change.  Content-sensitive must.
+    sel.write_text("def test_ok(): return 2\n", encoding="utf-8")
+    d2 = _current_worktree_digest(project_dir)
+    assert d2 is not None
+    assert d1 != d2, (
+        "worktree digest must change when an already-dirty file's content "
+        "changes (path/status-only digests are launderable)"
+    )
+    # Untracked file addition also changes the digest.
+    untracked = project_dir / "new_file.py"
+    untracked.write_text("x = 1\n", encoding="utf-8")
+    d3 = _current_worktree_digest(project_dir)
+    assert d3 is not None and d3 != d2
+    # Restoring the dirty file to HEAD content yields a different digest
+    # again (tree state changed back), and a second identical run is
+    # deterministic.
+    sel.write_text("def test_ok(): pass\n", encoding="utf-8")
+    untracked.unlink()
+    d4 = _current_worktree_digest(project_dir)
+    assert d4 is not None and d4 != d2 and d4 != d3
+    assert _current_worktree_digest(project_dir) == d4
