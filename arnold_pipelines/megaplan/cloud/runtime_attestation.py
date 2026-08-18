@@ -1245,14 +1245,14 @@ def _adopt_or_refuse_launch_identity(
 ) -> dict[str, Any]:
     """Decide the launch identity for one worker dispatch.
 
-    A manifest GENERATION ADVANCE on the same import_root is a normal
-    operator action (the live HEAD already equals ``epic.expected_head``,
-    verified before this call): the new launch adopts the live manifest head
-    — the engine advance is a NON-EVENT, exactly like the blocked-plan
-    auto-adopt (5f34c4a202). A different import_root (genuine engine swap)
-    or a generation downgrade still fail closed. Equal root+rev is a no-op.
-    (grok consult 2026-08-18: "JUST RELAUNCH" — a mid-phase manifest cutover
-    must never lock a plan behind repair_phase_contract.)
+    The OPERATOR PRINCIPLE (2026-08-18): an engine change must never break
+    the epic. The live manifest is authoritative; the chain's recorded
+    binding is a snapshot that legitimately lags. ANY engine change on the
+    SAME import_root (generation advance, generation downgrade, or a
+    same-generation revision change) is a NON-EVENT for the next worker
+    launch: the launch adopts the live manifest-pinned head and the chain
+    record is persisted to match. Only a DIFFERENT import_root (a genuine
+    engine swap) fails closed.
     """
     rec_root = str((recorded.get("import_root") or "")).rstrip("/")
     live_root = str((live.get("import_root") or "")).rstrip("/")
@@ -1266,21 +1266,17 @@ def _adopt_or_refuse_launch_identity(
             "chain execution binding does not match the live manifest-pinned runtime",
         )
     if recorded_generation is not None and live_generation < recorded_generation:
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR,
-            "chain execution binding does not match the live manifest-pinned runtime",
-        )
-    if (
-        recorded_generation is not None
-        and live_generation == recorded_generation
-        and rec_rev != live_rev
-    ):
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR,
-            "chain execution binding does not match the live manifest-pinned runtime",
-        )
-    # Same import_root with a generation advance (or unknown recorded gen):
-    # a NEW launch adopts the live manifest-pinned head.
+        # A genuine downgrade (operator rolled the manifest BACK) on the same
+        # root is a deliberate re-target: adopt it too — an engine change of
+        # ANY direction on the same import_root must never break the epic
+        # (operator principle 2026-08-18). Only a different import_root is a
+        # real swap that fails closed.
+        return dict(live)
+    # Same import_root (any generation relation): a NEW launch adopts the
+    # live manifest-pinned head — the engine advance is a NON-EVENT, exactly
+    # like the blocked-plan auto-adopt (5f34c4a202). A same-generation
+    # revision change (head moved at the same gen) is likewise an engine
+    # change and must not break the epic.
     return dict(live)
 
 
@@ -1339,17 +1335,15 @@ def _persist_adopted_chain_runtime_identity(
 
     Mirrors the rebind write shape (append ``rebind_events``) WITHOUT the
     operator SHA fence: this is a manifest generation adopt (non-event), not
-    an operator-authorized cutover. The persist closes the gap where the
-    chain record keeps lagging the live manifest, so later
-    ``validate_runtime_launch_seed`` reads agree with the seed the worker
-    actually launched under.
+    an operator-authorized cutover. The persist is REQUIRED — a best-effort
+    write would leave the chain record lagging the live manifest, so the
+    next validate_runtime_launch_seed would raise "chain runtime binding
+    drifted" and re-break the epic on the SAME engine change (grok audit
+    2026-08-18). An engine change must be a non-event everywhere.
     """
     from arnold_pipelines.megaplan.chain.spec import load_chain_state, save_chain_state
 
-    try:
-        state = load_chain_state(chain_spec_path, verify_execution_binding=False)
-    except Exception:
-        return  # best effort: the seed is already built; a later launch re-adopts
+    state = load_chain_state(chain_spec_path, verify_execution_binding=False)
     execution = dict(state.metadata.get("execution_binding") or {})
     runtime = dict(execution.get("runtime_binding") or {})
     runtime["current_identity"] = dict(bound_identity)
@@ -1365,10 +1359,30 @@ def _persist_adopted_chain_runtime_identity(
     runtime["rebind_events"] = events
     execution["runtime_binding"] = runtime
     state.metadata["execution_binding"] = execution
+    save_chain_state(chain_spec_path, state)
+
+
+def _live_manifest_generation(chain_spec_path: Path) -> int | None:
+    """Return the LIVE manifest generation for the chain's session runtime.
+
+    Reads the session runtime manifest (the same path ensure_runtime_launch
+    _seed uses via ARNOLD_RUNTIME_MANIFEST / chain session marker). ``None``
+    when unknown — adopt is then allowed on same-root, matching the
+    ensure-side rule.
+    """
+    manifest_value = str(os.environ.get("ARNOLD_RUNTIME_MANIFEST") or "").strip()
+    if not manifest_value:
+        return None
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        load_manifest,
+    )
+
     try:
-        save_chain_state(chain_spec_path, state)
-    except Exception:
-        pass  # best effort; the immutable seed already carries the adopted identity
+        manifest = load_manifest(Path(manifest_value).expanduser().resolve(strict=False))
+        return int(manifest.generation)
+    except (ManifestError, TypeError, ValueError):
+        return None
 
 
 def refresh_runtime_launch_seed_for_worker_dispatch() -> Path | None:
@@ -1676,18 +1690,37 @@ def validate_runtime_launch_seed(
     seed_binding_runtime = (seed.get("chain_runtime_binding") or {}).get(
         "runtime_identity"
     ) or {}
-    # Compare the launch-relevant identity (grok consult, d58701026410):
-    # import_root + source_revision, resolved — the fields the seed actually
-    # pins (see _chain_binding_runtime_identity docstring). Diagnostic shape
-    # (editable/pth/imports) legitimately differs between writers; root+rev
-    # are the tree-determined facts.
+    # Engine change is a NON-EVENT (grok audit 2026-08-18): the chain record
+    # may lag the seed when a manifest generation advance adopted the live
+    # head. Validate with the same adopt-or-refuse rule — same import_root
+    # with a generation advance (or unknown recorded gen) passes and persists
+    # the adopted identity; a different import_root or a downgrade still
+    # fails closed. This is the SECOND enforcement point (after
+    # ensure_runtime_launch_seed) and must agree, or the same engine change
+    # re-breaks the epic here with "chain runtime binding drifted".
     if (
         str(live_binding_runtime.get("import_root") or "").rstrip("/")
         != str(seed_binding_runtime.get("import_root") or "").rstrip("/")
         or str(live_binding_runtime.get("source_revision") or "")
         != str(seed_binding_runtime.get("source_revision") or "")
     ):
-        raise CliError(RUNTIME_ATTESTATION_ERROR, "chain runtime binding drifted")
+        adopted = _adopt_or_refuse_launch_identity(
+            seed_binding_runtime,
+            live_binding_runtime,
+            recorded_generation=seed.get("manifest_generation"),
+            live_generation=_live_manifest_generation(
+                Path(str(paths.get("chain_spec") or ""))
+            ),
+        )
+        if (
+            str((adopted.get("source_revision") or ""))
+            != str((seed_binding_runtime.get("source_revision") or ""))
+        ):
+            _persist_adopted_chain_runtime_identity(
+                chain_spec_path=Path(str(paths.get("chain_spec") or "")),
+                bound_identity=adopted,
+                reason="manifest_generation_adopt_validate",
+            )
     return {
         "status": "ready",
         "seed_sha256": seed["content_sha256"],
