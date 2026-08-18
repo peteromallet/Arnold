@@ -1060,3 +1060,42 @@ def test_legacy_runtime_binding_migration_is_safe() -> None:
     )
     assert safe is True
     assert changed == []
+
+
+def test_chain_spec_drift_without_asset_change_is_safe() -> None:
+    """A chain-spec CONTENT edit (e.g. profile switch) can change the
+    full-file chain_spec_sha256 while every comparable ASSET kind stays
+    identical (milestone briefs/north-star derive from milestone structure,
+    not profile pins). changed_asset_kinds=[] must not block reconciliation —
+    the only drift is the safe chain_spec_sha256 field (mega m4, occurrence
+    35afd4e47587: the fixer hit exactly this and needed `chain rebind`)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "revision_verification": {"ok": True},
+    }
+    active = {
+        "chain_spec_sha256": "c" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["chain_spec_sha256"],
+    )
+    assert safe is True
+    assert changed == []

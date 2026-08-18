@@ -860,6 +860,18 @@ def _future_source_reconciliation_is_safe(
         if expected_assets.get(kind) != active_assets.get(kind)
     )
     if not changed_kinds:
+        # A pure chain-spec CONTENT edit (e.g. profile switch) changes the
+        # full-file chain_spec_sha256 but may leave every comparable ASSET
+        # kind unchanged (milestone briefs, north star, bound assets all
+        # derive from the milestone structure, not the profile pins). With
+        # milestone_sequence + initiative_path already verified equal and the
+        # only drift being the safe chain_spec_sha256 field, this is the
+        # same intentional spec edit — safe for reconciliation. (mega m4,
+        # occurrence 35afd4e47587: changed_asset_kinds=[] drift.)
+        if drift_fields == ["chain_spec_sha256"] or (
+            set(drift_fields) <= {"chain_spec_sha256", "bundle_sha256"}
+        ):
+            return True, []
         return False, []
     cutoff = int(getattr(state, "current_milestone_index", -1))
     if not getattr(state, "current_plan_name", None):
