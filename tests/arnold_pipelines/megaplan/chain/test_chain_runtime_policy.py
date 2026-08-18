@@ -1289,3 +1289,81 @@ def test_blocked_plan_auto_adopts_runtime_drift_after_spec_reconcile() -> None:
         assert result["status"] == "reconcile_required"
     finally:
         eb.execution_binding_report = _original_report
+
+
+def test_rcsu_covered_asset_drift_is_reconcile_required() -> None:
+    """A milestone-brief amendment at the current milestone (operator
+    replan + registered required_canonical_source_updates status=reconciled
+    matching the active asset) must yield reconcile_required, not drift —
+    drift_fields=['assets'] alone previously forced status=drift even when
+    _reconciled_requirements_cover_revision_errors was True, refusing the
+    chain load (astrid m4: brief amendment 710ed4a4 -> replan)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 3
+        current_plan_name = "m4-bridge-sdk-and-cli-domains-20260818-0642"
+        current_state = "planned"
+        active_step = None
+        active_worker = None
+        completed = None
+        last_state = "planned"
+        metadata = {
+            "required_canonical_source_updates": {
+                "m4": {
+                    "status": "reconciled",
+                    "milestone_index": 3,
+                    "expected": {"semantic_sha256": "s" * 64},
+                }
+            },
+        }
+
+    # Monkeypatch report inputs: active identity carries the covered error.
+    def _fake_report(spec_path, state, *, active_identity=None):
+        active = {
+            "ready": False,
+            "errors": ["asset_not_at_intended_revision:milestone_brief:3"],
+            "assets": [{"kind": "milestone_brief:3", "semantic_sha256": "s" * 64}],
+            "chain_spec_sha256": "a" * 64,
+            "milestone_sequence": [{"index": i, "label": f"m{i+1}"} for i in range(9)],
+            "initiative_path": "astrid-first",
+            "intended_initiative_revision": "b" * 40,
+            "revision_verification": {"ok": True},
+        }
+        expected = {
+            "chain_spec_sha256": "c" * 64,
+            "milestone_sequence": [{"index": i, "label": f"m{i+1}"} for i in range(9)],
+            "initiative_path": "astrid-first",
+            "assets": [{"kind": "milestone_brief:3", "semantic_sha256": "t" * 64}],
+            "intended_initiative_revision": "d" * 40,
+            "revision_verification": {"ok": True},
+        }
+        return {
+            "schema": eb.BINDING_SCHEMA,
+            "required": True,
+            "status": "reconcile_required",
+            "drift_fields": ["assets"],
+            "bound_import_root_match": False,
+            "changed_asset_kinds": ["milestone_brief:3"],
+            "expected": expected,
+            "active": active,
+            "runtime_binding": {
+                "required": True,
+                "status": "match",
+                "expected": {"content_sha256": "e" * 64},
+                "active": {"content_sha256": "e" * 64},
+                "active_errors": [],
+            },
+        }
+
+    _original_report = eb.execution_binding_report
+    eb.execution_binding_report = _fake_report
+    try:
+        result = eb.assert_execution_binding(
+            __import__("pathlib").Path("/tmp/spec.yaml"),
+            _State(),
+            operation="chain start",
+        )
+        assert result["status"] == "reconcile_required"
+    finally:
+        eb.execution_binding_report = _original_report
