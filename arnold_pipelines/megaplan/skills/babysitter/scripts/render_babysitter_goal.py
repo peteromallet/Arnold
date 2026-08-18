@@ -253,6 +253,17 @@ Mandatory flow — follow the five steps exactly:
   automatically. Only investigate if the NEW dispatch produces a fresh
   failure that is genuinely new (different error class, recorded after the
   deploy).
+  BLOCKED-PLAN AUTO-ADOPT (2026-08-18, 5f34c4a202): a plan that is BLOCKED
+  with no live worker (chain last_state=blocked, no active_step/worker) and
+  whose recorded runtime binding lags the current manifest head is NOT a
+  rebind failure — assert_execution_binding now auto-adopts the manifest
+  head for that shape, so `chain start` / `resume` will succeed and rebuild
+  the seed automatically. If you see ``immutable spec binding is not
+  accepted`` / ``chain_runtime_binding_drift`` on a BLOCKED plan, do NOT run
+  the manual rebind ceremony and do NOT investigate the binding machinery:
+  just DRIVE (chain start / resume with the canonical env). The drive
+  auto-adopts. Only an ACTIVE plan (live worker/step) needs the explicit
+  rebind, and only a FRESH failure after the drive deserves investigation.
   TERMINAL CONTRACT (codex consult 2026-08-17): each terminal call must pass
   an explicit ``workdir`` — NEVER issue a standalone ``cd`` as a command. The
   shell is persistent (cwd survives), but a bare cd is treated as non-progress
