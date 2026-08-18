@@ -1121,19 +1121,26 @@ def ensure_runtime_launch_seed(
         # view; root+rev are the facts the tree determines. Equal root+rev
         # with different diagnostic shapes (editable/pth/imports populated vs
         # None depending on which writer stored them) is the same runtime.
-        # Fail closed on root or revision mismatch only.
-        chain_root = str(
-            (chain_identity.get("import_root") or "").rstrip("/")
+        # A manifest GENERATION ADVANCE on the same import_root is a normal
+        # operator action and must be a NON-EVENT for the next worker launch:
+        # the launch adopts the live manifest-pinned head (grok consult
+        # 2026-08-18: "JUST RELAUNCH"). A different import_root or a
+        # generation downgrade still fail closed.
+        bound_identity = _adopt_or_refuse_launch_identity(
+            chain_identity,
+            live_identity,
+            recorded_generation=_recorded_seed_generation(chain_spec_path),
+            live_generation=int(manifest.generation),
         )
-        live_root = str((live_identity.get("import_root") or "").rstrip("/"))
-        chain_rev = str(chain_identity.get("source_revision") or "")
-        live_rev = str(live_identity.get("source_revision") or "")
-        if chain_root != live_root or chain_rev != live_rev:
-            raise CliError(
-                RUNTIME_ATTESTATION_ERROR,
-                "chain execution binding does not match the live manifest-pinned runtime",
+        if (
+            str((bound_identity.get("source_revision") or ""))
+            != str((chain_identity.get("source_revision") or ""))
+        ):
+            _persist_adopted_chain_runtime_identity(
+                chain_spec_path=chain_spec_path,
+                bound_identity=bound_identity,
+                reason="manifest_generation_adopt",
             )
-        bound_identity = chain_identity
     else:
         bound_identity = live_identity
     marker = _json_file(marker_path, label="cloud session marker")
@@ -1227,6 +1234,141 @@ def ensure_runtime_launch_seed(
         seed_sha256=seed_sha,
     )
     return seed_path
+
+
+def _adopt_or_refuse_launch_identity(
+    recorded: Mapping[str, Any],
+    live: Mapping[str, Any],
+    *,
+    recorded_generation: int | None,
+    live_generation: int,
+) -> dict[str, Any]:
+    """Decide the launch identity for one worker dispatch.
+
+    A manifest GENERATION ADVANCE on the same import_root is a normal
+    operator action (the live HEAD already equals ``epic.expected_head``,
+    verified before this call): the new launch adopts the live manifest head
+    — the engine advance is a NON-EVENT, exactly like the blocked-plan
+    auto-adopt (5f34c4a202). A different import_root (genuine engine swap)
+    or a generation downgrade still fail closed. Equal root+rev is a no-op.
+    (grok consult 2026-08-18: "JUST RELAUNCH" — a mid-phase manifest cutover
+    must never lock a plan behind repair_phase_contract.)
+    """
+    rec_root = str((recorded.get("import_root") or "")).rstrip("/")
+    live_root = str((live.get("import_root") or "")).rstrip("/")
+    rec_rev = str(recorded.get("source_revision") or "")
+    live_rev = str(live.get("source_revision") or "")
+    if rec_root == live_root and rec_rev == live_rev:
+        return dict(recorded)
+    if rec_root != live_root:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "chain execution binding does not match the live manifest-pinned runtime",
+        )
+    if recorded_generation is not None and live_generation < recorded_generation:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "chain execution binding does not match the live manifest-pinned runtime",
+        )
+    if (
+        recorded_generation is not None
+        and live_generation == recorded_generation
+        and rec_rev != live_rev
+    ):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "chain execution binding does not match the live manifest-pinned runtime",
+        )
+    # Same import_root with a generation advance (or unknown recorded gen):
+    # a NEW launch adopts the live manifest-pinned head.
+    return dict(live)
+
+
+def _recorded_seed_generation(chain_spec_path: Path) -> int | None:
+    """Return the generation the CURRENT orchestration seed was built for.
+
+    Reads ``MEGAPLAN_RUNTIME_LAUNCH_SEED`` when set (worker dispatch) and
+    falls back to the chain's recorded runtime identity; ``None`` when
+    unknown (first launch), in which case adopt is allowed on same-root.
+    """
+    seed_value = str(os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED") or "").strip()
+    if seed_value:
+        try:
+            seed = _json_file(Path(seed_value), label="runtime launch seed")
+            generation = seed.get("manifest_generation")
+            if isinstance(generation, int):
+                return generation
+            input_paths = seed.get("input_paths")
+            if isinstance(input_paths, Mapping):
+                manifest_value = str(input_paths.get("manifest") or "").strip()
+                if manifest_value:
+                    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+                        load_manifest,
+                    )
+
+                    try:
+                        manifest = load_manifest(Path(manifest_value))
+                        return int(manifest.generation)
+                    except Exception:
+                        return None
+        except Exception:
+            return None
+    try:
+        from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+        state = load_chain_state(chain_spec_path, verify_execution_binding=False)
+        execution = (state.metadata or {}).get("execution_binding")
+        execution = execution if isinstance(execution, Mapping) else {}
+        runtime = execution.get("runtime_binding")
+        runtime = runtime if isinstance(runtime, Mapping) else {}
+        generation = runtime.get("manifest_generation")
+        if isinstance(generation, int):
+            return generation
+    except Exception:
+        pass
+    return None
+
+
+def _persist_adopted_chain_runtime_identity(
+    *,
+    chain_spec_path: Path,
+    bound_identity: Mapping[str, Any],
+    reason: str,
+) -> None:
+    """Persist the adopted runtime identity on the chain record.
+
+    Mirrors the rebind write shape (append ``rebind_events``) WITHOUT the
+    operator SHA fence: this is a manifest generation adopt (non-event), not
+    an operator-authorized cutover. The persist closes the gap where the
+    chain record keeps lagging the live manifest, so later
+    ``validate_runtime_launch_seed`` reads agree with the seed the worker
+    actually launched under.
+    """
+    from arnold_pipelines.megaplan.chain.spec import load_chain_state, save_chain_state
+
+    try:
+        state = load_chain_state(chain_spec_path, verify_execution_binding=False)
+    except Exception:
+        return  # best effort: the seed is already built; a later launch re-adopts
+    execution = dict(state.metadata.get("execution_binding") or {})
+    runtime = dict(execution.get("runtime_binding") or {})
+    runtime["current_identity"] = dict(bound_identity)
+    events = list(runtime.get("rebind_events") or [])
+    events.append(
+        {
+            "at": now_utc(),
+            "reason": reason,
+            "direction": "manifest_generation_adopt",
+            "to_source_revision": str(bound_identity.get("source_revision") or ""),
+        }
+    )
+    runtime["rebind_events"] = events
+    execution["runtime_binding"] = runtime
+    state.metadata["execution_binding"] = execution
+    try:
+        save_chain_state(chain_spec_path, state)
+    except Exception:
+        pass  # best effort; the immutable seed already carries the adopted identity
 
 
 def refresh_runtime_launch_seed_for_worker_dispatch() -> Path | None:
