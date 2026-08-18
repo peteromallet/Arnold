@@ -7255,6 +7255,22 @@ def _configured_spec_worker_failure_class(worker: WorkerResult) -> str | None:
     )
 
 
+def _configured_spec_pre_tool(error: CliError) -> bool:
+    """Return whether the failure carries a literal pre-tool attestation."""
+    return error.extra.get("_pre_tool_attested") is True
+
+
+def _configured_spec_worker_pre_tool(worker: WorkerResult) -> bool:
+    """Return whether a failed worker payload carries a literal pre-tool attestation."""
+    payload = worker.payload
+    if not isinstance(payload, dict) or payload.get("success") is not False:
+        return False
+    details = payload.get("details")
+    if not isinstance(details, dict):
+        return False
+    return details.get("_pre_tool_attested") is True
+
+
 def _advance_configured_spec_fallback(
     fallback_metadata: dict[str, Any],
     failure_class: str | None,
@@ -7262,11 +7278,19 @@ def _advance_configured_spec_fallback(
     mode: str,
     step: str,
     read_only: bool,
+    pre_tool: bool = False,
 ) -> tuple[AgentMode, dict[str, Any]] | None:
     # Never redispatch after a worker may have mutated the checkout. This is
     # stricter than the provider/model relationship and keeps mid-write
     # failures fail-closed for both explicit and profile-provided chains.
-    if not read_only or step in _EXECUTE_STEPS:
+    # A launch-time (pre-tool) provider failure on a non-execute phase may
+    # advance: no worker tool ran in THIS attempt, so nothing in the
+    # checkout can have been mutated by it. (quota/availability on a fresh
+    # plan worker is exactly this case; fallback_chains.py classifies quota
+    # as advance-eligible because it will not clear by waiting.)
+    if step in _EXECUTE_STEPS:
+        return None
+    if not read_only and pre_tool is not True:
         return None
     if failure_class not in _CONFIGURED_SPEC_FALLBACK_CLASSES:
         return None
@@ -7878,6 +7902,7 @@ def _run_step_with_worker_legacy(
                 mode=mode,
                 step=step,
                 read_only=read_only,
+                pre_tool=_configured_spec_worker_pre_tool(worker),
             )
             if fallback_attempt is not None:
                 if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
@@ -7933,6 +7958,7 @@ def _run_step_with_worker_legacy(
                 mode=mode,
                 step=step,
                 read_only=read_only,
+                pre_tool=_configured_spec_pre_tool(error),
             )
             if fallback_attempt is not None:
                 if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":

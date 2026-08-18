@@ -1889,6 +1889,56 @@ def _resolve_hermes_cost(result: dict) -> tuple[float, int, int, int]:
     return cost_usd, prompt_tokens, completion_tokens, total_tokens
 
 
+def _message_has_tool_activity(message: object) -> bool:
+    """Return True when a session message records any tool invocation.
+
+    Malformed messages cannot support a pre-tool attestation, so they
+    conservatively count as tool activity (fail-closed).
+    """
+    if not isinstance(message, dict):
+        return True
+    if message.get("role") == "tool":
+        return True
+    tool_calls = message.get("tool_calls")
+    return bool(tool_calls)
+
+
+def _pre_tool_attested(
+    baseline: list[dict],
+    observed: object,
+) -> bool:
+    """True only when THIS invocation ran zero tools since ``baseline``.
+
+    Conservative by construction: unverifiable, truncated, or reordered
+    history (i.e. anything that does not preserve the baseline as a strict
+    prefix) fails the attestation.  This gates configured-spec fallback for
+    non-read-only phases: no tool ran in this attempt, so nothing in the
+    checkout can have been mutated by it, so redispatch to the next spec is
+    safe.
+    """
+    if not isinstance(observed, list):
+        return False
+    if len(observed) < len(baseline):
+        return False
+    if observed[: len(baseline)] != baseline:
+        return False
+    return not any(
+        _message_has_tool_activity(message)
+        for message in observed[len(baseline):]
+    )
+
+
+def _with_pre_tool_attestation(error: CliError, attested: bool) -> CliError:
+    """Return a copy of ``error`` carrying the pre-tool attestation in extra."""
+    return CliError(
+        error.code,
+        error.message,
+        valid_next=error.valid_next,
+        extra={**error.extra, "_pre_tool_attested": attested},
+        exit_code=error.exit_code,
+    )
+
+
 def run_hermes_step(
     step: str,
     state: PlanState,
@@ -1960,6 +2010,12 @@ def run_hermes_step(
             conversation_history = db.get_messages_as_conversation(session_id)
         except Exception:
             conversation_history = None
+
+    # Pre-tool attestation baseline: the session messages already present
+    # BEFORE this invocation runs.  Every tool the model requested in THIS
+    # attempt appends after this prefix; a strict-prefix check with zero
+    # appended tool activity proves no checkout mutation by this worker.
+    _attempt_baseline = list(conversation_history or [])
 
     # Generate new session ID if needed
     if not session_id:
@@ -2583,7 +2639,22 @@ def run_hermes_step(
         from arnold_pipelines.megaplan.runtime.sandbox import install_sandbox
         _sandbox_stack.enter_context(install_sandbox(project_dir))
 
-    # Run — with fallback to OpenRouter for MiniMax if primary API fails
+    # Run — with fallback to OpenRouter for MiniMax if primary API fails.
+    # On escape, every error is annotated with the pre-tool attestation:
+    # did THIS invocation run any tool before failing?  A launch-time
+    # (pre-tool) failure on a non-read-only, non-execute phase may advance
+    # the configured fallback chain — no worker tool ran, so nothing in the
+    # checkout can have been mutated by this attempt.
+    result: dict | None = None
+
+    def _observed_session_messages() -> object:
+        if isinstance(result, dict) and isinstance(result.get("messages"), list):
+            return result["messages"]
+        try:
+            return SessionDB(db_path=_hermes_db_path).get_messages_as_conversation(session_id)
+        except Exception:
+            return None
+
     started = time.monotonic()
     try:
         try:
@@ -2692,6 +2763,32 @@ def run_hermes_step(
                 ) from exc
     finally:
         _sandbox_stack.close()
+        exc_type, exc_value, _ = sys.exc_info()
+        if exc_value is not None:
+            attested = _pre_tool_attested(
+                _attempt_baseline,
+                _observed_session_messages(),
+            )
+            if isinstance(exc_value, CliError):
+                annotated = _with_pre_tool_attestation(exc_value, attested)
+                raise annotated from exc_value
+            from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
+            wrapped = CliError(
+                "worker_error",
+                f"Hermes worker failed for step '{step}': {exc_value}",
+                extra={
+                    "session_id": session_id,
+                    "_external_error": (
+                        ExternalError.from_exception(
+                            exc_value,
+                            provider=(model or "").split(":", 1)[0] or "unknown",
+                        ).to_dict()
+                        if exc_value is not None
+                        else None
+                    ),
+                },
+            )
+            raise _with_pre_tool_attestation(wrapped, attested) from exc_value
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     cost_usd, prompt_tokens, completion_tokens, total_tokens = _resolve_hermes_cost(result)
