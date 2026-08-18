@@ -4027,15 +4027,21 @@ def _current_source_digest(project_dir: Path) -> str | None:
 
 
 def _current_worktree_digest(project_dir: Path) -> str | None:
-    """Worktree-aware source digest: HEAD tree PLUS working-tree dirtiness.
+    """Worktree-aware source digest: HEAD tree PLUS working-tree CONTENT.
 
     ``_compute_code_hash`` hashes ``git ls-tree HEAD`` only, so it cannot see
     uncommitted task changes (this occurrence's task outputs land uncommitted
     on the workspace tree).  Resume-reuse decisions must invalidate when the
-    WORKING TREE changes, so this combines the HEAD tree with
-    ``git status --porcelain`` output.  Falls back to the plain source digest
-    when git is unavailable.  ``None`` only when nothing can be computed —
-    callers treat ``None`` as a mismatch and fail closed.
+    WORKING TREE changes, so this combines the HEAD tree with the CONTENT of
+    every staged/unstaged change and every untracked file.  A path/status-only
+    view (``git status --porcelain``) is NOT enough — re-editing an
+    already-dirty file leaves the porcelain line unchanged, which would let a
+    stale envelope or POST_DELTA_PASSED be reused after the content actually
+    changed (codex 20260818T2226Z verdict).  ``git diff --binary HEAD`` carries
+    the actual content of all tracked changes (staged + unstaged); untracked
+    files are hashed directly.  Falls back to the plain source digest when git
+    is unavailable.  ``None`` only when nothing can be computed — callers
+    treat ``None`` as a mismatch and fail closed.
     """
     try:
         head = subprocess.run(
@@ -4046,14 +4052,51 @@ def _current_worktree_digest(project_dir: Path) -> str | None:
         )
         if head.returncode == 0 and head.stdout.strip():
             blob = head.stdout
-            status = subprocess.run(
-                ["git", "-C", str(project_dir), "status", "--porcelain"],
+            diff = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(project_dir),
+                    "diff",
+                    "--binary",
+                    "HEAD",
+                    "--",
+                    ".",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if diff.returncode == 0:
+                blob += "\n" + diff.stdout
+            untracked = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(project_dir),
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
-            if status.returncode == 0:
-                blob += "\n" + status.stdout
+            if untracked.returncode == 0:
+                for path in (p for p in untracked.stdout.split("\x00") if p):
+                    blob += f"\n? {path}"
+                    full = Path(project_dir) / path
+                    if full.exists() and full.is_file():
+                        try:
+                            digest = hashlib.sha256(
+                                full.read_bytes()
+                            ).hexdigest()
+                            blob += f" sha256:{digest}"
+                        except OSError:
+                            blob += " UNREADABLE"
+                    else:
+                        blob += " MISSING"
             return "sha256:" + hashlib.sha256(
                 blob.encode("utf-8")
             ).hexdigest()
