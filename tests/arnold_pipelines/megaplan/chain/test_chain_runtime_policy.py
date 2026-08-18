@@ -1101,6 +1101,86 @@ def test_chain_spec_drift_without_asset_change_is_safe() -> None:
     assert changed == []
 
 
+def test_spec_edit_with_revision_pin_co_drift_is_safe() -> None:
+    """A chain-spec CONTENT edit (profile switch) changes BOTH the
+    full-file chain_spec_sha256 AND the content-pinned
+    intended_initiative_revision (the chain.yaml content hash feeds both).
+    With changed_asset_kinds=[] and the only drift being those two fields
+    from the same edit, reconciliation must be safe (mega m4, occurrence
+    35afd4e47587: the partnered-5 profile pin produced exactly
+    drift_fields=['chain_spec_sha256', 'intended_initiative_revision'])."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "c" * 40,
+        "revision_verification": {"ok": True},
+    }
+    active = {
+        "chain_spec_sha256": "d" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "e" * 40,
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["chain_spec_sha256", "intended_initiative_revision"],
+    )
+    assert safe is True
+    assert changed == []
+
+
+def test_revision_pin_drift_alone_is_unsafe() -> None:
+    """intended_initiative_revision drift WITHOUT chain_spec_sha256 is a
+    different hazard (initiative content changed while the spec file did
+    not) and must stay refused."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "c" * 40,
+        "revision_verification": {"ok": True},
+    }
+    active = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "e" * 40,
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["intended_initiative_revision"],
+    )
+    assert safe is False
+    assert changed == []
+
+
 def test_blocked_plan_auto_adopts_runtime_drift() -> None:
     """A blocked plan with no live worker may auto-adopt the current manifest
     head: nothing is executing, so the engine advance is a non-event
