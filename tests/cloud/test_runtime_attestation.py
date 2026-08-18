@@ -1473,3 +1473,32 @@ def test_ensure_runtime_launch_seed_rebuilds_pointerless_or_wrong_pointer_seed(
     assert final["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
     assert final["input_paths"]["manifest"] != str(other.resolve(strict=False))
     assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(third)
+
+def test_manifest_matches_tolerates_extra_stored_entries(tmp_path: Path) -> None:
+    """Old seeds (built when chain_spec was pinned) carry a 3-entry manifest;
+    the post-drop validation shape compares only hot_env + supervisor_receipt.
+    Extra stored entries (chain_spec) must be ignored so pre-fix seeds validate
+    again — a genuine hot_env edit must still fail (seed schema migration)."""
+    hot_env = tmp_path / ".cloud-hot-env"
+    receipt = tmp_path / "last-prepare.json"
+    chain_spec = tmp_path / "chain.yaml"
+    hot_env.write_text("KEY=abc\n", encoding="utf-8")
+    receipt.write_text('{"prepared": true}\n', encoding="utf-8")
+    chain_spec.write_text("milestones: []\n", encoding="utf-8")
+
+    # Old seed shape: 3 entries including chain_spec.
+    old_manifest = attestation._manifest([hot_env, receipt, chain_spec])
+
+    # New validation shape: only hot_env + supervisor_receipt.
+    new_paths = [hot_env, receipt]
+    assert attestation._manifest_matches(new_paths, old_manifest) is True
+
+    # Genuine hot_env edit is still drift.
+    hot_env.write_text("KEY=rotated\n", encoding="utf-8")
+    assert attestation._manifest_matches(new_paths, old_manifest) is False
+    hot_env.write_text("KEY=abc\n", encoding="utf-8")
+
+    # Missing live path from stored manifest fails closed.
+    missing = tmp_path / "nope.json"
+    missing.write_text("x\n", encoding="utf-8")
+    assert attestation._manifest_matches([missing], old_manifest) is False
