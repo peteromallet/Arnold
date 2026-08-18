@@ -25,7 +25,12 @@ from pathlib import Path
 
 BOX_HOST = "root@159.69.51.216"
 BOX_CONTAINER = "megaplan-cloud-agent-resident-only"
-LOCAL_ROOTS = [Path("/Users/peteromalley/Documents")]
+# Local epic roots: override on the box (no Mac paths there).
+LOCAL_ROOTS = [
+    Path(p)
+    for p in os.environ.get("EPIC_BOARD_LOCAL_ROOTS", "/Users/peteromalley/Documents").split(":")
+    if p
+]
 
 
 def _now() -> str:
@@ -71,6 +76,22 @@ def _local_epics() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _box_snapshot(epics: list[str] | None = None) -> list[dict]:
+    cmd: list[str]
+    if os.path.exists("/workspace/.megaplan"):
+        # Running inside the box container: fixer-status is local.
+        cmd = ["fixer-status"]
+        if epics:
+            cmd.extend(epics)
+        cmd.append("--json")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            out = r.stdout.strip()
+            start = out.find("[")
+            if start < 0:
+                return []
+            return json.loads(out[start:])
+        except Exception:
+            return []
     cmd = ["ssh", "-o", "ConnectTimeout=30", BOX_HOST,
            "docker", "exec", BOX_CONTAINER, "fixer-status"]
     if epics:
@@ -98,6 +119,13 @@ def _box_epic_names() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _run_on_box(script: str) -> str:
+    if os.path.exists("/workspace/.megaplan"):
+        # Running inside the box container: execute directly.
+        try:
+            r = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, timeout=120)
+            return (r.stdout or "") + (r.stderr or "")
+        except Exception as e:
+            return f"<exec error: {e}>"
     # Quote the script for the remote shell so ssh doesn't re-split it.
     # The script itself runs inside `docker exec ... bash -lc <script>`.
     inner = script.replace("'", "'\\''")
