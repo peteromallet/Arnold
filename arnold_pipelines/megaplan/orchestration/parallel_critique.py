@@ -464,6 +464,35 @@ def _run_check(
     )
 
 
+def critique_seed_output_name(check_id: str, *, agent: str | None) -> str:
+    """Return the single-check template file name for *agent*.
+
+    Codex workers require an EMPTY response path (the local-response
+    contract forbids overwriting existing evidence), so their schema seed is
+    written to ``critique_check_<id>.seed.json`` and the WorkerUnit output
+    path is left ``None`` (the runner mints a per-occurrence response path).
+    Hermes intentionally reads a filled template from its output path, so its
+    seed stays ``critique_check_<id>.json`` and doubles as the output.
+    """
+    if agent == "codex":
+        return f"critique_check_{check_id}.seed.json"
+    return f"critique_check_{check_id}.json"
+
+
+def _unit_evidence_path(plan_dir: Path, unit: WorkerUnit) -> Path:
+    """Resolve the deterministic audit path for a unit's raw output.
+
+    Codex units run with ``output_path=None`` (a per-occurrence response path
+    is minted at dispatch); raw evidence is persisted beside the check's
+    schema seed so the audit trail stays deterministic and replayable.
+    """
+    path = unit.output_path
+    if path is None:
+        check_id = str(unit.extra.get("check_id", "?"))
+        path = plan_dir / f"critique_check_{check_id}.seed.json"
+    return Path(path)
+
+
 def run_parallel_critique(
     state: PlanState,
     plan_dir: Path,
@@ -547,10 +576,14 @@ def run_parallel_critique(
                 "the critique handler must attach a resolved AgentMode per SD1",
             )
 
-        _output_path = write_single_check_template(
-            plan_dir, state, _check, f"critique_check_{_check['id']}.json",
+        _is_codex = getattr(_resolved, "agent", None) == "codex"
+        _seed_name = critique_seed_output_name(
+            _check["id"], agent=getattr(_resolved, "agent", None)
         )
-        _prompt = _prompt_builder(state, plan_dir, root, _check, _output_path)
+        _seed_path = write_single_check_template(
+            plan_dir, state, _check, _seed_name,
+        )
+        _prompt = _prompt_builder(state, plan_dir, root, _check, _seed_path)
         _seam_tier = (
             ModelTier.ENFORCED if _resolved.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
         )
@@ -560,7 +593,7 @@ def run_parallel_critique(
                 step="critique",
                 resolved=_resolved,
                 prompt=_prompt,
-                output_path=_output_path,
+                output_path=None if _is_codex else _seed_path,
                 read_only=True,
                 validation_step="critique",
                 schema=_schema,
@@ -704,7 +737,7 @@ def run_parallel_critique(
     def _repair_unit(unit: WorkerUnit, retry_number: int) -> WorkerUnit:
         extra = dict(unit.extra)
         extra["wbc_dispatch_key"] = (
-            f"critique:{unit.extra.get('check_id', unit.output_path.stem)}:"
+            f"critique:{unit.extra.get('check_id', _unit_evidence_path(plan_dir, unit).stem)}:"
             f"shape-repair:{retry_number}"
         )
         return WorkerUnit(
@@ -729,7 +762,7 @@ def run_parallel_critique(
             error_kind = None
             if isinstance(exc, CliError):
                 _persist_critique_raw_output(
-                    unit.output_path,
+                    _unit_evidence_path(plan_dir, unit),
                     exc.extra.get("raw_output") or exc.message,
                 )
                 cause = str(exc.extra.get("source") or "") or None
@@ -737,7 +770,7 @@ def run_parallel_critique(
                 retryable = retryable_raw if isinstance(retryable_raw, bool) else None
                 error_kind = str(exc.code or "") or None
             else:
-                _persist_critique_raw_output(unit.output_path, str(exc))
+                _persist_critique_raw_output(_unit_evidence_path(plan_dir, unit), str(exc))
             reason = f"parallel critique worker failed for check '{check_id}': {exc}"
             return (
                 {
@@ -803,7 +836,7 @@ def run_parallel_critique(
         )
         if isinstance(_item, WorkerUnitResult):
             _persist_critique_raw_output(
-                units[_idx].output_path,
+                _unit_evidence_path(plan_dir, units[_idx]),
                 _item.raw_output,
                 iteration=int(state["iteration"]),
             )
@@ -812,7 +845,7 @@ def run_parallel_critique(
             _parsed_results[_idx] = _parse_result(_idx, _payload, units[_idx])
         except _RetryableCritiqueContractError as exc:
             if isinstance(_item, WorkerUnitResult):
-                _persist_critique_raw_output(units[_idx].output_path, _item.raw_output)
+                _persist_critique_raw_output(_unit_evidence_path(plan_dir, units[_idx]), _item.raw_output)
             _failures[_idx] = exc
 
     _retry_units = units
@@ -852,7 +885,7 @@ def run_parallel_critique(
             )
             if isinstance(_item, WorkerUnitResult):
                 _persist_critique_raw_output(
-                    _unit.output_path,
+                    _unit_evidence_path(plan_dir, _unit),
                     _item.raw_output,
                     iteration=int(state["iteration"]),
                 )
@@ -861,7 +894,7 @@ def run_parallel_critique(
                 _parsed_results[_original_idx] = _parse_result(_original_idx, _payload, _unit)
             except _RetryableCritiqueContractError as exc:
                 if isinstance(_item, WorkerUnitResult):
-                    _persist_critique_raw_output(_unit.output_path, _item.raw_output)
+                    _persist_critique_raw_output(_unit_evidence_path(plan_dir, _unit), _item.raw_output)
                 _next_failures[_original_idx] = exc
         _failures = _next_failures
         for _idx, _unit in _retry_units_by_index.items():
