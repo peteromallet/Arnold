@@ -1685,25 +1685,167 @@ def pid_live(pid):
     return True
 
 
+def _proc_root():
+    return pathlib.Path(os.environ.get("CLOUD_WATCHDOG_BABYSITTER_PROC_ROOT", "/proc"))
+
+
+def _progress_logs(payload, run_root):
+    """Files that actually move while a babysitter is working.
+
+    ``run.log`` is the managed-agent capture. It is silent during a model
+    call: the hermes spinner is non-TTY (PIPE), so it writes ``[tool]`` at
+    tool start and ``[done]`` at tool end, and nothing while the LLM thinks.
+    ``babysitter.stdout.log`` is a tee of that same stream (managed_agent
+    tee_output=True); ``babysitter.stderr.log`` is the supervisor. Watching
+    only ``run.log`` is what produced the I51 18-minute false-positive reap.
+    """
+    seen = []
+    seen_ids = set()
+
+    def _add(path):
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        marker = str(resolved)
+        if marker in seen_ids or not resolved.is_file():
+            return
+        seen_ids.add(marker)
+        seen.append(resolved)
+
+    if run_root and run_root.is_dir():
+        _add(run_root / "babysitter.stdout.log")
+        _add(run_root / "babysitter.stderr.log")
+        for path in run_root.rglob("run.log"):
+            _add(path)
+    for key in ("stdout_log", "stderr_log"):
+        raw = payload.get(key)
+        if isinstance(raw, str) and raw:
+            _add(pathlib.Path(raw))
+    return seen
+
+
+def _socket_inodes(pid, proc):
+    fd_dir = proc / str(pid) / "fd"
+    inodes = set()
+    try:
+        for entry in fd_dir.iterdir():
+            try:
+                target = os.readlink(entry)
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target.endswith("]"):
+                inodes.add(target[8:-1])
+    except OSError:
+        return inodes
+    return inodes
+
+
+def _pid_has_established_tcp(pid, proc):
+    inodes = _socket_inodes(pid, proc)
+    if not inodes:
+        return False
+    tables = [
+        proc / str(pid) / "net" / "tcp",
+        proc / str(pid) / "net" / "tcp6",
+        proc / "net" / "tcp",
+        proc / "net" / "tcp6",
+    ]
+    seen = set()
+    for table in tables:
+        marker = str(table)
+        if marker in seen or not table.is_file():
+            continue
+        seen.add(marker)
+        try:
+            lines = table.read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            # st == 01 is ESTABLISHED; field 9 is inode.
+            if len(parts) >= 10 and parts[3] == "01" and parts[9] in inodes:
+                return True
+    return False
+
+
+def _pid_runnable(pid, proc):
+    try:
+        stat = (proc / str(pid) / "stat").read_text(encoding="utf-8")
+        state = stat.rsplit(") ", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return state in {"R", "D"}
+
+
+def _descendant_pids(root_pids, proc):
+    children = {}
+    try:
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat = (entry / "stat").read_text(encoding="utf-8")
+                ppid = int(stat.rsplit(") ", 1)[1].split()[1])
+            except (OSError, IndexError, ValueError):
+                continue
+            children.setdefault(ppid, []).append(int(entry.name))
+    except OSError:
+        return []
+    out = []
+    stack = []
+    for root in root_pids:
+        stack.extend(children.get(int(root), []))
+    seen = set()
+    while stack:
+        pid = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        out.append(pid)
+        stack.extend(children.get(pid, []))
+    return out
+
+
+def _tree_has_live_work(root_pids):
+    """True if the babysitter tree is mid-call; None if /proc is unreadable.
+
+    A legitimate Flash babysitter spends most of its life in one of two
+    silent-log states: (1) blocked on an LLM SSE socket, (2) waiting on a
+    child (fan.py / pytest / grep) that is itself running or on a socket.
+    ``run.log`` growth cannot see either. I18/I32/I34 hangs are the inverse:
+    live pid, 0% CPU, 0 sockets, no children working.
+    """
+    proc = _proc_root()
+    if not proc.is_dir():
+        return None
+    pids = []
+    for raw in root_pids:
+        if isinstance(raw, int) and raw > 0:
+            pids.append(raw)
+    if not pids:
+        return False
+    for pid in (*pids, *_descendant_pids(pids, proc)):
+        if _pid_runnable(pid, proc) or _pid_has_established_tcp(pid, proc):
+            return True
+    return False
+
+
 def babysitter_wedged(payload, run_root):
     """A live-pid fixer that has made NO progress is wedged.
 
-    The dedup only checked kill(pid, 0), so a hung babysitter (hermes agent at
-    0% CPU, no run-log growth) blocked the chain indefinitely — the watchdog
-    never re-dispatched (astrid/mega 2026-08-17, I18). A fixer is wedged when:
-    its launch is older than the stall threshold, and either the managed
-    run.log is absent (never wrote anything) or its mtime is older than the
-    log-stall threshold. The watchdog then treats it as NOT live so a fresh
-    dispatch fires.
+    Contract (I51): a busy unbounded babysitter is never reaped. Wedge means
+    the launch is older than the stall threshold AND no progress file has
+    grown AND the process tree shows no live work (no ESTABLISHED TCP, no
+    R/D children). If /proc cannot be inspected, fail open — do not kill.
     """
-    # Configurable stall thresholds (default 15 min launch + 10 min no log
-    # growth). Tightened from 45/30 (I32/I34, 2026-08-17): the hermes agent
-    # wedge (model-call join hang) surfaced repeatedly; 45 min per wedge
-    # stalled the epics far longer than the underlying repair. 15+10 keeps
-    # the false-positive window wide for legitimate long tool calls while
-    # re-dispatching a wedged fixer ~3x faster.
+    # Launch stall is only a newborn grace period. The previous 15/10
+    # defaults (tightened from 45/30 in I32/I34) were compensating for
+    # watching the wrong file; they imposed an ~18 min wall on legitimate
+    # model calls. 5 min is enough for first-socket / first-log; after that
+    # the tree-work check is the truth. Knobs stay for operator override.
     launch_stall_minutes = float(
-        os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LAUNCH_STALL_MINUTES", "15")
+        os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LAUNCH_STALL_MINUTES", "5")
     )
     log_stall_minutes = float(
         os.environ.get("CLOUD_WATCHDOG_BABYSITTER_LOG_STALL_MINUTES", "10")
@@ -1717,13 +1859,25 @@ def babysitter_wedged(payload, run_root):
             return False
     except Exception:
         return False
-    run_logs = []
-    if run_root and run_root.is_dir():
-        run_logs = list(run_root.rglob("run.log"))
-    if run_logs:
-        newest = max(p.stat().st_mtime for p in run_logs)
+    newest = None
+    for path in _progress_logs(payload, run_root):
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    if newest is not None:
         if datetime.now(timezone.utc).timestamp() - newest < log_stall_minutes * 60:
             return False
+    live_work = _tree_has_live_work(
+        (payload.get("babysitter_pid"), payload.get("supervisor_pid"))
+    )
+    if live_work is True:
+        return False
+    if live_work is None:
+        # Cannot tell mid-call from hung. JUST LET IT RUN.
+        return False
     return True
 
 
@@ -1756,6 +1910,13 @@ for name in (
         # chain (observed 2026-08-17 I35: wedged 15:38 agents lingered beside
         # 16:46 re-dispatches, both alive, competing). Best-effort SIGTERM;
         # the receipt is left for the fresh launch to supersede.
+        print(
+            "babysitter wedged or dead; signaling "
+            f"session={session} babysitter_pid={payload.get('babysitter_pid')} "
+            f"supervisor_pid={payload.get('supervisor_pid')} "
+            f"run_root={run_root}",
+            file=sys.stderr,
+        )
         for stale_pid in (payload.get("babysitter_pid"), payload.get("supervisor_pid")):
             if isinstance(stale_pid, int) and stale_pid > 0 and pid_live(stale_pid):
                 try:
