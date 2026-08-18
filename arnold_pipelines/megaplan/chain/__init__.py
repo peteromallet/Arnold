@@ -7489,11 +7489,11 @@ def run_chain(
 
         if _state_blocked_no_live_work(state):
             from arnold_pipelines.megaplan.cloud.runtime_manifest import (
-                load_runtime_manifest,
+                load_manifest,
             )
 
             try:
-                _manifest_state = load_runtime_manifest(_manifest_pin)
+                _manifest_state = load_manifest(_manifest_pin)
                 _expected_head = str(
                     (_manifest_state.epic or {}).get("expected_head") or ""
                 )
