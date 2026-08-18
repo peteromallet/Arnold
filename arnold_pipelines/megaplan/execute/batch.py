@@ -4146,6 +4146,36 @@ def _raise_artifact_not_durable(
     ) from error
 
 
+def _validation_commands_equivalent(stored_command: object, effective_command: str) -> bool:
+    """True when a stored envelope's command is the same pytest invocation.
+
+    The stored envelope records the EXECUTED command (suite_runner rewrites
+    it to ``<interpreter> -m pytest <selectors> ...`` and appends the
+    standard reporting flags ``--tb=no --no-header -rA``), while the reuse
+    gate holds the RECOMPILED command (bare ``pytest <selectors> ...``).
+    Comparing the raw strings can therefore never match, so every second
+    pre-dispatch invocation raised ``pre_envelope_digest_drift`` and the
+    no-new-failures delta lifecycle could never resume after its first
+    envelope capture (occurrence a07166d38fbc, second wave).
+
+    Canonicalize both sides through the suite runner's ``_pytest_command``:
+    it rewrites a bare ``pytest`` to the running interpreter and appends the
+    missing standard flags, so the executed form and the recompiled form
+    reduce to the same canonical string.  Any unparseable command falls back
+    to strict equality (fail closed).
+    """
+    from arnold_pipelines.megaplan.orchestration.suite_runner import (
+        _pytest_command,
+    )
+
+    try:
+        return _pytest_command(str(stored_command or "")) == _pytest_command(
+            str(effective_command or "")
+        )
+    except Exception:
+        return str(stored_command or "") == str(effective_command or "")
+
+
 def _narrow_recheck_envelope_complete(result: Any) -> bool:
     """A COMPLETE pre-execution envelope: exit 1, successful collection,
     parsed failure set, no collection errors, no timeout.
@@ -4453,7 +4483,9 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     if (
                         set(_stored_env.get("selectors") or [])
                         == set(job.get("selectors") or [])
-                        and _stored_env.get("command") == _effective_command
+                        and _validation_commands_equivalent(
+                            _stored_env.get("command"), _effective_command
+                        )
                         and _envelope_matches_current_tree(_stored_env, project_dir)
                     ):
                         evidence_results.append(_stored_env)
