@@ -38,6 +38,7 @@ from arnold_pipelines.megaplan._core import (
     compute_task_batches,
     get_effective,
     is_prose_mode,
+    is_transient_execute_advisory,
     list_batch_artifacts,
     load_config,
     make_history_entry,
@@ -2874,35 +2875,6 @@ def _drop_resolved_quality_blocking_reasons(
     return kept
 
 
-def _is_transient_execute_advisory(message: object) -> bool:
-    """Return True for batch-local execute advisories that should not survive
-    into the terminal aggregate payload.
-
-    Per-batch payloads legitimately mention then-pending downstream tasks,
-    partial sense-check coverage, and provisional git-diff observations. Once
-    the aggregate execution audit recomputes final-state evidence, carrying
-    those earlier advisories forward makes the terminal execute artifact look
-    blocked for work that later completed.
-    """
-
-    if not isinstance(message, str):
-        return False
-    transient_prefixes = (
-        "Advisory observation mismatch:",
-        "Advisory audit finding:",
-        "Advisory audit skip:",
-        "Advisory carry-forward observation:",
-    )
-    if message.startswith(transient_prefixes):
-        return True
-    transient_fragments = (
-        "tasks have no executor update",
-        "sense checks have no executor acknowledgment",
-        "Tasks left pending after execute",
-    )
-    return any(fragment in message for fragment in transient_fragments)
-
-
 def _aggregate_terminal_deviations(
     aggregate_payload: dict[str, Any],
     *,
@@ -2912,7 +2884,7 @@ def _aggregate_terminal_deviations(
 ) -> list[str]:
     deviations: list[str] = []
     for deviation in aggregate_payload.get("deviations", []):
-        if _is_transient_execute_advisory(deviation):
+        if is_transient_execute_advisory(deviation):
             continue
         if deviation not in deviations:
             deviations.append(deviation)
@@ -4917,7 +4889,8 @@ def handle_execute_one_batch(
             state,
             plan_dir,
             batch_task_ids,
-            completed_ids,
+            current_artifact_number=batch_number,
+            completed_task_ids=completed_ids,
             root=root,
             batch_template_path=batch_template_path,
         ),
@@ -5115,7 +5088,7 @@ def handle_execute_one_batch(
         task.get("id")
         for task in tracked_tasks
         if task.get("id") in set(batch_task_ids)
-        and task.get("status") not in {"done", "completed"}
+        and task.get("status") not in TERMINAL_TASK_STATUSES
         and task.get("id") not in effective_completed_id_set
         and task.get("id") not in batch_blocked_id_set
     ]
@@ -5502,6 +5475,18 @@ def _reset_blocked_tasks_to_pending(
     return sorted(reset_ids)
 
 
+_TASK_TEST_BUDGET_MARKER = "[harness] task_test_budget_exhausted:"
+
+
+def _is_task_test_budget_blocked(task: Mapping[str, Any]) -> bool:
+    """True only for a live blocked row stamped by the merge budget gate."""
+
+    notes = task.get("executor_notes")
+    return task.get("status") == "blocked" and isinstance(notes, str) and (
+        _TASK_TEST_BUDGET_MARKER in notes
+    )
+
+
 def _clear_task_attempt_fields(task: dict[str, Any]) -> None:
     task["status"] = "pending"
     task["executor_notes"] = ""
@@ -5734,11 +5719,10 @@ def _adopt_authority_completed_blocked_tasks(
     """Promote blocked/pending rows whose accepted-attempt authority is dependency-closed.
 
     A task can be terminal-success in the kernel authority (accepted attempt,
-    dependencies closed) while finalize.json still shows ``blocked`` (stale
-    harness projection, e.g. ``task_test_budget_exhausted``) or ``pending``
-    (finalize status lags a substantively-complete batch). The authority reader
-    is the source of truth: promote those rows to ``done`` so the milestone
-    completion evidence can satisfy.
+    dependencies closed) while finalize.json still shows ``blocked`` or
+    ``pending``. Promote those stale rows, except a live test-budget rejection:
+    accepted worker authority cannot override the merge admission gate, which
+    requires a fresh compliant attempt.
     """
 
     tasks = finalize_data.get("tasks")
@@ -5768,6 +5752,8 @@ def _adopt_authority_completed_blocked_tasks(
         # authority reader is the source of truth; a pending task with NO
         # accepted envelope stays pending.
         if raw_status not in {"blocked", "pending"}:
+            continue
+        if _is_task_test_budget_blocked(task):
             continue
         if task_id not in completed_ids:
             continue
@@ -6483,6 +6469,13 @@ def handle_execute_auto_loop(
             plan_dir=plan_dir,
             root=root,
             state=state,
+        )
+        # Accepted worker authority cannot suppress a fresh retry of a result
+        # rejected by the merge-layer test-budget admission gate.
+        authority_completed_before_retry.difference_update(
+            task["id"] for task in tasks
+            if isinstance(task, dict) and isinstance(task.get("id"), str)
+            and _is_task_test_budget_blocked(task)
         )
         # ------------------------------------------------------------------
         # Explicit partial-failure resume partition (T12).
@@ -7237,7 +7230,8 @@ def handle_execute_auto_loop(
                     state,
                     plan_dir,
                     batch_task_ids,
-                    completed_task_ids,
+                    current_artifact_number=batch_number_for_artifact,
+                    completed_task_ids=completed_task_ids,
                     root=root,
                     rework_context=(
                         _review_rework_context(
@@ -7503,7 +7497,7 @@ def handle_execute_auto_loop(
             if isinstance(task, Mapping)
             and isinstance(task.get("id"), str)
             and task["id"] in set(batch_task_ids)
-            and task.get("status") not in {"done", "completed"}
+            and task.get("status") not in TERMINAL_TASK_STATUSES
         }
         current_batch_pending_left_behind = (
             current_batch_noncomplete_ids - newly_blocked_task_ids
@@ -7535,7 +7529,14 @@ def handle_execute_auto_loop(
                 args=args,
             )
             if recomputed:
-                batches_to_run = recomputed
+                # Preserve the monotonic dispatch cursor: keep the already
+                # consumed prefix and replace the REMAINING queue with the
+                # recomputed runnable frontier (blocked-task dependents and
+                # completed work excluded), so the cursor advances onto the
+                # fresh remainder instead of overshooting the shorter list
+                # (occurrence 4c0190500877: T16 stayed undispatched after the
+                # batch-12 budget block even though it was dependency-free).
+                batches_to_run = batches_to_run[:batch_index] + recomputed
                 log.info(
                     "task-level block(s) %s parked; continuing with %d "
                     "runnable batch(es) excluding their dependents",

@@ -278,6 +278,26 @@ def test_runtime_test_budget_blocks_unbounded_or_widened_evidence() -> None:
     assert "task_test_budget_exhausted" in invalid["executor_notes"]
     assert issues
 
+    # Explicit recurrence shape (occurrence 4c0190500877): two declared
+    # `timeout 120` runs sum to 240s > max_seconds=120 -> blocked, even though
+    # each individual run is within the admitted selector budget.
+    doubled = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": [
+            "timeout 120 pytest tests/test_t1.py",
+            "timeout 120 pytest tests/test_t1.py",
+        ],
+    }
+    issues.clear()
+    _enforce_task_test_budgets([doubled], targets_by_id={"T1": target}, issues=issues)
+    assert doubled["status"] == "blocked"
+    assert "declared test timeout total 240s exceeds max_seconds=120" in doubled[
+        "executor_notes"
+    ]
+    assert issues
+
 
 def test_runtime_write_budget_blocks_undeclared_paths() -> None:
     from arnold_pipelines.megaplan.execute.merge import _enforce_task_write_budgets

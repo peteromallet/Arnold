@@ -249,6 +249,7 @@ def _execute_batch_prompt(
     rework_context: dict[str, object] | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
     batch_template_path: Path | None = None,
+    current_artifact_number: int | None = None,
 ) -> str:
     mode = state.get("config", {}).get("mode", "code")
     if mode == "doc":
@@ -259,6 +260,7 @@ def _execute_batch_prompt(
             completed_task_ids,
             root=root,
             projection_capabilities=projection_capabilities,
+            current_artifact_number=current_artifact_number,
         )
         return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
     if is_creative_mode(state):
@@ -280,6 +282,7 @@ def _execute_batch_prompt(
         rework_context=rework_context,
         projection_capabilities=projection_capabilities,
         batch_template_path=batch_template_path,
+        current_artifact_number=current_artifact_number,
     )
     return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
 
