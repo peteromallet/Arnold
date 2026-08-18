@@ -798,6 +798,22 @@ def _comparable(identity: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _looks_like_legacy_runtime_binding(identity: Mapping[str, Any]) -> bool:
+    """True for a pre-canonical runtime-only chain binding.
+
+    Chains bound before the canonical chain-binding fields landed carry a
+    runtime-only ``current_identity`` (source_revision / content_sha256 /
+    import_root / pth / editable_*) with NONE of the chain-binding fields
+    (chain_spec_sha256, milestone_sequence, assets, initiative_path).
+    """
+    return not (
+        identity.get("chain_spec_sha256")
+        or identity.get("milestone_sequence")
+        or identity.get("initiative_path")
+        or identity.get("assets")
+    )
+
+
 def _future_source_reconciliation_is_safe(
     *,
     state: Any,
@@ -805,6 +821,17 @@ def _future_source_reconciliation_is_safe(
     active: Mapping[str, Any],
     drift_fields: list[str],
 ) -> tuple[bool, list[str]]:
+    # Legacy runtime-only binding bridge: chains bound before the canonical
+    # chain-binding fields landed carry a runtime-only current_identity
+    # (source_revision / content_sha256 / import_root / pth / editable_* —
+    # no chain_spec_sha256, milestone_sequence, assets, initiative_path).
+    # Against the full active identity every comparable field drifts, which
+    # is not a spec edit hazard — it is the BINDING UPGRADE itself, the
+    # purpose of a runtime-rebind. Treat the legacy -> canonical migration
+    # as always safe so a pre-canonical chain can rebind to the current
+    # engine instead of being refused forever.
+    if _looks_like_legacy_runtime_binding(expected):
+        return True, []
     allowed_fields = {
         "bundle_sha256",
         "chain_spec_sha256",
