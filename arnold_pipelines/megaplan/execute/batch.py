@@ -7589,6 +7589,20 @@ def handle_execute_auto_loop(
         refreshed = result.refreshed
 
     plan_mode = state["config"].get("mode", "code")
+    # Replay every independently proven batch artifact (including same-index
+    # waves shadowed by a newer preferred attempt) through the scoped merge
+    # validator, so accepted rows from earlier waves backfill evidence and
+    # acknowledgments before the authoritative completion/quality checks.
+    # Idempotent and validator-gated: authority IDs persist only on pass.
+    # (occurrence 0ae19cc17afd)
+    _replay_proven_batch_artifacts(
+        plan_dir=plan_dir,
+        finalize_data=finalize_data,
+        known_task_ids=all_task_ids,
+        known_sense_check_ids=all_sense_check_ids,
+        mode=plan_mode,
+        state=state,
+    )
     # Aggregate from the durable audited batch artifacts (execution_batch_N.json)
     # rather than the in-memory raw payloads. Raw payloads can be truncated or
     # placeholders; the audited files carry the final files_changed/task_updates.
