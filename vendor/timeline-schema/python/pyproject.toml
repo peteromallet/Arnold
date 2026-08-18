@@ -1,0 +1,19 @@
+[project]
+name = "banodoco-timeline-schema"
+version = "0.0.2"
+description = "Canonical TimelineConfig schema shared by Banodoco CLI and Reigh editor."
+requires-python = ">=3.10"
+dependencies = [
+    "jsonschema>=4.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["banodoco_timeline_schema"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+banodoco_timeline_schema = ["timeline.schema.json"]
