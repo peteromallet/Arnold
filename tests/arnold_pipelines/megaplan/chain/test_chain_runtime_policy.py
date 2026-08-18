@@ -1130,3 +1130,31 @@ def test_blocked_plan_auto_adopts_runtime_drift() -> None:
         metadata = {}
 
     assert eb._state_blocked_no_live_work(_RunningState()) is False
+
+
+def test_blocked_chain_state_last_state_shape() -> None:
+    """Chain-state-shaped objects carry last_state (not current_state); the
+    blocked-no-live-work detection must accept that shape too."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _ChainState:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        last_state = "blocked"
+        active_step = None
+        active_worker = None
+        completed = None
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_ChainState()) is True
+
+    class _RunningChain:
+        current_milestone_index = 4
+        current_plan_name = "m4"
+        last_state = "blocked"
+        active_step = {"phase": "execute"}
+        active_worker = "hermes"
+        completed = None
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_RunningChain()) is False
