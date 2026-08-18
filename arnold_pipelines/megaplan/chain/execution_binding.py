@@ -838,6 +838,16 @@ def _future_source_reconciliation_is_safe(
     if not getattr(state, "current_plan_name", None):
         cutoff -= 1
     for kind in changed_kinds:
+        # The chain-spec asset reflects the chain.yaml content hash. When the
+        # ONLY substantive drift is chain_spec_sha256 (an intentional, safe
+        # spec edit such as a profile switch — milestone_sequence and
+        # initiative_path already verified above), the derived chain_spec
+        # asset changing is the SAME edit, not a separate hazard. Treat it as
+        # safe for reconciliation so an ordinary chain.yaml edit can advance
+        # instead of hard-blocking every rebind/resume with
+        # chain_spec_not_at_intended_revision.
+        if kind == "chain_spec" and "chain_spec_sha256" in drift_fields:
+            continue
         if not kind.startswith("milestone_brief:"):
             return False, changed_kinds
         try:
