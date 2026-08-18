@@ -1194,10 +1194,15 @@ def assert_execution_binding(
     if (
         runtime_report["required"]
         and runtime_report["status"] != "match"
-        and not (
-            report.get("auto_adopted_blocked") is True
-            and _state_blocked_no_live_work(state)
-        )
+        # A blocked plan with no live worker auto-adopts runtime drift the
+        # same way it adopts spec drift: nothing is mid-flight. This must
+        # hold even when the SPEC check already reconciled (reconcile_required
+        # from a safe spec edit) — the runtime identity still lags the
+        # manifest head and the blocked plan must not be refused for it.
+        # (mega m4: spec drift -> reconcile_required skipped the auto-adopt
+        # branch, leaving auto_adopted_blocked unset, so the runtime carve-out
+        # failed with chain_runtime_binding_drift on a blocked plan.)
+        and not _state_blocked_no_live_work(state)
     ):
         raise CliError(
             RUNTIME_DRIFT_ERROR,
