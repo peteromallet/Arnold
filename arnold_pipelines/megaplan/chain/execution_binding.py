@@ -1134,13 +1134,18 @@ def runtime_binding_report(
 def _state_blocked_no_live_work(state: Any) -> bool:
     """True when the chain's current plan is blocked with no live worker.
 
-    A blocked plan (current_state=blocked, no active_step, no active_worker,
-    no resume cursor into a running phase) has nothing mid-flight, so
-    adopting the current manifest head on resume is safe — the engine
-    advance is a non-event, exactly like the immutable-seed per-dispatch
-    refresh. Mid-execution swaps (active worker/step) remain refused.
+    A blocked plan (chain last_state=blocked, no active step/worker) has
+    nothing mid-flight, so adopting the current manifest head on resume is
+    safe — the engine advance is a non-event, exactly like the immutable-seed
+    per-dispatch refresh. Mid-execution swaps (active worker/step) remain
+    refused. The chain state records ``last_state``; the plan state records
+    ``current_state``/``active_step`` — either may be present depending on the
+    caller, so accept the blocked shape from whichever is available.
     """
-    if getattr(state, "current_state", None) != "blocked":
+    if getattr(state, "current_state", None) is not None:
+        if getattr(state, "current_state") != "blocked":
+            return False
+    elif getattr(state, "last_state", None) != "blocked":
         return False
     if getattr(state, "active_step", None):
         return False
