@@ -4274,11 +4274,55 @@ def _observed_phase_context(
     if (
         isinstance(last_step, Mapping)
         and last_step.get("result") in {"success", "needs_rework", "force_proceeded"}
+        and not _rewound_by_override_after_last_step(state, last_step)
     ):
         phase = last_step.get("step")
         if isinstance(phase, str) and phase:
             return phase, "last_step"
     return None, None
+
+
+# Operator overrides that intentionally rewind the plan to a pre-gate state
+# (``planned`` / ``critiqued``) WITHOUT appending a phase-history record.  A
+# subsequent auto-drive must not manufacture a workflow cursor from the stale
+# last history entry (e.g. a prior gate success whose successors are
+# finalize/revise/tiebreaker_run/override/halt) and then flag a
+# workflow_cursor_mismatch against the rewound state's control projection —
+# the override supersedes the stale cursor (astrid-first m4 recovery,
+# occurrence 96fe5e598a73).
+_OVERRIDE_STATE_REWIND_ACTIONS = frozenset({"replan", "recover-blocked"})
+
+
+def _rewound_by_override_after_last_step(
+    state: Mapping[str, Any],
+    last_step: Mapping[str, Any],
+) -> bool:
+    """True when a state-rewinding operator override was recorded after the
+    last phase-history entry.
+
+    ``override replan`` and ``override recover-blocked`` move the plan back to
+    a pre-gate state without recording a phase transition, so the history tail
+    can describe a step whose successors do not match the rewound state.  When
+    such an override is newer than that last history record, the observed
+    phase is intentionally absent: the current-state control projection
+    (``workflow_next`` of the rewound state) is authoritative and drives the
+    next dispatch (planned -> critique, critiqued -> gate).
+    """
+    last_ts = last_step.get("timestamp")
+    if not isinstance(last_ts, str) or not last_ts:
+        return False
+    overrides = state.get("meta", {}).get("overrides")
+    if not isinstance(overrides, list):
+        return False
+    for entry in reversed(overrides):
+        if not isinstance(entry, Mapping):
+            continue
+        if entry.get("action") not in _OVERRIDE_STATE_REWIND_ACTIONS:
+            continue
+        ts = entry.get("timestamp")
+        if isinstance(ts, str) and ts and ts >= last_ts:
+            return True
+    return False
 
 
 def _gate_operator_issue(state: Mapping[str, Any]) -> tuple[str, str] | None:
