@@ -1502,3 +1502,99 @@ def test_manifest_matches_tolerates_extra_stored_entries(tmp_path: Path) -> None
     missing = tmp_path / "nope.json"
     missing.write_text("x\n", encoding="utf-8")
     assert attestation._manifest_matches([missing], old_manifest) is False
+
+
+def test_adopt_or_refuse_launch_identity_generation_advance() -> None:
+    """A manifest generation advance on the same import_root adopts the live
+    manifest head (non-event, "JUST RELAUNCH"); a different import_root or a
+    downgrade still fails closed. (grok consult 2026-08-18: mid-phase
+    manifest cutover must never lock a plan behind repair_phase_contract.)"""
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        RUNTIME_ATTESTATION_ERROR,
+        _adopt_or_refuse_launch_identity,
+    )
+    from arnold_pipelines.megaplan.cloud.runtime_cutover import (
+        normalize_runtime_identity,
+    )
+
+    root = "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+    recorded = {
+        "import_root": root,
+        "source_revision": "a" * 40,
+        "editable_root": None,
+        "editable_revision": None,
+        "direct_url": None,
+        "pth": None,
+        "imports": None,
+    }
+    live = {
+        "import_root": root,
+        "source_revision": "b" * 40,
+        "editable_root": None,
+        "editable_revision": None,
+        "direct_url": None,
+        "pth": None,
+        "imports": None,
+    }
+
+    # Equal root+rev -> no-op (returns recorded).
+    same = dict(live)
+    same["source_revision"] = recorded["source_revision"]
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, same, recorded_generation=114, live_generation=114
+    )
+    assert adopted["source_revision"] == recorded["source_revision"]
+
+    # Generation advance gen 114 -> 115 on same root -> adopt live head.
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, live, recorded_generation=114, live_generation=115
+    )
+    assert adopted["source_revision"] == live["source_revision"]
+
+    # Unknown recorded generation + same root -> adopt.
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, live, recorded_generation=None, live_generation=115
+    )
+    assert adopted["source_revision"] == live["source_revision"]
+
+    # Different import_root -> fail closed.
+    other_root = dict(live)
+    other_root["import_root"] = "/workspace/runtime-candidates/other"
+    try:
+        _adopt_or_refuse_launch_identity(
+            recorded, other_root, recorded_generation=114, live_generation=115
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == RUNTIME_ATTESTATION_ERROR
+    else:
+        raise AssertionError("different import_root must fail closed")
+
+    # Generation downgrade gen 115 -> 114 on same root -> fail closed.
+    try:
+        _adopt_or_refuse_launch_identity(
+            live, recorded, recorded_generation=115, live_generation=114
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == RUNTIME_ATTESTATION_ERROR
+    else:
+        raise AssertionError("generation downgrade must fail closed")
+
+    # Same generation but different revision -> fail closed (unexplained
+    # head change at the same generation is a genuine swap).
+    same_gen_other_rev = dict(live)
+    same_gen_other_rev["source_revision"] = "c" * 40
+    try:
+        _adopt_or_refuse_launch_identity(
+            recorded, same_gen_other_rev, recorded_generation=114, live_generation=114
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == RUNTIME_ATTESTATION_ERROR
+    else:
+        raise AssertionError("same-generation revision change must fail closed")
+
+    # normalized_runtime_identity round-trips through the helper.
+    normalized_recorded = normalize_runtime_identity(recorded)
+    adopted = _adopt_or_refuse_launch_identity(
+        normalized_recorded, live, recorded_generation=114, live_generation=115
+    )
+    assert adopted["source_revision"] == live["source_revision"]
