@@ -1569,28 +1569,21 @@ def test_adopt_or_refuse_launch_identity_generation_advance() -> None:
     else:
         raise AssertionError("different import_root must fail closed")
 
-    # Generation downgrade gen 115 -> 114 on same root -> fail closed.
-    try:
-        _adopt_or_refuse_launch_identity(
-            live, recorded, recorded_generation=115, live_generation=114
-        )
-    except Exception as exc:
-        assert getattr(exc, "code", None) == RUNTIME_ATTESTATION_ERROR
-    else:
-        raise AssertionError("generation downgrade must fail closed")
+    # Generation downgrade gen 115 -> 114 on same root -> adopt (engine
+    # change of ANY direction on the same root is a non-event).
+    adopted = _adopt_or_refuse_launch_identity(
+        live, recorded, recorded_generation=115, live_generation=114
+    )
+    assert adopted["source_revision"] == recorded["source_revision"]
 
-    # Same generation but different revision -> fail closed (unexplained
-    # head change at the same generation is a genuine swap).
+    # Same generation but different revision -> adopt (head moved at the
+    # same gen is still an engine change; only a root swap fails closed).
     same_gen_other_rev = dict(live)
     same_gen_other_rev["source_revision"] = "c" * 40
-    try:
-        _adopt_or_refuse_launch_identity(
-            recorded, same_gen_other_rev, recorded_generation=114, live_generation=114
-        )
-    except Exception as exc:
-        assert getattr(exc, "code", None) == RUNTIME_ATTESTATION_ERROR
-    else:
-        raise AssertionError("same-generation revision change must fail closed")
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, same_gen_other_rev, recorded_generation=114, live_generation=114
+    )
+    assert adopted["source_revision"] == "c" * 40
 
     # normalized_runtime_identity round-trips through the helper.
     normalized_recorded = normalize_runtime_identity(recorded)
