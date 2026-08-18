@@ -1146,7 +1146,35 @@ def _write_gate_json(
 ) -> str:
     """Write the legacy gate projection and, when known, immutable evidence."""
     if iteration is not None:
-        write_immutable_json(plan_dir / f"gate_v{iteration}.json", payload)
+        versioned = plan_dir / f"gate_v{iteration}.json"
+        if versioned.exists() and not versioned.is_symlink():
+            try:
+                stale = json.loads(versioned.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                stale = None
+            if not isinstance(stale, dict) or stale.get("recommendation") != payload.get("recommendation"):
+                # Re-entry at the same iteration (disposition-consume re-run,
+                # post-revise gate, provider retry): the stale immutable
+                # gate_v projection must be archived (the documented
+                # gate_retry invalidation) before the fresh gate publishes
+                # new evidence — otherwise the immutable write collides and
+                # the phase crashes after publishing gate_carry but before
+                # committing state.
+                from arnold_pipelines.megaplan.replan_state import (
+                    invalidate_replan_derived_artifacts,
+                )
+
+                try:
+                    invalidate_replan_derived_artifacts(
+                        plan_dir,
+                        timestamp=now_utc(),
+                        scope="gate_retry",
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "gate epoch archive skipped (best effort)", exc_info=True
+                    )
+        write_immutable_json(versioned, payload)
     return _write_json_artifact(plan_dir, "gate.json", payload)
 
 
