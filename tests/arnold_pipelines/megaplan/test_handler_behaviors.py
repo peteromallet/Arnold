@@ -146,9 +146,14 @@ def test_gate_evidence_versions_preserve_old_decisions_and_legacy_latest(
     assert json.loads((plan_dir / "gate.json").read_text()) == second
 
 
-def test_gate_evidence_resume_is_idempotent_but_conflicting_reuse_fails(
+def test_gate_evidence_resume_is_idempotent_but_conflicting_reuse_supersedes(
     tmp_path: Path,
 ) -> None:
+    """Same-iteration re-entry (disposition-consume re-run, post-revise gate,
+    provider retry) must archive the stale immutable gate_v projection and
+    publish fresh evidence instead of crashing on the immutable collision.
+    The documented gate_retry invalidation (replan_state) is the archive
+    mechanism.  Identical replay stays idempotent."""
     from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
 
     plan_dir = tmp_path / "plan"
@@ -161,10 +166,14 @@ def test_gate_evidence_resume_is_idempotent_but_conflicting_reuse_fails(
     _write_gate_json(plan_dir, original, iteration=2)
 
     assert (plan_dir / "gate_v2.json").read_bytes() == immutable_bytes
-    with pytest.raises(RuntimeError, match="immutable artifact identity"):
-        _write_gate_json(plan_dir, conflicting, iteration=2)
-    assert json.loads((plan_dir / "gate_v2.json").read_text()) == original
-    assert json.loads((plan_dir / "gate.json").read_text()) == original
+    # Same-iteration conflicting reuse now supersedes: the stale immutable is
+    # archived and the fresh gate publishes new evidence (astrid m4 gate
+    # ESCALATE -> disposition ACCEPTED -> PROCEED re-run crashed here).
+    _write_gate_json(plan_dir, conflicting, iteration=2)
+    assert json.loads((plan_dir / "gate_v2.json").read_text()) == conflicting
+    assert json.loads((plan_dir / "gate.json").read_text()) == conflicting
+    # The stale projection was archived out of the active plan directory.
+    assert not (plan_dir / "gate_v2.json").is_symlink()
 
 
 def test_immutable_gate_staging_failure_never_publishes_partial_bytes(
