@@ -1625,6 +1625,39 @@ _LEGACY_BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
 _EXECUTE_BATCH_TASKS_RE = re.compile(r"tasks_[0-9a-f]+\.json$")
 
 
+def is_transient_execute_advisory(message: object) -> bool:
+    """Return True for batch-local advisories superseded by final accounting."""
+
+    if not isinstance(message, str):
+        return False
+    transient_prefixes = (
+        "Advisory observation mismatch:",
+        "Advisory audit finding:",
+        "Advisory audit skip:",
+        "Advisory carry-forward observation:",
+    )
+    if message.startswith(transient_prefixes):
+        return True
+    transient_fragments = (
+        "tasks have no executor update",
+        "sense checks have no executor acknowledgment",
+        "Tasks left pending after execute",
+    )
+    return any(fragment in message for fragment in transient_fragments)
+
+
+def list_all_batch_artifacts(plan_dir: Path) -> list[Path]:
+    """List every S4/legacy artifact, including same-index attempts."""
+
+    candidates = {
+        path
+        for pattern in ("execute_batches/batch_*/tasks_*.json", "execution_batch_*.json")
+        for path in plan_dir.glob(pattern)
+        if path.is_file()
+    }
+    return sorted(candidates, key=lambda path: (batch_artifact_index(path) or 0, str(path)))
+
+
 def stable_task_id_digest(task_ids: Iterable[str]) -> str:
     """Short stable hex digest over the canonical (sorted, deduped) task-ID set.
 

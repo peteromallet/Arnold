@@ -933,6 +933,147 @@ def test_auto_loop_pending_left_behind_blocks_phase_and_skips_later_batch(
     assert state["current_state"] != "executed"
 
 
+def test_explained_skip_plus_budget_block_drains_independent_frontier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loop-halt fix (occurrence 4c0190500877): accepted skipped + budget
+    blocked must NOT park the auto loop.
+
+    A merged ``skipped`` task with an accepted envelope is terminal; a
+    ``blocked`` task carries its typed blocker disposition. Neither is
+    \"pending-left-behind\", so a sole task-level block parks only the blocked
+    rows and the dependency-independent frontier still dispatches. This is the
+    regression that keeps T16 runnable after a budget-blocked batch.
+    """
+    import argparse
+    import json
+    import types as _types
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        handle_execute_auto_loop,
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._guard_execute_batch_admission",
+        lambda **kwargs: None,
+    )
+
+    calls: list[list[str]] = []
+
+    def _fake_run_and_merge_batch(**kwargs):
+        # Simulates merge outcomes: T1 explained-skipped (accepted), T2
+        # budget-blocked by the merge admission gate, T3 completed.
+        fin = kwargs["finalize_data"]
+        batch_ids = list(kwargs["batch_task_ids"])
+        calls.append(batch_ids)
+        for tid in batch_ids:
+            for task in fin["tasks"]:
+                if task["id"] != tid:
+                    continue
+                if tid == "T1":
+                    task["status"] = "skipped"
+                    task["executor_notes"] = "explained skip: covered by T3"
+                elif tid == "T2":
+                    task["status"] = "blocked"
+                    task["executor_notes"] = (
+                        "[harness] task_test_budget_exhausted: declared test "
+                        "timeout total 240s exceeds max_seconds=120"
+                    )
+                else:
+                    task["status"] = "done"
+                    task["files_changed"] = [f"{tid}.py"]
+        worker = _types.SimpleNamespace(
+            duration_ms=0,
+            cost_usd=0.0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            rate_limit=None,
+            session_id=None,
+            model_actual=None,
+            worker_channel=None,
+            auth_channel=None,
+            auth_metadata=None,
+            rendered_prompt=None,
+            trace_output=None,
+        )
+        return _types.SimpleNamespace(
+            worker=worker,
+            agent=kwargs.get("agent", "shadow"),
+            mode=kwargs.get("mode", "code"),
+            refreshed=kwargs.get("refreshed", False),
+            payload={"task_updates": [], "sense_check_acknowledgments": []},
+            batch_number=kwargs.get("batch_number", 1),
+            batch_task_ids=batch_ids,
+            batch_sense_check_ids=kwargs.get("batch_sense_check_ids", []),
+            merged_task_count=len(batch_ids),
+            total_task_count=len(batch_ids),
+            acknowledged_sense_check_count=0,
+            total_sense_check_count=0,
+            missing_task_evidence=[],
+            execution_audit={},
+            finalize_hash="",
+            attribution_records=[],
+            routing_degradations=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._run_and_merge_batch",
+        _fake_run_and_merge_batch,
+    )
+
+    # Three independent tasks: batch 1 = [T1, T2], batch 2 = [T3].
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "pending", "depends_on": [], "description": "t1"},
+            {"id": "T2", "status": "pending", "depends_on": [], "description": "t2"},
+            {"id": "T3", "status": "pending", "depends_on": [], "description": "t3"},
+        ],
+        "sense_checks": [],
+        "baseline_test_failures": None,
+        "user_actions": [],
+    }
+    (tmp_path / "finalize.json").write_text(
+        json.dumps(finalize_data), encoding="utf-8"
+    )
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "finalized",
+        "iteration": 1,
+        "config": {"mode": "code", "project_dir": str(tmp_path), "max_tasks_per_batch": 2},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    response = handle_execute_auto_loop(
+        root=tmp_path,
+        plan_dir=tmp_path,
+        state=state,
+        args=argparse.Namespace(),
+        auto_approve=False,
+        agent="shadow",
+        mode="code",
+        refreshed=False,
+    )
+
+    # The budget block parked T2 but the independent frontier (T3) still
+    # dispatched — the loop did NOT halt after batch 1. The loop publishes
+    # finalize at completion, so re-read the persisted state.
+    assert calls == [["T1", "T2"], ["T3"]]
+    published = json.loads((tmp_path / "finalize.json").read_text(encoding="utf-8"))
+    by_id = {task["id"]: task for task in published["tasks"]}
+    assert by_id["T1"]["status"] == "skipped"
+    assert by_id["T2"]["status"] == "blocked"
+    assert by_id["T3"]["status"] == "done"
+    assert "remained non-complete after their execute batch" not in response.get(
+        "summary", ""
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Dependency-aware execute frontier (occurrence 0ae19cc17afd, shipped in
 # b2aaab3f "fix(execute): drain dependency-independent frontier after task

@@ -8,6 +8,7 @@ with the recorded baseline and harness-level post-execute check.
 from __future__ import annotations
 
 import copy
+import types as _types
 from pathlib import Path
 
 from arnold_pipelines.megaplan._core import (
@@ -551,3 +552,85 @@ def test_cross_session_real_fail_is_not_skipped_or_adopted() -> None:
     assert [tid for batch in batches for tid in batch] == ["T1", "T2"]
     assert "T1" not in completed_ids
     assert tasks[0]["status"] == "pending"  # rerunnable, not skipped/adopted
+
+
+def _budget_blocked_task(task_id: str) -> dict[str, object]:
+    task = _task(task_id, status="blocked")
+    task["blocked_reason"] = "task_test_budget_exhausted"
+    task["executor_notes"] = (
+        "work done [harness] task_test_budget_exhausted: declared test "
+        "timeout total 240s exceeds max_seconds=120"
+    )
+    task["files_changed"] = [f"{task_id}.py"]
+    task["commands_run"] = [
+        "timeout 120 pytest tests/test_t1.py",
+        "timeout 120 pytest tests/test_t1.py",
+    ]
+    return task
+
+
+def test_budget_blocked_row_is_not_adopted_and_resets_on_fresh_retry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Occurrence 4c0190500877: the merge admission gate's budget block cannot
+    be overridden by accepted worker authority.
+
+    ``_adopt_authority_completed_blocked_tasks`` must leave the budget-blocked
+    row ``blocked`` even when the kernel authority reports it completed, and
+    ``--retry-blocked-tasks`` must reset it to ``pending`` (it is removed from
+    the authority-completed exclusion so a fresh compliant attempt runs).
+    """
+    from arnold_pipelines.megaplan.execute.batch import (
+        _adopt_authority_completed_blocked_tasks,
+        _is_task_test_budget_blocked,
+    )
+
+    budget_task = _budget_blocked_task("T1")
+    generic_blocked = _s4_blocked_task("T2", blocker_kind="worker_abort")
+    pending_lag = _task("T3", status="pending")
+
+    assert _is_task_test_budget_blocked(budget_task)
+    assert not _is_task_test_budget_blocked(generic_blocked)
+    assert not _is_task_test_budget_blocked(pending_lag)
+
+    finalize_data = {"tasks": [budget_task, generic_blocked, pending_lag]}
+    # Kernel authority says ALL THREE are dependency-closed completed; the
+    # scheduler also records satisfied decisions for each (the adopt gate
+    # requires the per-task decision, not just membership in completed_ids).
+    def _fake_completed(tasks, **kwargs):
+        decisions = kwargs.get("decisions")
+        if decisions is not None:
+            for tid in ("T1", "T2", "T3"):
+                decisions[tid] = _types.SimpleNamespace(satisfied=True)
+        return {"T1", "T2", "T3"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._scheduler_completed_ids_for_tasks",
+        _fake_completed,
+    )
+    state = {"config": {"mode": "code", "project_dir": str(tmp_path)}}
+    adopted = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    # Generic blocked + pending adopt-miss rows promote; the budget row stays.
+    assert adopted == ["T2", "T3"]
+    by_id = {task["id"]: task for task in finalize_data["tasks"]}
+    assert by_id["T1"]["status"] == "blocked"
+    assert "task_test_budget_exhausted" in by_id["T1"]["executor_notes"]
+    assert by_id["T2"]["status"] == "done"
+    assert by_id["T3"]["status"] == "done"
+
+    # Fresh --retry-blocked-tasks partition: T1 is NOT authority-completed for
+    # the reset (its budget block removed it from the exclusion), so it resets.
+    reset_ids = _reset_blocked_tasks_to_pending(
+        finalize_data,
+        exclude_task_ids={"T2", "T3"},
+    )
+    assert reset_ids == ["T1"]
+    assert by_id["T1"]["status"] == "pending"
+    assert by_id["T1"]["executor_notes"] == ""
+    assert by_id["T1"]["files_changed"] == []

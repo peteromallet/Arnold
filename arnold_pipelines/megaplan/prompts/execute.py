@@ -9,15 +9,19 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan._core import (
+    batch_artifact_index,
     execute_batch_artifact_path,
     resolve_batch_artifact,
     compute_task_batches,
     configured_robustness,
     intent_brief_reference,
+    is_transient_execute_advisory,
     json_dump,
+    list_all_batch_artifacts,
     latest_plan_path,
     latest_plan_meta_path,
     read_json,
+    stable_task_id_digest,
 )
 from arnold_pipelines.megaplan.resolution_contract import (
     FALLBACK_STATES,
@@ -715,6 +719,97 @@ def _completed_task_receipts_for_prompt(
     )
 
 
+_PRIOR_BATCH_DEVIATION_LIMIT = 10
+_ACCEPTED_TERMINAL_TASK_STATUSES = frozenset({"done", "completed", "skipped"})
+
+
+def _read_batch_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = read_json(path)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _artifact_accepts_task_set(
+    payload: dict[str, Any], task_ids: list[str]
+) -> bool:
+    expected = set(task_ids)
+    updates = payload.get("task_updates")
+    if not expected or not isinstance(updates, list):
+        return False
+    accepted: set[str] = set()
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        task_id = update.get("task_id")
+        validation = update.get("authority_validation")
+        if (
+            task_id in expected
+            and update.get("status") in _ACCEPTED_TERMINAL_TASK_STATUSES
+            and isinstance(validation, dict)
+            and validation.get("outcome") == "accepted"
+        ):
+            accepted.add(task_id)
+    return accepted == expected
+
+
+def _prior_execute_batch_deviations(
+    plan_dir: Path,
+    batch_task_ids: list[str],
+    *,
+    prompt_batch_number: int,
+    current_artifact_number: int | None,
+    limit: int = _PRIOR_BATCH_DEVIATION_LIMIT,
+) -> list[str]:
+    """Merge actionable adjacent/same-task retry deviations deterministically."""
+
+    digest = stable_task_id_digest(batch_task_ids)
+    same_digest_attempts: list[tuple[Path, dict[str, Any]]] = []
+    if isinstance(current_artifact_number, int) and current_artifact_number > 0:
+        for path in list_all_batch_artifacts(plan_dir):
+            index = batch_artifact_index(path)
+            if index is None or index > current_artifact_number:
+                continue
+            payload = _read_batch_payload(path)
+            scope = payload.get("batch_scope")
+            if isinstance(scope, dict) and scope.get("task_set_digest") == digest:
+                same_digest_attempts.append((path, payload))
+
+    # A later fully accepted terminal attempt supersedes older deviations for
+    # the same task set. Keep that attempt's own messages and anything newer.
+    keep_from = 0
+    for position, (_, payload) in enumerate(same_digest_attempts):
+        if _artifact_accepts_task_set(payload, batch_task_ids):
+            keep_from = position
+    suppressed_paths = {
+        path for path, _ in same_digest_attempts[:keep_from]
+    }
+    retained_attempts = same_digest_attempts[keep_from:]
+
+    sources: dict[Path, dict[str, Any]] = {}
+    if prompt_batch_number > 1:
+        adjacent = resolve_batch_artifact(plan_dir, prompt_batch_number - 1)
+        if adjacent is not None and adjacent not in suppressed_paths:
+            sources[adjacent] = _read_batch_payload(adjacent)
+    for path, payload in retained_attempts:
+        sources[path] = payload
+
+    merged: list[str] = []
+    for path in sorted(sources, key=lambda item: (batch_artifact_index(item) or 0, str(item))):
+        raw = sources[path].get("deviations")
+        if not isinstance(raw, list):
+            continue
+        for deviation in raw:
+            if not isinstance(deviation, str) or is_transient_execute_advisory(deviation):
+                continue
+            # Last occurrence wins, so the bounded tail retains recent repeats.
+            if deviation in merged:
+                merged.remove(deviation)
+            merged.append(deviation)
+    return merged[-limit:] if limit > 0 else []
+
+
 def _execute_batch_prompt(
     state: PlanState,
     plan_dir: Path,
@@ -724,6 +819,7 @@ def _execute_batch_prompt(
     rework_context: dict[str, Any] | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
     batch_template_path: Path | None = None,
+    current_artifact_number: int | None = None,
 ) -> str:
     completed = set(completed_task_ids or set())
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -771,8 +867,13 @@ def _execute_batch_prompt(
         1,
     )
     batch_total = len(global_batches) or 1
+    artifact_number = (
+        current_artifact_number
+        if isinstance(current_artifact_number, int) and current_artifact_number > 0
+        else batch_number
+    )
     checkpoint_path = str(
-        execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids)
+        execute_batch_artifact_path(plan_dir, artifact_number, batch_task_ids)
     )
     if batch_template_path is None:
         batch_template_path = plan_dir / f"execute_batch_{batch_number}_output.json"
@@ -792,19 +893,13 @@ def _execute_batch_prompt(
                 batch_sense_check_ids,
             )
         ).strip()
-    prior_batch_deviations = "None"
-    if batch_number > 1:
-        prior_batch_artifact = resolve_batch_artifact(plan_dir, batch_number - 1)
-        if prior_batch_artifact is not None:
-            try:
-                prior_batch_payload = read_json(prior_batch_artifact)
-            except (OSError, ValueError):
-                prior_batch_payload = {}
-            raw_deviations = prior_batch_payload.get("deviations", [])
-            if isinstance(raw_deviations, list):
-                deviations = [item for item in raw_deviations if isinstance(item, str)]
-                if deviations:
-                    prior_batch_deviations = json_dump(deviations).strip()
+    deviations = _prior_execute_batch_deviations(
+        plan_dir,
+        batch_task_ids,
+        prompt_batch_number=batch_number,
+        current_artifact_number=current_artifact_number,
+    )
+    prior_batch_deviations = json_dump(deviations).strip() if deviations else "None"
     # Load resolutions and build resolution-aware prerequisite text.
     resolutions = load_user_action_resolutions(plan_dir)
     prerequisite_block, resolution_guidance_block = _format_user_action_guidance(
@@ -897,7 +992,7 @@ def _execute_batch_prompt(
         - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
         {_verification_cwd_requirement(Path(state["config"]["project_dir"]))}
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
-        - Each actionable task carries an admitted `write_set` and `narrow_tests` budget. Do not write outside its declared paths. Across the task, run at most the declared selectors, `max_runs`, and cumulative `max_seconds`. Wrap every test invocation with a foreground `timeout Ns` whose cumulative N stays within that budget so the harness can verify enforcement from `commands_run`; if the budget is exhausted, stop and return the task blocked with a residual checkpoint instead of widening or looping.
+        - Each actionable task carries an admitted `write_set` and `narrow_tests` budget. Do not write outside its declared paths. Across the task, run at most the declared selectors, `max_runs`, and cumulative `max_seconds`. The harness sums the declared `timeout N` values, not observed wall time: for `max_seconds=120`, use one `timeout 120` run or split runs whose N values total at most 120 (for example, two `timeout 60` runs). Every diagnostic or pre-change run consumes the same budget. If the budget is exhausted, stop and return the task blocked with a residual checkpoint instead of widening or looping.
         - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
         - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
         - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
