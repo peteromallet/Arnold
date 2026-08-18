@@ -1239,3 +1239,115 @@ def test_pre_dispatch_quiet_run_captures_envelope(
     stored = artifact.read_text(encoding="utf-8")
     assert PRE_ENVELOPE_CAPTURED in stored
     assert stored.count("test_a") >= 1
+
+
+# ---------------------------------------------------------------------------
+# Envelope reuse command normalization (occurrence a07166d38fbc, third wave)
+# ---------------------------------------------------------------------------
+# The stored envelope records the EXECUTED command (suite_runner rewrites it
+# to ``<interpreter> -m pytest <selectors> ...`` and appends the standard
+# reporting flags ``--tb=no --no-header -rA``), while the reuse gate holds
+# the RECOMPILED command (bare ``pytest <selectors> ...``).  Raw string
+# equality can therefore never match, so the second pre-dispatch invocation
+# raised ``pre_envelope_digest_drift`` and the delta lifecycle could never
+# resume after its first envelope capture.
+
+
+def test_validation_commands_equivalent_accepts_both_shapes() -> None:
+    """The executed form and the recompiled form are the same pytest
+    invocation; legacy bare-pytest envelopes compare equal too."""
+    from arnold_pipelines.megaplan.execute.batch import (
+        _validation_commands_equivalent,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import (
+        _pytest_command,
+    )
+
+    recompiled = _recompile_legacy_narrow_recheck_command(
+        LEGACY_COMMAND, [SEL_A, SEL_B]
+    )
+    executed = _pytest_command(recompiled)
+    assert executed != recompiled  # the production representation difference
+    assert _validation_commands_equivalent(executed, recompiled) is True
+    # Legacy/test-shaped stored envelope (bare pytest, no appended flags).
+    assert _validation_commands_equivalent(recompiled, recompiled) is True
+    # A genuinely different selector set stays unequal (fail closed).
+    other = _pytest_command(f"pytest tests/cloud/other.py --tb=short -q")
+    assert _validation_commands_equivalent(other, recompiled) is False
+    # Unparseable/empty stored command never matches a real one.
+    assert _validation_commands_equivalent(None, recompiled) is False
+
+
+def test_pre_dispatch_second_invocation_reuses_production_shaped_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A production-shaped durable pre-envelope (executed command with
+    interpreter prefix + appended reporting flags) is REUSED on the second
+    pre-dispatch invocation without re-capturing and without a
+    ``pre_envelope_digest_drift`` refusal."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.orchestration.suite_runner import (
+        _pytest_command,
+    )
+
+    plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
+    state = _make_state(project_dir)
+    failures = ["tests/cloud/test_progress_auditor.py::test_a"]
+    collected_ids = list(failures) + [
+        "tests/cloud/test_progress_auditor.py::test_ok"
+    ]
+    recompiled = _recompile_legacy_narrow_recheck_command(
+        LEGACY_COMMAND, [SEL_A, SEL_B]
+    )
+    # Production shape: the executed command is _pytest_command(recompiled).
+    executed = _pytest_command(recompiled)
+    fake1 = _result(
+        exit_code=1,
+        failures=list(failures),
+        collected_ids=list(collected_ids),
+        collected=0,  # quiet -q run: parser leaves the count at 0
+        code_hash=_tree_code_hash(project_dir),
+        command=executed,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake1,
+    ) as mock_run1, patch(
+        "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+        return_value={"event_id": "ev"},
+    ):
+        evidence = _run_batch_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            state=state,
+            admission=True,
+        )
+    mock_run1.assert_called_once()
+    assert evidence[0]["status"] == PRE_ENVELOPE_CAPTURED
+    env_artifact = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    assert env_artifact.exists()
+    stored_env = __import__("json").loads(env_artifact.read_text(encoding="utf-8"))
+    assert stored_env["command"] == executed
+
+    # Pass 2: same plan dir + same tree.  The durable envelope must be reused
+    # (NO second suite invocation, NO drift raise) and dispatch proceeds.
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+    ) as mock_run2, patch(
+        "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+        return_value={"event_id": "ev"},
+    ):
+        evidence2 = _run_batch_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            state=state,
+            admission=True,
+        )
+    mock_run2.assert_not_called()
+    assert evidence2[0]["evidence_hash"] == stored_env["evidence_hash"]
+    assert evidence2[0]["status"] == PRE_ENVELOPE_CAPTURED
