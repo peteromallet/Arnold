@@ -685,6 +685,183 @@ class TestGateOutcomeSemantics:
         assert outcome["result"] == "unresolved_flags"
         assert "f2" in outcome.get("blocking_unresolved_ids", [])
 
+    # ── operator-disposition settlement route (bd778acabe4d) ──────────────
+    def _escalate_summary(self, actions: list[dict[str, Any]], **overrides: Any) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "recommendation": "ESCALATE",
+            "passed": False,
+            "rationale": "route-authority halt requires a human disposition",
+            "signals_assessment": "score 0, no unresolved flags",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "unresolved_flags": [],
+            "north_star_actions": actions,
+            "orchestrator_guidance": "",
+        }
+        summary.update(overrides)
+        return summary
+
+    def _halt_action(self, question_id: str = "reigh-route-authority", **overrides: Any) -> dict[str, Any]:
+        action: dict[str, Any] = {
+            "id": f"nsa-{question_id}",
+            "question_id": question_id,
+            "question": "Should m4 correct the external Reigh repository?",
+            "concern": "external correction authority",
+            "category": "route_authority",
+            "action_type": "add_human_halt",
+            "severity": "blocking",
+            "severity_source": "schema",
+            "evidence": "The plan promotes upstream incompatibility into a blocking must.",
+        }
+        action.update(overrides)
+        return action
+
+    def _state_with_disposition(self, note: str | None = None) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 1,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        if note is not None:
+            state["meta"]["notes"] = [
+                {"timestamp": "2026-08-18T10:31:29Z", "note": note, "source": "user"}
+            ]
+        return state
+
+    def test_escalate_consumed_when_sole_halt_settled(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import STATE_GATED
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED. "
+            "OPERATOR DECISION \u2014 reigh-route-authority: DENIED FOR M4."
+        )
+        summary = self._escalate_summary([self._halt_action()])
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "proceed"
+        assert "proceed-with-recorded-dispositions" in outcome["summary"]
+        assert state["current_state"] == STATE_GATED
+        assert "user_approved_gate" not in state["meta"]
+
+    def test_escalate_stays_when_disposition_absent(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED
+
+        state = self._state_with_disposition(None)
+        summary = self._escalate_summary([self._halt_action()])
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+        assert state["current_state"] == STATE_CRITIQUED
+
+    def test_escalate_stays_when_note_not_from_user(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        state["meta"]["notes"][0]["source"] = "auto_approve_prep_clarification"
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([self._halt_action()]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_question_id_does_not_match(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=some-other-question decision=DENIED"
+        )
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([self._halt_action()]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_no_actions(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_mixed_or_new_action_unsettled(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        # One settled halt + one genuinely NEW halt -> still escalates.
+        summary = self._escalate_summary(
+            [
+                self._halt_action(),
+                self._halt_action(question_id="brand-new-question", id="nsa-new"),
+            ]
+        )
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_non_halt_action_present(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        action = self._halt_action()
+        action["action_type"] = "change_plan"
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([action]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_open_blocking_flag(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        summary = self._escalate_summary(
+            [self._halt_action()],
+            unresolved_flags=[
+                {"id": "f-open", "severity": "significant", "status": "open", "concern": "z"}
+            ],
+        )
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_preflight_failed(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        summary = self._escalate_summary(
+            [self._halt_action()],
+            preflight_results={"agent_availability": False},
+        )
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+
 
 class TestTiebreakerOutcomeSemantics:
     def test_pick_promotes_proceed_signal(self) -> None:

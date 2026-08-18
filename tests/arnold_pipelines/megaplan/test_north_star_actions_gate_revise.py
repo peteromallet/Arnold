@@ -1077,3 +1077,271 @@ class TestBlockingActionEvidenceValidation:
         )
         result = normalize_north_star_action(raw_action)
         assert result["severity"] == SEVERITY_ADVISORY
+
+
+class TestOperatorDispositionResolver:
+    """The question_id -> operator-disposition resolver (bd778acabe4d).
+
+    A source=user operator note naming the exact question_id with a final
+    decision settles an add_human_halt; anything else stays fail-closed.
+    """
+
+    def _halt_action(self, question_id: str = "reigh-route-authority", **overrides: Any) -> dict[str, Any]:
+        action = _blocking_ns_action(
+            action_type="add_human_halt",
+            question_id=question_id,
+            question="Should m4 correct the external Reigh repository?",
+            id=f"nsa-{question_id}",
+        )
+        action.update(overrides)
+        return action
+
+    def _state_with_note(self, note: str, *, source: str = "user") -> dict[str, Any]:
+        return {
+            "name": "p",
+            "iteration": 1,
+            "config": {},
+            "meta": {
+                "notes": [
+                    {"timestamp": "2026-08-18T10:31:29Z", "note": note, "source": source}
+                ]
+            },
+            "current_state": "blocked",
+        }
+
+    def test_legacy_note_resolves_existing_halt(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            operator_disposition_for_action,
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR DECISION \u2014 reigh-route-authority: DENIED FOR M4. "
+            "The m4 brief authorizes tests-only access and no Reigh correction."
+        )
+        action = self._halt_action()
+        assert resolved_by_operator_disposition(state, action) is True
+        record = operator_disposition_for_action(state, action)
+        assert record is not None
+        assert record["question_id"] == "reigh-route-authority"
+        assert record["decision"] == "DENIED"
+        assert record["source"] == "user"
+        assert record["note_index"] == 0
+        assert record["note_sha256"]
+
+    def test_canonical_note_resolves_same_id(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            operator_disposition_for_action,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED. "
+            "No Reigh mutation authority for m4."
+        )
+        record = operator_disposition_for_action(state, self._halt_action())
+        assert record is not None
+        assert record["decision"] == "DENIED"
+
+    def test_approved_decision_also_resolves(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=APPROVED"
+        )
+        assert resolved_by_operator_disposition(state, self._halt_action()) is True
+
+    def test_no_note_is_fail_closed(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = {"name": "p", "iteration": 1, "config": {}, "meta": {}, "current_state": "blocked"}
+        assert resolved_by_operator_disposition(state, self._halt_action()) is False
+
+    def test_non_user_source_is_not_a_disposition(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR DECISION \u2014 reigh-route-authority: DENIED FOR M4.",
+            source="auto_approve_prep_clarification",
+        )
+        assert resolved_by_operator_disposition(state, self._halt_action()) is False
+
+    def test_missing_question_id_is_fail_closed(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        action = self._halt_action()
+        del action["question_id"]
+        assert resolved_by_operator_disposition(state, action) is False
+
+    def test_substring_question_id_does_not_match(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority-v2 decision=DENIED"
+        )
+        # The action asks about the OLD id; a disposition on the new id is not a match.
+        assert resolved_by_operator_disposition(state, self._halt_action()) is False
+
+    def test_new_question_id_stays_blocking_when_old_settled(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        assert (
+            resolved_by_operator_disposition(
+                state, self._halt_action(question_id="reigh-route-authority-v2")
+            )
+            is False
+        )
+
+    def test_non_final_decision_is_not_a_disposition(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=PENDING"
+        )
+        assert resolved_by_operator_disposition(state, self._halt_action()) is False
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=NEEDS_HUMAN"
+        )
+        assert resolved_by_operator_disposition(state, self._halt_action()) is False
+
+    def test_loose_keyword_does_not_match(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "not approved yet; we are still waiting on the reigh-route-authority call"
+        )
+        assert resolved_by_operator_disposition(state, self._halt_action()) is False
+
+    def test_non_halt_action_type_is_not_resolved(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        action = self._halt_action(action_type="change_plan")
+        assert resolved_by_operator_disposition(state, action) is False
+
+    def test_mixed_set_only_resolves_matching_halt(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            resolved_by_operator_disposition,
+        )
+
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        settled = self._halt_action()
+        new_halt = self._halt_action(question_id="some-brand-new-question", id="nsa-new")
+        assert resolved_by_operator_disposition(state, settled) is True
+        assert resolved_by_operator_disposition(state, new_halt) is False
+
+    def test_ordinary_closeout_still_requires_action_id_linkage(self) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            find_unresolved_blocking_actions,
+        )
+
+        carried = [self._halt_action(id="nsa-1")]
+        # An addressed record with prose-only refs must NOT resolve the blocker.
+        addressed = [
+            {
+                "action_id": "nsa-1",
+                "resolution": "addressed",
+                "reason": "fixed in step 12",
+                "plan_refs": [],
+            }
+        ]
+        unresolved = find_unresolved_blocking_actions(
+            carried_blocking=carried, addressed=addressed
+        )
+        assert len(unresolved) == 1
+        assert unresolved[0]["reason"] == "prose_only"
+
+    def test_carry_round_trip_preserves_settlement(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            read_carried_north_star_actions,
+        )
+        from arnold_pipelines.megaplan.handlers.gate import (
+            _apply_operator_dispositions,
+            _build_gate_carry,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir(parents=True)
+        state = self._state_with_note(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        action = self._halt_action()
+        summary: dict[str, Any] = {
+            "recommendation": "ESCALATE",
+            "rationale": "route authority",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "settled_decisions": [],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+            "north_star_actions": [action],
+            "preflight_results": {},
+            "unresolved_flags": [],
+            "criteria_check": {},
+            "passed": False,
+            "orchestrator_guidance": "",
+        }
+        settled = _apply_operator_dispositions(state, summary)
+        assert len(settled) == 1
+        carry = _build_gate_carry(summary, iteration=1)
+        assert len(carry["settled_north_star_actions"]) == 1
+        (plan_dir / "gate_carry.json").write_text(json.dumps(carry), encoding="utf-8")
+        carried = read_carried_north_star_actions(plan_dir)
+        assert len(carried) == 1
+        assert carried[0]["resolved"] is True
+        assert carried[0]["status"] == "resolved"
+        assert carried[0]["operator_disposition"]["decision"] == "DENIED"
+
+    def test_carry_rejects_worker_fake_resolved(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            read_carried_north_star_actions,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir(parents=True)
+        carry = {
+            "north_star_actions": [
+                {
+                    "id": "nsa-1",
+                    "concern": "c",
+                    "category": "baselines",
+                    "action_type": "add_human_halt",
+                    "severity": "blocking",
+                    "severity_source": "schema",
+                    "evidence": "e",
+                    "resolved": True,  # worker-provided fake — must be stripped
+                }
+            ],
+            "settled_north_star_actions": [],
+        }
+        (plan_dir / "gate_carry.json").write_text(json.dumps(carry), encoding="utf-8")
+        carried = read_carried_north_star_actions(plan_dir)
+        assert len(carried) == 1
+        assert carried[0].get("resolved") is not True

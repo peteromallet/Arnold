@@ -195,3 +195,83 @@ def test_compact_open_flags_preserves_decision_fields() -> None:
     assert len(compact[0]["concern"]) <= COMPACT_GATE_FLAG_CONCERN_MAX_CHARS + 512
     assert len(compact[0]["evidence"]) <= COMPACT_GATE_FLAG_DETAIL_MAX_CHARS + 512
     assert len(compact[0]["revise_summary"]) <= COMPACT_GATE_FLAG_DETAIL_MAX_CHARS + 512
+
+
+def test_gate_prompt_includes_operator_decisions_block(tmp_path: Path) -> None:
+    """The gate prompt must surface recorded source=user operator decisions
+    (bd778acabe4d): without them the gate worker re-derives a stale halt on a
+    question the operator already settled."""
+    from arnold_pipelines.megaplan.prompts.gate import _gate_prompt
+
+    plan_dir = _make_plan_dir(tmp_path, flag_count=1)
+    state = _make_state(plan_dir, tmp_path / "project")
+    state["meta"]["notes"] = [
+        {
+            "timestamp": "2026-08-18T10:31:29Z",
+            "source": "user",
+            "note": (
+                "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED. "
+                "OPERATOR DECISION \u2014 reigh-route-authority: DENIED FOR M4."
+            ),
+        }
+    ]
+    prompt = _gate_prompt(state, plan_dir)
+    assert "Recorded operator decisions (source=user):" in prompt
+    assert "question_id: reigh-route-authority" in prompt
+    assert "decision: DENIED" in prompt
+    assert "mechanically_binding: true" in prompt
+    assert "do not re-emit the same add_human_halt" in prompt
+
+
+def test_compact_gate_prompt_includes_operator_decisions_block(tmp_path: Path) -> None:
+    """The compact fallback must preserve every parsed question_id/decision."""
+    plan_dir = _make_plan_dir(tmp_path, flag_count=1)
+    state = _make_state(plan_dir, tmp_path / "project")
+    state["meta"]["notes"] = [
+        {
+            "timestamp": "2026-08-18T10:31:29Z",
+            "source": "user",
+            "note": "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED",
+        }
+    ]
+    compact = compact_gate_prompt(state, plan_dir, tmp_path / "project")
+    assert "Recorded operator decisions (source=user):" in compact
+    assert "question_id: reigh-route-authority" in compact
+    assert "decision: DENIED" in compact
+    assert "mechanically_binding: true" in compact
+
+
+def test_gate_prompt_marks_unparseable_user_note_non_binding(tmp_path: Path) -> None:
+    """A source=user note that is NOT a parseable disposition is shown as
+    informational (mechanically_binding: false), never as a disposition."""
+    from arnold_pipelines.megaplan.prompts.gate import _gate_prompt
+
+    plan_dir = _make_plan_dir(tmp_path, flag_count=1)
+    state = _make_state(plan_dir, tmp_path / "project")
+    state["meta"]["notes"] = [
+        {
+            "timestamp": "2026-08-18T10:31:29Z",
+            "source": "user",
+            "note": "still waiting on the external owner; not approved yet",
+        }
+    ]
+    prompt = _gate_prompt(state, plan_dir)
+    assert "mechanically_binding: false" in prompt
+    assert "decision: (unparsed)" in prompt
+
+
+def test_gate_prompt_omits_non_user_notes_from_decisions_block(tmp_path: Path) -> None:
+    """Automated notes are not operator decisions and must not render."""
+    from arnold_pipelines.megaplan.prompts.gate import _gate_prompt
+
+    plan_dir = _make_plan_dir(tmp_path, flag_count=1)
+    state = _make_state(plan_dir, tmp_path / "project")
+    state["meta"]["notes"] = [
+        {
+            "timestamp": "2026-08-18T09:37:13Z",
+            "source": "auto_approve_prep_clarification",
+            "note": "converted prep clarification into planner assumptions",
+        }
+    ]
+    prompt = _gate_prompt(state, plan_dir)
+    assert "Recorded operator decisions (source=user):" not in prompt

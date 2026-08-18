@@ -113,6 +113,67 @@ def intent_and_notes_block(state: PlanState) -> str:
     return "\n\n".join(sections)
 
 
+def operator_decisions_block(state: PlanState) -> str:
+    """Render recorded source=user operator decisions for the gate prompt.
+
+    Each entry shows timestamp, source, parsed ``question_id``, parsed
+    decision, the original note text, and whether the record is mechanically
+    binding. Unparseable source=user notes are shown as informational with
+    ``mechanically_binding: false``; automated notes are not operator
+    decisions and are omitted. The closing instruction is shared with the
+    mechanical resolver so the prompt and the resolver never evolve separate
+    grammars.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import parse_operator_disposition
+
+    notes = (state.get("meta") or {}).get("notes")
+    if not isinstance(notes, list) or not notes:
+        return ""
+    lines: list[str] = []
+    for note in notes:
+        if not isinstance(note, Mapping):
+            continue
+        source = note.get("source")
+        if not isinstance(source, str) or source.strip().lower() != "user":
+            continue
+        note_text = note.get("note")
+        if not isinstance(note_text, str) or not note_text.strip():
+            continue
+        parsed = parse_operator_disposition(note_text)
+        timestamp = note.get("timestamp")
+        if not isinstance(timestamp, str):
+            timestamp = ""
+        if parsed is not None:
+            binding = "true"
+            question_id = parsed["question_id"]
+            decision = parsed["decision"]
+        else:
+            binding = "false"
+            question_id = "(none)"
+            decision = "(unparsed)"
+        lines.append(
+            "- timestamp: {ts} | source: user | question_id: {qid} | "
+            "decision: {dec} | mechanically_binding: {binding} | note: {text}".format(
+                ts=timestamp or "(unknown)",
+                qid=question_id,
+                dec=decision,
+                binding=binding,
+                text=note_text.replace("\n", " ")[:600],
+            )
+        )
+    if not lines:
+        return ""
+    return (
+        "Recorded operator decisions (source=user):\n        "
+        + "\n        ".join(lines)
+        + "\n        A recorded disposition settles that exact human question; do not "
+        "re-emit the same add_human_halt. If the selected decision creates "
+        "unfinished plan work, return ITERATE or a distinct actionable North "
+        "Star action describing that work. Never invent a second spelling of "
+        "an already-settled question merely to reopen it."
+    )
+
+
 def intent_brief_reference(state: PlanState) -> str:
     """Slim reference to the original brief for post-plan phases."""
     clarification = (state.get("clarification") or {}).get("intent_summary")
