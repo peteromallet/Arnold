@@ -7428,6 +7428,291 @@ def test_watchdog_hot_update_prefers_newer_editable_source_wrapper(tmp_path: Pat
     assert result.stdout.splitlines() == [str(source_wrapper), "once"]
 
 
+def _write_babysitter_receipt(
+    repair_data: Path,
+    *,
+    session: str,
+    digest: str,
+    pid: int,
+    run_root: Path,
+    launched_at: str,
+    status: str = "launched",
+) -> Path:
+    repair_data.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": "arnold.superfixer.watchdog_dispatch_receipt.v1",
+        "session": session,
+        "occurrence_digest": digest,
+        "status": status,
+        "babysitter_pid": pid,
+        "supervisor_pid": pid,
+        "run_root": str(run_root),
+        "launched_at": launched_at,
+        "dispatched_at": launched_at,
+    }
+    path = repair_data / f"{session}.babysitter-receipt.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _fake_proc_pid(
+    proc_root: Path,
+    pid: int,
+    *,
+    state: str = "S",
+    ppid: int = 1,
+    established_inode: str | None = None,
+) -> None:
+    pid_dir = proc_root / str(pid)
+    fd_dir = pid_dir / "fd"
+    fd_dir.mkdir(parents=True, exist_ok=True)
+    (pid_dir / "stat").write_text(
+        f"{pid} (python) {state} {ppid} {pid} {pid} 0 0 0 0 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    if established_inode is None:
+        return
+    os.symlink(f"socket:[{established_inode}]", fd_dir / "3")
+    net_dir = pid_dir / "net"
+    net_dir.mkdir(parents=True, exist_ok=True)
+    header = (
+        "  sl  local_address rem_address   st tx_queue rx_queue tr "
+        "tm->when retrnsmt   uid  timeout inode\n"
+    )
+    row = (
+        f"   0: 0100007F:C350 0100007F:01BB 01 00000000:00000000 "
+        f"00:00000000 00000000     0        0 {established_inode} 1\n"
+    )
+    (net_dir / "tcp").write_text(header + row, encoding="utf-8")
+
+
+def _invoke_babysitter_running(
+    *,
+    repair_data: Path,
+    session: str,
+    digest: str,
+    proc_root: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    exports = [
+        _extract_wrapper_function("babysitter_running_for_occurrence"),
+        f"REPAIR_DATA_DIR={str(repair_data)!r}",
+    ]
+    if proc_root is not None:
+        exports.append(
+            "export CLOUD_WATCHDOG_BABYSITTER_PROC_ROOT="
+            + shlex.quote(str(proc_root))
+        )
+    exports.append(
+        f"babysitter_running_for_occurrence {shlex.quote(session)} {shlex.quote(digest)}"
+    )
+    return _run_watchdog_shell("\n".join(exports))
+
+
+def test_babysitter_wedged_ignores_silent_run_log_when_stdout_grew(
+    tmp_path: Path,
+) -> None:
+    """I51: a mid-call babysitter tees to babysitter.stdout.log, not run.log."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / f"sched_superfixer_status_{session}_{digest}"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=20)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_babysitter_receipt(
+        repair_data,
+        session=session,
+        digest=digest,
+        pid=os.getpid(),
+        run_root=run_root,
+        launched_at=launched,
+    )
+    stale = time.time() - 40 * 60
+    (run_root / "nested").mkdir()
+    run_log = run_root / "nested" / "run.log"
+    run_log.write_text("[tool] read\n", encoding="utf-8")
+    os.utime(run_log, (stale, stale))
+    stdout_log = run_root / "babysitter.stdout.log"
+    stdout_log.write_text("[tool] grep\n", encoding="utf-8")
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    result = _invoke_babysitter_running(
+        repair_data=repair_data,
+        session=session,
+        digest=digest,
+        proc_root=proc_root,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_babysitter_wedged_treats_established_socket_as_live_work(
+    tmp_path: Path,
+) -> None:
+    """Mid-model-call: no log growth, but ESTABLISHED TCP → do not reap."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=20)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        _write_babysitter_receipt(
+            repair_data,
+            session=session,
+            digest=digest,
+            pid=child.pid,
+            run_root=run_root,
+            launched_at=launched,
+        )
+        stale = time.time() - 40 * 60
+        run_log = run_root / "run.log"
+        run_log.write_text("[done] old\n", encoding="utf-8")
+        os.utime(run_log, (stale, stale))
+        proc_root = tmp_path / "proc"
+        _fake_proc_pid(
+            proc_root, child.pid, state="S", established_inode="4242"
+        )
+        result = _invoke_babysitter_running(
+            repair_data=repair_data,
+            session=session,
+            digest=digest,
+            proc_root=proc_root,
+        )
+        assert result.returncode == 0, result.stderr
+        assert child.poll() is None
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_babysitter_wedged_reaps_idle_tree_with_stale_logs(
+    tmp_path: Path,
+) -> None:
+    """I18/I32/I34: live pid, stale logs, no sockets, not runnable → SIGTERM."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=20)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        _write_babysitter_receipt(
+            repair_data,
+            session=session,
+            digest=digest,
+            pid=child.pid,
+            run_root=run_root,
+            launched_at=launched,
+        )
+        stale = time.time() - 40 * 60
+        run_log = run_root / "run.log"
+        run_log.write_text("[done] old\n", encoding="utf-8")
+        os.utime(run_log, (stale, stale))
+        (run_root / "babysitter.stdout.log").write_text("old\n", encoding="utf-8")
+        os.utime(run_root / "babysitter.stdout.log", (stale, stale))
+        proc_root = tmp_path / "proc"
+        _fake_proc_pid(proc_root, child.pid, state="S")
+        result = _invoke_babysitter_running(
+            repair_data=repair_data,
+            session=session,
+            digest=digest,
+            proc_root=proc_root,
+        )
+        assert result.returncode == 1, result.stderr
+        assert "babysitter wedged or dead" in result.stderr
+        child.wait(timeout=5)
+        assert child.returncode in {-15, 15}
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_babysitter_wedged_treats_child_socket_as_live_work(
+    tmp_path: Path,
+) -> None:
+    """fan.py / nested hermes: parent idle, child ESTABLISHED → do not reap."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=20)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        _write_babysitter_receipt(
+            repair_data,
+            session=session,
+            digest=digest,
+            pid=child.pid,
+            run_root=run_root,
+            launched_at=launched,
+        )
+        stale = time.time() - 40 * 60
+        (run_root / "run.log").write_text("[tool] fan.py\n", encoding="utf-8")
+        os.utime(run_root / "run.log", (stale, stale))
+        proc_root = tmp_path / "proc"
+        grandchild_pid = child.pid + 100000
+        _fake_proc_pid(proc_root, child.pid, state="S")
+        _fake_proc_pid(
+            proc_root,
+            grandchild_pid,
+            state="S",
+            ppid=child.pid,
+            established_inode="7777",
+        )
+        result = _invoke_babysitter_running(
+            repair_data=repair_data,
+            session=session,
+            digest=digest,
+            proc_root=proc_root,
+        )
+        assert result.returncode == 0, result.stderr
+        assert child.poll() is None
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_babysitter_wedged_fail_open_without_proc(
+    tmp_path: Path,
+) -> None:
+    """No /proc and no recent logs: do not reap a live pid."""
+    session = "megaplan-maintenance"
+    digest = "a07166d38fbc"
+    repair_data = tmp_path / "repair-data"
+    run_root = repair_data / "babysitter-runs" / "run"
+    run_root.mkdir(parents=True)
+    launched = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=20)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_babysitter_receipt(
+        repair_data,
+        session=session,
+        digest=digest,
+        pid=os.getpid(),
+        run_root=run_root,
+        launched_at=launched,
+    )
+    missing_proc = tmp_path / "no-proc"
+    result = _invoke_babysitter_running(
+        repair_data=repair_data,
+        session=session,
+        digest=digest,
+        proc_root=missing_proc,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:
     text = _wrapper("arnold-chain")
 
