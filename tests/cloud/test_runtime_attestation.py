@@ -1021,11 +1021,13 @@ def test_ensure_runtime_launch_seed_rebuilds_on_seed_document_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Occurrence 35afd4e47587: a seed whose live seed documents (chain spec /
-    hot-env selector / supervisor receipt) drifted is STALE — the dispatcher
-    must rebuild it (mirroring the worker-side seed-document-manifest gate)
+    """Occurrence 35afd4e47587: a seed whose live seed documents (hot-env
+    selector / supervisor receipt) drifted is STALE — the dispatcher must
+    rebuild it (mirroring the worker-side seed-document-manifest gate)
     instead of re-issuing a seed every worker refuses with 'seed document
-    manifest drifted'."""
+    manifest drifted'. Chain-spec full-file drift is advisory ONLY (plan
+    state carries the recorded binding; a spec edit must not hard-block
+    every launch until a rebuild)."""
     env = _ensure_seed_env(tmp_path, monkeypatch)
     assert isinstance(env["manifest"], Path)
     manifest = env["manifest"]
@@ -1061,19 +1063,27 @@ def test_ensure_runtime_launch_seed_rebuilds_on_seed_document_drift(
     first = _ensure()
     assert _current(first)  # dispatcher gate accepts the fresh seed
 
-    # The chain spec changes after the seed was issued (supervisor edit).
+    # A chain-spec edit must NOT mark the seed stale: the chain spec is a
+    # planning input baked into plan state at init; workers resolve the
+    # plan's recorded binding, and the chain runtime binding is enforced
+    # separately. Blocking here would hard-block every launch after any
+    # legitimate spec edit (e.g. the partnered-5 profile switch).
     chain_spec = paths["chain_spec"]
     assert isinstance(chain_spec, Path)
     chain_spec.write_text(
         chain_spec.read_text(encoding="utf-8") + "# supervisor profile edit\n",
         encoding="utf-8",
     )
+    assert _current(first)
 
-    # Dispatcher gate now sees the seed as stale (the fix under test).
+    # A hot-env change (still load-bearing: launch credentials/environment)
+    # DOES mark the seed stale, and ensure_runtime_launch_seed rebuilds a
+    # NEW immutable seed; the dispatch pointer follows it.
+    hot_env = paths["hot_env"]
+    assert isinstance(hot_env, Path)
+    hot_env.write_text(hot_env.read_text(encoding="utf-8") + "KEY=rotated\n", encoding="utf-8")
     assert not _current(first)
 
-    # ensure_runtime_launch_seed rebuilds a NEW immutable seed for the same
-    # generation, and the dispatch pointer follows it.
     rebuilt = _ensure()
     assert rebuilt != first
     assert rebuilt.parent == first.parent
@@ -1086,10 +1096,10 @@ def test_ensure_runtime_launch_seed_rebuilds_on_seed_document_drift(
     rebuilt_entries = {
         str(entry["path"]): entry for entry in rebuilt_doc["entries"]
     }
-    chain_entry = rebuilt_entries[str(chain_spec)]
-    assert chain_entry["sha256"] != dict(
+    hot_env_entry = rebuilt_entries[str(hot_env)]
+    assert hot_env_entry["sha256"] != dict(
         (str(entry["path"]), entry) for entry in first_doc["entries"]
-    )[str(chain_spec)]["sha256"]
+    )[str(hot_env)]["sha256"]
     assert rebuilt_doc["content_sha256"] != first_doc["content_sha256"]
     assert _current(rebuilt)  # rebuilt seed passes the dispatcher gate
     pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"

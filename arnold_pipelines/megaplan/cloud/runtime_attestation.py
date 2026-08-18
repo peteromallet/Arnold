@@ -601,10 +601,16 @@ def build_runtime_launch_seed(
     hot_selectors = _parse_hot_env(hot_env_path)
     # ── Step 5A: collect revision components (branch, HEAD, origin) ────
     revision_components = _collect_revision_components(root)
+    # The chain spec is a planning input already baked into plan state at
+    # init; workers resolve the plan's RECORDED binding, not a live
+    # chain.yaml read. Pinning its full content hash here made any
+    # legitimate spec edit (e.g. profile switch) hard-block every launch
+    # with "seed document manifest drifted" until a seed rebuild. The chain
+    # runtime BINDING (chain_binding above) still enforces root/revision at
+    # dispatch; the full-file chain-spec hash is advisory only.
     document_paths = {
         supervisor_receipt_path,
         hot_env_path,
-        chain_spec_path,
         *seed_doc_paths,
     }
     seed_manifest = _manifest(document_paths)
@@ -922,16 +928,18 @@ def _launch_seed_current(
     ):
         return False
     # Occurrence 35afd4e47587 (seed document manifest drifted): a seed whose
-    # live seed documents (chain spec / hot-env selector / supervisor receipt /
-    # seed docs) no longer match the bound seed_document_manifest is STALE.
+    # live seed documents (hot-env selector / supervisor receipt / seed docs)
+    # no longer match the bound seed_document_manifest is STALE.
     # validate_runtime_launch_seed rejects it at worker launch ("seed document
     # manifest drifted"); the dispatcher must mirror that exact gate here so
     # ensure_runtime_launch_seed REBUILDS the seed instead of re-issuing one
-    # every worker would refuse. Without this, a supervisor chain-spec edit
-    # wedges the chain: every resume/chain-start re-dispatches the stale seed.
+    # every worker would refuse. The chain-spec FULL-FILE hash is advisory
+    # only (plan state carries the recorded binding; a spec edit must not
+    # hard-block every launch until a rebuild) — chain runtime binding is
+    # still enforced separately below.
     doc_paths = [
         Path(str(input_paths.get(name) or ""))
-        for name in ("supervisor_receipt", "hot_env", "chain_spec")
+        for name in ("supervisor_receipt", "hot_env")
     ]
     doc_paths.extend(Path(str(path)) for path in input_paths.get("seed_docs") or [])
     if _manifest(doc_paths) != seed.get("seed_document_manifest"):
@@ -1468,9 +1476,13 @@ def validate_runtime_launch_seed(
                 )
     paths = seed.get("input_paths")
     paths = paths if isinstance(paths, Mapping) else {}
+    # Chain-spec full-file hash is advisory (see build_runtime_launch_seed):
+    # the chain RUNTIME BINDING below (chain_spec path -> root/revision)
+    # still gates, but an ordinary chain.yaml edit must not hard-block every
+    # worker launch with "seed document manifest drifted".
     manifest_paths = [
         Path(str(paths.get(name) or ""))
-        for name in ("supervisor_receipt", "hot_env", "chain_spec")
+        for name in ("supervisor_receipt", "hot_env")
     ]
     manifest_paths.extend(Path(str(path)) for path in paths.get("seed_docs") or [])
     if _manifest(manifest_paths) != seed.get("seed_document_manifest"):
