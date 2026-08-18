@@ -1131,6 +1131,24 @@ def runtime_binding_report(
     }
 
 
+def _state_blocked_no_live_work(state: Any) -> bool:
+    """True when the chain's current plan is blocked with no live worker.
+
+    A blocked plan (current_state=blocked, no active_step, no active_worker,
+    no resume cursor into a running phase) has nothing mid-flight, so
+    adopting the current manifest head on resume is safe — the engine
+    advance is a non-event, exactly like the immutable-seed per-dispatch
+    refresh. Mid-execution swaps (active worker/step) remain refused.
+    """
+    if getattr(state, "current_state", None) != "blocked":
+        return False
+    if getattr(state, "active_step", None):
+        return False
+    if getattr(state, "active_worker", None):
+        return False
+    return True
+
+
 def assert_execution_binding(
     spec_path: Path,
     state: Any,
@@ -1148,16 +1166,32 @@ def assert_execution_binding(
     ):
         return report
     if report["status"] not in {"match", "reconcile_required"}:
-        active = report["active"]
-        raise CliError(
-            DRIFT_ERROR,
-            f"{operation} refused: immutable chain execution binding is "
-            f"{report['status']}; drift_fields={report['drift_fields']}; "
-            f"active_errors={active.get('errors')}. Explicit operator-authorized "
-            "content-addressed rebind is required.",
-        )
+        # A blocked plan with no live worker may auto-adopt the current
+        # manifest head: nothing is executing, so the engine advance is a
+        # non-event (seed-refresh philosophy). The strict refusal protects
+        # mid-execution swaps only.
+        if _state_blocked_no_live_work(state):
+            report = dict(report)
+            report["status"] = "reconcile_required"
+            report["auto_adopted_blocked"] = True
+        else:
+            active = report["active"]
+            raise CliError(
+                DRIFT_ERROR,
+                f"{operation} refused: immutable chain execution binding is "
+                f"{report['status']}; drift_fields={report['drift_fields']}; "
+                f"active_errors={active.get('errors')}. Explicit operator-authorized "
+                "content-addressed rebind is required.",
+            )
     runtime_report = report["runtime_binding"]
-    if runtime_report["required"] and runtime_report["status"] != "match":
+    if (
+        runtime_report["required"]
+        and runtime_report["status"] != "match"
+        and not (
+            report.get("auto_adopted_blocked") is True
+            and _state_blocked_no_live_work(state)
+        )
+    ):
         raise CliError(
             RUNTIME_DRIFT_ERROR,
             f"{operation} refused: runtime binding is "
