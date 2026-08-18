@@ -1055,8 +1055,20 @@ def execution_binding_report(
         )
         if safe_future:
             status = "reconcile_required"
+        elif not drift_fields and active_ready:
+            status = "match"
+        elif active_ready:
+            # The drift fields are fully covered by operator-recorded
+            # reconciliation (required_canonical_source_updates with
+            # status=reconciled matching the active asset): the binding
+            # errors are acknowledged, so the identity is ready and the
+            # drift is reconcilable — not a hard refusal. (astrid m4:
+            # milestone_brief:3 amended via replan; RCSU covers the error
+            # but drift_fields=['assets'] alone forced status=drift and
+            # refused the load.)
+            status = "reconcile_required"
         else:
-            status = "drift" if drift_fields or not active_ready else "match"
+            status = "drift"
     result = {
         "schema": BINDING_SCHEMA,
         "required": policy["required"],
