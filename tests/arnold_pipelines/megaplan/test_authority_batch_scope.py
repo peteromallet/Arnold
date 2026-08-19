@@ -948,6 +948,136 @@ def test_auto_loop_cross_session_reset_recomputes_pending_frontier(
     )
 
 
+def test_auto_loop_plain_resume_reruns_contradictory_done_budget_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 927ad612eda8 (live regression 2026-08-19T12:12Z).
+
+    A DONE row that still carries the durable budget-block identity with no
+    admitted evidence (adopt-before-replay artifact) must return to the
+    runnable frontier on the PLAIN resume path (no --retry-blocked-tasks),
+    or execute stays blocked on "done tasks missing both files_changed and
+    commands_run" forever.  The astrid retry partition (4d39b18d33) only
+    covered the flagged path; the plain path must mirror it.
+    """
+    import argparse
+    import types as _types
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        handle_execute_auto_loop,
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._guard_execute_batch_admission",
+        lambda **kwargs: None,
+    )
+
+    dispatched_batches: list[list[str]] = []
+
+    def _fake_run_and_merge_batch(**kwargs):
+        fin = kwargs["finalize_data"]
+        batch_ids = set(kwargs["batch_task_ids"])
+        dispatched_batches.append(sorted(batch_ids))
+        for task in fin.get("tasks", []):
+            if isinstance(task, dict) and task.get("id") in batch_ids:
+                task["status"] = "done"
+                task["executor_notes"] = "compliant rerun"
+                task["files_changed"] = [f"src/{task['id']}.py"]
+                task["commands_run"] = ["pytest tests/unit.py -q"]
+        worker = _types.SimpleNamespace(
+            duration_ms=0, cost_usd=0.0, prompt_tokens=0, completion_tokens=0,
+            total_tokens=0, rate_limit=None, session_id=None, model_actual=None,
+            worker_channel=None, auth_channel=None, auth_metadata=None,
+            rendered_prompt=None, trace_output=None,
+        )
+        return _types.SimpleNamespace(
+            worker=worker,
+            agent=kwargs.get("agent", "shadow"),
+            mode=kwargs.get("mode", "code"),
+            refreshed=kwargs.get("refreshed", False),
+            payload={"task_updates": [], "sense_check_acknowledgments": []},
+            batch_number=kwargs.get("batch_number", 1),
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs.get("batch_sense_check_ids", []),
+            merged_task_count=len(kwargs["batch_task_ids"]),
+            total_task_count=len(kwargs["batch_task_ids"]),
+            acknowledged_sense_check_count=0,
+            total_sense_check_count=len(kwargs.get("batch_sense_check_ids", [])),
+            missing_task_evidence=[],
+            execution_audit={},
+            finalize_hash="",
+            attribution_records=[],
+            routing_degradations=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._run_and_merge_batch",
+        _fake_run_and_merge_batch,
+    )
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T5A",
+                "status": "done",
+                "depends_on": [],
+                "description": "adopt-before-replay artifact row",
+                "executor_notes": "",
+                "task_test_budget_exhausted": (
+                    "task_test_budget_exhausted: declared test timeout total "
+                    "240s exceeds max_seconds=120"
+                ),
+            },
+            {
+                "id": "T5B",
+                "status": "pending",
+                "depends_on": [],
+                "description": "ordinary pending task",
+                "executor_notes": "",
+            },
+        ],
+        "sense_checks": [],
+        "baseline_test_failures": None,
+        "user_actions": [],
+    }
+    (tmp_path / "finalize.json").write_text(
+        json.dumps(finalize_data), encoding="utf-8"
+    )
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "executed",
+        "iteration": 1,
+        "config": {"mode": "code", "project_dir": str(tmp_path)},
+        "sessions": {},
+        "history": [],
+        "meta": {"current_invocation_id": "b8c09bb55ffb4166"},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    response = handle_execute_auto_loop(
+        root=tmp_path,
+        plan_dir=tmp_path,
+        state=state,
+        args=argparse.Namespace(),
+        auto_approve=False,
+        agent="shadow",
+        mode="code",
+        refreshed=False,
+    )
+    # Pre-fix T5A (done, budget marker, no evidence) was never dispatched.
+    assert dispatched_batches
+    all_dispatched = [tid for batch in dispatched_batches for tid in batch]
+    assert "T5A" in all_dispatched
+    assert "T5B" in all_dispatched
+    assert all(
+        task["status"] == "done"
+        for task in json.loads((tmp_path / "finalize.json").read_text())["tasks"]
+    )
+    assert response is not None
+
+
 
 def test_auto_loop_pending_left_behind_blocks_phase_and_skips_later_batch(
     tmp_path: Path,
