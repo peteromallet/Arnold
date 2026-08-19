@@ -482,7 +482,7 @@ def compute_default_blast_radius(
         "selectors": selectors,
         "changed_surfaces": changed_python_surfaces,
         "always_run": [],
-        "full_suite_fallback": True,
+        "full_suite_fallback": strategy != "none",
         "rationale": " ".join(rationale_parts),
         "import_graph": {
             "degraded": import_graph_degraded,

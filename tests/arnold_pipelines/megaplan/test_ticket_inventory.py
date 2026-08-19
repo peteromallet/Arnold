@@ -344,6 +344,29 @@ class TestValidUlidWithCanonicalFilename:
         entry = inv.entries[0]
         assert entry.roadmap_eligible is False
 
+    def test_valid_ulid_roadmap_eligible_from_initiatives_strategy(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression guard (occurrence 7e67b58a6582): the inventory reader must
+        resolve the initiatives STRATEGY.md (the path tickets/promotion.py writes
+        via layout.strategy_file_path), not only the legacy .megaplan/STRATEGY.md.
+        """
+        uid = _valid_ulid()
+        initiatives = tmp_path / ".megaplan" / "initiatives" / "repository-strategy"
+        initiatives.mkdir(parents=True, exist_ok=True)
+        (initiatives / "STRATEGY.md").write_text(
+            _minimal_strategy(ticket_refs=[uid]), encoding="utf-8"
+        )
+        td = _make_tickets_dir(tmp_path)
+        _write_ticket(td, f"{uid}-my-feature.md",
+                      _minimal_ticket_frontmatter(uid=uid))
+
+        inv = build_ticket_inventory(tmp_path)
+        assert inv.strategy_absent is False
+        entry = inv.entries[0]
+        assert entry.roadmap_eligible is True
+        assert inv.total_roadmap_eligible == 1
+
     def test_no_body(self, tmp_path: Path) -> None:
         uid = _valid_ulid()
         td = _make_tickets_dir(tmp_path)

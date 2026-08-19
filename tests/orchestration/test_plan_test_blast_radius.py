@@ -130,7 +130,33 @@ def test_plan_blast_radius_does_not_treat_missing_surfaces_as_no_tests(
 
     assert radius is not None
     assert radius["strategy"] == "full"
+    assert radius["full_suite_fallback"] is True
     assert "did not declare any concrete changed_surfaces" in radius["rationale"]
+
+
+def test_plan_blast_radius_none_floor_emits_false_fallback(tmp_path: Path) -> None:
+    """Regression guard (occurrence 7e67b58a6582): a strategy:none floor must
+    persist full_suite_fallback=false so plan must-criterion #14 is satisfiable.
+
+    The harness previously hardcoded True here, forcing the persisted field to
+    true regardless of the model's emitted value (tiebreaker FG-001).
+    """
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+
+    radius = _derive_plan_test_blast_radius(
+        plan_dir=plan_dir,
+        state=_state(repo),
+        payload={
+            "changed_surfaces": [],
+            "success_criteria": [],
+        },
+    )
+
+    assert radius is not None
+    assert radius["strategy"] == "none"
+    assert radius["full_suite_fallback"] is False
 
 
 def test_model_proposed_absent_node_lands_in_missing_test_selectors(
