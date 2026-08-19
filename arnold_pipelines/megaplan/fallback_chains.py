@@ -58,6 +58,7 @@ _AUTH_TOKENS: frozenset[str] = frozenset(
 _QUOTA_TOKENS = frozenset(
     {
         "quota",
+        "quota_exceeded",
         "billing",
         "insufficient_credits",
         "credit_balance",
