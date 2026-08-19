@@ -5491,6 +5491,7 @@ def _rearm_fresh_session_execute_block(
             "execution_blocked",
             "tasks_blocked",
             "external_error",
+            "quality_gate_circuit_open",
         }:
             return False
     from arnold_pipelines.megaplan._core.state import write_plan_state
