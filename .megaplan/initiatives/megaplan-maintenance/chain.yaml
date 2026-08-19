@@ -90,6 +90,8 @@ milestones:
   - 'finalize=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
   - execute=hermes:deepseek:deepseek-v4-pro
   - 'review=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
+  - 'tiebreaker_researcher=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
+  - 'tiebreaker_challenger=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
   depends_on:
   - m5-daily-efficiency-auditor
 on_failure:
