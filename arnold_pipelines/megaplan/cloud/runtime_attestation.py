@@ -9,6 +9,7 @@ import importlib
 import importlib.metadata
 import json
 import os
+import re
 import site
 import stat
 import subprocess
@@ -836,6 +837,35 @@ def _live_runtime_identity(*, root: Path, expected_revision: str) -> dict[str, A
     return normalized_runtime_identity(provenance)
 
 
+def _regenerate_relaunch_command(
+    command: str,
+    *,
+    old_revision: str,
+    new_revision: str,
+) -> str:
+    """Rewire a persisted relaunch command to a new runtime revision.
+
+    A content-addressed marker relaunch must bind the runtime it restarts.
+    When the manifest head advances on the SAME runtime root the only token
+    that legitimately changes is the 40-hex revision pin — persisted as
+    ``MEGAPLAN_BOUND_RUNTIME_REVISION=<rev>``, ``RUNTIME_REVISION=<rev>``,
+    or a bare ``<rev>`` token.  The swap is word-boundary guarded so a
+    revision that also appears as a prefix/suffix of another token is left
+    untouched.  When the old revision is absent the command is returned
+    unchanged and the caller fails closed (the CAS cutover still refuses a
+    command that does not bind the active runtime).
+    """
+    if not command or not old_revision or not new_revision:
+        return command
+    if old_revision == new_revision or len(old_revision) != 40:
+        return command
+    return re.sub(
+        rf"(?<![0-9a-f]){re.escape(old_revision)}(?![0-9a-f])",
+        new_revision,
+        command,
+    )
+
+
 def _rebind_marker_if_stale(
     marker_path: Path,
     marker: Mapping[str, Any],
@@ -880,6 +910,17 @@ def _rebind_marker_if_stale(
             RUNTIME_ATTESTATION_ERROR,
             "cloud session marker drift requires a relaunch command for rebinding",
         )
+    # The persisted command was authored for the marker's CURRENT runtime;
+    # on a same-root revision advance it still names the OLD revision and
+    # the CAS cutover would refuse it (runtime_marker_relaunch_mismatch).
+    # Regenerate the revision pin(s) so the cutover binds the LIVE runtime;
+    # a command that does not name the old revision at all is passed
+    # through unchanged and still fails closed in update_marker_runtime.
+    relaunch_command = _regenerate_relaunch_command(
+        relaunch_command,
+        old_revision=str(marker_identity.get("source_revision") or ""),
+        new_revision=str(live_identity.get("source_revision") or ""),
+    )
     update_marker_runtime(
         marker_path,
         expected_marker_sha256=_sha256_file(marker_path),
