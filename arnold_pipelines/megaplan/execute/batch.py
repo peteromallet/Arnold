@@ -7703,6 +7703,35 @@ def _review_rework_context(
     }
 
 
+def _scoped_successors_for_failed_validation(
+    validation_jobs: list[Mapping[str, Any]],
+    validation_results: list[Mapping[str, Any]],
+    accepted_task_ids: set[str] | frozenset[str],
+) -> list[str]:
+    """Derive scoped successor tasks from FAILED bounded validation jobs.
+
+    A bulk/manifest/global review rework item is admitted as a validation-only
+    job: the accepted task_ids it names are suppressed, not reopened.  When
+    the deterministic check FAILS, the engine demands a "scoped successor
+    task" — the named accepted tasks ARE those successors.  This helper
+    returns the accepted task_ids covered by failed jobs (in job order,
+    deduplicated), or [] when no job fails / no job covers accepted tasks.
+    """
+    successors: list[str] = []
+    for job, result in zip(validation_jobs, validation_results):
+        if not (
+            result.get("error")
+            or result.get("timed_out")
+            or result.get("exit_code") != 0
+        ):
+            continue
+        covered = job.get("task_ids") or []
+        for task_id in covered:
+            if task_id in accepted_task_ids and task_id not in successors:
+                successors.append(task_id)
+    return successors
+
+
 def _block_no_runnable_rework(
     *,
     plan_dir: Path,
@@ -8337,15 +8366,41 @@ def handle_execute_auto_loop(
                         if row.get("error") or row.get("timed_out") or row.get("exit_code") != 0
                     ]
                     if failed_validation and not review_rework_task_ids:
-                        return _block_no_runnable_rework(
-                            plan_dir=plan_dir,
-                            state=state,
-                            auto_approve=auto_approve,
-                            reason=(
-                                "review bulk verification failed its bounded validation "
-                                "job; a scoped successor task is required"
-                            ),
+                        # A failing bulk/manifest/global validation job names
+                        # the accepted tasks it covered (review rework item's
+                        # task_ids).  The admission treats bulk+check as
+                        # validation-only and suppresses those accepted ids, so
+                        # without this reopen the plan dead-ends on "scoped
+                        # successor task is required" — the named accepted
+                        # tasks ARE the scoped successors the message demands.
+                        # Reopen exactly the accepted tasks covered by FAILED
+                        # jobs; the deterministic check failing is the proof of
+                        # regression (no laundering: tasks must re-run and pass
+                        # verification again).  Jobs whose task_ids are not in
+                        # the accepted set contribute nothing here.
+                        accepted_set = set(completed_task_ids)
+                        failed_job_successors = _scoped_successors_for_failed_validation(
+                            rework_admission.validation_jobs,
+                            validation_results,
+                            accepted_set,
                         )
+                        if failed_job_successors:
+                            review_rework_task_ids = failed_job_successors
+                            log.info(
+                                "review bulk verification failed; reopening scoped "
+                                "successors %s (covered by failed validation job)",
+                                sorted(failed_job_successors),
+                            )
+                        else:
+                            return _block_no_runnable_rework(
+                                plan_dir=plan_dir,
+                                state=state,
+                                auto_approve=auto_approve,
+                                reason=(
+                                    "review bulk verification failed its bounded validation "
+                                    "job; a scoped successor task is required"
+                                ),
+                            )
                     validation_only_satisfied = not review_rework_task_ids
                 if not review_rework_task_ids and not validation_only_satisfied:
                     if unrunnable_rework_task_ids:
