@@ -8353,6 +8353,21 @@ def handle_execute_auto_loop(
                 if task.get("status") == "blocked" and isinstance(task.get("id"), str)
                 and task["id"] not in completed_task_ids
             }
+            # Recompute the runnable frontier too: reset tasks must rejoin
+            # pending_tasks, otherwise a pending dependent (T29 -> T28) keeps
+            # referencing a task absent from the batch graph and
+            # compute_task_batches raises "Unknown dependency ID" (occurrence
+            # 927ad612eda8, resume after cross-session blocked-task reset).
+            # The review-rework frontier (explicit scoped task list) is
+            # preserved when active.
+            if not rework_mode:
+                pending_tasks = [
+                    task
+                    for task in tasks
+                    if isinstance(task.get("id"), str)
+                    and task.get("status") != "blocked"
+                    and task.get("id") not in completed_task_ids
+                ]
         if blocked_task_ids:
             finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
                 finalize_data,

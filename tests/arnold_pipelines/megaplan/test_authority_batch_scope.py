@@ -815,6 +815,140 @@ def test_blocked_by_prereq_emits_prereq_blocked_task_ids_when_active_blocked_emp
     assert result.blocked_tasks[0].task_id == "X"
 
 
+def test_auto_loop_cross_session_reset_recomputes_pending_frontier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 927ad612eda8: cross-session blocked-task reset must rejoin
+    the runnable frontier.
+
+    ``handle_execute_auto_loop`` resets blocked tasks recorded under a
+    DIFFERENT invocation_id to pending (cross-session retry), then recomputed
+    ``blocked_task_ids`` — but previously left ``pending_tasks`` stale.  A
+    pending dependent (T29 -> T28) then referenced a task absent from the
+    batch graph and ``compute_task_batches`` raised
+    ``ValueError: Unknown dependency ID 'T28' for task 'T29'``, wedging every
+    resume of a plan with a cross-session blocked task that has a pending
+    dependent.  The reset must rebuild ``pending_tasks`` so the just-reset
+    task re-enters the frontier and batching succeeds.
+    """
+    import argparse
+    import types as _types
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        handle_execute_auto_loop,
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._guard_execute_batch_admission",
+        lambda **kwargs: None,
+    )
+
+    dispatched_batches: list[list[str]] = []
+
+    def _fake_run_and_merge_batch(**kwargs):
+        fin = kwargs["finalize_data"]
+        batch_ids = set(kwargs["batch_task_ids"])
+        dispatched_batches.append(sorted(batch_ids))
+        for task in fin.get("tasks", []):
+            if isinstance(task, dict) and task.get("id") in batch_ids:
+                task["status"] = "done"
+                task["executor_notes"] = "ok"
+        worker = _types.SimpleNamespace(
+            duration_ms=0, cost_usd=0.0, prompt_tokens=0, completion_tokens=0,
+            total_tokens=0, rate_limit=None, session_id=None, model_actual=None,
+            worker_channel=None, auth_channel=None, auth_metadata=None,
+            rendered_prompt=None, trace_output=None,
+        )
+        return _types.SimpleNamespace(
+            worker=worker,
+            agent=kwargs.get("agent", "shadow"),
+            mode=kwargs.get("mode", "code"),
+            refreshed=kwargs.get("refreshed", False),
+            payload={"task_updates": [], "sense_check_acknowledgments": []},
+            batch_number=kwargs.get("batch_number", 1),
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs.get("batch_sense_check_ids", []),
+            merged_task_count=len(kwargs["batch_task_ids"]),
+            total_task_count=len(kwargs["batch_task_ids"]),
+            acknowledged_sense_check_count=0,
+            total_sense_check_count=len(kwargs.get("batch_sense_check_ids", [])),
+            missing_task_evidence=[],
+            execution_audit={},
+            finalize_hash="",
+            attribution_records=[],
+            routing_degradations=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._run_and_merge_batch",
+        _fake_run_and_merge_batch,
+    )
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T28",
+                "status": "blocked",
+                "depends_on": [],
+                "description": "budget-blocked under an OLD invocation",
+                "executor_notes": "task_test_budget_exhausted",
+                "recorded_invocation_id": "a8612c22abbd4951",
+                "task_test_budget_exhausted": True,
+                "blocked_reason": "task_test_budget_exhausted",
+            },
+            {
+                "id": "T29",
+                "status": "pending",
+                "depends_on": ["T28"],
+                "description": "depends on T28",
+                "executor_notes": "",
+            },
+        ],
+        "sense_checks": [],
+        "baseline_test_failures": None,
+        "user_actions": [],
+    }
+    (tmp_path / "finalize.json").write_text(
+        json.dumps(finalize_data), encoding="utf-8"
+    )
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "executed",
+        "iteration": 1,
+        "config": {"mode": "code", "project_dir": str(tmp_path)},
+        "sessions": {},
+        "history": [],
+        "meta": {"current_invocation_id": "b8c09bb55ffb4166"},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    # Pre-fix this raised ValueError: Unknown dependency ID 'T28' for 'T29'.
+    response = handle_execute_auto_loop(
+        root=tmp_path,
+        plan_dir=tmp_path,
+        state=state,
+        args=argparse.Namespace(),
+        auto_approve=False,
+        agent="shadow",
+        mode="code",
+        refreshed=False,
+    )
+    # The reset must rejoin T28 to the runnable frontier so batching succeeds;
+    # T28 and T29 must both be dispatched (T28 first, then T29).
+    assert dispatched_batches
+    all_dispatched = [tid for batch in dispatched_batches for tid in batch]
+    assert "T28" in all_dispatched and "T29" in all_dispatched
+    assert all_dispatched.index("T28") < all_dispatched.index("T29")
+    # The stale frontier no longer crashes; both tasks merged as done.
+    assert all(
+        task["status"] == "done"
+        for task in json.loads((tmp_path / "finalize.json").read_text())["tasks"]
+    )
+
+
+
 def test_auto_loop_pending_left_behind_blocks_phase_and_skips_later_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
