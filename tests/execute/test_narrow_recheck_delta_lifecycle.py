@@ -1621,3 +1621,94 @@ def test_pre_dispatch_second_invocation_reuses_production_shaped_envelope(
     mock_run2.assert_not_called()
     assert evidence2[0]["evidence_hash"] == stored_env["evidence_hash"]
     assert evidence2[0]["status"] == PRE_ENVELOPE_CAPTURED
+
+
+def test_pre_dispatch_subtest_failure_captures_envelope_and_dispatches(
+    tmp_path: Path,
+) -> None:
+    """End-to-end (REAL pytest subprocess): a narrow_recheck whose selector
+    yields failing subtests (``SUBFAILED`` lines; parents PASSED) is a
+    COMPLETE exit-1 run — the delta lifecycle captures a pre-envelope and
+    dispatch proceeds instead of hard-blocking.
+
+    Regression for occurrence aac1a98ab9c2: suite_runner's node-id regex did
+    not parse ``SUBFAILED(...)`` lines, so the summary/parse count check
+    failed, the run was classified ``runner_error``, and the pre-dispatch
+    gate hard-failed (\"validation job VJ6 exited 1\") on the very batch whose
+    tasks would have repaired the tree.
+    """
+    from unittest.mock import patch
+
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    sel = "tests/test_subtest_surface.py"
+    path = project_dir / sel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "import unittest\n"
+        "\n"
+        "class SubTestProbe(unittest.TestCase):\n"
+        "    def test_mixed(self):\n"
+        "        for v in (1, 2):\n"
+        "            with self.subTest(v=v):\n"
+        "                self.assertEqual(v, 1)\n"
+        "\n"
+        "    def test_ok(self):\n"
+        "        self.assertTrue(True)\n",
+        encoding="utf-8",
+    )
+    finalize_data: dict = {
+        "task_contract_version": 2,
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "pending",
+                "write_set": {"paths": [sel], "complete": True},
+            }
+        ],
+        "validation_jobs": [
+            {
+                "id": "VJ12",
+                "kind": "narrow_recheck",
+                "command": f"pytest {sel} --tb=short -q",
+                "selectors": [sel],
+                "max_seconds": 120,
+                "timeout_seconds": 120,
+                "task_id": "T1",
+                "mutates": False,
+                "writes_files": False,
+                "expected_exit_codes": [0],
+                "acceptance_mode": "no_new_failures_delta",
+            }
+        ],
+    }
+    state = _make_state(project_dir)
+    with patch(
+        "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+        return_value={"event_id": "ev"},
+    ), patch(
+        "arnold_pipelines.megaplan.observability.work_ledger.emit_unavailable_reason",
+    ):
+        evidence = _run_batch_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            state=state,
+            admission=True,
+        )
+    assert evidence, "expected a VJ12 evidence record"
+    envelope = evidence[0]
+    assert envelope["status"] == PRE_ENVELOPE_CAPTURED
+    assert envelope["admission"] == "pre_dispatch_delta_envelope"
+    # The subtest node id is IN the envelope failure set (delta soundness:
+    # a NEW subtest failure after adoption must be detected).
+    assert (
+        "tests/test_subtest_surface.py::SubTestProbe::test_mixed"
+        in envelope["failures"]
+    )
+    # Durable pre-envelope artifact exists for resume reuse.
+    artifact = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    assert artifact.exists()

@@ -119,7 +119,7 @@ def _compute_filesystem_hash(project_dir: Path, paths: list[str]) -> str:
 # ``megaplan/handlers/finalize.py:584-586`` (``endswith(" FAILED")`` /
 # ``line[:-len(" FAILED")]``).
 _NODEID_LINE_RE = re.compile(
-    r"^(FAILED|PASSED)\s+(\S+)"
+    r"^(FAILED|PASSED|SUBFAILED(?:\([^)]*\))?)\s+(\S+)"
 )
 _SUMMARY_COUNT_RE = re.compile(r"(\d+)\s+(failed|passed)\b")
 _COLLECTION_ERROR_LINE_RE = re.compile(
@@ -192,10 +192,18 @@ def _parse_pytest_output(stdout: str, exit_code: int | None = None) -> dict[str,
         nodeid = m.group(2)
         if not nodeid:
             continue
-        if status_kw == "FAILED":
-            failures.append(nodeid)
-        elif status_kw == "PASSED":
+        if status_kw == "PASSED":
             passes.append(nodeid)
+        else:
+            # FAILED, or SUBFAILED(<subtest>) — pytest counts failing
+            # subtests in the summary "failed" counter even when the parent
+            # test passes (native unittest.subTest support), so subtest node
+            # ids must be parsed as failures or the count-consistency check
+            # below flips parse_ok to False and the run is misclassified as
+            # runner_error (occurrence aac1a98ab9c2: VJ6 hard-blocked the
+            # delta lifecycle's pre-dispatch envelope capture on a suite with
+            # 8 SUBFAILED lines).
+            failures.append(nodeid)
 
     summary = {"passed": 0, "failed": 0}
     for count, kind in _SUMMARY_COUNT_RE.findall(stdout):

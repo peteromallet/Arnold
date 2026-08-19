@@ -108,6 +108,25 @@ def test_dependency_requires_semantic_evidence_and_rejects_routing_reason() -> N
     assert "dependency_reason_missing" in _codes(report)
 
 
+def test_routing_reason_diagnostic_carries_offending_reason_text() -> None:
+    """The routing_dependency_forbidden diagnostic must surface the offending
+    reason text (and matched routing word) so the finalize revise loop can
+    reword or drop the exact edge instead of re-rolling blind."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"]["reason"] = "Keep separate for model tier routing."
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    diag = next(
+        d for d in report.get("diagnostics", [])
+        if (d.get("code") if isinstance(d, dict) else getattr(d, "code", None))
+        == "routing_dependency_forbidden"
+    )
+    raw = diag if isinstance(diag, dict) else diag.as_dict()
+    assert raw["dependency_id"] == "T1"
+    assert "Keep separate for model tier routing" in raw["message"]
+    assert "matched routing word" in raw["message"]
+    assert "consumes_output" in raw["message"]
+
+
 def test_non_mapping_dependency_evidence_rejected_as_routing() -> None:
     """A dependency_reasons entry that is not a Mapping must be rejected
     with routing_dependency_forbidden — it is not semantic evidence."""

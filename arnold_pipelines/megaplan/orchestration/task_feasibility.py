@@ -340,7 +340,21 @@ def compile_task_feasibility(
                 continue
             lowered = reason.lower()
             if any(word in lowered for word in _ROUTING_WORDS):
-                diagnostics.append(FeasibilityDiagnostic("routing_dependency_forbidden", "Routing, authoring order, and batch shape cannot create correctness dependencies.", task_id, dep))
+                matched = next((word for word in _ROUTING_WORDS if word in lowered), "")
+                snippet = reason if len(reason) <= 240 else reason[:237] + "..."
+                diagnostics.append(
+                    FeasibilityDiagnostic(
+                        "routing_dependency_forbidden",
+                        "Routing, authoring order, and batch shape cannot create "
+                        "correctness dependencies. Rewrite or remove the dependency "
+                        f"reason for '{dep}' (currently: {snippet!r}; matched routing "
+                        f"word {matched!r}) as a semantic consumes_output / "
+                        "write_conflict / human_prerequisite rationale that names a "
+                        "concrete required_output.",
+                        task_id,
+                        dep,
+                    )
+                )
 
     batches: list[list[str]] = []
     if ids and len(ids) == len(tasks):
