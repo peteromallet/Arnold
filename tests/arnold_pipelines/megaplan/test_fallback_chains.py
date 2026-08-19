@@ -138,6 +138,60 @@ def test_retryability_boundaries(value: object, classification: str, retryable: 
     assert is_retryable_failure(value) is retryable
 
 
+def test_codex_auth_error_surface_classifies_as_auth() -> None:
+    """Codex auth failures (401 revoked/invalidated token) must classify as
+    ``auth`` so configured-spec fallback can advance read-only phases.
+
+    The codex worker raises CliError(code="auth_error", message="Codex
+    authentication failed...") with no status_code and no _external_error
+    (workers/_impl.py:6228-6238, _CODEX_ERROR_PATTERNS 3194-3195). Before the
+    fix, ``auth_error`` was absent from _AUTH_TOKENS and the message needle
+    list lacked "authentication", so classify_retryability returned
+    "unknown" and _advance_configured_spec_fallback could never rescue a
+    codex auth outage even with a 2-spec chain configured.
+    """
+    # CliError-dict surface built by _configured_spec_failure_class.
+    assert (
+        classify_retryability(
+            {
+                "code": "auth_error",
+                "message": (
+                    "Codex authentication failed. Re-run the same step on "
+                    "Codex once before changing agent."
+                ),
+                "status_code": None,
+                "retryable": None,
+            }
+        )
+        == "auth"
+    )
+    # Flat _external_error surface (workers/hermes.py shape).
+    assert (
+        classify_retryability(
+            {
+                "status_code": 401,
+                "message": "Your authentication token has been invalidated",
+                "error_kind": "auth",
+            }
+        )
+        == "auth"
+    )
+    # Raw codex transport text as the message still classifies as auth via the
+    # "authentication" needle (refresh_token_invalidated revocations).
+    assert (
+        classify_retryability(
+            {
+                "code": "auth_error",
+                "message": (
+                    "Your access token could not be refreshed because your "
+                    "refresh token was revoked. Please log out and sign in again."
+                ),
+            }
+        )
+        == "auth"
+    )
+
+
 def test_classify_retryability_reads_nested_extra_external_error() -> None:
     # workers/hermes.py wraps provider failures as
     # CliError("worker_error", ..., extra={"_external_error": <dict>}); the
