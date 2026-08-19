@@ -4431,13 +4431,13 @@ tmux() {
 def test_watchdog_plan_resolver_persisted_command_requires_preflight(tmp_path: Path) -> None:
     """G5 round-6 finding 1b: the default-plan preflight gates ANY persisted
     plan command in the resolver — a persisted command cannot bypass the
-    engine-root preflight.  With no manifest pin the resolver fails closed
-    (typed drift, exit 24) and returns NOTHING; with a valid pin the
-    persisted command is returned only AFTER the preflight passes."""
+    engine-root preflight.  With no SESSION manifest the resolver fails closed
+    (typed drift, exit 24) and returns NOTHING; with the session manifest's
+    epic.runtime_root pin the persisted command is returned only AFTER the
+    preflight passes."""
     workspace = tmp_path / "workspace"
-    # G5 (round-17 finding 1c): the preflight compares against the real
-    # import root, so the manifest pin and recorded engine root must be the
-    # live import root itself.
+    manifest_dir = tmp_path / "manifests"
+    session = "demo-session"
     runtime_root = REPO_ROOT
     spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
     spec.parent.mkdir(parents=True, exist_ok=True)
@@ -4454,17 +4454,16 @@ def test_watchdog_plan_resolver_persisted_command_requires_preflight(tmp_path: P
     )
     persisted = "echo persisted-plan-command"
 
-    # Fail-closed half: no manifest pin -> typed drift 24, zero command output.
+    # Fail-closed half: no session manifest -> typed drift 24, zero output.
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(runtime_root)!r}",
-            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
-            "unset MANIFEST_RUNTIME_ROOT",
+            f"ARNOLD_RUNTIME_MANIFEST_DIR={str(manifest_dir)!r}",
             "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             (
-                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"resolve_relaunch_command {session} {str(workspace)!r} "
                 f"{str(spec)!r} plan demo-plan {shlex.quote(persisted)}"
             ),
         ]
@@ -4472,21 +4471,21 @@ def test_watchdog_plan_resolver_persisted_command_requires_preflight(tmp_path: P
     result = _run_watchdog_shell(script)
     assert result.returncode == 24, result.stderr
     assert "chain_runtime_binding_drift" in result.stderr
-    assert "missing manifest epic.runtime_root pin" in result.stderr
+    assert "session runtime manifest missing" in result.stderr
     assert result.stdout.strip() == ""
 
-    # Passing half: valid pin + recorded engine root -> preflight passes and
-    # the non-stale persisted command is returned verbatim.
+    # Passing half: session manifest pins the runtime root -> preflight passes
+    # and the non-stale persisted command is returned verbatim.
+    _write_session_runtime_manifest(manifest_dir, session, runtime_root)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(runtime_root)!r}",
-            f"MANIFEST_RUNTIME_ROOT={str(runtime_root)!r}",
-            f"LIVE_IMPORT_ROOT={str(runtime_root)!r}",
+            f"ARNOLD_RUNTIME_MANIFEST_DIR={str(manifest_dir)!r}",
             "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             (
-                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"resolve_relaunch_command {session} {str(workspace)!r} "
                 f"{str(spec)!r} plan demo-plan {shlex.quote(persisted)}"
             ),
         ]
@@ -4496,28 +4495,42 @@ def test_watchdog_plan_resolver_persisted_command_requires_preflight(tmp_path: P
     assert result.stdout == persisted
 
 
-def test_watchdog_plan_resolver_live_root_is_real_import_root(
+def test_watchdog_plan_resolver_session_manifest_drift_fails_closed(
     tmp_path: Path,
 ) -> None:
-    """G5 (round-17 finding 1c): the live root the watchdog preflight
-    compares against is the ACTUAL import root of the running python — NOT
-    the manifest-derived SRC_DIR.  A manifest==SRC_DIR pin that disagrees
-    with the real import root fails closed (typed drift, exit 24) instead of
-    passing the tautological recorded==manifest==live check."""
+    """T-0022: the plan resolver's preflight binds the SESSION manifest root,
+    not the watchdog-global live import root.  A chain state recorded engine
+    root that disagrees with the session manifest fails closed (typed drift,
+    exit 24) with ZERO persisted-command output."""
     workspace = tmp_path / "workspace"
+    manifest_dir = tmp_path / "manifests"
+    session = "demo-session"
     spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
-    drifted_root = _relaunch_runtime_root(tmp_path, name="drifted-runtime")
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    recorded = _relaunch_engine_root(tmp_path, name="recorded-engine")
+    manifest_engine = _relaunch_engine_root(tmp_path, name="manifest-engine")
+    _write_runtime_bound_chain_state(
+        workspace,
+        spec,
+        recorded,
+        plan_name="demo-plan",
+        metadata={
+            "execution_binding": {"spec": str(spec)},
+            "execution_environment": {"engine_root": str(recorded)},
+        },
+    )
+    _write_session_runtime_manifest(manifest_dir, session, manifest_engine)
     persisted = "echo persisted-plan-command"
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("watchdog"),
-            f"SRC_DIR={str(drifted_root)!r}",
-            f"MANIFEST_RUNTIME_ROOT={str(drifted_root)!r}",
-            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
+            f"SRC_DIR={str(manifest_engine)!r}",
+            f"ARNOLD_RUNTIME_MANIFEST_DIR={str(manifest_dir)!r}",
             "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             (
-                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"resolve_relaunch_command {session} {str(workspace)!r} "
                 f"{str(spec)!r} plan demo-plan {shlex.quote(persisted)}"
             ),
         ]
@@ -4526,34 +4539,37 @@ def test_watchdog_plan_resolver_live_root_is_real_import_root(
     assert result.returncode == 24, result.stderr
     assert "chain_runtime_binding_drift" in result.stderr, result.stderr
     assert (
-        f"engine root mismatch: manifest={drifted_root.resolve()} "
-        f"live={REPO_ROOT.resolve()}"
+        f"engine root mismatch: recorded={recorded.resolve()} "
+        f"manifest={manifest_engine.resolve()}"
     ) in result.stderr, result.stderr
     assert result.stdout.strip() == "", result.stdout
 
 
-def test_watchdog_chain_resolver_live_root_is_real_import_root(
+def test_watchdog_chain_resolver_session_manifest_drift_fails_closed(
     tmp_path: Path,
 ) -> None:
-    """G5 (round-17 finding 1c): the chain-resume preflight also compares
-    the recorded engine root against the REAL import root of the running
-    python — a manifest==SRC_DIR runtime (chain state records the manifest
-    root) that disagrees with the live import root fails closed (typed
-    drift, exit 24)."""
+    """T-0022: the chain-resume preflight also binds the SESSION manifest root
+    — a chain state recorded engine root that disagrees with the session
+    manifest fails closed (typed drift, exit 24)."""
     workspace = tmp_path / "workspace"
+    manifest_dir = tmp_path / "manifests"
+    session = "demo-session"
     spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
-    drifted_root = _relaunch_runtime_root(tmp_path, name="drifted-runtime")
-    _write_runtime_bound_chain_state(workspace, spec, drifted_root)
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    recorded = _relaunch_engine_root(tmp_path, name="recorded-engine")
+    manifest_engine = _relaunch_engine_root(tmp_path, name="manifest-engine")
+    _write_runtime_bound_chain_state(workspace, spec, recorded)
+    _write_session_runtime_manifest(manifest_dir, session, manifest_engine)
     script = "\n\n".join(
         [
             *_extract_relaunch_functions("watchdog"),
-            f"SRC_DIR={str(drifted_root)!r}",
-            f"MANIFEST_RUNTIME_ROOT={str(drifted_root)!r}",
-            "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
+            f"SRC_DIR={str(manifest_engine)!r}",
+            f"ARNOLD_RUNTIME_MANIFEST_DIR={str(manifest_dir)!r}",
             "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editible-install",
             (
-                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"resolve_relaunch_command {session} {str(workspace)!r} "
                 f"{str(spec)!r} chain '' 'echo stale-marker-chain-start'"
             ),
         ]
@@ -4562,8 +4578,8 @@ def test_watchdog_chain_resolver_live_root_is_real_import_root(
     assert result.returncode == 24, result.stderr
     assert "chain_runtime_binding_drift" in result.stderr, result.stderr
     assert (
-        f"engine root mismatch: recorded={drifted_root.resolve()} "
-        f"live={REPO_ROOT.resolve()}"
+        f"engine root mismatch: recorded={recorded.resolve()} "
+        f"manifest={manifest_engine.resolve()}"
     ) in result.stderr, result.stderr
     assert result.stdout.strip() == "", result.stdout
 
@@ -4572,26 +4588,56 @@ def _chain_engine_preflight_run(
     function_text: str,
     workspace: Path,
     *,
-    manifest_root: str,
-    live_root: str,
+    session: str,
+    manifest_dir: Path,
     remote_spec: str = "",
     plan_name: str = "",
+    watchdog_root: str = "",
 ) -> subprocess.CompletedProcess[str]:
-    """Run the REAL chain_engine_root_preflight with a valid manifest pin and
-    PYTHONPATH so find_bound_chain_spec resolves from the checked-out repo."""
-    script = "\n\n".join(
-        [
-            function_text,
-            f"export MANIFEST_RUNTIME_ROOT={shlex.quote(manifest_root)}",
-            f"export PYTHONPATH={shlex.quote(str(REPO_ROOT))}",
-            (
-                f"chain_engine_root_preflight {shlex.quote(str(workspace))} "
-                f"{shlex.quote(remote_spec)} {shlex.quote(live_root)} "
-                f"{shlex.quote(plan_name)}"
-            ),
-        ]
+    """Run the REAL chain_engine_root_preflight identity-scoped to ``session``:
+    ARNOLD_RUNTIME_MANIFEST_DIR points at a tmp dir holding ``{session}.json``
+    and PYTHONPATH exposes the checked-out repo so find_bound_chain_spec
+    resolves.  ``watchdog_root`` (optional) pins the supervisor's own
+    manifest/live root, which the preflight must IGNORE (multi-engine identity
+    scoping, T-0022)."""
+    lines = [
+        function_text,
+        f"export ARNOLD_RUNTIME_MANIFEST_DIR={shlex.quote(str(manifest_dir))}",
+        f"export PYTHONPATH={shlex.quote(str(REPO_ROOT))}",
+    ]
+    if watchdog_root:
+        lines.append(f"export MANIFEST_RUNTIME_ROOT={shlex.quote(watchdog_root)}")
+        lines.append(f"export LIVE_IMPORT_ROOT={shlex.quote(watchdog_root)}")
+    lines.append(
+        f"chain_engine_root_preflight {shlex.quote(str(workspace))} "
+        f"{shlex.quote(remote_spec)} {shlex.quote(session)} "
+        f"{shlex.quote(plan_name)}"
     )
-    return _run_watchdog_shell(script)
+    return _run_watchdog_shell("\n\n".join(lines))
+
+
+def _relaunch_engine_root(tmp_path: Path, name: str = "engine") -> Path:
+    """A fake engine checkout: a git repo WITH an arnold_pipelines package
+    (the preflight's require_engine proves both .git and arnold_pipelines)."""
+    root = _relaunch_runtime_root(tmp_path, name=name)
+    pkg = root / "arnold_pipelines"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    return root
+
+
+def _write_session_runtime_manifest(
+    manifest_dir: Path, session: str, runtime_root: str | Path
+) -> Path:
+    """Write {manifest_dir}/{session}.json with epic.runtime_root, the
+    canonical per-session runtime manifest the preflight reads."""
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    path = manifest_dir / f"{session}.json"
+    path.write_text(
+        json.dumps({"epic": {"runtime_root": str(runtime_root)}}),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _plan_bound_chain_workspace(
@@ -4624,99 +4670,159 @@ def _plan_bound_chain_workspace(
 def test_chain_engine_root_preflight_bound_chain_drift_fails_closed(
     tmp_path: Path,
 ) -> None:
-    """G5 round-8 finding 1: a BOUND chain whose recorded engine root
-    disagrees with the manifest pin or the live import root fails closed
-    (typed drift, exit 24) EVEN WHEN find_bound_chain_spec resolves the
-    chain — the recorded==manifest==live check is not gated on (or skipped
-    by) the bound-spec resolution."""
+    """A BOUND chain whose recorded engine root disagrees with the SESSION's
+    own manifest epic.runtime_root fails closed (typed drift, exit 24) EVEN
+    WHEN find_bound_chain_spec resolves the chain — the recorded==session
+    manifest check is not gated on (or skipped by) the bound-spec resolution."""
     plan_name = "demo-plan"
-    recorded = _relaunch_runtime_root(tmp_path, name="recorded-runtime")
-    manifest = _relaunch_runtime_root(tmp_path, name="manifest-runtime")
-    other_live = _relaunch_runtime_root(tmp_path, name="other-live")
-    workspace, spec = _plan_bound_chain_workspace(
+    session = "astrid-first"
+    manifest_dir = tmp_path / "manifests"
+    recorded = _relaunch_engine_root(tmp_path, name="recorded-engine")
+    manifest_engine = _relaunch_engine_root(tmp_path, name="manifest-engine")
+    workspace, _spec = _plan_bound_chain_workspace(
         tmp_path, plan_name=plan_name, engine_root=recorded
     )
+    _write_session_runtime_manifest(manifest_dir, session, manifest_engine)
 
     function_text = _extract_wrapper_function("chain_engine_root_preflight")
-    # recorded != manifest (live == manifest): drift on the manifest arm.
-    _plan_bound_chain_workspace(
-        tmp_path, plan_name=plan_name, engine_root=recorded
-    )
     result = _chain_engine_preflight_run(
         function_text,
         workspace,
-        manifest_root=str(manifest),
-        live_root=str(manifest),
+        session=session,
+        manifest_dir=manifest_dir,
         plan_name=plan_name,
     )
     assert result.returncode == 24, result.stderr
     assert "chain_runtime_binding_drift" in result.stderr, result.stderr
     assert (
         f"engine root mismatch: recorded={recorded.resolve()} "
-        f"manifest={manifest.resolve()}"
-    ) in result.stderr, result.stderr
-    assert result.stdout == "", result.stdout
-
-    # recorded == manifest but recorded != live: drift on the live arm.
-    _plan_bound_chain_workspace(
-        tmp_path, plan_name=plan_name, engine_root=manifest
-    )
-    result = _chain_engine_preflight_run(
-        function_text,
-        workspace,
-        manifest_root=str(manifest),
-        live_root=str(other_live),
-        plan_name=plan_name,
-    )
-    assert result.returncode == 24, result.stderr
-    assert (
-        f"engine root mismatch: recorded={manifest.resolve()} "
-        f"live={other_live.resolve()}"
+        f"manifest={manifest_engine.resolve()}"
     ) in result.stderr, result.stderr
     assert result.stdout == "", result.stdout
 
 
-def test_chain_engine_root_preflight_standalone_plan_requires_manifest_equality(
+def test_chain_engine_root_preflight_standalone_plan_uses_session_manifest(
     tmp_path: Path,
 ) -> None:
-    """G5 round-8 finding 1: a STANDALONE plan (no bound chain, so
-    find_bound_chain_spec returns nothing) must NOT have its live root
-    returned unchecked.  The preflight still requires the manifest pin and
-    verifies live_root == manifest_root: mismatch fails closed (typed drift,
-    exit 24), equality proceeds with the live root on stdout."""
-    plan_name = "demo-plan"
+    """A STANDALONE plan (no bound chain, so find_bound_chain_spec returns
+    nothing) carries no recorded engine root; the session manifest
+    epic.runtime_root IS the binding.  The preflight proves it is a real engine
+    checkout: a valid engine returns the manifest root, a dangling root fails
+    closed (typed drift, exit 24)."""
+    session = "astrid-first"
+    manifest_dir = tmp_path / "manifests"
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    runtime_a = _relaunch_runtime_root(tmp_path, name="runtime-a")
-    runtime_b = _relaunch_runtime_root(tmp_path, name="runtime-b")
+    engine = _relaunch_engine_root(tmp_path, name="engine")
+    dangling = tmp_path / "dangling"
 
     function_text = _extract_wrapper_function("chain_engine_root_preflight")
-    # live != manifest: drift, NOT an unchecked live_root return.
+    # Session manifest pins a dangling path -> drift, NOT an unchecked return.
+    _write_session_runtime_manifest(manifest_dir, session, dangling)
     result = _chain_engine_preflight_run(
         function_text,
         workspace,
-        manifest_root=str(runtime_a),
-        live_root=str(runtime_b),
-        plan_name=plan_name,
+        session=session,
+        manifest_dir=manifest_dir,
+        plan_name="demo-plan",
     )
     assert result.returncode == 24, result.stderr
     assert "chain_runtime_binding_drift" in result.stderr, result.stderr
-    assert (
-        f"engine root mismatch: manifest={runtime_a.resolve()} "
-        f"live={runtime_b.resolve()}"
-    ) in result.stderr, result.stderr
+    assert "missing or dangling" in result.stderr, result.stderr
     assert result.stdout == "", result.stdout
 
-    # live == manifest: proceed and return the live root.
+    # Session manifest pins a real engine -> proceed and return the root.
+    _write_session_runtime_manifest(manifest_dir, session, engine)
     result = _chain_engine_preflight_run(
         function_text,
         workspace,
-        manifest_root=str(runtime_a),
-        live_root=str(runtime_a),
-        plan_name=plan_name,
+        session=session,
+        manifest_dir=manifest_dir,
+        plan_name="demo-plan",
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == str(runtime_a), result.stdout
+    assert result.stdout.strip() == str(engine.resolve()), result.stdout
+
+
+def test_chain_engine_root_preflight_uses_session_manifest_root(
+    tmp_path: Path,
+) -> None:
+    """T-0022 identity scoping: the preflight binds to the SESSION's own
+    manifest epic.runtime_root, never the watchdog process's global root.  A
+    multi-engine box (watchdog root A observing session 'astrid-first' whose
+    manifest pins B) must PASS when the recorded chain root equals B — the old
+    env-scoped check wrongly typed this as drift (exit 24)."""
+    plan_name = "demo-plan"
+    session = "astrid-first"
+    manifest_dir = tmp_path / "manifests"
+    engine_a = _relaunch_engine_root(tmp_path, name="engine-a")
+    engine_b = _relaunch_engine_root(tmp_path, name="engine-b")
+    workspace, _spec = _plan_bound_chain_workspace(
+        tmp_path, plan_name=plan_name, engine_root=engine_b
+    )
+    _write_session_runtime_manifest(manifest_dir, session, engine_b)
+
+    function_text = _extract_wrapper_function("chain_engine_root_preflight")
+    result = _chain_engine_preflight_run(
+        function_text,
+        workspace,
+        session=session,
+        manifest_dir=manifest_dir,
+        plan_name=plan_name,
+        watchdog_root=str(engine_a),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(engine_b.resolve()), result.stdout
+
+
+def test_chain_engine_root_preflight_missing_session_manifest_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Identity scoping fails closed when the SESSION's own runtime manifest is
+    absent: exit 24 + 'session runtime manifest missing'.  The watchdog's own
+    manifest/live root is NOT a substitute for the session identity."""
+    session = "astrid-first"
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    function_text = _extract_wrapper_function("chain_engine_root_preflight")
+    result = _chain_engine_preflight_run(
+        function_text,
+        workspace,
+        session=session,
+        manifest_dir=manifest_dir,
+    )
+    assert result.returncode == 24, result.stderr
+    assert "session runtime manifest missing" in result.stderr, result.stderr
+    assert result.stdout == "", result.stdout
+
+
+def test_chain_engine_root_preflight_session_manifest_lacks_root_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """A session manifest WITHOUT epic.runtime_root cannot prove the runtime
+    binding: fail closed (exit 24) with 'lacks epic.runtime_root'."""
+    session = "astrid-first"
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / f"{session}.json").write_text(
+        json.dumps({"epic": {}}), encoding="utf-8"
+    )
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    function_text = _extract_wrapper_function("chain_engine_root_preflight")
+    result = _chain_engine_preflight_run(
+        function_text,
+        workspace,
+        session=session,
+        manifest_dir=manifest_dir,
+    )
+    assert result.returncode == 24, result.stderr
+    assert "lacks epic.runtime_root" in result.stderr, result.stderr
+    assert result.stdout == "", result.stdout
 
 
 def test_watchdog_fences_mechanical_relaunch_for_phase_contract_failure(tmp_path: Path) -> None:
