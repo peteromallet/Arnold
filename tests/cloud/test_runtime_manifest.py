@@ -2165,6 +2165,136 @@ def test_cli_cutover_honors_custom_receipt_out(tmp_path: Path, monkeypatch: pyte
     )["generation_after"] == 4
 
 
+def test_cli_cutover_refuses_root_owned_by_another_active_epic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Occurrence 0a0ce24c3510: a cutover into a runtime root already claimed
+    by ANOTHER active epic's manifest is refused fail-closed with the typed
+    ``runtime_root_ownership_conflict`` and ZERO mutation — the shared-root
+    wedge killed worker dispatch on the shared checkout's HEAD drift
+    (drive2/drive3)."""
+    _stub_git_head_guard(monkeypatch)
+    path = tmp_path / "m.json"
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    write_manifest(
+        _make_manifest_obj(
+            generation=3,
+            # the moving epic's branch
+            epic={
+                "branch": "fixer/epic-a",
+                "dependency_generation": _generation_proof(f"{to_venv}/bin/python"),
+            },
+        ),
+        path,
+    )
+    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    # A rival ACTIVE manifest already claims the target root.
+    rival = {
+        "schema": "arnold.megaplan.runtime_manifest.v1",
+        "generation": 9,
+        "state": "active",
+        "epic": {
+            "branch": "fixer/epic-b",
+            "runtime_root": to_root,
+            "worktree_path": to_root,
+            "expected_head": "d" * 40,
+            "venv_path": to_venv,
+            "repair_bin": to_repair,
+        },
+    }
+    (tmp_path / "rival.json").write_text(
+        json.dumps(rival, sort_keys=True), encoding="utf-8"
+    )
+
+    rc = main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "already owned by another active epic" in err
+    assert "rival.json" in err
+    # ZERO mutation: the manifest is untouched.
+    assert load_manifest(path).generation == 3
+    assert load_manifest(path).epic["runtime_root"] != to_root
+
+
+def test_cli_cutover_allows_same_epic_rebinding_its_own_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ownership guard must NOT block a cutover by the SAME epic rebinding
+    its own runtime root (the standard per-epic rebind, e.g. gen 79 -> 80 in
+    the dedicated-worktree topology fix)."""
+    _stub_git_head_guard(monkeypatch)
+    path = tmp_path / "m.json"
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    write_manifest(
+        _make_manifest_obj(
+            generation=3,
+            epic={
+                "branch": "fixer/epic-a",
+                "dependency_generation": _generation_proof(f"{to_venv}/bin/python"),
+            },
+        ),
+        path,
+    )
+    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    # The same epic's OLD manifest also claimed this root (pre-cutover).
+    rival = {
+        "schema": "arnold.megaplan.runtime_manifest.v1",
+        "generation": 2,
+        "state": "active",
+        "epic": {
+            "branch": "fixer/epic-a",
+            "runtime_root": to_root,
+            "worktree_path": to_root,
+            "expected_head": "e" * 40,
+            "venv_path": to_venv,
+            "repair_bin": to_repair,
+        },
+    }
+    (tmp_path / "legacy.json").write_text(
+        json.dumps(rival, sort_keys=True), encoding="utf-8"
+    )
+
+    assert main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    ) == 0
+    assert load_manifest(path).generation == 4
+    assert load_manifest(path).epic["runtime_root"] == to_root
+
+
 def test_cli_cutover_rejects_receipt_out_aliasing_manifest_zero_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
