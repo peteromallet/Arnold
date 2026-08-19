@@ -1652,6 +1652,36 @@ def apply_runtime_manifest_cutover(
                 f"generation mismatch: expected {expect_generation}, "
                 f"observed {manifest.generation}",
             )
+        # Exclusive mutable-runtime-root ownership (occurrence 0a0ce24c3510):
+        # refuse a cutover into a runtime root already claimed by another
+        # ACTIVE epic's manifest. The shared-root layout kills worker dispatch
+        # on the shared checkout's HEAD drift (astrid-first drive2 02:58:33Z,
+        # drive3 03:13:17Z). Legacy shared bindings stay recoverable: the owner
+        # cuts over to a dedicated per-epic worktree first; the same branch
+        # rebinding its own root is always allowed. Typed
+        # ``runtime_root_ownership_conflict``, zero mutation.
+        try:
+            from arnold_pipelines.megaplan.cloud.runtime_root_registry import (
+                assert_runtime_root_claimable,
+            )
+
+            owners = assert_runtime_root_claimable(
+                to_runtime_root,
+                str((manifest.epic or {}).get("branch") or ""),
+                target.parent,
+                exclude_manifest=target,
+            )
+            legacy_shared = [
+                root for root, entries in owners.items() if len(entries) > 1
+            ]
+            if legacy_shared:
+                log.warning(
+                    "runtime-root legacy inventory: shared mutable roots %s "
+                    "(recommended: dedicated per-epic worktrees)",
+                    sorted(legacy_shared),
+                )
+        except CliError as exc:
+            raise
         # The runtime identity/provenance receipt is verified BEFORE any write
         # (the verifier re-runs the receipted interpreter; a stale or forged
         # receipt refuses here with zero mutation).
