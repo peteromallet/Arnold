@@ -2695,10 +2695,17 @@ def run_hermes_step(
                 )
                 current_payload = dict(capture_outcome.legacy_payload)
             except (CliError, ModelStructuralAuditError) as error:
-                # For execute, try reconstructed payload if validation fails
+                # For execute/plan, try reconstructed payload if validation fails
                 reconstructed: dict | None = None
                 if step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
+                elif step == "plan":
+                    # The model often writes plan.md via a file tool and then
+                    # emits only fenced metadata blocks (Success Criteria,
+                    # Changed Surfaces, Test Blast Radius) as its final
+                    # message.  Rebuild the capture payload from the
+                    # model-authored plan.md artifact (auditor-clean markdown).
+                    reconstructed = _reconstruct_plan_payload(plan_dir)
                 if reconstructed is not None:
                     try:
                         capture_outcome = capture_step_output(
@@ -3067,6 +3074,31 @@ def _attribution_task_updates_from_files(
             "auto_attributed_files": True,
         })
     return updates
+
+
+def _reconstruct_plan_payload(plan_dir: Path) -> dict | None:
+    """Rebuild a plan capture payload from the model-authored ``plan.md``
+    artifact when the final message's extracted payload lacks step content
+    (e.g. the model wrote ``plan.md`` via a file tool and its final message
+    carried only fenced metadata blocks such as Success Criteria).
+
+    ``plan.md`` is the canonical artifact the planning template directs the
+    model to write (``prompts/planning.py``: complex plans use ``## Phase N:``
+    sections each containing ``### Step N:`` steps, global numbering).  Its
+    markdown satisfies the structural auditor (exactly one H1, ``## Overview``,
+    ``## Step N:`` / ``### Step N:`` sections, numbered substeps, backticked
+    file refs, Execution/Validation order), so a payload of ``{"plan": <md>}``
+    passes capture; ``_normalize_plan_capture_payload`` then derives the
+    optional metadata (questions/assumptions/success_criteria) from the
+    markdown via ``_extract_plan_markdown_metadata``.
+    """
+    try:
+        text = Path(plan_dir).joinpath("plan.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not text or not text.strip():
+        return None
+    return {"plan": text}
 
 
 def _reconstruct_execute_payload(
