@@ -5225,11 +5225,16 @@ def _sweep_persisted_deferred_selector_jobs(
                     "missing_selectors": sorted(set(lifecycle.missing_selectors)),
                 },
             )
-        # A delta-policy job must never be admitted through the sweep: a
-        # task-output selector has no pre-task state, so a pre-execution
-        # envelope is impossible by construction (same fail-closed rule as
-        # the same-batch deferred path).
-        if _narrow_recheck_delta_policy(job, job.get("command")):
+        # An EXPLICIT delta-policy job must never be admitted through the
+        # sweep: a task-output selector has no pre-task state, so a
+        # pre-execution envelope is impossible by construction (same
+        # fail-closed rule as the same-batch deferred path).  A job that is
+        # delta-classified ONLY by legacy command-shape derivation
+        # (``acceptance_mode`` is None) was compiled under the strict exit-0
+        # contract: revalidate it with the strict gate (occurrence
+        # 0a0ce24c3510 — legacy deferred records must not wedge a pre-delta
+        # plan; the strict gate is never weaker than the delta comparison).
+        if job.get("acceptance_mode") == NARROW_RECHECK_DELTA_ACCEPTANCE:
             raise CliError(
                 "deferred_validation_result_missing",
                 f"deferred validation job {job_id} cannot be revalidated: "
@@ -5522,10 +5527,14 @@ def _rerun_deferred_selector_validation_jobs(
 
         # A deferred selector is a task-output path that did not exist at
         # pre-dispatch time; a no-new-failures delta job has no pre-task
-        # state by construction, so a delta-policy job must never be admitted
-        # through the deferred path (it would capture a fake "pre-envelope"
-        # against the post-task tree and launder the post-adoption delta).
-        if _narrow_recheck_delta_policy(job, job.get("command")):
+        # state by construction, so an EXPLICIT delta job must never be
+        # admitted through the deferred path (it would capture a fake
+        # "pre-envelope" against the post-task tree and launder the
+        # post-adoption delta).  A job that is delta-classified ONLY by
+        # legacy command-shape derivation (``acceptance_mode`` is None) was
+        # compiled under the strict exit-0 contract and falls through to the
+        # strict recheck below (occurrence 0a0ce24c3510).
+        if job.get("acceptance_mode") == NARROW_RECHECK_DELTA_ACCEPTANCE:
             _raise_deferred_selector_result_block(
                 job_id=job_id,
                 task_id=task_id,
