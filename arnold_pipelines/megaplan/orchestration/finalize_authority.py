@@ -112,6 +112,16 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         # parks these rows and continues with the dependency-independent
         # frontier; the kind is surfaced in phase_result BlockedTask.blocker_kind.
         "blocked_reason",
+        # Durable test-budget block identity (occurrence 0513dbf3f069): the
+        # merge budget gate stamps this string field on the entry AND the target
+        # task row (merge.py:_enforce_task_test_budgets), and the retry reset
+        # preserves it so _is_task_test_budget_blocked can exclude the row from
+        # authority adoption until a fresh compliant attempt passes. The execute
+        # publisher propagates the merged rows into the finalize projection, so
+        # the execute owner must be able to publish it or the end-of-loop
+        # finalize publish aborts with FinalizeFieldOwnershipError (observed:
+        # astrid-first 0a0ce24c3510 drive5, batch_23 merge, T2 row).
+        "task_test_budget_exhausted",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})

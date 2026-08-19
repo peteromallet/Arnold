@@ -182,6 +182,45 @@ def test_execute_owner_can_publish_stamped_evidence_context_fields(tmp_path: Pat
     assert saved["sense_checks"][0]["executor_note"] == "checked"
 
 
+def test_execute_owner_can_publish_durable_budget_block_identity(
+    tmp_path: Path,
+) -> None:
+    """Regression (astrid-first 0a0ce24c3510 drive5): the merge budget gate
+    stamps a durable ``task_test_budget_exhausted`` string on the task row
+    (merge.py:_enforce_task_test_budgets, occurrence 0513dbf3f069) so the
+    retry reset cannot erase the budget-block identity.  The execute publisher
+    propagates the merged rows into the finalize projection at the end of the
+    auto loop; finalize_authority must let the execute owner publish that field
+    or the publish aborts with FinalizeFieldOwnershipError and the plan wedges
+    with done tasks never published (observed: T2 row, batch_23 merge).
+    """
+    _publish_initial(tmp_path)
+    payload = load_finalize_for_update(tmp_path)
+    payload["tasks"][0]["status"] = "blocked"
+    payload["tasks"][0]["executor_notes"] = (
+        "[harness] task_test_budget_exhausted: declared test timeout total "
+        "240s exceeds max_seconds=120"
+    )
+    payload["tasks"][0]["task_test_budget_exhausted"] = (
+        "task_test_budget_exhausted: declared test timeout total 240s exceeds "
+        "max_seconds=120"
+    )
+
+    token = publish_finalize_update(
+        tmp_path,
+        payload,
+        context=_context("execute", "publish-completion", "execute-9"),
+    )
+
+    assert token.version == 2
+    saved = json.loads((tmp_path / "finalize.json").read_text())
+    assert saved["tasks"][0]["status"] == "blocked"
+    assert "task_test_budget_exhausted" in saved["tasks"][0]
+    assert saved["tasks"][0]["task_test_budget_exhausted"].startswith(
+        "task_test_budget_exhausted:"
+    )
+
+
 def test_only_finalize_owner_can_create_document(tmp_path: Path) -> None:
     payload = _candidate()
     # A detached payload cannot smuggle itself into the update path.
