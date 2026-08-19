@@ -763,8 +763,27 @@ def _collect_accepted_attempt_authority(
             if decision is None:
                 # Validation-only (hollow) row: no explicit grant-aware
                 # accepted decision — must not suppress dispatch or clear
-                # authority gates.
-                continue
+                # authority gates.  EXCEPTION (occurrence 927ad612eda8,
+                # live regression 2026-08-19T12:12Z): a budget-killed wave
+                # (the worker is forced to return blocked by the
+                # max_seconds cap, so its envelope attempt is non-terminal)
+                # is hollow here and shadows older accepted waves, dropping
+                # the task from the accepted-attempt projection and keeping
+                # execute completion blocked forever even after D2
+                # reconciled the block.  A durable budget-debt ACCEPTANCE
+                # receipt (verification/task_budget_acceptance_<task-id>_*
+                # .json, disposition=accepted_with_debt) is kernel evidence
+                # that a current binding-valid strict pass discharged the
+                # cumulative-time block, so the receipt-holding subject's
+                # accepted attempt is minted.
+                if _budget_debt_acceptance_receipt_exists(
+                    plan_dir, entry_subject
+                ):
+                    decision = _mint_accepted_projection_decision(
+                        envelope, raw_validation, source
+                    )
+                else:
+                    continue
             # CAS expectations are dispatch-time preconditions, not durable
             # run-authority ledger facts. Feeding one to reduce_run_authority
             # makes the accepted-attempt projection fail closed even though
@@ -875,6 +894,21 @@ def _accepted_projection_decision(
         if decision.outcome != "accepted":
             return None
         return decision
+    return _mint_accepted_projection_decision(envelope, validation, source)
+
+
+def _mint_accepted_projection_decision(
+    envelope: ResultEnvelope,
+    validation: Mapping[str, Any],
+    source: str,
+) -> TaskValidationDecision:
+    """Mint the grant-aware accepted decision for a validated envelope.
+
+    Used by :func:`_accepted_projection_decision` for envelopes without an
+    explicit envelope-level decision, and by the authority collector for
+    budget-debt-reconciled (receipt-holding) budget-killed waves whose
+    envelope attempt is non-terminal (occurrence 927ad612eda8).
+    """
     payload = {
         "reason": _optional_str(validation.get("reason")) or "accepted_attempt_projection",
         "source_path": source,
@@ -897,6 +931,38 @@ def _accepted_projection_decision(
         idempotency_key=decision_id,
         payload=payload,
     )
+
+
+def _budget_debt_acceptance_receipt_exists(
+    plan_dir: Path, task_id: str
+) -> bool:
+    """True when a durable budget-debt acceptance receipt exists for a task.
+
+    ``verification/task_budget_acceptance_<task-id>_*.json`` receipts are
+    written by the execute reconciler ONLY after a binding-valid current
+    strict pass discharged a cumulative-time-only budget block (occurrence
+    927ad612eda8).  Their existence is kernel evidence that a budget-killed
+    (non-terminal) accepted wave was reconciled; the accepted-attempt
+    projection honors it so the task counts as dependency-closed completed.
+    """
+    try:
+        verification_dir = Path(plan_dir) / "verification"
+        for receipt in verification_dir.glob(
+            f"task_budget_acceptance_{task_id}_*.json"
+        ):
+            try:
+                data = json.loads(receipt.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                continue
+            if (
+                isinstance(data, dict)
+                and data.get("task_id") == task_id
+                and data.get("disposition") == "accepted_with_debt"
+            ):
+                return True
+    except OSError:
+        return False
+    return False
 
 
 def _envelope_terminal_attempt_status(

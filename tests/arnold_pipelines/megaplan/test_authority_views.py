@@ -443,6 +443,102 @@ def test_accepted_attempt_projection_newer_hollow_row_shadows_older_accepted(
     )
 
 
+def test_accepted_attempt_projection_budget_debt_receipt_restores_hollow_wave(
+    tmp_path,
+) -> None:
+    """Occurrence 927ad612eda8 (live regression 2026-08-19T12:12Z).
+
+    A newer budget-killed wave (the worker is forced to return blocked by
+    the max_seconds cap, so its envelope attempt is non-terminal) is hollow
+    to the accepted-attempt projection and shadows the older accepted wave,
+    dropping the task even after D2 wrote a durable budget-debt acceptance
+    receipt.  The receipt (verification/task_budget_acceptance_<task>_*.json,
+    disposition=accepted_with_debt) is kernel evidence of a current
+    binding-valid strict pass; the authority collector must honor it so
+    execute completion counts the task as dependency-closed completed.
+    """
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=12,
+        fence_token=9,
+        rows={"T21": {}},  # older accepted wave (terminal envelope)
+    )
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=13,
+        fence_token=10,
+        rows={
+            "T21": {
+                "status": "blocked",
+                "outcome": "accepted",
+                "envelope_status": "blocked",  # non-terminal -> hollow
+            }
+        },
+    )
+    verification = tmp_path / "verification"
+    verification.mkdir(parents=True, exist_ok=True)
+    (verification / "task_budget_acceptance_T21_abc123.json").write_text(
+        json.dumps(
+            {
+                "task_id": "T21",
+                "disposition": "accepted_with_debt",
+                "strict_evidence_hash": "sha256:strict",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tasks = [{"id": "T21", "status": "done", "depends_on": []}]
+    projection = accepted_attempt_execution_projection(
+        tasks, plan_dir=tmp_path
+    )
+    assert projection is not None
+    assert set(projection.view.accepted_task_ids) == {"T21"}
+    assert set(
+        projection.view.dependency_closed_completed_task_ids
+    ) == {"T21"}
+    assert effective_execute_completed_task_ids(
+        tasks, plan_dir=tmp_path
+    ) == {"T21"}
+
+
+def test_accepted_attempt_projection_budget_debt_receipt_absent_stays_hollow(
+    tmp_path,
+) -> None:
+    """Without a durable budget-debt receipt the hollow wave still shadows:
+    a budget-killed wave must NOT become accepted authority on its own."""
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=12,
+        fence_token=9,
+        rows={"T21": {}},
+    )
+    _write_wave(
+        tmp_path,
+        task_ids=["T21"],
+        batch_number=13,
+        fence_token=10,
+        rows={
+            "T21": {
+                "status": "blocked",
+                "outcome": "accepted",
+                "envelope_status": "blocked",
+            }
+        },
+    )
+    tasks = [{"id": "T21", "status": "done", "depends_on": []}]
+    projection = accepted_attempt_execution_projection(
+        tasks, plan_dir=tmp_path
+    )
+    assert projection is not None
+    assert projection.view.accepted_task_ids == ()
+    assert (
+        projection.view.dependency_closed_completed_task_ids == ()
+    )
+
+
 def test_accepted_attempt_projection_newer_pending_redispatch_shadows_older_accepted(
     tmp_path,
 ) -> None:
