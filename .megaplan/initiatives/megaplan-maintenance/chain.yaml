@@ -4,18 +4,18 @@ anchors:
 milestones:
 - label: m1-containment-and-truth
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m1-containment-and-truth.md
-  profile: partnered-5
+  profile: partnered-codex
   vendor: codex
   robustness: full
   depth: high
   prep_clarify: false
-  notes: Overall plan difficulty 5/5; partnered-5/full/high @codex because a locally
+  notes: Overall plan difficulty 5/5; partnered-codex/full/high @codex because a locally
     plausible containment plan could still leave a non-local mutation path or false
     action claim. This preserves the existing first milestone and does not enable
     autonomy.
 - label: m2-coherent-authority
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-authority.md
-  profile: partnered-5
+  profile: partnered-codex
   vendor: codex
   robustness: full
   depth: high
@@ -25,55 +25,55 @@ milestones:
   prep_direction: Map every resolver/classifier consumer, incident-ledger projection,
     Run Authority/WBC evidence surface, and direct plan/chain write. Reuse custody-control-plane
     and workflow-boundary-contracts decisions where compatible.
-  notes: Overall plan difficulty 5/5; partnered-5/full/high @codex because the shared
+  notes: Overall plan difficulty 5/5; partnered-codex/full/high @codex because the shared
     ledger, coherent observation envelope, and transition-authority contracts are
     public cross-system boundaries whose failure can remain locally green.
 - label: m3-independent-verification
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m3-independent-verification.md
-  profile: partnered-5
+  profile: partnered-codex
   vendor: codex
   robustness: full
   depth: high
   depends_on:
   - m2-coherent-authority
   prep_clarify: false
-  notes: Overall plan difficulty 5/5; partnered-5/full/high @codex because custody,
+  notes: Overall plan difficulty 5/5; partnered-codex/full/high @codex because custody,
     fencing, recurrence, terminal verification, canary install, and rollback are non-local
     production-safety contracts.
 - label: m3b-custody-bound-repair-promotion
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m3b-custody-bound-repair-promotion.md
-  profile: partnered-5
+  profile: partnered-codex
   vendor: codex
   robustness: full
   depth: high
   depends_on:
   - m3-independent-verification
   prep_clarify: false
-  notes: Overall plan difficulty 5/5; partnered-5/full/high @codex because exact-commit
+  notes: Overall plan difficulty 5/5; partnered-codex/full/high @codex because exact-commit
     publication, immutable runtime promotion, multi-artifact CAS cutover, and preserved
     repair lineage form one production-safety transaction across Git and runtime custody.
 - label: m4-six-hour-product-and-rollout
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md
-  profile: partnered-4
+  profile: partnered-codex
   vendor: codex
   robustness: full
   depth: high
   depends_on:
   - m3b-custody-bound-repair-promotion
   prep_clarify: false
-  notes: Overall plan difficulty 4/5; partnered-4/full/high @codex because the six-hour
+  notes: Overall plan difficulty 4/5; partnered-codex/full/high @codex because the six-hour
     loop has subtle event-time, custody, and false-intervention behavior, while its
     authority and schemas are fixed by M2-M3.
 - label: m5-daily-efficiency-auditor
   idea: .megaplan/initiatives/megaplan-maintenance/briefs/m5-daily-efficiency-auditor.md
-  profile: partnered-4
+  profile: partnered-codex
   vendor: codex
   robustness: full
   depth: high
   depends_on:
   - m4-six-hour-product-and-rollout
   prep_clarify: false
-  notes: Overall plan difficulty 4/5; partnered-4/full/high @codex because censored
+  notes: Overall plan difficulty 4/5; partnered-codex/full/high @codex because censored
     analytics, cohort baselines, recurrence clustering, and recommendation precision
     need careful planning, but the loop is read-only and cannot reshape active chains.
 - label: reconcile
@@ -82,16 +82,7 @@ milestones:
   branch: reconcile/megaplan-maintenance-20260816
   target_branch: main
   merge_policy: review
-  phase_model:
-  - 'plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
-  - critique=hermes:deepseek:deepseek-v4-pro
-  - gate=hermes:deepseek:deepseek-v4-pro
-  - revise=hermes:deepseek:deepseek-v4-flash
-  - 'finalize=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
-  - execute=hermes:deepseek:deepseek-v4-pro
-  - 'review=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
-  - 'tiebreaker_researcher=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
-  - 'tiebreaker_challenger=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
+  profile: partnered-codex
   depends_on:
   - m5-daily-efficiency-auditor
 on_failure:
