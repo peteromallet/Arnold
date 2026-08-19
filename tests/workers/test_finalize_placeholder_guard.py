@@ -147,6 +147,48 @@ def test_placeholder_echo_is_discarded_and_summary_prompt_recovers(tmp_path: Pat
     assert agent.calls, "summary prompt must have been invoked to recover a real fill"
 
 
+def test_placeholder_in_assistant_message_content_is_discarded(tmp_path: Path) -> None:
+    # The model's final_response is unusable prose, but an earlier assistant
+    # message carries the empty schema template (tasks: []).  The extraction
+    # fallback must NOT accept it as the payload: the summary prompt must fire
+    # and recover a real fill.
+    agent = FakeAgent(
+        [
+            {"final_response": json.dumps(REAL_PAYLOAD), "messages": []},  # summary re-fill
+        ]
+    )
+    result = {
+        "final_response": "I investigated the plan but could not produce JSON.",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "task_contract_version": 0,
+                        "tasks": [],
+                        "validation_jobs": [],
+                        "sense_checks": [],
+                        "watch_items": [],
+                        "meta_commentary": "",
+                        "user_actions": [],
+                    }
+                ),
+            },
+        ],
+    }
+    payload, _ = parse_agent_output(
+        agent,
+        result,
+        output_path=tmp_path / "finalize_output.json",
+        schema=FINALIZE_MODEL_OUTPUT_SCHEMA,
+        step="finalize",
+        project_dir=tmp_path,
+        plan_dir=tmp_path,
+    )
+    assert payload == REAL_PAYLOAD
+    assert agent.calls, "summary prompt must have been invoked to recover a real fill"
+
+
 def test_real_finalize_graph_passes_through_untouched(tmp_path: Path) -> None:
     agent = FakeAgent([])
     payload, raw = parse_agent_output(

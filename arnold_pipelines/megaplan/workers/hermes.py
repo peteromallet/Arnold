@@ -1608,7 +1608,14 @@ def parse_agent_output(
     # instead of content. Just grab it from there.
     if payload is None and messages:
         payload = _extract_json_from_reasoning(messages)
-        if payload is not None:
+        if payload is not None and step == "finalize" and _is_finalize_placeholder_payload(payload):
+            print(
+                "[hermes-worker] Reasoning-tags JSON is an unfilled finalize schema template — discarding",
+                file=sys.stderr,
+            )
+            payload = None
+            template_unfilled = True
+        elif payload is not None:
             print(f"[hermes-worker] Extracted JSON from reasoning tags", file=sys.stderr)
 
     # Fallback: check all assistant message content fields (not just final_response)
@@ -1620,6 +1627,14 @@ def parse_agent_output(
             content = msg.get("content", "")
             if isinstance(content, str) and content.strip():
                 payload = _parse_json_response(content)
+                if payload is not None and step == "finalize" and _is_finalize_placeholder_payload(payload):
+                    print(
+                        "[hermes-worker] Assistant-message JSON is an unfilled finalize schema template — discarding",
+                        file=sys.stderr,
+                    )
+                    payload = None
+                    template_unfilled = True
+                    continue
                 if payload is not None:
                     print(f"[hermes-worker] Extracted JSON from assistant message content", file=sys.stderr)
                     break
