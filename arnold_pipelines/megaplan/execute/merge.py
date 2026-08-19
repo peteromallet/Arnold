@@ -1004,6 +1004,12 @@ def _test_command_evidence(
     return timeout_seconds, selectors
 
 
+_TASK_TEST_BUDGET_REMEDIATION = (
+    "Remediation: rerun pytest using exactly "
+    "`timeout <N> python3 -m pytest <selector> -q`; record results separately."
+)
+
+
 def _enforce_task_test_budgets(
     entries: Iterable[dict[str, Any]],
     *,
@@ -1067,8 +1073,13 @@ def _enforce_task_test_budgets(
         reason = "task_test_budget_exhausted: " + "; ".join(dict.fromkeys(violations))
         entry["status"] = "blocked"
         notes = str(entry.get("executor_notes") or "").strip()
-        entry["executor_notes"] = f"{notes} [harness] {reason}".strip()
-        issues.append(f"Task {task_id} blocked by admitted test budget: {reason}")
+        entry["executor_notes"] = (
+            f"{notes} [harness] {reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
+        ).strip()
+        issues.append(
+            f"Task {task_id} blocked by admitted test budget: "
+            f"{reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
+        )
 
 
 def _enforce_task_write_budgets(
