@@ -637,6 +637,94 @@ def test_budget_blocked_row_is_not_adopted_and_resets_on_fresh_retry(
     assert by_id["T1"]["files_changed"] == []
 
 
+def test_budget_identity_survives_retry_reset_and_blocks_adoption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 0513dbf3f069: the --retry-blocked-tasks reset (which clears
+    executor_notes/files_changed/commands_run) must NOT erase the test-budget
+    block identity, or _adopt_authority_completed_blocked_tasks re-promotes the
+    authority-completed row to done WITHOUT evidence and the quality gate
+    re-blocks forever.
+
+    The merge gate now stamps a durable ``task_test_budget_exhausted`` field
+    on both the entry and the target row; the retry reset preserves it; and
+    ``_is_task_test_budget_blocked`` recognizes the durable field even when the
+    row is pending, so the adopt gate keeps excluding the row until a fresh
+    compliant attempt passes.
+    """
+    from arnold_pipelines.megaplan.execute.batch import (
+        _adopt_authority_completed_blocked_tasks,
+        _is_task_test_budget_blocked,
+        _reset_blocked_tasks_to_pending,
+    )
+    from arnold_pipelines.megaplan.execute.batch import (
+        _scheduler_completed_ids_for_tasks as _real_scheduler_completed_ids,
+    )
+
+    budget_task = _budget_blocked_task("T1")
+    budget_task["task_test_budget_exhausted"] = (
+        "task_test_budget_exhausted: declared test timeout total 240s exceeds max_seconds=120"
+    )
+    finalize_data = {"tasks": [budget_task]}
+    state = {"config": {"mode": "code", "project_dir": str(tmp_path)}}
+
+    def _fake_completed(tasks, **kwargs):
+        decisions = kwargs.get("decisions")
+        if decisions is not None:
+            decisions["T1"] = _types.SimpleNamespace(satisfied=True)
+        return {"T1"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._scheduler_completed_ids_for_tasks",
+        _fake_completed,
+    )
+
+    # retry reset: blocked -> pending, notes/evidence cleared, durable field KEPT
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1"]
+    by_id = {task["id"]: task for task in finalize_data["tasks"]}
+    assert by_id["T1"]["status"] == "pending"
+    assert by_id["T1"]["executor_notes"] == ""
+    assert by_id["T1"]["files_changed"] == []
+    assert by_id["T1"]["task_test_budget_exhausted"]
+
+    # budget identity survives the reset -> adopt gate excludes the row
+    assert _is_task_test_budget_blocked(by_id["T1"])
+    adopted = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    assert adopted == []
+    assert by_id["T1"]["status"] == "pending"  # NOT re-promoted to done-null
+    assert by_id["T1"]["files_changed"] == []
+
+    # The shared completed-ids reader must ALSO exclude the budget row, or the
+    # planner drops it from the pending frontier and the reducer declares a
+    # false SUCCESS without a compliant re-run (observed at 03:09Z: phase_result
+    # success while finalize rows were still budget-blocked, no new batch
+    # artifacts). Patch the INNER reader to return the row as authority-complete
+    # and verify the outer scheduler reader strips the budget-gated row.
+    from arnold_pipelines.megaplan.execute.batch import _scheduler_completed_ids_for_tasks
+
+    def _inner_completed(*_args, **_kwargs):
+        return {"T1"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch.effective_execute_completed_task_ids",
+        _inner_completed,
+    )
+    completed_ids = _real_scheduler_completed_ids(
+        finalize_data["tasks"],
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    assert "T1" not in completed_ids
+
+
 def test_count_execute_tracking_sees_acks_in_non_preferred_batch_envelope(
     tmp_path: Path,
 ) -> None:

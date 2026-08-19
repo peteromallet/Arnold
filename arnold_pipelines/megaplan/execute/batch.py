@@ -1047,7 +1047,7 @@ def _scheduler_completed_ids_for_tasks(
         else root
     )
     current_head = _best_effort_git_head(project_dir)
-    return effective_execute_completed_task_ids(
+    completed = effective_execute_completed_task_ids(
         tasks,
         plan_dir=plan_dir,
         project_dir=project_dir,
@@ -1055,6 +1055,23 @@ def _scheduler_completed_ids_for_tasks(
         current_head=current_head,
         decisions=decisions,
     )
+    # Budget-gate rows are NEVER effectively completed, even when their result
+    # envelope authority was accepted (occurrence 0513dbf3f069 / 93e301ead5
+    # contract: "authority adoption never overrides the gate"). The merge gate
+    # stamps status=blocked plus the marker; the durable field survives the
+    # --retry-blocked-tasks reset. Excluding them from the shared completed
+    # reader keeps the planner (pending frontier), the reducer (blocked, not
+    # false SUCCESS), the adopt gate, and the stale-authority demotion all
+    # consistent: a budget-blocked row must re-enter the runnable frontier.
+    budget_blocked = {
+        task["id"]
+        for task in tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+        and _is_task_test_budget_blocked(task)
+    }
+    if budget_blocked:
+        completed = {tid for tid in completed if tid not in budget_blocked}
+    return completed
 def _best_effort_git_head(root: Path | None) -> str | None:
     if root is None:
         return None
@@ -6450,12 +6467,25 @@ _TASK_TEST_BUDGET_MARKER = "[harness] task_test_budget_exhausted:"
 
 
 def _is_task_test_budget_blocked(task: Mapping[str, Any]) -> bool:
-    """True only for a live blocked row stamped by the merge budget gate."""
+    """True for a budget-gated row, INCLUDING after the retry reset.
 
+    The merge gate stamps status="blocked" plus the marker in executor_notes.
+    ``_clear_task_attempt_fields`` (the --retry-blocked-tasks reset) flips the
+    row to pending and wipes notes, which previously erased the budget identity
+    and let _adopt_authority_completed_blocked_tasks re-promote the
+    authority-completed row to done WITHOUT evidence -> quality gate re-blocks
+    (occurrence 0513dbf3f069 infinite loop). The durable
+    ``task_test_budget_exhausted`` field (set by the merge gate, popped by the
+    adopt helper on promote) survives the reset, so a pending row that was
+    budget-gated still counts as budget-blocked and stays out of authority
+    adoption until a fresh compliant attempt passes.
+    """
+    if task.get("status") not in ("blocked", "pending"):
+        return False
+    if isinstance(task.get("task_test_budget_exhausted"), str) and task["task_test_budget_exhausted"]:
+        return True
     notes = task.get("executor_notes")
-    return task.get("status") == "blocked" and isinstance(notes, str) and (
-        _TASK_TEST_BUDGET_MARKER in notes
-    )
+    return isinstance(notes, str) and (_TASK_TEST_BUDGET_MARKER in notes)
 
 
 def _clear_task_attempt_fields(task: dict[str, Any]) -> None:

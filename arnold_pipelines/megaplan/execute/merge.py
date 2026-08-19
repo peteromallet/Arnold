@@ -1072,6 +1072,17 @@ def _enforce_task_test_budgets(
             continue
         reason = "task_test_budget_exhausted: " + "; ".join(dict.fromkeys(violations))
         entry["status"] = "blocked"
+        # Durable budget-block identity (occurrence 0513dbf3f069): the marker
+        # lives in executor_notes, but the retry reset (_clear_task_attempt_fields)
+        # wipes notes when flipping blocked->pending, and then
+        # _adopt_authority_completed_blocked_tasks re-promotes the
+        # authority-completed row to done WITHOUT evidence -> the quality gate
+        # re-blocks -> infinite loop.  Persist the verdict in a dedicated field
+        # (the adopt helper already pops task_test_budget_exhausted on promote)
+        # so the exclusion survives the reset and the row re-enters the frontier.
+        entry["task_test_budget_exhausted"] = reason
+        if isinstance(target, dict):
+            target["task_test_budget_exhausted"] = reason
         notes = str(entry.get("executor_notes") or "").strip()
         entry["executor_notes"] = (
             f"{notes} [harness] {reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
