@@ -725,6 +725,110 @@ def test_budget_identity_survives_retry_reset_and_blocks_adoption(
     assert "T1" not in completed_ids
 
 
+def test_contradictory_done_budget_row_resets_on_retry() -> None:
+    """Occurrence 0a0ce24c3510: a DONE row that still carries the durable
+    budget-block identity with NO admitted evidence is a state no valid flow
+    can produce (the merge gate stamps the field only on blocked/pending rows,
+    the adopt helper pops it on promote, and a compliant attempt produces
+    evidence). It arises when adopt runs before the proven-artifact replay
+    stamps the envelope identity into the row, promoting the budget-gated row
+    to done without evidence and wedging the quality gate. The retry reset
+    must return exactly those contradictory rows to the runnable frontier;
+    done rows WITH evidence (legitimately complete) and done rows without the
+    budget flag must never be reset.
+    """
+    from arnold_pipelines.megaplan.execute.batch import _reset_blocked_tasks_to_pending
+
+    contradictory = _task("T1", status="done")
+    contradictory["task_test_budget_exhausted"] = (
+        "task_test_budget_exhausted: declared test timeout total 240s exceeds "
+        "max_seconds=120"
+    )
+    contradictory["files_changed"] = []
+    contradictory["commands_run"] = []
+    legit_done = _task("T2", status="done")
+    legit_done["files_changed"] = ["astrid/packs/shots/cli.py"]
+    legit_done["commands_run"] = ["timeout 120 python3 -m pytest tests -q"]
+    plain_done = _task("T3", status="done")
+    blocked = _task("T4", status="blocked")
+
+    finalize_data = {"tasks": [contradictory, legit_done, plain_done, blocked]}
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1", "T4"]
+    by_id = {task["id"]: task for task in finalize_data["tasks"]}
+    assert by_id["T1"]["status"] == "pending"
+    assert by_id["T1"]["task_test_budget_exhausted"]  # identity survives reset
+    assert by_id["T1"]["files_changed"] == []
+    assert by_id["T1"]["commands_run"] == []
+    assert by_id["T2"]["status"] == "done"  # evidence present -> untouched
+    assert by_id["T2"]["files_changed"] == ["astrid/packs/shots/cli.py"]
+    assert by_id["T3"]["status"] == "done"  # no budget flag -> untouched
+    assert by_id["T4"]["status"] == "pending"  # ordinary blocked reset
+
+
+def test_envelope_budget_identity_blocks_adoption_before_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 0a0ce24c3510 (adopt-before-replay): the adopt gate must
+    exclude a row whose durable budget identity lives ONLY in its proven batch
+    envelope, even when the finalize row has not yet been stamped. Without
+    this, a budget-gated row is promoted to done without evidence and the
+    quality gate re-blocks forever.
+    """
+    from arnold_pipelines.megaplan.execute.batch import (
+        _adopt_authority_completed_blocked_tasks,
+    )
+
+    # A blocked row whose row-level fields carry NO budget identity...
+    budget_task = _budget_blocked_task("T1")
+    budget_task.pop("task_test_budget_exhausted", None)
+    budget_task["executor_notes"] = ""
+    budget_task["blocked_reason"] = ""
+
+    # ...but whose proven batch envelope carries the durable field (the merge
+    # gate stamps it on the entry; the replay would later propagate it).
+    envelope = {
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "blocked",
+                "task_test_budget_exhausted": (
+                    "task_test_budget_exhausted: declared test timeout total "
+                    "240s exceeds max_seconds=120"
+                ),
+            }
+        ]
+    }
+    batch_dir = tmp_path / "execute_batches" / "batch_1"
+    batch_dir.mkdir(parents=True)
+    (batch_dir / "tasks_aaaabbbbcccc.json").write_text(
+        json.dumps(envelope), encoding="utf-8"
+    )
+
+    finalize_data = {"tasks": [budget_task]}
+    state = {"config": {"mode": "code", "project_dir": str(tmp_path)}}
+
+    def _fake_completed(tasks, **kwargs):
+        decisions = kwargs.get("decisions")
+        if decisions is not None:
+            decisions["T1"] = _types.SimpleNamespace(satisfied=True)
+        return {"T1"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._scheduler_completed_ids_for_tasks",
+        _fake_completed,
+    )
+    adopted = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    assert adopted == []
+    assert finalize_data["tasks"][0]["status"] == "blocked"
+
+
 def test_count_execute_tracking_sees_acks_in_non_preferred_batch_envelope(
     tmp_path: Path,
 ) -> None:
