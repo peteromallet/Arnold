@@ -1045,16 +1045,30 @@ def _enforce_task_test_budgets(
         max_runs = narrow.get("max_runs")
         max_seconds = narrow.get("max_seconds")
         violations: list[str] = []
+        typed_violations: list[dict[str, Any]] = []
         if isinstance(max_runs, int) and len(invocations) > max_runs:
             violations.append(f"{len(invocations)} test runs exceeds max_runs={max_runs}")
+            typed_violations.append(
+                {
+                    "kind": "max_runs_exceeded",
+                    "runs": len(invocations),
+                    "max_runs": max_runs,
+                }
+            )
         timeout_total = 0
         for timeout_seconds, selectors in invocations:
             if timeout_seconds is None:
                 violations.append("test command lacks an admitted timeout wrapper")
+                typed_violations.append(
+                    {"kind": "missing_timeout_wrapper"}
+                )
             else:
                 timeout_total += timeout_seconds
             if not selectors:
                 violations.append("test command has no bounded path selector")
+                typed_violations.append(
+                    {"kind": "unbounded_selector"}
+                )
                 continue
             for selector in selectors:
                 selector_base = selector.split("::", 1)[0]
@@ -1064,9 +1078,22 @@ def _enforce_task_test_budgets(
                     for allowed in allowed_selectors
                 ):
                     violations.append(f"selector {selector!r} is outside narrow_tests.selectors")
+                    typed_violations.append(
+                        {
+                            "kind": "selector_outside_admission",
+                            "selector": selector,
+                        }
+                    )
         if isinstance(max_seconds, int) and timeout_total > max_seconds:
             violations.append(
                 f"declared test timeout total {timeout_total}s exceeds max_seconds={max_seconds}"
+            )
+            typed_violations.append(
+                {
+                    "kind": "max_seconds_exceeded",
+                    "declared_total_seconds": timeout_total,
+                    "max_seconds": max_seconds,
+                }
             )
         if not violations:
             continue
@@ -1081,8 +1108,10 @@ def _enforce_task_test_budgets(
         # (the adopt helper already pops task_test_budget_exhausted on promote)
         # so the exclusion survives the reset and the row re-enters the frontier.
         entry["task_test_budget_exhausted"] = reason
+        entry["task_test_budget_violations"] = typed_violations
         if isinstance(target, dict):
             target["task_test_budget_exhausted"] = reason
+            target["task_test_budget_violations"] = typed_violations
         notes = str(entry.get("executor_notes") or "").strip()
         entry["executor_notes"] = (
             f"{notes} [harness] {reason}. {_TASK_TEST_BUDGET_REMEDIATION}"

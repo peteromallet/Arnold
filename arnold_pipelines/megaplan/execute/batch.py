@@ -3488,6 +3488,26 @@ def _run_and_merge_batch(
             payload.setdefault("validation_results", []).extend(
                 _final_sweep_results
             )
+        # Evidence-gated budget-debt acceptance (occurrence 927ad612eda8):
+        # a cumulative max_seconds-only block whose FULL admitted selection
+        # passes strict against the current merged tree is reconciled to
+        # durable accepted_with_debt so TDD-style plans cannot wedge in
+        # blocked_by_quality on a parametrized selector that can never fit
+        # the cap.  Runs after the final deferred sweep (fresh strict
+        # evidence) and before deviation/audit publication.
+        _budget_debt_accepted = _accept_strictly_verified_test_budget_debt(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            payload=payload,
+            deviations=deviations,
+        )
+        if _budget_debt_accepted:
+            log.info(
+                "final sweep: test-budget debt accepted with strict evidence "
+                "for task(s): %s",
+                ", ".join(_budget_debt_accepted),
+            )
     attribution_result = AttributionResult(records=[], recursive_snapshot=None)
     if not is_prose_mode(state):
         attribution_result = _auto_attribute_unclaimed_paths(
@@ -4020,6 +4040,52 @@ def _pre_envelope_artifact_path(verification_dir: Path, job_id: str) -> Path:
     return verification_dir / f"validation_{job_id}{_PRE_ENVELOPE_ARTIFACT_SUFFIX}"
 
 
+def _quarantine_pre_envelope_artifact_required(
+    artifact: Path,
+    *,
+    job_id: str,
+    reason: str,
+) -> Path:
+    """Atomically move a stale pre-envelope under ``verification/stale/``.
+
+    This is the REQUIRED (fail-closed) recovery for the pre-dispatch drift
+    gate: a completed pre-envelope whose selectors/command/source digest no
+    longer matches the current tree must never be re-captured in place (the
+    post-adoption delta would self-compare and mask new failures), but a hard
+    raise with no in-code recovery wedges every TDD-style plan whose agent
+    WIP (or the watchdog's own ledger appends) changes the digested tree
+    between envelope capture and dispatch (occurrence 927ad612eda8: VJ27
+    drift fired on every resume until an operator manually removed the stale
+    artifact — twice).
+
+    The stale artifact is preserved under a unique name so the audit trail
+    survives; the job then re-runs normally and durably writes a fresh
+    pre-envelope against the CURRENT tree.  On any move failure the gate
+    fails closed and nothing is overwritten.
+    """
+    try:
+        stale_dir = artifact.parent / "stale"
+        stale_dir.mkdir(parents=True, exist_ok=True)
+        target = stale_dir / (
+            f"{artifact.stem}-stale-{time.time_ns()}-{os.getpid()}"
+            f"-{id(artifact):x}{artifact.suffix}"
+        )
+        artifact.replace(target)
+    except OSError as exc:
+        raise CliError(
+            "validation_job_failed",
+            f"validation job {job_id} {reason}: could not quarantine stale "
+            f"pre-envelope {artifact}",
+            valid_next=["execute", "revise"],
+            extra={
+                "job_id": job_id,
+                "reason": "pre_envelope_quarantine_failed",
+                "artifact_path": str(artifact),
+            },
+        ) from exc
+    return target
+
+
 def _post_delta_artifact_path(verification_dir: Path, job_id: str) -> Path:
     return verification_dir / f"validation_{job_id}{_POST_DELTA_ARTIFACT_SUFFIX}"
 
@@ -4512,6 +4578,7 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 except Exception:
                     _stored_env = None
                 _completed_env_statuses = (PRE_ENVELOPE_CAPTURED, "passed")
+                _reused_envelope = False
                 if isinstance(_stored_env, dict) and _stored_env.get(
                     "status"
                 ) in _completed_env_statuses:
@@ -4524,31 +4591,40 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         and _envelope_matches_current_tree(_stored_env, project_dir)
                     ):
                         evidence_results.append(_stored_env)
+                        _reused_envelope = True
                         log.info(
                             "validation job %s reusing durable pre-execution envelope %s",
                             job_id,
                             _stored_env.get("evidence_hash"),
                         )
-                        continue
+                if not _reused_envelope and _env_artifact.exists():
                     # A COMPLETED envelope whose selectors/command/source no
                     # longer match must never be overwritten by a re-capture
                     # against the changed tree — the post-adoption delta would
-                    # self-compare and mask new failures.  Recovery is an
-                    # explicit operator action (remove the stale artifact).
-                    raise CliError(
-                        "validation_job_failed",
-                        f"validation job {job_id} completed pre-envelope no longer "
-                        "matches current selectors/command/source digest; refusing "
-                        "to recapture onto a changed tree",
-                        valid_next=["execute", "revise"],
-                        extra={
-                            "job_id": job_id,
-                            "reason": "pre_envelope_digest_drift",
-                            "stored_status": _stored_env.get("status"),
-                            "stored_code_hash": _stored_env.get("code_hash"),
-                            "current_code_hash": _current_source_digest(project_dir),
-                        },
+                    # self-compare and mask new failures.  Recovery (occurrence
+                    # 927ad612eda8): quarantine ANY non-reusable artifact
+                    # (drifted, unreadable JSON, non-object, incomplete/unknown
+                    # status) under verification/stale/ and re-run the job so a
+                    # FRESH pre-envelope is durably captured against the
+                    # CURRENT tree.  Safe because the job has not executed yet
+                    # and the post-adoption path never consumes the stored
+                    # envelope; the quarantine is required and fails closed.
+                    _quarantine_pre_envelope_artifact_required(
+                        _env_artifact,
+                        job_id=job_id,
+                        reason="pre_envelope_digest_drift",
                     )
+                    log.info(
+                        "validation job %s stale pre-envelope quarantined "
+                        "to verification/stale/; re-running to refresh "
+                        "against the current tree",
+                        job_id,
+                    )
+                if _reused_envelope:
+                    continue
+                # Fall through to the normal suite execution; the existing
+                # atomic write below remains the only producer of the
+                # fresh pre-envelope.
         _effective_command = command.strip()
         if _recompiled_command is not None:
             _effective_command = _recompiled_command
@@ -5213,6 +5289,242 @@ def _semantic_deferred_resolution(
             return True
         _quarantine_validation_artifact(artifact, stale_dir)
     return False
+
+
+def _find_binding_valid_strict_pass(
+    *,
+    verification_dir: Path,
+    job_id: str,
+    job: Mapping[str, Any],
+    project_dir: Path,
+) -> dict[str, Any] | None:
+    """Return the CURRENT binding-valid strict PASS artifact for a job.
+
+    Mirrors ``_semantic_deferred_resolution`` but returns the record and adds
+    the strict-gate fields (exit_code == 0, no failures/timeout, admitted
+    command equivalence) so an evidence-gated budget-debt acceptance can cite
+    the exact evidence hash.  Only a strict ``passed`` (never a pre/post-delta
+    envelope, never a deferred marker, never a policy block, never a stale
+    digest) qualifies; anything else is ignored (NOT quarantined here — the
+    sweep owns quarantine).
+    """
+    import json as _json
+
+    expected_selectors = {
+        str(s).strip("'\"") for s in (job.get("selectors") or []) if isinstance(s, str)
+    }
+    effective_command = str(job.get("command") or "").strip()
+    current_digest = _current_worktree_digest(project_dir)
+    for artifact in sorted(verification_dir.glob(f"validation_{job_id}_*.json")):
+        name = artifact.name
+        if name.endswith(_PRE_ENVELOPE_ARTIFACT_SUFFIX) or name.endswith(
+            _POST_DELTA_ARTIFACT_SUFFIX
+        ):
+            continue
+        try:
+            record = _json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, Mapping) or record.get("status") != "passed":
+            continue
+        if record.get("exit_code") != 0:
+            continue
+        if record.get("timeout_reason") or record.get("failures"):
+            continue
+        selectors_ok = (
+            {str(s).strip("'\"") for s in (record.get("selectors") or []) if isinstance(s, str)}
+            == expected_selectors
+        )
+        digest_ok = bool(record.get("worktree_digest")) and record.get(
+            "worktree_digest"
+        ) == current_digest
+        command_ok = _validation_commands_equivalent(
+            record.get("command"), effective_command
+        )
+        if selectors_ok and digest_ok and command_ok:
+            return dict(record)
+    return None
+
+
+def _budget_debt_acceptance_receipt_path(
+    verification_dir: Path, task_id: str, evidence_prefix: str
+) -> Path:
+    return verification_dir / (
+        f"task_budget_acceptance_{task_id}_{evidence_prefix}.json"
+    )
+
+
+def _accept_strictly_verified_test_budget_debt(
+    *,
+    plan_dir: Path,
+    project_dir: Path,
+    finalize_data: dict[str, Any],
+    payload: Mapping[str, Any],
+    deviations: list[str],
+) -> list[str]:
+    """Evidence-gated acceptance of a cumulative-time-only test-budget block.
+
+    The merge budget gate (merge.py:_enforce_task_test_budgets) stays strict:
+    a task whose recorded invocations exceed ``max_seconds`` is blocked with a
+    durable typed ``task_test_budget_violations`` list.  For TDD-style plans a
+    declared selector can be parametrized so wide that the FULL admitted
+    selection deterministically cannot finish inside ``max_seconds`` (m5 T28:
+    tests/cloud/test_progress_auditor.py ~225 cases, 217s green run vs a 120s
+    cap).  A fresh compliant attempt can therefore never converge, wedging
+    execute in ``blocked_by_quality`` forever (occurrence 927ad612eda8).
+
+    This reconciler converts ONLY the single non-correctness case AFTER merge:
+    - the durable violations are EXACTLY ``{max_seconds_exceeded}``;
+    - every recorded run used only admitted selectors and wrappers (implied by
+      the absence of every other typed kind);
+    - run count is within ``max_runs`` (also implied);
+    - the task has an ACCEPTED result envelope (kernel authority);
+    - the task has exactly one ``narrow_recheck`` job whose normalized
+      selectors equal ``task.narrow_tests.selectors``; and
+    - a binding-valid CURRENT-worktree strict artifact for that job exists
+      (status passed, exit 0, no failures/timeout, equivalent command, exact
+      selectors, current digest).
+
+    On eligibility the task is promoted to ``done`` with the block cleared and
+    the original violation retained as durable ``task_test_budget_debt``
+    (disposition ``accepted_with_debt``) plus a content-addressed acceptance
+    receipt under ``verification/``.  Any other violation kind, missing
+    authority, stale digest, widened selector, missing wrapper, run-count
+    excess, or genuine strict failure remains blocked — never laundered.
+    """
+    import json as _json
+    import time as _time
+
+    tasks = finalize_data.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+    jobs_by_id: dict[str, Mapping[str, Any]] = {}
+    for job in finalize_data.get("validation_jobs", []):
+        if isinstance(job, Mapping) and isinstance(job.get("id"), str):
+            jobs_by_id[str(job.get("id"))] = job
+    verification_dir = Path(plan_dir) / "verification"
+    current_digest = _current_worktree_digest(project_dir)
+    accepted_envelopes = _accepted_task_result_envelopes(payload)
+    accepted_ids: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or task.get("status") != "blocked":
+            continue
+        violations = task.get("task_test_budget_violations")
+        if not isinstance(violations, list) or not violations:
+            continue
+        kinds = {
+            str(v.get("kind"))
+            for v in violations
+            if isinstance(v, Mapping) and isinstance(v.get("kind"), str)
+        }
+        if kinds != {"max_seconds_exceeded"}:
+            continue
+        # Accepted kernel authority: the merged row carries the accepted
+        # outcome, or the current payload has the accepted envelope.
+        row_authority = task.get("authority_validation")
+        has_authority = (
+            isinstance(row_authority, Mapping)
+            and row_authority.get("outcome") == "accepted"
+        ) or task_id in accepted_envelopes
+        if not has_authority:
+            continue
+        narrow = task.get("narrow_tests")
+        if not isinstance(narrow, Mapping):
+            continue
+        admitted_selectors = {
+            str(s).strip("'\"")
+            for s in narrow.get("selectors", [])
+            if isinstance(s, str) and s.strip()
+        }
+        if not admitted_selectors:
+            continue
+        matching_jobs = [
+            job
+            for job in jobs_by_id.values()
+            if job.get("kind") == "narrow_recheck"
+            and str(job.get("task_id") or "") == task_id
+        ]
+        if len(matching_jobs) != 1:
+            continue
+        job = matching_jobs[0]
+        job_selectors = {
+            str(s).strip("'\"") for s in (job.get("selectors") or []) if isinstance(s, str)
+        }
+        if job_selectors != admitted_selectors:
+            continue
+        strict = _find_binding_valid_strict_pass(
+            verification_dir=verification_dir,
+            job_id=str(job.get("id") or ""),
+            job=job,
+            project_dir=project_dir,
+        )
+        if strict is None:
+            continue
+        evidence_prefix = str(strict.get("evidence_hash") or "").replace(
+            "sha256:", ""
+        )[:12]
+        receipt_path = _budget_debt_acceptance_receipt_path(
+            verification_dir, task_id, evidence_prefix
+        )
+        debt = {
+            "disposition": "accepted_with_debt",
+            "violation": violations,
+            "task_id": task_id,
+            "job_id": job.get("id"),
+            "strict_evidence_hash": strict.get("evidence_hash"),
+            "worktree_digest": current_digest,
+            "selectors": sorted(admitted_selectors),
+            "command": str(job.get("command") or ""),
+            "accepted_envelope": (
+                accepted_envelopes.get(task_id, (None, None))[1].to_dict()
+                if task_id in accepted_envelopes
+                else None
+            ),
+            "accepted_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        }
+        try:
+            atomic_write_json(receipt_path, debt)
+        except Exception as _exc:
+            raise CliError(
+                "validation_job_failed",
+                f"task {task_id} budget-debt acceptance receipt not durable",
+                valid_next=["execute", "revise"],
+                extra={
+                    "task_id": task_id,
+                    "reason": "budget_debt_acceptance_not_durable",
+                    "artifact_path": str(receipt_path),
+                },
+            ) from _exc
+        task["status"] = "done"
+        task.pop("blocked_reason", None)
+        task.pop("task_test_budget_exhausted", None)
+        task["task_test_budget_debt"] = debt
+        # Replace the merge-generated quality blocker with an advisory so
+        # aggregation keeps the debt as deferred evidence, not a blocker.
+        prefix = f"Task {task_id} blocked by admitted test budget:"
+        merged = [
+            msg
+            for msg in deviations
+            if not (isinstance(msg, str) and msg.startswith(prefix))
+        ]
+        merged.append(
+            "Advisory test-budget debt accepted after current strict "
+            f"validation: {task_id} ({str(job.get('id') or '')} strict pass "
+            f"{strict.get('evidence_hash')})."
+        )
+        deviations[:] = merged
+        accepted_ids.append(task_id)
+        log.info(
+            "test-budget debt accepted with evidence for task %s "
+            "(job %s strict pass %s); task promoted to done",
+            task_id,
+            job.get("id"),
+            strict.get("evidence_hash"),
+        )
+    return sorted(accepted_ids)
 
 
 def _sweep_persisted_deferred_selector_jobs(
@@ -6845,7 +7157,14 @@ def _envelope_budget_blocked_task_ids(plan_dir: Path) -> set[str]:
     row has not yet been stamped: the execute auto-loop runs adopt before the
     proven-artifact replay, so a budget-gated row whose identity lives only in
     the envelope would otherwise be promoted to done WITHOUT evidence and the
-    quality gate would re-block forever (occurrence 0a0ce24c3510, 24 rows)."""
+    quality gate would re-block forever (occurrence 0a0ce24c3510, 24 rows).
+
+    A task with a binding-valid budget-debt ACCEPTANCE receipt
+    (``verification/task_budget_acceptance_<task-id>_*.json``) is subtracted:
+    old immutable batch artifacts retain the original violation by design, but
+    the acceptance receipt proves the block was reconciled after a current
+    strict pass (occurrence 927ad612eda8), so it must not resurrect the block.
+    """
     blocked: set[str] = set()
     for artifact_path in _all_batch_artifact_paths(plan_dir):
         try:
@@ -6869,6 +7188,23 @@ def _envelope_budget_blocked_task_ids(plan_dir: Path) -> set[str]:
                     and value.strip()
                 ):
                     blocked.add(task_id)
+    if blocked:
+        verification_dir = Path(plan_dir) / "verification"
+        accepted: set[str] = set()
+        for receipt in verification_dir.glob(
+            "task_budget_acceptance_*_*.json"
+        ):
+            try:
+                receipt_data = read_json(receipt)
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            if (
+                isinstance(receipt_data, dict)
+                and isinstance(receipt_data.get("task_id"), str)
+                and receipt_data.get("disposition") == "accepted_with_debt"
+            ):
+                accepted.add(receipt_data["task_id"])
+        blocked -= accepted
     return blocked
 
 

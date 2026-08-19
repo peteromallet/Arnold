@@ -489,10 +489,13 @@ def test_resume_envelope_requires_matching_selectors(
 
     plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
     state = _make_state(project_dir)
-    # A stale envelope artifact with DIFFERENT selectors must never be reused
-    # AND must never be re-captured onto the current tree: a completed
-    # envelope whose selectors/command/source digest no longer match fails
-    # closed (drift), so the post-adoption delta can never self-compare.
+    # A stale envelope artifact with DIFFERENT selectors must never be reused.
+    # Recovery (occurrence 927ad612eda8): the stale artifact is QUARANTINED
+    # under verification/stale/ (preserved, unique name) and the job re-runs
+    # so a FRESH pre-envelope is captured against the current tree.  The
+    # post-adoption delta can never self-compare because the job has not
+    # executed yet and the post-adoption path never consumes the stored
+    # envelope.
     stale = {
         "job_id": "VJ12",
         "status": PRE_ENVELOPE_CAPTURED,
@@ -511,6 +514,9 @@ def test_resume_envelope_requires_matching_selectors(
         collected_ids=["tests/cloud/test_progress_auditor.py::test_a"],
         collected=1,
         code_hash=_tree_code_hash(project_dir),
+        command=_recompile_legacy_narrow_recheck_command(
+            LEGACY_COMMAND, [SEL_A, SEL_B]
+        ),
     )
     with patch(
         "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
@@ -520,20 +526,230 @@ def test_resume_envelope_requires_matching_selectors(
             "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
             return_value={"event_id": "ev"},
         ):
-            with pytest.raises(CliError) as exc_info:
-                _run_batch_validation_jobs(
-                    plan_dir=plan_dir,
-                    project_dir=project_dir,
-                    finalize_data=finalize_data,
-                    batch_task_ids=["T1"],
-                    state=state,
-                    admission=True,
-                )
-    # Fail closed BEFORE any run: the stale envelope is neither reused nor
-    # overwritten by a re-capture.
+            evidence = _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                state=state,
+                admission=True,
+            )
+    # The stale envelope is quarantined (never overwritten in place) and the
+    # suite re-runs to capture a fresh envelope at the live path against the
+    # current tree.
+    mock_run.assert_called_once()
+    stale_artifacts = list((plan_dir / "verification" / "stale").glob("*.json"))
+    assert stale_artifacts, "stale pre-envelope must be preserved under stale/"
+    assert any(
+        "validation_VJ12_pre_envelope-stale-" in item.name
+        for item in stale_artifacts
+    )
+    fresh = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    assert fresh.exists()
+    fresh_data = __import__("json").loads(fresh.read_text(encoding="utf-8"))
+    assert fresh_data["status"] == PRE_ENVELOPE_CAPTURED
+    assert set(fresh_data["selectors"]) == {SEL_A, SEL_B}
+    assert any(
+        item["status"] == PRE_ENVELOPE_CAPTURED for item in evidence
+    )
+
+
+def test_resume_envelope_worktree_digest_drift_quarantines_and_reruns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import patch
+
+    plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
+    state = _make_state(project_dir)
+    # Same selectors + command but a STALE worktree digest: the envelope
+    # cannot be reused and must be quarantined + re-captured (occurrence
+    # 927ad612eda8 — agent WIP changes the digested tree between envelope
+    # capture and dispatch).
+    stale = {
+        "job_id": "VJ12",
+        "status": PRE_ENVELOPE_CAPTURED,
+        "selectors": [SEL_A, SEL_B],
+        "failures": [],
+        "evidence_hash": "sha256:stale-digest",
+        "worktree_digest": "sha256:old-tree-digest",
+    }
+    artifact = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(__import__("json").dumps(stale), encoding="utf-8")
+    fake = _result(
+        exit_code=1,
+        failures=["tests/cloud/test_progress_auditor.py::test_a"],
+        collected_ids=["tests/cloud/test_progress_auditor.py::test_a"],
+        collected=1,
+        code_hash=_tree_code_hash(project_dir),
+        command=_recompile_legacy_narrow_recheck_command(
+            LEGACY_COMMAND, [SEL_A, SEL_B]
+        ),
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake,
+    ) as mock_run:
+        with patch(
+            "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+            return_value={"event_id": "ev"},
+        ):
+            evidence = _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                state=state,
+                admission=True,
+            )
+    mock_run.assert_called_once()
+    stale_artifacts = list((plan_dir / "verification" / "stale").glob("*.json"))
+    assert any(
+        "validation_VJ12_pre_envelope-stale-" in item.name
+        for item in stale_artifacts
+    )
+    fresh = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    assert fresh.exists()
+    fresh_data = __import__("json").loads(fresh.read_text(encoding="utf-8"))
+    assert fresh_data["status"] == PRE_ENVELOPE_CAPTURED
+    assert fresh_data["worktree_digest"] is not None
+
+
+def test_resume_envelope_unreadable_json_quarantines_and_reruns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import patch
+
+    plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
+    state = _make_state(project_dir)
+    artifact = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("{not json", encoding="utf-8")
+    fake = _result(
+        exit_code=1,
+        failures=["tests/cloud/test_progress_auditor.py::test_a"],
+        collected_ids=["tests/cloud/test_progress_auditor.py::test_a"],
+        collected=1,
+        code_hash=_tree_code_hash(project_dir),
+        command=_recompile_legacy_narrow_recheck_command(
+            LEGACY_COMMAND, [SEL_A, SEL_B]
+        ),
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake,
+    ) as mock_run:
+        with patch(
+            "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+            return_value={"event_id": "ev"},
+        ):
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                state=state,
+                admission=True,
+            )
+    mock_run.assert_called_once()
+    stale_artifacts = list((plan_dir / "verification" / "stale").glob("*.json"))
+    assert any(
+        "validation_VJ12_pre_envelope-stale-" in item.name
+        for item in stale_artifacts
+    )
+    fresh = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    assert fresh.exists()
+    fresh_data = __import__("json").loads(fresh.read_text(encoding="utf-8"))
+    assert fresh_data["status"] == PRE_ENVELOPE_CAPTURED
+
+
+def test_resume_envelope_missing_runs_and_writes_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import patch
+
+    plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
+    state = _make_state(project_dir)
+    fake = _result(
+        exit_code=1,
+        failures=["tests/cloud/test_progress_auditor.py::test_a"],
+        collected_ids=["tests/cloud/test_progress_auditor.py::test_a"],
+        collected=1,
+        code_hash=_tree_code_hash(project_dir),
+        command=_recompile_legacy_narrow_recheck_command(
+            LEGACY_COMMAND, [SEL_A, SEL_B]
+        ),
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake,
+    ) as mock_run:
+        with patch(
+            "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+            return_value={"event_id": "ev"},
+        ):
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                state=state,
+                admission=True,
+            )
+    mock_run.assert_called_once()
+    fresh = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    assert fresh.exists()
+    assert not (plan_dir / "verification" / "stale").exists() or not list(
+        (plan_dir / "verification" / "stale").glob("*.json")
+    )
+
+
+def test_resume_envelope_quarantine_failure_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.types import CliError
+
+    plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
+    state = _make_state(project_dir)
+    stale = {
+        "job_id": "VJ12",
+        "status": PRE_ENVELOPE_CAPTURED,
+        "selectors": ["tests/other.py"],
+        "failures": [],
+        "evidence_hash": "sha256:stale",
+    }
+    artifact = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(__import__("json").dumps(stale), encoding="utf-8")
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+    ) as mock_run:
+        with patch(
+            "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+            return_value={"event_id": "ev"},
+        ):
+            with patch(
+                "arnold_pipelines.megaplan.execute.batch.Path.replace",
+                side_effect=OSError("read-only verification dir"),
+            ):
+                with pytest.raises(CliError) as exc_info:
+                    _run_batch_validation_jobs(
+                        plan_dir=plan_dir,
+                        project_dir=project_dir,
+                        finalize_data=finalize_data,
+                        batch_task_ids=["T1"],
+                        state=state,
+                        admission=True,
+                    )
     mock_run.assert_not_called()
     assert exc_info.value.code == "validation_job_failed"
-    assert exc_info.value.extra.get("reason") == "pre_envelope_digest_drift"
+    assert (
+        exc_info.value.extra.get("reason") == "pre_envelope_quarantine_failed"
+    )
+    # The stale artifact is untouched (never overwritten).
+    assert artifact.exists()
 
 
 # ---------------------------------------------------------------------------
