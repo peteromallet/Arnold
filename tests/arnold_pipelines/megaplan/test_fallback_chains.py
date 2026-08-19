@@ -192,6 +192,66 @@ def test_codex_auth_error_surface_classifies_as_auth() -> None:
     )
 
 
+def test_codex_no_credits_surface_classifies_as_quota() -> None:
+    """Codex billing exhaustion ("no credits remaining") must classify as
+    ``quota`` (durable, cross-family fallbackable), not ``availability``.
+
+    The codex worker maps the raw transport text "stream disconnected before
+    completion: You have no credits remaining..." to
+    CliError(code="quota_exceeded", message="Codex quota exceeded. ...") via
+    the _CODEX_ERROR_PATTERNS row added BEFORE the generic
+    "stream disconnected before completion" connection_error row
+    (workers/_impl.py:3171-3180). The CliError-dict surface below is exactly
+    what _configured_spec_failure_class builds for classify_retryability
+    (workers/_impl.py:7208-7219). Before the fix the code surface was
+    connection_error -> availability, so the durable billing condition was
+    treated as a transient transport drop (astrid-first m6 finalize stall,
+    occurrence fc98376b2f10).
+    """
+    # CliError-dict surface built by _configured_spec_failure_class.
+    assert (
+        classify_retryability(
+            {
+                "code": "quota_exceeded",
+                "message": (
+                    "Codex quota exceeded. Do not retry immediately; this "
+                    "condition cannot recover on its own."
+                ),
+                "status_code": None,
+                "retryable": None,
+            }
+        )
+        == "quota"
+    )
+    # The pre-existing "usage limit" codex row classifies via the same token.
+    assert (
+        classify_retryability(
+            {
+                "code": "quota_exceeded",
+                "message": "Codex usage limit reached. Try again at a later time.",
+                "status_code": None,
+                "retryable": None,
+            }
+        )
+        == "quota"
+    )
+    # Raw codex transport text as the message still classifies as quota via
+    # the "billing"/"credit balance" needles.
+    assert (
+        classify_retryability(
+            {
+                "code": "connection_error",
+                "message": (
+                    "stream disconnected before completion: You have no "
+                    "credits remaining. Add credits to continue using the API "
+                    "at https://platform.openai.com/settings/organization/billing/."
+                ),
+            }
+        )
+        == "quota"
+    )
+
+
 def test_classify_retryability_reads_nested_extra_external_error() -> None:
     # workers/hermes.py wraps provider failures as
     # CliError("worker_error", ..., extra={"_external_error": <dict>}); the

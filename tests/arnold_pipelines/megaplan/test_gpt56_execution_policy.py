@@ -380,3 +380,44 @@ def test_unpriced_status_survives_worker_and_history_compatibility_surfaces() ->
         mode="oneshot",
     )
     assert entry["cost_pricing"] == "unpriced"
+
+
+def test_diagnose_codex_failure_no_credits_is_quota_not_connection() -> None:
+    """The real codex no-credits transport text must diagnose as quota_exceeded,
+    not connection_error.
+
+    Codex surfaces billing exhaustion wrapped inside
+    "stream disconnected before completion: You have no credits remaining..."
+    (astrid-first m6 finalize_v1_raw.txt, occurrence fc98376b2f10). The
+    _CODEX_ERROR_PATTERNS row for "no credits remaining" is placed BEFORE the
+    generic "stream disconnected before completion" connection row
+    (workers/_impl.py:3171-3180), so first-match-wins returns quota_exceeded
+    and routes to _codex_hard_quota_guidance instead of the transient
+    "re-run once" guidance.
+    """
+    raw = (
+        '{"type":"thread.started","thread_id":"01a01ad6-9bad-7743-ba98-13c9f02d0e00"}\n'
+        '{"type":"turn.started"}\n'
+        '{"type":"error","message":"Reconnecting... 2/5 (stream disconnected before '
+        'completion: You have no credits remaining. Add credits to continue using the '
+        'API at https://platform.openai.com/settings/organization/billing/.)"}\n'
+        '{"type":"error","message":"Reconnecting... 5/5 (stream disconnected before '
+        'completion: You have no credits remaining. Add credits to continue using the '
+        'API at https://platform.openai.com/settings/organization/billing/.)"}\n'
+        '{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Falling '
+        'back from WebSockets to HTTPS transport. stream disconnected before completion: '
+        'You have no credits remaining. Add credits to continue using the API at '
+        'https://platform.openai.com/settings/organization/billing/."}}\n'
+    )
+    code, message = _impl._diagnose_codex_failure(raw, returncode=1)
+    assert code == "quota_exceeded"
+    assert "Codex quota exceeded" in message
+    assert "Do not retry immediately" in message
+    assert "Re-run the same step" not in message
+
+    # A genuine transport drop (no billing text) still diagnoses as
+    # connection_error — the new row must not shadow unrelated drops.
+    code2, _message2 = _impl._diagnose_codex_failure(
+        "stream disconnected before completion: peer closed the connection", returncode=1
+    )
+    assert code2 == "connection_error"

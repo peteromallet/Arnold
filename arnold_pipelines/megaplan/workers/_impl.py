@@ -3170,6 +3170,13 @@ _CODEX_ERROR_PATTERNS: list[tuple[str, str, str]] = [
     # thread IDs or unrelated numbers do not get misclassified as 429s.
     ("failed to lookup address information", "connection_error", "Codex could not resolve the backend host"),
     ("failed to connect to websocket", "connection_error", "Codex could not connect to the realtime backend"),
+    # Durable billing exhaustion must be recognized BEFORE the generic transport
+    # row below: codex surfaces "no credits remaining" wrapped inside
+    # "stream disconnected before completion", and the first-match-wins table
+    # would otherwise swallow the billing signal as a transient connection
+    # drop (astrid-first m6 finalize, occurrence fc98376b2f10). quota_exceeded
+    # also routes to _codex_hard_quota_guidance() instead of "re-run once".
+    ("no credits remaining", "quota_exceeded", "Codex quota exceeded"),
     ("stream disconnected before completion", "connection_error", "Codex connection dropped before completion"),
     ("error sending request for url", "connection_error", "Codex could not send the backend request"),
     ("nodename nor servname provided", "connection_error", "Codex could not resolve the backend host"),
