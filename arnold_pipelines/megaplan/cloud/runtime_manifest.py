@@ -761,6 +761,43 @@ def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) ->
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        # Foreign-epic guard (occurrence 0a0ce24c3510 / 0513dbf3f069): the
+        # active pointer must NEVER be silently overwritten with a different
+        # epic's manifest.  A caller whose ARNOLD_RUNTIME_MANIFEST env (or the
+        # absence of it) resolves to the shared default pointer while
+        # advancing ANOTHER epic's manifest would clobber the active epic's
+        # generation (astrid-first's gen-78 advance overwrote the
+        # megaplan-maintenance pointer at 02:07:42Z with no retention because
+        # 78 < 119 skipped the rollback copy).  A ``compatibility_only``
+        # pointer is non-authoritative telemetry (G2) and may be replaced;
+        # an invalid pointer is left to ``_retain_previous_generation``'s
+        # existing fail-closed check.
+        if pointer.exists():
+            try:
+                _current_pointer_manifest = load_manifest(pointer)
+            except ManifestError:
+                _current_pointer_manifest = None
+            if (
+                _current_pointer_manifest is not None
+                and not _current_pointer_manifest.compatibility_only
+            ):
+                _current_epic_branch = str(
+                    (_current_pointer_manifest.epic or {}).get("branch") or ""
+                )
+                _incoming_epic_branch = str(
+                    (manifest.epic or {}).get("branch") or ""
+                )
+                if (
+                    _current_epic_branch
+                    and _incoming_epic_branch
+                    and _current_epic_branch != _incoming_epic_branch
+                ):
+                    raise ManifestError(
+                        "active pointer holds a different epic's manifest "
+                        f"({_current_epic_branch!r}); refusing to overwrite it "
+                        f"with {_incoming_epic_branch!r} "
+                        "(fail-closed foreign-epic pointer guard)"
+                    )
         _retain_previous_generation(pointer, manifest)
         _atomic_write(pointer, _write_payload(manifest, pointer, pointer_write=True))
     finally:

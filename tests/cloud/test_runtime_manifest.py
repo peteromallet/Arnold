@@ -1137,6 +1137,64 @@ def test_write_active_pointer_refuses_invalid_existing_pointer(tmp_path: Path) -
     assert pointer.read_text() == "{not json"  # untouched
 
 
+def test_write_active_pointer_refuses_foreign_epic_overwrite(tmp_path: Path) -> None:
+    """The active pointer must never be silently clobbered by another epic.
+
+    Regression for occurrence 0a0ce24c3510: astrid-first's gen-78
+    ``advance_generation`` inherited ARNOLD_RUNTIME_MANIFEST resolving to the
+    shared default pointer and overwrote the megaplan-maintenance manifest
+    (gen 119) with no retention (78 < 119 skipped the rollback copy).
+    """
+    pointer = tmp_path / "pointer.json"
+    foreign = _make_manifest_obj(generation=119)
+    foreign.epic["branch"] = "fixer/megaplan-maintenance-20260813"
+    write_active_pointer(foreign, pointer)
+    incoming = _make_manifest_obj(generation=78)
+    incoming.epic["branch"] = "fixer/astrid-first-20260814"
+    with pytest.raises(ManifestError, match="different epic"):
+        write_active_pointer(incoming, pointer)
+    # pointer untouched: the active epic's generation survives the attempt
+    assert load_manifest(pointer).generation == 119
+    assert (
+        load_manifest(pointer).epic["branch"]
+        == "fixer/megaplan-maintenance-20260813"
+    )
+    assert not list(tmp_path.glob("pointer.json.previous-78.json"))
+
+
+def test_write_active_pointer_same_epic_overwrite_still_allowed(tmp_path: Path) -> None:
+    """Same-epic generation bumps keep retention + write (no false refusal)."""
+    pointer = tmp_path / "pointer.json"
+    first = _make_manifest_obj(generation=119)
+    first.epic["branch"] = "fixer/megaplan-maintenance-20260813"
+    write_active_pointer(first, pointer)
+    second = _make_manifest_obj(generation=120)
+    second.epic["branch"] = "fixer/megaplan-maintenance-20260813"
+    write_active_pointer(second, pointer)
+    assert load_manifest(pointer).generation == 120
+    retained = tmp_path / "pointer.json.previous-119.json"
+    assert retained.exists()
+    assert (
+        load_manifest(retained).epic["branch"]
+        == "fixer/megaplan-maintenance-20260813"
+    )
+
+
+def test_write_active_pointer_allows_compatibility_only_pointer_replacement(
+    tmp_path: Path,
+) -> None:
+    """A compatibility_only pointer (non-authoritative telemetry) is replaceable."""
+    pointer = tmp_path / "pointer.json"
+    compat = _make_manifest_obj(generation=1, compatibility_only=True)
+    compat.epic["branch"] = "fixer/megaplan-maintenance-20260813"
+    write_active_pointer(compat, pointer)
+    incoming = _make_manifest_obj(generation=2)
+    incoming.epic["branch"] = "fixer/astrid-first-20260814"
+    write_active_pointer(incoming, pointer)
+    assert load_manifest(pointer).generation == 2
+    assert load_manifest(pointer).epic["branch"] == "fixer/astrid-first-20260814"
+
+
 def test_bootstrap_manifest_resolves_through_active_pointer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
