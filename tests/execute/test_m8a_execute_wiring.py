@@ -842,8 +842,16 @@ def test_canonical_v2_missing_tasks_cannot_bypass_selector_classification(tmp_pa
 
 
 def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Path) -> None:
-    """An earlier accepted authority outcome cannot override a later policy block."""
+    """An earlier accepted authority outcome cannot override a later policy block.
+
+    The blocked row must NOT release the deferred selector; the refusal is
+    parked as a typed ``post_merge_policy_blocked`` / ``validation_blocked``
+    disposition instead of raising a terminal CliError, so the execute
+    coordinator can publish its aggregate state and a fresh compliant attempt
+    (via ``--retry-blocked-tasks``) can rerun the task.
+    """
     from arnold_pipelines.megaplan.execute.batch import (
+        _POST_MERGE_POLICY_BLOCKED,
         _rerun_deferred_selector_validation_jobs,
         _run_batch_validation_jobs,
     )
@@ -861,16 +869,26 @@ def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Pat
     (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
     payload, _entry = _accepted_task_payload(selector=selector)
     finalize_data["tasks"][0]["status"] = "blocked"
-    with pytest.raises(CliError, match="task_result_blocked_by_post_merge_policy"):
-        _rerun_deferred_selector_validation_jobs(
-            plan_dir=plan_dir,
-            project_dir=project_dir,
-            finalize_data=finalize_data,
-            batch_task_ids=["T1"],
-            pre_dispatch_results=deferred,
-            payload=payload,
-            state=_make_state(project_dir),
-        )
+    results = _rerun_deferred_selector_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        pre_dispatch_results=deferred,
+        payload=payload,
+        state=_make_state(project_dir),
+    )
+    # The refusal is parked as a typed validation_blocked disposition.
+    assert len(results) == 1
+    parked = results[0]
+    assert parked["status"] == _POST_MERGE_POLICY_BLOCKED
+    assert parked["disposition"] == "validation_blocked"
+    assert parked["reason"] == "task_result_blocked_by_post_merge_policy"
+    assert parked["task_status"] == "blocked"
+    # No pass artifact is minted and the suite runner is not invoked.
+    assert not (plan_dir / "verification" / "validation_VJ1_passed.json").exists()
+    # The row itself stays blocked.
+    assert finalize_data["tasks"][0]["status"] == "blocked"
 
 
 def test_deferred_selector_blocks_without_accepted_result_envelope(tmp_path: Path) -> None:
