@@ -228,7 +228,8 @@ def test_budget_debt_extra_violation_kind_stays_blocked(tmp_path: Path) -> None:
 
 def test_budget_debt_missing_authority_stays_blocked(tmp_path: Path) -> None:
     plan_dir, project_dir, finalize_data = _budget_debt_fixture(tmp_path)
-    # No accepted envelope and no row authority -> stays blocked.
+    # No accepted envelope, no row authority, and no work evidence ->
+    # stays blocked.  A skipped task must never be laundered into done.
     finalize_data["tasks"][0].pop("authority_validation", None)
     _write_strict_pass(plan_dir, project_dir)
     accepted = _accept_strictly_verified_test_budget_debt(
@@ -240,6 +241,103 @@ def test_budget_debt_missing_authority_stays_blocked(tmp_path: Path) -> None:
     )
     assert accepted == []
     assert finalize_data["tasks"][0]["status"] == "blocked"
+
+
+def test_budget_debt_prior_dispatch_work_evidence_accepts(tmp_path: Path) -> None:
+    """Occurrence 927ad612eda8 live regression 10:46Z.
+
+    A budget-killed task can NEVER produce an accepted envelope (the worker
+    is forced to return blocked by the cap), so the envelope preconditions
+    are unsatisfiable for exactly the case this reconciler exists for.  The
+    merged row's kernel-witnessed WORK EVIDENCE (non-empty files_changed AND
+    commands_run from the dispatch that did the work) plus a binding-valid
+    strict pass must carry the acceptance.
+    """
+    plan_dir, project_dir, finalize_data = _budget_debt_fixture(tmp_path)
+    task = finalize_data["tasks"][0]
+    task.pop("authority_validation", None)
+    task["files_changed"] = [
+        "arnold_pipelines/megaplan/resident/scheduler.py",
+        "tests/cloud/test_progress_auditor.py",
+    ]
+    task["commands_run"] = [
+        "timeout 120 python3 -m pytest tests/cloud/test_progress_auditor.py -q",
+    ]
+    _write_strict_pass(plan_dir, project_dir)
+    accepted = _accept_strictly_verified_test_budget_debt(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        payload={},  # NO accepted envelope — work evidence must carry it
+        deviations=[],
+    )
+    assert accepted == ["T28"]
+    task = finalize_data["tasks"][0]
+    assert task["status"] == "done"
+    assert task["task_test_budget_debt"]["disposition"] == "accepted_with_debt"
+    receipts = list((plan_dir / "verification").glob("task_budget_acceptance_*.json"))
+    assert len(receipts) == 1
+
+
+def test_budget_debt_skipped_task_without_work_evidence_stays_blocked(
+    tmp_path: Path,
+) -> None:
+    """A never-executed task (no files_changed/commands_run) stays blocked."""
+    plan_dir, project_dir, finalize_data = _budget_debt_fixture(tmp_path)
+    task = finalize_data["tasks"][0]
+    task.pop("authority_validation", None)
+    # No work fields: the strict pass alone must NOT launder a skip.
+    _write_strict_pass(plan_dir, project_dir)
+    accepted = _accept_strictly_verified_test_budget_debt(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        payload={},
+        deviations=[],
+    )
+    assert accepted == []
+    assert finalize_data["tasks"][0]["status"] == "blocked"
+
+
+def test_worktree_digest_excludes_engine_owned_ledger_files(
+    tmp_path: Path,
+) -> None:
+    """Occurrence 927ad612eda8: watchdog ledger appends must not shift the
+    worktree digest (they made validation artifacts stale within minutes and
+    wedged D2 strict-binding acceptance).  Real source changes must still
+    shift it."""
+    import subprocess
+
+    def _git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(project_dir), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "src.py").write_text("x=1\n", encoding="utf-8")
+    ledger = project_dir / ".megaplan" / "incident-ledger"
+    ledger.mkdir(parents=True)
+    (ledger / "events.jsonl").write_text('{"seq":1}\n', encoding="utf-8")
+    (ledger / ".events.seq").write_text("1\n", encoding="utf-8")
+    _git("init", "-q")
+    _git("config", "user.email", "test@example.com")
+    _git("config", "user.name", "test")
+    _git("add", ".")
+    _git("commit", "-q", "-m", "init")
+    d1 = _current_worktree_digest(project_dir)
+    assert d1
+    # Watchdog-style ledger append must NOT change the digest.
+    with open(ledger / "events.jsonl", "a", encoding="utf-8") as fh:
+        fh.write('{"seq":2}\n')
+    (ledger / ".events.seq").write_text("2\n", encoding="utf-8")
+    assert _current_worktree_digest(project_dir) == d1
+    # A real source change MUST change the digest.
+    (project_dir / "src.py").write_text("x=2\n", encoding="utf-8")
+    assert _current_worktree_digest(project_dir) != d1
 
 
 def test_budget_debt_selector_mismatch_stays_blocked(tmp_path: Path) -> None:

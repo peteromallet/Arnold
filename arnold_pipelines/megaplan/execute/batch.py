@@ -4110,6 +4110,20 @@ def _current_source_digest(project_dir: Path) -> str | None:
         return None
 
 
+# Engine-owned volatile ledger files (watchdog appends ~every few minutes).
+# Tracked + continuously modified incident metadata — never a task
+# deliverable.  Excluded from the worktree digest by explicit enumerated
+# path so validation artifacts stay binding-valid across short windows
+# (occurrence 927ad612eda8: D1 pre-envelope drift, D2 strict-binding
+# acceptance).  See _current_worktree_digest.
+_WORKTREE_DIGEST_EXCLUDED_RELATIVE_PATHS = frozenset(
+    {
+        ".megaplan/incident-ledger/events.jsonl",
+        ".megaplan/incident-ledger/.events.seq",
+    }
+)
+
+
 def _current_worktree_digest(project_dir: Path) -> str | None:
     """Worktree-aware source digest: HEAD tree PLUS working-tree CONTENT.
 
@@ -4124,9 +4138,21 @@ def _current_worktree_digest(project_dir: Path) -> str | None:
     changed (codex 20260818T2226Z verdict).  ``git diff --binary HEAD`` carries
     the actual content of all tracked changes (staged + unstaged); untracked
     files are hashed directly.  Falls back to the plain source digest when git
-    is unavailable.  ``None`` only when nothing can be computed — callers
+    is unavailable.    ``None`` only when nothing can be computed — callers
     treat ``None`` as a mismatch and fail closed.
+
+    Engine-owned volatile ledger files (``.megaplan/incident-ledger/
+    events.jsonl``, ``.megaplan/incident-ledger/.events.seq``) are tracked
+    and appended by the watchdog every few minutes.  They are incident
+    metadata, never a task deliverable, so hashing them makes every
+    worktree digest (and every validation artifact bound to it) stale
+    within minutes for no semantic gain — wedging pre-envelope reuse (D1)
+    and evidence-gated budget-debt acceptance (D2) (occurrence
+    927ad612eda8, 2026-08-19).  They are excluded here by explicit
+    enumerated path only; a task that ever declares them as deliverables
+    must revisit this exclusion.
     """
+    _excluded = _WORKTREE_DIGEST_EXCLUDED_RELATIVE_PATHS
     try:
         head = subprocess.run(
             ["git", "-C", str(project_dir), "ls-tree", "-r", "HEAD", "--", "."],
@@ -4136,17 +4162,21 @@ def _current_worktree_digest(project_dir: Path) -> str | None:
         )
         if head.returncode == 0 and head.stdout.strip():
             blob = head.stdout
+            diff_argv = [
+                "git",
+                "-C",
+                str(project_dir),
+                "diff",
+                "--binary",
+                "HEAD",
+                "--",
+                ".",
+            ]
+            diff_argv.extend(
+                f":(exclude){path}" for path in sorted(_excluded)
+            )
             diff = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(project_dir),
-                    "diff",
-                    "--binary",
-                    "HEAD",
-                    "--",
-                    ".",
-                ],
+                diff_argv,
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -4169,6 +4199,11 @@ def _current_worktree_digest(project_dir: Path) -> str | None:
             )
             if untracked.returncode == 0:
                 for path in (p for p in untracked.stdout.split("\x00") if p):
+                    if path in _excluded:
+                        # Defensive: the enumerated engine-owned ledger
+                        # files must never perturb the digest even if they
+                        # are untracked in some checkout (see constant).
+                        continue
                     blob += f"\n? {path}"
                     full = Path(project_dir) / path
                     if full.exists() and full.is_file():
@@ -5423,12 +5458,31 @@ def _accept_strictly_verified_test_budget_debt(
         if kinds != {"max_seconds_exceeded"}:
             continue
         # Accepted kernel authority: the merged row carries the accepted
-        # outcome, or the current payload has the accepted envelope.
+        # outcome, the current payload has the accepted envelope, OR the
+        # merged row carries kernel-witnessed WORK EVIDENCE (non-empty
+        # files_changed AND commands_run) from a budget-killed dispatch.
+        # The merge only admits authority-validated entries
+        # (merge.py:_validate_and_merge_batch), so merged-row evidence is
+        # kernel-witnessed; a skipped task has empty evidence and can never
+        # satisfy this; and max_seconds_exceeded structurally implies the
+        # admitted commands actually ran (merge.py:_enforce_task_test_budgets
+        # derives the typed violations from recorded runs).  The envelope
+        # preconditions alone are unsatisfiable for budget-killed tasks —
+        # the worker is forced to return blocked by the cap, so no accepted
+        # envelope is ever produced (occurrence 927ad612eda8 live regression
+        # 2026-08-19T10:46Z) — making the work-evidence disjunct the only
+        # path that can fire for exactly the case this reconciler exists for.
         row_authority = task.get("authority_validation")
+        work_evidence = bool(
+            isinstance(task.get("files_changed"), list)
+            and task.get("files_changed")
+            and isinstance(task.get("commands_run"), list)
+            and task.get("commands_run")
+        )
         has_authority = (
             isinstance(row_authority, Mapping)
             and row_authority.get("outcome") == "accepted"
-        ) or task_id in accepted_envelopes
+        ) or task_id in accepted_envelopes or work_evidence
         if not has_authority:
             continue
         narrow = task.get("narrow_tests")
