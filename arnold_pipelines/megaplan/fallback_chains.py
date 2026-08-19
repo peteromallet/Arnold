@@ -429,6 +429,20 @@ def classify_retryability(value: object | None) -> RetryabilityClass:
     error_layer = str(_object_field(value, "error_layer") or "").strip().lower()
     tokens = _normalized_tokens(value)
 
+    # A provider whose key is unavailable right now (missing, cooled down,
+    # rotated, or the key pool is empty) is an operational condition for THAT
+    # provider only: an explicitly configured different-family fallback must
+    # be allowed to advance.  The error stays non-retryable for the SAME
+    # launch (no point re-attempting a provider with no key), but it must not
+    # be "permanent" for the whole chain — otherwise a single provider's key
+    # outage hard-blocks a phase that has a healthy fallback provider
+    # (astrid-first m5: zhipu key cooldown after quota exhaustion repeatedly
+    # blocked finalize despite a working fireworks fallback).
+    if (
+        error_layer == "credential_preflight"
+        and error_kind in {"auth", "credentials"}
+    ):
+        return "availability"
     # A provider response-schema contract cannot become valid by changing
     # model/provider.  It must be repaired at the compiler/adapter boundary.
     if nonretryable is True or (
