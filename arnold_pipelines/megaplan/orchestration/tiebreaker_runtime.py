@@ -372,6 +372,15 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
                     reset_replan_loop_state(state, target_state=STATE_CRITIQUED)
                 else:
                     state["current_state"] = STATE_CRITIQUED
+                    # Settle the gate after a successful decision: the stale
+                    # "TIEBREAKER" recommendation would otherwise keep
+                    # workflow_next(critiqued) offering the un-dispatchable
+                    # ``tiebreaker`` step, and the auto-drive would dead-end
+                    # with no_next_step (occurrence 47671addc195). The replan
+                    # branch already clears last_gate via reset_replan_loop_state;
+                    # the pick branch mirrors that so the normal gate loop
+                    # resumes (critiqued -> gate -> gated -> finalize).
+                    state["last_gate"] = {}
 
                 response = _finish_step(
                     plan_dir,
