@@ -266,5 +266,18 @@ def _write_finalize_template(
     )
 
     output_path = plan_dir / "finalize_output.json"
+    # Never clobber a payload the model already filled.  The scratch file is
+    # the only durable copy of a valid task graph between attempts;
+    # overwriting it with the empty template before every model call throws
+    # that graph away and leaves the empty template to be re-rejected
+    # forever (observed: m6 finalize 7x loop with a valid T1-T21 raw output
+    # discarded at the retry pre-seed).
+    if output_path.exists():
+        try:
+            existing = json.loads(output_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict) and existing.get("tasks"):
+                return output_path
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
     return output_path
