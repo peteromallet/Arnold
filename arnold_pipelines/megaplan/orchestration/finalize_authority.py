@@ -122,6 +122,12 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         # finalize publish aborts with FinalizeFieldOwnershipError (observed:
         # astrid-first 0a0ce24c3510 drive5, batch_23 merge, T2 row).
         "task_test_budget_exhausted",
+        # Typed test-budget violations + evidence-gated debt acceptance
+        # (occurrence 927ad612eda8): the merge gate writes the typed list, and
+        # the final-sweep reconciler writes the durable accepted-with-debt
+        # record + receipt.  Both are execute-owned mutable fields.
+        "task_test_budget_violations",
+        "task_test_budget_debt",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})
