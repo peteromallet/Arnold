@@ -431,6 +431,36 @@ def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state:
 _FINALIZE_INPUT_SCHEMA = FINALIZE_MODEL_OUTPUT_SCHEMA
 
 
+def _persist_invalid_finalize_feedback(plan_dir: Path, worker: WorkerResult, error: CliError) -> None:
+    """Persist structured feedback for an ``invalid_finalize`` rejection.
+
+    Mirrors the feasibility repair lane (``_route_finalize_task_feasibility_failure_to_revise``)
+    so a fresh finalizer invocation receives the rejection diagnostics via
+    ``_finalize_retry_feedback`` instead of the plan hard-blocking with no
+    repair path.  The feedback file is advisory scratch: it is overwritten by
+    the next successful finalize and never treated as an admitted artifact.
+    """
+    message = getattr(error, "message", None) or str(error)
+    atomic_write_json(
+        plan_dir / "finalize_revise_feedback.json",
+        {
+            "code": "finalized_payload_invalid",
+            "message": message,
+            "next_step": "finalize",
+            "diagnostic_codes": ["invalid_finalize"],
+            "diagnostics": [{"code": "invalid_finalize", "message": message}],
+            "feasibility": None,
+            "candidate_id": None,
+            "failure_fingerprint": None,
+            "occurrences": None,
+            "circuit_open": False,
+            "report_artifact": "finalize_revise_feedback.json",
+            "implementation_dispatch_allowed": False,
+            "repair_identity_persisted": False,
+        },
+    )
+
+
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
     """Thin wrapper: route schema-expressible checks through the C1 chokepoint
     (``validate_payload_against_schema``) then delegate residual semantic checks
@@ -2835,7 +2865,16 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         # ────────────────────────────────────────────────────────────
 
-        _validate_finalize_payload(plan_dir, state, worker)
+        try:
+            _validate_finalize_payload(plan_dir, state, worker)
+        except CliError as error:
+            if error.code != "invalid_finalize":
+                raise
+            # Make the rejection repairable: persist structured diagnostics so
+            # the next finalizer invocation (resume/retry) receives feedback via
+            # _finalize_retry_feedback instead of hard-blocking with no lane.
+            _persist_invalid_finalize_feedback(plan_dir, worker, error)
+            raise
 
         # North Star closeout gate: reject finalize when carried blocking
         # North Star actions are not concretely addressed in the latest

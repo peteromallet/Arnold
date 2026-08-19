@@ -1423,6 +1423,42 @@ def _template_has_content(payload: dict, step: str) -> bool:
     )
 
 
+_FINALIZE_PLACEHOLDER_TOKENS = frozenset(
+    {"string", "integer", "number", "boolean", "array", "object", "null"}
+)
+
+
+def _is_finalize_placeholder_payload(payload: dict) -> bool:
+    """Detect a finalize payload that is an unfilled schema template.
+
+    The finalize schema template — and models that echo it back — carries
+    placeholder values such as ``id: "string"``, ``complexity: 0``,
+    ``objective: "string"`` and ``task_contract_version: 0``.  Such a payload
+    is syntactically valid JSON but semantically empty: passing it to the
+    finalize validator produces an opaque ``invalid_finalize`` rejection with
+    no repair lane.  Detect it at the parse boundary so the worker's normal
+    repair/summary paths force a real fill instead.
+    """
+    if not isinstance(payload, dict):
+        return False
+    tasks = payload.get("tasks")
+    if isinstance(tasks, list) and tasks:
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            if task.get("id") in _FINALIZE_PLACEHOLDER_TOKENS:
+                return True
+            if task.get("complexity") == 0:
+                return True
+            if task.get("objective") in _FINALIZE_PLACEHOLDER_TOKENS | {""}:
+                return True
+            if task.get("description") in _FINALIZE_PLACEHOLDER_TOKENS:
+                return True
+        return False
+    # No tasks at all: the template was not filled (finalize always emits tasks).
+    return True
+
+
 def _preferred_schema_type(prop: dict) -> str:
     ptype = prop.get("type", "string")
     if isinstance(ptype, list):
@@ -1533,7 +1569,10 @@ def parse_agent_output(
             candidate_payload = json.loads(output_text)
             if isinstance(candidate_payload, dict):
                 # Check if the model actually filled in findings (not just the empty template)
-                has_content = _template_has_content(candidate_payload, step)
+                has_content = _template_has_content(candidate_payload, step) and not (
+                    step == "finalize"
+                    and _is_finalize_placeholder_payload(candidate_payload)
+                )
                 if has_content:
                     payload = candidate_payload
                     print(f"[hermes-worker] Read JSON from template file: {output_path}", file=sys.stderr)
@@ -1555,7 +1594,14 @@ def parse_agent_output(
     # Try parsing the final text response
     if payload is None:
         payload = _parse_json_response(raw_output)
-        if payload is None and parse_error is None:
+        if payload is not None and step == "finalize" and _is_finalize_placeholder_payload(payload):
+            print(
+                "[hermes-worker] Finalize output is an unfilled schema template — discarding; requesting a real fill",
+                file=sys.stderr,
+            )
+            payload = None
+            template_unfilled = True
+        elif payload is None and parse_error is None:
             parse_error = _json_decode_error_for_raw(raw_output)
 
     # Fallback: some models (GLM-5) put JSON in reasoning/think tags
@@ -1618,7 +1664,17 @@ def parse_agent_output(
             summary_output = summary_result.get("final_response", "") or ""
             if summary_output.strip():
                 payload = _parse_json_response(summary_output)
-                if payload is not None:
+                if (
+                    payload is not None
+                    and step == "finalize"
+                    and _is_finalize_placeholder_payload(payload)
+                ):
+                    print(
+                        "[hermes-worker] Summary prompt still returned the unfilled finalize schema template",
+                        file=sys.stderr,
+                    )
+                    payload = None
+                elif payload is not None:
                     print(f"[hermes-worker] Got JSON from summary prompt ({len(summary_output)} chars)", file=sys.stderr)
         except ModelBudgetError:
             raise
