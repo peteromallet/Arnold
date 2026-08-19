@@ -6456,10 +6456,30 @@ def _reset_blocked_tasks_to_pending(
             continue
         if task_id in excluded:
             continue
-        if task.get("status") != "blocked":
+        if task.get("status") == "blocked":
+            _clear_task_attempt_fields(task)
+            reset_ids.append(task_id)
             continue
-        _clear_task_attempt_fields(task)
-        reset_ids.append(task_id)
+        # Contradictory class (occurrence 0a0ce24c3510): a DONE row that still
+        # carries the durable budget-block identity with NO admitted evidence.
+        # A valid state can never contain one: the merge budget gate stamps the
+        # field only on blocked/pending rows, the adopt helper pops it on
+        # promote, and a compliant attempt produces evidence. They arise when
+        # adopt runs before the proven-artifact replay stamps the envelope
+        # budget identity into the row, so the adopt exclusion misses it and
+        # promotes the budget-gated row to done without evidence — wedging the
+        # quality gate ("done tasks missing both files_changed and
+        # commands_run"). Return them to the runnable frontier for a fresh
+        # compliant attempt; the durable field survives the reset (2f28baee99)
+        # so the adopt gate keeps them out until that attempt passes.
+        if (
+            task.get("status") == "done"
+            and isinstance(task.get("task_test_budget_exhausted"), str)
+            and task["task_test_budget_exhausted"].strip()
+            and not (task.get("files_changed") or task.get("commands_run"))
+        ):
+            _clear_task_attempt_fields(task)
+            reset_ids.append(task_id)
     return sorted(reset_ids)
 
 
@@ -6710,6 +6730,40 @@ def _has_genuine_task_level_blocker(task: Mapping[str, Any]) -> bool:
     return False
 
 
+def _envelope_budget_blocked_task_ids(plan_dir: Path) -> set[str]:
+    """Task IDs whose PROVEN batch envelopes carry the durable budget-block
+    identity (merge.py:_enforce_task_test_budgets stamps it on the entry and
+    the target row). The adopt gate must consult these even when the finalize
+    row has not yet been stamped: the execute auto-loop runs adopt before the
+    proven-artifact replay, so a budget-gated row whose identity lives only in
+    the envelope would otherwise be promoted to done WITHOUT evidence and the
+    quality gate would re-block forever (occurrence 0a0ce24c3510, 24 rows)."""
+    blocked: set[str] = set()
+    for artifact_path in _all_batch_artifact_paths(plan_dir):
+        try:
+            payload = read_json(artifact_path)
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for key in ("task_updates", "result_envelopes"):
+            entries = payload.get(key)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                task_id = entry.get("task_id") or entry.get("id")
+                value = entry.get("task_test_budget_exhausted")
+                if (
+                    isinstance(task_id, str)
+                    and isinstance(value, str)
+                    and value.strip()
+                ):
+                    blocked.add(task_id)
+    return blocked
+
+
 def _adopt_authority_completed_blocked_tasks(
     finalize_data: dict[str, Any],
     *,
@@ -6738,6 +6792,12 @@ def _adopt_authority_completed_blocked_tasks(
         decisions=decisions,
     )
     adopted_ids: list[str] = []
+    # Envelope-level budget identities: adopt runs before the proven-artifact
+    # replay stamps the durable field into rows, so a budget-gated row whose
+    # identity lives only in its batch envelope must still be excluded
+    # (occurrence 0a0ce24c3510 — adopt-before-replay promoted 24 budget-gated
+    # rows to done without evidence, wedging the quality gate).
+    envelope_budget_blocked = _envelope_budget_blocked_task_ids(plan_dir)
     for task in tasks:
         if not isinstance(task, dict):
             continue
@@ -6755,6 +6815,8 @@ def _adopt_authority_completed_blocked_tasks(
         if raw_status not in {"blocked", "pending"}:
             continue
         if _is_task_test_budget_blocked(task):
+            continue
+        if task_id in envelope_budget_blocked:
             continue
         if task_id not in completed_ids:
             continue
