@@ -1865,6 +1865,17 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     if step == "critique":
         _normalize_critique_flag_severity(payload)
 
+    # Review rework_items arrive with the same drift the review handler
+    # backfills later (handlers/review.py _normalize_review_payload): a
+    # top-level task_id without target.task_id/task_ids, and a missing
+    # deterministic_check.  The worker audit runs BEFORE the handler, so a
+    # semantically complete review would be rejected on a shape the canonical
+    # payload explicitly tolerates.  Mirror the handler backfill here so the
+    # audit sees the canonical shape (fallback-provider reviews, occurrence
+    # 1f1f5d10145b).
+    if step == "review":
+        _normalize_review_rework_items(payload)
+
 
 def _normalize_flattened_plan_success_criterion(payload: dict) -> None:
     has_flattened_criterion = any(
@@ -1889,6 +1900,53 @@ def _normalize_flattened_plan_success_criterion(payload: dict) -> None:
         existing.insert(0, entry)
     else:
         payload["success_criteria"] = [entry]
+
+
+def _normalize_review_rework_items(payload: dict) -> None:
+    """Backfill review rework_items to the canonical shape the handler expects.
+
+    Mirrors handlers/review.py's rework-items normalization so the worker's
+    structural audit (which runs before the handler) sees the same canonical
+    shape: ``target.task_id`` / ``target.task_ids`` derived from the item's
+    top-level ``task_id``, ``target.kind`` defaulted, and ``deterministic_check``
+    defaulted to None (schema type ``["object", "null"]``) with
+    ``evidence_file`` defaulted inside a present check.
+    """
+    rework_items = payload.get("rework_items")
+    if not isinstance(rework_items, list):
+        return
+    for item in rework_items:
+        if not isinstance(item, dict):
+            continue
+        task_id = item.get("task_id")
+        task_id_str = task_id if isinstance(task_id, str) and task_id else None
+        target = item.get("target")
+        if isinstance(target, dict):
+            kind = target.get("kind")
+            if not isinstance(kind, str) or not kind:
+                target["kind"] = "task" if task_id_str else "global"
+            if "task_id" not in target:
+                target["task_id"] = task_id_str
+            if "task_ids" not in target:
+                target["task_ids"] = [task_id_str] if task_id_str else []
+            if "id" not in target:
+                target["id"] = None
+        elif "target" not in item:
+            item["target"] = (
+                {
+                    "kind": "task",
+                    "task_id": task_id_str,
+                    "task_ids": [task_id_str] if task_id_str else [],
+                    "id": None,
+                }
+                if task_id_str
+                else None
+            )
+        if "deterministic_check" not in item:
+            item["deterministic_check"] = None
+        deterministic_check = item.get("deterministic_check")
+        if isinstance(deterministic_check, dict):
+            deterministic_check.setdefault("evidence_file", None)
 
 
 def _strip_execute_bookkeeping_fields(payload: dict) -> None:
