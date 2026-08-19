@@ -695,6 +695,60 @@ def test_post_delta_new_failure_blocks_without_authority(
     assert POST_DELTA_PASSED not in failed_artifact.read_text(encoding="utf-8")
 
 
+def test_post_delta_policy_blocked_row_is_parked_not_raised(
+    tmp_path: Path,
+) -> None:
+    """A post-merge policy-blocked row in the delta-envelope path is parked.
+
+    Twin of ``test_post_policy_blocked_task_cannot_release_deferred_selector``
+    for the enveloped branch (batch.py ``_rerun_deferred_selector_validation_jobs``
+    delta loop): a task blocked by the merge admission gate must NOT release the
+    deferred selector, and the refusal is parked as a typed
+    ``post_merge_policy_blocked`` / ``validation_blocked`` disposition instead of
+    raising a terminal CliError — the execute coordinator can publish its
+    aggregate state and a fresh compliant attempt can rerun the task.
+    """
+    from arnold_pipelines.megaplan.execute.batch import (
+        _POST_MERGE_POLICY_BLOCKED,
+        _rerun_deferred_selector_validation_jobs,
+    )
+
+    plan_dir, project_dir, finalize_data = _narrow_ready_fixture(tmp_path)
+    state = _make_state(project_dir)
+    envelope = {
+        "job_id": "VJ12",
+        "status": PRE_ENVELOPE_CAPTURED,
+        "admission": "pre_dispatch_delta_envelope",
+        "failures": [],
+        "collected_ids": ["tests/cloud/test_progress_auditor.py::test_ok"],
+        "selectors": [SEL_A, SEL_B],
+    }
+    # Post-merge policy block: the merge admission gate (e.g. test-budget
+    # gate) blocked the row; an accepted envelope must not override it.
+    finalize_data["tasks"][0]["status"] = "blocked"
+    results = _rerun_deferred_selector_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        pre_dispatch_results=[envelope],
+        payload=_accepted_task_payload(),
+        state=state,
+    )
+    # The refusal is parked as a typed validation_blocked disposition.
+    assert len(results) == 1
+    parked = results[0]
+    assert parked["status"] == _POST_MERGE_POLICY_BLOCKED
+    assert parked["disposition"] == "validation_blocked"
+    assert parked["reason"] == "task_result_blocked_by_post_merge_policy"
+    assert parked["task_status"] == "blocked"
+    # No pass artifact is minted and the row stays blocked.
+    assert not _post_delta_artifact_path(
+        plan_dir / "verification", "VJ12"
+    ).exists()
+    assert finalize_data["tasks"][0]["status"] == "blocked"
+
+
 def test_post_delta_timeout_blocks_without_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

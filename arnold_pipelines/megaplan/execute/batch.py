@@ -4997,6 +4997,43 @@ def _raise_deferred_selector_result_block(
     )
 
 
+_POST_MERGE_POLICY_BLOCKED = "post_merge_policy_blocked"
+
+
+def _park_post_merge_policy_block(
+    *,
+    verification_dir: Path,
+    job_id: str,
+    task_id: str,
+    task_status: object,
+) -> dict[str, Any]:
+    """Persist a typed validation-blocked disposition for a policy-blocked row.
+
+    A task blocked by the merge admission gate (e.g. the test-budget gate)
+    cannot release a deferred selector.  Instead of raising a terminal
+    ``task_result_blocked_by_post_merge_policy`` that kills the execute
+    coordinator's aggregate state publication, park the refusal as a typed
+    ``validation_blocked`` disposition so the plan survives to a fresh
+    compliant attempt.  The row itself stays blocked; authority adoption never
+    overrides the gate; the next ``--retry-blocked-tasks`` dispatch resets it.
+    """
+
+    evidence = {
+        "job_id": job_id,
+        "task_id": task_id,
+        "kind": "narrow_recheck",
+        "status": _POST_MERGE_POLICY_BLOCKED,
+        "disposition": "validation_blocked",
+        "reason": "task_result_blocked_by_post_merge_policy",
+        "task_status": task_status,
+    }
+    atomic_write_json(
+        verification_dir / f"validation_{job_id}_policy_blocked.json",
+        evidence,
+    )
+    return evidence
+
+
 def _load_current_unresolved_deferred_selector_jobs(
     *,
     plan_dir: Path,
@@ -5336,13 +5373,27 @@ def _rerun_deferred_selector_validation_jobs(
         # task-policy/write/test guardrails run.  A policy-blocked target must
         # therefore not release a deferred selector merely because that
         # earlier authority check said ``accepted``.
+        if task_status == "blocked":
+            # Post-merge policy block (e.g. test-budget admission gate): park
+            # as a typed validation_blocked disposition instead of raising a
+            # terminal refusal that kills the execute coordinator's aggregate
+            # state publication.  The row stays blocked; the next
+            # --retry-blocked-tasks dispatch resets it for a fresh compliant
+            # attempt (authority adoption never overrides the gate).
+            rerun_results.append(
+                _park_post_merge_policy_block(
+                    verification_dir=verification_dir,
+                    job_id=job_id,
+                    task_id=task_id,
+                    task_status=task_status,
+                )
+            )
+            continue
         if task_status not in {"done", "completed"}:
             _raise_deferred_selector_result_block(
                 job_id=job_id,
                 task_id=task_id,
-                reason="task_result_blocked_by_post_merge_policy"
-                if task_status == "blocked"
-                else "task_result_not_completed_after_merge",
+                reason="task_result_not_completed_after_merge",
                 extra={"task_status": task_status},
             )
         claim_payload = envelope.claim.payload
@@ -5554,13 +5605,26 @@ def _rerun_deferred_selector_validation_jobs(
                 task_id=task_id,
                 reason="accepted_task_result_envelope_missing",
             )
+        if task_status == "blocked":
+            # Same park-vs-raise split as the deferred path: a post-merge
+            # policy block (test-budget admission gate) must not kill the
+            # execute coordinator's aggregate state publication.  Park the
+            # refusal as a typed validation_blocked disposition; the row
+            # stays blocked and a fresh compliant attempt is still required.
+            rerun_results.append(
+                _park_post_merge_policy_block(
+                    verification_dir=verification_dir,
+                    job_id=job_id,
+                    task_id=task_id,
+                    task_status=task_status,
+                )
+            )
+            continue
         if task_status not in {"done", "completed"}:
             _raise_deferred_selector_result_block(
                 job_id=job_id,
                 task_id=task_id,
-                reason="task_result_blocked_by_post_merge_policy"
-                if task_status == "blocked"
-                else "task_result_not_completed_after_merge",
+                reason="task_result_not_completed_after_merge",
                 extra={"task_status": task_status},
             )
         # A post-adoption delta check must fail closed when the task removed
