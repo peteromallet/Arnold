@@ -4239,7 +4239,7 @@ class _EnvelopeSuiteRun:
         self.collected_ids = list(collected_ids or [])
 
 
-def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None, admission: bool = False, delta_baseline_envelope: Mapping[str, Any] | None = None, comparison_ceiling_override: int | None = None):
+def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None, admission: bool = False, delta_baseline_envelope: Mapping[str, Any] | None = None, comparison_ceiling_override: int | None = None, force_strict_gate: bool = False):
     """Run deterministic harness validation jobs outside model dispatch (M8A T10).
 
     Returns a list of content-addressed evidence dicts (one per applicable
@@ -4254,6 +4254,15 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
     collection failure, timeout, or malformed result blocks.  When ``None``
     (pre-dispatch), a completed exit-1 run captures the pre-execution
     envelope and defers the verdict.
+
+    ``force_strict_gate`` disables the no-new-failures delta acceptance for a
+    deferred-selector recheck: a deferred task-output selector has no
+    pre-task state, so a pre-execution envelope is impossible by construction
+    and capturing one against the post-merge tree would launder the delta.
+    Forced-strict runs keep the strict exit-code gate (never weaker than the
+    delta comparison — for a task-created file the baseline is empty, so
+    strict exit-0 equals no-new-failures exactly) and never create or consume
+    pre/post-delta envelopes.
     """
     import hashlib as _hashlib
     import json as _json
@@ -4444,14 +4453,25 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
         _comparison_ceiling: int | None = None
         _recompiled_command: str | None = None
         if kind == "narrow_recheck":
-            _delta_policy = _narrow_recheck_delta_policy(job, job.get("command"))
-            if _delta_policy:
+            # Detect the delta policy and recompile any legacy command shape
+            # BEFORE suppression: forced-strict deferred rechecks still
+            # normalize legacy embedded-timeout commands (the normalization is
+            # the fix for the deterministic 124 killer, not a delta privilege).
+            _detected_delta_policy = _narrow_recheck_delta_policy(
+                job, job.get("command")
+            )
+            if _detected_delta_policy:
+                _recompiled_command = _recompile_legacy_narrow_recheck_command(
+                    job.get("command"), job.get("selectors")
+                )
+            _delta_policy = _detected_delta_policy and not force_strict_gate
+            if _delta_policy or comparison_ceiling_override is not None:
                 _comparison_ceiling = (
                     comparison_ceiling_override
                     if comparison_ceiling_override is not None
                     else _validation_comparison_ceiling(finalize_data)
                 )
-                if _comparison_ceiling is None:
+                if _delta_policy and _comparison_ceiling is None:
                     raise CliError(
                         "validation_job_failed",
                         f"validation job {job_id} uses the no-new-failures delta "
@@ -4464,9 +4484,6 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                             "expected_exit_codes": job.get("expected_exit_codes", [0]),
                         },
                     )
-                _recompiled_command = _recompile_legacy_narrow_recheck_command(
-                    job.get("command"), job.get("selectors")
-                )
             _effective_command = command.strip()
             if _recompiled_command is not None:
                 _effective_command = _recompiled_command
@@ -4558,10 +4575,13 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             except Exception:
                 pass
         _run_deadline_seconds = float(timeout)
-        if _delta_policy and _comparison_ceiling is not None:
+        if _comparison_ceiling is not None:
             # The comparison ceiling (authoritative full-suite budget) is the
             # deadline for the required differential run, NOT the planner's
             # probe hint.  It ends promptly when the selectors complete.
+            # Forced-strict deferred rechecks honor the same ceiling: the
+            # planner probe budget is a cost hint, never a deadline for a
+            # required revalidation.
             _run_deadline_seconds = float(_comparison_ceiling)
         try:
             result = _suite_runner.run_suite(
@@ -4574,20 +4594,27 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
         except Exception as exc:
             log.warning("validation job %s failed: %s", job_id, exc)
             error_detail = f"{type(exc).__name__}: {exc}"
-            if _delta_policy:
-                # A runner EXCEPTION in the no-new-failures delta lifecycle is
-                # unknown, not a pass: no envelope, no verdict, no dispatch.
-                # The generic runner_error/continue path would let dispatch or
-                # authority progress without either — fail closed instead.
+            if _delta_policy or force_strict_gate:
+                # A runner EXCEPTION in the no-new-failures delta lifecycle or
+                # in a forced-strict deferred recheck is unknown, not a pass:
+                # no envelope, no verdict, no dispatch.  The generic
+                # runner_error/continue path would let dispatch or authority
+                # progress without either — fail closed instead.
+                _strict_runner_error = force_strict_gate and not _delta_policy
                 raise CliError(
                     "validation_job_failed",
-                    f"validation job {job_id} runner error in delta lifecycle: "
+                    f"validation job {job_id} runner error in "
+                    f"{'strict deferred gate' if _strict_runner_error else 'delta lifecycle'}: "
                     f"{error_detail}",
                     valid_next=["execute", "revise"],
                     extra={
                         "job_id": job_id,
                         "validation_job_kind": kind,
-                        "reason": "delta_runner_error",
+                        "reason": (
+                            "strict_gate_runner_error"
+                            if _strict_runner_error
+                            else "delta_runner_error"
+                        ),
                         "error": error_detail,
                     },
                 ) from exc
@@ -4629,6 +4656,9 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             evidence["collected"] = int(getattr(result, "collected", 0) or 0)
             evidence["collected_ids"] = list(result.collected_ids or [])
             evidence["selectors"] = list(job.get("selectors") or [])
+            # Worktree binding for semantic resolution: a strict recheck pass
+            # is only evidence against the merged tree it actually ran on.
+            evidence["worktree_digest"] = _current_worktree_digest(project_dir)
         canonical = _json.dumps(evidence, sort_keys=True, separators=(",", ":"))
         evidence_hash = "sha256:" + _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         evidence["evidence_hash"] = evidence_hash
@@ -5097,6 +5127,94 @@ def _load_current_unresolved_deferred_selector_jobs(
     return records
 
 
+def _quarantine_validation_artifact(artifact: Path, stale_dir: Path) -> None:
+    """Move a non-resolving validation artifact under ``verification/stale/``.
+
+    Keeps the audit evidence while guaranteeing it can never suppress a
+    future strict recheck.  Idempotent and never destructive: a name clash is
+    resolved by suffixing the source mtime ns.
+    """
+    try:
+        stale_dir.mkdir(parents=True, exist_ok=True)
+        target = stale_dir / artifact.name
+        if target.exists():
+            target = stale_dir / (
+                f"{artifact.stem}-{artifact.stat().st_mtime_ns}{artifact.suffix}"
+            )
+        artifact.replace(target)
+    except OSError as _exc:
+        log.warning(
+            "could not quarantine validation artifact %s: %s", artifact, _exc
+        )
+
+
+def _semantic_deferred_resolution(
+    *,
+    verification_dir: Path,
+    job_id: str,
+    job: Mapping[str, Any],
+    project_dir: Path,
+) -> bool:
+    """True only when a CURRENT binding-valid PASS artifact resolves a job.
+
+    Filename existence is not a verdict: deferred markers, pre/post-delta
+    envelopes, policy blocks, failed/runner-error/timeout evidence, malformed
+    records, and binding-mismatched passes never resolve a deferred job.
+    Such artifacts are quarantined under ``verification/stale/`` so the next
+    sweep re-runs the job against the merged tree (occurrence ae1f50c01dbd —
+    stale ``pre_envelope_captured`` evidence must not suppress the strict
+    recheck).
+    """
+    import json as _json
+
+    expected_selectors = {
+        str(s).strip("'\"") for s in (job.get("selectors") or []) if isinstance(s, str)
+    }
+    stale_dir = verification_dir / "stale"
+    for artifact in sorted(verification_dir.glob(f"validation_{job_id}_*.json")):
+        name = artifact.name
+        if name == f"validation_{job_id}_deferred.json":
+            # The deferred marker is the reason we are here; keep it.
+            continue
+        if name.endswith(_PRE_ENVELOPE_ARTIFACT_SUFFIX) or name.endswith(
+            _POST_DELTA_ARTIFACT_SUFFIX
+        ):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        try:
+            record = _json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        if not isinstance(record, Mapping):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        status = record.get("status")
+        if status not in ("passed", POST_DELTA_PASSED):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        selectors_ok = (
+            {str(s).strip("'\"") for s in (record.get("selectors") or []) if isinstance(s, str)}
+            == expected_selectors
+        )
+        digest_ok = bool(record.get("worktree_digest")) and record.get(
+            "worktree_digest"
+        ) == _current_worktree_digest(project_dir)
+        if status == POST_DELTA_PASSED:
+            newly_failing = record.get("newly_failing") or []
+            if (
+                not newly_failing
+                and record.get("baseline_envelope_hash")
+                and selectors_ok
+                and digest_ok
+            ):
+                return True
+        elif status == "passed" and selectors_ok and digest_ok:
+            return True
+        _quarantine_validation_artifact(artifact, stale_dir)
+    return False
+
+
 def _sweep_persisted_deferred_selector_jobs(
     *,
     plan_dir: Path,
@@ -5154,16 +5272,18 @@ def _sweep_persisted_deferred_selector_jobs(
                     "reason": "task_or_validation_job_missing_from_finalize_contract",
                 },
             )
-        # A non-deferred result artifact proves this job already ran (e.g. the
-        # same-batch recheck discharged it); do not re-run a resolved job.
-        try:
-            resolved = any(
-                artifact.name != f"validation_{job_id}_deferred.json"
-                for artifact in verification_dir.glob(f"validation_{job_id}_*.json")
-            )
-        except OSError:
-            resolved = False
-        if resolved:
+        # A CURRENT binding-valid PASS artifact proves this job already
+        # passed against the merged tree (e.g. a prior sweep's strict recheck
+        # discharged it); do not re-run a resolved job.  Filename existence is
+        # NOT a verdict: failed/stale/pre-envelope/policy-blocked evidence is
+        # quarantined so it cannot suppress the strict recheck (occurrence
+        # ae1f50c01dbd).
+        if _semantic_deferred_resolution(
+            verification_dir=verification_dir,
+            job_id=job_id,
+            job=job,
+            project_dir=project_dir,
+        ):
             continue
         lifecycle = classify_selector_lifecycle(
             project_dir=project_dir,
@@ -5243,28 +5363,18 @@ def _sweep_persisted_deferred_selector_jobs(
                     "missing_selectors": sorted(set(lifecycle.missing_selectors)),
                 },
             )
-        # An EXPLICIT delta-policy job must never be admitted through the
-        # sweep: a task-output selector has no pre-task state, so a
-        # pre-execution envelope is impossible by construction (same
-        # fail-closed rule as the same-batch deferred path).  A job that is
-        # delta-classified ONLY by legacy command-shape derivation
-        # (``acceptance_mode`` is None) was compiled under the strict exit-0
-        # contract: revalidate it with the strict gate (occurrence
-        # 0a0ce24c3510 — legacy deferred records must not wedge a pre-delta
-        # plan; the strict gate is never weaker than the delta comparison).
-        if job.get("acceptance_mode") == NARROW_RECHECK_DELTA_ACCEPTANCE:
-            raise CliError(
-                "deferred_validation_result_missing",
-                f"deferred validation job {job_id} cannot be revalidated: "
-                "delta_policy_deferred_selector_unsupported",
-                valid_next=["execute", "revise"],
-                extra={
-                    "job_id": job_id,
-                    "task_id": task_id,
-                    "validation_job_kind": "narrow_recheck",
-                    "reason": "delta_policy_deferred_selector_unsupported",
-                },
-            )
+        # A deferred selector is a task-output path that did not exist at
+        # pre-dispatch time; a no-new-failures delta job has no pre-task state
+        # by construction, so NO delta job (explicit OR legacy-derived) may be
+        # admitted through the sweep with its delta lifecycle — capturing a
+        # "pre-envelope" against the post-task tree would launder the
+        # post-adoption delta.  Instead the sweep revalidates every deferred
+        # job whose selector now exists with the STRICT exit-0 gate
+        # (``force_strict_gate``): the strict gate is never weaker than the
+        # delta comparison (occurrence 0a0ce24c3510), and for a task-created
+        # file the baseline is empty so strict exit-0 equals no-new-failures
+        # exactly (occurrence ae1f50c01dbd — explicit-delta TDD plans must
+        # not wedge at the final sweep).
         # The sweep runs the job as a singleton; carry the authoritative
         # comparison ceiling from the FULL plan list so the planner probe
         # budget never becomes a recheck deadline.
@@ -5295,6 +5405,7 @@ def _sweep_persisted_deferred_selector_jobs(
                 is_final_batch=False,
                 state=state,
                 comparison_ceiling_override=_sweep_ceiling,
+                force_strict_gate=True,
             )
         )
     return sweep_results
@@ -5545,19 +5656,14 @@ def _rerun_deferred_selector_validation_jobs(
 
         # A deferred selector is a task-output path that did not exist at
         # pre-dispatch time; a no-new-failures delta job has no pre-task
-        # state by construction, so an EXPLICIT delta job must never be
-        # admitted through the deferred path (it would capture a fake
-        # "pre-envelope" against the post-task tree and launder the
-        # post-adoption delta).  A job that is delta-classified ONLY by
-        # legacy command-shape derivation (``acceptance_mode`` is None) was
-        # compiled under the strict exit-0 contract and falls through to the
-        # strict recheck below (occurrence 0a0ce24c3510).
-        if job.get("acceptance_mode") == NARROW_RECHECK_DELTA_ACCEPTANCE:
-            _raise_deferred_selector_result_block(
-                job_id=job_id,
-                task_id=task_id,
-                reason="delta_policy_deferred_selector_unsupported",
-            )
+        # state by construction, so NO delta job (explicit OR legacy-derived)
+        # may be admitted through the deferred path with its delta lifecycle
+        # (it would capture a fake "pre-envelope" against the post-task tree
+        # and launder the post-adoption delta).  The strict recheck below
+        # (``force_strict_gate``) is never weaker than the delta comparison
+        # (occurrence 0a0ce24c3510) and equals it exactly for task-created
+        # files (occurrence ae1f50c01dbd — explicit-delta TDD plans must not
+        # wedge at the deferred recheck).
         # The rerun list is truncated to this single job; re-derive the
         # authoritative comparison ceiling from the FULL plan list.  Never
         # let the planner probe budget (120s) become a recheck deadline.
@@ -5579,6 +5685,7 @@ def _rerun_deferred_selector_validation_jobs(
                 is_final_batch=False,
                 state=state,
                 comparison_ceiling_override=_rerun_ceiling,
+                force_strict_gate=True,
             )
         )
     # ---- post-adoption delta recheck for captured pre-execution envelopes ----
