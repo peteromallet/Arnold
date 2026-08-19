@@ -61,6 +61,15 @@ def runtime_root_ownership(
     for manifest_path in sorted(manifests_dir.glob("*.json")):
         if manifest_path.name.endswith((".lock", ".previous")):
             continue
+        # Rollback/retention receipts are NOT live manifests: generation
+        # switches retain the previous pointer as ``<name>.previous-<N>.json``
+        # and cutovers emit ``<name>.cutover-rollback.json``.  Treating them
+        # as owning epics made every cutover refuse once any receipt existed
+        # in the manifests dir (occurrence 927ad612eda8 observed the guard
+        # listing 100 stale ``*.previous-*.json`` receipts as rival owners).
+        name = manifest_path.name
+        if ".previous-" in name or name.endswith(".cutover-rollback.json"):
+            continue
         if exclude_manifest is not None and manifest_path.resolve() == Path(
             exclude_manifest
         ).resolve():

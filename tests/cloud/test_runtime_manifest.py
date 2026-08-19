@@ -2295,6 +2295,76 @@ def test_cli_cutover_allows_same_epic_rebinding_its_own_root(
     assert load_manifest(path).epic["runtime_root"] == to_root
 
 
+def test_cli_cutover_ignores_rollback_receipts_in_ownership_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Occurrence 927ad612eda8: generation-retention receipts
+    (``<name>.previous-<N>.json``) and cutover rollback receipts
+    (``<name>.cutover-rollback.json``) are NOT live epics.  Before the fix the
+    ownership scan globbed every ``*.json`` sibling and treated stale receipts
+    as rival ACTIVE owners, so ANY cutover into a root that any receipt ever
+    mentioned was refused fail-closed with ``runtime_root_ownership_conflict``
+    (observed: 100 stale receipts listed as owners)."""
+    _stub_git_head_guard(monkeypatch)
+    path = tmp_path / "m.json"
+    identity, receipt = _fake_identity_files(tmp_path)
+    to_root, to_venv, to_repair = _make_cutover_runtime_tree(tmp_path)
+    write_manifest(
+        _make_manifest_obj(
+            generation=3,
+            epic={
+                "branch": "fixer/epic-a",
+                "dependency_generation": _generation_proof(f"{to_venv}/bin/python"),
+            },
+        ),
+        path,
+    )
+    expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_manifest"
+        "._verify_external_runtime_identity",
+        lambda identity_path, receipt_path: _verified_identity(
+            to_runtime_root=to_root
+        ),
+    )
+    # Stale rollback/retention receipts claiming the target root as a rival
+    # epic (both naming shapes the engine writes).
+    stale = {
+        "schema": "arnold.megaplan.runtime_manifest.v1",
+        "generation": 9,
+        "state": "active",
+        "epic": {
+            "branch": "fixer/epic-b",
+            "runtime_root": to_root,
+            "worktree_path": to_root,
+            "expected_head": "d" * 40,
+            "venv_path": to_venv,
+            "repair_bin": to_repair,
+        },
+    }
+    (tmp_path / "rival.json.previous-38.json").write_text(
+        json.dumps(stale, sort_keys=True), encoding="utf-8"
+    )
+    (tmp_path / "rival.json.cutover-rollback.json").write_text(
+        json.dumps(stale, sort_keys=True), encoding="utf-8"
+    )
+
+    rc = main(
+        _cutover_cli_args(
+            path,
+            expect_manifest_sha256=expected_sha,
+            identity=identity,
+            receipt=receipt,
+            to_runtime_root=to_root,
+            to_venv_path=to_venv,
+            to_repair_bin=to_repair,
+        )
+    )
+    assert rc == 0, capsys.readouterr().err
+    assert load_manifest(path).generation == 4
+    assert load_manifest(path).epic["runtime_root"] == to_root
+
+
 def test_cli_cutover_rejects_receipt_out_aliasing_manifest_zero_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
