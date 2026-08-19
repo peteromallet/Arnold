@@ -4325,6 +4325,38 @@ def _rewound_by_override_after_last_step(
     return False
 
 
+# Tiebreaker decision steps that REWIND the plan to the main workflow without
+# a state-machine transition of their own. The pypeline cursor for
+# ``tiebreaker_decide`` describes the decision ROUTES (pick -> finalize,
+# replan -> critique-fanout, escalate -> override), not the post-decision
+# continuation: the legacy handler sets current_state back to critiqued (or
+# awaiting_human_verify for escalate) and clears last_gate, so the main-loop
+# control projection (workflow_next of the rewound state) is authoritative —
+# exactly like the override replan / recover-blocked rewind handled by
+# _rewound_by_override_after_last_step (occurrence 47671addc195: without this,
+# the stale decision-route cursor mismatches the rewound [gate] projection
+# and the auto-drive dead-ends with workflow_cursor_mismatch).
+_TIEBREAKER_REWIND_STEPS = frozenset({"tiebreaker_decide", "tiebreaker_decision"})
+
+
+def _tiebreaker_rewound_to_step_context(
+    state: Mapping[str, Any],
+    last_step: Mapping[str, Any],
+) -> bool:
+    """True when a completed tiebreaker decision rewound the plan to the main
+    workflow (critiqued), so the status workflow cursor is stale."""
+    if not isinstance(last_step, Mapping):
+        return False
+    if last_step.get("step") not in _TIEBREAKER_REWIND_STEPS:
+        return False
+    if last_step.get("result") not in {"success", "needs_rework", "force_proceeded"}:
+        return False
+    # Only the rewind-to-critiqued shape (pick / replan) is stale-cursor; an
+    # escalated decision parks at awaiting_human_verify, whose verify-human
+    # seam must keep the operator in control.
+    return state.get("current_state") == STATE_CRITIQUED
+
+
 def _gate_operator_issue(state: Mapping[str, Any]) -> tuple[str, str] | None:
     last_gate = state.get("last_gate")
     if not isinstance(last_gate, Mapping):
@@ -4376,7 +4408,10 @@ def _project_auto_dispatch(
     status_last_step = status.get("last_step")
     stale_status_cursor = bool(
         isinstance(status_last_step, Mapping)
-        and _rewound_by_override_after_last_step(state, status_last_step)
+        and (
+            _rewound_by_override_after_last_step(state, status_last_step)
+            or _tiebreaker_rewound_to_step_context(state, status_last_step)
+        )
     )
     cursor_payload = (
         None

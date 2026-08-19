@@ -234,3 +234,67 @@ def test_stale_status_cursor_without_rewind_override_preserves_mismatch(
     )
     assert projection.issue == "workflow_cursor_mismatch", projection
     assert projection.next_step is None, projection
+
+
+TIEBREAKER_DECIDE_TS = "2026-08-19T23:03:10Z"
+
+
+def _status_after_tiebreaker_decide(*, state: str) -> dict[str, Any]:
+    """Status as built by the driver after a completed tiebreaker decide:
+    last_step = tiebreaker_decide(success) and the pypeline decision-route
+    cursor (pick -> finalize, replan -> critique-fanout, escalate -> override).
+    This is the REAL occurrence shape (47671addc195): the decision-route cursor
+    must not override the rewound main-loop control projection (critiqued ->
+    gate) after the handler cleared last_gate."""
+    status = _base_status(state=state)
+    status["last_step"] = {
+        "step": "tiebreaker_decide",
+        "result": "success",
+        "timestamp": TIEBREAKER_DECIDE_TS,
+    }
+    status["workflow_cursor"] = {
+        "dispatch_phase": "tiebreaker_decide",
+        "next_dispatch_phases": ["finalize", "revise", "override"],
+    }
+    return status
+
+
+def test_tiebreaker_decide_rewound_to_critiqued_drives_gate_without_mismatch(
+    tmp_path: Path,
+) -> None:
+    """critiqued + history tail tiebreaker_decide(success) + decision-route
+    cursor -> the main-loop projection (gate) wins; no workflow_cursor_mismatch
+    (occurrence 47671addc195, second layer)."""
+    state = _base_state(current_state="critiqued")
+    state["history"] = [
+        {
+            "step": "tiebreaker_decide",
+            "result": "success",
+            "timestamp": TIEBREAKER_DECIDE_TS,
+        }
+    ]
+    state["last_gate"] = {}
+    _write_plan_state(tmp_path, state)
+    projection = auto._project_auto_dispatch(
+        "m4-test-plan",
+        plan_dir=tmp_path,
+        status=_status_after_tiebreaker_decide(state="critiqued"),
+    )
+    assert projection.issue is None, projection.message
+    assert projection.next_step == "gate", projection
+    assert projection.valid_next == ("gate",), projection
+
+
+def test_tiebreaker_decide_escalate_is_not_stale_cursor() -> None:
+    """An escalated decision parks at awaiting_human_verify: the rewind-to-step-
+    context treatment must NOT apply (the verify-human seam stays in control)."""
+    state = _base_state(current_state="awaiting_human_verify")
+    state["last_gate"] = {"recommendation": "TIEBREAKER", "passed": False}
+    last_step = {
+        "step": "tiebreaker_decide",
+        "result": "success",
+        "timestamp": TIEBREAKER_DECIDE_TS,
+    }
+    assert (
+        auto._tiebreaker_rewound_to_step_context(state, last_step) is False
+    )
