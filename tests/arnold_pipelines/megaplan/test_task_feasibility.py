@@ -276,6 +276,9 @@ def test_runtime_test_budget_blocks_unbounded_or_widened_evidence() -> None:
     _enforce_task_test_budgets([invalid], targets_by_id={"T1": target}, issues=issues)
     assert invalid["status"] == "blocked"
     assert "task_test_budget_exhausted" in invalid["executor_notes"]
+    assert "`timeout <N> python3 -m pytest <selector> -q`" in invalid[
+        "executor_notes"
+    ]
     assert issues
 
     # Explicit recurrence shape (occurrence 4c0190500877): two declared
