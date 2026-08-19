@@ -83,7 +83,13 @@ milestones:
   target_branch: main
   merge_policy: review
   phase_model:
-  - execute=codex
+  - 'plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - revise=hermes:deepseek:deepseek-v4-flash
+  - 'finalize=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
+  - execute=hermes:deepseek:deepseek-v4-pro
+  - 'review=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol"]'
   depends_on:
   - m5-daily-efficiency-auditor
 on_failure:
