@@ -43,9 +43,10 @@ _NON_RETRYABLE_TOKEN_MAP: tuple[tuple[str, RetryabilityClass], ...] = (
     ("gate", "gate"),
     ("test", "test"),
 )
-_AUTH_TOKENS = frozenset(
+_AUTH_TOKENS: frozenset[str] = frozenset(
     {
         "auth",
+        "auth_error",
         "authentication",
         "unauthorized",
         "forbidden",
@@ -386,6 +387,7 @@ def _normalized_tokens(value: object) -> set[str]:
             "credit balance",
             "billing",
             "unauthorized",
+            "authentication",
             "forbidden",
             "bad request",
             "context length",
