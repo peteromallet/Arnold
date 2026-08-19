@@ -8207,6 +8207,38 @@ def handle_execute_auto_loop(
         for sense_check in finalize_data.get("sense_checks", [])
         if isinstance(sense_check, dict) and isinstance(sense_check.get("id"), str)
     ]
+    # Contradictory done-budget rows (astrid fix 4d39b18d33): a DONE row
+    # that still carries the durable budget-block identity with NO admitted
+    # evidence cannot be produced by any valid flow (adopt-before-replay
+    # artifact) and must return to the runnable frontier for a fresh
+    # compliant attempt.  The --retry-blocked-tasks partition reruns them,
+    # but the PLAIN resume path (no flag) must do the same, or execute
+    # stays blocked on "done tasks missing both files_changed and
+    # commands_run" forever (occurrence 927ad612eda8, live regression
+    # 2026-08-19T12:12Z).  Review-rework scopes are preserved (review.json
+    # present = scoped frontier is authoritative).
+    if not (plan_dir / "review.json").exists():
+        contradictory_ids = [
+            task["id"]
+            for task in tasks
+            if isinstance(task, dict)
+            and isinstance(task.get("id"), str)
+            and is_contradictory_done_budget_row(task)
+        ]
+        if contradictory_ids:
+            for task in tasks:
+                if (
+                    isinstance(task, dict)
+                    and isinstance(task.get("id"), str)
+                    and task["id"] in contradictory_ids
+                ):
+                    _clear_task_attempt_fields(task)
+            log.info(
+                "resume: returned %d contradictory done-budget row(s) to the "
+                "runnable frontier for a fresh compliant attempt: %s",
+                len(contradictory_ids),
+                ", ".join(sorted(contradictory_ids)),
+            )
     completed_task_ids = _scheduler_completed_ids_for_tasks(
         tasks,
         plan_dir=plan_dir,
