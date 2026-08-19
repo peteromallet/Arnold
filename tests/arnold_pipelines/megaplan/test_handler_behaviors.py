@@ -1002,6 +1002,137 @@ class TestTiebreakerOutcomeSemantics:
         assert "next_step" not in response
         assert state["current_state"] == STATE_CRITIQUED
 
+    def test_pick_settles_stale_tiebreaker_gate_so_workflow_resumes_gate_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression for occurrence 47671addc195: a successful pick decision must
+        # settle last_gate (recommendation was TIEBREAKER), otherwise
+        # workflow_next(critiqued) keeps offering the un-dispatchable
+        # ``tiebreaker`` step and the auto-drive dead-ends with no_next_step.
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED, STATE_TIEBREAKER_READY
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps(
+                {
+                    "tiebreaker_question": "Which option?",
+                    "tiebreaker_flag_ids": ["CF-1"],
+                    "tiebreaker_fuzzy_group_id": "FG-001",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}), encoding="utf-8"
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}), encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "last_gate": {"recommendation": "TIEBREAKER", "passed": False},
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick="option-a",
+                escalate=False,
+                replan=False,
+                rationale="pick it",
+            ),
+        )
+
+        assert response["route_signal"] == "proceed"
+        assert state["current_state"] == STATE_CRITIQUED
+        assert state["last_gate"] == {}, "pick must settle the stale TIEBREAKER gate"
+        from arnold_pipelines.megaplan._core.workflow import workflow_next
+
+        assert workflow_next(state) == ["gate", "step"]
+
+    def test_escalate_preserves_last_gate_and_routes_to_awaiting_human_verify(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import (
+            STATE_AWAITING_HUMAN_VERIFY,
+            STATE_TIEBREAKER_READY,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps(
+                {"tiebreaker_question": "Which option?", "tiebreaker_flag_ids": []}
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "last_gate": {"recommendation": "TIEBREAKER", "passed": False},
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick="",
+                escalate=True,
+                replan=False,
+                rationale="human escalation",
+            ),
+        )
+
+        assert state["current_state"] == STATE_AWAITING_HUMAN_VERIFY
+        assert state["last_gate"] == {"recommendation": "TIEBREAKER", "passed": False}
+
     def test_legacy_decision_bridge_resolves_iterate_via_lowered_topology(self) -> None:
         from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _bridge_tiebreaker_next_step
 
