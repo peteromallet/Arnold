@@ -231,7 +231,7 @@ def test_normalize_plan_capture_materializes_omitted_test_hints() -> None:
         "strategy": "none",
         "selectors": [],
         "changed_surfaces": [],
-        "full_suite_fallback": True,
+        "full_suite_fallback": False,
         "rationale": (
             "The model omitted optional test-selection hints; the harness must "
             "derive the authoritative repository floor."
@@ -282,7 +282,7 @@ def test_parse_agent_output_accepts_omitted_optional_test_hints(
 
     assert payload["changed_surfaces"] == []
     assert payload["test_blast_radius"]["strategy"] == "none"
-    assert payload["test_blast_radius"]["full_suite_fallback"] is True
+    assert payload["test_blast_radius"]["full_suite_fallback"] is False
 
 
 def test_normalize_phased_plan_payload_renders_flat_step_sections() -> None:

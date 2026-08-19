@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.layout import strategy_file_path
 from arnold_pipelines.megaplan.tickets.files import (
     FilenamePrefixShape,
     classify_filename_prefix,
@@ -157,7 +158,7 @@ def _extract_strategy_ticket_refs(repo_root: str | Path) -> set[str] | None:
     skipped so that a partially-correct roadmap does not block inventory
     of healthy ticket files.
     """
-    strategy_path = Path(repo_root) / ".megaplan" / "STRATEGY.md"
+    strategy_path = strategy_file_path(repo_root)
     if not strategy_path.is_file():
         return None
 

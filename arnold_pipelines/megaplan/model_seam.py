@@ -1483,7 +1483,7 @@ def _normalize_plan_test_proposal(
             "strategy": "none",
             "selectors": [],
             "changed_surfaces": list(normalized_changed),
-            "full_suite_fallback": True,
+            "full_suite_fallback": False,
             "rationale": (
                 "The model omitted optional test-selection hints; the harness "
                 "must derive the authoritative repository floor."
