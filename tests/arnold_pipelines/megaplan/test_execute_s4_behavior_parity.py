@@ -829,6 +829,42 @@ def test_envelope_budget_identity_blocks_adoption_before_replay(
     assert finalize_data["tasks"][0]["status"] == "blocked"
 
 
+def test_partial_failure_resume_reruns_contradictory_done_budget_rows() -> None:
+    """Occurrence 0a0ce24c3510: the partial-failure resume partition must NOT
+    preserve a done row that carries the durable budget-block identity with no
+    admitted evidence (the adopt-before-replay artifact). Such rows are
+    rerunnable — returning them to the frontier for a fresh compliant attempt —
+    while genuinely-done rows (with evidence) stay preserved.
+    """
+    from arnold_pipelines.megaplan.execute.policy import (
+        ResumeOutcome,
+        resolve_partial_failure_resume,
+    )
+
+    contradictory = _task("T1", status="done")
+    contradictory["task_test_budget_exhausted"] = (
+        "task_test_budget_exhausted: declared test timeout total 240s exceeds "
+        "max_seconds=120"
+    )
+    contradictory["files_changed"] = []
+    contradictory["commands_run"] = []
+    legit_done = _task("T2", status="done")
+    legit_done["files_changed"] = ["astrid/packs/shots/cli.py"]
+    legit_done["commands_run"] = ["timeout 120 python3 -m pytest tests -q"]
+    blocked = _task("T3", status="blocked")
+
+    decision = resolve_partial_failure_resume(
+        [contradictory, legit_done, blocked],
+        # T1 is authority-completed yet must still rerun (contradictory class
+        # beats the authority-preserve rule); T2 is authority-completed and
+        # preserved; T3 is not authority-completed and reruns as blocked.
+        completed_task_ids={"T1", "T2"},
+    )
+    assert decision.outcome is ResumeOutcome.RESUME
+    assert decision.rerun_task_ids == ("T1", "T3")
+    assert decision.preserved_task_ids == ("T2",)
+
+
 def test_count_execute_tracking_sees_acks_in_non_preferred_batch_envelope(
     tmp_path: Path,
 ) -> None:

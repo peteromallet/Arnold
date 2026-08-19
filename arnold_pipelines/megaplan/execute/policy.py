@@ -772,6 +772,28 @@ _RESUME_PRESERVED_STATUSES: frozenset[str] = frozenset({"done", "skipped"})
 _RESUME_RERUN_STATUS: str = "blocked"
 
 
+def is_contradictory_done_budget_row(task: Mapping[str, Any]) -> bool:
+    """True for a DONE row that still carries the durable budget-block identity
+    with NO admitted evidence.
+
+    No valid flow can produce such a row: the merge budget gate stamps
+    ``task_test_budget_exhausted`` only on blocked/pending rows, the adopt
+    helper pops it on promote, and a compliant attempt produces evidence. It
+    arises when adopt runs before the proven-artifact replay stamps the
+    envelope identity into the row (occurrence 0a0ce24c3510): the budget-gated
+    row is promoted to done WITHOUT evidence and the quality gate re-blocks
+    forever ("done tasks missing both files_changed and commands_run"). Such
+    rows must be treated as FAILED for resume purposes: returned to the
+    runnable frontier for a fresh compliant attempt, never preserved.
+    """
+    return (
+        task.get("status") == "done"
+        and isinstance(task.get("task_test_budget_exhausted"), str)
+        and bool(task["task_test_budget_exhausted"].strip())
+        and not (task.get("files_changed") or task.get("commands_run"))
+    )
+
+
 @dataclass(frozen=True)
 class PartialFailureResumeDecision:
     """Pure decision for partial-failure resume.
@@ -853,6 +875,13 @@ def resolve_partial_failure_resume(
         if not isinstance(task_id, str):
             continue
         status = task.get("status")
+        # Contradictory done-budget rows (occurrence 0a0ce24c3510) are NOT
+        # preserved: they carry the durable budget-block identity with no
+        # admitted evidence and must return to the frontier for a fresh
+        # compliant attempt — even though their persisted status is done.
+        if is_contradictory_done_budget_row(task):
+            rerun_ids.append(task_id)
+            continue
         # Authority-completed tasks are always preserved regardless of their
         # persisted status field.
         if task_id in completed:
