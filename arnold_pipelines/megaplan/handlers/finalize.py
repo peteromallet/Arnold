@@ -2183,7 +2183,19 @@ def _route_finalize_task_feasibility_failure_to_revise(
         # receives structured diagnostics without broad critique/revise.
         next_step = "finalize"
         result = "planner_repair_required"
-        repair_identity_persisted = False
+        # Mint the v1 repair-identity envelope on the ORDINARY feasibility
+        # rejection too (not only circuit_open).  Without it the watchdog's
+        # dispatch derives zero authority from an empty request and no fixer
+        # can claim the occurrence -- the stall becomes unrepairable while
+        # the visible symptom (provider timeout on the next retry) hides the
+        # missing identity.  Fail closed: identity stays unminted when the
+        # active step / runner lease is unavailable.
+        repair_identity_persisted = _persist_finalize_repair_identity(
+            plan_dir,
+            state,
+            repair,
+            message=message,
+        )
     atomic_write_json(
         plan_dir / "finalize_revise_feedback.json",
         {
@@ -2802,7 +2814,35 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         try:
             from arnold_pipelines.megaplan.prompts.finalize import _write_finalize_template
 
+            # Seed the retry scratch from the last model-authored finalize
+            # graph (finalize_vN_raw.txt) when it parses as a complete
+            # payload, so the retry repairs the graph instead of regenerating
+            # from an empty template.  The raw file is the ONLY durable copy
+            # of the full task graph; planner_repair.json carries only the
+            # reduced candidate record.
             seed_path = _write_finalize_template(plan_dir, state)
+            try:
+                import glob as _glob
+                raw_files = sorted(
+                    _glob.glob(str(plan_dir / "finalize_v*_raw.txt")),
+                    key=lambda s: s,
+                )
+                for raw_file in reversed(raw_files):
+                    import json as _json
+                    raw_text = open(raw_file, encoding="utf-8").read()
+                    graph = _json.loads(raw_text)
+                    if isinstance(graph, dict) and graph.get("tasks"):
+                        seed_path.write_text(
+                            _json.dumps(graph, indent=2), encoding="utf-8"
+                        )
+                        print(
+                            f"[finalize] seeded retry scratch from {raw_file} "
+                            f"({len(graph.get('tasks') or [])} tasks)",
+                            file=sys.stderr,
+                        )
+                        break
+            except (OSError, UnicodeDecodeError, ValueError):
+                pass
             seed_json = seed_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             seed_json = None
