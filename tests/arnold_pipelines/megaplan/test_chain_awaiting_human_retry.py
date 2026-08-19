@@ -1253,6 +1253,93 @@ def test_run_chain_rearms_fresh_session_execute_block_on_restart(
     assert any("fresh-session retry" in message for message in messages)
 
 
+def test_run_chain_rearms_quality_gate_circuit_open_on_restart(
+    tmp_path: Path,
+) -> None:
+    """A quality-gate circuit-open block with an execute/fresh_session resume
+    cursor must be rearmed by the chain relaunch helper (occurrence
+    4c0190500877, plan m5 frozen-digest bulk rework dead-end).
+
+    The circuit-open kind is the SECOND failure in a quality-gate sequence
+    (the first is execution_blocked); the rearm allowlist must accept it so a
+    chain relaunch can re-drive execute with the fix that reopens scoped
+    successors, instead of preserving the stop as unrecoverable.
+    """
+
+    from arnold_pipelines.megaplan import chain as chain_module
+
+    _write_plan_state(
+        tmp_path,
+        current_state="blocked",
+        active_step=None,
+    )
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = {
+        "kind": "quality_gate_circuit_open",
+        "message": "quality-gate circuit open (unknown) after 2 equivalent failures",
+        "phase": "execute",
+        "state": "blocked",
+        "metadata": {"circuit_open": True, "circuit_count": 2},
+    }
+    state_payload["resume_cursor"] = {
+        "phase": "execute",
+        "retry_strategy": "fresh_session",
+    }
+    (plan_dir / "state.json").write_text(
+        json.dumps(state_payload) + "\n",
+        encoding="utf-8",
+    )
+
+    messages: list[str] = []
+    assert chain_module._rearm_fresh_session_execute_block(
+        plan_dir, writer=messages.append
+    )
+    updated = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert updated["current_state"] == "finalized"
+    assert "latest_failure" not in updated
+    assert "resume_cursor" not in updated
+    assert any("fresh-session retry" in message for message in messages)
+
+
+def test_run_chain_preserves_circuit_open_without_fresh_session_cursor(
+    tmp_path: Path,
+) -> None:
+    """Without an execute/fresh_session resume cursor, a quality-gate
+    circuit-open block must NOT be rearmed (conservative: the plan recorded no
+    fresh-session retry intent)."""
+
+    from arnold_pipelines.megaplan import chain as chain_module
+
+    _write_plan_state(
+        tmp_path,
+        current_state="blocked",
+        active_step=None,
+    )
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = {
+        "kind": "quality_gate_circuit_open",
+        "message": "quality-gate circuit open (unknown) after 2 equivalent failures",
+        "phase": "execute",
+        "state": "blocked",
+    }
+    state_payload["resume_cursor"] = {
+        "phase": "execute",
+        "retry_strategy": "repair_validation_failure",
+    }
+    (plan_dir / "state.json").write_text(
+        json.dumps(state_payload) + "\n",
+        encoding="utf-8",
+    )
+
+    assert not chain_module._rearm_fresh_session_execute_block(
+        plan_dir, writer=lambda _text: None
+    )
+    updated = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert updated["current_state"] == "blocked"
+
+
 def test_run_chain_rearms_stale_incomplete_execute_cursor_mismatch_on_restart(
     tmp_path: Path,
 ) -> None:
