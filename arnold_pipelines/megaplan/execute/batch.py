@@ -83,6 +83,7 @@ from arnold_pipelines.megaplan.execute.policy import (
     NextExecuteTransition,
     NextStepDecision,
     evaluate_blocker_recovery_policy,
+    is_contradictory_done_budget_row,
     resolve_batch_tier,
     resolve_partial_failure_resume,
     resolve_single_batch_next_step,
@@ -7538,7 +7539,10 @@ def handle_execute_auto_loop(
         authority_completed_before_retry.difference_update(
             task["id"] for task in tasks
             if isinstance(task, dict) and isinstance(task.get("id"), str)
-            and _is_task_test_budget_blocked(task)
+            and (
+                _is_task_test_budget_blocked(task)
+                or is_contradictory_done_budget_row(task)
+            )
         )
         # ------------------------------------------------------------------
         # Explicit partial-failure resume partition (T12).
