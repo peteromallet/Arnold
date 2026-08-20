@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from datetime import datetime
 from pathlib import Path
 
 from scripts import run_maintenance_consolidation_agent as launcher
@@ -46,6 +47,126 @@ def _args(root: Path, *, role: str = "[HARD]", route: str = "gpt-5.6-luna") -> l
         f"--query-file={query}", f"--project-dir={project}", f"--allowance-file={allowance}",
         f"--evidence-dir={root / 'evidence'}", "--timeout=30",
     ]
+def _close_args(project: Path, allowance_id: str, evidence: Path | None = None) -> list[str]:
+    args = [f"--deactivate-allowance={allowance_id}", f"--project-dir={project}"]
+    if evidence is not None:
+        args.append(f"--evidence-dir={evidence}")
+    return args
+
+
+def _write_manifest(path: Path, value: dict) -> bytes:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(value, separators=(",", ":")).encode("utf-8")
+    path.write_bytes(raw)
+    return raw
+
+
+def test_close_active_allowance_preserves_manifest_content(tmp_path, capsys):
+    project = tmp_path / "project"
+    evidence = tmp_path / "evidence"
+    registry_path = evidence / "manifest.json"
+    target = {
+        "allowance_id": "active",
+        "task_id": "T0.3",
+        "production_files": ["scripts/wrapper.py"],
+        "tests": ["tests/test_wrapper.py"],
+        "generated_surfaces": ["docs/evidence.json"],
+        "allowance_digest": "a" * 64,
+        "lifecycle_state": "active",
+        "active": True,
+    }
+    other = {"allowance_id": "other", "active": True, "production_files": ["other.py"]}
+    manifest = {"schema": "keep-me", "metadata": {"owner": "mrc"}, "allowances": [target, other], "tail": ["unchanged"]}
+    _write_manifest(registry_path, manifest)
+
+    assert launcher.main(_close_args(project, "active", evidence)) == 0
+    output = json.loads(capsys.readouterr().out)
+    updated = json.loads(registry_path.read_text(encoding="utf-8"))
+    closed = updated["allowances"][0]
+
+    assert output == {"allowance_id": "active", "manifest": str(registry_path.resolve()), "status": "closed"}
+    assert closed["active"] is False
+    assert closed["lifecycle_state"] == "closed"
+    assert closed["closed_at_utc"].endswith("Z")
+    assert datetime.fromisoformat(closed["closed_at_utc"].replace("Z", "+00:00")).utcoffset().total_seconds() == 0
+    assert {key: closed[key] for key in target if key not in {"active", "lifecycle_state"}} == {
+        key: target[key] for key in target if key not in {"active", "lifecycle_state"}
+    }
+    assert updated["allowances"][1] == other
+    assert {key: updated[key] for key in manifest if key != "allowances"} == {
+        key: manifest[key] for key in manifest if key != "allowances"
+    }
+
+
+def test_close_registry_uses_evidence_first_then_project_fallback(tmp_path):
+    project = tmp_path / "project"
+    fallback = project / "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json"
+    evidence = tmp_path / "evidence"
+    evidence_registry = evidence / "manifest.json"
+    _write_manifest(fallback, {"allowances": [{"allowance_id": "target", "active": True}]})
+    _write_manifest(evidence_registry, {"allowances": [{"allowance_id": "target", "active": True}]})
+
+    assert launcher.main(_close_args(project, "target", evidence)) == 0
+    assert json.loads(evidence_registry.read_text(encoding="utf-8"))["allowances"][0]["active"] is False
+    assert json.loads(fallback.read_text(encoding="utf-8"))["allowances"][0]["active"] is True
+
+    evidence_registry.unlink()
+    assert launcher.main(_close_args(project, "target", evidence)) == 0
+    assert json.loads(fallback.read_text(encoding="utf-8"))["allowances"][0]["active"] is False
+
+
+def test_close_absent_allowance_leaves_manifest_byte_identical(tmp_path, capsys):
+    project = tmp_path / "project"
+    registry_path = project / "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json"
+    before = _write_manifest(registry_path, {"allowances": [{"allowance_id": "other", "active": True}], "extra": 7})
+
+    assert launcher.main(_close_args(project, "missing")) == 2
+    assert "ALLOWANCE_NOT_FOUND:missing" in capsys.readouterr().err
+    assert registry_path.read_bytes() == before
+
+
+def test_close_already_closed_is_deterministic_and_preserves_timestamp(tmp_path, capsys):
+    project = tmp_path / "project"
+    registry_path = project / "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json"
+    _write_manifest(registry_path, {"allowances": [{"allowance_id": "target", "active": True}]})
+
+    assert launcher.main(_close_args(project, "target")) == 0
+    first = registry_path.read_bytes()
+    timestamp = json.loads(first.decode())["allowances"][0]["closed_at_utc"]
+    assert launcher.main(_close_args(project, "target")) == 2
+    assert "ALLOWANCE_ALREADY_CLOSED:target" in capsys.readouterr().err
+    assert registry_path.read_bytes() == first
+    assert json.loads(first.decode())["allowances"][0]["closed_at_utc"] == timestamp
+
+
+def test_close_malformed_selected_manifest_does_not_fall_back_or_replace(tmp_path, capsys):
+    project = tmp_path / "project"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(parents=True)
+    selected = evidence / "manifest.json"
+    fallback = project / "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json"
+    selected.write_text("{not-json", encoding="utf-8")
+    fallback_before = _write_manifest(fallback, {"allowances": [{"allowance_id": "target", "active": True}]})
+
+    assert launcher.main(_close_args(project, "target", evidence)) == 2
+    assert "MALFORMED_ALLOWANCE_REGISTRY" in capsys.readouterr().err
+    assert selected.read_text(encoding="utf-8") == "{not-json"
+    assert fallback.read_bytes() == fallback_before
+
+
+def test_inactive_overlap_allows_dispatch(tmp_path, monkeypatch):
+    root = tmp_path / f"mrc-wrapper-inactive-{secrets.token_hex(6)}"
+    args = _args(root)
+    evidence = root / "evidence"
+    evidence.mkdir(parents=True)
+    (evidence / "manifest.json").write_text(
+        json.dumps({"allowances": [{"allowance_id": "closed", "active": False, "production_files": ["src"], "tests": []}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+
+    assert launcher.main(args) == 0
+    assert list((evidence / "receipts").glob("*.json"))
 
 
 def test_invocation_id_generation_and_atomic_receipt_lifecycle(tmp_path, monkeypatch):

@@ -160,7 +160,76 @@ def _build_command(model_route: str, query_file: Path, project_dir: Path, timeou
     ]
 
 
+def _registry_path(project_dir: Path, evidence_dir: Path | None) -> Path:
+    if evidence_dir is not None:
+        evidence_registry = evidence_dir / "manifest.json"
+        if evidence_registry.is_file():
+            return evidence_registry
+    project_registry = project_dir / "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json"
+    if project_registry.is_file():
+        return project_registry
+    locations = [str(evidence_dir / "manifest.json")] if evidence_dir is not None else []
+    locations.append(str(project_registry))
+    raise ValueError(f"MISSING_ALLOWANCE_REGISTRY:{' or '.join(locations)}")
+
+
+def _atomic_manifest(path: Path, value: dict[str, Any]) -> None:
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def deactivate_allowance(args: argparse.Namespace) -> int:
+    project_dir = Path(args.project_dir).resolve()
+    evidence_dir = Path(args.evidence_dir).resolve() if args.evidence_dir else None
+    registry_path = _registry_path(project_dir, evidence_dir)
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"MALFORMED_ALLOWANCE_REGISTRY:{registry_path}:{exc.msg}") from exc
+    if not isinstance(registry, dict) or not isinstance(registry.get("allowances"), list):
+        raise ValueError(f"MALFORMED_ALLOWANCE_REGISTRY:{registry_path}:allowances must be a list")
+
+    allowance = next(
+        (
+            record
+            for record in registry["allowances"]
+            if isinstance(record, dict) and record.get("allowance_id") == args.deactivate_allowance
+        ),
+        None,
+    )
+    if allowance is None:
+        raise ValueError(f"ALLOWANCE_NOT_FOUND:{args.deactivate_allowance}")
+    if not allowance.get("active") or allowance.get("lifecycle_state") == "closed":
+        raise ValueError(f"ALLOWANCE_ALREADY_CLOSED:{args.deactivate_allowance}")
+
+    allowance["active"] = False
+    allowance["lifecycle_state"] = "closed"
+    allowance["closed_at_utc"] = now()
+    _atomic_manifest(registry_path, registry)
+    print(json.dumps({"allowance_id": args.deactivate_allowance, "manifest": str(registry_path), "status": "closed"}, sort_keys=True))
+    return 0
+
+
+def _require_dispatch_args(args: argparse.Namespace) -> None:
+    required = ("task_id", "role", "label", "model_route", "query_file", "allowance_file", "evidence_dir", "timeout")
+    missing = [name.replace("_", "-") for name in required if getattr(args, name) is None]
+    if missing:
+        raise ValueError(f"MISSING_DISPATCH_ARGUMENTS:{','.join(missing)}")
+
+
 def dispatch(args: argparse.Namespace) -> int:
+    _require_dispatch_args(args)
     if args.invocation_id is not None:
         raise ValueError("CALLER_INVOCATION_ID_FORBIDDEN")
     project_dir = Path(args.project_dir).resolve()
@@ -272,15 +341,16 @@ def dispatch(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("--task-id", required=True)
-    parser.add_argument("--role", required=True)
-    parser.add_argument("--label", required=True)
-    parser.add_argument("--model-route", required=True, choices=tuple(LAUNCHERS))
-    parser.add_argument("--query-file", required=True)
+    parser.add_argument("--deactivate-allowance", default=None)
+    parser.add_argument("--task-id")
+    parser.add_argument("--role")
+    parser.add_argument("--label")
+    parser.add_argument("--model-route", choices=tuple(LAUNCHERS))
+    parser.add_argument("--query-file")
     parser.add_argument("--project-dir", required=True)
-    parser.add_argument("--allowance-file", required=True)
-    parser.add_argument("--evidence-dir", required=True)
-    parser.add_argument("--timeout", required=True, type=int)
+    parser.add_argument("--allowance-file")
+    parser.add_argument("--evidence-dir")
+    parser.add_argument("--timeout", type=int)
     parser.add_argument("--invocation-id", default=None)
     return parser
 
@@ -289,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
+        if args.deactivate_allowance is not None:
+            return deactivate_allowance(args)
         return dispatch(args)
     except SystemExit as exc:
         return int(exc.code)
@@ -298,3 +370,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
