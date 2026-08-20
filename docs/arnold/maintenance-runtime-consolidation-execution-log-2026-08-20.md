@@ -131,3 +131,50 @@ Directives for consolidation:
 - Material judgment required: how to reconcile baseline immutability with pushability (redact-and-audit vs. exclude vs. other), plus rotation recommendation for the exposed key (it never reached GitHub, but was written to local git objects in plaintext).
 - Routed: fresh Grok 4.6 judgment (J3) via wrapper. Batch-0 push stays blocked pending ruling.
 
+
+## R002 HARD-REVIEW — NOT PASS (4 must findings) → R002-REV2 routing
+
+- Reviewer: independent Luna (mrc-70a0f9b2…, 1055.77s). Single-field redaction + index/manifest consistency + authority records PASS at c92eabc710 evidence state; reachable-graph scan clean; validator passes.
+- R002-001 (must, HARD-REVISION): F-002-redaction-receipt.json final_hygiene_commit_sha is null; J3 requires non-null = c92eabc71046608b626cccc90a74e46da47101ef.
+- R002-002 (must, HARD-REVISION): rewrite changed pre-boundary ancestry — old parent 9d3efebe08… not ancestor of HEAD; rewritten parent 083e66eaa9… is. Receipt map omits pre-b14c727e29 rewritten objects. Fix: document complete rewrite scope (full old→new map incl. pre-boundary) + prove pre-boundary commits' trees byte-identical (blob-level equality), record as bounded revision.
+- R002-003 (must): expected review tip c92eabc710…; actual HEAD b26f3f5778… (PLANAMEND landed after).
+- R002-004 (must): b26f3f5778 changes plan/goal docs (2 paths, 126+/9-) — outside F-002 allowed surface.
+- R002-003/004 disposition: NOT a defect — the tip change is the OPERATOR-DIRECTED plan amendment (directive recorded in this log; PLANAMEND card mrc-1fcd861d…, commit b26f3f5778 "Amend maintenance consolidation execution plan"). J1 froze the boundary against UNCONTROLLED mutation; this is a controlled operator-authorized boundary amendment (T2.4 insertion + incident table + goal Batch-2 line). Evidence note will cite the directive + amendment commit so the re-review accepts the true tip.
+- Route: bounded Luna [HARD-REVISION] (R002-REV2): fix receipt final SHA (R002-001); complete rewrite map + pre-boundary blob-equality proof (R002-002); add operator-amendment evidence note resolving R002-003/004; then FRESH independent re-review at the true tip b26f3f5778.
+- Push stays blocked until re-review PASS.
+
+
+## F-003 — wrapper has no allowance-close path (registry deadlock)
+
+- Finding: scripts/run_maintenance_consolidation_agent.py reads the allowance registry from manifest.json (reject_allowance_overlap) but has NO subcommand/flag to deactivate a completed task's allowance record. The R002-resume implementer registered its own allowance (allowance_id R002-resume, task_id F-002, active:true) in manifest.json as part of its manifest updates. Every subsequent wrapper dispatch whose allowance overlaps that record's paths — including the mechanical deactivation card and R002-REV2 — is rejected with OVERLAPPING_ALLOWANCE. Self-deadlock.
+- Severity: must (blocks all further evidence-path dispatch until resolved).
+- Classification: [HARD-REVISION] — single production file (scripts/run_maintenance_consolidation_agent.py) + its test; governing contract frozen (T0.3 requires a per-task atomic allowance registry and overlap rejection; lifecycle closure is implied); changes no authority/custody/identity/migration/concurrency/compat/live-runtime/task-scope/policy dimension. Not ambiguous → no Grok classification judgment required.
+- Required fix: add a wrapper subcommand/flag (e.g. --deactivate-allowance <allowance_id>) that atomically marks the named registry record active:false + lifecycle_state:closed (+ closed_at_utc) in manifest.json; add a focused test; keep overlap rejection intact for active records.
+- Route: Luna brief-prep → Luna [HARD-REVISION] implementer (allowance = wrapper source + test only, disjoint from the stale R002-resume record so the wrapper accepts dispatch) → independent Luna [HARD-REVIEW] → integration; then use the new close path on R002-resume, then re-dispatch R002-REV2.
+
+
+## R003 HARD-REVIEW — findings (F-R003-001) → R003-REV2
+
+- Reviewer: independent Luna (mrc-8d923452…). Contract table: all Pass except byte-preservation.
+- F-R003-001 (must, HARD-REVISION): --deactivate-allowance serializes the whole manifest via json.dump (normalizes formatting, unicode escapes, key order, trailing content). Narrow fix: lossless source-preserving update that changes ONLY the target record's active/lifecycle_state/closed_at_utc; add successful-close byte-level regression test with noncanonical JSON.
+- Route: Luna [HARD-REVISION] (R003-REV2) → independent re-review → then use --deactivate-allowance on R002-resume → then R002-REV2 → re-review → push.
+
+
+## OPERATOR DIRECTIVE (2026-08-20) — review cadence relaxation (supersedes per-card review policy)
+
+- User directive: "do only one review for each subsection and then one up to 3 big ones at the end based on sol".
+- Interpretation (recorded, default-to-action): replace the per-card pre/post XHARD review chain (G4.1/4.2/4.3 pre+post, G5 pre+post, G6.1/6.2 pre+post, G7.4-pre/post as separate per-card gates) with ONE review per subsection (the existing batch gates G1/G2/G3/G4/G5/G6.3, each covering its whole batch), and consolidate the whole-system reviews (G3.5 midpoint, G6.4 systemic, G7 final) into UP TO THREE big end-stage reviews based on Sol (`codex:gpt-5.6-sol`, high-reasoning route, fresh instance each, read-only):
+  1. Whole-system architecture/authority/simplification attack (covers G3.5+G6.4 concerns: observation→effect paths, duplicated authority, over-enforcement, dead-PID dual, false-success fixer, Live Tree Authority adherence);
+  2. Evidence manifest + selection completeness + validator integrity (covers T7.1/T7.5 closure concerns);
+  3. Final promotion recommendation (covers G7; after validator passes, before promotion decision).
+- Preserved safety rails: must-findings still block; reviewer never reviews its own work; reviews read-only; findings still get evidence-linked revision cards with independent re-review; material judgments still Grok/Judgment-routed; T2.1 sole claim seam unchanged.
+- Cadence now: implement (Luna ordinary / Grok XHARD per routing) → ONE subsection review → continue; end-stage: up to 3 Sol reviews → promotion recommendation.
+- Wrapper impact: needs a `gpt-5.6-sol` model route (hermes launcher --model=codex:gpt-5.6-sol) for the big reviews; add via a bounded wrapper revision (R004) after R003-REV2 lands (serialization on the wrapper file).
+- Plan doc: review-ownership table + per-card review text updated by a routed plan-amendment card (folded into the J4 prep flow).
+
+
+## R003-REV2 first dispatch — HOLLOW RECEIPT, mechanically rejected
+
+- Invocation mrc-f278d0e0… closed completed/exit 0 but stdout = single byte "1"; no commit created, no worktree/branch left, no wrapper change, test count still 13. No deliverable exists.
+- Disposition: mechanical receipt rejection (not a judgment); re-dispatch R003-REV2 with the same brief.
+
