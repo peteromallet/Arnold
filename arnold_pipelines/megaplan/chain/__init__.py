@@ -5493,11 +5493,42 @@ def _rearm_fresh_session_execute_block(
     if state_payload.get("active_step"):
         return False
     resume_cursor = state_payload.get("resume_cursor")
-    if not isinstance(resume_cursor, dict):
-        return False
-    if resume_cursor.get("phase") != "execute":
-        return False
-    if resume_cursor.get("retry_strategy") != "fresh_session":
+    fresh_session_retry = (
+        isinstance(resume_cursor, dict)
+        and resume_cursor.get("phase") == "execute"
+        and resume_cursor.get("retry_strategy") == "fresh_session"
+    )
+    deferred_validation_retry = False
+    if not fresh_session_retry:
+        history = state_payload.get("history")
+        latest_execute: Mapping[str, Any] | None = None
+        if isinstance(history, list):
+            for entry in reversed(history):
+                if isinstance(entry, Mapping) and entry.get("step") == "execute":
+                    latest_execute = entry
+                    break
+        message = latest_execute.get("message") if isinstance(latest_execute, Mapping) else None
+        if (
+            isinstance(latest_execute, Mapping)
+            and latest_execute.get("result") == "error"
+            and isinstance(message, str)
+            and re.match(r"^validation job [^ ]+ exited \d+; expected one of \[", message)
+        ):
+            try:
+                latest_batch = list_batch_artifacts(plan_dir)[-1]
+                batch_payload = json.loads(latest_batch.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, IndexError):
+                batch_payload = None
+            if isinstance(batch_payload, Mapping):
+                task_updates = batch_payload.get("task_updates")
+                deferred_validation_retry = isinstance(task_updates, list) and any(
+                    isinstance(update, Mapping)
+                    and update.get("status") == "blocked"
+                    and isinstance(update.get("task_id"), str)
+                    and update["task_id"].strip()
+                    for update in task_updates
+                )
+    if not fresh_session_retry and not deferred_validation_retry:
         return False
     latest_failure = state_payload.get("latest_failure")
     if isinstance(latest_failure, dict):
@@ -5516,7 +5547,11 @@ def _rearm_fresh_session_execute_block(
 
     recovery_event = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "reason": "chain relaunch honored execute fresh_session resume cursor",
+        "reason": (
+            "chain relaunch reopened deferred validation retry frontier"
+            if deferred_validation_retry
+            else "chain relaunch honored execute fresh_session resume cursor"
+        ),
     }
 
     def _patch_blocked_execute(current: dict[str, Any]) -> bool:
@@ -5536,10 +5571,16 @@ def _rearm_fresh_session_execute_block(
         patch={"current_state": STATE_FINALIZED},
         mutation=_patch_blocked_execute,
     )
-    writer(
-        "[chain] execute block recorded a fresh-session retry; reset blocked plan "
-        "back to finalized so execute can re-run\n"
-    )
+    if deferred_validation_retry:
+        writer(
+            "[chain] deferred validation left a blocked task frontier; reset blocked "
+            "plan back to finalized so execute can retry it\n"
+        )
+    else:
+        writer(
+            "[chain] execute block recorded a fresh-session retry; reset blocked plan "
+            "back to finalized so execute can re-run\n"
+        )
     return True
 
 

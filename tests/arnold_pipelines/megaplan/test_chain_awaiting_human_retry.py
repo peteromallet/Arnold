@@ -9,7 +9,9 @@ from unittest.mock import patch
 from arnold_pipelines.megaplan.auto import DriverOutcome
 from arnold_pipelines.megaplan.chain import (
     _handle_outcome,
+    _blocked_plan_replay_would_be_redundant,
     _record_chain_last_state_after_plan_run,
+    _rearm_fresh_session_execute_block,
     _reconcile_chain_from_ground_truth,
     _recover_stale_prerequisite_block,
     _sync_chain_last_state_from_plan,
@@ -1107,6 +1109,11 @@ def test_blocked_validation_failure_reopens_supported_execute_retry_frontier(
         plan_state=plan_state,
         root=tmp_path,
     ) is False
+    messages: list[str] = []
+    assert _rearm_fresh_session_execute_block(plan_dir, writer=messages.append)
+    updated = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert updated["current_state"] == "finalized"
+    assert any("deferred validation" in message for message in messages)
 
 
 def test_no_push_reconciliation_never_fabricates_open_pr_as_merged(
