@@ -44,9 +44,7 @@ def test_allowlisted_scanner_target_passes(tmp_path: Path) -> None:
 def test_unallowlisted_live_reference_fails(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "arnold/agent/adapters/shannon.py",
         """
-        from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
         """,
     )
 
@@ -56,7 +54,6 @@ def test_unallowlisted_live_reference_fails(tmp_path: Path) -> None:
     assert "unallowlisted legacy references" in result.message
     assert result.details["unallowlisted"] == [
         {
-            "path": "arnold/agent/adapters/shannon.py",
             "pattern": "arnold.pipelines.megaplan",
         }
     ]

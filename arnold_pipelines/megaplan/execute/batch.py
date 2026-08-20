@@ -187,11 +187,6 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_EXECUTED,
     STATE_FINALIZED,
 )
-try:
-    from arnold_pipelines.megaplan.bakeoff.channel_shadow import maybe_run_channel_shadow
-except ImportError:  # pragma: no cover - exercised by import-isolation subprocess tests
-    def maybe_run_channel_shadow(**_kwargs: Any) -> None:
-        return None
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workers.result_metadata import aggregate_rate_limits
 
@@ -3253,18 +3248,6 @@ def _run_and_merge_batch(
             effort=selected.effort,
             resolved_model=worker.model_actual or selected.model,
         )
-    maybe_run_channel_shadow(
-        root=root,
-        plan_dir=plan_dir,
-        state=state,
-        args=args,
-        step="execute",
-        primary_worker=worker,
-        primary_agent=agent,
-        prompt_override=prompt_override,
-        sample_key=f"{state.get('name') or plan_dir.name}:execute:{batch_number}",
-        resolved=am_for_worker,
-    )
     # ── M8A T18 — Work-class event emission ──────────────────────────
     # Emit productive / queue / unavailable_reason work-ledger events for
     # this batch's worker dispatch.  Every measure is attributed to an

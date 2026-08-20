@@ -1,6 +1,6 @@
 """Tests for :class:`arnold.agent.adapters.shannon.ShannonAdapter`.
 
-Deterministic and offline: the real ``run_shannon_step`` worker is replaced
+Deterministic and offline: the real ``run_claude_step`` worker is replaced
 wholesale so no tmux session, claude CLI, or vendored-bun process ever runs.
 """
 
@@ -53,7 +53,7 @@ def _fake_worker_result(**overrides):
 
 def test_shannon_adapter_projects_worker_result() -> None:
     with patch(
-        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.claude.run_claude_step",
         side_effect=lambda *a, **k: _fake_worker_result(),
     ):
         result = ShannonAdapter()(_request())
@@ -75,15 +75,15 @@ def test_shannon_adapter_projects_worker_result() -> None:
 def test_shannon_adapter_synthesizes_oneshot_context() -> None:
     captured: dict = {}
 
-    def fake_run_shannon_step(step, state, plan_dir, **kwargs):
+    def fake_run_claude_step(step, state, plan_dir, **kwargs):
         captured["step"] = step
         captured["state"] = state
         captured["kwargs"] = kwargs
         return _fake_worker_result()
 
     with patch(
-        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
-        side_effect=fake_run_shannon_step,
+        "arnold_pipelines.megaplan.workers.claude.run_claude_step",
+        side_effect=fake_run_claude_step,
     ):
         ShannonAdapter(session_agent="claude")(_request())
 
@@ -102,14 +102,14 @@ def test_shannon_adapter_read_only_vs_write_work_dir(tmp_path: Path) -> None:
     work_dir.mkdir()
     captured: dict = {}
 
-    def fake_run_shannon_step(step, state, plan_dir, **kwargs):
+    def fake_run_claude_step(step, state, plan_dir, **kwargs):
         captured["read_only"] = kwargs["read_only"]
         captured["project_dir"] = state["config"]["project_dir"]
         return _fake_worker_result()
 
     with patch(
-        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
-        side_effect=fake_run_shannon_step,
+        "arnold_pipelines.megaplan.workers.claude.run_claude_step",
+        side_effect=fake_run_claude_step,
     ):
         ShannonAdapter()(
             _request(read_only=False, metadata={"work_dir": str(work_dir)})
@@ -122,13 +122,13 @@ def test_shannon_adapter_read_only_vs_write_work_dir(tmp_path: Path) -> None:
 def test_shannon_adapter_session_agent_default_and_override() -> None:
     captured: dict = {}
 
-    def fake_run_shannon_step(step, state, plan_dir, **kwargs):
+    def fake_run_claude_step(step, state, plan_dir, **kwargs):
         captured.setdefault("agents", []).append(kwargs["session_agent"])
         return _fake_worker_result()
 
     with patch(
-        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
-        side_effect=fake_run_shannon_step,
+        "arnold_pipelines.megaplan.workers.claude.run_claude_step",
+        side_effect=fake_run_claude_step,
     ):
         ShannonAdapter()(_request())  # default -> "claude"
         ShannonAdapter(session_agent="shannon")(_request(agent="shannon"))
@@ -152,13 +152,13 @@ def test_shannon_adapter_is_available_delegates() -> None:
 def test_default_dispatcher_routes_claude_and_shannon() -> None:
     captured: dict = {}
 
-    def fake_run_shannon_step(step, state, plan_dir, **kwargs):
+    def fake_run_claude_step(step, state, plan_dir, **kwargs):
         captured.setdefault("agents", []).append(kwargs["session_agent"])
         return _fake_worker_result()
 
     with patch(
-        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
-        side_effect=fake_run_shannon_step,
+        "arnold_pipelines.megaplan.workers.claude.run_claude_step",
+        side_effect=fake_run_claude_step,
     ):
         r_claude = dispatch(_request(agent="claude"))
         r_shannon = dispatch(_request(agent="shannon"))
@@ -172,7 +172,7 @@ def test_default_dispatcher_routes_claude_and_shannon() -> None:
 def test_shannon_adapter_real_worker_path_mock_shortcut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Drive the *genuine* ``run_shannon_step`` via the in-process mock-worker
+    """Drive the *genuine* ``run_claude_step`` via the in-process mock-worker
     shortcut (``MEGAPLAN_MOCK_WORKERS=1``) — no tmux/claude/bun process runs —
     proving the synthesized one-shot context satisfies the real worker entry."""
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
@@ -185,7 +185,7 @@ def test_explicit_dispatcher_register_and_route() -> None:
     disp = ArnoldDispatcher()
     disp.register("claude", ShannonAdapter(session_agent="claude"))
     with patch(
-        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.claude.run_claude_step",
         side_effect=lambda *a, **k: _fake_worker_result(session_id="Y"),
     ):
         result = disp.dispatch(_request())

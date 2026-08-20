@@ -5219,12 +5219,15 @@ def _run_claude_step_uncapped(
     model: str | None = None,
     output_path: Path | None = None,
 ) -> WorkerResult:
-    """Compatibility wrapper: the public ``claude`` route runs via Shannon."""
+    """Compatibility wrapper: the public ``claude`` route runs via the native
+    ``claude --print`` worker (workers/claude.py)."""
     if effort is not None and effort not in _VALID_CLAUDE_EFFORTS:
         raise CliError("invalid_args", f"Unsupported claude effort level: {effort}")
-    from arnold_pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold_pipelines.megaplan.workers.claude import (
+        run_claude_step as _run_claude_native,
+    )
 
-    return run_shannon_step(
+    return _run_claude_native(
         step,
         state,
         plan_dir,
@@ -5233,8 +5236,8 @@ def _run_claude_step_uncapped(
         prompt_override=prompt_override,
         prompt_kwargs=prompt_kwargs,
         effort=effort,
-        session_agent="claude",
         model=model,
+        read_only=False,
         output_path=output_path,
     )
 
@@ -6756,14 +6759,9 @@ def _is_agent_available(agent: str) -> bool:
             return bool(shutil.which("omp"))
         return True
     if agent in {"claude", "shannon"}:
-        from arnold_pipelines.megaplan._core.io import (
-            _shannon_stream_worker_enabled,
-            is_claude_stream_available,
-            is_shannon_available,
-        )
-        if _shannon_stream_worker_enabled():
-            return is_claude_stream_available()
-        return is_shannon_available()
+        # shannon is a deprecated alias for claude: both run the native
+        # `claude --print` worker (legacy tmux shannon machinery removed).
+        return bool(shutil.which("claude"))
     if agent == "omp":
         # The omp worker launches a ``bun ... --mode rpc`` child through the
         # pinned omp_rpc client.  It is available when the omp executable is
@@ -7145,55 +7143,31 @@ def _shannon_to_agent_result(
     output_path: Path | None,
     effective_refreshed: bool,
 ) -> Any:
-    """Call run_shannon_step and project WorkerResult → AgentResult."""
-    from arnold_pipelines.megaplan._core.io import _shannon_stream_worker_enabled
+    """Call run_claude_step and project WorkerResult → AgentResult.
 
-    if _shannon_stream_worker_enabled(root=root, plan_id=str(state.get("name") or "")):
-        from arnold_pipelines.megaplan.workers.shannon_stream import (
-            run_shannon_stream_step as run_shannon_worker_step,
-        )
-    else:
-        from arnold_pipelines.megaplan.workers.shannon import (
-            run_shannon_step as run_shannon_worker_step,
-        )
+    ``shannon`` is a deprecated alias for ``claude`` — both run the native
+    ``claude --print`` worker (legacy tmux shannon machinery was removed).
+    """
+    from arnold_pipelines.megaplan.workers.claude import run_claude_step
 
     mode = req.mode
     resolved_model = req.resolved_model
     effort = req.effort
     read_only = req.read_only
-    shannon_kwargs: dict[str, Any] = dict(
+    _w = run_claude_step(
+        step,
+        state,
+        plan_dir,
         root=root,
+        fresh=effective_refreshed,
+        model=resolved_model,
+        effort=effort,
         prompt_override=prompt_override,
         prompt_kwargs=prompt_kwargs,
-        effort=effort,
-        model=resolved_model,
         read_only=read_only,
         output_path=output_path,
     )
-    if req.agent == "claude":
-        shannon_kwargs["session_agent"] = "claude"
-    attempted_retry = False
-    eff_fresh = effective_refreshed
-    while True:
-        try:
-            _w = run_shannon_worker_step(
-                step,
-                state,
-                plan_dir,
-                fresh=eff_fresh,
-                **shannon_kwargs,
-            )
-            return _w.to_agent_result()
-        except CliError as error:
-            if (
-                attempted_retry
-                or step in _EXECUTE_STEPS
-                or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
-            ):
-                raise
-            attempted_retry = True
-            eff_fresh = True
-            continue
+    return _w.to_agent_result()
 
 
 def _selected_step_spec(agent: str, model: str | None, effort: str | None) -> str:
@@ -7753,60 +7727,25 @@ def _run_step_with_worker_legacy(
                         worker_options=worker_options,
                     )
                 elif agent in ("claude", "shannon"):
-                    # Both the ``claude`` agent (Claude via the shannon CLI, e.g.
-                    # the ``partnered`` profile) and the explicit ``shannon`` agent
-                    # run through run_shannon_step. A stalled SSE stream now surfaces
-                    # promptly as a retryable ``worker_stall`` (idle-output watchdog
-                    # in run_command) instead of hanging until the coarse phase
-                    # wall-clock ``worker_timeout``. Give it the same bounded one-shot
-                    # retry the codex branch grants transient failures so a single
-                    # stall retries (fresh session) rather than failing the plan.
-                    from arnold_pipelines.megaplan._core.io import _shannon_stream_worker_enabled
+                    # shannon is a deprecated alias for claude: both run the
+                    # native ``claude --print`` worker (legacy tmux shannon
+                    # machinery removed). The outer auth/connection fallback
+                    # loop handles retries.
+                    from arnold_pipelines.megaplan.workers.claude import run_claude_step
 
-                    if _shannon_stream_worker_enabled(root=root, plan_id=str(state.get("name") or "")):
-                        from arnold_pipelines.megaplan.workers.shannon_stream import (
-                            run_shannon_stream_step as run_shannon_worker_step,
-                        )
-                    else:
-                        from arnold_pipelines.megaplan.workers.shannon import (
-                            run_shannon_step as run_shannon_worker_step,
-                        )
-
-                    shannon_kwargs: dict[str, Any] = dict(
+                    worker = run_claude_step(
+                        step,
+                        state,
+                        plan_dir,
                         root=root,
+                        fresh=effective_refreshed,
+                        model=resolved_model,
+                        effort=effort,
                         prompt_override=prompt_override,
                         prompt_kwargs=prompt_kwargs,
-                        effort=effort,
-                        model=resolved_model,
                         read_only=read_only,
                         output_path=output_path,
                     )
-                    if agent == "claude":
-                        shannon_kwargs["session_agent"] = "claude"
-                    attempted_retry = False
-                    while True:
-                        try:
-                            worker = run_shannon_worker_step(
-                                step,
-                                state,
-                                plan_dir,
-                                fresh=effective_refreshed,
-                                **shannon_kwargs,
-                            )
-                            break
-                        except CliError as error:
-                            if (
-                                attempted_retry
-                                or os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
-                                or step in _EXECUTE_STEPS
-                                or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
-                            ):
-                                raise
-                            attempted_retry = True
-                            # Retry on a fresh session so a wedged stream is not
-                            # resumed back into the same stall.
-                            effective_refreshed = True
-                            continue
                 elif agent == "omp":
                     # omp is a first-class direct worker: a fresh stateless
                     # RPC session per attempt.  The spec's ``omp:provider/model``
@@ -7938,7 +7877,7 @@ def _run_step_with_worker_legacy(
                         effective_refreshed=effective_refreshed,
                     ),
                 )
-                _shannon_closure = lambda req: _shannon_to_agent_result(
+                _claude_closure = lambda req: _shannon_to_agent_result(
                     req,
                     step=step,
                     state=state,
@@ -7951,8 +7890,10 @@ def _run_step_with_worker_legacy(
                     output_path=output_path,
                     effective_refreshed=effective_refreshed,
                 )
-                _dispatcher.register("claude", _shannon_closure)
-                _dispatcher.register("shannon", _shannon_closure)
+                # shannon is a deprecated alias for claude — both route to the
+                # native claude --print worker.
+                _dispatcher.register("claude", _claude_closure)
+                _dispatcher.register("shannon", _claude_closure)
                 if agent == "hermes":
                     _rendered = render_prompt_for_dispatch(
                         "hermes",

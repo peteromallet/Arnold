@@ -1,4 +1,4 @@
-"""Shannon adapter — wraps the real ``run_shannon_step`` worker for a one-shot.
+"""Shannon adapter — wraps the real ``run_claude_step`` worker for a one-shot.
 
 Conforms to :data:`arnold.agent.adapters.BackendAdapter`
 (``Callable[[AgentRequest], AgentResult]``) and is a first-class peer of
@@ -12,8 +12,8 @@ The irreducible Claude context — tmux session, workspace-trust file
 (``_ensure_workspace_trusted``), ``ANTHROPIC_API_KEY=""`` subscription path,
 ``CLAUDE_CONFIG_DIR`` isolation, readiness handshake, paste-race handling and
 output parsing — all live inside
-``arnold_pipelines.megaplan.workers.shannon.run_shannon_step`` (and the
-``run_turn`` executor it drives).  This adapter calls ``run_shannon_step``
+``arnold_pipelines.megaplan.workers.shannon.run_claude_step`` (and the
+``run_turn`` executor it drives).  This adapter calls ``run_claude_step``
 exactly the way the existing ``MEGAPLAN_USE_AGENT_DISPATCHER`` closure
 (``_shannon_to_agent_result``) does, synthesizing only the minimal ephemeral
 one-shot context via :mod:`arnold.agent.adapters._oneshot`.
@@ -35,7 +35,7 @@ from arnold.agent.contracts import AgentRequest, AgentResult
 
 
 class ShannonAdapter:
-    """Adapts the real ``run_shannon_step`` worker into the ``BackendAdapter`` seam.
+    """Adapts the real ``run_claude_step`` worker into the ``BackendAdapter`` seam.
 
     Args:
         session_agent: ``"claude"`` routes the worker's Claude-specific session
@@ -59,10 +59,10 @@ class ShannonAdapter:
 
     def __call__(self, request: AgentRequest) -> AgentResult:
         # Lazy import: keep arnold.agent import-safe.
-        from arnold_pipelines.megaplan.workers.shannon import run_shannon_step
+        from arnold_pipelines.megaplan.workers.claude import run_claude_step
 
         with _oneshot.oneshot_context(request) as ctx:
-            worker_result = run_shannon_step(
+            worker_result = run_claude_step(
                 ctx["step"],
                 ctx["state"],
                 ctx["plan_dir"],
