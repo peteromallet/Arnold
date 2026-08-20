@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan._core import (
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
+    list_batch_artifacts,
     load_flag_registry,
     read_json,
 )
@@ -53,6 +54,47 @@ def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audienc
         return prompt
     return f"{anchor_block}\n\n{prompt}"
 COMPACT_REVIEW_MAX_CHANGED_FILES = 200
+
+
+def _reconcile_selection_authority_block(plan_dir: Path) -> str:
+    """Explain the authoritative completion contract for a reconcile review.
+
+    Reconcile execution is a read-only selection operation.  Its batch
+    envelope is deliberately not a generic task-execution report, so an empty
+    ``task_updates``/``sense_check_acknowledgments`` pair is not, by itself, a
+    missing-completion failure when the selection evidence is present.  Keep
+    this guidance conditional on the durable envelope so ordinary execute
+    reviews retain their strict per-task custody contract.
+    """
+    for batch_path in sorted(list_batch_artifacts(plan_dir)):
+        try:
+            payload = read_json(batch_path)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if "selected_shas" not in payload or not isinstance(
+            payload.get("verification_evidence"), dict
+        ):
+            continue
+        return textwrap.dedent(
+            """
+            Reconcile selection authority:
+            This is a read-only reconcile selector, not a generic task-edit
+            execution. The durable execute_batches/batch_*/tasks_*.json
+            selection envelope is authoritative completion evidence when it
+            contains both top-level `selected_shas` and
+            `verification_evidence`. Review the selected-SHA classification,
+            per-phase evidence, fail-closed notes, and deterministic checks in
+            that envelope. Do not create blocking rework solely because
+            generic `task_updates`, `sense_check_acknowledgments`, or
+            finalize task statuses are empty; those fields are not the
+            reconcile selector's completion contract. Create rework only for
+            a separate deterministic failure in the reconcile output or its
+            required evidence-preserving notes.
+            """
+        ).strip()
+    return ""
 
 
 def _review_subject(state: PlanState) -> CompletionSubject:
@@ -558,6 +600,7 @@ def compact_review_prompt(
         execution_audit_data,
         capabilities=projection_capabilities,
     )
+    reconcile_authority_block = _reconcile_selection_authority_block(plan_dir)
     base_ref = _milestone_diff_base(state)
     git_diff = collect_git_diff_patch(project_dir, base_ref=base_ref)
     changed_files = _changed_files_from_patch(git_diff)
@@ -602,6 +645,8 @@ def compact_review_prompt(
 
         Review execution context (`finalize.json` + `execution.json`, compact projection):
         {_truncate_prompt_block(json_dump(projected_review).strip(), limit=COMPACT_REVIEW_CONTEXT_MAX_CHARS)}
+
+        {reconcile_authority_block}
 
         {_execution_audit_block(execution_audit_data, capabilities=projection_capabilities)}
 
@@ -889,6 +934,7 @@ def single_check_review_prompt(
         context["execution_audit_data"],
         capabilities=projection_capabilities,
     )
+    reconcile_authority_block = _reconcile_selection_authority_block(plan_dir)
     audit_block = _execution_audit_block(
         context["execution_audit_data"],
         capabilities=projection_capabilities,
@@ -941,6 +987,8 @@ def single_check_review_prompt(
 
             Review execution context (`finalize.json` + `execution.json`, prompt projection only):
             {json_dump(projected_review).strip()}
+
+            {reconcile_authority_block}
 
             {audit_block}
 
@@ -1000,6 +1048,8 @@ def single_check_review_prompt(
 
         Review execution context (`finalize.json` + `execution.json`, prompt projection only):
         {json_dump(projected_review).strip()}
+
+        {reconcile_authority_block}
 
         {audit_block}
 
@@ -1095,6 +1145,8 @@ def parallel_criteria_review_prompt(
             Review execution context (`finalize.json` + `execution.json`, prompt projection only):
             {json_dump(projected_review).strip()}
 
+            {reconcile_authority_block}
+
             {audit_block}
 
             {_review_evidence_block(plan_dir)}
@@ -1142,6 +1194,8 @@ def parallel_criteria_review_prompt(
 
         Review execution context (`finalize.json` + `execution.json`, prompt projection only):
         {json_dump(projected_review).strip()}
+
+        {reconcile_authority_block}
 
         {audit_block}
 
@@ -1233,6 +1287,7 @@ def _review_prompt(
         else None,
         capabilities=projection_capabilities,
     )
+    reconcile_authority_block = _reconcile_selection_authority_block(plan_dir)
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
     north_star_closeout_block = _north_star_closeout_review_block(plan_dir)
@@ -1303,6 +1358,8 @@ def _review_prompt(
 
         Review execution context (`finalize.json` + `execution.json`, prompt projection only):
         {json_dump(projected_review).strip()}
+
+        {reconcile_authority_block}
 
         Plan metadata:
         {json_dump(latest_meta).strip()}
