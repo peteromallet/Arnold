@@ -233,7 +233,7 @@ def _raise_generic_openrouter_blocked(reason: str) -> None:
             "rerun with --hermes deepseek:<model>",
             "rerun with --hermes kimi:<model>",
             "rerun with --hermes mimo:<model>",
-            "rerun with --hermes xai:grok-4.5",
+            "rerun with --hermes xai:grok-4.6",
             "rerun with --agent claude / --agent codex / --agent shannon",
         ],
     )

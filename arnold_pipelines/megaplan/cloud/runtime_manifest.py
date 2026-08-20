@@ -35,6 +35,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import urllib.parse
@@ -47,6 +48,15 @@ from arnold_pipelines.megaplan.cloud.shadow_attestation import attest_target_con
 from arnold_pipelines.megaplan.cloud.runtime_provenance import (
     emit_runtime_manifest_cutover_rollback_receipt,
     verify_runtime_manifest_cutover_rollback_receipt,
+)
+# Codex fix 2026-08-17: dependency-generation proof carry-forward is now
+# CONDITIONAL — the proof must bind to the NEW commit's frozen dependency
+# spec (recomputed digest) and its interpreter/venv must still verify.
+# These are imported at module level so tests can monkeypatch them.
+from arnold_pipelines.megaplan.cloud.install_sync import (
+    GenerationError,
+    compute_venv_digest,
+    frozen_spec_sha256,
 )
 from arnold_pipelines.megaplan.types import CliError
 
@@ -91,6 +101,8 @@ RECEIPT_ALIASES_PROTECTED_STATE = "receipt_aliases_protected_state"
 RECEIPT_POST_VERIFY_FAILED = "receipt_post_verify_failed"
 
 _FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+_GIT_SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
 _VALID_STATES = frozenset({"active", "closed"})
 
@@ -174,6 +186,64 @@ def _require_keys(label: str, mapping: Any, required: tuple[str, ...]) -> None:
     missing = [key for key in required if key not in mapping]
     if missing:
         raise ManifestError(f"{label} missing required keys: {', '.join(missing)}")
+
+
+def _require_git_sha40(value: object, *, label: str) -> str:
+    """Shape-check *value* as a 40-char lowercase hex git commit SHA.
+
+    This is a pure shape check — it does NOT verify the object exists in any
+    repository.  It rejects the observed corruption pattern (41-char heads
+    built from a 10-char real prefix plus a fabricated tail) at the boundary
+    before any git lookup.
+    """
+    head = str(value or "").strip()
+    if not _GIT_SHA40.fullmatch(head):
+        raise ManifestError(
+            f"{label} must be a 40-char lowercase hex git SHA, got {value!r}"
+        )
+    return head
+
+
+def _require_resolvable_head(runtime_root: str | Path, head: str) -> str:
+    """Require *head* to be a 40-hex SHA that RESOLVES to that exact commit
+    in the git repository at *runtime_root*.
+
+    The equality check is deliberate: ``^{commit}`` must resolve to the exact
+    supplied commit ID, not merely peel some other object such as an
+    annotated tag.  Raises :class:`ManifestError` on shape failure, a missing
+    runtime root, or an unresolvable head — callers must treat that as a
+    hard refusal BEFORE any manifest/pointer write.
+    """
+    value = _require_git_sha40(head, label="head")
+    root_text = str(runtime_root or "").strip()
+    if not root_text:
+        raise ManifestError("runtime root is required to verify head")
+    root = Path(root_text).expanduser().resolve(strict=False)
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                f"{value}^{{commit}}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise ManifestError(
+            f"cannot verify head {value!r} in {root}: {exc}"
+        ) from exc
+    resolved = proc.stdout.strip() if proc.returncode == 0 else ""
+    if resolved != value:
+        raise ManifestError(
+            f"head {value!r} does not resolve to that commit in {root}"
+        )
+    return value
 
 
 def _parse_utc_timestamp(value: Any, label: str) -> datetime:
@@ -691,6 +761,43 @@ def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) ->
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        # Foreign-epic guard (occurrence 0a0ce24c3510 / 0513dbf3f069): the
+        # active pointer must NEVER be silently overwritten with a different
+        # epic's manifest.  A caller whose ARNOLD_RUNTIME_MANIFEST env (or the
+        # absence of it) resolves to the shared default pointer while
+        # advancing ANOTHER epic's manifest would clobber the active epic's
+        # generation (astrid-first's gen-78 advance overwrote the
+        # megaplan-maintenance pointer at 02:07:42Z with no retention because
+        # 78 < 119 skipped the rollback copy).  A ``compatibility_only``
+        # pointer is non-authoritative telemetry (G2) and may be replaced;
+        # an invalid pointer is left to ``_retain_previous_generation``'s
+        # existing fail-closed check.
+        if pointer.exists():
+            try:
+                _current_pointer_manifest = load_manifest(pointer)
+            except ManifestError:
+                _current_pointer_manifest = None
+            if (
+                _current_pointer_manifest is not None
+                and not _current_pointer_manifest.compatibility_only
+            ):
+                _current_epic_branch = str(
+                    (_current_pointer_manifest.epic or {}).get("branch") or ""
+                )
+                _incoming_epic_branch = str(
+                    (manifest.epic or {}).get("branch") or ""
+                )
+                if (
+                    _current_epic_branch
+                    and _incoming_epic_branch
+                    and _current_epic_branch != _incoming_epic_branch
+                ):
+                    raise ManifestError(
+                        "active pointer holds a different epic's manifest "
+                        f"({_current_epic_branch!r}); refusing to overwrite it "
+                        f"with {_incoming_epic_branch!r} "
+                        "(fail-closed foreign-epic pointer guard)"
+                    )
         _retain_previous_generation(pointer, manifest)
         _atomic_write(pointer, _write_payload(manifest, pointer, pointer_write=True))
     finally:
@@ -799,6 +906,21 @@ def advance_generation(
             "dependency_generation proof; unknown dependency state blocks "
             "publication (T-0301)"
         )
+    # Codex fix 2026-08-17: conditional dependency-proof carry-forward. The
+    # proposed OR carried proof must bind to the NEW commit's frozen
+    # dependency spec — carrying a proof merely because it was valid for the
+    # previous source commit is a proof-substitution hole. Recompute the
+    # frozen-spec digest from the runtime root and verify the interpreter path
+    # and venv digest still resolve to that generation.
+    _verify_dependency_generation_binding(
+        proof,
+        runtime_root=str(manifest.epic.get("runtime_root") or ""),
+    )
+    # Git-object head guard: the new commit must be a 40-hex SHA that
+    # RESOLVES to that exact commit in the runtime root.  This rejects the
+    # recurring fake-head corruption (10-char real prefix + fabricated tail)
+    # BEFORE any promotion record or pointer write (codex fix 2026-08-17).
+    _require_resolvable_head(manifest.epic.get("runtime_root"), new_commit)
     previous_commit = str(manifest.epic.get("expected_head", ""))
     now = _utc_now()
     promotions = list(manifest.promotions) + [
@@ -821,6 +943,67 @@ def advance_generation(
         promotions=promotions,
         timestamps=dict(manifest.timestamps, updated=now),
     )
+
+
+def _verify_dependency_generation_binding(
+    proof: Mapping[str, Any],
+    *,
+    runtime_root: str,
+) -> None:
+    """Fail-closed proof→commit binding (Codex fix 2026-08-17).
+
+    Recompute the frozen dependency-spec digest from *runtime_root* (the
+    checkout AT the new commit) and require the proposed/carried proof to bind
+    to it: ``proof["frozen_spec_sha256"] == candidate``, the proof's
+    ``interpreter_path`` must live inside the content-addressed generation
+    directory named by that digest, and the recomputed ``venv_digest`` must
+    match the recorded one.  Any mismatch is :class:`ManifestError` — a proof
+    valid only for a previous commit is never carried forward.
+    """
+    if not runtime_root:
+        raise ManifestError(
+            "advance_generation refused: epic.runtime_root is empty; cannot "
+            "verify the dependency-generation binding"
+        )
+    try:
+        candidate = frozen_spec_sha256(runtime_root)
+    except GenerationError as exc:
+        raise ManifestError(
+            "advance_generation refused: cannot compute the frozen dependency-"
+            f"spec digest at {runtime_root}: {exc}"
+        ) from exc
+    if str(proof.get("frozen_spec_sha256") or "") != candidate:
+        raise ManifestError(
+            "advance_generation refused: dependency-generation proof is bound "
+            f"to frozen_spec_sha256 {proof.get('frozen_spec_sha256')!r} but the "
+            f"new commit's frozen spec digest is {candidate!r}; rebuild or "
+            "select the matching content-addressed generation before advancing"
+        )
+    interpreter = Path(str(proof.get("interpreter_path") or "")).expanduser()
+    generation_dir = interpreter.resolve(strict=False).parent.parent
+    if generation_dir.name != candidate:
+        raise ManifestError(
+            "advance_generation refused: dependency-generation "
+            f"interpreter_path {interpreter} does not live inside the "
+            f"content-addressed generation dir named {candidate!r}"
+        )
+    if not interpreter.is_file():
+        raise ManifestError(
+            "advance_generation refused: dependency-generation interpreter "
+            f"is missing: {interpreter}"
+        )
+    try:
+        observed = compute_venv_digest(interpreter)
+    except Exception as exc:  # noqa: BLE001 - any failure blocks publication
+        raise ManifestError(
+            f"advance_generation refused: cannot recompute venv_digest: {exc}"
+        ) from exc
+    if observed != str(proof.get("venv_digest") or ""):
+        raise ManifestError(
+            "advance_generation refused: dependency-generation venv_digest "
+            f"mismatch (recorded {proof.get('venv_digest')!r}, observed "
+            f"{observed!r}); the immutable generation was modified or rebuilt"
+        )
 
 
 def cutover_runtime_manifest(
@@ -908,6 +1091,13 @@ def cutover_runtime_manifest(
             "cutover refused: from-expected-head does not match "
             "manifest epic.expected_head"
         )
+    # Git-object head guard: the TARGET head must be a 40-hex SHA that
+    # RESOLVES to that exact commit in the TARGET runtime root.  This rejects
+    # the recurring fake-head corruption (10-char real prefix + fabricated
+    # tail) BEFORE any promotion record or manifest write (codex fix
+    # 2026-08-17).  The FROM side is CAS-guarded above by equality; only the
+    # TO side is git-verified (a from-side fake head is historical evidence).
+    _require_resolvable_head(to_runtime_root, to_expected_head)
     now = _utc_now()
     promotions = list(manifest.promotions) + [
         {
@@ -1001,9 +1191,21 @@ def set_state(manifest: RuntimeManifest, state: str) -> RuntimeManifest:
 def append_promotion(
     manifest: RuntimeManifest, record: dict[str, Any]
 ) -> RuntimeManifest:
-    """Return a NEW manifest with *record* appended to ``promotions``."""
+    """Return a NEW manifest with *record* appended to ``promotions``.
+
+    Present, non-empty commit fields (``previous_commit``, ``from_sha``,
+    ``to_sha``) are shape-checked as 40-hex git SHAs; a record that omits
+    them (or leaves them empty) is still accepted, and no git lookup is
+    performed here — a journal record can legitimately describe a commit in
+    a source repository other than the manifest's current runtime root
+    (codex fix 2026-08-17).
+    """
     if not isinstance(record, dict):
         raise ManifestError("promotion record must be an object")
+    for key in ("previous_commit", "from_sha", "to_sha"):
+        value = record.get(key)
+        if value not in (None, ""):
+            _require_git_sha40(value, label=key)
     return _reconstruct(manifest, promotions=list(manifest.promotions) + [record])
 
 
@@ -1450,6 +1652,36 @@ def apply_runtime_manifest_cutover(
                 f"generation mismatch: expected {expect_generation}, "
                 f"observed {manifest.generation}",
             )
+        # Exclusive mutable-runtime-root ownership (occurrence 0a0ce24c3510):
+        # refuse a cutover into a runtime root already claimed by another
+        # ACTIVE epic's manifest. The shared-root layout kills worker dispatch
+        # on the shared checkout's HEAD drift (astrid-first drive2 02:58:33Z,
+        # drive3 03:13:17Z). Legacy shared bindings stay recoverable: the owner
+        # cuts over to a dedicated per-epic worktree first; the same branch
+        # rebinding its own root is always allowed. Typed
+        # ``runtime_root_ownership_conflict``, zero mutation.
+        try:
+            from arnold_pipelines.megaplan.cloud.runtime_root_registry import (
+                assert_runtime_root_claimable,
+            )
+
+            owners = assert_runtime_root_claimable(
+                to_runtime_root,
+                str((manifest.epic or {}).get("branch") or ""),
+                target.parent,
+                exclude_manifest=target,
+            )
+            legacy_shared = [
+                root for root, entries in owners.items() if len(entries) > 1
+            ]
+            if legacy_shared:
+                log.warning(
+                    "runtime-root legacy inventory: shared mutable roots %s "
+                    "(recommended: dedicated per-epic worktrees)",
+                    sorted(legacy_shared),
+                )
+        except CliError as exc:
+            raise
         # The runtime identity/provenance receipt is verified BEFORE any write
         # (the verifier re-runs the receipted interpreter; a stale or forged
         # receipt refuses here with zero mutation).
@@ -1696,6 +1928,15 @@ def main(argv: list[str] | None = None) -> int:
     adv_p.add_argument(
         "--reason", required=True, help="reason recorded in the rollback record"
     )
+    adv_p.add_argument(
+        "--dependency-generation",
+        help=(
+            "the new commit's content-addressed dependency-generation proof "
+            "(inline JSON or @FILE). When omitted the manifest's current "
+            "complete proof is validated against the new commit's frozen spec "
+            "and carried forward ONLY if it binds (T-0301/Codex 2026-08-17)"
+        ),
+    )
     cut_p = sub.add_parser(
         "cutover",
         help=(
@@ -1772,7 +2013,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(updated.to_dict(), sort_keys=True))
         elif args.action == "advance_generation":
             manifest = load_manifest(args.path)
-            advanced = advance_generation(manifest, args.new_commit, reason=args.reason)
+            advanced = advance_generation(
+                manifest,
+                args.new_commit,
+                reason=args.reason,
+                dependency_generation=(
+                    _parse_json_record(args.dependency_generation)
+                    if args.dependency_generation
+                    else None
+                ),
+            )
             pointer = active_manifest_path()
             if Path(args.path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
                 # The caller passed the pointer itself — the switch IS the write.

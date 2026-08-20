@@ -1,3 +1,5 @@
+> **DEPRECATED — NON-CANONICAL BRIEF.** Superseded by [`m1-containment-and-truth.md`](m1-containment-and-truth.md). This July audit copy is retained only for historical traceability; its six-hour/model-pin and rank-based scope must not override the canonical containment boundary or current M2 handoff.
+
 # M1 — Containment and truthful control
 
 ## Outcome
@@ -35,4 +37,3 @@ Ship the containment release described in the July 10 audit: every dispatched ac
 ## Prep direction
 
 Trace production adapters and wrapper subprocess boundaries using real modules. Identify concurrent changes before editing and preserve unrelated work.
-

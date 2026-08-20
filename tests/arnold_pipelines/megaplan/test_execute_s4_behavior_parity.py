@@ -8,6 +8,8 @@ with the recorded baseline and harness-level post-execute check.
 from __future__ import annotations
 
 import copy
+import json
+import types as _types
 from pathlib import Path
 
 from arnold_pipelines.megaplan._core import (
@@ -471,3 +473,457 @@ def test_split_high_complexity_batches_handles_empty_input() -> None:
 
     assert split_high_complexity_batches([], {}) == []
     assert split_high_complexity_batches([], {"tasks": []}) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Cross-session blocked-task semantics (occurrence 0ae19cc17afd, shipped in
+# b2aaab3f). A validation_blocked row (typed disposition, no accepted terminal
+# authority) is retryable: the NEXT invocation resets it to pending, and only
+# an accepted pass marks it done (never skipped, never adopted without
+# authority). A real failure without an accepted envelope stays rerunnable and
+# never enters completed IDs.
+# ═══════════════════════════════════════════════════════════════════════════
+
+import argparse as _s4_argparse  # noqa: F401  (kept for symmetry with other suites)
+
+from arnold_pipelines.megaplan.execute.batch import (
+    _has_genuine_task_level_blocker,
+    _reset_blocked_tasks_to_pending,
+)
+
+
+def _s4_blocked_task(task_id: str, *, blocker_kind: str) -> dict[str, object]:
+    task = _task(task_id, status="blocked")
+    task["blocked_reason"] = blocker_kind
+    task["recorded_invocation_id"] = f"inv-{task_id}"
+    return task
+
+
+def test_cross_session_block_pass_reruns_once_then_authority_skips() -> None:
+    """Next invocation resets the blocked row; accepted pass marks it done."""
+    tasks = [
+        _s4_blocked_task("T1", blocker_kind="validation_blocked"),
+        _task("T2", depends_on=["T1"]),
+        _task("T3"),
+    ]
+    finalize_data = {"tasks": tasks}
+
+    # Validation-blocked rows are retryable, not genuine blockers.
+    assert _has_genuine_task_level_blocker(tasks[0]) is False
+
+    # Fresh session: reset the blocked row back to pending (cross-session
+    # retry path). T2 depends on T1 so it stays pending; T3 is independent.
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1"]
+    assert tasks[0]["status"] == "pending"
+    assert tasks[0].get("recorded_invocation_id") is None
+
+    # The fresh run passes: T1 gets accepted authority and is done. A later
+    # resume derives T1 completed from authority and never re-dispatches it.
+    tasks[0]["status"] = "done"
+    completed_ids = {"T1"}
+    pending_tasks = [task for task in tasks if task.get("status") == "pending"]
+    batches = compute_task_batches(pending_tasks, completed_ids=completed_ids)
+    assert [tid for batch in batches for tid in batch] == ["T2", "T3"]
+    assert "T1" not in {tid for batch in batches for tid in batch}
+
+    # T1 is done with accepted authority: the recompute path must not re-add it
+    # to a runnable frontier, and it is not part of any blocked closure.
+    assert tasks[0]["status"] == "done"
+    assert tasks[0]["id"] not in {tid for batch in batches for tid in batch}
+
+
+def test_cross_session_real_fail_is_not_skipped_or_adopted() -> None:
+    """No accepted envelope: failed row is rerunnable next session, never adopted."""
+    tasks = [
+        _s4_blocked_task("T1", blocker_kind="validation_blocked"),
+        _task("T2", depends_on=["T1"]),
+    ]
+    finalize_data = {"tasks": tasks}
+
+    # Fresh session resets the failed row (no accepted envelope exists).
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1"]
+    assert tasks[0]["status"] == "pending"
+
+    # No accepted terminal authority: T1 never enters completed IDs, so the
+    # initial frontier re-derives it (never skipped) and it stays pending.
+    completed_ids: set[str] = set()
+    batches = compute_task_batches(tasks, completed_ids=completed_ids)
+    assert [tid for batch in batches for tid in batch] == ["T1", "T2"]
+    assert "T1" not in completed_ids
+    assert tasks[0]["status"] == "pending"  # rerunnable, not skipped/adopted
+
+
+def _budget_blocked_task(task_id: str) -> dict[str, object]:
+    task = _task(task_id, status="blocked")
+    task["blocked_reason"] = "task_test_budget_exhausted"
+    task["executor_notes"] = (
+        "work done [harness] task_test_budget_exhausted: declared test "
+        "timeout total 240s exceeds max_seconds=120"
+    )
+    task["files_changed"] = [f"{task_id}.py"]
+    task["commands_run"] = [
+        "timeout 120 pytest tests/test_t1.py",
+        "timeout 120 pytest tests/test_t1.py",
+    ]
+    return task
+
+
+def test_budget_blocked_row_is_not_adopted_and_resets_on_fresh_retry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Occurrence 4c0190500877: the merge admission gate's budget block cannot
+    be overridden by accepted worker authority.
+
+    ``_adopt_authority_completed_blocked_tasks`` must leave the budget-blocked
+    row ``blocked`` even when the kernel authority reports it completed, and
+    ``--retry-blocked-tasks`` must reset it to ``pending`` (it is removed from
+    the authority-completed exclusion so a fresh compliant attempt runs).
+    """
+    from arnold_pipelines.megaplan.execute.batch import (
+        _adopt_authority_completed_blocked_tasks,
+        _is_task_test_budget_blocked,
+    )
+
+    budget_task = _budget_blocked_task("T1")
+    generic_blocked = _s4_blocked_task("T2", blocker_kind="worker_abort")
+    pending_lag = _task("T3", status="pending")
+
+    assert _is_task_test_budget_blocked(budget_task)
+    assert not _is_task_test_budget_blocked(generic_blocked)
+    assert not _is_task_test_budget_blocked(pending_lag)
+
+    finalize_data = {"tasks": [budget_task, generic_blocked, pending_lag]}
+    # Kernel authority says ALL THREE are dependency-closed completed; the
+    # scheduler also records satisfied decisions for each (the adopt gate
+    # requires the per-task decision, not just membership in completed_ids).
+    def _fake_completed(tasks, **kwargs):
+        decisions = kwargs.get("decisions")
+        if decisions is not None:
+            for tid in ("T1", "T2", "T3"):
+                decisions[tid] = _types.SimpleNamespace(satisfied=True)
+        return {"T1", "T2", "T3"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._scheduler_completed_ids_for_tasks",
+        _fake_completed,
+    )
+    state = {"config": {"mode": "code", "project_dir": str(tmp_path)}}
+    adopted = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    # Generic blocked + pending adopt-miss rows promote; the budget row stays.
+    assert adopted == ["T2", "T3"]
+    by_id = {task["id"]: task for task in finalize_data["tasks"]}
+    assert by_id["T1"]["status"] == "blocked"
+    assert "task_test_budget_exhausted" in by_id["T1"]["executor_notes"]
+    assert by_id["T2"]["status"] == "done"
+    assert by_id["T3"]["status"] == "done"
+
+    # Fresh --retry-blocked-tasks partition: T1 is NOT authority-completed for
+    # the reset (its budget block removed it from the exclusion), so it resets.
+    reset_ids = _reset_blocked_tasks_to_pending(
+        finalize_data,
+        exclude_task_ids={"T2", "T3"},
+    )
+    assert reset_ids == ["T1"]
+    assert by_id["T1"]["status"] == "pending"
+    assert by_id["T1"]["executor_notes"] == ""
+    assert by_id["T1"]["files_changed"] == []
+
+
+def test_budget_identity_survives_retry_reset_and_blocks_adoption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 0513dbf3f069: the --retry-blocked-tasks reset (which clears
+    executor_notes/files_changed/commands_run) must NOT erase the test-budget
+    block identity, or _adopt_authority_completed_blocked_tasks re-promotes the
+    authority-completed row to done WITHOUT evidence and the quality gate
+    re-blocks forever.
+
+    The merge gate now stamps a durable ``task_test_budget_exhausted`` field
+    on both the entry and the target row; the retry reset preserves it; and
+    ``_is_task_test_budget_blocked`` recognizes the durable field even when the
+    row is pending, so the adopt gate keeps excluding the row until a fresh
+    compliant attempt passes.
+    """
+    from arnold_pipelines.megaplan.execute.batch import (
+        _adopt_authority_completed_blocked_tasks,
+        _is_task_test_budget_blocked,
+        _reset_blocked_tasks_to_pending,
+    )
+    from arnold_pipelines.megaplan.execute.batch import (
+        _scheduler_completed_ids_for_tasks as _real_scheduler_completed_ids,
+    )
+
+    budget_task = _budget_blocked_task("T1")
+    budget_task["task_test_budget_exhausted"] = (
+        "task_test_budget_exhausted: declared test timeout total 240s exceeds max_seconds=120"
+    )
+    finalize_data = {"tasks": [budget_task]}
+    state = {"config": {"mode": "code", "project_dir": str(tmp_path)}}
+
+    def _fake_completed(tasks, **kwargs):
+        decisions = kwargs.get("decisions")
+        if decisions is not None:
+            decisions["T1"] = _types.SimpleNamespace(satisfied=True)
+        return {"T1"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._scheduler_completed_ids_for_tasks",
+        _fake_completed,
+    )
+
+    # retry reset: blocked -> pending, notes/evidence cleared, durable field KEPT
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1"]
+    by_id = {task["id"]: task for task in finalize_data["tasks"]}
+    assert by_id["T1"]["status"] == "pending"
+    assert by_id["T1"]["executor_notes"] == ""
+    assert by_id["T1"]["files_changed"] == []
+    assert by_id["T1"]["task_test_budget_exhausted"]
+
+    # budget identity survives the reset -> adopt gate excludes the row
+    assert _is_task_test_budget_blocked(by_id["T1"])
+    adopted = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    assert adopted == []
+    assert by_id["T1"]["status"] == "pending"  # NOT re-promoted to done-null
+    assert by_id["T1"]["files_changed"] == []
+
+    # The shared completed-ids reader must ALSO exclude the budget row, or the
+    # planner drops it from the pending frontier and the reducer declares a
+    # false SUCCESS without a compliant re-run (observed at 03:09Z: phase_result
+    # success while finalize rows were still budget-blocked, no new batch
+    # artifacts). Patch the INNER reader to return the row as authority-complete
+    # and verify the outer scheduler reader strips the budget-gated row.
+    from arnold_pipelines.megaplan.execute.batch import _scheduler_completed_ids_for_tasks
+
+    def _inner_completed(*_args, **_kwargs):
+        return {"T1"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch.effective_execute_completed_task_ids",
+        _inner_completed,
+    )
+    completed_ids = _real_scheduler_completed_ids(
+        finalize_data["tasks"],
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    assert "T1" not in completed_ids
+
+
+def test_contradictory_done_budget_row_resets_on_retry() -> None:
+    """Occurrence 0a0ce24c3510: a DONE row that still carries the durable
+    budget-block identity with NO admitted evidence is a state no valid flow
+    can produce (the merge gate stamps the field only on blocked/pending rows,
+    the adopt helper pops it on promote, and a compliant attempt produces
+    evidence). It arises when adopt runs before the proven-artifact replay
+    stamps the envelope identity into the row, promoting the budget-gated row
+    to done without evidence and wedging the quality gate. The retry reset
+    must return exactly those contradictory rows to the runnable frontier;
+    done rows WITH evidence (legitimately complete) and done rows without the
+    budget flag must never be reset.
+    """
+    from arnold_pipelines.megaplan.execute.batch import _reset_blocked_tasks_to_pending
+
+    contradictory = _task("T1", status="done")
+    contradictory["task_test_budget_exhausted"] = (
+        "task_test_budget_exhausted: declared test timeout total 240s exceeds "
+        "max_seconds=120"
+    )
+    contradictory["files_changed"] = []
+    contradictory["commands_run"] = []
+    legit_done = _task("T2", status="done")
+    legit_done["files_changed"] = ["astrid/packs/shots/cli.py"]
+    legit_done["commands_run"] = ["timeout 120 python3 -m pytest tests -q"]
+    plain_done = _task("T3", status="done")
+    blocked = _task("T4", status="blocked")
+
+    finalize_data = {"tasks": [contradictory, legit_done, plain_done, blocked]}
+    reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+    assert reset_ids == ["T1", "T4"]
+    by_id = {task["id"]: task for task in finalize_data["tasks"]}
+    assert by_id["T1"]["status"] == "pending"
+    assert by_id["T1"]["task_test_budget_exhausted"]  # identity survives reset
+    assert by_id["T1"]["files_changed"] == []
+    assert by_id["T1"]["commands_run"] == []
+    assert by_id["T2"]["status"] == "done"  # evidence present -> untouched
+    assert by_id["T2"]["files_changed"] == ["astrid/packs/shots/cli.py"]
+    assert by_id["T3"]["status"] == "done"  # no budget flag -> untouched
+    assert by_id["T4"]["status"] == "pending"  # ordinary blocked reset
+
+
+def test_envelope_budget_identity_blocks_adoption_before_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 0a0ce24c3510 (adopt-before-replay): the adopt gate must
+    exclude a row whose durable budget identity lives ONLY in its proven batch
+    envelope, even when the finalize row has not yet been stamped. Without
+    this, a budget-gated row is promoted to done without evidence and the
+    quality gate re-blocks forever.
+    """
+    from arnold_pipelines.megaplan.execute.batch import (
+        _adopt_authority_completed_blocked_tasks,
+    )
+
+    # A blocked row whose row-level fields carry NO budget identity...
+    budget_task = _budget_blocked_task("T1")
+    budget_task.pop("task_test_budget_exhausted", None)
+    budget_task["executor_notes"] = ""
+    budget_task["blocked_reason"] = ""
+
+    # ...but whose proven batch envelope carries the durable field (the merge
+    # gate stamps it on the entry; the replay would later propagate it).
+    envelope = {
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "blocked",
+                "task_test_budget_exhausted": (
+                    "task_test_budget_exhausted: declared test timeout total "
+                    "240s exceeds max_seconds=120"
+                ),
+            }
+        ]
+    }
+    batch_dir = tmp_path / "execute_batches" / "batch_1"
+    batch_dir.mkdir(parents=True)
+    (batch_dir / "tasks_aaaabbbbcccc.json").write_text(
+        json.dumps(envelope), encoding="utf-8"
+    )
+
+    finalize_data = {"tasks": [budget_task]}
+    state = {"config": {"mode": "code", "project_dir": str(tmp_path)}}
+
+    def _fake_completed(tasks, **kwargs):
+        decisions = kwargs.get("decisions")
+        if decisions is not None:
+            decisions["T1"] = _types.SimpleNamespace(satisfied=True)
+        return {"T1"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._scheduler_completed_ids_for_tasks",
+        _fake_completed,
+    )
+    adopted = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=tmp_path,
+        root=tmp_path,
+        state=state,
+    )
+    assert adopted == []
+    assert finalize_data["tasks"][0]["status"] == "blocked"
+
+
+def test_partial_failure_resume_reruns_contradictory_done_budget_rows() -> None:
+    """Occurrence 0a0ce24c3510: the partial-failure resume partition must NOT
+    preserve a done row that carries the durable budget-block identity with no
+    admitted evidence (the adopt-before-replay artifact). Such rows are
+    rerunnable — returning them to the frontier for a fresh compliant attempt —
+    while genuinely-done rows (with evidence) stay preserved.
+    """
+    from arnold_pipelines.megaplan.execute.policy import (
+        ResumeOutcome,
+        resolve_partial_failure_resume,
+    )
+
+    contradictory = _task("T1", status="done")
+    contradictory["task_test_budget_exhausted"] = (
+        "task_test_budget_exhausted: declared test timeout total 240s exceeds "
+        "max_seconds=120"
+    )
+    contradictory["files_changed"] = []
+    contradictory["commands_run"] = []
+    legit_done = _task("T2", status="done")
+    legit_done["files_changed"] = ["astrid/packs/shots/cli.py"]
+    legit_done["commands_run"] = ["timeout 120 python3 -m pytest tests -q"]
+    blocked = _task("T3", status="blocked")
+
+    decision = resolve_partial_failure_resume(
+        [contradictory, legit_done, blocked],
+        # T1 is authority-completed yet must still rerun (contradictory class
+        # beats the authority-preserve rule); T2 is authority-completed and
+        # preserved; T3 is not authority-completed and reruns as blocked.
+        completed_task_ids={"T1", "T2"},
+    )
+    assert decision.outcome is ResumeOutcome.RESUME
+    assert decision.rerun_task_ids == ("T1", "T3")
+    assert decision.preserved_task_ids == ("T2",)
+
+
+def test_count_execute_tracking_sees_acks_in_non_preferred_batch_envelope(
+    tmp_path: Path,
+) -> None:
+    """Occurrence 047aff60f06c: the sense-check ack scan must read ALL batch
+    envelopes, not only the preferred attempt per reused batch index.
+
+    In the m3 plan, ``execute_batches/batch_1`` holds 7 distinct task
+    envelopes (the index was reused across dispatch waves). The SC1/SC7
+    acknowledgments live in a non-preferred envelope
+    (``tasks_c47c2a07ab05.json``, fence 2) while the preferred fence-5
+    envelope carries only SC12. ``_count_execute_tracking`` scanned batch
+    artifacts via ``list_batch_artifacts`` (preferred-only), so SC1/SC7 were
+    invisible and execute completion blocked with "2/18 sense checks have no
+    executor acknowledgment" (blocked_by_quality), keeping the chain guard in
+    authority_divergence. The ack scan is an existence set-union, so reading
+    all envelopes is safe (no double counting).
+    """
+    from arnold_pipelines.megaplan.execute.batch import _count_execute_tracking
+
+    finalize_data = {
+        "tasks": [_task("T1", status="done"), _task("T7", status="done")],
+        "sense_checks": [
+            {"id": "SC1", "task_id": "T1"},
+            {"id": "SC7", "task_id": "T7"},
+            {"id": "SC12", "task_id": "T12"},
+        ],
+    }
+    batch_dir = tmp_path / "execute_batches" / "batch_1"
+    batch_dir.mkdir(parents=True)
+    # Preferred attempt (highest fence token) carries only SC12.
+    (batch_dir / "tasks_preferred.json").write_text(
+        json.dumps(
+            {
+                "dispatch_identity": {"fence_token": 5},
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC12", "executor_note": "verified"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Non-preferred attempt carries SC1 + SC7 — hidden by preferred-only scan.
+    (batch_dir / "tasks_c47c2a07ab05.json").write_text(
+        json.dumps(
+            {
+                "dispatch_identity": {"fence_token": 2},
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC1", "executor_note": "verified"},
+                    {"sense_check_id": "SC7", "executor_note": "verified"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    tracked, total_tasks, acked, total_checks = _count_execute_tracking(
+        finalize_data,
+        active_task_ids={"T1", "T7"},
+        active_sense_check_ids={"SC1", "SC7", "SC12"},
+        plan_dir=tmp_path,
+    )
+    assert tracked == total_tasks == 2
+    assert acked == total_checks == 3

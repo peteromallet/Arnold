@@ -46,7 +46,6 @@ ZERO_RECOVERY_PROCESS_TOKENS = (
     "arnold-watchdog",
     "arnold-heartbeat",
     "arnold-progress-auditor",
-    "arnold-repair-trigger",
     "megaplan resident discord",
 )
 

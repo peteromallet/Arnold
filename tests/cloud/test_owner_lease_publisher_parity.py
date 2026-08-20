@@ -198,7 +198,7 @@ def test_recovery_launchers_preserve_the_managed_owner_contract() -> None:
     wrappers = root / "arnold_pipelines/megaplan/cloud/wrappers"
     discover = (wrappers / "arnold-cloud-discover").read_text(encoding="utf-8")
     watchdog = (wrappers / "arnold-watchdog").read_text(encoding="utf-8")
-    repair_loop = (wrappers / "arnold-repair-loop").read_text(encoding="utf-8")
+    repair_loop = (wrappers / "arnold-babysitter").read_text(encoding="utf-8")
     chain_wrapper = (wrappers / "arnold-chain").read_text(encoding="utf-8")
 
     # Discovery persists commands that may be replayed independently, so the
@@ -207,8 +207,8 @@ def test_recovery_launchers_preserve_the_managed_owner_contract() -> None:
     assert '_managed_route(session, "plan")' in discover
     assert '_managed_route(session, "chain")' in discover
 
-    # Mechanical recovery executes stored commands below a supervisor.  Both
-    # recovery owners must clear inherited ownership and bind the replacement
+    # Mechanical recovery executes stored commands below a supervisor.  The
+    # recovery owner must clear inherited ownership and bind the replacement
     # to the exact marker/session/kind before exec.
     required = (
         "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START",
@@ -216,7 +216,7 @@ def test_recovery_launchers_preserve_the_managed_owner_contract() -> None:
         "export ARNOLD_REPAIR_SESSION=",
         "export ARNOLD_REPAIR_RUN_KIND=",
     )
-    for source in (watchdog, repair_loop):
+    for source in (watchdog,):
         for fragment in required:
             assert fragment in source
 
@@ -232,7 +232,6 @@ def test_recovery_launchers_preserve_the_managed_owner_contract() -> None:
         "ARNOLD_LIVENESS_OWNER_PROCESS_START"
     )
     assert watchdog.count(hot_env_fence) >= 2
-    assert hot_env_fence in repair_loop
     # arnold-chain loads the (credentials-only) hot env once at wrapper top,
     # AFTER pinning ARNOLD_RUNTIME_MANIFEST and BEFORE the mandatory manifest
     # gate / owner-lease unset at each launch boundary (G2 finding 1): the
@@ -253,7 +252,7 @@ def test_recovery_launchers_preserve_the_managed_owner_contract() -> None:
         "arnold-chain",
         "arnold-cloud-discover",
         "arnold-watchdog",
-        "arnold-repair-loop",
+        "arnold-babysitter",
     ):
         parsed = subprocess.run(
             ["bash", "-n", str(wrappers / wrapper)],

@@ -233,9 +233,9 @@ GLOBAL_WATCHDOG_SWEEP_ENABLED="${MEGAPLAN_AUDIT_GLOBAL_WATCHDOG_SWEEP_ENABLED:-0
 RECOVERY_SYNC_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_SYNC_ENABLED:-0}"
 WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
 # Step 51: the legacy REPAIR_TRIGGER_BIN argv handoff has been retired.  The
-# progress-auditor wrapper repair-trigger handoff now routes through the shared
-# repair-delegation shim (see the L3 escalation controller below); the
-# arnold-repair-trigger binary is no longer plumbed by this wrapper.
+# progress-auditor wrapper repair handoff now routes through the shared
+# repair-delegation shim (see the L3 escalation controller below); no legacy
+# trigger binary is plumbed by this wrapper.
 ESCALATION_STATE_ROOT="${MEGAPLAN_AUDIT_ESCALATION_STATE_ROOT:-/workspace/.megaplan/progress-auditor-escalations}"
 
 # Legacy direct DeepSeek launcher contract retained here for watchdog contract
@@ -907,15 +907,12 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import classify_r
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     bounded_auditor_projection,
 )
-try:
-    from arnold_pipelines.megaplan.cloud.repair_investigation import summarize_investigation_artifacts
-except ImportError:
-    def summarize_investigation_artifacts(_repair_data, *, field="investigation"):
-        return {
-            "required": True,
-            "status": "invalid",
-            "reason": f"installed runtime lacks shared {field} evidence semantics",
-        }
+def summarize_investigation_artifacts(_repair_data, *, field="investigation"):
+    return {
+        "required": True,
+        "status": "invalid",
+        "reason": f"installed runtime lacks shared {field} evidence semantics",
+    }
 try:
     from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
         inspect_existing_ownership,
@@ -1024,10 +1021,7 @@ REPAIR_GOAL_MARKER_DIR = pathlib.Path(
 COMMIT_SOURCE_PATHS = (
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
-    "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
-    "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
     "arnold_pipelines/megaplan/cloud/meta_repair.py",
-    "arnold_pipelines/megaplan/cloud/meta_repair_policy.py",
     "arnold_pipelines/megaplan/cloud/repair_contract.py",
 )
 
@@ -6266,11 +6260,11 @@ Return one of:
 Evaluate these questions in order:
 
 0. Superfixer health / repair-the-repairer
-- First audit the repair system itself. The watchdog + repair loop + repair trigger
-  are the primary machine that should fix unintended stops.
+- First audit the repair system itself. The watchdog + babysitter are the
+  primary machine that should fix unintended stops.
 - Start by writing a short "pipeline friction map": what looks slow, repetitive,
-  disabled, under-instrumented, or misrouted across watchdog, repair-trigger,
-  immediate repair, meta-repair, and this auditor.
+  disabled, under-instrumented, or misrouted across watchdog, the babysitter,
+  immediate repair, and this auditor.
 - Treat all repair/autofix systems as intended to be enabled by default. If an
   env var, wrapper default, service unit, or hot-env setting disables immediate
   repair, meta-repair, auditor autofix, or commit/push persistence, classify
@@ -6288,7 +6282,7 @@ Evaluate these questions in order:
   any explicit log paths cited in repair-data attempts or meta records.
 - If the evidence shows an unintended stop/stall/spec/workspace/chain-health
   failure and there is no active or recent repair attempt, classify that as an
-  Arnold superfixer bug. Fix the watchdog/repair-trigger/auditor source in
+  Arnold superfixer bug. Fix the watchdog/babysitter/auditor source in
   $ARNOLD_SRC on editible-install; do not hand-unblock only this run.
 - If repair-data shows repeated failed iterations, repair_timeout,
   recurring_retry_pending, a dead provider/auth path, an argument-size crash,
@@ -6296,11 +6290,11 @@ Evaluate these questions in order:
   classify that as a repairer failure unless the issue is genuinely human-only.
   Fix the repairer at root in $ARNOLD_SRC and return FIXED <commit-sha>.
 - If ordinary repair failed, timed out, produced no output, or repeated the same
-  diagnosis, verify whether meta-repair should have launched. Then verify whether
-  arnold-meta-repair-loop actually launched, read its brief, produced a verdict,
-  delegated subagents, wrote a meta record, committed/pushed when allowed, and
-  retriggered ordinary repair. If any of those did not happen, classify
-  META_REPAIR_FAILURE and fix the meta-repairer/watchdog dispatch path first.
+  diagnosis, verify whether the babysitter should have launched. Then verify
+  whether arnold-babysitter actually launched, read its goal, ran the bounded
+  swarm, delegated to codex, implemented, relaunched, and proved recovery. If
+  any of those did not happen, classify BABYSITTER_FAILURE and fix the
+  watchdog/babysitter dispatch path first.
 - Verify the ordinary-repair and meta-repair briefs retain an explicit
   profile-preservation clause. Missing profile preservation is a repair-system
   contract failure; profile observation never authorizes profile mutation.
@@ -6997,10 +6991,10 @@ record_incident_audits "$GATHER_DIR/findings.json"
 # Explicit effect phase. Deterministic gather/report above never creates repair
 # custody. This controller is pure when authority is absent; when authorized it
 # can enqueue only a coherent true-stall receipt. Step 51 reroutes the
-# progress-auditor wrapper repair-trigger handoff through the shared
-# repair-delegation shim: the legacy arnold-repair-trigger argv is no longer
-# plumbed as trigger_argv, so the wrapper boundary cannot launch repair
-# authority.  Repair authority remains with the canonical simple_fixer
+# progress-auditor wrapper repair handoff through the shared repair-delegation
+# shim: the legacy trigger argv is no longer plumbed as trigger_argv, so the
+# wrapper boundary cannot launch repair authority.  Repair authority remains
+# with the canonical simple_fixer
 # delegation that processes the occurrence-compatible queue identities
 # produced by the controller (Steps 43/46).  Audit reporting, human
 # escalation, GitHub sync, and model audit behaviour are intentionally left

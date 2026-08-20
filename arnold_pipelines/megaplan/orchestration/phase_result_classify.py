@@ -115,16 +115,23 @@ def classify_external_error_payload(
             "error_layer": "worker_stream_stall",
         }
     error_kind: str | None = None
-    if status_code == 429 or re.search(
+    if (
+        status_code == 402
+        or re.search(
+            r"(\b(payment required|insufficient (?:balance|credits?)|balance|"
+            r"quota (?:exceeded|exhausted)|limit exhausted)\b|"
+            # Zhipu/bigmodel quota exhaustion (error code 1113) is reported as
+            # HTTP 429 with a Chinese body; it is non-transient billing
+            # exhaustion and must not be recorded as rate_limit.
+            r"余额不足|充值|资源包|无可用资源包)",
+            combined,
+        )
+    ):
+        error_kind = "balance"
+    elif status_code == 429 or re.search(
         r"\b(rate[-_\s]?limit(?:ed)?|too many requests)\b", combined
     ):
         error_kind = "rate_limit"
-    elif status_code == 402 or re.search(
-        r"\b(payment required|insufficient (?:balance|credits?)|"
-        r"balance|quota (?:exceeded|exhausted)|limit exhausted)\b",
-        combined,
-    ):
-        error_kind = "balance"
     elif status_code in (401, 403) or re.search(
         r"(\b(unauthori[sz]ed|forbidden|invalid api[_ -]?key|bad api[_ -]?key|"
         r"api[_ -]?key|authentication|permission denied|missing credentials?)\b|"
@@ -161,6 +168,8 @@ def classify_external_error_payload(
         "retry_after_s": _extract_retry_after(combined),
         "request_id": _extract_request_id(combined),
     }
+    if error_kind in {"quota", "balance"}:
+        payload["error_layer"] = "provider_quota"
     if timeout_like:
         payload["provider_error_code"] = "timeout"
         payload["error_layer"] = "transport_timeout"

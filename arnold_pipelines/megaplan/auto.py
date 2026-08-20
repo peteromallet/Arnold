@@ -3821,6 +3821,34 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         state_data=state_data,
         current_head=recorded_execute_head,
     )
+    # P6 reconcile selection envelope: a read-only reconcile selector's
+    # authoritative output is the selection JSON (selected_shas +
+    # verification_evidence) carried in the batch artifact; that IS the
+    # corroborated completion evidence for the batch tasks, so the per-task
+    # corroboration check must not fail for it (occurrence 47671addc195 —
+    # execute succeeded but the drive blocked on
+    # 'execute terminal success lacks corroborated task completion').
+    try:
+        from arnold_pipelines.megaplan._core.io import (
+            list_all_batch_artifacts,
+            read_json,
+        )
+
+        selection_complete = False
+        for batch_path in list_all_batch_artifacts(plan_dir):
+            try:
+                payload = read_json(batch_path)
+            except Exception:
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            if "selected_shas" in payload or "verification_evidence" in payload:
+                selection_complete = True
+                break
+    except Exception:
+        selection_complete = False
+    if selection_complete:
+        return True, []
     missing: list[str] = []
     for task in tasks:
         task_id = str(task.get("id") or task.get("task_id") or "")
@@ -4274,11 +4302,87 @@ def _observed_phase_context(
     if (
         isinstance(last_step, Mapping)
         and last_step.get("result") in {"success", "needs_rework", "force_proceeded"}
+        and not _rewound_by_override_after_last_step(state, last_step)
     ):
         phase = last_step.get("step")
         if isinstance(phase, str) and phase:
             return phase, "last_step"
     return None, None
+
+
+# Operator overrides that intentionally rewind the plan to a pre-gate state
+# (``planned`` / ``critiqued``) WITHOUT appending a phase-history record.  A
+# subsequent auto-drive must not manufacture a workflow cursor from the stale
+# last history entry (e.g. a prior gate success whose successors are
+# finalize/revise/tiebreaker_run/override/halt) and then flag a
+# workflow_cursor_mismatch against the rewound state's control projection —
+# the override supersedes the stale cursor (astrid-first m4 recovery,
+# occurrence 96fe5e598a73).
+_OVERRIDE_STATE_REWIND_ACTIONS = frozenset({"replan", "recover-blocked"})
+
+
+def _rewound_by_override_after_last_step(
+    state: Mapping[str, Any],
+    last_step: Mapping[str, Any],
+) -> bool:
+    """True when a state-rewinding operator override was recorded after the
+    last phase-history entry.
+
+    ``override replan`` and ``override recover-blocked`` move the plan back to
+    a pre-gate state without recording a phase transition, so the history tail
+    can describe a step whose successors do not match the rewound state.  When
+    such an override is newer than that last history record, the observed
+    phase is intentionally absent: the current-state control projection
+    (``workflow_next`` of the rewound state) is authoritative and drives the
+    next dispatch (planned -> critique, critiqued -> gate).
+    """
+    last_ts = last_step.get("timestamp")
+    if not isinstance(last_ts, str) or not last_ts:
+        return False
+    overrides = state.get("meta", {}).get("overrides")
+    if not isinstance(overrides, list):
+        return False
+    for entry in reversed(overrides):
+        if not isinstance(entry, Mapping):
+            continue
+        if entry.get("action") not in _OVERRIDE_STATE_REWIND_ACTIONS:
+            continue
+        ts = entry.get("timestamp")
+        if isinstance(ts, str) and ts and ts >= last_ts:
+            return True
+    return False
+
+
+# Tiebreaker decision steps that REWIND the plan to the main workflow without
+# a state-machine transition of their own. The pypeline cursor for
+# ``tiebreaker_decide`` describes the decision ROUTES (pick -> finalize,
+# replan -> critique-fanout, escalate -> override), not the post-decision
+# continuation: the legacy handler sets current_state back to critiqued (or
+# awaiting_human_verify for escalate) and clears last_gate, so the main-loop
+# control projection (workflow_next of the rewound state) is authoritative —
+# exactly like the override replan / recover-blocked rewind handled by
+# _rewound_by_override_after_last_step (occurrence 47671addc195: without this,
+# the stale decision-route cursor mismatches the rewound [gate] projection
+# and the auto-drive dead-ends with workflow_cursor_mismatch).
+_TIEBREAKER_REWIND_STEPS = frozenset({"tiebreaker_decide", "tiebreaker_decision"})
+
+
+def _tiebreaker_rewound_to_step_context(
+    state: Mapping[str, Any],
+    last_step: Mapping[str, Any],
+) -> bool:
+    """True when a completed tiebreaker decision rewound the plan to the main
+    workflow (critiqued), so the status workflow cursor is stale."""
+    if not isinstance(last_step, Mapping):
+        return False
+    if last_step.get("step") not in _TIEBREAKER_REWIND_STEPS:
+        return False
+    if last_step.get("result") not in {"success", "needs_rework", "force_proceeded"}:
+        return False
+    # Only the rewind-to-critiqued shape (pick / replan) is stale-cursor; an
+    # escalated decision parks at awaiting_human_verify, whose verify-human
+    # seam must keep the operator in control.
+    return state.get("current_state") == STATE_CRITIQUED
 
 
 def _gate_operator_issue(state: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -4319,7 +4423,29 @@ def _project_auto_dispatch(
 ) -> _AutoDispatchProjection:
     state = _projection_state_snapshot(plan, plan_dir, status)
     observed_phase, observed_phase_source = _observed_phase_context(state, status)
-    cursor_payload = _projection_cursor_payload(status, observed_phase)
+    # A state-rewinding override (replan / recover-blocked) recorded after the
+    # last phase-history entry supersedes BOTH the last_step fallback (handled
+    # in _observed_phase_context) AND the status workflow cursor, which the
+    # status builder derives from that same stale history tail (e.g. a prior
+    # gate success whose successors are finalize/revise/tiebreaker_run/
+    # override/halt).  Without this, the stale status cursor would still
+    # mismatch the rewound state's control projection ([critique, plan]) and
+    # manufacture a workflow_cursor_mismatch on the documented replan seam
+    # (astrid-first m4, occurrence 48d51bc6b31f — guard only covered the
+    # observed-phase fallback, not the independent status cursor payload).
+    status_last_step = status.get("last_step")
+    stale_status_cursor = bool(
+        isinstance(status_last_step, Mapping)
+        and (
+            _rewound_by_override_after_last_step(state, status_last_step)
+            or _tiebreaker_rewound_to_step_context(state, status_last_step)
+        )
+    )
+    cursor_payload = (
+        None
+        if stale_status_cursor
+        else _projection_cursor_payload(status, observed_phase)
+    )
     cursor_dispatch_phase = (
         str(cursor_payload.get("dispatch_phase"))
         if isinstance(cursor_payload, Mapping) and isinstance(cursor_payload.get("dispatch_phase"), str)

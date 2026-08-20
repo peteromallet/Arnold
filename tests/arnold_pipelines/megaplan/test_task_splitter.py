@@ -182,16 +182,22 @@ class TestSuccessfulSplitting:
         assert proof["narrow_tests"]["max_seconds"] == 60
         assert proof["narrow_tests"]["max_runs"] == 2
 
-    def test_implementation_has_reduced_test_budget(self) -> None:
+    def test_implementation_carries_full_test_budget(self) -> None:
+        # The impl subtask must be able to run its own tests: the execute
+        # worker enforces narrow_tests as a HARD gate and halving the budget
+        # guaranteed task_test_budget_exhausted (astrid m2 reap loop,
+        # 2026-08-16). The proof subtask independently verifies with the full
+        # budget; the impl carries the full original budget too.
         task = _task("T1", complexity=8, selectors=["tests/test_t1.py"], max_seconds=60, max_runs=2)
         subtasks = _subtasks(split_task(task))
 
         impl, proof = subtasks
-        # Implementation gets half max_seconds, at most 1 run
-        assert impl["narrow_tests"]["max_seconds"] == 30
-        assert impl["narrow_tests"]["max_runs"] == 1
-        # But same selectors
+        assert impl["narrow_tests"]["max_seconds"] == 60
+        assert impl["narrow_tests"]["max_runs"] == 2
         assert impl["narrow_tests"]["selectors"] == ["tests/test_t1.py"]
+        # Proof still carries the full original budget (independent verify)
+        assert proof["narrow_tests"]["max_seconds"] == 60
+        assert proof["narrow_tests"]["max_runs"] == 2
 
     def test_preserves_checkpoint_on_implementation(self) -> None:
         task = _task("T1", complexity=8)
@@ -720,3 +726,47 @@ class TestEdgeCases:
         assert proof["write_set"]["paths"] == []
         assert proof["write_set"]["complete"] is True
         assert proof["complexity"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Weight-aware batch sizing (execute/batch.py) — astrid reap loop regression
+# ---------------------------------------------------------------------------
+
+class TestWeightAwareBatchSize:
+    """Heavy tasks must shrink the batch so one worker can finish it."""
+
+    def _call(self, base, tasks):
+        from arnold_pipelines.megaplan.execute.batch import (
+            _weight_aware_max_tasks_per_batch,
+        )
+
+        return _weight_aware_max_tasks_per_batch(base, tasks)
+
+    def test_light_tasks_keep_default(self):
+        tasks = [
+            {"id": f"T{i}", "complexity": 3, "estimated_minutes": 3}
+            for i in range(6)
+        ]
+        assert self._call(5, tasks) == 5
+
+    def test_heavy_tasks_shrink_to_two(self):
+        tasks = [
+            {"id": f"T{i}", "complexity": 6, "estimated_minutes": 10}
+            for i in range(5)
+        ]
+        assert self._call(5, tasks) == 2
+
+    def test_mixed_heavy_and_light_shrinks(self):
+        tasks = [
+            {"id": "T1", "complexity": 3, "estimated_minutes": 3},
+            {"id": "T2", "complexity": 6, "estimated_minutes": 10},
+            {"id": "T3", "complexity": 4, "estimated_minutes": 5},
+        ]
+        assert self._call(5, tasks) == 2
+
+    def test_empty_and_small_lists_keep_base(self):
+        assert self._call(5, []) == 5
+        tasks = [{"id": "T1", "complexity": 6, "estimated_minutes": 10}]
+        # single heavy task: no shrink below 1 needed at this layer
+        assert self._call(5, tasks) == 5
+        assert self._call(1, tasks) == 1

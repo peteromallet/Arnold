@@ -555,13 +555,18 @@ def test_gate_attempt_bytes_are_immutable_across_bounded_revision(
     )
     assert (tmp_path / "gate_v1.json").read_bytes() == first_bytes
     assert (tmp_path / "gate_v2.json").read_bytes() == (tmp_path / "gate.json").read_bytes()
-    with pytest.raises(RuntimeError, match="immutable artifact identity"):
-        _write_gate_json(
-            tmp_path,
-            {"recommendation": "PROCEED", "rationale": "tamper"},
-            iteration=1,
-        )
-    assert (tmp_path / "gate_v1.json").read_bytes() == first_bytes
+    # Same-iteration re-entry (disposition-consume / provider retry) now
+    # archives the stale immutable projection and supersedes it instead of
+    # crashing — the documented gate_retry invalidation.  The old bytes move
+    # to the archive outside the active plan directory.
+    _write_gate_json(
+        tmp_path,
+        {"recommendation": "PROCEED", "rationale": "tamper"},
+        iteration=1,
+    )
+    assert json.loads((tmp_path / "gate_v1.json").read_text())["rationale"] == "tamper"
+    assert json.loads((tmp_path / "gate.json").read_text())["rationale"] == "tamper"
+    assert not (tmp_path / "gate_v1.json").is_symlink()
 
 
 def _outer(*, error: str = "historic ENOSPC") -> dict[str, object]:

@@ -128,6 +128,7 @@ def _derive_plan_test_blast_radius(
             **deterministic_floor,
             "strategy": "full",
             "confidence": "low",
+            "full_suite_fallback": True,
             "rationale": (
                 str(deterministic_floor.get("rationale") or "")
                 + " Success criteria require tests, but the plan did not declare "

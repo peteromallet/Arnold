@@ -130,4 +130,84 @@ def test_plan_blast_radius_does_not_treat_missing_surfaces_as_no_tests(
 
     assert radius is not None
     assert radius["strategy"] == "full"
+    assert radius["full_suite_fallback"] is True
     assert "did not declare any concrete changed_surfaces" in radius["rationale"]
+
+
+def test_plan_blast_radius_none_floor_emits_false_fallback(tmp_path: Path) -> None:
+    """Regression guard (occurrence 7e67b58a6582): a strategy:none floor must
+    persist full_suite_fallback=false so plan must-criterion #14 is satisfiable.
+
+    The harness previously hardcoded True here, forcing the persisted field to
+    true regardless of the model's emitted value (tiebreaker FG-001).
+    """
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+
+    radius = _derive_plan_test_blast_radius(
+        plan_dir=plan_dir,
+        state=_state(repo),
+        payload={
+            "changed_surfaces": [],
+            "success_criteria": [],
+        },
+    )
+
+    assert radius is not None
+    assert radius["strategy"] == "none"
+    assert radius["full_suite_fallback"] is False
+
+
+def test_model_proposed_absent_node_lands_in_missing_test_selectors(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    _write(repo, "pkg/util.py", "VALUE = 1\n")
+    _write(repo, "tests/test_util.py", "import pkg.util\n")
+    # The file exists, but the node the model proposes is NOT defined in it.
+    _write(
+        repo,
+        "tests/cloud/test_m1_containment_acceptance.py",
+        "def test_some_existing_check():\n    pass\n",
+    )
+    (plan_dir / "prep.json").write_text(
+        json.dumps({"relevant_code": [{"file_path": "pkg/util.py"}]}),
+        encoding="utf-8",
+    )
+
+    radius = _derive_plan_test_blast_radius(
+        plan_dir=plan_dir,
+        state=_state(repo),
+        payload={
+            "changed_surfaces": ["pkg/util.py"],
+            "test_blast_radius": {
+                "strategy": "scoped",
+                "selectors": [
+                    {
+                        "kind": "path",
+                        "value": (
+                            "tests/cloud/test_m1_containment_acceptance.py::"
+                            "test_no_cloud_conftest_keyword_collection_hook"
+                        ),
+                    }
+                ],
+                "changed_surfaces": ["pkg/util.py"],
+            },
+            "success_criteria": [],
+        },
+    )
+
+    assert radius is not None
+    assert radius["missing_test_selectors"] == [
+        "tests/cloud/test_m1_containment_acceptance.py::"
+        "test_no_cloud_conftest_keyword_collection_hook"
+    ]
+    assert all(
+        selector["value"]
+        != "tests/cloud/test_m1_containment_acceptance.py::"
+        "test_no_cloud_conftest_keyword_collection_hook"
+        for selector in radius["selectors"]
+    )

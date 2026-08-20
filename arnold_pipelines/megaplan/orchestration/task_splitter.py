@@ -428,13 +428,21 @@ def _adjust_dependency_reasons(
 
 
 def _build_impl_narrow_tests(task: Mapping[str, Any]) -> dict[str, Any]:
-    """Build a reduced narrow_tests for the implementation subtask.
+    """Build the narrow_tests for the implementation subtask.
 
-    The implementation subtask gets a subset of the original narrow tests:
-    specifically those that look like they test the implementation paths
-    (not just any test). If no meaningful subset can be extracted, we
-    return the original narrow_tests with reduced max_runs so the impl
-    can still do a quick sanity check.
+    The implementation subtask must be able to RUN its implementation tests:
+    the execute worker enforces the admitted ``narrow_tests`` budget as a HARD
+    gate (``task_test_budget_exhausted`` blocks the task when the tests need
+    more time/runs than admitted), and a blocked impl subtask strands the whole
+    batch (astrid m2 reap loop, 2026-08-16). Halving ``max_seconds`` and
+    forcing ``max_runs=1`` guaranteed exhaustion for any non-trivial test file.
+
+    The independent verification role belongs to the PROOF subtask (which
+    deep-copies the full original narrow_tests); the impl subtask carries the
+    full original budget so it can complete its own tests. Both running the
+    declared selectors is the designed split (impl proves the code, proof
+    verifies against the contract). Preserve a safety ceiling (never exceed the
+    original admission) but do not shrink it.
     """
     original = task.get("narrow_tests")
     if not isinstance(original, Mapping):
@@ -444,15 +452,17 @@ def _build_impl_narrow_tests(task: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(selectors, list):
         selectors = []
 
-    # Give the implementation a quick sanity run: at most 1 run, half the time
     max_seconds = original.get("max_seconds", 0)
-    if not isinstance(max_seconds, (int, float)):
+    if not isinstance(max_seconds, (int, float)) or max_seconds <= 0:
         max_seconds = 0
+    max_runs = original.get("max_runs", 0)
+    if not isinstance(max_runs, int) or max_runs <= 0:
+        max_runs = 0
 
     return {
         "selectors": list(selectors),
-        "max_seconds": max(1, int(max_seconds * 0.5)),
-        "max_runs": 1,
+        "max_seconds": int(max_seconds),
+        "max_runs": max_runs,
     }
 
 

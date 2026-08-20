@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.babysitter import launch
+from arnold_pipelines.megaplan.cloud.babysitter.routing import (
+    resolve_babysitter_routing,
+)
+
+
+def test_babysitter_routing_defaults_to_legacy_deepseek() -> None:
+    route = resolve_babysitter_routing({})
+    assert route.mode == "legacy"
+    assert route.controller_backend == "hermes"
+    assert route.controller_model == "hermes:deepseek:deepseek-v4-flash"
+    assert route.investigator_model == route.controller_model
+
+
+def test_codex_override_resolves_controller_and_investigators() -> None:
+    route = resolve_babysitter_routing({"ARNOLD_BABYSITTER_ROUTING": "codex"})
+    assert route.as_dict() == {
+        "mode": "codex",
+        "controller_backend": "codex",
+        "controller_model": "codex:gpt-5.6-luna",
+        "investigator_backend": "codex",
+        "investigator_model": "codex:gpt-5.6-luna",
+    }
+
+
+def test_unknown_routing_value_fails_closed() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="ARNOLD_BABYSITTER_ROUTING"):
+        resolve_babysitter_routing({"ARNOLD_BABYSITTER_ROUTING": "deepseek"})
+
+
+def test_managed_spec_records_codex_route_and_sealed_goal(tmp_path: Path) -> None:
+    goal = tmp_path / "goal.md"
+    goal.write_text("prove movement", encoding="utf-8")
+    route = resolve_babysitter_routing({"ARNOLD_BABYSITTER_ROUTING": "codex"})
+    ctx = {
+        "engine_root": Path(__file__).resolve().parents[2],
+        "run_root": tmp_path / "run",
+        "session": "astrid-first",
+        "occurrence": "occurrence",
+        "run_id": "run",
+        "plan": "m7",
+        "routing": route,
+        "model": route.controller_model,
+        "difficulty": 8,
+        "remote_spec": "",
+        "workspace": str(tmp_path),
+        "mode": "superfixer",
+    }
+    spec = launch._managed_spec(ctx, goal_path=goal, identity_key="identity")
+    assert spec.backend == "codex"
+    assert spec.model == "codex:gpt-5.6-luna"
+    assert spec.stdin_path == goal
+    assert spec.argv[:2] == ("codex", "exec")
+    assert "gpt-5.6-luna" in spec.argv
+    assert all("deepseek" not in arg for arg in spec.argv)
+    assert spec.links["routing"] == route.as_dict()
+
+
+def test_legacy_managed_spec_keeps_hermes_controller(tmp_path: Path) -> None:
+    goal = tmp_path / "goal.md"
+    goal.write_text("prove movement", encoding="utf-8")
+    route = resolve_babysitter_routing({})
+    ctx = {
+        "engine_root": Path(__file__).resolve().parents[2],
+        "run_root": tmp_path / "run",
+        "session": "astrid-first",
+        "occurrence": "occurrence",
+        "run_id": "run",
+        "plan": "m7",
+        "routing": route,
+        "model": route.controller_model,
+        "difficulty": 8,
+        "remote_spec": "",
+        "workspace": str(tmp_path),
+        "mode": "superfixer",
+    }
+    spec = launch._managed_spec(ctx, goal_path=goal, identity_key="identity")
+    assert spec.backend == "babysitter"
+    assert spec.model == route.controller_model
+    assert spec.stdin_path is None
+    assert any("launch_hermes_agent.py" in arg for arg in spec.argv)
+
+
+def test_launch_receipt_contains_resolved_controller_and_investigator_models(tmp_path: Path) -> None:
+    route = resolve_babysitter_routing({"ARNOLD_BABYSITTER_ROUTING": "codex"})
+    ctx = {
+        "session": "astrid-first",
+        "occurrence": "occurrence",
+        "run_id": "run",
+        "run_root": tmp_path,
+        "plan": "m7",
+        "run_kind": "chain",
+        "workspace": str(tmp_path),
+        "remote_spec": "",
+        "mode": "superfixer",
+        "model": route.controller_model,
+        "routing": route,
+        "launched_at": "2026-08-20T10:00:00Z",
+    }
+    payload = launch._receipt_payload(ctx, status="running")
+    assert payload["controller_backend"] == "codex"
+    assert payload["controller_model"] == "codex:gpt-5.6-luna"
+    assert payload["investigator_backend"] == "codex"
+    assert payload["investigator_model"] == "codex:gpt-5.6-luna"

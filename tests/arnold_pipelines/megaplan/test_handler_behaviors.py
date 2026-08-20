@@ -146,9 +146,14 @@ def test_gate_evidence_versions_preserve_old_decisions_and_legacy_latest(
     assert json.loads((plan_dir / "gate.json").read_text()) == second
 
 
-def test_gate_evidence_resume_is_idempotent_but_conflicting_reuse_fails(
+def test_gate_evidence_resume_is_idempotent_but_conflicting_reuse_supersedes(
     tmp_path: Path,
 ) -> None:
+    """Same-iteration re-entry (disposition-consume re-run, post-revise gate,
+    provider retry) must archive the stale immutable gate_v projection and
+    publish fresh evidence instead of crashing on the immutable collision.
+    The documented gate_retry invalidation (replan_state) is the archive
+    mechanism.  Identical replay stays idempotent."""
     from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
 
     plan_dir = tmp_path / "plan"
@@ -161,10 +166,14 @@ def test_gate_evidence_resume_is_idempotent_but_conflicting_reuse_fails(
     _write_gate_json(plan_dir, original, iteration=2)
 
     assert (plan_dir / "gate_v2.json").read_bytes() == immutable_bytes
-    with pytest.raises(RuntimeError, match="immutable artifact identity"):
-        _write_gate_json(plan_dir, conflicting, iteration=2)
-    assert json.loads((plan_dir / "gate_v2.json").read_text()) == original
-    assert json.loads((plan_dir / "gate.json").read_text()) == original
+    # Same-iteration conflicting reuse now supersedes: the stale immutable is
+    # archived and the fresh gate publishes new evidence (astrid m4 gate
+    # ESCALATE -> disposition ACCEPTED -> PROCEED re-run crashed here).
+    _write_gate_json(plan_dir, conflicting, iteration=2)
+    assert json.loads((plan_dir / "gate_v2.json").read_text()) == conflicting
+    assert json.loads((plan_dir / "gate.json").read_text()) == conflicting
+    # The stale projection was archived out of the active plan directory.
+    assert not (plan_dir / "gate_v2.json").is_symlink()
 
 
 def test_immutable_gate_staging_failure_never_publishes_partial_bytes(
@@ -592,6 +601,276 @@ class TestGateOutcomeSemantics:
         assert outcome["route_signal"] == "retry_gate"
         assert outcome["blocking_unresolved_ids"]
 
+    def test_build_gate_route_signal_verify_fixed_resolves_open_flag(self, tmp_path: Path) -> None:
+        """d58701026410 catch-22 regression: after a `plan` REWRITE (not
+        revise), flags_addressed stays empty so every carried flag remains
+        `open`. The gate worker proves them fixed (flag_resolutions
+        verify_fixed) but the old addressed-only membership check discarded
+        the resolution -> PROCEED auto-downgraded to ITERATE forever. A
+        verify_fixed with real evidence for an UNRESOLVED (open) flag must
+        resolve it."""
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        summary = {
+            "recommendation": "PROCEED",
+            "passed": True,  # gate worker's PROCEED carries passed=True
+            "rationale": "No blocking flag remains unresolved, so PROCEED is warranted",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "addressed_flags": [],  # plan-rewrite track: nothing was addressed
+            "unresolved_flags": [
+                {
+                    "id": "CF-65426ECA51BDDD1938F4",
+                    "severity": "significant",
+                    "status": "open",
+                    "concern": "installed-runtime coverage",
+                }
+            ],
+            "flag_resolutions": [
+                {
+                    "flag_id": "CF-65426ECA51BDDD1938F4",
+                    "action": "verify_fixed",
+                    "evidence": (
+                        "plan_v5b.md Step 7 adds the shipped-wrapper bash -n "
+                        "check under exact T7 nodes; evaluator_verdict.json "
+                        "verified the node selectors resolve"
+                    ),
+                }
+            ],
+            "orchestrator_guidance": "",
+        }
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "proceed"
+        assert not outcome.get("blocking_unresolved_ids")
+
+    def test_build_gate_route_signal_rejects_rubber_stamp_verify_fixed(self, tmp_path: Path) -> None:
+        """Rubber-stamp verify_fixed (no evidence) must NOT resolve an open
+        flag — the fail-closed side of the catch-22 fix."""
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        summary = {
+            "recommendation": "PROCEED",
+            "passed": False,
+            "rationale": "ok",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "addressed_flags": [],
+            "unresolved_flags": [
+                {"id": "f2", "severity": "significant", "status": "open", "concern": "y"}
+            ],
+            "flag_resolutions": [
+                {
+                    "flag_id": "f2",
+                    "action": "verify_fixed",
+                    "evidence": "resolved",  # rubber stamp
+                }
+            ],
+            "orchestrator_guidance": "",
+        }
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["result"] == "unresolved_flags"
+        assert "f2" in outcome.get("blocking_unresolved_ids", [])
+
+    # ── operator-disposition settlement route (bd778acabe4d) ──────────────
+    def _escalate_summary(self, actions: list[dict[str, Any]], **overrides: Any) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "recommendation": "ESCALATE",
+            "passed": False,
+            "rationale": "route-authority halt requires a human disposition",
+            "signals_assessment": "score 0, no unresolved flags",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "unresolved_flags": [],
+            "north_star_actions": actions,
+            "orchestrator_guidance": "",
+        }
+        summary.update(overrides)
+        return summary
+
+    def _halt_action(self, question_id: str = "reigh-route-authority", **overrides: Any) -> dict[str, Any]:
+        action: dict[str, Any] = {
+            "id": f"nsa-{question_id}",
+            "question_id": question_id,
+            "question": "Should m4 correct the external Reigh repository?",
+            "concern": "external correction authority",
+            "category": "route_authority",
+            "action_type": "add_human_halt",
+            "severity": "blocking",
+            "severity_source": "schema",
+            "evidence": "The plan promotes upstream incompatibility into a blocking must.",
+        }
+        action.update(overrides)
+        return action
+
+    def _state_with_disposition(self, note: str | None = None) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 1,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        if note is not None:
+            state["meta"]["notes"] = [
+                {"timestamp": "2026-08-18T10:31:29Z", "note": note, "source": "user"}
+            ]
+        return state
+
+    def test_escalate_consumed_when_sole_halt_settled(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import STATE_GATED
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED. "
+            "OPERATOR DECISION \u2014 reigh-route-authority: DENIED FOR M4."
+        )
+        summary = self._escalate_summary([self._halt_action()])
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "proceed"
+        assert "proceed-with-recorded-dispositions" in outcome["summary"]
+        assert state["current_state"] == STATE_GATED
+        assert "user_approved_gate" not in state["meta"]
+
+    def test_escalate_stays_when_disposition_absent(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED
+
+        state = self._state_with_disposition(None)
+        summary = self._escalate_summary([self._halt_action()])
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+        assert state["current_state"] == STATE_CRITIQUED
+
+    def test_escalate_stays_when_note_not_from_user(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        state["meta"]["notes"][0]["source"] = "auto_approve_prep_clarification"
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([self._halt_action()]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_question_id_does_not_match(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=some-other-question decision=DENIED"
+        )
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([self._halt_action()]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_no_actions(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_mixed_or_new_action_unsettled(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        # One settled halt + one genuinely NEW halt -> still escalates.
+        summary = self._escalate_summary(
+            [
+                self._halt_action(),
+                self._halt_action(question_id="brand-new-question", id="nsa-new"),
+            ]
+        )
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_non_halt_action_present(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        action = self._halt_action()
+        action["action_type"] = "change_plan"
+        outcome = _build_gate_route_signal(
+            state, self._escalate_summary([action]),
+            robustness="standard", plan_dir=tmp_path,
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_open_blocking_flag(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        summary = self._escalate_summary(
+            [self._halt_action()],
+            unresolved_flags=[
+                {"id": "f-open", "severity": "significant", "status": "open", "concern": "z"}
+            ],
+        )
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+
+    def test_escalate_stays_when_preflight_failed(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+
+        state = self._state_with_disposition(
+            "OPERATOR_DISPOSITION question_id=reigh-route-authority decision=DENIED"
+        )
+        summary = self._escalate_summary(
+            [self._halt_action()],
+            preflight_results={"agent_availability": False},
+        )
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert outcome["route_signal"] == "escalate"
+
 
 class TestTiebreakerOutcomeSemantics:
     def test_pick_promotes_proceed_signal(self) -> None:
@@ -722,6 +1001,137 @@ class TestTiebreakerOutcomeSemantics:
         assert response["decision"] == "proceed"
         assert "next_step" not in response
         assert state["current_state"] == STATE_CRITIQUED
+
+    def test_pick_settles_stale_tiebreaker_gate_so_workflow_resumes_gate_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression for occurrence 47671addc195: a successful pick decision must
+        # settle last_gate (recommendation was TIEBREAKER), otherwise
+        # workflow_next(critiqued) keeps offering the un-dispatchable
+        # ``tiebreaker`` step and the auto-drive dead-ends with no_next_step.
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED, STATE_TIEBREAKER_READY
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps(
+                {
+                    "tiebreaker_question": "Which option?",
+                    "tiebreaker_flag_ids": ["CF-1"],
+                    "tiebreaker_fuzzy_group_id": "FG-001",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}), encoding="utf-8"
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}), encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "last_gate": {"recommendation": "TIEBREAKER", "passed": False},
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick="option-a",
+                escalate=False,
+                replan=False,
+                rationale="pick it",
+            ),
+        )
+
+        assert response["route_signal"] == "proceed"
+        assert state["current_state"] == STATE_CRITIQUED
+        assert state["last_gate"] == {}, "pick must settle the stale TIEBREAKER gate"
+        from arnold_pipelines.megaplan._core.workflow import workflow_next
+
+        assert workflow_next(state) == ["gate", "step"]
+
+    def test_escalate_preserves_last_gate_and_routes_to_awaiting_human_verify(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import (
+            STATE_AWAITING_HUMAN_VERIFY,
+            STATE_TIEBREAKER_READY,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps(
+                {"tiebreaker_question": "Which option?", "tiebreaker_flag_ids": []}
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "last_gate": {"recommendation": "TIEBREAKER", "passed": False},
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick="",
+                escalate=True,
+                replan=False,
+                rationale="human escalation",
+            ),
+        )
+
+        assert state["current_state"] == STATE_AWAITING_HUMAN_VERIFY
+        assert state["last_gate"] == {"recommendation": "TIEBREAKER", "passed": False}
 
     def test_legacy_decision_bridge_resolves_iterate_via_lowered_topology(self) -> None:
         from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _bridge_tiebreaker_next_step

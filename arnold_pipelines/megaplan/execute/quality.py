@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -128,10 +129,24 @@ _DOCS_NOTES_ADVISORY_MIN_LEN = 50
 
 
 def _task_kind(task: dict[str, Any]) -> str:
-    """Return the declared task kind, defaulting to ``code`` for back-compat."""
+    """Return the declared task kind, defaulting to ``code`` for back-compat.
+
+    When ``kind`` is absent, infer ``audit`` only from an EXPLICIT leading
+    ``audit …`` / ``read-only audit …`` phrase in the objective or description.
+    ``verify``, ``review``, and ``inspect`` are deliberately NOT inferred —
+    those may require code changes. Explicit valid ``kind`` always wins.
+    """
     kind = task.get("kind")
-    if isinstance(kind, str) and kind:
+    if kind in {"code", "test", "audit", "research", "docs"}:
         return kind
+
+    text = " ".join(
+        str(task.get(field) or "").strip()
+        for field in ("objective", "description")
+    ).lower()
+
+    if re.match(r"^(audit|read-only audit)\b", text):
+        return "audit"
     return "code"
 
 

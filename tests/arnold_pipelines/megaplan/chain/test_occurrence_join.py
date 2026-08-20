@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 import threading
 
@@ -32,6 +33,27 @@ from tests.cloud.repair_identity_fixtures import repair_identity
 
 SESSION = "chain-session-1"
 CLAIM_ID = "operator-claim-0001"
+
+
+@pytest.fixture(autouse=True)
+def _align_repair_queue_root(tmp_path: Path) -> Iterator[None]:
+    """T-0640 D1: occurrence-join resolves the queue root from
+    ARNOLD_REPAIR_QUEUE_ROOT (else the marker-adjacent box-central queue —
+    never project_dir).  Pin it to this test's tmp queue so every direct and
+    CLI join reads the queue ``_enqueue`` wrote.  Set directly on
+    os.environ (restored in teardown) so a test's ``monkeypatch.undo()``
+    cannot silently reset it to the box-central default."""
+    prior = os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+    os.environ["ARNOLD_REPAIR_QUEUE_ROOT"] = str(
+        tmp_path / ".megaplan" / "repair-queue"
+    )
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop("ARNOLD_REPAIR_QUEUE_ROOT", None)
+        else:
+            os.environ["ARNOLD_REPAIR_QUEUE_ROOT"] = prior
 
 
 def _chain(tmp_path: Path, *, plan_state: str = "blocked", chain_last_state: str = "blocked") -> tuple[Path, Path]:
@@ -794,6 +816,10 @@ def test_join_refuses_every_non_accepted_decision_kind_with_zero_mutation(tmp_pa
     for kind in non_accepted_kinds:
         root = tmp_path / kind
         root.mkdir(parents=True)
+        # T-0640 D1: each sub-tree carries its own aligned queue root.
+        os.environ["ARNOLD_REPAIR_QUEUE_ROOT"] = str(
+            root / ".megaplan" / "repair-queue"
+        )
         spec, plan, result = _setup(root)
         queue_root = root / ".megaplan" / "repair-queue"
         receipt_path = _evidence_receipt(root)

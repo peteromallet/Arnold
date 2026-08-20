@@ -331,13 +331,10 @@ def test_watchdog_source_has_no_provider_fallback() -> None:
 
 
 def test_repair_loop_direct_notification_writer_is_retired() -> None:
-    source = Path("arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop").read_text(
+    source = Path("arnold_pipelines/megaplan/cloud/wrappers/arnold-babysitter").read_text(
         encoding="utf-8"
     )
     assert "DISCORD_DM_BIN" not in source
-    function = source.split("send_discord_escalation() {", 1)[1].split(
-        'log "starting session=', 1
-    )[0]
-    assert "canonical_notification_outbox" in function
-    assert "EscalationLedgerWriter" not in function
-    assert "discord-payload" not in function
+    assert "canonical_notification_outbox" not in source
+    assert "EscalationLedgerWriter" not in source
+    assert "discord-payload" not in source

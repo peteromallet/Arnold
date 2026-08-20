@@ -8,7 +8,6 @@ from typing import Any
 
 from arnold_pipelines.megaplan._core import (
     execute_batch_artifact_path,
-    resolve_batch_artifact,
     compute_task_batches,
     configured_robustness,
     intent_and_notes_block,
@@ -36,6 +35,7 @@ from arnold_pipelines.megaplan.prompts.execute import (
     _execute_rerun_guidance,
     _execute_review_block,
     _extract_execution_order_summary,
+    _prior_execute_batch_deviations,
     _render_settled_decisions_brief,
 )
 
@@ -225,6 +225,7 @@ def _execute_doc_batch_prompt(
     completed_task_ids: set[str] | None = None,
     root: Path | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
+    current_artifact_number: int | None = None,
 ) -> str:
     completed = set(completed_task_ids or set())
     output_path = state["config"].get("output_path", "output.md")
@@ -273,22 +274,21 @@ def _execute_doc_batch_prompt(
         1,
     )
     batch_total = len(global_batches) or 1
-    checkpoint_path = str(
-        execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids)
+    artifact_number = (
+        current_artifact_number
+        if isinstance(current_artifact_number, int) and current_artifact_number > 0
+        else batch_number
     )
-    prior_batch_deviations = "None"
-    if batch_number > 1:
-        prior_batch_artifact = resolve_batch_artifact(plan_dir, batch_number - 1)
-        if prior_batch_artifact is not None:
-            try:
-                prior_batch_payload = read_json(prior_batch_artifact)
-            except (OSError, ValueError):
-                prior_batch_payload = {}
-            raw_deviations = prior_batch_payload.get("deviations", [])
-            if isinstance(raw_deviations, list):
-                deviations = [item for item in raw_deviations if isinstance(item, str)]
-                if deviations:
-                    prior_batch_deviations = json_dump(deviations).strip()
+    checkpoint_path = str(
+        execute_batch_artifact_path(plan_dir, artifact_number, batch_task_ids)
+    )
+    deviations = _prior_execute_batch_deviations(
+        plan_dir,
+        batch_task_ids,
+        prompt_batch_number=batch_number,
+        current_artifact_number=current_artifact_number,
+    )
+    prior_batch_deviations = json_dump(deviations).strip() if deviations else "None"
     approval_note = _execute_approval_note(state)
     prior_doc_block = _prior_doc_context_block(state)
     gate_carry = _gate_summary_or_skipped(plan_dir)

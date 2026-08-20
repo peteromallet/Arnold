@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from arnold_pipelines.megaplan._core import is_transient_execute_advisory
 from arnold_pipelines.megaplan.auto import _execute_completion_authority
 from arnold_pipelines.megaplan.blocker_recovery import (
     _extract_nodeids,
@@ -12,7 +13,6 @@ from arnold_pipelines.megaplan.blocker_recovery import (
 )
 from arnold_pipelines.megaplan.execute.batch import (
     _aggregate_terminal_deviations,
-    _is_transient_execute_advisory,
     _prerequisite_blocked_task_ids,
     _reset_stale_authority_done_tasks,
     _normalize_execute_capture_payload,
@@ -252,10 +252,10 @@ def test_terminal_execute_aggregate_drops_stale_batch_advisories() -> None:
         "substantive command failure that should survive",
         "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
     ]
-    assert _is_transient_execute_advisory(
+    assert is_transient_execute_advisory(
         "Advisory audit finding: Tasks left pending after execute (executor never started them): T7"
     )
-    assert _is_transient_execute_advisory("1/1 sense checks have no executor acknowledgment")
+    assert is_transient_execute_advisory("1/1 sense checks have no executor acknowledgment")
 
 
 def test_prerequisite_blocked_task_ids_excludes_harness_generated_blocks() -> None:

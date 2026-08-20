@@ -2032,7 +2032,7 @@ def test_progress_auditor_wrapper_repair_handoff_uses_shim() -> None:
     """Step 51 (T36): the progress-auditor wrapper repair-trigger handoff
     routes through the shared repair-delegation shim.
 
-    The wrapper must no longer plumb the legacy ``arnold-repair-trigger``
+    The wrapper must no longer plumb a legacy trigger
     binary as ``trigger_argv`` to the L3 escalation controller; instead the
     repair handoff emits a typed zero-authority rejection via the shared
     ``repair_delegation`` shim (the auditor boundary holds no exact F01

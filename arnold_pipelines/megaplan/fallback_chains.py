@@ -43,9 +43,10 @@ _NON_RETRYABLE_TOKEN_MAP: tuple[tuple[str, RetryabilityClass], ...] = (
     ("gate", "gate"),
     ("test", "test"),
 )
-_AUTH_TOKENS = frozenset(
+_AUTH_TOKENS: frozenset[str] = frozenset(
     {
         "auth",
+        "auth_error",
         "authentication",
         "unauthorized",
         "forbidden",
@@ -57,10 +58,23 @@ _AUTH_TOKENS = frozenset(
 _QUOTA_TOKENS = frozenset(
     {
         "quota",
+        "quota_exceeded",
         "billing",
         "insufficient_credits",
         "credit_balance",
         "payment_required",
+        "insufficient_balance",
+        "balance",
+        # Zhipu/bigmodel quota-exhaustion messages are Chinese; the HTTP
+        # status is 429 but the condition is non-transient billing
+        # exhaustion (error code 1113 "余额不足或无可用资源包,请充值。"),
+        # not a transient rate limit.  These tokens let classify_retryability
+        # distinguish the two instead of blanket-mapping every 429 to
+        # rate_limit.
+        "余额不足",
+        "充值",
+        "资源包",
+        "无可用资源包",
     }
 )
 _RATE_LIMIT_TOKENS = frozenset({"rate_limit", "rate_limited", "throttled", "retry_after"})
@@ -318,6 +332,16 @@ def provider_family(spec: str) -> str:
             "fireworks_ai": "fireworks",
         }
         return alias_map.get(family, family)
+    if parsed.agent == "omp" and isinstance(parsed.model, str) and parsed.model:
+        # omp routes carry the upstream provider as the first path segment
+        # (``omp:deepseek/...`` → ``deepseek``, ``omp:zai/...`` → ``zai``).
+        # The provider family is the upstream provider; transport identity
+        # stays ``omp``.  omp-native routes alias to their canonical family so
+        # fallback treats same-upstream routes (premium codex vs
+        # omp:openai-codex; direct-key xai vs omp:grok) as one family.
+        provider = parsed.model.split("/", 1)[0].strip().lower()
+        omp_alias_map = {"openai-codex": "codex", "grok": "xai"}
+        return omp_alias_map.get(provider, provider) or "omp"
     if parsed.agent == "premium":
         return "premium"
     return parsed.agent.lower()
@@ -326,7 +350,23 @@ def provider_family(spec: str) -> str:
 def _object_field(value: object, name: str) -> Any:
     if isinstance(value, dict):
         return value.get(name)
-    return getattr(value, name, None)
+    found = getattr(value, name, None)
+    if found is not None:
+        return found
+    # Worker wrappers (workers/hermes.py) raise CliError("worker_error", ...,
+    # extra={"_external_error": <ExternalError dict>}) — the structured
+    # status_code/error_kind/message live nested in extra, not on the error
+    # object.  Consult that nested shape so classify_retryability sees the
+    # same fields the phase-result classifier does.
+    extra = getattr(value, "extra", None)
+    if isinstance(extra, dict):
+        found = extra.get(name)
+        if found is not None:
+            return found
+        nested = extra.get("_external_error")
+        if isinstance(nested, dict):
+            return nested.get(name)
+    return None
 
 
 def _normalized_tokens(value: object) -> set[str]:
@@ -358,6 +398,7 @@ def _normalized_tokens(value: object) -> set[str]:
             "credit balance",
             "billing",
             "unauthorized",
+            "authentication",
             "forbidden",
             "bad request",
             "context length",
@@ -375,6 +416,13 @@ def _normalized_tokens(value: object) -> set[str]:
             "malformed output",
             "evidence",
             "test",
+            # Non-transient billing/quota exhaustion in Chinese (zhipu code
+            # 1113 "余额不足或无可用资源包,请充值。") — these land in
+            # _QUOTA_TOKENS so classify_retryability emits "quota" even when
+            # the HTTP status is 429.
+            "余额不足",
+            "充值",
+            "资源包",
         ):
             if needle in lowered:
                 tokens.add(needle.replace(" ", "_"))
@@ -394,6 +442,20 @@ def classify_retryability(value: object | None) -> RetryabilityClass:
     error_layer = str(_object_field(value, "error_layer") or "").strip().lower()
     tokens = _normalized_tokens(value)
 
+    # A provider whose key is unavailable right now (missing, cooled down,
+    # rotated, or the key pool is empty) is an operational condition for THAT
+    # provider only: an explicitly configured different-family fallback must
+    # be allowed to advance.  The error stays non-retryable for the SAME
+    # launch (no point re-attempting a provider with no key), but it must not
+    # be "permanent" for the whole chain — otherwise a single provider's key
+    # outage hard-blocks a phase that has a healthy fallback provider
+    # (astrid-first m5: zhipu key cooldown after quota exhaustion repeatedly
+    # blocked finalize despite a working fireworks fallback).
+    if (
+        error_layer == "credential_preflight"
+        and error_kind in {"auth", "credentials"}
+    ):
+        return "availability"
     # A provider response-schema contract cannot become valid by changing
     # model/provider.  It must be repaired at the compiler/adapter boundary.
     if nonretryable is True or (
@@ -403,6 +465,17 @@ def classify_retryability(value: object | None) -> RetryabilityClass:
     for token, classification in _NON_RETRYABLE_TOKEN_MAP:
         if token in tokens:
             return classification
+    # Non-transient billing/quota exhaustion must be distinguishable from a
+    # transient rate limit even when the provider reports HTTP 429 (zhipu
+    # code 1113 insufficient-balance is exactly this).  A quota failure will
+    # not clear by waiting, so it must be allowed to advance the configured
+    # fallback chain instead of being parked as an unresolvable rate_limit.
+    if (
+        error_kind in {"quota", "balance"}
+        or status_code == 402
+        or tokens & _QUOTA_TOKENS
+    ):
+        return "quota"
     if retry_after_s is not None or status_code == 429 or tokens & _RATE_LIMIT_TOKENS:
         return "rate_limit"
     if status_code in {401, 403} or tokens & _AUTH_TOKENS:
@@ -428,6 +501,19 @@ def classify_retryability(value: object | None) -> RetryabilityClass:
 
 def is_retryable_classification(classification: RetryabilityClass) -> bool:
     return classification in {"availability", "infrastructure"}
+
+
+def is_cross_family_retryable_classification(classification: RetryabilityClass) -> bool:
+    """Return whether a failure may advance to a DIFFERENT provider family.
+
+    ``availability``/``infrastructure`` are transient operational failures.
+    ``quota`` is non-transient billing exhaustion — retrying the same provider
+    cannot succeed, so an explicitly configured different-family fallback is
+    the only way forward.  ``rate_limit`` intentionally stays excluded: a
+    transient rate limit should cool down on the same provider rather than
+    burn a different provider's quota.
+    """
+    return classification in {"availability", "infrastructure", "quota"}
 
 
 def is_same_family_operational_classification(

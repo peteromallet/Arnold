@@ -259,7 +259,7 @@ def test_render_masks_environ_values_and_keylike_cmdline() -> None:
 def test_render_census_markdown_is_deterministic() -> None:
     a = _sample_process(pid=10, cmdline="python arnold-watchdog")
     b = _sample_process(pid=5, cmdline="python megaplan-supervise")
-    c = _sample_process(pid=7, cmdline="python arnold-repair-loop")
+    c = _sample_process(pid=7, cmdline="python arnold-babysitter")
     trees = [
         GitTreeState("t1", "a" * 40, "main", 0, True),
         GitTreeState("t2", "", "", -1, False),

@@ -233,8 +233,6 @@ TRIGGER_ARGV_REJECTION_KINDS: tuple[str, ...] = (
 #: surface.  The canonical path is simple_fixer delegation, not a subprocess
 #: trigger binary.
 _LEGACY_TRIGGER_BINARY_NAMES: tuple[str, ...] = (
-    "arnold-repair-trigger",
-    "arnold-repair-loop",
     "arnold-watchdog",
     "arnold-auditor",
     "arnold-meta",

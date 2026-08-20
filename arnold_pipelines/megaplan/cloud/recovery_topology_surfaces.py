@@ -16,9 +16,9 @@ live repair-authority surfaces that must be migrated before final route closure:
   and ``.run()`` invocations), direct repair-queue calls
   (``enqueue_repair_request`` / ``enqueue_human_gate_repair_request``), and the
   enqueue producers that wrap them.
-* Command-authority surfaces — ``arnold-repair-trigger``, ``trigger_once``,
-  direct ``python -m arnold_pipelines.megaplan <repair-subcommand>`` module
-  launches, and the legacy ``arnold-repair-loop`` wrapper.
+* Command-authority surfaces — ``trigger_once`` and direct
+  ``python -m arnold_pipelines.megaplan <repair-subcommand>`` module
+  launches.
 
 Step 27 (shell repair-authority scanner adapter): statically detects shell-based
 legacy repair surfaces that must be migrated before final route closure:
@@ -215,7 +215,7 @@ class AuthoritySurface:
     state: SurfaceState
     kind: str
     """Specific detection kind, e.g. ``python.subprocess.run`` or
-    ``command.arnold-repair-trigger``."""
+    ``command.trigger_once``."""
 
     location: str
     """File path (and optional ``:line``) where the surface lives."""
@@ -537,14 +537,6 @@ def scan_python_source(source: str, location: str) -> list[AuthoritySurface]:
 #: rendered templates, and Markdown alike.
 _COMMAND_AUTHORITY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
-        "command.arnold-repair-trigger",
-        re.compile(r"\barnold-repair-trigger\b"),
-    ),
-    (
-        "command.arnold-repair-loop",
-        re.compile(r"\barnold-repair-loop\b"),
-    ),
-    (
         "command.trigger_once",
         re.compile(r"\btrigger_once\b"),
     ),
@@ -566,9 +558,9 @@ COMMAND_AUTHORITY_DETECTION_KINDS: tuple[str, ...] = tuple(
 def scan_command_authority(text: str, location: str) -> list[AuthoritySurface]:
     """Detect command-authority surfaces in arbitrary *text*.
 
-    Matches ``arnold-repair-trigger``, ``arnold-repair-loop``, ``trigger_once``,
-    and direct ``python -m arnold_pipelines.megaplan <repair-subcommand>``
-    module launches.  Returns surfaces in ``LIVE_AUTHORITY`` state.
+    Matches ``trigger_once`` and direct ``python -m
+    arnold_pipelines.megaplan <repair-subcommand>`` module launches.
+    Returns surfaces in ``LIVE_AUTHORITY`` state.
     """
     surfaces: list[AuthoritySurface] = []
     for kind, pattern in _COMMAND_AUTHORITY_PATTERNS:
@@ -664,14 +656,7 @@ _SHELL_AUTHORITY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"[^\n]*?\b(?:doctor|auto|resume|repair|fix|heal)\b"
         ),
     ),
-    # ── legacy repair-loop relaunch patterns ───────────────────────────
-    (
-        "shell.repair_loop_relaunch",
-        re.compile(
-            r"(?:nohup\s+)?(?:bash\s+)?(?:\./)?arnold-repair-loop\b"
-            r"|(?:exec\s+)?arnold-repair-loop\s"
-        ),
-    ),
+    # ── legacy repair-loop wrapper patterns ────────────────────────────
     (
         "shell.repair_loop_wrapper",
         re.compile(
@@ -1122,7 +1107,7 @@ MARKDOWN_SCAN_ROOTS: tuple[str, ...] = (
 #: Inline repair-command references that, when documented in operator-facing
 #: Markdown, mark the file as carrying repair-authority documentation.
 _MARKDOWN_COMMAND_REF_PATTERN = re.compile(
-    r"\b(?:arnold-repair-trigger|arnold-repair-loop|trigger_once"
+    r"\b(?:trigger_once"
     r"|arnold-watchdog\b|arnold-auditor\b|arnold-kimi\b|arnold-meta-repair\b"
     r"|python(?:3)?\s+-m\s+arnold_pipelines\.megaplan\b"
     r"[^\n`]{0,80}?\b(?:doctor|auto|resume|repair|fix|heal)\b)"

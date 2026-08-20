@@ -6,9 +6,9 @@ plan                  = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fire
 prep                  = "hermes:deepseek:deepseek-v4-pro"
 critique              = "hermes:deepseek:deepseek-v4-pro"
 critique_evaluator    = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-revise                = "codex:gpt-5.5"
+revise                = ["hermes:deepseek:deepseek-v4-pro", "hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
 gate                  = "hermes:deepseek:deepseek-v4-pro"
-finalize              = "codex:gpt-5.5"
+finalize              = ["hermes:deepseek:deepseek-v4-pro", "hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
 execute               = "hermes:deepseek:deepseek-v4-pro"
 feedback              = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
 loop_plan             = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
@@ -26,12 +26,12 @@ tiebreaker_challenger = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fire
 6 = "hermes:deepseek:deepseek-v4-pro"
 7 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
 8 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-9 = "codex:gpt-5.5"
-10 = "codex:gpt-5.5"
+9 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.5"]
+10 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.5"]
 
 [profiles.partnered-4.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"
 2 = "hermes:deepseek:deepseek-v4-pro"
 3 = "hermes:deepseek:deepseek-v4-pro"
 4 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-5 = "codex:gpt-5.5"
+5 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.5"]

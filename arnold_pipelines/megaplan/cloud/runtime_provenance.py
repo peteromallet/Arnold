@@ -169,7 +169,15 @@ def runtime_provenance(
     errors: list[str] = []
     if expected is not None and import_root != expected:
         errors.append("import_root_mismatch")
-    if expected is not None and editable_root != expected:
+    # T-0301 generation: no pip editable install exists (worktree-first
+    # PYTHONPATH). `editable_root` is only meaningful when a direct-url
+    # editable distribution is actually present; otherwise the import-root
+    # check above is the authoritative provenance gate.
+    if (
+        expected is not None
+        and editable_root is not None
+        and editable_root != expected
+    ):
         errors.append("editable_metadata_mismatch")
     if expected is not None:
         mismatched_imports = [
@@ -185,15 +193,25 @@ def runtime_provenance(
             for entry in record.get("entries", [])
             if isinstance(entry, str)
         ]
-        if not pth or not pth_entries:
+        # T-0301 generation: the executing runtime is a worktree-first
+        # PYTHONPATH root, not a pip editable install. When imports already
+        # resolve to the expected root, the legacy .pth requirement does not
+        # apply. A .pth that DOES exist must still point at the expected root.
+        imports_match = not mismatched_imports
+        if not imports_match and (not pth or not pth_entries):
             errors.append("editable_pth_missing")
-        elif any(
+        elif pth_entries and any(
             Path(entry).resolve(strict=False) != expected for entry in pth_entries
         ):
             errors.append("editable_pth_mismatch")
         if any(not bool(record.get("readable")) for record in pth):
             errors.append("editable_pth_unreadable")
     if expected_revision and source_revision != expected_revision:
+        # Codex fix 2026-08-17: exact revision check restored. A worker's
+        # seed binds ONE immutable generation; the live checkout revision must
+        # equal the seed's expected_revision exactly. There is no
+        # "follow_accepted_generation" path — a newer accepted manifest head
+        # must never silently re-interpret an already-issued seed.
         errors.append("source_revision_mismatch")
     return {
         "ok": not errors,
@@ -214,11 +232,42 @@ def normalized_runtime_identity(provenance: Mapping[str, Any]) -> dict[str, Any]
     """Project strict provenance into the content-addressed runtime identity."""
 
     identity = {key: provenance.get(key) for key in _RUNTIME_IDENTITY_KEYS}
-    identity["editable_revision"] = str(
-        provenance.get("editable_revision") or provenance.get("source_revision") or ""
-    )
-    identity["content_sha256"] = _canonical_sha256(identity)
+    # T-0301 worktree-first runtime has no pip editable install, so
+    # editable_revision must stay EMPTY (matching active_execution_identity,
+    # which derives it from the editable root only). Falling back to
+    # source_revision here made the seed identity disagree with the chain
+    # binding identity and broke ensure_runtime_launch_seed's equality check.
+    #
+    # For an EDITABLE-installed runtime, active_execution_identity derives
+    # editable_revision from the editable root's git revision; mirror that
+    # exactly so the launch-seed live identity equals the chain-bound
+    # identity (runtime_provenance() itself does not emit editable_revision,
+    # so fall back to the editable root's git revision when one exists).
+    editable_root_text = str(provenance.get("editable_root") or "")
+    identity["editable_revision"] = str(provenance.get("editable_revision") or "")
+    if not identity["editable_revision"] and editable_root_text:
+        identity["editable_revision"] = _git_revision(
+            Path(editable_root_text).expanduser()
+        )
+    identity["content_sha256"] = _canonical_sha256(_identity_digest_core(identity))
     return identity
+
+
+def _identity_digest_core(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """Env-independent identity digest (grok consult, occurrence d58701026410).
+
+    editable_root / editable_revision / direct_url / pth / imports all derive
+    from the probing interpreter's view (importlib.metadata dist-info,
+    resolved module paths) and drift between the generation-interpreter launch
+    recipe and a leftover candidate .venv. An identity pin that changes with
+    the probing interpreter is not an identity. The launch-relevant identity
+    is import_root + source_revision — the only fields determined by the tree
+    itself.
+    """
+    core = {key: identity.get(key) for key in _RUNTIME_IDENTITY_KEYS}
+    for key in ("editable_root", "editable_revision", "direct_url", "pth", "imports"):
+        core[key] = None
+    return core
 
 
 def runtime_provenance_receipt(provenance: Mapping[str, Any]) -> dict[str, Any]:

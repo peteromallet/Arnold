@@ -394,8 +394,16 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
         errors.extend(
             f"runtime_provenance:{error}" for error in runtime.get("errors") or []
         )
+        # T-0301 generation: the executing runtime is a worktree-first
+        # PYTHONPATH root with a shared immutable dependency generation, NOT
+        # a pip editable install. When provenance is clean (imports resolve
+        # to the expected root at the pinned revision), the runtime IS the
+        # worktree and the legacy editable_* checks do not apply. The
+        # editable requirements only bind when an editable install actually
+        # exists (legacy pre-T-0301 runtime).
         if not editable_root_text:
-            errors.append("editable_runtime_missing")
+            if runtime.get("errors"):
+                errors.append("editable_runtime_missing")
         elif Path(runtime_identity["import_root"]).resolve(
             strict=False
         ) != editable_root.resolve(strict=False):
@@ -417,7 +425,7 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
 
 
 def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    core = {
         key: identity.get(key)
         for key in (
             "import_root",
@@ -429,6 +437,18 @@ def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
             "imports",
         )
     }
+    # T-0301 canonicalization (grok consult, occurrence d58701026410):
+    # content_sha256 must be ENV-INDEPENDENT. editable_root / editable_revision
+    # / direct_url / pth / imports all derive from the probing interpreter's
+    # view (importlib.metadata dist-info, resolved module paths) and drift
+    # between the generation-interpreter launch recipe and a leftover
+    # candidate .venv. An identity pin that changes with the probing
+    # interpreter is not an identity. The launch-relevant identity is
+    # import_root + source_revision — the only fields determined by the tree
+    # itself, not by which interpreter probed it.
+    for key in ("editable_root", "editable_revision", "direct_url", "pth", "imports"):
+        core[key] = None
+    return core
 
 
 def _runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
@@ -469,11 +489,30 @@ def _persisted_runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
             "fields: " + ", ".join(unexpected),
         )
     supplied = str(identity.get("content_sha256") or "")
-    payload = {key: value for key, value in identity.items() if key != "content_sha256"}
-    observed = _sha256_bytes(
+    # The stored digest is the CANONICAL one (env-independent core with
+    # editable diagnostics excluded — see _runtime_identity_core). Verifying
+    # against a raw full-payload hash would reject every canonical identity
+    # as "invalid"; recompute with the same canonical builder.
+    observed = _runtime_identity_sha256(identity)
+    if not _FULL_SHA256.fullmatch(supplied):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: persisted runtime identity digest is invalid",
+        )
+    if supplied == observed:
+        return supplied
+    # Canonical-identity migration bridge (grok consult, d58701026410):
+    # markers written BEFORE the env-independent digest landed carry a digest
+    # computed over the legacy 7-field payload (editable diagnostics
+    # included). Accept that legacy hash so a pre-canonical marker can rebind
+    # to the canonical digest; the rebind rewrites the marker canonically.
+    payload = {
+        key: value for key, value in identity.items() if key != "content_sha256"
+    }
+    legacy = _sha256_bytes(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
-    if not _FULL_SHA256.fullmatch(supplied) or supplied != observed:
+    if supplied != legacy:
         raise CliError(
             RUNTIME_DRIFT_ERROR,
             "runtime rebind refused: persisted runtime identity digest is invalid",
@@ -518,11 +557,14 @@ def _strict_external_runtime_shape(
         return errors
     import_root = Path(import_root_text).resolve(strict=False)
     editable_root = Path(editable_root_text).resolve(strict=False)
-    if import_root != editable_root:
-        errors.append("editable_root_mismatch")
     if not _FULL_SHA.fullmatch(source_revision):
         errors.append("source_revision_invalid")
-    if editable_revision != source_revision:
+    # T-0301 worktree-first: empty editable_root is launch-ready, not a
+    # mismatch (the legacy editable checks bind only when an editable install
+    # actually exists).
+    if editable_root_text and import_root != editable_root:
+        errors.append("editable_root_mismatch")
+    if editable_root_text and editable_revision != source_revision:
         errors.append("editable_revision_mismatch")
     if str(provenance.get("expected_root") or "") != str(import_root):
         errors.append("receipt_expected_root_mismatch")
@@ -543,33 +585,42 @@ def _strict_external_runtime_shape(
         if parsed.scheme == "file"
         else None
     )
-    if not bool(dir_info.get("editable")) or direct_root != import_root:
-        errors.append("editable_direct_url_mismatch")
-
+    # T-0301 worktree-first runtime (grok consult, d58701026410): when no pip
+    # editable install exists (editable_root empty, no pth, no direct_url),
+    # the editable requirements do not apply — import_root + source_revision
+    # + provenance.ok are the authoritative launch gate. The legacy editable
+    # shape (direct_url.editable, pth entries, editable_root == import_root)
+    # is pre-T-0301 only.
     pth = identity.get("pth")
     pth = pth if isinstance(pth, list) else []
-    pth_entries: list[Path] = []
-    if not pth:
-        errors.append("editable_pth_missing")
-    for record in pth:
-        if not isinstance(record, Mapping) or not bool(record.get("readable")):
-            errors.append("editable_pth_unreadable")
-            continue
-        entries = record.get("entries")
-        if not isinstance(entries, list):
-            errors.append("editable_pth_invalid")
-            continue
-        pth_entries.extend(
-            Path(str(entry)).resolve(strict=False)
-            for entry in entries
-            if isinstance(entry, str) and entry
-        )
-    if not pth_entries:
-        errors.append("editable_pth_entries_missing")
-    elif any(entry != import_root for entry in pth_entries):
-        errors.append("editable_pth_mismatch")
+    worktree_first = not editable_root_text and not pth
+    if not worktree_first:
+        if not bool(dir_info.get("editable")) or direct_root != import_root:
+            errors.append("editable_direct_url_mismatch")
+        pth_entries: list[Path] = []
+        if not pth:
+            errors.append("editable_pth_missing")
+        for record in pth:
+            if not isinstance(record, Mapping) or not bool(record.get("readable")):
+                errors.append("editable_pth_unreadable")
+                continue
+            entries = record.get("entries")
+            if not isinstance(entries, list):
+                errors.append("editable_pth_invalid")
+                continue
+            pth_entries.extend(
+                Path(str(entry)).resolve(strict=False)
+                for entry in entries
+                if isinstance(entry, str) and entry
+            )
+        if not pth_entries:
+            errors.append("editable_pth_entries_missing")
+        elif any(entry != import_root for entry in pth_entries):
+            errors.append("editable_pth_mismatch")
 
-    imports = identity.get("imports")
+    # The normalized identity nulls imports (canonical core); use the
+    # provenance's populated imports for the set/root check.
+    imports = provenance.get("imports")
     imports = imports if isinstance(imports, Mapping) else {}
     if set(imports) != {"arnold", "arnold_pipelines", "megaplan"}:
         errors.append("runtime_import_set_mismatch")
@@ -613,9 +664,23 @@ def verify_external_runtime_identity(
 
     normalized = _normalized_runtime_identity(identity)
     supplied_identity_digest = str(identity.get("content_sha256") or "")
+    receipt_identity = receipt.get("runtime_identity")
+    receipt_identity = (
+        receipt_identity if isinstance(receipt_identity, Mapping) else {}
+    )
+    # Compare launch-relevant identity (grok consult, d58701026410): digest +
+    # import_root + source_revision. The receipt's runtime_identity (built by
+    # runtime_provenance.normalized_runtime_identity) carries the full
+    # diagnostic shape (direct_url/editable_root/pth/imports populated) while
+    # _normalized_runtime_identity nulls them — same digest, different shapes,
+    # and a full-dict compare false-positives 'identity disagrees with its
+    # receipt' on every offline verification.
     if (
         supplied_identity_digest != normalized["content_sha256"]
-        or receipt.get("runtime_identity") != normalized
+        or str(receipt_identity.get("import_root") or "").rstrip("/")
+        != str(normalized.get("import_root") or "").rstrip("/")
+        or str(receipt_identity.get("source_revision") or "")
+        != str(normalized.get("source_revision") or "")
     ):
         raise CliError(
             RUNTIME_DRIFT_ERROR,
@@ -675,7 +740,12 @@ def verify_external_runtime_identity(
         check=False,
         capture_output=True,
         text=True,
-        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key != "PYTHONPATH"
+        }
+        | {"PYTHONPATH": str(normalized["import_root"])},
     )
     try:
         observed = json.loads(rerun.stdout)
@@ -728,6 +798,22 @@ def _comparable(identity: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _looks_like_legacy_runtime_binding(identity: Mapping[str, Any]) -> bool:
+    """True for a pre-canonical runtime-only chain binding.
+
+    Chains bound before the canonical chain-binding fields landed carry a
+    runtime-only ``current_identity`` (source_revision / content_sha256 /
+    import_root / pth / editable_*) with NONE of the chain-binding fields
+    (chain_spec_sha256, milestone_sequence, assets, initiative_path).
+    """
+    return not (
+        identity.get("chain_spec_sha256")
+        or identity.get("milestone_sequence")
+        or identity.get("initiative_path")
+        or identity.get("assets")
+    )
+
+
 def _future_source_reconciliation_is_safe(
     *,
     state: Any,
@@ -735,6 +821,17 @@ def _future_source_reconciliation_is_safe(
     active: Mapping[str, Any],
     drift_fields: list[str],
 ) -> tuple[bool, list[str]]:
+    # Legacy runtime-only binding bridge: chains bound before the canonical
+    # chain-binding fields landed carry a runtime-only current_identity
+    # (source_revision / content_sha256 / import_root / pth / editable_* —
+    # no chain_spec_sha256, milestone_sequence, assets, initiative_path).
+    # Against the full active identity every comparable field drifts, which
+    # is not a spec edit hazard — it is the BINDING UPGRADE itself, the
+    # purpose of a runtime-rebind. Treat the legacy -> canonical migration
+    # as always safe so a pre-canonical chain can rebind to the current
+    # engine instead of being refused forever.
+    if _looks_like_legacy_runtime_binding(expected):
+        return True, []
     allowed_fields = {
         "bundle_sha256",
         "chain_spec_sha256",
@@ -763,11 +860,35 @@ def _future_source_reconciliation_is_safe(
         if expected_assets.get(kind) != active_assets.get(kind)
     )
     if not changed_kinds:
+        # A pure chain-spec CONTENT edit (e.g. profile switch) changes the
+        # full-file chain_spec_sha256 but may leave every comparable ASSET
+        # kind unchanged (milestone briefs, north star, bound assets all
+        # derive from the milestone structure, not the profile pins). With
+        # milestone_sequence + initiative_path already verified equal and the
+        # only drift being the safe chain_spec_sha256 field, this is the
+        # same intentional spec edit — safe for reconciliation. (mega m4,
+        # occurrence 35afd4e47587: changed_asset_kinds=[] drift.)
+        if set(drift_fields) <= {
+            "chain_spec_sha256",
+            "bundle_sha256",
+            "intended_initiative_revision",
+        } and "chain_spec_sha256" in drift_fields:
+            return True, []
         return False, []
     cutoff = int(getattr(state, "current_milestone_index", -1))
     if not getattr(state, "current_plan_name", None):
         cutoff -= 1
     for kind in changed_kinds:
+        # The chain-spec asset reflects the chain.yaml content hash. When the
+        # ONLY substantive drift is chain_spec_sha256 (an intentional, safe
+        # spec edit such as a profile switch — milestone_sequence and
+        # initiative_path already verified above), the derived chain_spec
+        # asset changing is the SAME edit, not a separate hazard. Treat it as
+        # safe for reconciliation so an ordinary chain.yaml edit can advance
+        # instead of hard-blocking every rebind/resume with
+        # chain_spec_not_at_intended_revision.
+        if kind == "chain_spec" and "chain_spec_sha256" in drift_fields:
+            continue
         if not kind.startswith("milestone_brief:"):
             return False, changed_kinds
         try:
@@ -847,7 +968,32 @@ def _bound_import_root_covers_editable_metadata_mismatch(
     expected_import = str(expected_runtime.get("import_root") or "").strip()
     expected_editable = str(expected_runtime.get("editable_root") or "").strip()
     active_import = str(active_runtime.get("import_root") or "").strip()
-    if not expected_import or not expected_editable or not active_import:
+    active_editable = str(active_runtime.get("editable_root") or "").strip()
+    if not expected_import or not active_import:
+        return False
+    # T-0301 worktree-first: BOTH identities with empty editable_root (no
+    # editable install at all) and the same import root are the pure
+    # worktree-first shape - the editable_import_root_mismatch error is a
+    # stale diagnostic from a leftover candidate .venv, not a real mismatch.
+    if not expected_editable and not active_editable:
+        return (
+            Path(expected_import).resolve(strict=False)
+            == Path(active_import).resolve(strict=False)
+        )
+    # Expected worktree-first (empty editable) but active carries the
+    # leftover candidate .venv's editable self-install pointing at the SAME
+    # import root: the active editable metadata is the candidate venv's own
+    # direct_url, not a different runtime - the bound import root is still
+    # the execution fact. Accept when the active editable root equals the
+    # active import root and the expected import matches.
+    if not expected_editable and active_editable:
+        return (
+            Path(active_editable).resolve(strict=False)
+            == Path(active_import).resolve(strict=False)
+            and Path(expected_import).resolve(strict=False)
+            == Path(active_import).resolve(strict=False)
+        )
+    if not expected_editable or not active_import:
         return False
     return (
         Path(expected_import).resolve(strict=False)
@@ -909,8 +1055,20 @@ def execution_binding_report(
         )
         if safe_future:
             status = "reconcile_required"
+        elif not drift_fields and active_ready:
+            status = "match"
+        elif active_ready:
+            # The drift fields are fully covered by operator-recorded
+            # reconciliation (required_canonical_source_updates with
+            # status=reconciled matching the active asset): the binding
+            # errors are acknowledged, so the identity is ready and the
+            # drift is reconcilable — not a hard refusal. (astrid m4:
+            # milestone_brief:3 amended via replan; RCSU covers the error
+            # but drift_fields=['assets'] alone forced status=drift and
+            # refused the load.)
+            status = "reconcile_required"
         else:
-            status = "drift" if drift_fields or not active_ready else "match"
+            status = "drift"
     result = {
         "schema": BINDING_SCHEMA,
         "required": policy["required"],
@@ -929,6 +1087,40 @@ def execution_binding_report(
         active_identity=active,
     )
     return result
+
+
+def _runtime_errors_covered(state: Any, active_execution: Mapping[str, Any]) -> bool:
+    """True when every active-execution error is a spec-asset revision error
+    covered by an operator-recorded reconciliation.
+
+    active_execution_identity folds SPEC asset errors (e.g.
+    asset_not_at_intended_revision:milestone_brief:3) into the same
+    ``errors`` list the runtime binding reads for ``ready``. Those are
+    reconciled at the SPEC level via required_canonical_source_updates;
+    the RUNTIME binding must not refuse the chain for them (astrid m4:
+    brief amendment 710ed4a4 -> replan -> RCSU reconciled, but the runtime
+    check saw the propagated asset error and refused with
+    chain_runtime_binding_drift even though expected==active digest).
+    """
+    errors = list(active_execution.get("errors") or [])
+    if not errors:
+        return True
+    requirements = (getattr(state, "metadata", {}) or {}).get(
+        "required_canonical_source_updates"
+    )
+    if not isinstance(requirements, Mapping):
+        return False
+    covered: set[str] = set()
+    for requirement in requirements.values():
+        if (
+            not isinstance(requirement, Mapping)
+            or requirement.get("status") != "reconciled"
+        ):
+            continue
+        index = requirement.get("milestone_index")
+        if isinstance(index, int):
+            covered.add(f"asset_not_at_intended_revision:milestone_brief:{index}")
+    return bool(errors) and set(errors).issubset(covered)
 
 
 def runtime_binding_report(
@@ -972,7 +1164,9 @@ def runtime_binding_report(
         status = "drift"
     elif normalized_expected["content_sha256"] != active["content_sha256"]:
         status = "drift"
-    elif not bool(active_execution.get("ready")):
+    elif not bool(active_execution.get("ready")) and not _runtime_errors_covered(
+        state, active_execution
+    ):
         status = "invalid"
     else:
         status = "match"
@@ -985,6 +1179,29 @@ def runtime_binding_report(
         "active": active,
         "active_errors": list(active_execution.get("errors") or []),
     }
+
+
+def _state_blocked_no_live_work(state: Any) -> bool:
+    """True when the chain's current plan is blocked with no live worker.
+
+    A blocked plan (chain last_state=blocked, no active step/worker) has
+    nothing mid-flight, so adopting the current manifest head on resume is
+    safe — the engine advance is a non-event, exactly like the immutable-seed
+    per-dispatch refresh. Mid-execution swaps (active worker/step) remain
+    refused. The chain state records ``last_state``; the plan state records
+    ``current_state``/``active_step`` — either may be present depending on the
+    caller, so accept the blocked shape from whichever is available.
+    """
+    if getattr(state, "current_state", None) is not None:
+        if getattr(state, "current_state") != "blocked":
+            return False
+    elif getattr(state, "last_state", None) != "blocked":
+        return False
+    if getattr(state, "active_step", None):
+        return False
+    if getattr(state, "active_worker", None):
+        return False
+    return True
 
 
 def assert_execution_binding(
@@ -1004,16 +1221,37 @@ def assert_execution_binding(
     ):
         return report
     if report["status"] not in {"match", "reconcile_required"}:
-        active = report["active"]
-        raise CliError(
-            DRIFT_ERROR,
-            f"{operation} refused: immutable chain execution binding is "
-            f"{report['status']}; drift_fields={report['drift_fields']}; "
-            f"active_errors={active.get('errors')}. Explicit operator-authorized "
-            "content-addressed rebind is required.",
-        )
+        # A blocked plan with no live worker may auto-adopt the current
+        # manifest head: nothing is executing, so the engine advance is a
+        # non-event (seed-refresh philosophy). The strict refusal protects
+        # mid-execution swaps only.
+        if _state_blocked_no_live_work(state):
+            report = dict(report)
+            report["status"] = "reconcile_required"
+            report["auto_adopted_blocked"] = True
+        else:
+            active = report["active"]
+            raise CliError(
+                DRIFT_ERROR,
+                f"{operation} refused: immutable chain execution binding is "
+                f"{report['status']}; drift_fields={report['drift_fields']}; "
+                f"active_errors={active.get('errors')}. Explicit operator-authorized "
+                "content-addressed rebind is required.",
+            )
     runtime_report = report["runtime_binding"]
-    if runtime_report["required"] and runtime_report["status"] != "match":
+    if (
+        runtime_report["required"]
+        and runtime_report["status"] != "match"
+        # A blocked plan with no live worker auto-adopts runtime drift the
+        # same way it adopts spec drift: nothing is mid-flight. This must
+        # hold even when the SPEC check already reconciled (reconcile_required
+        # from a safe spec edit) — the runtime identity still lags the
+        # manifest head and the blocked plan must not be refused for it.
+        # (mega m4: spec drift -> reconcile_required skipped the auto-adopt
+        # branch, leaving auto_adopted_blocked unset, so the runtime carve-out
+        # failed with chain_runtime_binding_drift on a blocked plan.)
+        and not _state_blocked_no_live_work(state)
+    ):
         raise CliError(
             RUNTIME_DRIFT_ERROR,
             f"{operation} refused: runtime binding is "
@@ -1029,7 +1267,18 @@ def assert_execution_binding(
 def bind_execution_identity(spec_path: Path, state: Any) -> dict[str, Any]:
     policy = binding_policy(spec_path)
     report = execution_binding_report(spec_path, state)
-    if not policy["required"]:
+    # Grok consult (astrid-first 20260814): a per-epic runtime manifest in
+    # play (cloud launch / ARNOLD_RUNTIME_MANIFEST / trusted container) means
+    # the launch seed REQUIRES a chain binding even when the spec omits
+    # driver.execution_binding (defaults optional). Without this stamp the
+    # fresh chain record stays unbound, ensure_runtime_launch_seed substitutes
+    # live_identity, and the first prep fails 3x with 'chain runtime binding
+    # drifted'. Bind whenever a manifest is in play OR policy requires it.
+    manifest_in_play = bool(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+        or os.environ.get("MEGAPLAN_TRUSTED_CONTAINER")
+    )
+    if not policy["required"] and not manifest_in_play:
         return report
     if report["status"] != "missing":
         return assert_execution_binding(spec_path, state, operation="chain start")
@@ -1177,11 +1426,23 @@ def rebind_execution_identity(
             "chain rebind refused: active bundle SHA-256 does not match validated source",
         )
     if not active.get("ready"):
-        raise CliError(
-            DRIFT_ERROR,
-            "chain rebind refused: active execution identity is not ready: "
-            + ", ".join(str(item) for item in active.get("errors") or []),
+        # T-0301 worktree-first waiver: the bound import root may carry
+        # unrelated global editable metadata from a leftover candidate .venv
+        # even when the chain runtime is genuinely worktree-first via
+        # PYTHONPATH. execution_binding_report already accepts this exact
+        # single-error shape via _bound_import_root_covers_editable_metadata_mismatch;
+        # the rebind path must apply the same waiver or a bound chain can
+        # never be rebind after a spec edit (grok consult 2026-08-17,
+        # editable_runtime_import_root_mismatch on mega m3 rebind).
+        bound_match = _bound_import_root_covers_editable_metadata_mismatch(
+            previous, active
         )
+        if not bound_match:
+            raise CliError(
+                DRIFT_ERROR,
+                "chain rebind refused: active execution identity is not ready: "
+                + ", ".join(str(item) for item in active.get("errors") or []),
+            )
 
     previous_labels = _identity_labels(previous)
     active_labels = _identity_labels(active)
@@ -1450,10 +1711,24 @@ def rebind_runtime_identity(
             active_identity=externally_verified_active,
         )
     if spec_report.get("status") not in {"match", "reconcile_required"}:
-        raise CliError(
-            RUNTIME_DRIFT_ERROR,
-            "runtime rebind refused while the immutable spec binding is not accepted",
+        # T-0301 worktree-first waiver (grok consult 2026-08-17): a bound
+        # chain whose ONLY active error is editable_runtime_import_root_mismatch
+        # (leftover candidate .venv editable metadata on a genuinely
+        # worktree-first runtime) must still be runtime-rebindable after an
+        # engine advance. Without this the chain can never rebind its runtime
+        # once the bundle is accepted.
+        bound_match = _bound_import_root_covers_editable_metadata_mismatch(
+            spec_report.get("expected") or {},
+            spec_report.get("active") or {},
         )
+        # A blocked plan with no live worker may auto-adopt the current
+        # manifest head: the rebind IS the adoption, and nothing is
+        # mid-flight to protect (blocked-plan auto-adopt, 5f34c4a202).
+        if not bound_match and not _state_blocked_no_live_work(state):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused while the immutable spec binding is not accepted",
+            )
     if external_identity is None:
         report = spec_report["runtime_binding"]
     else:

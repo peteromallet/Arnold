@@ -319,3 +319,70 @@ def test_admission_keeps_nonexact_terminal_cursor_mismatch_blocked(tmp_path: Pat
     (plan_dir / "state.json").write_text(json.dumps({"current_state": "blocked", "latest_failure": {"kind": "workflow_cursor_mismatch", "phase": "execute", "message": "different cursor mismatch"}}) + "\n", encoding="utf-8")
     monkeypatch.setattr(chain_module, "_latest_execution_batch_all_tasks_done", lambda _plan_dir: (True, "finalize.json"))
     assert not chain_module._rearm_stale_terminal_execute_cursor_mismatch(plan_dir, writer=lambda _text: None)
+
+
+def test_committed_clean_file_in_window_counts_zero_added_loc(tmp_path: Path) -> None:
+    """Scope-drift must not count a committed-clean tracked file as fully-added.
+
+    Regression for the astrid m2 permanent blocked_by_quality: files committed
+    by the fixer/repair lineage inside the milestone window (clean in the
+    worktree, no diff vs HEAD) were counted at FULL file line count by
+    collect_loc_by_file's fallback, tripping scope_drift=high (>20 LOC
+    unclaimed) on every execute closeout even after every task completed.
+    """
+    from arnold_pipelines.megaplan.receipts.drift import collect_loc_by_file
+
+    repo = tmp_path / "repo"
+    base_sha = _init_repo(repo)
+    # A committed-clean file inside the milestone window (after the base).
+    (repo / "committed_clean.py").write_text("X = 1\n" * 100, encoding="utf-8")
+    _commit(repo, "fixer commit")
+    loc = collect_loc_by_file(repo, {"committed_clean.py"})
+    assert loc["committed_clean.py"] == 0, loc
+    # Untracked files still fall back to a full-file count.
+    (repo / "untracked.py").write_text("Y = 2\n" * 50, encoding="utf-8")
+    loc = collect_loc_by_file(repo, {"untracked.py"})
+    assert loc["untracked.py"] == 50, loc
+    assert base_sha
+
+
+def test_terminal_task_write_set_counts_as_claimed_paths(tmp_path: Path) -> None:
+    """A done task's admitted write_set is durable ownership even when
+    files_changed is empty (FLAG-006 softening) — adopt-miss read-path fix.
+
+    Regression for the astrid m2 kit.py case: T24_impl done with write_set
+    admitting astrid/core/conformance/kit.py but files_changed=[]; the scope
+    drift reader only read files_changed, so a committed-window file owned by
+    a terminal task was mis-read as unclaimed and blocked every closeout.
+    """
+    from arnold_pipelines.megaplan.execute.aggregation import (
+        _collect_finalized_task_claimed_paths,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T24_impl",
+                        "status": "done",
+                        "files_changed": [],
+                        "write_set": {
+                            "paths": [
+                                "astrid/core/conformance/kit.py",
+                                "tests/v10/conftest.py",
+                            ],
+                            "complete": True,
+                        },
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    claimed = _collect_finalized_task_claimed_paths(plan_dir, tmp_path)
+    assert "astrid/core/conformance/kit.py" in claimed
+    assert "tests/v10/conftest.py" in claimed

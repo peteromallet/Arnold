@@ -155,15 +155,23 @@ def _recover_evaluator_payload_from_raw(
 # must corroborate it. When a verdict references one of these fields but the
 # runtime has no corresponding accepted value, the call fails closed rather
 # than silently accepting an unverifiable provenance claim.
+#
+# Field-authority classification (occurrence a2c3644905c0, evidence delta 2):
+# only `critique_mode` is a GENUINE accepted-policy ref — the runtime always
+# admits the allowed modes and the validator rejects unpermitted modes.
+# Every other CL3 additive output field (`budgets`, `input_set_hashes`,
+# `domain_selections`, `domain_skips`, `evidence_targets`,
+# `expected_revision`, `expected_briefing_hash`) is a PROMPT-MANDATED
+# SELF-DECLARED field: `audits/critique_evaluator.py` validates its shape and
+# compares it against accepted context ONLY when that context exists
+# (declared budget cap, ledger handoff, known domains/refs); absence of the
+# context is "no constraint", not an unverifiable handoff claim. Mandatory
+# fail-closed corroboration for those fields wedges every plan whose profile
+# does not configure the corresponding data (see occurrence a2c3644905c0:
+# budgets -> max_budget_findings, input_set_hashes -> input_set_hash,
+# domain_selections -> known_domains).
 _EVALUATOR_HANDOFF_REFS: dict[str, str] = {
-    "expected_revision": "expected_revision",
-    "expected_briefing_hash": "expected_briefing_hash",
-    "domain_selections": "known_domains",
-    "domain_skips": "known_domains",
-    "evidence_targets": "known_finding_refs",
-    "budgets": "max_budget_findings",
     "critique_mode": "allowed_critique_modes",
-    "input_set_hashes": "input_set_hash",
 }
 
 

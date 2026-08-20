@@ -69,6 +69,15 @@ from urllib.parse import unquote, urlparse
 if __name__ != "fan":
     sys.modules.setdefault("fan", sys.modules[__name__])
 
+# When fan.py is executed under PYTHONSAFEPATH/-P (the babysitter runs it from
+# a sandboxed managed-agent env), the script's own directory is NOT on
+# sys.path, so the sibling-module import below fails with ModuleNotFoundError.
+# Prepend the real script directory explicitly so `from fan_process import …`
+# resolves regardless of how fan.py is launched.
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
 from fan_process import _ProcTask, _ProcessTaskRunner
 
 
@@ -261,6 +270,7 @@ _MODEL_SHORTCUTS = {
     "kimi": "fireworks:accounts/fireworks/models/kimi-k2p5",
     "kimi26": "fireworks:accounts/fireworks/models/kimi-k2p6",
     "glm": "zhipu:glm-4.6",
+    "grok": "xai:grok-4.6",
 }
 
 _HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:", "mimo:")

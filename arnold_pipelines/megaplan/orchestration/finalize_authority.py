@@ -97,6 +97,37 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         # FinalizeFieldOwnershipError before finalize.json is updated.
         "head_sha",
         "code_hash",
+        # Scope-reconciliation field the execute seam stamps onto task records
+        # (aggregation.py:reconcile_finalized_review_scope_claims — merges
+        # review-verdict evidence_files into files_changed and records the
+        # reconciled additions).  The execute owner computes and publishes it
+        # during the aggregate-execute publish, so it must be publishable or
+        # every post-review execute aborts with FinalizeFieldOwnershipError
+        # before finalize.json is updated (recurring scope-drift blocker).
+        "scope_reconciled_files",
+        # Typed blocker disposition stamped by the execute auto-loop when a
+        # worker reports a task status=blocked: "prerequisite_blocked" (explicit
+        # prereq/user-action blocker) or "validation_blocked" (task-scoped
+        # worker/policy block with no accepted terminal authority). The loop
+        # parks these rows and continues with the dependency-independent
+        # frontier; the kind is surfaced in phase_result BlockedTask.blocker_kind.
+        "blocked_reason",
+        # Durable test-budget block identity (occurrence 0513dbf3f069): the
+        # merge budget gate stamps this string field on the entry AND the target
+        # task row (merge.py:_enforce_task_test_budgets), and the retry reset
+        # preserves it so _is_task_test_budget_blocked can exclude the row from
+        # authority adoption until a fresh compliant attempt passes. The execute
+        # publisher propagates the merged rows into the finalize projection, so
+        # the execute owner must be able to publish it or the end-of-loop
+        # finalize publish aborts with FinalizeFieldOwnershipError (observed:
+        # astrid-first 0a0ce24c3510 drive5, batch_23 merge, T2 row).
+        "task_test_budget_exhausted",
+        # Typed test-budget violations + evidence-gated debt acceptance
+        # (occurrence 927ad612eda8): the merge gate writes the typed list, and
+        # the final-sweep reconciler writes the durable accepted-with-debt
+        # record + receipt.  Both are execute-owned mutable fields.
+        "task_test_budget_violations",
+        "task_test_budget_debt",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})

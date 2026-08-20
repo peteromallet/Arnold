@@ -42,3 +42,6 @@ def test_execute_batch_prompt_requires_verification_in_project_worktree(tmp_path
     assert f"(`{tmp_path}`)" in prompt
     assert "Do not `cd` to `/workspace/arnold`" in prompt
     assert "editable-engine mirror" in prompt
+    assert (
+        "`timeout <N> python3 -m pytest <selector> -q`" in prompt
+    )

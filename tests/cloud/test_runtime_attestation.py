@@ -13,6 +13,9 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud import runtime_attestation as attestation
+from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+    normalized_runtime_identity,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -242,6 +245,45 @@ def test_complete_loaded_module_vector_rejects_mixed_and_late_modules(
     )
 
     with pytest.raises(CliError, match="escaped the expected root"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+
+
+def test_worker_with_fewer_modules_than_seed_validates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Builder-only seed modules (chain-CLI imports) are not worker requirements.
+
+    Occurrence prep-retry-20260815T0020Z: the seed was rebuilt by the fat
+    chain CLI (325 loaded_modules incl. relaunch_resolution/runtime_cutover/
+    runtime_manifest/shadow_attestation) and the thin prep worker imports
+    none of those.  Presence is optional; identity, when present, is strict.
+    """
+    seed, _paths = _release_seed(tmp_path, monkeypatch)
+    # A worker that imports none of the seed-listed modules (strictly weaker
+    # than the real 321/325 case) must still validate.
+    monkeypatch.setattr(attestation, "_module_vector", lambda _root: ([], []))
+
+    result = attestation.validate_runtime_launch_seed(seed, component="worker")
+    assert result["status"] == "ready"
+
+
+def test_worker_module_identity_drift_still_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Presence is optional, but a present module must match exactly."""
+    seed, _paths = _release_seed(tmp_path, monkeypatch)
+    drifted = [
+        {
+            "module": "arnold_pipelines.megaplan.cloud.runtime_attestation",
+            "path": "/other/arnold_pipelines/megaplan/cloud/runtime_attestation.py",
+            "root": "/other",
+        }
+    ]
+    monkeypatch.setattr(attestation, "_module_vector", lambda _root: (drifted, []))
+
+    with pytest.raises(CliError, match="loaded module identity changed"):
         attestation.validate_runtime_launch_seed(seed, component="worker")
 
 
@@ -667,6 +709,618 @@ def test_configured_runtime_attestation_required_defaults_on(
     assert attestation.configured_runtime_attestation_required() is False
 
 
+def test_release_seed_accepts_supervisor_receipt_from_another_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G14 regression: the Jul-31 supervisor wheel is prepared from its own
+    consolidated source, which legitimately differs from the per-epic worker
+    root/revision.  The seed must still build ready=true — the supervisor is
+    attested independently (probe ready + fingerprint + import-receipt
+    self-consistency + runtime prefix), never by source/revision equality."""
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    assert seed["ready"] is True
+
+    receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
+    receipt["source"] = str(tmp_path / "supervisor-src")
+    receipt["source_revision"] = "d" * 40
+    _write_json(paths["receipt"], receipt)
+
+    seed2 = attestation.build_runtime_launch_seed(
+        expected_root=paths["root"],
+        expected_revision="a" * 40,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+        marker_path=paths["marker"],
+        chain_spec_path=paths["chain_spec"],
+        seed_doc_paths=[paths["seed_doc"]],
+    )
+    assert seed2["ready"] is True
+    assert seed2["errors"] == []
+    assert seed2["supervisor_receipt"]["source"] == str(
+        (tmp_path / "supervisor-src").resolve()
+    )
+    assert seed2["supervisor_receipt"]["source_revision"] == "d" * 40
+
+
+def test_normalized_identity_mirrors_active_execution_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """d587/a2c3644905c0 regression: normalized_runtime_identity forced
+    editable_revision='' while active_execution_identity derives it from the
+    editable root's git revision, so _strict_external_runtime_shape raised
+    editable_revision_mismatch on a launch-ready runtime.  Mirror the chain
+    binding: fall back to the editable root's git revision when one exists."""
+    from arnold_pipelines.megaplan.cloud import runtime_provenance as rp
+
+    # A git root exists -> identity derives its HEAD revision, matching
+    # active_execution_identity's editable_revision.
+    git_root = tmp_path / "editable-root"
+    git_root.mkdir()
+    subprocess.run(["git", "-C", str(git_root), "init", "-q"], check=True)
+    (git_root / "marker.txt").write_text("x", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(git_root), "add", "-A"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(git_root), "commit", "-qm", "seed"],
+        check=True,
+        capture_output=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(git_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    prov = {
+        "editable_root": str(git_root),
+        "source_revision": head,
+        "editable_revision": "",
+    }
+    identity = normalized_runtime_identity(prov)
+    assert identity["editable_revision"] == head
+    assert len(identity["content_sha256"]) == 64
+
+    # No editable root -> stays empty (worktree-first T-0301 runtime).
+    prov_none = {"editable_root": "", "source_revision": "a" * 40}
+    identity_none = normalized_runtime_identity(prov_none)
+    assert identity_none["editable_revision"] == ""
+
+    # Explicit editable_revision wins over the fallback.
+    prov_explicit = {
+        "editable_root": str(git_root),
+        "source_revision": "b" * 40,
+        "editable_revision": "c" * 40,
+    }
+    identity_explicit = normalized_runtime_identity(prov_explicit)
+    assert identity_explicit["editable_revision"] == "c" * 40
+
+
+def _ensure_seed_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    revision: str = "a" * 40,
+) -> dict[str, object]:
+    """A manifest-pinned launch-seed environment reusing the release-seed mocks.
+
+    The marker is written in the FULL content-addressed identity form and its
+    relaunch command names root + revision, so a stale marker can be rebound
+    through the CAS helper when the head advances.
+    """
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    root = paths["root"]
+    state = {"revision": revision}
+
+    def _provenance(**_kwargs: object) -> dict[str, object]:
+        return {
+            "ok": True,
+            "ready": True,
+            "errors": [],
+            "import_root": str(root),
+            "editable_root": str(root),
+            "source_revision": state["revision"],
+            "runtime_revision": state["revision"],
+            "direct_url": {},
+            "pth": [],
+            "imports": {
+                "arnold": str(root / "arnold" / "__init__.py"),
+                "arnold_pipelines": str(root / "arnold_pipelines" / "__init__.py"),
+                "megaplan": str(root / "arnold_pipelines" / "megaplan" / "__init__.py"),
+            },
+        }
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _provenance)
+    monkeypatch.setattr(attestation, "_git_revision", lambda _root: state["revision"])
+    identity = normalized_runtime_identity(_provenance())
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    marker["runtime_binding"]["current_identity"] = dict(identity)
+    marker["relaunch_command"] = (
+        f"python -m arnold_pipelines.megaplan chain {root} {state['revision']}"
+    )
+    _write_json(paths["marker"], marker)
+
+    def _regenerate_relaunch_command() -> None:
+        """Simulate the repair-loop regenerating a command that binds the
+        CURRENT runtime (root + revision) while the identity stays stale."""
+        marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+        marker["relaunch_command"] = (
+            f"python -m arnold_pipelines.megaplan chain {root} {state['revision']}"
+        )
+        _write_json(paths["marker"], marker)
+
+    manifest_path = tmp_path / "runtime-manifest.json"
+
+    def _write_manifest() -> None:
+        _write_json(
+            manifest_path,
+            {
+                "runtime_id": "runtime-test-1",
+                "schema": "1",
+                "generation": 3,
+                "epic_id": "epic-demo",
+                "state": "active",
+                "owner": "test",
+                "base": {
+                    "ref": "refs/heads/base/editable-install",
+                    "commit": "87a912beb",
+                    "editable_install_path": str(root / "base"),
+                    "venv_path": str(root / "base" / "venv"),
+                },
+                "epic": {
+                    "branch": "fixer/epic-demo-20260807",
+                    "worktree_path": str(root),
+                    "venv_path": str(root / "venv"),
+                    "runtime_root": str(root),
+                    "expected_head": state["revision"],
+                    "repair_bin": str(root / "venv" / "bin" / "arnold-babysitter"),
+                    "deps_lockfile": str(root / "uv.lock"),
+                },
+                "indirection": {
+                    "host_path": str(root),
+                    "container_path": "/workspace/epic-demo",
+                    "mount_table": [],
+                    "execution_namespace": "epic-demo-ns",
+                    "verified_head": state["revision"],
+                    "last_verified_at": "2026-08-13T00:00:00+00:00",
+                    "attestation": {
+                        "module_file": str(root / "arnold_pipelines" / "__init__.py"),
+                        "module_digest": "d41d8cd98f00b204e9800998ecf8427e",
+                        "mount_id": "0:42",
+                    },
+                },
+                "policy": {
+                    "policy_sha": "policy-sha-1",
+                    "model_policy_sha": "model-sha-1",
+                    "sync_policy": "push-on-promote",
+                },
+                "promotions": [],
+                "timestamps": {
+                    "created": "2026-08-13T00:00:00+00:00",
+                    "updated": "2026-08-13T00:00:00+00:00",
+                    "closed": "",
+                },
+                "gc_policy": "closed-only",
+                "commands": ["megaplan chain"],
+            },
+        )
+
+    _write_manifest()
+    seed_dir = tmp_path / "launch-seeds"
+    return {
+        "manifest": manifest_path,
+        "paths": paths,
+        "seed_dir": seed_dir,
+        "identity": identity,
+        "state": state,
+        "write_manifest": _write_manifest,
+        "provenance": _provenance,
+        "regenerate_relaunch_command": _regenerate_relaunch_command,
+    }
+
+
+def test_ensure_runtime_launch_seed_rebuilds_on_head_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G14: ensure_runtime_launch_seed writes the canonical seed once and
+    rebuilds it when the manifest-pinned HEAD changes (missing -> build,
+    current -> reuse, drifted -> rebuild)."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    state = env["state"]
+    assert isinstance(state, dict)
+    seed_dir = env["seed_dir"]
+    assert isinstance(seed_dir, Path)
+    revision = str(state["revision"])
+    root = paths["root"]
+    identity = env["identity"]
+    assert isinstance(identity, dict)
+
+    first = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=identity,
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    # T-0303 immutable content-addressed seed: <generation>-<rev>-<seed-sha>.json
+    # plus a dispatch-current.json pointer. Not the old mutable per-runtime slot.
+    assert first.name != "runtime-test-1.json"
+    assert first.parent == seed_dir / "runtime-test-1"
+    assert first.exists()
+    assert json.loads(first.read_text(encoding="utf-8"))[
+        "expected_revision"
+    ] == revision
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert pointer.exists()
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(first)
+
+    # unchanged pin -> reuse the existing seed (no rebuild, no marker churn)
+    second = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=identity,
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    assert second == first  # immutable seed reused, pointer unchanged
+
+    # head advances: manifest pin, live HEAD, and the chain identity move.
+    # The marker's relaunch command was regenerated to bind the current
+    # runtime (root + revision) while its identity stays stale — the CAS
+    # rebind then converges the marker to the live identity.
+    new_revision = "c" * 40
+    state["revision"] = new_revision
+    env["regenerate_relaunch_command"]()  # type: ignore[operator]
+    env["write_manifest"]()  # type: ignore[operator]
+    new_identity = normalized_runtime_identity(
+        env["provenance"]()  # type: ignore[operator]
+    )
+    third = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=new_identity,
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    # A new generation -> a NEW immutable seed (content-addressed by the new
+    # revision); the old seed file is never rewritten.
+    assert third != first
+    assert third.parent == seed_dir / "runtime-test-1"
+    assert third.exists()
+    rebuilt = json.loads(third.read_text(encoding="utf-8"))
+    assert rebuilt["expected_revision"] == new_revision
+    assert json.loads(first.read_text(encoding="utf-8"))[
+        "expected_revision"
+    ] == revision  # old seed untouched (immutability)
+    # dispatch pointer now targets the new generation
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(third)
+    # the stale marker was CAS-rebound to the new identity
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    marker_identity = marker["runtime_binding"]["current_identity"]
+    assert marker_identity["source_revision"] == new_revision
+    assert marker_identity["import_root"] == str(root)
+    assert len(marker["runtime_binding"].get("rebind_events") or []) == 1
+
+
+def test_ensure_runtime_launch_seed_rebuilds_on_seed_document_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 35afd4e47587: a seed whose live seed documents (hot-env
+    selector / supervisor receipt) drifted is STALE — the dispatcher must
+    rebuild it (mirroring the worker-side seed-document-manifest gate)
+    instead of re-issuing a seed every worker refuses with 'seed document
+    manifest drifted'. Chain-spec full-file drift is advisory ONLY (plan
+    state carries the recorded binding; a spec edit must not hard-block
+    every launch until a rebuild)."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    seed_dir = env["seed_dir"]
+    assert isinstance(seed_dir, Path)
+    identity = env["identity"]
+    assert isinstance(identity, dict)
+    root = paths["root"]
+
+    def _ensure() -> Path:
+        return attestation.ensure_runtime_launch_seed(
+            manifest_path=manifest,
+            chain_spec_path=paths["chain_spec"],
+            marker_path=paths["marker"],
+            chain_runtime_identity=identity,
+            seed_dir=seed_dir,
+            supervisor_receipt_path=paths["receipt"],
+            hot_env_path=paths["hot_env"],
+        )
+
+    def _current(seed_path: Path) -> bool:
+        return attestation._launch_seed_current(
+            seed_path,
+            root=root,
+            expected_revision=str(env["state"]["revision"]),  # type: ignore[index]
+            marker_path=paths["marker"],
+            manifest_path=manifest,
+            generation=3,
+        )
+
+    first = _ensure()
+    assert _current(first)  # dispatcher gate accepts the fresh seed
+
+    # A chain-spec edit must NOT mark the seed stale: the chain spec is a
+    # planning input baked into plan state at init; workers resolve the
+    # plan's recorded binding, and the chain runtime binding is enforced
+    # separately. Blocking here would hard-block every launch after any
+    # legitimate spec edit (e.g. the partnered-5 profile switch).
+    chain_spec = paths["chain_spec"]
+    assert isinstance(chain_spec, Path)
+    chain_spec.write_text(
+        chain_spec.read_text(encoding="utf-8") + "# supervisor profile edit\n",
+        encoding="utf-8",
+    )
+    assert _current(first)
+
+    # A hot-env change (still load-bearing: launch credentials/environment)
+    # DOES mark the seed stale, and ensure_runtime_launch_seed rebuilds a
+    # NEW immutable seed; the dispatch pointer follows it.
+    hot_env = paths["hot_env"]
+    assert isinstance(hot_env, Path)
+    hot_env.write_text(hot_env.read_text(encoding="utf-8") + "KEY=rotated\n", encoding="utf-8")
+    assert not _current(first)
+
+    rebuilt = _ensure()
+    assert rebuilt != first
+    assert rebuilt.parent == first.parent
+    first_doc = json.loads(first.read_text(encoding="utf-8"))[
+        "seed_document_manifest"
+    ]
+    rebuilt_doc = json.loads(rebuilt.read_text(encoding="utf-8"))[
+        "seed_document_manifest"
+    ]
+    rebuilt_entries = {
+        str(entry["path"]): entry for entry in rebuilt_doc["entries"]
+    }
+    hot_env_entry = rebuilt_entries[str(hot_env)]
+    assert hot_env_entry["sha256"] != dict(
+        (str(entry["path"]), entry) for entry in first_doc["entries"]
+    )[str(hot_env)]["sha256"]
+    assert rebuilt_doc["content_sha256"] != first_doc["content_sha256"]
+    assert _current(rebuilt)  # rebuilt seed passes the dispatcher gate
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(
+        rebuilt
+    )
+    # Old seed untouched (immutability).
+    assert json.loads(first.read_text(encoding="utf-8"))[
+        "seed_document_manifest"
+    ] == first_doc
+
+
+def test_ensure_runtime_launch_seed_refuses_drifted_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G14 fail-closed: the live runtime HEAD MUST equal the manifest pin."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    state = env["state"]
+    assert isinstance(state, dict)
+    monkeypatch.setattr(attestation, "_git_revision", lambda _root: "e" * 40)
+
+    with pytest.raises(CliError, match="HEAD does not match the manifest pin"):
+        attestation.ensure_runtime_launch_seed(
+            manifest_path=manifest,
+            chain_spec_path=paths["chain_spec"],
+            marker_path=paths["marker"],
+            chain_runtime_identity=env["identity"],
+            seed_dir=env["seed_dir"],
+            supervisor_receipt_path=paths["receipt"],
+            hot_env_path=paths["hot_env"],
+        )
+
+
+def test_ensure_runtime_launch_seed_rebinds_stale_marker_with_regenerated_relaunch_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale marker whose relaunch command names the OLD revision is
+    rebound to the LIVE runtime: the rebind path regenerates the command's
+    revision pin (same runtime root, new source revision) so the CAS
+    cutover accepts it — the blocked-plan auto-adopt (5f34c4a202) then
+    completes instead of failing with runtime_marker_relaunch_mismatch."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    state = env["state"]
+    assert isinstance(state, dict)
+    # head advances; the persisted command still names the old revision
+    state["revision"] = "c" * 40
+    env["write_manifest"]()  # type: ignore[operator]
+    new_identity = normalized_runtime_identity(
+        env["provenance"]()  # type: ignore[operator]
+    )
+
+    attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=new_identity,
+        seed_dir=env["seed_dir"],
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    # the marker was CAS-rebound: identity + command now bind the live rev
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    identity = marker["runtime_binding"]["current_identity"]
+    assert identity["source_revision"] == "c" * 40
+    assert "c" * 40 in marker["relaunch_command"]
+    assert "a" * 40 not in marker["relaunch_command"]
+    assert (marker["runtime_binding"].get("rebind_events") or [])
+    assert marker["editable_source_head"] == "c" * 40
+
+
+def test_ensure_runtime_launch_seed_refuses_unverifiable_marker_rebind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G14 fail-closed: a stale marker whose relaunch command does NOT name
+    the old revision at all cannot be regenerated by a revision-pin swap —
+    the CAS rebind still fails with a typed error and the marker JSON is
+    never hand-edited."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    state = env["state"]
+    assert isinstance(state, dict)
+    # head advances, but the marker command carries NO revision token
+    state["revision"] = "c" * 40
+    env["write_manifest"]()  # type: ignore[operator]
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    marker["relaunch_command"] = "python -m arnold_pipelines.megaplan chain tick"
+    _write_json(paths["marker"], marker)
+    new_identity = normalized_runtime_identity(
+        env["provenance"]()  # type: ignore[operator]
+    )
+
+    with pytest.raises(CliError, match="relaunch command does not bind"):
+        attestation.ensure_runtime_launch_seed(
+            manifest_path=manifest,
+            chain_spec_path=paths["chain_spec"],
+            marker_path=paths["marker"],
+            chain_runtime_identity=new_identity,
+            seed_dir=env["seed_dir"],
+            supervisor_receipt_path=paths["receipt"],
+            hot_env_path=paths["hot_env"],
+        )
+    # the marker was left untouched
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    assert marker["runtime_binding"]["current_identity"]["source_revision"] == (
+        "a" * 40
+    )
+    assert not (marker["runtime_binding"].get("rebind_events") or [])
+
+
+def test_regenerate_relaunch_command_swaps_revision_pins() -> None:
+    """The regenerated command rewrites every 40-hex revision occurrence —
+    env pins (MEGAPLAN_BOUND_RUNTIME_REVISION / RUNTIME_REVISION) and bare
+    tokens — while leaving every other token byte-identical."""
+    old = "a" * 40
+    new = "b" * 40
+    command = (
+        f"cd /ws && env -u PYTHONHOME RUNTIME_REVISION={old} "
+        f"MEGAPLAN_BOUND_RUNTIME_REVISION={old} "
+        f"python -m arnold_pipelines.megaplan chain start {old}"
+    )
+    regenerated = attestation._regenerate_relaunch_command(
+        command, old_revision=old, new_revision=new
+    )
+    assert regenerated == (
+        f"cd /ws && env -u PYTHONHOME RUNTIME_REVISION={new} "
+        f"MEGAPLAN_BOUND_RUNTIME_REVISION={new} "
+        f"python -m arnold_pipelines.megaplan chain start {new}"
+    )
+    assert old not in regenerated
+
+
+def test_regenerate_relaunch_command_noop_cases() -> None:
+    """No-op when the old revision is absent, empty, malformed, or equal to
+    the new revision — the caller fails closed downstream."""
+    old = "a" * 40
+    command = "python -m arnold_pipelines.megaplan chain tick"
+    assert (
+        attestation._regenerate_relaunch_command(
+            command, old_revision=old, new_revision="b" * 40
+        )
+        == command
+    )
+    assert (
+        attestation._regenerate_relaunch_command(
+            command, old_revision="", new_revision="b" * 40
+        )
+        == command
+    )
+    assert (
+        attestation._regenerate_relaunch_command(
+            command, old_revision="short", new_revision="b" * 40
+        )
+        == command
+    )
+    assert (
+        attestation._regenerate_relaunch_command(
+            f"RUNTIME_REVISION={old}",
+            old_revision=old,
+            new_revision=old,
+        )
+        == f"RUNTIME_REVISION={old}"
+    )
+
+
+def test_regenerate_relaunch_command_does_not_touch_hex_neighbors() -> None:
+    """Word-boundary guard: a revision that is a prefix of another hex token
+    (e.g. inside a longer digest or a path) is not swapped."""
+    old = "a" * 40
+    new = "b" * 40
+    command = f"python -m chain {old} extra-{old}deadbeef"
+    regenerated = attestation._regenerate_relaunch_command(
+        command, old_revision=old, new_revision=new
+    )
+    assert regenerated == f"python -m chain {new} extra-{old}deadbeef"
+
+
+def test_worker_preflight_reads_configured_launch_seed_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G14: the worker launch preflight sees the env export — with
+    MEGAPLAN_RUNTIME_LAUNCH_SEED set, require_configured_runtime_launch reads
+    that exact seed path instead of failing with 'required but missing'."""
+    seed_path = tmp_path / "seed.json"
+    seed_path.write_text(json.dumps({"schema": "x", "ready": True}), encoding="utf-8")
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(seed_path))
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION", raising=False)
+    observed: dict[str, str] = {}
+    monkeypatch.setattr(
+        attestation,
+        "_json_file",
+        lambda path, label: (observed.update(path=str(path)) or {"schema": "x", "ready": True}),
+    )
+    monkeypatch.setattr(
+        attestation,
+        "create_runtime_process_attestation",
+        lambda *args, **kwargs: {"pid": 123},
+    )
+    monkeypatch.setattr(attestation, "_atomic_write", lambda *args, **kwargs: None)
+
+    seed = attestation.require_configured_runtime_launch(
+        "worker", target_pid=123, create=True
+    )
+    assert seed == {"schema": "x", "ready": True}
+    assert observed["path"] == str(seed_path)
+
+
 def test_attestation_disable_without_seed_does_not_authorize_production_launch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -680,3 +1334,372 @@ def test_attestation_disable_without_seed_does_not_authorize_production_launch(
 
     with pytest.raises(CliError, match="required but missing"):
         attestation.require_configured_runtime_launch("resident")
+
+
+def test_build_cli_records_explicit_manifest_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Codex consult 0ae19cc17afd (b.1): the `runtime_attestation build` CLI
+    accepts --manifest and records the resolved path in input_paths.manifest
+    (fixer/rebind parity with the production ensure_runtime_launch_seed path —
+    the structural gap that produced the pointerless seed)."""
+    _seed, paths = _release_seed(tmp_path, monkeypatch)
+    manifest = tmp_path / "runtime-manifest.json"
+    _write_json(manifest, {"epic": {"expected_head": "a" * 40}})
+    output = tmp_path / "cli-seed.json"
+    rc = attestation.main(
+        [
+            "build",
+            "--expected-root",
+            str(paths["root"]),
+            "--expected-revision",
+            "a" * 40,
+            "--supervisor-receipt",
+            str(paths["receipt"]),
+            "--hot-env",
+            str(paths["hot_env"]),
+            "--marker",
+            str(paths["marker"]),
+            "--chain-spec",
+            str(paths["chain_spec"]),
+            "--manifest",
+            str(manifest),
+            "--output",
+            str(output),
+        ]
+    )
+    assert rc == 0
+    assert output.exists()
+    built = json.loads(output.read_text(encoding="utf-8"))
+    assert built["ready"] is True
+    assert built["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    captured = capsys.readouterr()
+    assert manifest.resolve(strict=False).as_posix() in captured.out
+
+
+def test_validate_pointerless_seed_without_manifest_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-0303 (Codex design): a seed whose revision differs from the live
+    head FAILS CLOSED with source_revision_mismatch. Validation NEVER follows
+    a manifest/environment head - the seed is immutable evidence and is
+    validated exactly as issued (no ARNOLD_ACCEPTED_RUNTIME_HEAD reinterpret).
+    """
+    seed, _paths = _release_seed(tmp_path, monkeypatch)
+    assert seed["input_paths"]["manifest"] == ""
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_ACCEPTED_RUNTIME_HEAD", raising=False)
+
+    def _drifted_provenance(**_kwargs: object) -> dict[str, object]:
+        return {"ok": False, "errors": ["source_revision_mismatch"]}
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _drifted_provenance)
+
+    with pytest.raises(CliError, match="source_revision_mismatch"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+
+    # Even with ARNOLD_RUNTIME_MANIFEST pointing at a NEWER accepted head, the
+    # stale seed must NOT follow it - the follow behavior is removed.
+    new_head = "c" * 40
+    manifest = tmp_path / "env-manifest.json"
+    _write_json(manifest, {"epic": {"expected_head": new_head}})
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest))
+
+    def _drifted_advanced(**_kwargs: object) -> dict[str, object]:
+        prov = dict(seed["runtime_provenance"])  # type: ignore[arg-type]
+        prov["source_revision"] = new_head
+        prov["ok"] = False
+        prov["errors"] = ["source_revision_mismatch"]
+        return prov
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _drifted_advanced)
+    with pytest.raises(CliError, match="source_revision_mismatch"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+    # No accepted-head env was set by validation (follow removed).
+    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") is None
+
+
+def test_validate_seed_manifest_pointer_wins_over_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex consult 0ae19cc17afd (b.2 precedence): a nonempty seed
+    input_paths.manifest is authoritative — a conflicting ARNOLD_RUNTIME_MANIFEST
+    is ignored. And a nonempty-but-invalid seed pointer does NOT fall back to
+    the environment (seed-first authority preserved)."""
+    _seed, paths = _release_seed(tmp_path, monkeypatch)
+    seed_head = "a" * 40
+    env_head = "d" * 40
+    seed_manifest = tmp_path / "seed-manifest.json"
+    env_manifest = tmp_path / "env-manifest.json"
+    _write_json(seed_manifest, {"epic": {"expected_head": seed_head}})
+    _write_json(env_manifest, {"epic": {"expected_head": env_head}})
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(env_manifest))
+    monkeypatch.delenv("ARNOLD_ACCEPTED_RUNTIME_HEAD", raising=False)
+
+    seed_with_pointer = attestation.build_runtime_launch_seed(
+        expected_root=paths["root"],
+        expected_revision=seed_head,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+        marker_path=paths["marker"],
+        chain_spec_path=paths["chain_spec"],
+        manifest_path=seed_manifest,
+    )
+    assert seed_with_pointer["input_paths"]["manifest"] == str(
+        seed_manifest.resolve(strict=False)
+    )
+
+    def _stable_provenance(**_kwargs: object) -> dict[str, object]:
+        prov = dict(seed_with_pointer["runtime_provenance"])  # type: ignore[arg-type]
+        prov["ok"] = True
+        return prov
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _stable_provenance)
+    result = attestation.validate_runtime_launch_seed(
+        seed_with_pointer, component="worker"
+    )
+    assert result["status"] == "ready"
+    # T-0303: validation does NOT set an accepted-head env (follow removed) -
+    # the seed is validated exactly as issued against the live provenance.
+    assert os.environ.get("ARNOLD_ACCEPTED_RUNTIME_HEAD") is None
+
+    # nonempty-but-invalid seed pointer: must NOT fall through to the env.
+    broken = tmp_path / "missing-manifest.json"
+    seed_broken = attestation.build_runtime_launch_seed(
+        expected_root=paths["root"],
+        expected_revision=seed_head,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+        marker_path=paths["marker"],
+        chain_spec_path=paths["chain_spec"],
+        manifest_path=broken,
+    )
+    assert seed_broken["input_paths"]["manifest"] == str(broken.resolve(strict=False))
+
+    def _env_only_provenance(**_kwargs: object) -> dict[str, object]:
+        return {"ok": False, "errors": ["source_revision_mismatch"]}
+
+    monkeypatch.setattr(attestation, "runtime_provenance", _env_only_provenance)
+    with pytest.raises(CliError, match="source_revision_mismatch"):
+        attestation.validate_runtime_launch_seed(seed_broken, component="worker")
+
+
+def test_ensure_runtime_launch_seed_rebuilds_pointerless_or_wrong_pointer_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex consult 0ae19cc17afd (b.3): _launch_seed_current requires the
+    seed's input_paths.manifest to resolve to the SAME canonical manifest path.
+    A pointerless seed or a wrong-pointer seed (even with a valid recomputed
+    digest) is never treated as current and is rebuilt by the next
+    ensure_runtime_launch_seed."""
+    env = _ensure_seed_env(tmp_path, monkeypatch)
+    assert isinstance(env["manifest"], Path)
+    manifest = env["manifest"]
+    paths = env["paths"]
+    assert isinstance(paths, dict)
+    state = env["state"]
+    assert isinstance(state, dict)
+    seed_dir = env["seed_dir"]
+    assert isinstance(seed_dir, Path)
+
+    first = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=env["identity"],
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    # T-0303: content-addressed immutable seed + dispatch-current pointer.
+    assert first.name != "runtime-test-1.json"
+    assert first.parent == seed_dir / "runtime-test-1"
+    assert first.exists()
+    built = json.loads(first.read_text(encoding="utf-8"))
+    assert built["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    pointer = seed_dir / "runtime-test-1" / "dispatch-current.json"
+    assert pointer.exists()
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(first)
+
+    # rewrite the CURRENT immutable seed with a VALID digest but EMPTY pointer:
+    # it is no longer the dispatch-current target (content changed), so the
+    # next ensure builds a NEW immutable seed and re-points dispatch-current.
+    pointerless = dict(built)
+    pointerless["input_paths"] = dict(built["input_paths"])
+    pointerless["input_paths"]["manifest"] = ""
+    pointerless["content_sha256"] = attestation._canonical_sha256(
+        {k: v for k, v in pointerless.items() if k != "content_sha256"}
+    )
+    _write_json(first, pointerless)
+    attestation._verify_seed_digest(
+        json.loads(first.read_text(encoding="utf-8"))
+    )
+
+    second = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=env["identity"],
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    # The pointerless mutation was rejected: ensure rebuilds the seed with the
+    # canonical manifest pointer (content-identical to the original -> may land
+    # at the same content-addressed path). The dispatch seed is never the
+    # empty-pointer mutation.
+    assert second.exists()
+    rebuilt = json.loads(second.read_text(encoding="utf-8"))
+    assert rebuilt["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(second)
+
+    # wrong pointer (another manifest path) is also not current -> rebuilt
+    other = tmp_path / "other-manifest.json"
+    _write_json(other, {"epic": {"expected_head": state["revision"]}})
+    wrong = dict(rebuilt)
+    wrong["input_paths"] = dict(rebuilt["input_paths"])
+    wrong["input_paths"]["manifest"] = str(other.resolve(strict=False))
+    wrong["content_sha256"] = attestation._canonical_sha256(
+        {k: v for k, v in wrong.items() if k != "content_sha256"}
+    )
+    _write_json(second, wrong)
+
+    third = attestation.ensure_runtime_launch_seed(
+        manifest_path=manifest,
+        chain_spec_path=paths["chain_spec"],
+        marker_path=paths["marker"],
+        chain_runtime_identity=env["identity"],
+        seed_dir=seed_dir,
+        supervisor_receipt_path=paths["receipt"],
+        hot_env_path=paths["hot_env"],
+    )
+    assert third.exists()
+    final = json.loads(third.read_text(encoding="utf-8"))
+    # The wrong-pointer mutation was rejected: the dispatch seed carries the
+    # canonical manifest pointer (rebuilt), never the foreign one.
+    assert final["input_paths"]["manifest"] == str(manifest.resolve(strict=False))
+    assert final["input_paths"]["manifest"] != str(other.resolve(strict=False))
+    assert json.loads(pointer.read_text(encoding="utf-8"))["seed_path"] == str(third)
+
+def test_manifest_matches_tolerates_extra_stored_entries(tmp_path: Path) -> None:
+    """Old seeds (built when chain_spec was pinned) carry a 3-entry manifest;
+    the post-drop validation shape compares only hot_env + supervisor_receipt.
+    Extra stored entries (chain_spec) must be ignored so pre-fix seeds validate
+    again — a genuine hot_env edit must still fail (seed schema migration)."""
+    hot_env = tmp_path / ".cloud-hot-env"
+    receipt = tmp_path / "last-prepare.json"
+    chain_spec = tmp_path / "chain.yaml"
+    hot_env.write_text("KEY=abc\n", encoding="utf-8")
+    receipt.write_text('{"prepared": true}\n', encoding="utf-8")
+    chain_spec.write_text("milestones: []\n", encoding="utf-8")
+
+    # Old seed shape: 3 entries including chain_spec.
+    old_manifest = attestation._manifest([hot_env, receipt, chain_spec])
+
+    # New validation shape: only hot_env + supervisor_receipt.
+    new_paths = [hot_env, receipt]
+    assert attestation._manifest_matches(new_paths, old_manifest) is True
+
+    # Genuine hot_env edit is still drift.
+    hot_env.write_text("KEY=rotated\n", encoding="utf-8")
+    assert attestation._manifest_matches(new_paths, old_manifest) is False
+    hot_env.write_text("KEY=abc\n", encoding="utf-8")
+
+    # Missing live path from stored manifest fails closed.
+    missing = tmp_path / "nope.json"
+    missing.write_text("x\n", encoding="utf-8")
+    assert attestation._manifest_matches([missing], old_manifest) is False
+
+
+def test_adopt_or_refuse_launch_identity_generation_advance() -> None:
+    """A manifest generation advance on the same import_root adopts the live
+    manifest head (non-event, "JUST RELAUNCH"); a different import_root or a
+    downgrade still fails closed. (grok consult 2026-08-18: mid-phase
+    manifest cutover must never lock a plan behind repair_phase_contract.)"""
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        RUNTIME_ATTESTATION_ERROR,
+        _adopt_or_refuse_launch_identity,
+    )
+    from arnold_pipelines.megaplan.cloud.runtime_cutover import (
+        normalize_runtime_identity,
+    )
+
+    root = "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+    recorded = {
+        "import_root": root,
+        "source_revision": "a" * 40,
+        "editable_root": None,
+        "editable_revision": None,
+        "direct_url": None,
+        "pth": None,
+        "imports": None,
+    }
+    live = {
+        "import_root": root,
+        "source_revision": "b" * 40,
+        "editable_root": None,
+        "editable_revision": None,
+        "direct_url": None,
+        "pth": None,
+        "imports": None,
+    }
+
+    # Equal root+rev -> no-op (returns recorded).
+    same = dict(live)
+    same["source_revision"] = recorded["source_revision"]
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, same, recorded_generation=114, live_generation=114
+    )
+    assert adopted["source_revision"] == recorded["source_revision"]
+
+    # Generation advance gen 114 -> 115 on same root -> adopt live head.
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, live, recorded_generation=114, live_generation=115
+    )
+    assert adopted["source_revision"] == live["source_revision"]
+
+    # Unknown recorded generation + same root -> adopt.
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, live, recorded_generation=None, live_generation=115
+    )
+    assert adopted["source_revision"] == live["source_revision"]
+
+    # Different import_root -> fail closed.
+    other_root = dict(live)
+    other_root["import_root"] = "/workspace/runtime-candidates/other"
+    try:
+        _adopt_or_refuse_launch_identity(
+            recorded, other_root, recorded_generation=114, live_generation=115
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == RUNTIME_ATTESTATION_ERROR
+    else:
+        raise AssertionError("different import_root must fail closed")
+
+    # Generation downgrade gen 115 -> 114 on same root -> adopt (engine
+    # change of ANY direction on the same root is a non-event).
+    adopted = _adopt_or_refuse_launch_identity(
+        live, recorded, recorded_generation=115, live_generation=114
+    )
+    assert adopted["source_revision"] == recorded["source_revision"]
+
+    # Same generation but different revision -> adopt (head moved at the
+    # same gen is still an engine change; only a root swap fails closed).
+    same_gen_other_rev = dict(live)
+    same_gen_other_rev["source_revision"] = "c" * 40
+    adopted = _adopt_or_refuse_launch_identity(
+        recorded, same_gen_other_rev, recorded_generation=114, live_generation=114
+    )
+    assert adopted["source_revision"] == "c" * 40
+
+    # normalized_runtime_identity round-trips through the helper.
+    normalized_recorded = normalize_runtime_identity(recorded)
+    adopted = _adopt_or_refuse_launch_identity(
+        normalized_recorded, live, recorded_generation=114, live_generation=115
+    )
+    assert adopted["source_revision"] == live["source_revision"]

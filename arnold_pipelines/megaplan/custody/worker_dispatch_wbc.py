@@ -33,6 +33,7 @@ from .contracts import (
     CustodyTargetKey,
     RepairOccurrenceKey,
     normalize_repair_occurrence_key,
+    owner_observably_dead,
     process_birth_identity,
 )
 from .lease_store import (
@@ -780,6 +781,22 @@ def _ensure_dispatch_leases(
             else:
                 # Terminal-but-not-yet-expired foreign lease (clock skew) is
                 # still reclaimable; only an ACTIVE foreign lease denies.
+                # An ACTIVE lease whose owner is observably DEAD (process
+                # gone, same host, boot unchanged) is also reclaimable: a
+                # resume worker that dies mid-batch otherwise wedges the
+                # stable per-batch lease until its 1h TTL lapses (grok
+                # consult).  Foreign-host and live-owner leases are never
+                # stolen.
+                owner_dead = owner_observably_dead(
+                    host=current.owner_host,
+                    pid=current.owner_pid,
+                    boot_id=current.owner_boot_id,
+                )
+                if owner_dead:
+                    try:
+                        lease_store.expire(lease_id=lease_id)
+                    except TerminalLeaseError:
+                        pass  # already terminal — reclaim below is still valid
                 try:
                     lease_store.reclaim(
                         lease_id=lease_id,

@@ -9,15 +9,19 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan._core import (
+    batch_artifact_index,
     execute_batch_artifact_path,
     resolve_batch_artifact,
     compute_task_batches,
     configured_robustness,
     intent_brief_reference,
+    is_transient_execute_advisory,
     json_dump,
+    list_all_batch_artifacts,
     latest_plan_path,
     latest_plan_meta_path,
     read_json,
+    stable_task_id_digest,
 )
 from arnold_pipelines.megaplan.resolution_contract import (
     FALLBACK_STATES,
@@ -124,13 +128,22 @@ _RECONCILE_OUTPUT_SHAPE_EXAMPLE = textwrap.dedent(
     ```json
     {
       "selected_shas": [
-        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-        "f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1"
+        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
       ],
       "verification_evidence": {
+        "candidate_count": 3,
+        "divergence_mode": "strict_ancestor",
         "reachability_checked": true,
         "all_selected_reachable_from_target": true,
         "chain_control_commits_excluded": true,
+        "target_ref": "origin/main",
+        "target_sha": "f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1",
+        "local_main_sha": "f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1",
+        "source_head_sha": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        "promotion_evidence_refs": [
+          {"ref": "manifest.indirection.verified_head", "resolves": true}
+        ],
+        "promotion_evidence_status": "ok",
         "excluded_shas": ["c0c0c0d0d0d0e0e0f0f0a0a0b0b0c0c0d0d0e0e0"],
         "per_phase": [
           {
@@ -168,15 +181,42 @@ _RECONCILE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     - EXCLUDE chain-control and meta commits: briefs, docs, .megaplan chain
       scaffolding, generated milestone artifacts, seed/template commits, and
       anything that only manages the chain process itself.
-    - A commit is selected only if it is REACHABLE from the reconcile target
-      branch's history (the target is `main` for generated reconcile
-      milestones).  When reachability cannot be verified, do not select it;
-      note the uncertainty in `verification_evidence`.
+    - A commit is selected only if it is REACHABLE from the SOURCE LINEAGE
+      (the current fixer branch / HEAD — the branch the epic's commits live
+      on).  Reachability from `main` is NOT the criterion: the controller
+      validates source-lineage reachability before cherry-picking, and
+      `main`/`origin/main` ancestry is the "already published" test, not a
+      selection test.  When reachability cannot be verified, do not select
+      it; note the uncertainty in `verification_evidence`.
+    - Resolve the divergence mode with read-only git BEFORE classifying:
+      `equal` (origin/main == source HEAD, or each is an ancestor of the
+      other), `strict_ancestor` (origin/main strictly behind HEAD),
+      `ahead_or_diverged` (origin/main not an ancestor of HEAD), or
+      `origin/main` unresolvable (stop and report).
+    - In `equal` mode: do NOT select anything.  Classify every candidate as
+      `coincident_ref` ("origin/main == source HEAD; possible stale/divergent
+      remote ref — typed UNKNOWN/INCOHERENT") or `promotion_evidence` (covered
+      by a promotion-evidence ref) and emit `selected_shas: []`.  NEVER use
+      "already published" in equal mode — the label would assert publication
+      the evidence cannot establish.  An empty selection fails closed at the
+      controller; the typed evidence survives in the batch artifact.
+    - In `strict_ancestor` / `ahead_or_diverged` modes: EXCLUDE a candidate
+      when it is an ancestor of `origin/main` (already_on_target), when it is
+      covered by promotion evidence, when it touches no engine-source path, or
+      when it is not reachable from HEAD; SELECT it otherwise.
     - When in doubt between including and excluding a commit, EXCLUDE it and
       record the reason — a false inclusion corrupts the release branch,
       while an excluded commit stays in the epic's own history.
     - Do not modify files, open PRs, or touch the repository state.  This is
       a read-only selection task; the controller performs the cherry-pick.
+    - `verification_evidence` MUST carry: `divergence_mode`, `candidate_count`
+      (== len(candidate_commits)), `target_ref` (`origin/main`), `target_sha`,
+      `local_main_sha`, `source_head_sha`, `promotion_evidence_refs` (with
+      `resolves` per ref), `promotion_evidence_status`, and `per_phase` with
+      an entry for EVERY candidate (sha + subject + reason from the allowed
+      vocabulary: already_on_target / promotion_evidence / non_engine_path /
+      not_reachable_from_source / coincident_ref / unresolved).  Never emit a
+      partial per_phase list.
 
     Return the following JSON exactly (the authoritative output — no prose
     outside the JSON):
@@ -191,6 +231,7 @@ def render_reconcile_prompt(
     first_parent_log: str,
     candidate_commits: list[dict[str, Any]],
     target_branch: str = "main",
+    review_data: dict[str, Any] | None = None,
 ) -> str:
     """Build the codex reconcile-execution prompt.
 
@@ -226,6 +267,25 @@ def render_reconcile_prompt(
             f"   paths: {', '.join(paths) if paths else '(none listed)'}"
         )
     candidates_block = "\n".join(commit_lines) if commit_lines else "(no candidates)"
+    review_rework_block = ""
+    if isinstance(review_data, dict):
+        projected_review = project_rework_context(
+            review_data,
+            capabilities=PromptProjectionCapabilities.full(),
+        )
+        if projected_review.get("rework_items"):
+            review_rework_block = textwrap.dedent(
+                f"""
+
+                ## Persisted review rework contract
+                This is the authoritative review contract for this re-execution pass.
+                Preserve every applicable requirement below in
+                `verification_evidence.notes`, including the exact deterministic
+                check and operator-resolution evidence. This remains a read-only
+                selection task: do not edit files, create a PR, or mutate state.
+                {json_dump(projected_review).strip()}
+                """
+            ).strip()
     return textwrap.dedent(
         f"""
         {_RECONCILE_REQUIREMENTS_TEMPLATE.format(
@@ -244,6 +304,7 @@ def render_reconcile_prompt(
 
         ## Rubric documents
         {rubric_block}
+        {review_rework_block}
         """
     ).strip()
 
@@ -715,6 +776,97 @@ def _completed_task_receipts_for_prompt(
     )
 
 
+_PRIOR_BATCH_DEVIATION_LIMIT = 10
+_ACCEPTED_TERMINAL_TASK_STATUSES = frozenset({"done", "completed", "skipped"})
+
+
+def _read_batch_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = read_json(path)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _artifact_accepts_task_set(
+    payload: dict[str, Any], task_ids: list[str]
+) -> bool:
+    expected = set(task_ids)
+    updates = payload.get("task_updates")
+    if not expected or not isinstance(updates, list):
+        return False
+    accepted: set[str] = set()
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        task_id = update.get("task_id")
+        validation = update.get("authority_validation")
+        if (
+            task_id in expected
+            and update.get("status") in _ACCEPTED_TERMINAL_TASK_STATUSES
+            and isinstance(validation, dict)
+            and validation.get("outcome") == "accepted"
+        ):
+            accepted.add(task_id)
+    return accepted == expected
+
+
+def _prior_execute_batch_deviations(
+    plan_dir: Path,
+    batch_task_ids: list[str],
+    *,
+    prompt_batch_number: int,
+    current_artifact_number: int | None,
+    limit: int = _PRIOR_BATCH_DEVIATION_LIMIT,
+) -> list[str]:
+    """Merge actionable adjacent/same-task retry deviations deterministically."""
+
+    digest = stable_task_id_digest(batch_task_ids)
+    same_digest_attempts: list[tuple[Path, dict[str, Any]]] = []
+    if isinstance(current_artifact_number, int) and current_artifact_number > 0:
+        for path in list_all_batch_artifacts(plan_dir):
+            index = batch_artifact_index(path)
+            if index is None or index > current_artifact_number:
+                continue
+            payload = _read_batch_payload(path)
+            scope = payload.get("batch_scope")
+            if isinstance(scope, dict) and scope.get("task_set_digest") == digest:
+                same_digest_attempts.append((path, payload))
+
+    # A later fully accepted terminal attempt supersedes older deviations for
+    # the same task set. Keep that attempt's own messages and anything newer.
+    keep_from = 0
+    for position, (_, payload) in enumerate(same_digest_attempts):
+        if _artifact_accepts_task_set(payload, batch_task_ids):
+            keep_from = position
+    suppressed_paths = {
+        path for path, _ in same_digest_attempts[:keep_from]
+    }
+    retained_attempts = same_digest_attempts[keep_from:]
+
+    sources: dict[Path, dict[str, Any]] = {}
+    if prompt_batch_number > 1:
+        adjacent = resolve_batch_artifact(plan_dir, prompt_batch_number - 1)
+        if adjacent is not None and adjacent not in suppressed_paths:
+            sources[adjacent] = _read_batch_payload(adjacent)
+    for path, payload in retained_attempts:
+        sources[path] = payload
+
+    merged: list[str] = []
+    for path in sorted(sources, key=lambda item: (batch_artifact_index(item) or 0, str(item))):
+        raw = sources[path].get("deviations")
+        if not isinstance(raw, list):
+            continue
+        for deviation in raw:
+            if not isinstance(deviation, str) or is_transient_execute_advisory(deviation):
+                continue
+            # Last occurrence wins, so the bounded tail retains recent repeats.
+            if deviation in merged:
+                merged.remove(deviation)
+            merged.append(deviation)
+    return merged[-limit:] if limit > 0 else []
+
+
 def _execute_batch_prompt(
     state: PlanState,
     plan_dir: Path,
@@ -724,6 +876,7 @@ def _execute_batch_prompt(
     rework_context: dict[str, Any] | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
     batch_template_path: Path | None = None,
+    current_artifact_number: int | None = None,
 ) -> str:
     completed = set(completed_task_ids or set())
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -771,8 +924,13 @@ def _execute_batch_prompt(
         1,
     )
     batch_total = len(global_batches) or 1
+    artifact_number = (
+        current_artifact_number
+        if isinstance(current_artifact_number, int) and current_artifact_number > 0
+        else batch_number
+    )
     checkpoint_path = str(
-        execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids)
+        execute_batch_artifact_path(plan_dir, artifact_number, batch_task_ids)
     )
     if batch_template_path is None:
         batch_template_path = plan_dir / f"execute_batch_{batch_number}_output.json"
@@ -792,19 +950,13 @@ def _execute_batch_prompt(
                 batch_sense_check_ids,
             )
         ).strip()
-    prior_batch_deviations = "None"
-    if batch_number > 1:
-        prior_batch_artifact = resolve_batch_artifact(plan_dir, batch_number - 1)
-        if prior_batch_artifact is not None:
-            try:
-                prior_batch_payload = read_json(prior_batch_artifact)
-            except (OSError, ValueError):
-                prior_batch_payload = {}
-            raw_deviations = prior_batch_payload.get("deviations", [])
-            if isinstance(raw_deviations, list):
-                deviations = [item for item in raw_deviations if isinstance(item, str)]
-                if deviations:
-                    prior_batch_deviations = json_dump(deviations).strip()
+    deviations = _prior_execute_batch_deviations(
+        plan_dir,
+        batch_task_ids,
+        prompt_batch_number=batch_number,
+        current_artifact_number=current_artifact_number,
+    )
+    prior_batch_deviations = json_dump(deviations).strip() if deviations else "None"
     # Load resolutions and build resolution-aware prerequisite text.
     resolutions = load_user_action_resolutions(plan_dir)
     prerequisite_block, resolution_guidance_block = _format_user_action_guidance(
@@ -897,7 +1049,9 @@ def _execute_batch_prompt(
         - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
         {_verification_cwd_requirement(Path(state["config"]["project_dir"]))}
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
-        - Each actionable task carries an admitted `write_set` and `narrow_tests` budget. Do not write outside its declared paths. Across the task, run at most the declared selectors, `max_runs`, and cumulative `max_seconds`. Wrap every test invocation with a foreground `timeout Ns` whose cumulative N stays within that budget so the harness can verify enforcement from `commands_run`; if the budget is exhausted, stop and return the task blocked with a residual checkpoint instead of widening or looping.
+        - Each actionable task carries an admitted `write_set` and `narrow_tests` budget. Do not write outside its declared paths. Across the task, run at most the declared selectors, `max_runs`, and cumulative `max_seconds`.
+        - Every pytest command, including every baseline or diagnostic run, MUST use exactly this command shape: `timeout <N> python3 -m pytest <selector> -q`. Replace `<N>` with integer seconds and `<selector>` with only the admitted selector or selectors. Record the exact command in `commands_run`; put outcomes such as pass counts and durations in `executor_notes`, not after the command string. The sum of all N values for the task MUST be <= `narrow_tests.max_seconds`.
+        - Every diagnostic or pre-change run consumes the same budget. If the budget is exhausted, stop and return the task blocked with a residual checkpoint instead of widening or looping.
         - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
         - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
         - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.

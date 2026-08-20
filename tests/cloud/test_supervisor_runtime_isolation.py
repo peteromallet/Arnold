@@ -497,3 +497,55 @@ def test_runtime_prepare_receipt_binds_source_sha_and_import_paths() -> None:
     assert '"imports": imports' in helper
     assert "supervisor import escaped runtime" in helper
     assert 'receipt_ready "$CURRENT/bin/python3"' in helper
+
+
+# ── Seed-gap follow-up: ambient-PYTHONPATH isolation contract ──────────────
+# The supervisor venv is an isolation token: runtime_ready, receipt_ready,
+# and the receipt writer must never resolve Arnold code from an ambient
+# PYTHONPATH (a hollow venv could otherwise look ready while importing from a
+# dead runtime tree, minting a false receipt).  PYTHONSAFEPATH alone does NOT
+# ignore PYTHONPATH, so every invocation must also `env -u PYTHONPATH`.
+
+_WRAPPER = WRAPPERS / "arnold-supervisor-runtime"
+
+
+def _supervisor_wrapper_text() -> str:
+    return _WRAPPER.read_text(encoding="utf-8")
+
+
+def test_supervisor_wrapper_strips_pythonpath_everywhere() -> None:
+    text = _supervisor_wrapper_text()
+    # The three python invocations (runtime_ready, receipt_ready, receipt
+    # writer) must isolate PYTHONPATH.  A bare PYTHONSAFEPATH=1 without the
+    # env -u is the hollow-receipt bug.
+    assert text.count("env -u PYTHONPATH PYTHONSAFEPATH=1") >= 3
+
+
+def test_supervisor_wrapper_uses_dash_p_with_isolation() -> None:
+    text = _supervisor_wrapper_text()
+    matches = re.findall(
+        r"env -u PYTHONPATH PYTHONSAFEPATH=1 \"[^\"]+\" -P", text
+    )
+    assert len(matches) >= 3
+
+
+def test_supervisor_wrapper_has_no_bare_pythonsafepath() -> None:
+    text = _supervisor_wrapper_text()
+    bare = re.findall(r"(?<!env -u PYTHONPATH )PYTHONSAFEPATH=1", text)
+    assert not bare, f"bare PYTHONSAFEPATH invocations present: {bare}"
+
+
+def test_supervisor_wrapper_syntax_valid() -> None:
+    result = subprocess.run(
+        ["bash", "-n", str(_WRAPPER)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_supervisor_wrapper_receipt_writer_isolated() -> None:
+    text = _supervisor_wrapper_text()
+    writer_block = text.split("env -u PYTHONPATH PYTHONSAFEPATH=1")[-1]
+    assert "json.dump" in writer_block

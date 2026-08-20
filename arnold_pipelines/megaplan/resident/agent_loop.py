@@ -1048,6 +1048,7 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                 raise AgentLoopError(f"Hermes launcher not found: {self.hermes_launcher}")
             argv = [
                 sys.executable,
+                "-P",
                 str(self.hermes_launcher),
                 "--model",
                 model,

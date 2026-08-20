@@ -301,6 +301,19 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--repair-commit", dest="repair_commit")
     override_parser.add_argument("--failure-fingerprint", dest="failure_fingerprint")
     override_parser.add_argument(
+        "--occurrence",
+        dest="occurrence",
+        help=(
+            "Occurrence digest fence for the legacy deterministic-phase "
+            "recovery admission (watchdog _failure_digest_src reconstruction)."
+        ),
+    )
+    override_parser.add_argument(
+        "--handoff-id",
+        dest="handoff_id",
+        help="Content-addressed arnold.superfixer.recovery_handoff.v1 id bound to this repair.",
+    )
+    override_parser.add_argument(
         "--repair-scope",
         dest="repair_scope",
         choices=("target_workspace", "engine_runtime"),
