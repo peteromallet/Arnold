@@ -5947,9 +5947,10 @@ def _blocked_plan_replay_would_be_redundant(
     """Return whether a blocked plan has no safe retry frontier.
 
     Deferred validation failures are retryable across chain sessions. Keep
-    every other durable block parked, but allow replay when the latest execute
-    error names a validation job and the latest canonical batch artifact
-    contains a blocked task update.
+    every other durable block parked, but allow replay when canonical execute
+    evidence names a typed validation-blocked task. Older plans recorded this
+    as a validation-job error plus a blocked batch update; newer plans persist
+    the typed ``phase_result.json`` directly.
     """
     current_state = plan_state.get("current_state")
     if not isinstance(current_state, str):
@@ -5961,6 +5962,41 @@ def _blocked_plan_replay_would_be_redundant(
     )
     if not blocked_without_worker:
         return False
+
+    # The current execute driver records prerequisite validation blocks in the
+    # phase result and sets the plan's latest failure to execution_blocked. A
+    # chain restart must reopen that retry frontier; otherwise the supervisor
+    # preserves the blocked plan forever even after the executor has repaired
+    # the source and its focused tests pass.
+    if root is not None and state.current_plan_name:
+        try:
+            plan_dir = resolve_plan_dir(root, state.current_plan_name)
+            phase_result = json.loads(
+                (plan_dir / "phase_result.json").read_text(encoding="utf-8")
+            )
+        except (CliError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            phase_result = None
+        if isinstance(phase_result, Mapping):
+            blocked_tasks = phase_result.get("blocked_tasks")
+            typed_validation_block = (
+                phase_result.get("phase") == "execute"
+                and phase_result.get("exit_kind") == "blocked_by_prereq"
+                and isinstance(blocked_tasks, list)
+                and any(
+                    isinstance(task, Mapping)
+                    and isinstance(task.get("task_id"), str)
+                    and task.get("task_id", "").strip()
+                    and task.get("blocker_kind") == "validation_blocked"
+                    for task in blocked_tasks
+                )
+            )
+            latest_failure = plan_state.get("latest_failure")
+            if typed_validation_block and isinstance(latest_failure, Mapping):
+                if (
+                    latest_failure.get("kind") == "execution_blocked"
+                    and latest_failure.get("phase") == "execute"
+                ):
+                    return False
 
     history = plan_state.get("history")
     latest_execute: Mapping[str, Any] | None = None

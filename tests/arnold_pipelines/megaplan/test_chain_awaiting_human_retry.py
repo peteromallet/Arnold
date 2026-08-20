@@ -1116,6 +1116,51 @@ def test_blocked_validation_failure_reopens_supported_execute_retry_frontier(
     assert any("deferred validation" in message for message in messages)
 
 
+def test_typed_execute_validation_block_reopens_on_chain_restart(
+    tmp_path: Path,
+) -> None:
+    """The current phase-result block shape is a retryable frontier."""
+    plan_name = "m8-plan"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    plan_state = {
+        "current_state": "blocked",
+        "active_step": None,
+        "latest_failure": {
+            "kind": "execution_blocked",
+            "phase": "execute",
+        },
+        "history": [
+            {
+                "step": "execute",
+                "result": "blocked",
+            }
+        ],
+    }
+    (plan_dir / "state.json").write_text(json.dumps(plan_state), encoding="utf-8")
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            {
+                "phase": "execute",
+                "exit_kind": "blocked_by_prereq",
+                "blocked_tasks": [
+                    {
+                        "task_id": "T3",
+                        "blocker_kind": "validation_blocked",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _blocked_plan_replay_would_be_redundant(
+        ChainState(current_plan_name=plan_name, last_state="blocked"),
+        plan_state=plan_state,
+        root=tmp_path,
+    ) is False
+
+
 def test_typed_pre_dispatch_validation_failure_reopens_once(
     tmp_path: Path,
 ) -> None:
