@@ -636,12 +636,16 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
                 ctx,
                 status=terminal_status,
                 finished_at=_utcnow_iso(),
-                returncode=rc,
+                returncode=1 if false_success_reason else rc,
                 managed_terminal_status=managed_terminal,
                 false_success_reason=false_success_reason or None,
             ),
         )
-        return rc
+        # False success is a failed session, not a successful one: rc 0 here
+        # makes the watchdog treat the run as done and re-arm the SAME
+        # occurrence, burning a full cycle. Return 1 so the repair is
+        # recorded as failed and the next scan can relaunch cleanly.
+        return 1 if false_success_reason else rc
     except SystemExit:
         raise
     except BaseException as exc:

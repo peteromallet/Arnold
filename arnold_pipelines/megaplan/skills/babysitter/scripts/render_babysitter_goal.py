@@ -168,11 +168,15 @@ investigate, propose, implement the narrowest source-level fix, relaunch the
 chain, and prove movement.  You are not an auditor who reports back; you drive
 the chain out of the blocked/failed state."""
         investigator_step = f"""- STEP 1 — DEPLOY CODEX INVESTIGATORS: over the failure evidence, run one
-  bounded, read-only investigator per scoping question through foreground
+  bounded, NO-MUTATION investigator per scoping question through foreground
   `codex exec` commands using `-m {routing.investigator_model.split(':', 1)[1]}`
-  and a read-only sandbox.  Record the actual provider/model/transport in every
-  report.  Do not invoke Hermes, DeepSeek, or another provider under this
-  explicit override."""
+  and `--sandbox danger-full-access` (the container is the isolation boundary;
+  bwrap userns is unavailable here and `--sandbox read-only` dies with
+  `bwrap: No permissions to create new namespace`).  Probe once at start:
+  `bwrap --ro-bind / / -- true`; if it fails, never use `--sandbox read-only`.
+  Investigators must not mutate the product workspace or runtime state.  Record
+  the actual provider/model/transport in every report.  Do not invoke Hermes,
+  DeepSeek, or another provider under this explicit override."""
     else:
         controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
 hermes:deepseek:deepseek-v4-flash managed agent and the ORCHESTRATOR of the
