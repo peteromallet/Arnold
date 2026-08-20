@@ -2596,11 +2596,18 @@ def _reconcile_prompt_override(
             return batch_prompt
         if not isinstance(target_branch, str) or not target_branch.strip():
             target_branch = "main"
+        review_data = None
+        review_path = plan_dir / "review.json"
+        if review_path.is_file():
+            loaded_review = json.loads(review_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_review, dict):
+                review_data = loaded_review
         return render_reconcile_prompt(
             rubric_docs=rubric_docs,
             first_parent_log=first_parent_log,
             candidate_commits=candidate_commits,
             target_branch=target_branch,
+            review_data=review_data,
         )
     except Exception:  # noqa: BLE001 - marker problems never break execute
         return batch_prompt

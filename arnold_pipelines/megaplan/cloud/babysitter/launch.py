@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-flash status-trigger babysitter launch module.
+"""Status-trigger babysitter launch module.
 
 The watchdog's status trigger (``MEGAPLAN_SUPERFIXER_ONLY=1``) Popen's
 ``arnold-babysitter``, which executes this module.  The babysitter is ONE
@@ -52,6 +52,10 @@ import time
 from pathlib import Path
 from typing import Any, Sequence
 
+from arnold_pipelines.megaplan.cloud.babysitter.routing import (
+    cli_model,
+    resolve_babysitter_routing,
+)
 from arnold_pipelines.megaplan.managed_agent import (
     ManagedCommandSpec,
     machine_origin_provenance,
@@ -233,6 +237,7 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
     if not run_root_raw and repair_data_dir is not None:
         run_root_raw = str(repair_data_dir / "babysitter-runs" / run_id)
     run_root = Path(run_root_raw) if run_root_raw else _REPO_ROOT / ".babysitter-runs" / run_id
+    routing = resolve_babysitter_routing()
     return {
         "session": session,
         "workspace": workspace,
@@ -248,7 +253,10 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
         "goal_file_cli": args.goal_file,
         "failure_json": args.failure_json,
         "planner_repair_json": args.planner_repair_json,
-        "model": os.environ.get("ARNOLD_BABYSITTER_MODEL", "").strip() or DEFAULT_MODEL,
+        "model": routing.controller_model
+        if routing.mode == "codex"
+        else os.environ.get("ARNOLD_BABYSITTER_MODEL", "").strip() or DEFAULT_MODEL,
+        "routing": routing,
         "difficulty": _difficulty_env(),
     }
 
@@ -329,6 +337,9 @@ def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[
         payload["managed_run_id"] = ctx["managed_run_id"]
     if ctx.get("managed_manifest_path") is not None:
         payload["managed_manifest_path"] = str(ctx["managed_manifest_path"])
+    routing = ctx.get("routing")
+    if routing is not None:
+        payload.update(routing.as_dict())
     payload.update({key: value for key, value in extra.items() if value is not None})
     return payload
 
@@ -419,34 +430,66 @@ def _managed_spec(
     ctx: dict[str, Any], *, goal_path: Path, identity_key: str
 ) -> ManagedCommandSpec:
     engine_root = ctx["engine_root"]
-    launcher = (
-        engine_root
-        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
-    )
-    if not launcher.is_file():
-        raise RuntimeError(f"hermes subagent launcher unavailable: {launcher}")
-    # Strip the managed-agent env vars the supervisor injects, so the hermes
-    # launcher runs the goal as a DIRECT worker of this managed run instead of
-    # re-exec'ing itself as a nested "research" run (launch_hermes_agent's
-    # automatic-managed reexec).  The babysitter is the only managed run here.
-    worker_argv = [
-        "/usr/bin/env",
-        "-u", "ARNOLD_MANAGED_AGENT_RUN_ID",
-        "-u", "ARNOLD_MANAGED_AGENT_MANIFEST",
-        "-u", "ARNOLD_MANAGED_AGENT_ORIGIN",
-        sys.executable,
-        str(launcher),
-        f"--model={ctx['model']}",
-        f"--toolsets={TOOLSETS}",
-        f"--query-file={goal_path}",
-        f"--project-dir={engine_root}",
-    ]
+    routing = ctx["routing"]
+    if routing.mode == "codex":
+        # Codex reads the sealed goal from stdin.  Keeping the goal out of argv
+        # also makes the managed manifest's stdin hash the exact controller
+        # input used for this occurrence.
+        worker_argv = [
+            "codex",
+            "exec",
+            "--sandbox", "danger-full-access",
+            "--ephemeral",
+            "-m", cli_model(routing.controller_model),
+            "-c", "model_reasoning_effort=high",
+            "--output-last-message", str(ctx["run_root"] / "controller-last-message.md"),
+            "-",
+        ]
+        stdin_path = goal_path
+        backend = "codex"
+        route_class = "watchdog_babysitter_codex_override"
+        description = (
+            f"Codex babysitter session={ctx['session']} "
+            f"occurrence={ctx['occurrence'] or 'unknown'} plan={ctx['plan'] or 'current target'} — "
+            "codex investigators -> codex controller -> implement -> relaunch -> prove"
+        )
+    else:
+        launcher = (
+            engine_root
+            / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+        )
+        if not launcher.is_file():
+            raise RuntimeError(f"hermes subagent launcher unavailable: {launcher}")
+        # Strip the managed-agent env vars the supervisor injects, so the hermes
+        # launcher runs the goal as a DIRECT worker of this managed run instead
+        # of re-exec'ing itself as a nested "research" run.
+        worker_argv = [
+            "/usr/bin/env",
+            "-u", "ARNOLD_MANAGED_AGENT_RUN_ID",
+            "-u", "ARNOLD_MANAGED_AGENT_MANIFEST",
+            "-u", "ARNOLD_MANAGED_AGENT_ORIGIN",
+            sys.executable,
+            str(launcher),
+            f"--model={ctx['model']}",
+            f"--toolsets={TOOLSETS}",
+            f"--query-file={goal_path}",
+            f"--project-dir={engine_root}",
+        ]
+        stdin_path = None
+        backend = BACKEND
+        route_class = ROUTE_CLASS
+        description = (
+            f"Single Flash babysitter session={ctx['session']} "
+            f"occurrence={ctx['occurrence'] or 'unknown'} plan={ctx['plan'] or 'current target'} — "
+            "swarm -> codex -> implement -> relaunch -> prove"
+        )
     links: dict[str, Any] = {
         "cloud_session": ctx["session"],
         "occurrence_digest": ctx["occurrence"],
         "run_id": ctx["run_id"],
         "goal_path": str(goal_path),
         "babysitter_mode": ctx["mode"] or "superfixer",
+        "routing": routing.as_dict(),
     }
     if ctx.get("repair_data_dir") is not None:
         links["repair_data_dir"] = str(ctx["repair_data_dir"])
@@ -458,11 +501,6 @@ def _managed_spec(
         links["plan"] = ctx["plan"]
     if ctx["workspace"]:
         links["workspace"] = ctx["workspace"]
-    description = (
-        f"Single Flash babysitter session={ctx['session']} "
-        f"occurrence={ctx['occurrence'] or 'unknown'} plan={ctx['plan'] or 'current target'} — "
-        "swarm -> codex -> implement -> relaunch -> prove"
-    )
     spec = ManagedCommandSpec(
         run_kind=RUN_KIND,
         identity_key=identity_key,
@@ -472,10 +510,10 @@ def _managed_spec(
         difficulty=ctx["difficulty"],
         model=ctx["model"],
         reasoning_effort=REASONING_EFFORT,
-        route_class=ROUTE_CLASS,
-        backend=BACKEND,
+        route_class=route_class,
+        backend=backend,
         command_display=(
-            f"arnold-babysitter flash agent session={ctx['session']} "
+            f"arnold-babysitter {routing.controller_model} agent session={ctx['session']} "
             f"occurrence={ctx['occurrence'] or 'unknown'}"
         ),
         description=description,
@@ -488,6 +526,7 @@ def _managed_spec(
         links=links,
         lineage_key=f"babysitter:{ctx['session']}",
         run_root=ctx["run_root"],
+        stdin_path=stdin_path,
     )
     return spec
 
