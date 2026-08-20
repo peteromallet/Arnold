@@ -1,4 +1,4 @@
-# Purge the legacy hermes phase worker
+# Remove the legacy hermes phase worker
 
 ## Outcome
 Remove the legacy megaplan hermes phase worker and route payload helpers and parallel critique through the neutral omp worker runtime.
