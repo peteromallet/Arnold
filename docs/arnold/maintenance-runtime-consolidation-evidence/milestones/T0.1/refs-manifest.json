@@ -1,0 +1,2255 @@
+{
+  "canonicalization": {
+    "algorithm": "SHA-256",
+    "canonical_form": "JSON sort_keys=true, separators=(,,:) with no self-referential manifest digest",
+    "json_encoding": "UTF-8"
+  },
+  "command_records": [
+    {
+      "combined_sha256": "83be0c91f62d2e1a25b7da7a912fe4b4084f4bf5325221d4cf45c2094b726e13",
+      "command": [
+        "git",
+        "worktree",
+        "list",
+        "--porcelain"
+      ],
+      "component_sha256": "79b25034e0acb85a7851062edbb0e6bc146bfdc668526d8880880085a95b3090",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:27:54.049905Z",
+      "label": "preflight worktree list",
+      "started_utc": "2026-08-20T15:27:54.000231Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "worktree /Users/peteromalley/Documents/Arnold\nHEAD e800fc8fc6814851a5fcde3edba7853b24b9a67a\nbranch refs/heads/main\n\nworktree /private/tmp/arnold-e943-check\nHEAD e943455d955a31ee942aa8e121fe20e4035d58ed\ndetached\n\nworktree /private/tmp/arnold-fallback-fix\nHEAD 76febf7ec1f1fb4b92477fee8105de9b9a90c87a\nbranch refs/heads/fixer/fallback-plan-quota\n\nworktree /private/tmp/arnold-fixer-fix\nHEAD 1b6c6d1527d2e1bbf21aef4766e2c83a57e3238d\nbranch refs/heads/fixer/chain-gate-sort\n\nworktree /private/tmp/arnold-head-check\nHEAD b70b7c57a9c85391e40c1085aa6e8e56be55a4ce\ndetached\n\nworktree /private/tmp/arnold-mega-luna-fix.HbdezU\nHEAD b63f403249762fe63cd52c187020cbabd7fdcc60\nbranch refs/heads/fixer/mega-luna-native-dispatch\n\nworktree /private/tmp/arnold-seedgate-fix\nHEAD e943455d955a31ee942aa8e121fe20e4035d58ed\nbranch refs/heads/fixer/seed-gate-minimal\n\nworktree /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-bootstrap\nHEAD 4a24f7c04086c1d697cc40cfa0db50bfed4574ed\nbranch refs/heads/fixer/runtime-convergence-bootstrap\n\nworktree /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution\nHEAD a610c220da202c6c4a45c4c990ebef4be9f53942\nbranch refs/heads/integration/goal-maintenance-runtime-20260820\n\nworktree /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-r\nHEAD 1aeaee8c75ac97298e7a5bb9e522f187d5604afb\nbranch refs/heads/fixer/runtime-convergence-local\n\nworktree /Users/peteromalley/Documents/Arnold-resident-restart-fix\nHEAD dda97cc315cbf64995debe6cacd7885557601b6b\nbranch refs/heads/editible-install\n\n",
+      "stdout_sha256": "3ed115d0d158fdee66d42cb697c5427add5e330d9363a72c5832eb4fef589fb4"
+    },
+    {
+      "combined_sha256": "cca2b9564e418a055100b2200ae51987d314f05b63c5a61b0d961a04fffde171",
+      "command": [
+        "git",
+        "symbolic-ref",
+        "--short",
+        "HEAD"
+      ],
+      "component_sha256": "39ca75e0f5a0a30425782aa2261e46dfd600793ba5585c3da9816dd341298a1b",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:27:54.065157Z",
+      "label": "integration branch preflight",
+      "started_utc": "2026-08-20T15:27:54.050569Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "integration/goal-maintenance-runtime-20260820\n",
+      "stdout_sha256": "ca92a9b29c16771755155af031155804c857d938efa07cac4baa4cbdcf520bb2"
+    },
+    {
+      "combined_sha256": "704e83b91f327f37e9cd99180f7f2ee5dc4adf1717bc1d1a2634123748118b57",
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "component_sha256": "077628c213d1f4dad8cc7ec65686b48ab99ddeb7191d4449ddcadf3b8dc0e28b",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:27:54.079139Z",
+      "label": "integration HEAD preflight",
+      "started_utc": "2026-08-20T15:27:54.065488Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "a610c220da202c6c4a45c4c990ebef4be9f53942\n",
+      "stdout_sha256": "12fcdabc8d86cd52995a8a86195aab6a5c69cc3cd0653df599c041c5b0c234ef"
+    },
+    {
+      "combined_sha256": "65b11c760daa9efec925fc7f9f06da3ed8cf36ff2c8cf1e1c79b41364b0094e7",
+      "command": [
+        "git",
+        "status",
+        "--short",
+        "--branch"
+      ],
+      "component_sha256": "19818f586a9fffa23fc51770d3a84723306d7c09bb68e753009c8651d66e7b4a",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:27:54.189264Z",
+      "label": "integration status preflight",
+      "started_utc": "2026-08-20T15:27:54.079357Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "## integration/goal-maintenance-runtime-20260820...origin/fixer/runtime-convergence-r\n?? docs/arnold/maintenance-runtime-consolidation-evidence/\n?? docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md\n",
+      "stdout_sha256": "f08aae42b2f9aa0d3c8cd18d117b1d38022613f4a36b5aef2a4db78ab815b0bb"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "diff",
+        "--name-only",
+        "--"
+      ],
+      "component_sha256": "db2eff888515dce9cbd8994bddd2b6558f13d71adca48214b38ee5d2522acb08",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:27:54.213085Z",
+      "label": "integration tracked diff preflight",
+      "started_utc": "2026-08-20T15:27:54.189598Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "diff",
+        "--cached",
+        "--name-only",
+        "--"
+      ],
+      "component_sha256": "2df0867690031401085803a924dc85b0787c546743dc000bd50d750c26e4fdb1",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:27:54.230679Z",
+      "label": "integration staged diff preflight",
+      "started_utc": "2026-08-20T15:27:54.213361Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "fca8aff860ea12adda8b9d91ba0b7b242b6853e1355167dd3745f507b7fc441f",
+      "command": [
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "a610c220da202c6c4a45c4c990ebef4be9f53942"
+      ],
+      "component_sha256": "87f921f489ab4703722c80576cadb65cb3ebaf6dd78bf814107aa2493f58c9e8",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:03.862459Z",
+      "label": "create fresh disposable verification worktree",
+      "started_utc": "2026-08-20T15:28:00.782287Z",
+      "stderr": "Preparing worktree (detached HEAD a610c220da)\nUpdating files:  60% (3642/5997)\nUpdating files:  61% (3659/5997)\nUpdating files:  62% (3719/5997)\nUpdating files:  63% (3779/5997)\nUpdating files:  64% (3839/5997)\nUpdating files:  65% (3899/5997)\nUpdating files:  66% (3959/5997)\nUpdating files:  67% (4018/5997)\nUpdating files:  68% (4078/5997)\nUpdating files:  69% (4138/5997)\nUpdating files:  69% (4174/5997)\nUpdating files:  70% (4198/5997)\nUpdating files:  71% (4258/5997)\nUpdating files:  72% (4318/5997)\nUpdating files:  73% (4378/5997)\nUpdating files:  74% (4438/5997)\nUpdating files:  75% (4498/5997)\nUpdating files:  76% (4558/5997)\nUpdating files:  77% (4618/5997)\nUpdating files:  78% (4678/5997)\nUpdating files:  79% (4738/5997)\nUpdating files:  80% (4798/5997)\nUpdating files:  81% (4858/5997)\nUpdating files:  82% (4918/5997)\nUpdating files:  83% (4978/5997)\nUpdating files:  84% (5038/5997)\nUpdating files:  85% (5098/5997)\nUpdating files:  86% (5158/5997)\nUpdating files:  87% (5218/5997)\nUpdating files:  88% (5278/5997)\nUpdating files:  89% (5338/5997)\nUpdating files:  90% (5398/5997)\nUpdating files:  91% (5458/5997)\nUpdating files:  92% (5518/5997)\nUpdating files:  93% (5578/5997)\nUpdating files:  94% (5638/5997)\nUpdating files:  95% (5698/5997)\nUpdating files:  96% (5758/5997)\nUpdating files:  97% (5818/5997)\nUpdating files:  98% (5878/5997)\nUpdating files:  99% (5938/5997)\nUpdating files: 100% (5997/5997)\nUpdating files: 100% (5997/5997), done.\n",
+      "stderr_sha256": "e40b8f7f2280860cd84cdb91014329a3c1539fc012b0b31d1d6a7ccac9526ba9",
+      "stdout": "HEAD is now at a610c220da Route maintenance execution judgments and revisions\n",
+      "stdout_sha256": "7a9deca00777a155856af27fd4b11d9c0405cbf29c578a86b465153a7498351c"
+    },
+    {
+      "combined_sha256": "992a9b8a0bc9ee2e9e603b132acda3bee2ed2b4c24085d1977ff4826f3f37a65",
+      "command": [
+        "git",
+        "status",
+        "--short",
+        "--branch"
+      ],
+      "component_sha256": "4ae36012c2fe5c3426a719a48b23f5dde544f54be9483f9f2df12a3610d178cb",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:04.086446Z",
+      "label": "disposable base status",
+      "started_utc": "2026-08-20T15:28:03.862922Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "## HEAD (no branch)\n",
+      "stdout_sha256": "ba051334ebc33f3162a4fd5be48615e03c8dac8ec7977e7c2752dbc1cf981841"
+    },
+    {
+      "combined_sha256": "704e83b91f327f37e9cd99180f7f2ee5dc4adf1717bc1d1a2634123748118b57",
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "component_sha256": "7cdff1565a99899c959a9fdd622455b79735a4164c8a232dbf287b0c9bd97e07",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:04.107355Z",
+      "label": "disposable base SHA",
+      "started_utc": "2026-08-20T15:28:04.086767Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "a610c220da202c6c4a45c4c990ebef4be9f53942\n",
+      "stdout_sha256": "12fcdabc8d86cd52995a8a86195aab6a5c69cc3cd0653df599c041c5b0c234ef"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "symbolic-ref",
+        "--short",
+        "-q",
+        "HEAD"
+      ],
+      "component_sha256": "ca14ec013625b127e66100bc603b1cc929e2682a4f289c8f5615617cf9601840",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 1,
+      "finished_utc": "2026-08-20T15:28:04.127586Z",
+      "label": "disposable branch state",
+      "started_utc": "2026-08-20T15:28:04.107759Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145^{commit}"
+      ],
+      "component_sha256": "3f37675b51f74691a8532e35ea4dabb66ecc272d1bba8dcaf4279f705630f102",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.359312Z",
+      "label": "M1 object reachability",
+      "started_utc": "2026-08-20T15:28:16.328703Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "15b881cb47274447b3795c9438fd2de1d9f9d33d^{commit}"
+      ],
+      "component_sha256": "b36aeea07fdf037697fcdc62044eb63d052eef839081e748ac32c4c10d4f6c12",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.389008Z",
+      "label": "M2 object reachability",
+      "started_utc": "2026-08-20T15:28:16.359690Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "58d4a935539597c2aa3f323e1515054ec1f95fe7^{commit}"
+      ],
+      "component_sha256": "894205ae837921dda8acb15ebdfcc8d139ab798dc606c0e55c2ae436e91e5257",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.420360Z",
+      "label": "M3 object reachability",
+      "started_utc": "2026-08-20T15:28:16.389353Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "7272cdc7f4303219fb399aefd2966f410d79d208^{commit}"
+      ],
+      "component_sha256": "a4b9a4c42ee7f22429fd5c22326b228854d0ffc3224232684adf917682e2dddc",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.451701Z",
+      "label": "M3b object reachability",
+      "started_utc": "2026-08-20T15:28:16.420738Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "759e3186f773ae40e58dc9de1e716dfd2ebb8438^{commit}"
+      ],
+      "component_sha256": "6e8bf99f718f15c357ac89b26f473fd9636fc5a3f17d170ba71594c70a725ec1",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.481507Z",
+      "label": "M4 object reachability",
+      "started_utc": "2026-08-20T15:28:16.452299Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "800fa27648245115d5c1412d16ec583d91bdea02^{commit}"
+      ],
+      "component_sha256": "445680e2c62160698cadf1b0002b1e980b40afef9cd2a506ea79b15c0f102e75",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.511554Z",
+      "label": "M5 object reachability",
+      "started_utc": "2026-08-20T15:28:16.482035Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "87a0a903daedf956082a1b43671ffaaf481513ca60b9eec0417497b4bafce9db",
+      "command": [
+        "git",
+        "show-ref",
+        "refs/heads/safety/maintenance-m1",
+        "refs/heads/safety/maintenance-m2",
+        "refs/heads/safety/maintenance-m3",
+        "refs/heads/safety/maintenance-m3b",
+        "refs/heads/safety/maintenance-m4",
+        "refs/heads/safety/maintenance-m5"
+      ],
+      "component_sha256": "dc75e87989edf4a8f861628cec82b7fe37387d266e7bb0ff181730624f67eb80",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.549236Z",
+      "label": "complete safety-ref snapshot",
+      "started_utc": "2026-08-20T15:28:16.511989Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145 refs/heads/safety/maintenance-m1\n15b881cb47274447b3795c9438fd2de1d9f9d33d refs/heads/safety/maintenance-m2\n58d4a935539597c2aa3f323e1515054ec1f95fe7 refs/heads/safety/maintenance-m3\n7272cdc7f4303219fb399aefd2966f410d79d208 refs/heads/safety/maintenance-m3b\n759e3186f773ae40e58dc9de1e716dfd2ebb8438 refs/heads/safety/maintenance-m4\n800fa27648245115d5c1412d16ec583d91bdea02 refs/heads/safety/maintenance-m5\n",
+      "stdout_sha256": "7618e12fcf2a5e81ed06d1122882eefd815ded8da864640221b39b8cd7774c60"
+    },
+    {
+      "combined_sha256": "28fb3f39fc528e996865da137ab1b65937d8a05d3d280eb0b89b2699fc68a62f",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m1"
+      ],
+      "component_sha256": "d35d772074a801288e550e2d9c8b3857245c15bd8770004057f34f80c23d9d32",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.578444Z",
+      "label": "M1 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.549686Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145\n",
+      "stdout_sha256": "28d8a57587acb5cf8d22f80a54b8c77cf687119afec943f066b8b3fc3c3ccaa9"
+    },
+    {
+      "combined_sha256": "1ac964c70720e3ba912801511c35473eb067653e64fbab9bbb83659dcea3a3b5",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m2"
+      ],
+      "component_sha256": "8c1364400fc6c6302c54f667bd9ab4a1a39baf9cef630e694c016f3c51b11a9a",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.606727Z",
+      "label": "M2 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.578862Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "15b881cb47274447b3795c9438fd2de1d9f9d33d\n",
+      "stdout_sha256": "b608d61bdc97515346a8e19c95dea6a5d34f391d6debe9f41e4cff13f4645452"
+    },
+    {
+      "combined_sha256": "cb81fac32f025c6aaf7e8c87d1f9a0058950e7484a77cd161f9f30a42cbe5935",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m3"
+      ],
+      "component_sha256": "6c1e4e78893ac69c68368651ef173edd34d360b7b6ced52e607ba42a706f6cac",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.636645Z",
+      "label": "M3 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.607235Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "58d4a935539597c2aa3f323e1515054ec1f95fe7\n",
+      "stdout_sha256": "91f1d6db5c6a4e0c229bb287c315ab832607a937a02bb5e45590e15e34208c77"
+    },
+    {
+      "combined_sha256": "a192425c64a99cf5ad6710d43f3ad271ca45edaf79dd2e2eda435a4935799394",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m3b"
+      ],
+      "component_sha256": "2e6e2e05edb1d0dd92b00f4078f98d124af147cb14d23e350030761d6cef816f",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.667538Z",
+      "label": "M3b safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.637013Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "7272cdc7f4303219fb399aefd2966f410d79d208\n",
+      "stdout_sha256": "966512588247d1795da4185c8c1a8834fc2c5eb3597b10f1468d1f2534c64632"
+    },
+    {
+      "combined_sha256": "bbeef5404c949e215e600dba8caaac4a0c8c80ff04fb390818c12157dfc6108c",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m4"
+      ],
+      "component_sha256": "00e42cad3a83fd685699f8c0233bcb7cf97ecd1730075619c5a8e8221a1a18a0",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.699911Z",
+      "label": "M4 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.669718Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "759e3186f773ae40e58dc9de1e716dfd2ebb8438\n",
+      "stdout_sha256": "40ac4aa935133238fb4494f82c87d29e904dde49b8d2e440620ab0583c57dd49"
+    },
+    {
+      "combined_sha256": "0de74a4528e554e44d218f6ee65b8e2f897fecef1dce26814b42b6602ef9e5eb",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m5"
+      ],
+      "component_sha256": "9cc3307371931f468a2410667759369678ce9d0fdda6dc99b6b7fe379a254c21",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.729473Z",
+      "label": "M5 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.700329Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "800fa27648245115d5c1412d16ec583d91bdea02\n",
+      "stdout_sha256": "215e6b393deb12c1f5ff6235e2d7351dba00149708656a98dfb1a1086ad6c842"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "7da0b85e5f0055419107cfeb1caabb563b8a281592099784a57396f6ae817fff",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.774890Z",
+      "label": "M1 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.729874Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "4235f46fec73c37f8eaaf837ead7250ce3e9d8412b77f02ccb6c4572c38a09d5",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.813260Z",
+      "label": "M2 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.775377Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "d65bf319946e3e929fd18115b6751154bb0ccf7598699169505abbf691045fb3",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.852004Z",
+      "label": "M3 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.813702Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "7272cdc7f4303219fb399aefd2966f410d79d208",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "8e2999981ce3f081331827bd80e55d86d8ba3d7fe7ec18d8e46fc2f652ea8df5",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.888380Z",
+      "label": "M3b merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.852334Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "9bea2a6da6ecc3cb6649ba6c089ecd26e19a02477e12e2ee1302e872cdeb1aa0",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.927584Z",
+      "label": "M4 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.888787Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "800fa27648245115d5c1412d16ec583d91bdea02",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "3ca17cd59520d6ed9884b8c22703521682b5bf6c351601885ec4f9285a27e368",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.966313Z",
+      "label": "M5 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.928151Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "test",
+        "!",
+        "-e",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json"
+      ],
+      "component_sha256": "6180294f3c4ff6725b3d27c707dd8fadc39393b235c7a5b10b57301bad88c85b",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:29:23.852865Z",
+      "label": "manifest absent pre-authoring",
+      "started_utc": "2026-08-20T15:29:23.832676Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "cca2b9564e418a055100b2200ae51987d314f05b63c5a61b0d961a04fffde171",
+      "command": [
+        "git",
+        "symbolic-ref",
+        "--short",
+        "HEAD"
+      ],
+      "component_sha256": "0d6bd1ac879a82d90d61d51675005eac3e35af587ac6fa52c1b520769cabee91",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:30:39.248156Z",
+      "label": "integration branch pre-commit recheck",
+      "started_utc": "2026-08-20T15:30:39.150867Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "integration/goal-maintenance-runtime-20260820\n",
+      "stdout_sha256": "ca92a9b29c16771755155af031155804c857d938efa07cac4baa4cbdcf520bb2"
+    },
+    {
+      "combined_sha256": "704e83b91f327f37e9cd99180f7f2ee5dc4adf1717bc1d1a2634123748118b57",
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "component_sha256": "32b880b2674c902aac4b17197c5ba764cf6df9a7fa256c1573f6588e35f36a94",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:30:39.339861Z",
+      "label": "integration HEAD pre-commit recheck",
+      "started_utc": "2026-08-20T15:30:39.248774Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "a610c220da202c6c4a45c4c990ebef4be9f53942\n",
+      "stdout_sha256": "12fcdabc8d86cd52995a8a86195aab6a5c69cc3cd0653df599c041c5b0c234ef"
+    },
+    {
+      "combined_sha256": "65b11c760daa9efec925fc7f9f06da3ed8cf36ff2c8cf1e1c79b41364b0094e7",
+      "command": [
+        "git",
+        "status",
+        "--short",
+        "--branch"
+      ],
+      "component_sha256": "f6506701525d441a4c00e04141fa585c9ea6c61f40dc4e07e5d0b75569e7c370",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:30:40.059456Z",
+      "label": "integration status pre-commit recheck",
+      "started_utc": "2026-08-20T15:30:39.340268Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "## integration/goal-maintenance-runtime-20260820...origin/fixer/runtime-convergence-r\n?? docs/arnold/maintenance-runtime-consolidation-evidence/\n?? docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md\n",
+      "stdout_sha256": "f08aae42b2f9aa0d3c8cd18d117b1d38022613f4a36b5aef2a4db78ab815b0bb"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "diff",
+        "--name-only",
+        "--"
+      ],
+      "component_sha256": "1adb18ff80619dbed42d1c8565d3484f9177fe03d747926b12ec3425c69a60ec",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:30:40.237125Z",
+      "label": "integration tracked diff pre-commit recheck",
+      "started_utc": "2026-08-20T15:30:40.059884Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "diff",
+        "--cached",
+        "--name-only",
+        "--"
+      ],
+      "component_sha256": "c179fca68dc2e9c6b1dd794c674db8583199a60e26382cc74edbbea6bc8ff9e3",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:30:40.417237Z",
+      "label": "integration staged diff pre-commit recheck",
+      "started_utc": "2026-08-20T15:30:40.238242Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "component_digests": {
+    "command_records": "2de28c6752f5c3fd49c390da8b1a1adcbe17df4896c7ea4b267b083cb24c1839",
+    "evidence_inputs": "c0eabf38cac3adfb447d607249d8f74ebfa156faa264e1866ed9015602116043",
+    "identity": "042a105c6e8b6c053cf6cc37d2654922b91ee0681f46e337e50f26f7482e51e7",
+    "integration_state_pre_commit": "9f88e366ebb5d434ad155844cd392e64f17993b8e21be8e2f0ff6ba591ca9f9a",
+    "lifecycle": "ebe8e56a07e2f3d6bc441773750d107d712b220cdd5063dd901ccd152902604d",
+    "milestones": "79f645d8fcab8aabd40cb62c195f0dcac6b8561a870ab0e39f0925cff8c59512",
+    "pack_transfer_evidence": "eb2d06d7cea83f0989554a852bf95a28d9680ee79045bf319a8caa7a830b3d3c",
+    "ref_snapshot": "f57faa5b71024fd78cd1f666f11171da1f91065de676ed69be0dc3aa201d579f",
+    "scope": "3ffe9badb5c1881f3c60d3fbf66f40c351b28eaae6469314f5157f0de671d65f",
+    "t0_0_baseline_inventory": "4ec6f68b2b936d558cb0195fe539184969434e126d831aa8ca0043b90de85968",
+    "worktree": "a5425d67d84d1b1e2d95127d54c1b2c3540a2d9328c40e60df0916e203c7e072"
+  },
+  "evidence_inputs": [
+    {
+      "component_sha256": "13754ed9549ce04bb6df96467ece7438784d4a8bc2f8b4d01c07355db2413e77",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/receipts/J1-grok.stdout",
+      "required": true,
+      "role": "J1 judgment and routing",
+      "sha256": "54c16a523ea6d5b71896a78b4e0b828b715393e9c97330a260815d2c675dbc86",
+      "size_bytes": 12639
+    },
+    {
+      "component_sha256": "a855d287e44572777ba4ad36a0dc73fa163ea9a66177b6ab8d75a39e87119643",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J1-grok-judgment.json",
+      "required": true,
+      "role": "structured J1 judgment",
+      "sha256": "8a43b98852009649474fa792fbfef063290a0f90e181c9bc22fdd1652a578734",
+      "size_bytes": 7826
+    },
+    {
+      "component_sha256": "c2b1fe0e4986091485eaf0fd776a426081bcf91a4575b4ed4f0e3fccb14da34d",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J1-boundary-restoration-receipt.json",
+      "required": true,
+      "role": "boundary restoration receipt",
+      "sha256": "0d04878f84f29d54b93b6dab8e1ffbca50291b48edcc0b3f9b1bcc5707eaddf8",
+      "size_bytes": 6763
+    },
+    {
+      "component_sha256": "1c70093a176688fdf14409d33f974fb73e3cae0c07fff9ac09e6b6e83b5a3edf",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md",
+      "required": true,
+      "role": "committed execution plan",
+      "sha256": "d94bef32ccdb834a37834ab6eb66bddab4d8998a164724e5bdf9d33d8e62c20a",
+      "size_bytes": 53496
+    },
+    {
+      "component_sha256": "b1e131ca82ff2fdb2e98fb40b4b74ebf09c6b98ad1b626fa0fc1e40659833e62",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/goal-execute-maintenance-runtime-consolidation.md",
+      "required": true,
+      "role": "committed goal",
+      "sha256": "54c0fac85296a5783571d22d945cfe94fbe4974692d505200f10e7928119cf73",
+      "size_bytes": 23471
+    },
+    {
+      "component_sha256": "75430da41f7d606e1504f9ae4d52f3b42553ab7917ab7561707421ec61434378",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/receipts/T0.1-impl.stdout",
+      "required": true,
+      "role": "historical custody receipt",
+      "sha256": "d36920b341f8710a4c2cc7e5694e9b320b5a53a6d7e93af1d0dfc66b7ef2848b",
+      "size_bytes": 7911
+    },
+    {
+      "component_sha256": "0fe21be6634006dce809540fd848ebbab70971e7fceae8d3543baf10224cbecc",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/briefs/env-record-T0.md",
+      "required": true,
+      "role": "pre-T0 environment record",
+      "sha256": "c6ef16e935e16e7d66191cda3e49f181e7fe7e0d4990842e8ceb56cdc672ac73",
+      "size_bytes": 3879
+    },
+    {
+      "component_sha256": "938d0010e0fae6dd61613eb3bb85fee3e2aa5630048c9a859a0ec05d32b9db55",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/baseline.json",
+      "required": true,
+      "role": "T0.0 baseline summary",
+      "sha256": "f5dfdf50bf3c552d24a53b0027b05123228135cc5473fdf1ddd5d842d2b4149b",
+      "size_bytes": 24317
+    },
+    {
+      "component_sha256": "96a0e3ce85bb4233ac5171da9a47f6f375054b64fa81cd098d5247649f4eba58",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/commands.ndjson",
+      "required": true,
+      "role": "T0.0 command evidence",
+      "sha256": "277e5b3587d869f83fbfc23a52e1ffe61255d407cfe58062bcf9ff9008c9d517",
+      "size_bytes": 17621
+    },
+    {
+      "component_sha256": "59c89d16bec9e8d5a8b50fb69f0ac3a92bcaf4297860f1481167fe1b985b1113",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/integration-refs.json",
+      "required": true,
+      "role": "T0.0 integration refs",
+      "sha256": "6f403e0fdc08ef033c2456a3bc7e3c814616b4678c40c2db47f2718ea410fe27",
+      "size_bytes": 809
+    }
+  ],
+  "identity": {
+    "component_sha256": "042a105c6e8b6c053cf6cc37d2654922b91ee0681f46e337e50f26f7482e51e7",
+    "disposition": "RE-BRIEF",
+    "integration_base": "fce48030a82d4d35d9b4a5184e4c789792b9c172",
+    "integration_worktree": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+    "manifest_authoring_worktree": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+    "manifest_created_utc": "2026-08-20T15:30:27.135999Z",
+    "manifest_digest_policy": "No self-referential manifest digest is stored; final file SHA-256 is computed after commit.",
+    "manifest_relative_path": "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json",
+    "plan_id": "maintenance-runtime-consolidation-2026-08-20",
+    "pre_commit_head": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "required_branch": "integration/goal-maintenance-runtime-20260820",
+    "schema": "maintenance-runtime-consolidation-t0.1-refs-manifest.v1",
+    "task_id": "T0.1"
+  },
+  "integration_state": {
+    "pre_commit": {
+      "allowed_pre_existing_untracked_paths": [
+        "docs/arnold/maintenance-runtime-consolidation-evidence/",
+        "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md"
+      ],
+      "boundary_precondition_satisfied": true,
+      "branch_command": {
+        "combined_sha256": "cca2b9564e418a055100b2200ae51987d314f05b63c5a61b0d961a04fffde171",
+        "command": [
+          "git",
+          "symbolic-ref",
+          "--short",
+          "HEAD"
+        ],
+        "component_sha256": "0d6bd1ac879a82d90d61d51675005eac3e35af587ac6fa52c1b520769cabee91",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:30:39.248156Z",
+        "label": "integration branch pre-commit recheck",
+        "started_utc": "2026-08-20T15:30:39.150867Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "integration/goal-maintenance-runtime-20260820\n",
+        "stdout_sha256": "ca92a9b29c16771755155af031155804c857d938efa07cac4baa4cbdcf520bb2"
+      },
+      "captured_utc": "2026-08-20T15:30:39.150867Z",
+      "component_sha256": "9f88e366ebb5d434ad155844cd392e64f17993b8e21be8e2f0ff6ba591ca9f9a",
+      "head_command": {
+        "combined_sha256": "704e83b91f327f37e9cd99180f7f2ee5dc4adf1717bc1d1a2634123748118b57",
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "component_sha256": "32b880b2674c902aac4b17197c5ba764cf6df9a7fa256c1573f6588e35f36a94",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:30:39.339861Z",
+        "label": "integration HEAD pre-commit recheck",
+        "started_utc": "2026-08-20T15:30:39.248774Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "a610c220da202c6c4a45c4c990ebef4be9f53942\n",
+        "stdout_sha256": "12fcdabc8d86cd52995a8a86195aab6a5c69cc3cd0653df599c041c5b0c234ef"
+      },
+      "pre_existing_untracked_paths": [
+        "docs/arnold/maintenance-runtime-consolidation-evidence/",
+        "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md"
+      ],
+      "staged_diff_command": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "diff",
+          "--cached",
+          "--name-only",
+          "--"
+        ],
+        "component_sha256": "c179fca68dc2e9c6b1dd794c674db8583199a60e26382cc74edbbea6bc8ff9e3",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:30:40.417237Z",
+        "label": "integration staged diff pre-commit recheck",
+        "started_utc": "2026-08-20T15:30:40.238242Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "staged_modifications": [],
+      "status_command": {
+        "combined_sha256": "65b11c760daa9efec925fc7f9f06da3ed8cf36ff2c8cf1e1c79b41364b0094e7",
+        "command": [
+          "git",
+          "status",
+          "--short",
+          "--branch"
+        ],
+        "component_sha256": "f6506701525d441a4c00e04141fa585c9ea6c61f40dc4e07e5d0b75569e7c370",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:30:40.059456Z",
+        "label": "integration status pre-commit recheck",
+        "started_utc": "2026-08-20T15:30:39.340268Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "## integration/goal-maintenance-runtime-20260820...origin/fixer/runtime-convergence-r\n?? docs/arnold/maintenance-runtime-consolidation-evidence/\n?? docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md\n",
+        "stdout_sha256": "f08aae42b2f9aa0d3c8cd18d117b1d38022613f4a36b5aef2a4db78ab815b0bb"
+      },
+      "target_manifest_absent_check": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "test",
+          "!",
+          "-e",
+          "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json"
+        ],
+        "component_sha256": "6180294f3c4ff6725b3d27c707dd8fadc39393b235c7a5b10b57301bad88c85b",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:29:23.852865Z",
+        "label": "manifest absent pre-authoring",
+        "started_utc": "2026-08-20T15:29:23.832676Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "tracked_diff_command": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "diff",
+          "--name-only",
+          "--"
+        ],
+        "component_sha256": "1adb18ff80619dbed42d1c8565d3484f9177fe03d747926b12ec3425c69a60ec",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:30:40.237125Z",
+        "label": "integration tracked diff pre-commit recheck",
+        "started_utc": "2026-08-20T15:30:40.059884Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "tracked_modifications": []
+    }
+  },
+  "lifecycle": {
+    "commit_utc": "recorded in the handoff from the single commit result",
+    "component_sha256": "ebe8e56a07e2f3d6bc441773750d107d712b220cdd5063dd901ccd152902604d",
+    "final_checks_utc": "recorded in the handoff from the required post-commit commands",
+    "immutability_note": "The manifest is intentionally not amended after the one evidence commit.",
+    "manifest_creation_utc": "2026-08-20T15:30:27.135999Z",
+    "pre_commit_recheck_completed_utc": "2026-08-20T15:30:40.417237Z",
+    "staging_utc": "recorded by staged-path command immediately before the single commit; post-commit commit/final-check timestamps are in the handoff because the immutable manifest cannot be changed after commit"
+  },
+  "merge_base_checks": [
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "7da0b85e5f0055419107cfeb1caabb563b8a281592099784a57396f6ae817fff",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.774890Z",
+      "label": "M1 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.729874Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "4235f46fec73c37f8eaaf837ead7250ce3e9d8412b77f02ccb6c4572c38a09d5",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.813260Z",
+      "label": "M2 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.775377Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "d65bf319946e3e929fd18115b6751154bb0ccf7598699169505abbf691045fb3",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.852004Z",
+      "label": "M3 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.813702Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "7272cdc7f4303219fb399aefd2966f410d79d208",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "8e2999981ce3f081331827bd80e55d86d8ba3d7fe7ec18d8e46fc2f652ea8df5",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.888380Z",
+      "label": "M3b merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.852334Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "9bea2a6da6ecc3cb6649ba6c089ecd26e19a02477e12e2ee1302e872cdeb1aa0",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.927584Z",
+      "label": "M4 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.888787Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    },
+    {
+      "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+      "command": [
+        "git",
+        "merge-base",
+        "800fa27648245115d5c1412d16ec583d91bdea02",
+        "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+      ],
+      "component_sha256": "3ca17cd59520d6ed9884b8c22703521682b5bf6c351601885ec4f9285a27e368",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.966313Z",
+      "label": "M5 merge-base vs fce",
+      "started_utc": "2026-08-20T15:28:16.928151Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+      "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+    }
+  ],
+  "milestones": [
+    {
+      "component_sha256": "0f6b67f775fbabf2aa69d67c32b0b1d9b9527ac0c56cd2ab26468b7558850416",
+      "id": "M1",
+      "merge_base_check": {
+        "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+        "command": [
+          "git",
+          "merge-base",
+          "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+          "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+        ],
+        "component_sha256": "7da0b85e5f0055419107cfeb1caabb563b8a281592099784a57396f6ae817fff",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.774890Z",
+        "label": "M1 merge-base vs fce",
+        "started_utc": "2026-08-20T15:28:16.729874Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+        "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+      },
+      "merge_base_expected": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "merge_base_vs_fce": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "object_reachability_check": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145^{commit}"
+        ],
+        "component_sha256": "3f37675b51f74691a8532e35ea4dabb66ecc272d1bba8dcaf4279f705630f102",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.359312Z",
+        "label": "M1 object reachability",
+        "started_utc": "2026-08-20T15:28:16.328703Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ref_exact": true,
+      "safety_ref": "refs/heads/safety/maintenance-m1",
+      "safety_ref_check": {
+        "combined_sha256": "28fb3f39fc528e996865da137ab1b65937d8a05d3d280eb0b89b2699fc68a62f",
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m1"
+        ],
+        "component_sha256": "d35d772074a801288e550e2d9c8b3857245c15bd8770004057f34f80c23d9d32",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.578444Z",
+        "label": "M1 safety-ref exactness",
+        "started_utc": "2026-08-20T15:28:16.549686Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145\n",
+        "stdout_sha256": "28d8a57587acb5cf8d22f80a54b8c77cf687119afec943f066b8b3fc3c3ccaa9"
+      },
+      "tip_sha": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145"
+    },
+    {
+      "component_sha256": "5913335e0adc73b052d768a7cd75e034ed76e8da4ac47e6f17cfe7172631f374",
+      "id": "M2",
+      "merge_base_check": {
+        "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+        "command": [
+          "git",
+          "merge-base",
+          "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+          "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+        ],
+        "component_sha256": "4235f46fec73c37f8eaaf837ead7250ce3e9d8412b77f02ccb6c4572c38a09d5",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.813260Z",
+        "label": "M2 merge-base vs fce",
+        "started_utc": "2026-08-20T15:28:16.775377Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+        "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+      },
+      "merge_base_expected": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "merge_base_vs_fce": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "object_reachability_check": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "15b881cb47274447b3795c9438fd2de1d9f9d33d^{commit}"
+        ],
+        "component_sha256": "b36aeea07fdf037697fcdc62044eb63d052eef839081e748ac32c4c10d4f6c12",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.389008Z",
+        "label": "M2 object reachability",
+        "started_utc": "2026-08-20T15:28:16.359690Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ref_exact": true,
+      "safety_ref": "refs/heads/safety/maintenance-m2",
+      "safety_ref_check": {
+        "combined_sha256": "1ac964c70720e3ba912801511c35473eb067653e64fbab9bbb83659dcea3a3b5",
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m2"
+        ],
+        "component_sha256": "8c1364400fc6c6302c54f667bd9ab4a1a39baf9cef630e694c016f3c51b11a9a",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.606727Z",
+        "label": "M2 safety-ref exactness",
+        "started_utc": "2026-08-20T15:28:16.578862Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "15b881cb47274447b3795c9438fd2de1d9f9d33d\n",
+        "stdout_sha256": "b608d61bdc97515346a8e19c95dea6a5d34f391d6debe9f41e4cff13f4645452"
+      },
+      "tip_sha": "15b881cb47274447b3795c9438fd2de1d9f9d33d"
+    },
+    {
+      "component_sha256": "a93786681049260af3e15f05551301f9fe082543969b5bdb32faeb76d15de90b",
+      "id": "M3",
+      "merge_base_check": {
+        "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+        "command": [
+          "git",
+          "merge-base",
+          "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+          "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+        ],
+        "component_sha256": "d65bf319946e3e929fd18115b6751154bb0ccf7598699169505abbf691045fb3",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.852004Z",
+        "label": "M3 merge-base vs fce",
+        "started_utc": "2026-08-20T15:28:16.813702Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+        "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+      },
+      "merge_base_expected": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "merge_base_vs_fce": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "object_reachability_check": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "58d4a935539597c2aa3f323e1515054ec1f95fe7^{commit}"
+        ],
+        "component_sha256": "894205ae837921dda8acb15ebdfcc8d139ab798dc606c0e55c2ae436e91e5257",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.420360Z",
+        "label": "M3 object reachability",
+        "started_utc": "2026-08-20T15:28:16.389353Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ref_exact": true,
+      "safety_ref": "refs/heads/safety/maintenance-m3",
+      "safety_ref_check": {
+        "combined_sha256": "cb81fac32f025c6aaf7e8c87d1f9a0058950e7484a77cd161f9f30a42cbe5935",
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m3"
+        ],
+        "component_sha256": "6c1e4e78893ac69c68368651ef173edd34d360b7b6ced52e607ba42a706f6cac",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.636645Z",
+        "label": "M3 safety-ref exactness",
+        "started_utc": "2026-08-20T15:28:16.607235Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "58d4a935539597c2aa3f323e1515054ec1f95fe7\n",
+        "stdout_sha256": "91f1d6db5c6a4e0c229bb287c315ab832607a937a02bb5e45590e15e34208c77"
+      },
+      "tip_sha": "58d4a935539597c2aa3f323e1515054ec1f95fe7"
+    },
+    {
+      "component_sha256": "dbd0a5012b34760edce6b24b182e5d8e873aca7986a11a7ba9d05e031e485f14",
+      "id": "M3b",
+      "merge_base_check": {
+        "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+        "command": [
+          "git",
+          "merge-base",
+          "7272cdc7f4303219fb399aefd2966f410d79d208",
+          "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+        ],
+        "component_sha256": "8e2999981ce3f081331827bd80e55d86d8ba3d7fe7ec18d8e46fc2f652ea8df5",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.888380Z",
+        "label": "M3b merge-base vs fce",
+        "started_utc": "2026-08-20T15:28:16.852334Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+        "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+      },
+      "merge_base_expected": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "merge_base_vs_fce": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "object_reachability_check": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "7272cdc7f4303219fb399aefd2966f410d79d208^{commit}"
+        ],
+        "component_sha256": "a4b9a4c42ee7f22429fd5c22326b228854d0ffc3224232684adf917682e2dddc",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.451701Z",
+        "label": "M3b object reachability",
+        "started_utc": "2026-08-20T15:28:16.420738Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ref_exact": true,
+      "safety_ref": "refs/heads/safety/maintenance-m3b",
+      "safety_ref_check": {
+        "combined_sha256": "a192425c64a99cf5ad6710d43f3ad271ca45edaf79dd2e2eda435a4935799394",
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m3b"
+        ],
+        "component_sha256": "2e6e2e05edb1d0dd92b00f4078f98d124af147cb14d23e350030761d6cef816f",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.667538Z",
+        "label": "M3b safety-ref exactness",
+        "started_utc": "2026-08-20T15:28:16.637013Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "7272cdc7f4303219fb399aefd2966f410d79d208\n",
+        "stdout_sha256": "966512588247d1795da4185c8c1a8834fc2c5eb3597b10f1468d1f2534c64632"
+      },
+      "tip_sha": "7272cdc7f4303219fb399aefd2966f410d79d208"
+    },
+    {
+      "component_sha256": "1b0a81e2dc11ffa2f6129be1c0e4c0007581956b2a1d72a03b814eb80bbc32be",
+      "id": "M4",
+      "merge_base_check": {
+        "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+        "command": [
+          "git",
+          "merge-base",
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+          "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+        ],
+        "component_sha256": "9bea2a6da6ecc3cb6649ba6c089ecd26e19a02477e12e2ee1302e872cdeb1aa0",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.927584Z",
+        "label": "M4 merge-base vs fce",
+        "started_utc": "2026-08-20T15:28:16.888787Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+        "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+      },
+      "merge_base_expected": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "merge_base_vs_fce": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "object_reachability_check": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438^{commit}"
+        ],
+        "component_sha256": "6e8bf99f718f15c357ac89b26f473fd9636fc5a3f17d170ba71594c70a725ec1",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.481507Z",
+        "label": "M4 object reachability",
+        "started_utc": "2026-08-20T15:28:16.452299Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ref_exact": true,
+      "safety_ref": "refs/heads/safety/maintenance-m4",
+      "safety_ref_check": {
+        "combined_sha256": "bbeef5404c949e215e600dba8caaac4a0c8c80ff04fb390818c12157dfc6108c",
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m4"
+        ],
+        "component_sha256": "00e42cad3a83fd685699f8c0233bcb7cf97ecd1730075619c5a8e8221a1a18a0",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.699911Z",
+        "label": "M4 safety-ref exactness",
+        "started_utc": "2026-08-20T15:28:16.669718Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "759e3186f773ae40e58dc9de1e716dfd2ebb8438\n",
+        "stdout_sha256": "40ac4aa935133238fb4494f82c87d29e904dde49b8d2e440620ab0583c57dd49"
+      },
+      "tip_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+    },
+    {
+      "component_sha256": "eb4f18975f15094abe2dcf2f6b2e0ea2343e7bc4992721505d46b68d59d2a5a5",
+      "id": "M5",
+      "merge_base_check": {
+        "combined_sha256": "8f0f4597396b987ec4d5efdc1f65e2ac29b01908da81d60c3b5395669f0ff513",
+        "command": [
+          "git",
+          "merge-base",
+          "800fa27648245115d5c1412d16ec583d91bdea02",
+          "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+        ],
+        "component_sha256": "3ca17cd59520d6ed9884b8c22703521682b5bf6c351601885ec4f9285a27e368",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.966313Z",
+        "label": "M5 merge-base vs fce",
+        "started_utc": "2026-08-20T15:28:16.928151Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d\n",
+        "stdout_sha256": "7ea519c669fed0cb959df48c43b4750babdb9ad7e51b490de3a32973c99e4614"
+      },
+      "merge_base_expected": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "merge_base_vs_fce": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+      "object_reachability_check": {
+        "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "800fa27648245115d5c1412d16ec583d91bdea02^{commit}"
+        ],
+        "component_sha256": "445680e2c62160698cadf1b0002b1e980b40afef9cd2a506ea79b15c0f102e75",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.511554Z",
+        "label": "M5 object reachability",
+        "started_utc": "2026-08-20T15:28:16.482035Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ref_exact": true,
+      "safety_ref": "refs/heads/safety/maintenance-m5",
+      "safety_ref_check": {
+        "combined_sha256": "0de74a4528e554e44d218f6ee65b8e2f897fecef1dce26814b42b6602ef9e5eb",
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m5"
+        ],
+        "component_sha256": "9cc3307371931f468a2410667759369678ce9d0fdda6dc99b6b7fe379a254c21",
+        "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "exit_status": 0,
+        "finished_utc": "2026-08-20T15:28:16.729473Z",
+        "label": "M5 safety-ref exactness",
+        "started_utc": "2026-08-20T15:28:16.700329Z",
+        "stderr": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "800fa27648245115d5c1412d16ec583d91bdea02\n",
+        "stdout_sha256": "215e6b393deb12c1f5ff6235e2d7351dba00149708656a98dfb1a1086ad6c842"
+      },
+      "tip_sha": "800fa27648245115d5c1412d16ec583d91bdea02"
+    }
+  ],
+  "object_reachability_checks": [
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145^{commit}"
+      ],
+      "component_sha256": "3f37675b51f74691a8532e35ea4dabb66ecc272d1bba8dcaf4279f705630f102",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.359312Z",
+      "label": "M1 object reachability",
+      "started_utc": "2026-08-20T15:28:16.328703Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "15b881cb47274447b3795c9438fd2de1d9f9d33d^{commit}"
+      ],
+      "component_sha256": "b36aeea07fdf037697fcdc62044eb63d052eef839081e748ac32c4c10d4f6c12",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.389008Z",
+      "label": "M2 object reachability",
+      "started_utc": "2026-08-20T15:28:16.359690Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "58d4a935539597c2aa3f323e1515054ec1f95fe7^{commit}"
+      ],
+      "component_sha256": "894205ae837921dda8acb15ebdfcc8d139ab798dc606c0e55c2ae436e91e5257",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.420360Z",
+      "label": "M3 object reachability",
+      "started_utc": "2026-08-20T15:28:16.389353Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "7272cdc7f4303219fb399aefd2966f410d79d208^{commit}"
+      ],
+      "component_sha256": "a4b9a4c42ee7f22429fd5c22326b228854d0ffc3224232684adf917682e2dddc",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.451701Z",
+      "label": "M3b object reachability",
+      "started_utc": "2026-08-20T15:28:16.420738Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "759e3186f773ae40e58dc9de1e716dfd2ebb8438^{commit}"
+      ],
+      "component_sha256": "6e8bf99f718f15c357ac89b26f473fd9636fc5a3f17d170ba71594c70a725ec1",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.481507Z",
+      "label": "M4 object reachability",
+      "started_utc": "2026-08-20T15:28:16.452299Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "cat-file",
+        "-e",
+        "800fa27648245115d5c1412d16ec583d91bdea02^{commit}"
+      ],
+      "component_sha256": "445680e2c62160698cadf1b0002b1e980b40afef9cd2a506ea79b15c0f102e75",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.511554Z",
+      "label": "M5 object reachability",
+      "started_utc": "2026-08-20T15:28:16.482035Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "pack_transfer_evidence": {
+    "component_sha256": "eb2d06d7cea83f0989554a852bf95a28d9680ee79045bf319a8caa7a830b3d3c",
+    "historical": true,
+    "historical_receipt_path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/receipts/T0.1-impl.stdout",
+    "note": "Historical read-only transfer and local unpack recorded by prior run; no transfer or refetch was performed in this run.",
+    "pack_sha256": "f5e2ce1c108867f65758472da9492591bfed6cf277ee3444f428b0b73007e710",
+    "pack_size_bytes": 125147110,
+    "performed_by_prior_run": true,
+    "refetch_performed_this_run": false,
+    "source_command": "ssh root@159.69.51.216 docker exec -i megaplan-cloud-agent-resident-only git -C /workspace/megaplan-maintenance/Arnold pack-objects --revs --stdout",
+    "source_status": 0,
+    "temporary_historical_path": "/tmp/t0.1-missing-tips.pack"
+  },
+  "ref_snapshot": {
+    "all_six_exact": true,
+    "all_six_present": true,
+    "command": {
+      "combined_sha256": "87a0a903daedf956082a1b43671ffaaf481513ca60b9eec0417497b4bafce9db",
+      "command": [
+        "git",
+        "show-ref",
+        "refs/heads/safety/maintenance-m1",
+        "refs/heads/safety/maintenance-m2",
+        "refs/heads/safety/maintenance-m3",
+        "refs/heads/safety/maintenance-m3b",
+        "refs/heads/safety/maintenance-m4",
+        "refs/heads/safety/maintenance-m5"
+      ],
+      "component_sha256": "dc75e87989edf4a8f861628cec82b7fe37387d266e7bb0ff181730624f67eb80",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.549236Z",
+      "label": "complete safety-ref snapshot",
+      "started_utc": "2026-08-20T15:28:16.511989Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145 refs/heads/safety/maintenance-m1\n15b881cb47274447b3795c9438fd2de1d9f9d33d refs/heads/safety/maintenance-m2\n58d4a935539597c2aa3f323e1515054ec1f95fe7 refs/heads/safety/maintenance-m3\n7272cdc7f4303219fb399aefd2966f410d79d208 refs/heads/safety/maintenance-m3b\n759e3186f773ae40e58dc9de1e716dfd2ebb8438 refs/heads/safety/maintenance-m4\n800fa27648245115d5c1412d16ec583d91bdea02 refs/heads/safety/maintenance-m5\n",
+      "stdout_sha256": "7618e12fcf2a5e81ed06d1122882eefd815ded8da864640221b39b8cd7774c60"
+    },
+    "component_sha256": "f57faa5b71024fd78cd1f666f11171da1f91065de676ed69be0dc3aa201d579f",
+    "expected_mappings": {
+      "M1": {
+        "safety_ref": "refs/heads/safety/maintenance-m1",
+        "tip_sha": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145"
+      },
+      "M2": {
+        "safety_ref": "refs/heads/safety/maintenance-m2",
+        "tip_sha": "15b881cb47274447b3795c9438fd2de1d9f9d33d"
+      },
+      "M3": {
+        "safety_ref": "refs/heads/safety/maintenance-m3",
+        "tip_sha": "58d4a935539597c2aa3f323e1515054ec1f95fe7"
+      },
+      "M3b": {
+        "safety_ref": "refs/heads/safety/maintenance-m3b",
+        "tip_sha": "7272cdc7f4303219fb399aefd2966f410d79d208"
+      },
+      "M4": {
+        "safety_ref": "refs/heads/safety/maintenance-m4",
+        "tip_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+      },
+      "M5": {
+        "safety_ref": "refs/heads/safety/maintenance-m5",
+        "tip_sha": "800fa27648245115d5c1412d16ec583d91bdea02"
+      }
+    },
+    "lines": [
+      "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145 refs/heads/safety/maintenance-m1",
+      "15b881cb47274447b3795c9438fd2de1d9f9d33d refs/heads/safety/maintenance-m2",
+      "58d4a935539597c2aa3f323e1515054ec1f95fe7 refs/heads/safety/maintenance-m3",
+      "7272cdc7f4303219fb399aefd2966f410d79d208 refs/heads/safety/maintenance-m3b",
+      "759e3186f773ae40e58dc9de1e716dfd2ebb8438 refs/heads/safety/maintenance-m4",
+      "800fa27648245115d5c1412d16ec583d91bdea02 refs/heads/safety/maintenance-m5"
+    ],
+    "matching_refs_untouched": true,
+    "repair_attempts": []
+  },
+  "safety_ref_checks": [
+    {
+      "combined_sha256": "28fb3f39fc528e996865da137ab1b65937d8a05d3d280eb0b89b2699fc68a62f",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m1"
+      ],
+      "component_sha256": "d35d772074a801288e550e2d9c8b3857245c15bd8770004057f34f80c23d9d32",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.578444Z",
+      "label": "M1 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.549686Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145\n",
+      "stdout_sha256": "28d8a57587acb5cf8d22f80a54b8c77cf687119afec943f066b8b3fc3c3ccaa9"
+    },
+    {
+      "combined_sha256": "1ac964c70720e3ba912801511c35473eb067653e64fbab9bbb83659dcea3a3b5",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m2"
+      ],
+      "component_sha256": "8c1364400fc6c6302c54f667bd9ab4a1a39baf9cef630e694c016f3c51b11a9a",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.606727Z",
+      "label": "M2 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.578862Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "15b881cb47274447b3795c9438fd2de1d9f9d33d\n",
+      "stdout_sha256": "b608d61bdc97515346a8e19c95dea6a5d34f391d6debe9f41e4cff13f4645452"
+    },
+    {
+      "combined_sha256": "cb81fac32f025c6aaf7e8c87d1f9a0058950e7484a77cd161f9f30a42cbe5935",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m3"
+      ],
+      "component_sha256": "6c1e4e78893ac69c68368651ef173edd34d360b7b6ced52e607ba42a706f6cac",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.636645Z",
+      "label": "M3 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.607235Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "58d4a935539597c2aa3f323e1515054ec1f95fe7\n",
+      "stdout_sha256": "91f1d6db5c6a4e0c229bb287c315ab832607a937a02bb5e45590e15e34208c77"
+    },
+    {
+      "combined_sha256": "a192425c64a99cf5ad6710d43f3ad271ca45edaf79dd2e2eda435a4935799394",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m3b"
+      ],
+      "component_sha256": "2e6e2e05edb1d0dd92b00f4078f98d124af147cb14d23e350030761d6cef816f",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.667538Z",
+      "label": "M3b safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.637013Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "7272cdc7f4303219fb399aefd2966f410d79d208\n",
+      "stdout_sha256": "966512588247d1795da4185c8c1a8834fc2c5eb3597b10f1468d1f2534c64632"
+    },
+    {
+      "combined_sha256": "bbeef5404c949e215e600dba8caaac4a0c8c80ff04fb390818c12157dfc6108c",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m4"
+      ],
+      "component_sha256": "00e42cad3a83fd685699f8c0233bcb7cf97ecd1730075619c5a8e8221a1a18a0",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.699911Z",
+      "label": "M4 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.669718Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "759e3186f773ae40e58dc9de1e716dfd2ebb8438\n",
+      "stdout_sha256": "40ac4aa935133238fb4494f82c87d29e904dde49b8d2e440620ab0583c57dd49"
+    },
+    {
+      "combined_sha256": "0de74a4528e554e44d218f6ee65b8e2f897fecef1dce26814b42b6602ef9e5eb",
+      "command": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--hash",
+        "refs/heads/safety/maintenance-m5"
+      ],
+      "component_sha256": "9cc3307371931f468a2410667759369678ce9d0fdda6dc99b6b7fe379a254c21",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:16.729473Z",
+      "label": "M5 safety-ref exactness",
+      "started_utc": "2026-08-20T15:28:16.700329Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "800fa27648245115d5c1412d16ec583d91bdea02\n",
+      "stdout_sha256": "215e6b393deb12c1f5ff6235e2d7351dba00149708656a98dfb1a1086ad6c842"
+    }
+  ],
+  "schema": "maintenance-runtime-consolidation-t0.1-refs-manifest.v1",
+  "scope": {
+    "component_sha256": "3ffe9badb5c1881f3c60d3fbf66f40c351b28eaae6469314f5157f0de671d65f",
+    "forbidden_mutations_observed": [],
+    "mutation_scope": [
+      "fresh disposable worktree administrative metadata",
+      "exact existing local safety refs left unchanged",
+      "one T0.1 refs-manifest.json",
+      "one evidence commit containing only that manifest"
+    ],
+    "no_plan_goal_edit": true,
+    "no_plan_or_epic_created": true,
+    "no_production_or_test_edit": true,
+    "no_push": true,
+    "no_remote_or_cloud_write": true,
+    "no_reset_checkout_stash_merge_rebase_cherry_pick": true,
+    "no_runtime_seed_written": true,
+    "no_t4_4_or_g4_4_authority_material_added": true
+  },
+  "t0_0_baseline_inventory": [
+    {
+      "component_sha256": "e35de87336f6514aad18ab8567c4a7c3cd79f66de84e0a5030ce5cc52252c584",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/astrid-plan-chain.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "226704ea4ab6f7038bc81d4a4a17587b565db6bac1b48a18ef6781d898488cbf",
+      "size_bytes": 2694
+    },
+    {
+      "component_sha256": "26315fada502bca58692e6a709b782dee6923754a6d54551d41d78ab00bb4af9",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/baseline.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "f5dfdf50bf3c552d24a53b0027b05123228135cc5473fdf1ddd5d842d2b4149b",
+      "size_bytes": 24317
+    },
+    {
+      "component_sha256": "b771a78b126208c2f907fd30cec5842a3c486c9553a69a7d481530d300c77c5b",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/candidates-arnold-4a830c6ac9.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "d4426d54209b9e4a0d522fd4be953f97bf4e06d76c806eabf6a18af25ed6212f",
+      "size_bytes": 608
+    },
+    {
+      "component_sha256": "8451eb9384946c0d33d749526d35a96d7f39b627bf500a40f174bd09649f9331",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/candidates-astrid-first.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "3c8f67434eb55115e43321c8508f97bf2ebeedf7d79b64d5c205dc158ade431e",
+      "size_bytes": 399
+    },
+    {
+      "component_sha256": "8c916cf856c34a8d2d39e6902a883577f74895fd36bb2e7aa5672b2577c211bf",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/commands.ndjson",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "277e5b3587d869f83fbfc23a52e1ffe61255d407cfe58062bcf9ff9008c9d517",
+      "size_bytes": 17621
+    },
+    {
+      "component_sha256": "02e36b51df21698b8e3164056d0a9068cb6ea65cabe6da541ed14d4c5014ea10",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/final-reconcile/candidate-artifact.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "aebe9b12e5f941691293a839926c428ffc6f9a913723d11b19e45ab13ff36a08",
+      "size_bytes": 480
+    },
+    {
+      "component_sha256": "768180d62bc0f7a41807ef932148bd151ca94408edcf54098986bd4dbe6049d5",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/final-reconcile/execution.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "37518e260dc54eacc010a7f97e7dccb450f6b13b2e30dbd9a9ff033af668124e",
+      "size_bytes": 527
+    },
+    {
+      "component_sha256": "d922c89a06bc889a89f91bd9ac95697658f4321787a4a756d8bcbeecc8b83ec4",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/final-reconcile/identity.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "9ff50f70de129331c6ab60f55e0b5f939752ebc53342a343e2d7ca71d8666b21",
+      "size_bytes": 856
+    },
+    {
+      "component_sha256": "efd0988c88122c390a822dce1e3f67c75a8137c0d25f1d18f420d220866cfbfc",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/final-reconcile/introspect.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "6dd9827b7b4770c597ee8249cd5e9b6aabd87b9efed813b29d209600cbfde08d",
+      "size_bytes": 427
+    },
+    {
+      "component_sha256": "d37b3c3309438eb90e2067c9aaf7f6c02cb1a1292eede015eae0d640b227956c",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/final-reconcile/review.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "5fd2e73231ad13ca405ac8fbc21ed1addf8bb1deb06e245bc85ec9a0341b2141",
+      "size_bytes": 522
+    },
+    {
+      "component_sha256": "c626dee289256ce2c3a485abab6b7b65ee8ac348dac1912ea42f4bcd09252ab8",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/final-reconcile/review_evidence.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "03024028f8224319cf956bf189172c3712789774bab0e0c6caeed29ac94940d5",
+      "size_bytes": 540
+    },
+    {
+      "component_sha256": "a19b812195d84f6c1031c0f57647c486694c68714b6d5734762779bc46cef27c",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/integration-refs.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "6f403e0fdc08ef033c2456a3bc7e3c814616b4678c40c2db47f2718ea410fe27",
+      "size_bytes": 809
+    },
+    {
+      "component_sha256": "9712f2b0612e5ce5688ce1f5ac3995ecaed213c47b95972cbb3ff528bc903c59",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/leases-fences.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "d61cbf954eb41448e6b3ba02a49d9170355ebbe593ff900c268762558f4eb00b",
+      "size_bytes": 1204
+    },
+    {
+      "component_sha256": "ad57cdb0db84cfbc1d20fe44f1fd43ed05ae7c494bb5fe4acc4e58b188d2f5c3",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/maintenance-ledger.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "6ad1165807b9e3a5e63cea5a554bc76d944dbf95d83074bf1bb4ba22ddd86f9e",
+      "size_bytes": 935
+    },
+    {
+      "component_sha256": "133acf843eeab4dd4fe88128a52f9f0f86d92f536c862f02f967d8088f4469de",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/maintenance-plan-chain.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "5ff27fd34619ec0c06f111979469c46ea8a70904917a9a934792733b42f361bb",
+      "size_bytes": 19939
+    },
+    {
+      "component_sha256": "34a1c96ae378b77a084959318f23a82437621ed3ac8678355b4917c1e4f63e7a",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/processes-cloud.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "a43a9320b17f2eda37cfb233f0035c62287850517467d0a86346d972f82946de",
+      "size_bytes": 1321
+    },
+    {
+      "component_sha256": "e21cc2aa3ef736bce0a1d9e1fa3b3a79785cad4434863a600d997b59d17e0a74",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/processes-local.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "b9ee7b51e19fc153b746384db1b9910cab08db729a32691150c0e7ab79300ecb",
+      "size_bytes": 988
+    },
+    {
+      "component_sha256": "12c89d439ec2d92c1cdc62abfe54ec5983720f1f7227a418318cba3d928be89a",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-active-leases-fences-digests.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "6e0117d60e32b89906ef1639623469ba06c9658b1c063773b2d61c6708248543",
+      "size_bytes": 1276
+    },
+    {
+      "component_sha256": "6a9dbf35fce47637912fdebf4f46dfe9dd1ede12eb670ee4820ea9697c7f2cea",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-astrid-plan-chain-files.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "6d56d4aadc0222d155f51e04f29d5a64bd1bd09835fa6b7a6f1f6a5546319a33",
+      "size_bytes": 829
+    },
+    {
+      "component_sha256": "8cf3c21b80bcbdb58d16e2bbfee7b39610d443c88f081883637a548a7ca05254",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-candidate-arnold-git.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "f017927009265c0dbcb7d752fedc5f8909ceb7fd33bbe422ca75494bd3daef18",
+      "size_bytes": 53
+    },
+    {
+      "component_sha256": "05f3fb70d17478b2c9c144f8aa2a14a48fd781a1e1b06ed0d68c41f771f2ff1d",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-candidate-arnold-observed-git.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "6a79a298d173237525040f1e6ea19a24ac0f2aec505d83d1b0cb23c07eb79025",
+      "size_bytes": 24206
+    },
+    {
+      "component_sha256": "c980b39f1a7e88efeaeab1737136d0879ab1c63cd6f7b02c3dc6ede8eea4e01c",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-candidate-astrid-first-git.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "fd0d836142c3d98edbdd181d1286ef9ad822e39201c821fe4aee8bcaaf0d42e3",
+      "size_bytes": 4223
+    },
+    {
+      "component_sha256": "331fcd5a68e912a879d15eef23e8e64cdfaae907b6d90ee48cd24e78d08298c2",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-candidate-git-provenance.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "f36b7321cf1ff66e3ba9c6cb186fc76dbead59a48b739f8fb0bf5538edd5736d",
+      "size_bytes": 586
+    },
+    {
+      "component_sha256": "0dc332761d19af41bfc4582d2dd4b7d304055a2e2a9a7162fe7a3ba519ab485e",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-candidate-files.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "280ba24c87e6cd099f6d05ca6c259d62bb93a283423290afd453137a76fa24c0",
+      "size_bytes": 619672
+    },
+    {
+      "component_sha256": "b2ce6133fc88c286f26e745f993afbd2dad35f216705fc0cce99d39aed3d0e18",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60",
+      "size_bytes": 8289
+    },
+    {
+      "component_sha256": "98cc067ee15d46ad94843972d94112b12ffd5b7b450abb33134ec76de3ffa6fe",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-control-paths.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "fcbd01816a0c0bb1c2d9f804b989cea966f7a2a01488f7e4f16e0cda36bdc5a2",
+      "size_bytes": 10951981
+    },
+    {
+      "component_sha256": "c2e49bd78113bc59086e6078815f342d2b3cb223c1dac3cb02935b879d399453",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-file-inventory.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "component_sha256": "bf57d82b4c7b81662d0783d742ab871b9d47a9ce3d101d689886495190d1d4a9",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-megaplan-files.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "950fc6b1036965ffb55429e2e7d8d60770fcd68190cc4b12658735667a624ca5",
+      "size_bytes": 2214921
+    },
+    {
+      "component_sha256": "10366ef75200e9ab8137ccdb5d239bedc7cbb3a8bc64cbcd4e042e90d6301d47",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-pgrep.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "51be33d4a474a861e72e3dc9bb4638452904d792da0cea7da8b8ab8a3e515404",
+      "size_bytes": 63902
+    },
+    {
+      "component_sha256": "1b98f399434aa457a031cd5183105665a8ab064f71d05cecc12b4d8cbc8b1073",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-ps.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "572ae0fadb6cbc4916c3e06b87f616f772fee25bf2a956236a0aa0fa74336966",
+      "size_bytes": 23474
+    },
+    {
+      "component_sha256": "78cec69791902211362eb680c0840309095632080a9d3093b5967d3867b26ef7",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-control-digests.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "e73c6136357ebd9667d6e8cdc4aa5d4e6db5a4d2cf7cfbb5eedc51419163fcd8",
+      "size_bytes": 1719
+    },
+    {
+      "component_sha256": "e2e40a612136bad4c15ef3bd249178dd8f30bc6425364bdb65ba7026bce7fc7d",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-control-stat.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "59842a45ed2b84f83870ba2798777293cc01f83c1880321667718ba4b88672ca",
+      "size_bytes": 1245
+    },
+    {
+      "component_sha256": "3808dc63258bbfa7684a2468848c14ef1711d3c92e512aa2d47095542cb6279b",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-final-reconcile-inventory.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "24c485164aa1c3c3235149b929705c366d5c5b4d417a86e6f8416b70ec350849",
+      "size_bytes": 38769
+    },
+    {
+      "component_sha256": "57f3469c0c0c4f659cce5c519536ea5af6bd5093ff59ce3a3720a494973212c1",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-final-reconcile-key-artifacts.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "312e3fdad95d97b05eef5a62d75e3ad3a47bde6e7be8d4b23cd81a1ed7dba77c",
+      "size_bytes": 396928
+    },
+    {
+      "component_sha256": "73256fd1926d669ddf4e6d00a540bc565d89b07dce425afa750a50a125578a2a",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-final-reconcile-state.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "fb5e5693d22fc8caeb74c92f3fef84ff30a61d3f8ed3e1b4b4aa7ccb46d1c67b",
+      "size_bytes": 134765
+    },
+    {
+      "component_sha256": "f67ac1b6ad505bac7ee7d58afea51740ded64dce49d983e662c5a30f2b9157d4",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-leases-fences.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "component_sha256": "2ec7aec464531d5e88685559479dc45659c9656561d86f7b4b9cfe11a1d2ad12",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-local-capture-time.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "94a4ad894583c1a36aa4143f6d8a2ab9c06653adf1d244901ab812e2563a6a2a",
+      "size_bytes": 21
+    },
+    {
+      "component_sha256": "038c731dd4523090976ab731541e6cc90dc02cc61c50be4bf2a10787597634b3",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-local-head.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "12fcdabc8d86cd52995a8a86195aab6a5c69cc3cd0653df599c041c5b0c234ef",
+      "size_bytes": 41
+    },
+    {
+      "component_sha256": "93a6ee11fe4764cc505f1f04bf8835f551355c7720f14a3a83decfca10b588af",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-local-pgrep.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "8eae03bcb82ed7f93f3ff66c6eb143ce715701be232e5de55b1f2c65041a16f2",
+      "size_bytes": 2201
+    },
+    {
+      "component_sha256": "3da77c75e5a08be6be8c268dbb1e717e0ec4af4ffb171ddd20cd2a0f61a5cdf4",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-local-ps.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "b92265688ae2089c3b3c45da76b62bf33e2f803a372605a5658ef95df99781a3",
+      "size_bytes": 102667
+    },
+    {
+      "component_sha256": "a36dac4f9041d8a134adf301a26e89acedcba1cf99b398234766cc4e6746351d",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-local-show-ref.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "41e1d18bb0e7b388475486dc4d3d683876913547e33262dd0a54522ee8b80279",
+      "size_bytes": 27399
+    },
+    {
+      "component_sha256": "adecfb807b094ab9b40fe95e1c7007a003e5cd64f63a6d88994eda24dd5f04e0",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-maintenance-ledger-inventory.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "2b3cf9af0c74e5e5a812914a3df418bd83798fdea1bef3f9f2714f8ce6c79534",
+      "size_bytes": 5579
+    },
+    {
+      "component_sha256": "8f6ed6c18086f0565f421386c11a47b698cf0c620b11ee4698c0d216cd882f9f",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-maintenance-plan-chain-files.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "00bcddb04a243e42f4be1a74103bc883e1c008de9305391e2cac8bba360ce417",
+      "size_bytes": 8606
+    },
+    {
+      "component_sha256": "755476c8bd6968e89bba0faa7a2cc4a617f4efd2eb23db69e1fb6a8d6b54e5c2",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-origin-ls-remote.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "837d82e21c8ac13fc957c978330f4e164f8ca80930a3061cce721b74ec9ee33a",
+      "size_bytes": 15125
+    },
+    {
+      "component_sha256": "a96d577af29ee5ec3ac8891a4e782b1830b4994700048abbe0401321b1fca160",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-schedule-store-inventory.txt",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "ff89eb65ba831f550c501b88af15ddcf09452a1593167b4544194f174fd7c897",
+      "size_bytes": 1979
+    },
+    {
+      "component_sha256": "12dbe4a3402e75c65d0d2f0eb2341697dd8dd29b2969f8ad4b682719e769bafb",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/schedule-store.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "60a5d162b26081585b82dcb2edaec8a62e74fb461271504ff7a099ee616c7845",
+      "size_bytes": 919
+    },
+    {
+      "component_sha256": "e9dff11c912761ed55f3ff34f39ee7cb336d18cc8433ba5e09e7031d680399f4",
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/selectors-markers-manifests.json",
+      "required": true,
+      "role": "T0.0 baseline inventory member",
+      "sha256": "7d18e0a448fec6b6672e7144fbc2c8b5fca9840b5e37690e587482511f698975",
+      "size_bytes": 4891
+    }
+  ],
+  "task_id": "T0.1",
+  "worktree": {
+    "base_sha": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "base_sha_check": {
+      "combined_sha256": "704e83b91f327f37e9cd99180f7f2ee5dc4adf1717bc1d1a2634123748118b57",
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "component_sha256": "7cdff1565a99899c959a9fdd622455b79735a4164c8a232dbf287b0c9bd97e07",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:04.107355Z",
+      "label": "disposable base SHA",
+      "started_utc": "2026-08-20T15:28:04.086767Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "a610c220da202c6c4a45c4c990ebef4be9f53942\n",
+      "stdout_sha256": "12fcdabc8d86cd52995a8a86195aab6a5c69cc3cd0653df599c041c5b0c234ef"
+    },
+    "base_status": {
+      "combined_sha256": "992a9b8a0bc9ee2e9e603b132acda3bee2ed2b4c24085d1977ff4826f3f37a65",
+      "command": [
+        "git",
+        "status",
+        "--short",
+        "--branch"
+      ],
+      "component_sha256": "4ae36012c2fe5c3426a719a48b23f5dde544f54be9483f9f2df12a3610d178cb",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:04.086446Z",
+      "label": "disposable base status",
+      "started_utc": "2026-08-20T15:28:03.862922Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "## HEAD (no branch)\n",
+      "stdout_sha256": "ba051334ebc33f3162a4fd5be48615e03c8dac8ec7977e7c2752dbc1cf981841"
+    },
+    "branch": "detached",
+    "branch_state_check": {
+      "combined_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "command": [
+        "git",
+        "symbolic-ref",
+        "--short",
+        "-q",
+        "HEAD"
+      ],
+      "component_sha256": "ca14ec013625b127e66100bc603b1cc929e2682a4f289c8f5615617cf9601840",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+      "exit_status": 1,
+      "finished_utc": "2026-08-20T15:28:04.127586Z",
+      "label": "disposable branch state",
+      "started_utc": "2026-08-20T15:28:04.107759Z",
+      "stderr": "",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "component_sha256": "a5425d67d84d1b1e2d95127d54c1b2c3540a2d9328c40e60df0916e203c7e072",
+    "creation_command": {
+      "combined_sha256": "fca8aff860ea12adda8b9d91ba0b7b242b6853e1355167dd3745f507b7fc441f",
+      "command": [
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+        "a610c220da202c6c4a45c4c990ebef4be9f53942"
+      ],
+      "component_sha256": "87f921f489ab4703722c80576cadb65cb3ebaf6dd78bf814107aa2493f58c9e8",
+      "cwd": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+      "exit_status": 0,
+      "finished_utc": "2026-08-20T15:28:03.862459Z",
+      "label": "create fresh disposable verification worktree",
+      "started_utc": "2026-08-20T15:28:00.782287Z",
+      "stderr": "Preparing worktree (detached HEAD a610c220da)\nUpdating files:  60% (3642/5997)\nUpdating files:  61% (3659/5997)\nUpdating files:  62% (3719/5997)\nUpdating files:  63% (3779/5997)\nUpdating files:  64% (3839/5997)\nUpdating files:  65% (3899/5997)\nUpdating files:  66% (3959/5997)\nUpdating files:  67% (4018/5997)\nUpdating files:  68% (4078/5997)\nUpdating files:  69% (4138/5997)\nUpdating files:  69% (4174/5997)\nUpdating files:  70% (4198/5997)\nUpdating files:  71% (4258/5997)\nUpdating files:  72% (4318/5997)\nUpdating files:  73% (4378/5997)\nUpdating files:  74% (4438/5997)\nUpdating files:  75% (4498/5997)\nUpdating files:  76% (4558/5997)\nUpdating files:  77% (4618/5997)\nUpdating files:  78% (4678/5997)\nUpdating files:  79% (4738/5997)\nUpdating files:  80% (4798/5997)\nUpdating files:  81% (4858/5997)\nUpdating files:  82% (4918/5997)\nUpdating files:  83% (4978/5997)\nUpdating files:  84% (5038/5997)\nUpdating files:  85% (5098/5997)\nUpdating files:  86% (5158/5997)\nUpdating files:  87% (5218/5997)\nUpdating files:  88% (5278/5997)\nUpdating files:  89% (5338/5997)\nUpdating files:  90% (5398/5997)\nUpdating files:  91% (5458/5997)\nUpdating files:  92% (5518/5997)\nUpdating files:  93% (5578/5997)\nUpdating files:  94% (5638/5997)\nUpdating files:  95% (5698/5997)\nUpdating files:  96% (5758/5997)\nUpdating files:  97% (5818/5997)\nUpdating files:  98% (5878/5997)\nUpdating files:  99% (5938/5997)\nUpdating files: 100% (5997/5997)\nUpdating files: 100% (5997/5997), done.\n",
+      "stderr_sha256": "e40b8f7f2280860cd84cdb91014329a3c1539fc012b0b31d1d6a7ccac9526ba9",
+      "stdout": "HEAD is now at a610c220da Route maintenance execution judgments and revisions\n",
+      "stdout_sha256": "7a9deca00777a155856af27fd4b11d9c0405cbf29c578a86b465153a7498351c"
+    },
+    "detached": true,
+    "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-t0-1-rebrief-20260820-1528",
+    "reused_removed_worktrees": false
+  }
+}
