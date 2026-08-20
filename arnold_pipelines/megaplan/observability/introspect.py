@@ -209,7 +209,7 @@ def _parse_decision_skill_profiles() -> list[str]:
     known = {
         "solo", "directed", "partnered", "premium", "apex",
         "all-deepseek-pro", "all-deepseek-pro-direct", "all-claude",
-        "all-codex", "all-open", "all-deepseek-flash", "all-fireworks-deepseek",
+        "partnered-codex", "all-open", "all-deepseek-flash", "all-fireworks-deepseek",
     }
 
     for name in known:

@@ -8,6 +8,7 @@ _pool singleton that wires envelope/governor context.
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Re-export KeyPool from the SSoT (arnold.agent.providers.pool)
@@ -152,6 +153,23 @@ def _is_claude_model_name(name: str) -> bool:
     )
 
 
+# ChatGPT-subscription Codex backend.  The same OAuth bundle the `codex` CLI
+# uses (imported from ~/.codex/auth.json into ~/.hermes/auth.json) is the only
+# credential — no OPENAI_API_KEY required.
+_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
+
+# megaplan depth tokens accepted after ``codex:<model>:``.  xhigh/max are CLI
+# reasoning levels the Responses API does not accept, so they map down to high.
+_CODEX_EFFORT_LEVELS = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
+
+
+def _normalize_codex_effort(effort: str) -> str:
+    """Map megaplan depth tokens to Responses-API reasoning effort."""
+    if effort in ("xhigh", "max"):
+        return "high"
+    return effort
+
+
 def _is_codex_model_name(name: str) -> bool:
     """Match codex gpt-5.x family (case-insensitive)."""
     lowered = name.lower()
@@ -197,12 +215,14 @@ def _raise_codex_via_openrouter_blocked(reason: str) -> None:
             "Codex models (gpt-5.5, gpt-5.4, etc.) will not be silently billed "
             "to your OpenRouter key. Pick an explicit path:\n"
             "  --agent codex                    (use the codex vendor path)\n"
+            "  --hermes codex:gpt-5.6-sol:high  (ChatGPT subscription, no API key)\n"
             "  --hermes openrouter:gpt-5.5      (explicit OpenRouter opt-in)\n"
             "If you actually want OpenRouter, set the model explicitly with "
             "an ``openrouter:`` prefix."
         ),
         valid_next=[
             "rerun with --agent codex",
+            "rerun with --hermes codex:gpt-5.6-sol:high (subscription token)",
             "rerun with --hermes openrouter:gpt-5.5 (explicit)",
         ],
     )
@@ -239,8 +259,8 @@ def _raise_generic_openrouter_blocked(reason: str) -> None:
     )
 
 
-def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
-    agent_kwargs: dict[str, str] = {}
+def resolve_model(model: str | None) -> tuple[str, dict[str, Any]]:
+    agent_kwargs: dict[str, Any] = {}
     if model is None or not str(model).strip():
         # No model specified — the previous behaviour silently defaulted to
         # anthropic/claude-opus-4.6 via OpenRouter. Refuse that silent path.
@@ -307,6 +327,57 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
             resolved_model = "minimax/" + resolved_model
             agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["openrouter"]
             agent_kwargs["api_key"] = acquire_key("openrouter")
+    elif resolved_model.startswith("codex:"):
+        # GPT-5.x via the ChatGPT-subscription Codex backend
+        # (chatgpt.com/backend-api/codex) using the Codex OAuth bundle — the
+        # same subscription the `codex` CLI uses, no API key required.  The
+        # tokens live in the Hermes auth store (~/.hermes/auth.json) and are
+        # imported from ~/.codex/auth.json on first use, so the CLI's token is
+        # honored without sharing the CLI's refresh session.
+        resolved_model = resolved_model[len("codex:"):]
+        effort = None
+        candidate, sep, tail = resolved_model.rpartition(":")
+        if sep and tail in _CODEX_EFFORT_LEVELS:
+            resolved_model, effort = candidate, tail
+        from arnold.agent.hermes_cli.auth import resolve_codex_runtime_credentials
+
+        try:
+            creds = resolve_codex_runtime_credentials(force_refresh=False)
+        except Exception as exc:
+            from arnold_pipelines.megaplan.types import CliError
+
+            raise CliError(
+                code="codex_auth_unavailable",
+                message=(
+                    "No Codex (ChatGPT subscription) credentials available for "
+                    f"model {resolved_model!r}: {exc} "
+                    "Log in once with `codex login` (or `hermes login "
+                    "--provider openai-codex`) so the OAuth bundle can be "
+                    "imported."
+                ),
+                valid_next=["rerun after `codex login` / `hermes login`"],
+            )
+        api_key = str(creds.get("api_key") or "").strip()
+        if not api_key:
+            from arnold_pipelines.megaplan.types import CliError
+
+            raise CliError(
+                code="codex_auth_unavailable",
+                message=(
+                    "Codex credentials resolved but contained no usable access "
+                    f"token for model {resolved_model!r}. Re-login with "
+                    "`codex login`."
+                ),
+                valid_next=["rerun after `codex login`"],
+            )
+        agent_kwargs["base_url"] = str(creds.get("base_url") or _CODEX_BASE_URL).rstrip("/")
+        agent_kwargs["api_key"] = api_key
+        agent_kwargs["provider"] = "openai-codex"
+        if effort:
+            agent_kwargs["reasoning_config"] = {
+                "enabled": True,
+                "effort": _normalize_codex_effort(effort),
+            }
     else:
         # Non-prefixed models (e.g. "qwen/qwen3.5-27b") — historically
         # routed through OpenRouter, but we now refuse all silent

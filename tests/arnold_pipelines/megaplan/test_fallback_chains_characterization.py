@@ -387,7 +387,7 @@ class TestLocalPreflight:
         from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
 
         args = argparse.Namespace(
-            profile="all-codex",
+            profile="partnered-codex",
             phase_model=[],
             tier_models=None,
             vendor=None,
@@ -406,7 +406,7 @@ class TestLocalPreflight:
         from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
 
         args = argparse.Namespace(
-            profile="all-codex",
+            profile="partnered-codex",
             phase_model=[],
             tier_models=None,
             vendor=None,
@@ -424,7 +424,7 @@ class TestLocalPreflight:
         from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
 
         args = argparse.Namespace(
-            profile="all-codex",
+            profile="partnered-codex",
             phase_model=[],
             tier_models=None,
             vendor=None,
@@ -435,7 +435,7 @@ class TestLocalPreflight:
             hermes=None,
         )
         apply_profile_expansion(args, tmp_path)
-        # all-codex profile has tier_models
+        # partnered-codex profile has tier_models
         assert args.tier_models is not None
         assert isinstance(args.tier_models, dict)
 
@@ -443,7 +443,7 @@ class TestLocalPreflight:
         from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
 
         args = argparse.Namespace(
-            profile="all-codex",
+            profile="partnered-codex",
             phase_model=["execute=hermes:deepseek:custom-model"],
             tier_models=None,
             vendor=None,

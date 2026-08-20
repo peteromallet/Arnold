@@ -101,6 +101,7 @@ def _write_validated_attempt_artifact(
     outcome: str = "accepted",
     batch_number: int = 1,
     with_cas: bool = False,
+    hollow: bool = False,
 ) -> ResultEnvelope:
     evidence, fence, grant, attempt, _claim_key, claim, *_ = _records(task_id)
     dispatch = DispatchIdentity.from_records(
@@ -114,11 +115,22 @@ def _write_validated_attempt_artifact(
             else None
         ),
     )
+    if hollow:
+        # Hollow shadow-wave artifact: no canonical terminal attempt status
+        # (claim/evidence carry no worker result status) and no envelope-level
+        # decision.  ``authority_validation.outcome`` alone must never create
+        # an accepted attempt.
+        claim = TaskClaim(
+            f"claim-{task_id}", RUN, REVISION, task_id, attempt.attempt_id,
+            grant.grant_id, "coordinator-1", 4, TASK_COMPLETION_CLAIM,
+            (evidence.evidence_id,), f"claim-key-{task_id}", {},
+        )
     envelope = ResultEnvelope(
         dispatch=dispatch,
         attempt=attempt,
         claim=claim,
         evidence=(evidence,),
+        decision=None,
     )
     entry = {
         "task_id": task_id,
@@ -921,6 +933,38 @@ def test_execute_scheduler_rejected_projection_prevents_raw_done_fallback(tmp_pa
     assert completed == set()
     assert decisions["T1"].status is EvidenceStatus.unknown
     assert decisions["T1"].diagnostics["execute_completion"] == "accepted_attempt_projection"
+
+
+def test_validation_only_hollow_envelope_never_counts_as_accepted(tmp_path) -> None:
+    """Regression: validation-only (decision-less) shadow-wave envelopes must
+    NOT suppress dispatch or satisfy the cursor-clear authority gate.
+
+    A hollow envelope carries ``authority_validation.outcome == accepted`` but
+    no explicit grant-aware decision — the exact shape of the T6-T11 shadow
+    waves that caused ``execute_authority_diverged`` on drive6.
+    """
+    envelope = _write_validated_attempt_artifact(
+        tmp_path,
+        task_id="T1",
+        outcome="accepted",
+        hollow=True,
+    )
+    tasks = [
+        {"id": "T1", "status": "pending", "depends_on": []},
+        {"id": "T2", "status": "done", "depends_on": ["T1"], "files_changed": ["src/T2.py"]},
+    ]
+    decisions: dict[str, AuthorityDecision] = {}
+
+    completed = effective_execute_completed_task_ids(
+        tasks,
+        plan_dir=tmp_path,
+        decisions=decisions,
+    )
+
+    assert envelope.decision is None
+    assert completed == set()
+    assert "T1" not in completed
+    assert decisions["T1"].status is EvidenceStatus.unknown
 
 
 def test_raw_terminal_labels_and_unresolved_claims_never_complete_tasks() -> None:

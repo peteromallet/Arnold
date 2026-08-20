@@ -67,7 +67,7 @@ def _valid_manifest(runtime_root: str | Path) -> dict[str, object]:
             "venv_path": f"{root}/venv",
             "runtime_root": root,
             "expected_head": "0" * 40,
-            "repair_bin": f"{root}/venv/bin/arnold-repair-loop",
+            "repair_bin": f"{root}/venv/bin/arnold-babysitter",
             "deps_lockfile": f"{root}/uv.lock",
         },
         "indirection": {

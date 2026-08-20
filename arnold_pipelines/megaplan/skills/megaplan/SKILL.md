@@ -1,1 +1,1 @@
-../../data/_composed/claude_skill.md
+/private/tmp/arnold-port/arnold_pipelines/megaplan/data/_composed/claude_skill.md

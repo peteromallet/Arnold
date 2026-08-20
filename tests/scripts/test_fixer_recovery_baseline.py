@@ -167,8 +167,8 @@ driver:
     )
     if selector_in_wrapper:
         wrapper += "export MEGAPLAN_RUNTIME_SRC=/tmp/retired-selector\n"
-    _write(runtime_root / "bin" / "arnold-repair-loop", wrapper)
-    (runtime_root / "bin" / "arnold-repair-loop").chmod(0o755)
+    _write(runtime_root / "bin" / "arnold-babysitter", wrapper)
+    (runtime_root / "bin" / "arnold-babysitter").chmod(0o755)
     if venv_in_root:
         _write(runtime_root / ".venv" / "bin" / "python", "#!/bin/sh\n")
         (runtime_root / ".venv" / "bin" / "python").chmod(0o755)
@@ -191,7 +191,7 @@ driver:
             "venv_path": epic_venv,
             "runtime_root": str(runtime_root),
             "expected_head": head,
-            "repair_bin": str(runtime_root / "bin" / "arnold-repair-loop"),
+            "repair_bin": str(runtime_root / "bin" / "arnold-babysitter"),
             "deps_lockfile": str(runtime_root / "uv.lock"),
         },
         "indirection": {
