@@ -332,6 +332,16 @@ def provider_family(spec: str) -> str:
             "fireworks_ai": "fireworks",
         }
         return alias_map.get(family, family)
+    if parsed.agent == "omp" and isinstance(parsed.model, str) and parsed.model:
+        # omp routes carry the upstream provider as the first path segment
+        # (``omp:deepseek/...`` → ``deepseek``, ``omp:zai/...`` → ``zai``).
+        # The provider family is the upstream provider; transport identity
+        # stays ``omp``.  omp-native routes alias to their canonical family so
+        # fallback treats same-upstream routes (premium codex vs
+        # omp:openai-codex; direct-key xai vs omp:grok) as one family.
+        provider = parsed.model.split("/", 1)[0].strip().lower()
+        omp_alias_map = {"openai-codex": "codex", "grok": "xai"}
+        return omp_alias_map.get(provider, provider) or "omp"
     if parsed.agent == "premium":
         return "premium"
     return parsed.agent.lower()
