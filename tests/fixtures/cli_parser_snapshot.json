@@ -1711,6 +1711,21 @@
                   "choices": null,
                   "const": null,
                   "default": null,
+                  "dest": "expect_marker_sha256",
+                  "help": "Exact sha256 of the cloud-session marker file.  REQUIRED when the marker is identity-less (no runtime identity fields): that form is accepted only under this CAS plus the relaunch-root guard.  Optional for markers already carrying a runtime identity form.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expect-marker-sha256"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
                   "dest": "reason",
                   "help": null,
                   "metavar": null,
@@ -1817,6 +1832,419 @@
                     "--output"
                   ],
                   "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "occurrence-adopt": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "session",
+                  "help": "Chain session of the blocked occurrence",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--session"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_current_plan",
+                  "help": "Exact current plan name",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-current-plan"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_phase",
+                  "help": "Exact blocked phase",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-phase"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_failure_kind",
+                  "help": "Exact latest failure kind",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-failure-kind"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_failure_code",
+                  "help": "Exact latest failure code",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-failure-code"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_failure_recorded_at",
+                  "help": "Exact failure recorded_at",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-failure-recorded-at"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_resume_phase",
+                  "help": "Exact resume cursor phase",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-resume-phase"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_retry_strategy",
+                  "help": "Exact resume cursor retry strategy",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-retry-strategy"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_chain_state_sha256",
+                  "help": "Exact sha256 of the chain state file",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-chain-state-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_plan_state_sha256",
+                  "help": "Exact sha256 of the plan state.json",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-plan-state-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_latest_failure_sha256",
+                  "help": "Exact canonical sha256 of latest_failure",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-latest-failure-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_resume_cursor_sha256",
+                  "help": "Exact canonical sha256 of resume_cursor",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-resume-cursor-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_pause_authority_sha256",
+                  "help": "Exact canonical sha256 of the pause authority",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-pause-authority-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "runtime_manifest",
+                  "help": "Path to the runtime manifest JSON",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--runtime-manifest"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_runtime_manifest_sha256",
+                  "help": "Exact sha256 of the runtime manifest file",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-runtime-manifest-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "marker",
+                  "help": "Path to the cloud-session marker JSON",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--marker"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_marker_sha256",
+                  "help": "Exact sha256 of the marker file",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-marker-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "runtime_identity",
+                  "help": "Verified runtime identity JSON (independently receipted)",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--runtime-identity"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "runtime_provenance_receipt",
+                  "help": "Runtime provenance receipt paired with --runtime-identity",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--runtime-provenance-receipt"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "candidate_root",
+                  "help": "The candidate runtime root (one of the six equal roots)",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--candidate-root"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "expected_runtime_roots_sha256",
+                  "help": "Exact canonical sha256 of the six-root payload",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--expected-runtime-roots-sha256"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "reason",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--reason"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "operator",
+                  "dest": "actor",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--actor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "receipt",
+                  "help": "Durable receipt JSON output path (written only on success)",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--receipt"
+                  ],
+                  "required": true,
                   "type": null
                 }
               ],
@@ -3996,6 +4424,247 @@
             }
           }
         },
+        "config": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {
+            "profiles": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {
+                "list": {
+                  "mutually_exclusive_groups": [],
+                  "options": [
+                    {
+                      "action": "_HelpAction",
+                      "choices": null,
+                      "const": null,
+                      "default": "<SUPPRESS>",
+                      "dest": "help",
+                      "help": "show this help message and exit",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--help",
+                        "-h"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "positionals": [],
+                  "subcommands": {}
+                },
+                "show": {
+                  "mutually_exclusive_groups": [],
+                  "options": [
+                    {
+                      "action": "_HelpAction",
+                      "choices": null,
+                      "const": null,
+                      "default": "<SUPPRESS>",
+                      "dest": "help",
+                      "help": "show this help message and exit",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--help",
+                        "-h"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "action": "_StoreAction",
+                      "choices": null,
+                      "const": null,
+                      "default": null,
+                      "dest": "name",
+                      "help": null,
+                      "metavar": null,
+                      "nargs": null,
+                      "option_strings": [],
+                      "required": true,
+                      "type": null
+                    }
+                  ],
+                  "subcommands": {}
+                }
+              }
+            },
+            "reset": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "set": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "key",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "value",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            },
+            "show": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "use-profile": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "name",
+                  "help": "Profile name (see 'megaplan config profiles list')",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            }
+          }
+        },
         "critique": {
           "mutually_exclusive_groups": [],
           "options": [
@@ -4845,7 +5514,8 @@
               "action": "_StoreAction",
               "choices": [
                 "claude",
-                "codex"
+                "codex",
+                "xai"
               ],
               "const": null,
               "default": null,
@@ -5919,6 +6589,36 @@
               "nargs": null,
               "option_strings": [
                 "--failure-fingerprint"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "occurrence",
+              "help": "Occurrence digest fence for the legacy deterministic-phase recovery admission (watchdog _failure_digest_src reconstruction).",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--occurrence"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "handoff_id",
+              "help": "Content-addressed arnold.superfixer.recovery_handoff.v1 id bound to this repair.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--handoff-id"
               ],
               "required": false,
               "type": null
@@ -9134,7 +9834,8 @@
                 "claude",
                 "codex",
                 "hermes",
-                "shannon"
+                "shannon",
+                "xai"
               ],
               "const": null,
               "default": null,

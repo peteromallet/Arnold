@@ -188,6 +188,52 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--editors", action="store_true")
     setup_parser.add_argument("--user-editors", action="store_true")
 
+    config_parser = subparsers.add_parser(
+        "config", help="View or edit megaplan configuration"
+    )
+    config_sub = config_parser.add_subparsers(dest="config_action", required=True)
+    config_sub.add_parser("show")
+    config_set = config_sub.add_parser("set")
+    config_set.add_argument("key")
+    config_set.add_argument("value")
+    config_sub.add_parser("reset")
+    profiles_parser = config_sub.add_parser(
+        "profiles",
+        help="Inspect model profiles from built-in, user, and project layers",
+    )
+    profiles_sub = profiles_parser.add_subparsers(
+        dest="profiles_action", required=True
+    )
+    profiles_sub.add_parser(
+        "list",
+        help="List profiles from all layers",
+        description=(
+            "List profiles from all layers. Project-layer profiles are only "
+            "visible when run from that project directory."
+        ),
+    )
+    profiles_show = profiles_sub.add_parser(
+        "show", help="Show the fully resolved phase map for one profile"
+    )
+    profiles_show.add_argument("name")
+    use_profile = config_sub.add_parser(
+        "use-profile",
+        help=(
+            "Apply a profile as the user-config default agent routing "
+            "(writes every agents.<phase>)"
+        ),
+        description=(
+            "Apply a named profile from built-in/user/project layers as the "
+            "persisted default agent routing in ~/.config/megaplan/config.json. "
+            "Equivalent to running 'config set agents.<phase> <agent>' for every "
+            "phase in the profile, but accepts agent specs with model qualifiers "
+            "the same way profiles do."
+        ),
+    )
+    use_profile.add_argument(
+        "name", help="Profile name (see 'megaplan config profiles list')"
+    )
+
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--project-dir", required=False)
     init_parser.add_argument("--in-worktree", default=None)
