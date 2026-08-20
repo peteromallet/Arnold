@@ -1,0 +1,64 @@
+diff --git a/arnold_pipelines/megaplan/prompts/__init__.py b/arnold_pipelines/megaplan/prompts/__init__.py
+index 7a15ff0..3550c8f 100644
+--- a/arnold_pipelines/megaplan/prompts/__init__.py
++++ b/arnold_pipelines/megaplan/prompts/__init__.py
+@@ -248,6 +248,7 @@ def _execute_batch_prompt(
+     rework_context: dict[str, object] | None = None,
+     projection_capabilities: PromptProjectionCapabilities | None = None,
+     batch_template_path: Path | None = None,
++    checkpoint_path: Path | None = None,
+ ) -> str:
+     mode = state.get("config", {}).get("mode", "code")
+     if mode == "doc":
+@@ -278,5 +279,6 @@ def _execute_batch_prompt(
+         rework_context=rework_context,
+         projection_capabilities=projection_capabilities,
+         batch_template_path=batch_template_path,
++        checkpoint_path=checkpoint_path,
+     )
+     return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
+diff --git a/tests/arnold_pipelines/megaplan/test_anchors.py b/tests/arnold_pipelines/megaplan/test_anchors.py
+index 8ad5ed1..0614616 100644
+--- a/tests/arnold_pipelines/megaplan/test_anchors.py
++++ b/tests/arnold_pipelines/megaplan/test_anchors.py
+@@ -309,5 +309,40 @@ def test_execute_batch_prompt_gets_no_anchor_context(tmp_path: Path) -> None:
+     assert "Execute only the actionable tasks in this batch" in prompt
+ 
+ 
++def test_execute_batch_dispatcher_forwards_attempt_checkpoint_path(tmp_path: Path) -> None:
++    from arnold_pipelines.megaplan import prompts
++
++    plan_dir = tmp_path / ".megaplan" / "plans" / "anchor-plan"
++    plan_dir.mkdir(parents=True)
++    state = _attach_anchor(plan_dir, tmp_path)
++    (plan_dir / "finalize.json").write_text(
++        json.dumps(
++            {
++                "tasks": [
++                    {
++                        "id": "T1",
++                        "description": "Make the smallest possible change.",
++                        "files": [],
++                        "commands": [],
++                    }
++                ],
++                "sense_checks": [{"id": "SC1", "task_id": "T1", "check": "Verify it."}],
++            }
++        ),
++        encoding="utf-8",
++    )
++    checkpoint_path = plan_dir / "execute-attempts" / "attempt-1.json"
++
++    prompt = prompts._execute_batch_prompt(
++        state,
++        plan_dir,
++        ["T1"],
++        root=tmp_path,
++        checkpoint_path=checkpoint_path,
++    )
++
++    assert str(checkpoint_path) in prompt
++
++
+ def test_execute_batch_inner_builder_does_not_inject_anchor(tmp_path: Path) -> None:
+     from arnold_pipelines.megaplan.prompts.execute import _execute_batch_prompt

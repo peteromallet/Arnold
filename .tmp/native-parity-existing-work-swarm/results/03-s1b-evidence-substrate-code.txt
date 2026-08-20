@@ -1,0 +1,80 @@
+Here is my verified verdict.
+
+---
+
+## 1. Verdict: **Adjacent only**
+
+None of the six sub-components exist as the turnkey deterministic evidence substrate described in the master plan. Significant adjacent infrastructure is present, but each S1b piece requires construction.
+
+---
+
+## 2. Existing or Prior Artifacts (with file:line evidence)
+
+### Replay infrastructure (adjacent, not the harness)
+- **`arnold/kernel/replay.py`** (330 lines) — `ReplayCursor`, `resolve_cursor`, `validate_replay_cursor`, `validate_artifact_content_hashes`, `validate_event_sequence_against_cursor`. This is cursor-based resume validation, not the deterministic replay harness with canned worker payloads required by the plan (master plan:47).
+- **`arnold/runtime/semantic_replay.py`** (251 lines) — `semantic_equivalent` (deep structural comparison) and `semantic_replay_journal` (replay event journal + fold state). Close in spirit but replays event journals, not canned worker payloads.
+- **`tests/arnold/pipeline/native/test_replay_consistency.py`** (1192 lines) — Tests resume consistency for native pipelines (uninterrupted vs interrupted/resumed). Adjacent to but not the required harness.
+- **`tests/arnold/runtime/test_semantic_replay.py`** (424 lines) — Tests `semantic_equivalent` and `semantic_replay_journal`.
+
+### Split-outcome inventory (exists)
+- **`docs/arnold/megaplan-native-representation-scenarios.yaml`** (762 lines, schema `arnold.megaplan_native_representation.scenarios.v1`) — 9 split-outcome categories (prep, gate, cap, tiebreaker, execute, approval, review, no_review, override), multiple split-outcome records with executable_modules, deterministic_fixture_paths, expected_outcomes, and source_warrant_paths. This is the scenario inventory the master plan lists as an S1a exit-gate output. It already exists but was treated as S1a deliverable, not S1b.
+
+### Evidence bundle generator (exists, bridges several S1b concerns)
+- **`scripts/generate_native_representation_evidence.py`** (1788 lines) — Contains `_build_split_outcome_hashes` (`:1397-1604`), `_build_installed_package_fingerprints` (`:916-946`), `_build_handler_purity_checks` (`:1018-1104`), `_build_compatibility_quarantine_checks` (`:1156-1191`), `_build_dead_delete_mutation_checks` (`:1194-1225`), and topology regeneration checks. This is the most significant existing artifact — SA5 in the master plan confirmed it (`master plan:195`).
+
+### Installed-package smoke (exists but not strict-checker mode)
+- **`tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py`** (757 lines) — Builds installed wheel, verifies authority chain (canonical source → WorkflowManifest → NativeProgram), verifies `importlib.resources` source loading from installed artifact (`:375-557`), checks no legacy leaks. Uses `importlib.resources.files(...)` as required. BUT: tests composition/manifest building, not strict checker source path. S1b-2 exit gate references this test file by name (`master plan:590`), so it may be sufficient as-is.
+- **`tests/arnold_pipelines/megaplan/package_resources.py`** (38 lines) — `importlib.resources` helpers: `resource_text()`, `resource_path()`, `resource_exists()`.
+
+### Baseline inventory (adjacent, not baseline freeze)
+- **`tests/arnold_pipelines/megaplan/test_legacy_baseline_inventory.py`** (344 lines) — Classifies M5 idea paths (rename/delete/archive/absent), not golden split-outcome baseline freezing.
+- **`tests/arnold_pipelines/megaplan/fixtures/native_goldens/legacy_baseline_inventory.json`** — JSON inventory of M5 paths.
+
+---
+
+## 3. What Can Be Reused or Generalized
+
+| Reusable | From | What it provides | Gap to S1b |
+|---|---|---|---|
+| `semantic_equivalent()` + `semantic_replay_journal()` | `arnold/runtime/semantic_replay.py` | Deep structural comparison with ignore/unordered paths; event replay + fold | Needs canned-worker-payload injection, not event-journal replay |
+| `ReplayCursor` + `resolve_cursor()` | `arnold/kernel/replay.py` | Cursor validation, alias resolution, quarantine contracts | Needs to be extended from cursor replay to full deterministic route/state/next-command harness |
+| `_build_split_outcome_hashes()` | `scripts/generate_native_representation_evidence.py:1397-1604` | Scenario manifest validation, split-outcome record hashing, cross-referencing with traceability rows | Needs to be wired into baseline freeze/freeze-verify pipeline |
+| `test_installed_package_composition_smoke.py` | Entire test file (757 lines) | Installed-wheel build, `importlib.resources` source loading, authority-chain verification | Needs strict checker path (currently tests composition, not strict row evidence) |
+| `package_resources.py` | `tests/arnold_pipelines/megaplan/package_resources.py` | `importlib.resources.files()` helpers | Can be used directly |
+| `megaplan-native-representation-scenarios.yaml` | 762-line YAML | Split-outcome inventory with categories, records, executable_modules, expected_outcomes | May need completeness check against required split-outcome list |
+
+---
+
+## 4. What Still Must Be Built
+
+1. **Deterministic replay harness** — The master plan calls for "hash-pinned canned worker payloads" (line 47). Current replay code replays event journals and validates cursors, not canned payloads driving route/state/next-command/suspension assertions. This is the largest missing piece.
+
+2. **Baseline freeze + verify pipeline** — Scripts `capture_megaplan_split_outcome_baselines.py`, `check_megaplan_baseline_freeze.py`, and `validate_megaplan_replay_harness.py` do not exist. No baseline freeze mechanism exists.
+
+3. **Headless control injection** — No `test_control_injection_headless.py` or headless control-injection API exists. Destructive approval denial/approval and tiebreaker decisions currently require interactive CLI steering per Q7 audit (master plan:228).
+
+4. **Canonicalizer for artifact hashes** — No volatile-field normalizer (timestamps, UUIDs, absolute paths, invocation ids, snapshot ids, worker session ids) exists. Required only if baseline artifacts include content hashes beyond route/state/next-command/suspension assertions (master plan:61-64, 440-444).
+
+5. **Strict checker installed-package path** — Current installed-package smoke tests composition (manifest/NativeProgram), not the strict checker row-evidence path. The master plan requires `--mode installed-package --smoke` that loads `.pypeline` source through package resources and feeds it through the same strict checker (master plan:448-452).
+
+6. **Exit-gate scripts** — None of the S1b exit-gate scripts exist: `validate_megaplan_replay_harness.py`, `validate_megaplan_baseline_canonicalizer.py`, `capture_megaplan_split_outcome_baselines.py`, `check_megaplan_baseline_freeze.py`.
+
+7. **S1b-specific test files** — `test_native_runtime_dynamic_fanout.py`, `test_native_runtime_suspension_reentry.py`, `test_manifest_backend_source_dispatch.py`, `test_native_runtime_loop_exits.py`, `test_runtime_items_ref_resolution.py` — all absent. These are S1b-1 exit gates, not S1b proper, but confirm no substrate proof work has started.
+
+---
+
+## 5. Recommended Adjustment to the Sprint Plan
+
+**S1b should be treated as a greenfield build sprint**, not a wiring sprint. The adjacent code provides building blocks (semantic equivalence comparison, cursor validation, scenario YAML schema, evidence generator patterns, installed-package smoke patterns), but none of the six sub-components exist as a working substrate.
+
+**Specific recommendations:**
+
+- **Replay harness**: Build on `semantic_replay_journal()` from `arnold/runtime/semantic_replay.py` but replace event-journal input with canned worker payload injection. The `semantic_equivalent()` comparator is directly reusable.
+
+- **Split-outcome inventory**: The YAML file exists and is well-structured. Add a completeness validation step (the master plan's `validate_megaplan_split_outcome_scenarios.py` script doesn't exist yet either) rather than rebuilding the inventory.
+
+- **Installed-package smoke**: Extend `test_installed_package_composition_smoke.py` or build a parallel `test_installed_package_strict_source_loading.py` that routes source through the strict checker, not just through `build_pipeline()`/`compile_pipeline()`.
+
+- **Canonicalizer**: Defer as designed — the master plan triggers it only when artifact hashes are used as parity proof (line 62: "Canonicalized artifact hashes are added only when artifact content is used as parity proof"). Do not build it in S1b unless artifact-hash baselines are committed to.
+
+- **Headless control injection**: This is a new API surface with no adjacent code. It needs fresh design — the master plan scopes it to "destructive approval denial, destructive approval approval, tiebreaker proceed/iterate/escalate" only (line 445-448). Build the minimal surface.

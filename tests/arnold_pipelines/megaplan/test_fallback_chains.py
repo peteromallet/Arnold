@@ -22,7 +22,6 @@ from arnold_pipelines.megaplan.fallback_chains import (
     select_fallback_spec,
     validate_fallback_spec_value,
 )
-from arnold_pipelines.megaplan.workers.hermes import HermesProviderCredentialError
 
 
 def test_normalize_scalar_and_list_values() -> None:
@@ -314,23 +313,6 @@ def test_explicit_nonretryable_stays_permanent_despite_quota_words() -> None:
     }
     assert classify_retryability(value) == "permanent"
 
-
-def test_credential_preflight_missing_key_is_fallbackable_across_family() -> None:
-    # A provider whose key is unavailable right now (missing, cooled down,
-    # rotated) must not hard-block a phase that has a healthy different-family
-    # fallback: the error stays nonretryable for the SAME provider but must
-    # classify as an operational failure so the fallback chain can advance.
-    # (astrid-first m5: zhipu key cooldown after quota exhaustion repeatedly
-    # blocked finalize despite a working fireworks fallback.)
-    error = HermesProviderCredentialError(
-        provider="zhipu",
-        model="glm-5.2",
-        env_hints=("ZHIPU_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY"),
-    )
-    classification = classify_retryability(error)
-    assert classification == "availability"
-    assert is_cross_family_retryable_classification(classification)
-    assert is_retryable_failure(error)
 
 
 def test_unrelated_nonretryable_error_stays_permanent() -> None:

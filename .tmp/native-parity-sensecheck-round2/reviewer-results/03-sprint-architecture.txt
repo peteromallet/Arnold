@@ -1,0 +1,185 @@
+I have now read all required documents. Here is the complete audit.
+
+---
+
+# Lens 3 — Sprint Architecture, Granularity, and Dependency Audit
+
+## 1. Verdict
+
+**FAIL — conditional on amendment.** The s1–s7 compression is architecturally defensible in direction but unsafe in its current form. Three sprints (S1, S3, S5) over-bundle work that the 15-sprint swarm synthesis explicitly warned against merging. One sprint (S3) contains a deletion-before-migration hazard for front-half carriers. The prerequisite Custody M11 chain shows only M1 provisioned — not the required full M11 — and no completion manifest/proof map exists at the checked-in paths. The dependency ordering from S2→S3→S4→S5 is fundamentally sound, and the semantic/custody dual-gate pattern is well-designed, but the compression loses three independent proof boundaries that the 15-sprint plan considered essential. The m1–m10 historical decomposition reveals that gate/revise coupling and execute fanout/review integration risks were correctly identified but then re-bundled in the compressed plan. **With the ranked amendments below, the plan becomes sound.**
+
+---
+
+## 2. Sprint-by-Sprint Table
+
+| Sprint | Goals | Prerequisite Inputs | Load Realism | Vertical Result | Blocking Gate Quality | Deletion Risk | Dependency Risks | Status |
+|--------|-------|---------------------|--------------|-----------------|-----------------------|---------------|------------------|--------|
+| **S1** | M11 admission, identity matrix, fail-closed checker, proof-map schema, negative fixtures | Custody M11 completion manifest (chain.yaml:8-9) | **Overloaded.** Combines M11 validation (substantial), full identity model (new), checker scaffolding (new), proof-map schema (new), AND negative fixtures. The 15-sprint plan splits this into S1a (checker), S1b (evidence substrate), and S1c (runtime substrate) — three sprints | No runnable end-to-end slice; pure infrastructure | Semantic gate well-defined (lines 43-49). Custody gate well-defined (lines 51-60). But gates depend on M11 manifest that may not exist | Low — no deletion, only admission and checker build | **Critical:** M11 prerequisite manifest (`docs/arnold/proof-map.json` referenced at existing-work synthesis:326) is unconfirmed. S1's entire utility depends on a valid, complete M11 surface to admit | **AMEND** — split into S1a (admission+checker) and S1b (identity+proof schema) |
+| **S2** | Generic control primitives (typed decisions, loops, map/reducer, suspend/resume, checkpoints) bound to M11 custody APIs | S1 gates passing; M11 APIs admitted | **Overloaded but survivable.** The swarm (finding 4) says substrate "partly exists" — `parallel_map` lowering and runtime exist, suspension/reentry exist. But Megaplan-specific tests absent, manifest backend dispatch still consults components | Neutral reference pipeline exercising all constructs | S2:36-43 (semantic): every reference node passes set equality. S2:45-53 (custody): enforce-mode tests pass. Well-specified | None | Generic compiler/runtime must have zero Megaplan carrier imports (S2:43-44). This is a build-time check, but verifying it across all edge cases is hard in one sprint | **PASS with caution** — scope creep risk from "implement or finish" language (S2:12) |
+| **S3** | Front-half vertical slice (prep through revise), WBC producer relocation, legacy carrier deletion | S2 constructs complete; M11 validator working | **DANGEROUSLY OVERLOADED.** Bundles prep, plan, critique, gate, revise, AND carrier deletion in 2 weeks. The 15-sprint plan split this into S2a (prep/plan/critique) and S2b (gate/revise). The swarm (finding 6) warned: "Split front-half into two extraction sprints... keeps the coupled gate/revise work intact while avoiding an overloaded all-front-half sprint." | Runnable front-half from checkout AND installed package | S3:40-47 (semantic): reviewer can follow without components. S3:49-56 (custody): four-domain joins, stale-fence/epoch tests. Good specificity | **HIGH RISK.** Deletion of front-half carriers (S3:33-34) happens *in the same sprint* as migration. If migration is incomplete, deleted carriers cannot serve as fallback. Mutation tests must prove deleted surfaces have no influence — but those tests can only run AFTER migration | Gate/revise loop extraction is tightly coupled to critique fanout. If S2's dynamic map/reducer has bugs, S3's gate reprompt/downgrade won't work. No explicit fallback plan | **AMEND** — split into S3a (prep/plan/critique without deletion) and S3b (gate/revise + carrier deletion) |
+| **S4** | Tiebreaker, finalize, human decisions, durable reentry | S3 front-half migrated; S2 reentry/checkpoint constructs | **Realistic.** Four phases plus rejoin/deletion. The swarm (finding 7) said tiebreaker "is source-visible but still cosmetic" — the work is making it authoritative, not building from scratch. Tiebreaker+finalize is a coherent product boundary | Runnable tiebreaker/finalize with restart/resume | S4:36-41 (semantic): source visibly expresses parallelism, scenarios execute from lowered topology. S4:43-50 (custody): kill/restart resumes at same semantic path | Deferred — deletion happens but carriers for tiebreaker/finalize are narrower scope than front-half | Tiebreaker replan must rejoin through S3's established critique/gate/revise path. If S3's path has bugs, S4's replan scenario breaks | **PASS** |
+| **S5** | One reusable delivery cycle (execute + review + rework) | S4 human-decision machinery; S2 batch/map constructs; S3 finalized topology | **OVERLOADED.** Bundles execute batching, approval, dynamic fanout, review fanout/reducer, rework caps, AND carrier deletion. The 15-sprint plan split this into S4a (execute DAG), S4b (execute approval/resume), S5a (review/rework), S5b (finalize/terminal). Four sprints compressed to one | Runnable execute/review/rework cycle | S5:47-55 (semantic): well-specified scenarios. S5:58-65 (custody): crash-before/after effect, cross-host transfer | **HIGH RISK.** S5:44 says "Delete/fence execute/review/finalize component routes" — same sprint as migration. The override matrix and auto-drive (S6 targets) may still depend on old execute/review handlers that S5 deletes | Execute DAG batching depends on finalization task lists from S4. Review fanout depends on execute having produced artifacts. If execute migration has bugs, review can't close either | **AMEND** — split into S5a (execute+approval) and S5b (review+rework+finalize terminal) |
+| **S6** | Override, recovery, auto-drive collapse, projection adoption | S5 delivery cycle complete; S2 generic constructs | **Realistic.** The swarm (finding 10) says override surface "is largely built, but split-brained." Auto-drive reduction and projection adoption are narrower scopes than the extraction sprints. But: "Delete/fence `LEGACY_ALIASES`, component override matrices" (S6:33) | Runnable override/recovery surface; auto becomes consumer | S6:39-44 (semantic): source owns every routing action. S6:47-53 (custody): each positive action validates grant/fence and lease/epoch | Deferred — deletion is natural here since S3-S5 already migrated their respective carriers. Override matrix deletion carries blast radius across all product phases | Auto-drive consumption of "canonical events" (S6:27) depends on S3-S5 having established the canonical event surface. If any prior sprint's event plumbing is incomplete, auto cannot consume correctly | **PASS with caution** |
+| **S7** | Final conformance on M11 proof framework | S1-S6 all complete; M11 proof framework admitted in S1 | **Realistic as aggregation sprint.** The swarm (finding 11) says S7 tooling should be "pulled forward" into S1-S6. S1's proof-map schema and negative fixtures partially address this. Risk: if checker was not hardened across S1-S6, S7 becomes implementation, not aggregation | Complete proof map; checkout/wheel/cloud equivalence | S7:39-46 (semantic): set equality, zero hidden authority. S7:49-56 (custody): every action enforce-mode covered. 12 minimum blocking regressions (S7:59-73) are exhaustive and well-specified | FINAL deletion (S7:32-33): "Delete remaining component/handler route tables... only after negative and rollback gates pass." Correctly sequenced | S7 depends on S1's proof-map schema being correct from the start. If S1's schema was too narrow or too broad, S7 cannot retrofit it | **PASS** |
+
+---
+
+## 3. Critical Path / Dependency Ordering with Exact Evidence
+
+The dependency chain declared in `chain.yaml:50-92` is:
+
+```
+S1 → S2 → S3 → S4 → S5 → S6 → S7
+```
+
+**Evidence for each edge:**
+
+1. **M11 prerequisite → S1:** `chain.yaml:8-9`: `kind: chain_completed` on `.megaplan/initiatives/custody-control-plane/chain.yaml` with `require_manifest: true`. **CRITICAL FINDING:** The custody cloud log (`cloud-chain-custody-control-plane.log:1`) shows chain state as `"status": "absent"` and the log traces only M1 provisioning (`m1.md`). The log ends at M1 work, nowhere near M11. The `docs/arnold/proof-map.json` referenced by the swarm synthesis (`existing-work-swarm-synthesis.md:326`) has no custody-specific entries in the checked paths. **This prerequisite is not satisfied.** The `chain.yaml:5-9` launch precondition would block chain start, but the sprint design assumes the M11 surface is available throughout S1-S7.
+
+2. **S1 → S2:** `chain.yaml:49-50`: `depends_on: s1-custody-admission-semantic-preservation`. Sound. S2 needs the M11 API inventory (S1:22-23) and identity matrix (S1:24-27) to bind control primitives. Evidence: S2:25-27 references "M11's existing WBC reservation/start/terminal/retry/suspend/resume/cancel" — these must be admitted in S1.
+
+3. **S2 → S3:** `chain.yaml:57-58`: `depends_on: s2-control-primitives-custody-binding`. Sound. S3 needs generic constructs (map/reducer, loops, suspend/resume) to build front-half. Evidence: S3:20-21 says "Pure computation may remain in phase bodies, but those bodies may not choose routes, caps, retries, model policy, suspension, or workflow state transitions" — these constructs come from S2.
+
+4. **S3 → S4:** `chain.yaml:65-66`: `depends_on: s3-front-half-native-slice`. Sound. S4 tiebreaker replan must rejoin S3's critique/gate/revise path. Evidence: S4:17 says "replan state reset and rejoin to the ordinary plan/finalize path" — that path is established in S3.
+
+5. **S4 → S5:** `chain.yaml:76-77`: `depends_on: s4-tiebreaker-finalize-durable-reentry`. Sound. S5 delivery cycle starts from finalize. Evidence: S5:7 says "finalize -> approval -> dependency-ready dynamic batches" — finalize is S4 scope.
+
+6. **S5 → S6:** `chain.yaml:84-85`: `depends_on: s5-reusable-delivery-cycle`. Sound. S6 override routes (abort, force-proceed, replan) interact with the execute/review cycle. Evidence: S6:12 lists "adopt-execution" — needs S5's execution semantics.
+
+7. **S6 → S7:** `chain.yaml:91-92`: `depends_on: s6-override-auto-control-adoption`. Sound. S7 aggregates all prior proof.
+
+**Hidden prerequisite not declared:**
+
+- **S3 needs the existing `build_pipeline()` to still function during migration.** The corrective plan (`corrective-plan.md:183-186`) says `build_pipeline()` "must consume that lowered topology or be replaced and quarantined." But the current code (`planning.py:695-721`) still rebuilds from `PIPELINE_STEP_COMPONENTS` and `_canonical_steps()` which reads `component.metadata`. S3 cannot delete component route bindings until `build_pipeline()` has been fixed or bypassed — but fixing `build_pipeline()` is not explicitly in S3 scope. It's implied by "Make `build_pipeline()` consume the lowered structure" (S3:26-27), which is a deep architectural change to a 795-line module.
+
+---
+
+## 4. Ranked Amendments
+
+Each amendment is the smallest possible authoritative file/text change.
+
+### Amendment 1 — Split S1 into two sprints (BLOCKING)
+
+**File:** `chain.yaml:37-43`
+**Change:** Replace single `s1-custody-admission-semantic-preservation` with two milestones:
+
+```yaml
+- label: s1a-custody-admission-checker-baseline
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s1-checker-outcomes-builder-slice.md
+  notes: Admit M11, build identity matrix, checker scaffolding, negative fixtures.
+- label: s1b-proof-schema-evidence-substrate
+  idea: .../briefs/s1b-proof-schema.md (new)
+  depends_on: [s1a-custody-admission-checker-baseline]
+  notes: Proof-map schema, deterministic replay harness, baseline freeze.
+```
+
+**Evidence:** `sprint-sizing-review.md:88-90` shows S1a and S1b are separate sprints with distinct deliverables. Swarm synthesis (`existing-work-swarm-synthesis.md:367-374`) explicitly recommends splitting into checker authority, evidence substrate, runtime proof, and builder slice as four independent infrastructure sprints.
+
+### Amendment 2 — Split S3 into two sprints (BLOCKING)
+
+**File:** `chain.yaml:52-58`
+**Change:** Replace single `s3-front-half-native-slice` with two milestones:
+
+```yaml
+- label: s3a-prep-plan-critique-native
+  idea: .../briefs/s3a-front-half-native.md (new)
+  depends_on: [s2-control-primitives-custody-binding]
+  notes: Migrate prep/plan/critique; relocate WBC producers; do NOT delete carriers yet.
+- label: s3b-gate-revise-carrier-deletion
+  idea: .../briefs/s3b-gate-revise-deletion.md (new)
+  depends_on: [s3a-prep-plan-critique-native]
+  notes: Migrate gate/revise loop; delete front-half carriers only after s3a passes semantic gate.
+```
+
+**Evidence:** `sprint-sizing-review.md:92-93` shows S2a (prep/plan/critique) and S2b (gate/revise) as separate sprints. Swarm synthesis (`existing-work-swarm-synthesis.md:184-186`) warns: "Split front-half into two extraction sprints... keeps the coupled gate/revise work intact while avoiding an overloaded all-front-half sprint." S3:33-34 deletion-before-migration hazard requires carrier deletion to be deferred.
+
+### Amendment 3 — Split S5 into two sprints (BLOCKING)
+
+**File:** `chain.yaml:68-78`
+**Change:** Replace single `s5-reusable-delivery-cycle` with two milestones:
+
+```yaml
+- label: s5a-execute-approval-batches
+  idea: .../briefs/s5a-execute-batches.md (new)
+  depends_on: [s4-tiebreaker-finalize-durable-reentry]
+  notes: Execute DAG batching, approval gates, blocked-task recovery, partial resume.
+- label: s5b-review-rework-terminal
+  idea: .../briefs/s5b-review-rework.md (new)
+  depends_on: [s5a-execute-approval-batches]
+  notes: Review fanout/reducer, rework cycle, cap outcomes, finalize terminal projection.
+```
+
+**Evidence:** `sprint-sizing-review.md:95-98` shows S4a, S4b, S5a, S5b as four distinct sprints. The swarm synthesis (`existing-work-swarm-synthesis.md:382-386`) explicitly recommends splitting execute and review into S4a/S4b and S5a/S5b.
+
+### Amendment 4 — Add explicit build_pipeline migration to S3 scope (CONDITIONAL)
+
+**File:** `briefs/s3-tiebreaker-replan-native.md:26-27`
+**Change:** Replace vague "Make `build_pipeline()` consume the lowered structure without component selection/metadata overlays or route reconstruction" with:
+
+```
+- Fix or replace `build_pipeline()` in `arnold_pipelines/megaplan/workflows/planning.py`
+  so that `_canonical_steps()` (line 643-672) derives step metadata from lowered source
+  spans, not from `PIPELINE_STEP_COMPONENTS_BY_ID` / `component.metadata`. The old path
+  must be quarantined behind a `_LEGACY_BUILDER` flag and mutation tests must prove it
+  cannot affect the corrected slice.
+```
+
+**Evidence:** `planning.py:643-672` shows `_canonical_steps()` iterates `PIPELINE_STEP_COMPONENTS` and reads `component.metadata.get("handler_ref")`. `corrective-plan.md:183-186` says this is the "immediate high-risk function." `oracle-synthesis.md:27-28` calls it "where source improvements can become decorative." S3 silent on the depth of this change.
+
+### Amendment 5 — Require M11 proof-map prerequisite validation before S1 gates can pass (BLOCKING)
+
+**File:** `briefs/s1-checker-outcomes-builder-slice.md:12-20`
+**Change:** Add as first bullet under "Required work":
+
+```
+- The prerequisite manifest at the path declared by the custody chain's
+  `completion-manifest.json` must exist, validate against the custody chain
+  spec hash, and prove M11 end state. If absent or incomplete, S1 gates
+  fail immediately and the chain does not advance.
+```
+
+**Evidence:** `cloud-chain-custody-control-plane.log:1` shows `"status": "absent"`. No `completion-manifest.json` exists for the custody chain. `chain.yaml:8-9` would block chain start, but S1 brief does not make this a sprint-internal gate.
+
+### Amendment 6 — Clarify S2 "implement or finish" language
+
+**File:** `briefs/s2-front-half-native-loop.md:12-15`
+**Change:** Replace "Implement or finish typed decisions, typed terminal outcomes, bounded loops..." with:
+
+```
+- Implement the following constructs, reusing existing substrate where the swarm
+  confirms it already exists (parallel_map lowering in compiler.py, suspension/reentry
+  in runtime.py, generic tests): [list remains same]
+- Each construct must have a Megaplan-specific integration test before S3 can consume it.
+```
+
+**Evidence:** `existing-work-swarm-synthesis.md:118-139` confirms significant existing substrate but missing Megaplan-specific tests. "Implement or finish" is ambiguous about how much exists vs. needs building.
+
+---
+
+## 5. Justified Compression and Sound Sequencing
+
+### What the compression gets right
+
+1. **S2 generic-primitives-first.** Building product-neutral constructs BEFORE migrating product phases is the correct dependency order. The 15-sprint plan had this right; the 7-sprint plan preserves it. S3-S6 all consume S2's output.
+
+2. **S4 tiebreaker+finalize as coherent unit.** These share the human-decision machinery and durable reentry infrastructure. Bundling them avoids splitting the custody lifecycle across sprints.
+
+3. **S6 auto/projection as consumers-only.** Placing override and auto-drive collapse AFTER all product phases are migrated ensures auto cannot silently own behavior during migration. Correct sequencing.
+
+4. **S7 as aggregation, not implementation.** The brief explicitly says "extend—not duplicate—the admitted Custody M11 conformance framework" (S7:5). If S1-S6 tooling is built forward (as the swarm recommends), S7 is realistic aggregation.
+
+5. **Dual semantic/custody gates.** Every sprint has two independent closure gates. This is the strongest architectural decision in the plan — it prevents the old pattern where a semantic-looking source passed because custody enforcement wasn't wired.
+
+### What the compression loses
+
+1. **Three independent proof boundaries.** The 15-sprint plan had S1a→S1b→S1c→S1d as infrastructure, S2a→S2b as front-half, S4a→S4b and S5a→S5b as delivery. Each split created a checkpoint where one domain's proof didn't depend on another's bugs. The 7-sprint plan collapses these, meaning a bug in S3's gate migration can block S3's critique proof from closing.
+
+2. **build_pipeline() migration not explicit.** The `planning.py:695` function is the central coupling point — it reads from both lowered source and component metadata. S3 says it will "make build_pipeline() consume the lowered structure" but this is a ~200-line refactor of `_canonical_steps()`, `_canonical_routes()`, `_metadata_for_step()`, and `_policy_for_step()` — all of which currently read `PIPELINE_STEP_COMPONENTS_BY_ID` and `component.metadata`. Without explicit scope, S3 will either under-deliver or overrun.
+
+3. **M11 prerequisite chain gap.** The `custody-control-plane` chain log shows only M1 activity. The corrective plan requires M11's "exact Run Authority, Custody, and WBC contract/schema versions; enabled enforcement cohort; zero-bypass controlled-writer inventory; exact-version WBC producer/query registries; transactional attempt/effect history; custody lease/epoch lifecycle; recovery, retry, cross-host transfer/reclaim" (`corrective-plan.md:48-56`). None of these are evident in the current chain state. The entire s1-s7 plan is conditional on this prerequisite — and it does not appear to exist yet.
+
+### Net assessment
+
+The 7-sprint plan is a defensible compression if and only if Amendments 1-6 are applied. The compression from 15 to 7 is not inherently reckless — much of the 15-sprint plan's splitting was cautious, and the swarm confirms significant existing substrate. But the three overloaded sprints (S1, S3, S5) each bundle 2-4 sprints of work, and the deletion-before-migration hazard in S3 is a hard safety issue. With the amendments, the plan becomes a sound 11-sprint execution (1a, 1b, 2, 3a, 3b, 4, 5a, 5b, 6, 7) with realistic load, independent proof boundaries, and correct deletion sequencing. Without them, S3 and S5 carry unacceptable risk of false closure or regression.
+
+**The M11 prerequisite gap is the single largest risk to the entire epic.** If the custody control plane is not at M11 end state with a valid completion manifest, every sprint's custody-adoption gate is built against an API surface that does not exist. The chain's `launch_preconditions` would correctly block start — but the sprint briefs assume the surface is available and do not include contingency for its absence.

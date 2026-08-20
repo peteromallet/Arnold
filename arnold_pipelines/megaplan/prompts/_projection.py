@@ -685,7 +685,16 @@ def project_rework_context(
                 projected_rework.append(item)
                 continue
             pi: dict[str, Any] = {}
-            for key in ("task_id", "issue", "expected", "actual"):
+            for key in (
+                "task_id",
+                "target",
+                "issue",
+                "expected",
+                "actual",
+                "flag_id",
+                "source",
+                "deterministic_check",
+            ):
                 if key in item:
                     pi[key] = item[key]
             # Gate evidence_file on capabilities

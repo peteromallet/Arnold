@@ -1,0 +1,80 @@
+## S1b Deterministic Evidence Substrate — Audit Report
+
+### 1. Verdict: **Adjacent only**
+
+None of the six component elements exist as the dedicated artifacts the master plan requires. Adjacent mechanisms in three areas are generalizable, but four critical scripts/tests are entirely missing.
+
+---
+
+### 2. Existing or Prior Artifacts (with file:line evidence)
+
+**Split-outcome inventory — partly exists:**
+- `docs/arnold/megaplan-native-representation-scenarios.yaml:1-762` — 9 `split_outcome_records` and 13 scenario definitions exist with row IDs, executable modules, deterministic fixtures, source warrants, and expected outcomes.  
+- `scripts/generate_native_representation_evidence.py:1397-1604` — `_build_split_outcome_hashes()` validates and hashes the existing scenario inventory.  
+- **Gap:** The required completeness check target `docs/arnold/megaplan-native-required-split-outcomes.yaml` **does not exist**. The existing 9 records do not cover all outcomes required by S2–S6 (master plan: lines 632, 671, 706, 742, 777).
+
+**Installed-package source loading — partly exists:**
+- `tests/arnold_pipelines/megaplan/package_resources.py:1-38` — `resource_text()`, `resource_path()`, `resource_exists()` via `importlib.resources` exist and are production-quality.  
+- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py:1-757` — comprehensive installed-package authority chain tests exist.  
+- `scripts/generate_native_representation_evidence.py:916-946` — `_build_installed_package_fingerprints()` exists.  
+- **Gap:** `test_installed_package_strict_source_loading.py` **does not exist**. The existing smoke test verifies authority chain integrity but does not specifically test loading `.pypeline` via `importlib.resources` and feeding through the strict checker.
+
+**Replay harness — adjacent only:**
+- `arnold/kernel/replay.py:1-330` — `ReplayCursor`, `ReplayResolution`, `validate_replay_cursor()`, `validate_artifact_content_hashes()` exist as generic kernel substrate for cursor replay and artifact validation.  
+- `tests/arnold/pipeline/native/test_replay_consistency.py:1-1192` — interrupt/resume replay consistency tests exist for generic native pipelines (not Megaplan).  
+- `tests/oracles/replay_oracle.py:1-191` — `ReplaySnapshot` and capture helpers for override-path legacy oracle exist.  
+- **Gap:** No Megaplan-specific deterministic replay harness with hash-pinned canned worker payloads exists. `scripts/validate_megaplan_replay_harness.py` and `tests/fixtures/megaplan/replay/` **do not exist**.
+
+**Baseline freeze — adjacent only:**
+- `arnold_pipelines/megaplan/orchestration/baseline_gate.py:1-200+` — `baseline_slot()` concurrency gate exists but controls test-suite execution, not split-outcome behavior capture.  
+- `arnold_pipelines/megaplan/orchestration/full_suite_backstop.py:39-321` — `build_full_suite_baseline()`, `_recapture_missing_baseline()` exist for pre-execute test baselines.  
+- **Gap:** `scripts/capture_megaplan_split_outcome_baselines.py`, `scripts/check_megaplan_baseline_freeze.py`, and the freeze record artifacts **do not exist**.
+
+**Headless control injection — adjacent only:**
+- `arnold_pipelines/megaplan/control.py:478` — `resume_plan_control_handler` exists as CLI-driven control handler.  
+- `arnold_pipelines/megaplan/handlers/override.py:1857` — `_override_resume_clarify` exists but is handler-local, not a headless API.  
+- **Gap:** `test_control_injection_headless.py` **does not exist**. No programmatic API for driving destructive approval denial/approval, tiebreaker proceed/iterate/escalate from CI without an interactive CLI.
+
+**Canonicalizer — adjacent only:**
+- `arnold_pipelines/megaplan/_core/canonical.py:1-30` — generic JSON canonicalization via sorted keys exists.  
+- `arnold_pipelines/megaplan/store/snapshot.py:13-27` — `_canonicalize()` for stable JSON serialization exists.  
+- `tests/arnold/pipeline/native/test_replay_consistency.py:47-58` — `_normalize_event_line()` strips `seq`, `ts_utc`, `ts_rel_init_s` from NDJSON events — this is the closest thing to volatile-field stripping.  
+- **Gap:** No canonicalizer normalizes timestamps, UUIDs, absolute paths, invocation IDs, snapshot IDs, model/session IDs, or `generated_at`/`provenance` fields. `scripts/validate_megaplan_baseline_canonicalizer.py` **does not exist**.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Adjacent Mechanism | Can Be Generalized To |
+|---|---|
+| `arnold/kernel/replay.py` — `ReplayCursor`, `validate_artifact_content_hashes` | Foundation for the deterministic replay harness; cursor already handles manifest-hash + reentry + scope + artifact-root |
+| `tests/oracles/replay_oracle.py` — `ReplaySnapshot`, `capture_events` | Pattern for capturing deterministic snapshot + event envelope from legacy path before extraction |
+| `tests/arnold/pipeline/native/test_replay_consistency.py` — `_normalize_event_line`, `_canonical_json` | Volatile-field stripping pattern; can be extended into the full canonicalizer |
+| `tests/arnold_pipelines/megaplan/package_resources.py` — `resource_text()`, `resource_path()` | Ready-to-use helpers for the `importlib.resources` strict source loading path |
+| `scripts/generate_native_representation_evidence.py:1397-1604` — `_build_split_outcome_hashes` | Validates scenario inventory completeness; can be extended to validate against a required-outcomes spec |
+| `arnold_pipelines/megaplan/orchestration/baseline_gate.py` — concurrency slot pattern | Reusable for baseline-capture slot gating |
+| `tests/arnold_pipelines/megaplan/fixtures/native_goldens/` — golden trace fixtures | Existing fixture pattern for deterministic golden comparisons |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Deterministic replay harness** — A Megaplan-specific harness that replays route/state traces using hash-pinned canned worker payloads (not live model output). Kernel replay cursor can be the substrate.
+
+2. **Split-outcome completeness spec** — `docs/arnold/megaplan-native-required-split-outcomes.yaml` plus a validator that cross-checks the scenario inventory against required outcomes per sprint scope.
+
+3. **Baseline freeze scripts** — `capture_megaplan_split_outcome_baselines.py` and `check_megaplan_baseline_freeze.py`. Existing test-suite baselines (`full_suite_backstop.py`) are the wrong abstraction — these must capture route/state/next-command/suspension assertions from legacy behavior.
+
+4. **Headless control-injection API** — Programmatic actions for destructive approval denial, destructive approval approval, tiebreaker proceed/iterate/escalate. Must not require interactive CLI in CI.
+
+5. **Installed-package strict source loading smoke** — Dedicated test (`test_installed_package_strict_source_loading.py`) that loads `workflow.pypeline` via `importlib.resources.files("arnold_pipelines.megaplan")` and feeds through `check_workflow_source(..., evidence=())`.
+
+6. **Artifact canonicalizer** — Must normalize timestamps, UUIDs, absolute paths, invocation IDs, snapshot IDs, model/session IDs, and `generated_at`/`provenance` fields. Must embed canonicalizer version in every baseline record. Only required if artifact content hashes are used as parity proof (master plan: line 480).
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+**Risk:** S1a (master plan: lines 435–459) already scopes the replay harness, canonicalizer, headless control injection, installed-package smoke, and baseline capture into one sprint alongside the checker hard bar, negative fixtures, carrier scan, and row registry. The evidence shows none of the S1b-adjacent scripts exist. If S1a truly intends to deliver these, it is overloaded.
+
+**Recommendation:** Move the four "adjacent only" items (replay harness, baseline freeze, canonicalizer, headless injection) into S1b proper as a dedicated **S1b-0 Deterministic Evidence Substrate** sprint that lands before S1b-1 (runtime substrate proof) and S1b-2 (builder slice). This keeps S1a focused on checker authority and lets S1b-0 produce the harness and baselines that S2–S7 extraction sprints depend on for parity gates. The installed-package smoke can stay in S1a since strong infrastructure already exists.

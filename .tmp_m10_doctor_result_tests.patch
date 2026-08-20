@@ -1,0 +1,30 @@
+diff --git a/tests/arnold_pipelines/megaplan/test_doctor_llm_liveness.py b/tests/arnold_pipelines/megaplan/test_doctor_llm_liveness.py
+--- a/tests/arnold_pipelines/megaplan/test_doctor_llm_liveness.py
++++ b/tests/arnold_pipelines/megaplan/test_doctor_llm_liveness.py
+@@ -49,10 +49,10 @@ def test_doctor_accepts_recent_active_step_liveness_for_requestless_call(
+         encoding="utf-8",
+     )
+ 
+-    severity, label, _ = _check_llm_liveness(plan_dir)
++    result = _check_llm_liveness(plan_dir)
+ 
+-    assert severity == "OK"
+-    assert label == "LLM liveness"
++    assert result.severity == "OK"
++    assert result.label == "LLM liveness"
+ 
+ 
+ def test_doctor_warns_when_current_requestless_call_and_worker_liveness_are_stale(tmp_path) -> None:
+@@ -84,8 +84,8 @@ def test_doctor_warns_when_current_requestless_call_and_worker_liveness_are_stal
+         encoding="utf-8",
+     )
+ 
+-    severity, label, message = _check_llm_liveness(plan_dir)
++    result = _check_llm_liveness(plan_dir)
+ 
+-    assert severity == "WARN"
+-    assert "no heartbeat" in label
+-    assert "may be wedged" in message
++    assert result.severity == "WARN"
++    assert "no heartbeat" in result.label
++    assert "may be wedged" in result.message

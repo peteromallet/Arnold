@@ -97,6 +97,63 @@ def test_reconcile_prompt_override_matches_render_reconcile_prompt(
     assert override == expected
 
 
+def test_reconcile_prompt_override_preserves_review_rework_contract(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "reconcile-plan"
+    plan_dir.mkdir(parents=True)
+    _write_inputs(plan_dir)
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "review_verdict": "needs_rework",
+                "rework_items": [
+                    {
+                        "target": {"kind": "bulk", "task_ids": ["T3", "T4"]},
+                        "task_id": "T4",
+                        "issue": "notes contract is incomplete",
+                        "expected": (
+                            "verification_evidence.notes must state pr_required; "
+                            "no selected_shas found in plan execution evidence; "
+                            "cannot publish the reconcile PR; execute_batches/batch_; "
+                            "operator resolution; execute.py:175-178; "
+                            "01M0ETZ6W0K3H9XQ7N2D5B8RV4; ead33b1d"
+                        ),
+                        "actual": "notes omitted the operator contract",
+                        "evidence_file": "execute_batches/batch_1/tasks_T4.json",
+                        "source": "review_criterion_verification",
+                        "deterministic_check": {
+                            "command": "jq -e '.verification_evidence.notes' artifact.json",
+                            "baseline_status": "failed",
+                            "post_status": "failed",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    prompt = _reconcile_prompt_override(plan_dir, "generic-batch-prompt")
+
+    assert "Persisted review rework contract" in prompt
+    assert "verification_evidence.notes" in prompt
+    for fragment in (
+        "pr_required",
+        "no selected_shas found in plan execution evidence; cannot publish the reconcile PR",
+        "execute_batches/batch_",
+        "operator",
+        "execute.py:175-178",
+        "01M0ETZ6W0K3H9XQ7N2D5B8RV4",
+        "ead33b1d",
+        "baseline_status",
+        "post_status",
+    ):
+        assert fragment in prompt
+    assert "Do not modify files, open PRs, or touch the repository state." in prompt
+    assert "generic-batch-prompt" not in prompt
+
+
 def test_reconcile_prompt_override_falls_back_without_marker(
     tmp_path: Path,
 ) -> None:
@@ -380,3 +437,48 @@ def test_reconcile_selection_payload_corroborates_completion_authority(
 
     ok, reason = chain_mod._latest_execution_batch_all_tasks_done(plan_dir)
     assert ok is True, reason
+
+    from arnold_pipelines.megaplan.handlers.review import (
+        _review_execute_authority_gaps,
+    )
+
+    assert _review_execute_authority_gaps(
+        finalize_data={"tasks": [{"id": "T1", "status": "pending"}, {"id": "T2", "status": "pending"}]},
+        plan_dir=plan_dir,
+        project_dir=tmp_path,
+        state={"config": {"project_dir": str(tmp_path)}, "meta": {}},
+    ) == []
+
+
+def test_reconcile_review_prompt_uses_selection_authority_contract(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.prompts.review import (
+        _reconcile_selection_authority_block,
+    )
+    from arnold_pipelines.megaplan._core.io import execute_batch_artifact_path
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    artifact_path = execute_batch_artifact_path(plan_dir, 1, ["T1"])
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "selected_shas": [],
+                "verification_evidence": {"per_phase": []},
+                "task_updates": [],
+                "sense_check_acknowledgments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    guidance = _reconcile_selection_authority_block(plan_dir)
+    assert "selection envelope is authoritative completion evidence" in guidance
+    assert "Do not create blocking rework solely" in guidance
+    assert "task_updates" in guidance
+
+    ordinary_plan = tmp_path / "ordinary"
+    ordinary_plan.mkdir()
+    assert _reconcile_selection_authority_block(ordinary_plan) == ""

@@ -1,0 +1,27 @@
+diff --git a/tests/workers/test_session_cache_regression.py b/tests/workers/test_session_cache_regression.py
+--- a/tests/workers/test_session_cache_regression.py
++++ b/tests/workers/test_session_cache_regression.py
+@@ -270,17 +270,11 @@ def test_shannon_revise_uses_versioned_prompt_and_fresh_session(
+             prompt_override="revise prompt",
+         )
+ 
+-    clear_command = next(
+-        call.args[0]
+-        for call in run_command.call_args_list
+-        if "-p" in call.args[0]
+-        and call.args[0][call.args[0].index("-p") + 1] == "/clear"
+-    )
+-    command = run_command.call_args_list[-1].args[0]
+-    assert clear_command[clear_command.index("-p") + 1] == "/clear"
+-    assert clear_command[clear_command.index("--resume") + 1] == "old-shannon-session"
+-    assert "--resume" in command
+-    assert command[command.index("--resume") + 1] == "fresh-shannon-session"
+-    assert "old-shannon-session" not in command
++    command_texts = [" ".join(call.args[0]) for call in run_command.call_args_list]
++    clear_command_text = next(text for text in command_texts if " -p /clear " in f" {text} ")
++    command_text = command_texts[-1]
++    assert "--resume old-shannon-session" in clear_command_text
++    assert "--resume fresh-shannon-session" in command_text
++    assert "old-shannon-session" not in command_text
+     # Prompt file is now written to the per-run artifact dir (T9 Step 7).
+     assert (plan_dir / ".megaplan" / "runs" / "test-plan" / "revise" / "shannon" / "revise_v2_shannon_prompt.txt").exists()

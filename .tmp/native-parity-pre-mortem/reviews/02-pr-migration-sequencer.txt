@@ -1,0 +1,287 @@
+I now have a thorough understanding of every surface. Here is my complete review.
+
+---
+
+# Isolated Review 2 — Concrete PR and Migration Sequencer
+
+## 0. Position Statement
+
+**The corrective plan is architecturally sound but its sprint-to-PR translation has five structural defects that guarantee mid-chain breakage without intervention.** S2 and S3 share an underspecified seam; S3 and S6 have a route-reader deadlock; the chain.yaml lacks per-sprint stop/go enforcement for S1–S6; S1 conflates checker design with checker implementation on existing ground; and S5's "one reusable cycle" requires S2 loop machinery that the briefs prevent S2 from testing at Megaplan scale. The chain can be made safe with six PR-level amendments, not replanning.
+
+---
+
+## 1. Exact Surface Inventory
+
+### 1.1 Producers (what sets route/next-step/decision authority)
+
+| Producer | Path | What it produces |
+|---|---|---|
+| Authored pypeline | `arnold_pipelines/megaplan/workflows/workflow.pypeline:388-754` | Step order, `if/elif/else` gate branches, `parallel_map` fanout calls, tiebreaker subflow, review/rework blocks |
+| Builder/lowerer | `arnold_pipelines/megaplan/workflows/planning.py:695-721` | `build_pipeline()` composes lowered DSL → canonical steps/routes via component filter + policy merge + metadata overlay |
+| Component definitions | `arnold_pipelines/megaplan/workflows/components.py:79-500` (and onward) | `handler_ref` bindings, `route_bindings`, `policy_refs`, `capability_requirements`, `runtime_branch_vocabulary` |
+| Override matrix | `arnold_pipelines/megaplan/workflows/override_matrix.py:54-151` | Per-action family (terminal_route/additive_config), `route_signal`, `target_ref`, `dispatch_surface`, `effect_id` |
+| Legacy state machine | `arnold_pipelines/megaplan/_core/workflow_data.py:45-92` | `WORKFLOW` dict: state → `[Transition(next_step, next_state, condition)]` |
+| Robustness overrides | `arnold_pipelines/megaplan/_core/workflow_data.py:95-117` | Per-level transition merges/empties |
+| RunTopology | `arnold_pipelines/megaplan/_core/topology.py:157-177` | Builds `Graph` from `workflow_data`, exposes `next_steps(state)` → `list[str]` |
+| Workflow helpers | `arnold_pipelines/megaplan/_core/workflow.py:356-403` | `workflow_next()`, `workflow_transition()`, `workflow_includes_step()` — all read from `workflow_data` |
+| Handlers | `handlers/gate.py:886-1173`, `handlers/review.py:1609-1670+`, `handlers/override.py:1927-1990+`, `handlers/execute.py:348-450+`, `handlers/critique.py:22+` | Each returns a route signal string that drives next-step resolution |
+| Auto driver | `arnold_pipelines/megaplan/auto.py:1-5808` | Reads `status`, calls `next_step` (via `_core`), runs CLI subprocess per phase |
+| CLI dispatch | `arnold_pipelines/megaplan/cli/__init__.py:3073-3170+` | `main()` routes subcommands to handlers via argparse |
+
+### 1.2 Consumers (what reads route/state to decide behavior)
+
+| Consumer | Path | Dependency |
+|---|---|---|
+| auto.py loop | `auto.py:92-150` (constants), `auto.py:340-510` (main loop) | Imports `_core.active_phase_name`, `_core.state.write_plan_state`, `planning.state.*`, `handlers.shared.*`, `orchestration.phase_result.*`, `orchestration.authority_readers.*` |
+| Phase runtime | `_core/phase_runtime.py` | Reads plan state, calls workflow_next |
+| State recovery | `_core/state.py:362-467` | `_recover_finalize_state()`, `_recover_execute_state()` — read plan_dir + state, fix "no_next_step" failures |
+| CLI handlers | `cli/__init__.py` subcommands | Calls handlers by name, reads state |
+| Status/observability | `observability/events.py`, `planning/state.py` | Labels routed through state machine |
+| Boundary contracts | `workflows/planning.py:724-753` | `lowered_workflow_topology()`, `lowered_route_bindings_by_step()` — topology views consumed by evidence bundles |
+| Conformance validator | `scripts/validate_native_representation_conformance.py:1-1139` | Reads `conformance.yaml`, `traceability.yaml`, `evidence.yaml`, `final-proof-map.json` |
+
+### 1.3 Adapters / Compatibility Shells
+
+| Adapter | Path | Function |
+|---|---|---|
+| Compatibility shell | `_compatibility.py:101-115` | `build_compatibility_shell(dsl_pipeline) → CompatibilityPipelineShell` — projects DSL to neutral graph + attaches NativeProgram |
+| Public facade | `pipeline.py:23-25` | `build_and_compile_pipeline()` — wraps build + compatibility shell |
+| Package `__init__.py` | `__init__.py:38-49` | `build_pipeline(args)` — deferred import of `pipeline.py` module |
+| Step wire adapter | `_compatibility.py:88-98` | `_CompatibilityStep` — neutral step carrying handler_ref, default_next |
+
+### 1.4 Route Readers / Writers (what must be deleted or fenced)
+
+| Artifact | Path | Content |
+|---|---|---|
+| WORKFLOW dict | `_core/workflow_data.py:45-92` | 14 state→transition entries |
+| _ROBUSTNESS_OVERRIDES | `_core/workflow_data.py:95-117` | 5 robustness profiles with transition overrides |
+| RunTopologyConfig | `_core/topology.py:52-72` | `STAGE_TO_STATE`, `STATE_TO_STAGE` mapping |
+| Condition strings | `_core/topology.py:39-50` | 8 condition predicates |
+| Route bindings in components | `components.py` via `_step()` / `workflow.pypeline:81-279` | All route_bindings with target_ref + condition_ref |
+| Handler refs | `workflow.pypeline:83,89,95,101,...` | 12 handler_ref entries pointing to `handlers:*` |
+| Override matrix entries | `override_matrix.py:54-151` | 11 action entries with route_signal/target_ref |
+| CLI decision translation | `cli/__init__.py` | Phase command routing |
+| Auto phase derivation | `auto.py` | State-reading step resolution |
+
+### 1.5 Test Oracles / Installed-Artifact Paths
+
+| Surface | Path |
+|---|---|
+| Installed wheel conformance | `tests/installed_wheel/test_import_workflow_kernel.py`, `test_m5_wheel_smoke.py` |
+| Wheel/sdist build | `dist/` |
+| Package metadata | `pyproject.toml:6` — name=`arnold`, version=`0.23.0` |
+| Conformance YAML | `docs/arnold/megaplan-native-representation-conformance.yaml` (400 lines, 47 row entries) |
+| Traceability YAML | `docs/arnold/megaplan-native-representation-traceability.yaml` |
+| Evidence bundle | `docs/arnold/megaplan-native-representation-evidence.yaml` |
+| Boundary fixtures | `docs/arnold/megaplan-native-representation-boundary-fixtures/` (33 scenario directories) |
+| Conformance script | `scripts/validate_native_representation_conformance.py` (1139 lines) |
+| Legacy parity tests | `tests/archive/m5/_pipeline/test_planning_discovered_parity.py`, `test_receipt_planning_parity.py` |
+
+---
+
+## 2. Dependency Graph (PR-level)
+
+```
+PR1 (S1)  ─────────────────────────────────────────────────────────────────┐
+  Checker shell, receipt schema, negative fixture, M11 admission pin        │
+  No product change. Repo stays runnable.                                    │
+                                                                            │
+PR2 (S2)  ───────────────────────────────────────────────────────────────┐ │
+  Generic constructs: typed decisions, dynamic map/reducer, loops,          │ │
+  suspension, checkpoint. Generic compiler stays Megaplan-clean.            │ │
+  Reference pipeline exercises constructs. Repo stays runnable.             │ │
+  BREAKS IF: reference pipeline overlaps Megaplan product semantics.        ├─┤
+                                                                            │ │
+PR3 (S3 stop/go) ────────────────────────────────────────────────────────┐ │ │
+  prep→plan vertical slice + clarification. Both carriers live.            │ │ │
+  STOP/GO: builder receipt must pass before PR4 begins.                    ├─┤─┤
+  Repo RUNNABLE (old carrier still works, new one co-lives).              │ │ │
+                                                                            │ │ │
+PR4 (S3 carrier) ────────────────────────────────────────────────────────┘ │ │
+  Delete front-half carriers: component route_bindings for prep/plan/      │ │
+  critique/gate/revise, handler refs, _core routes for corrected paths,    │ │
+  CLI decision translation for front half.                                  │ │
+  ⚠ auto.py and _core/workflow.py still read the deleted routes.           ├─┤─┤
+  Repo BREAKS unless auto.py reads from lowered topology, not workflow_data.│ │ │
+                                                                            │ │ │
+PR5 (S4)  ──────────────────────────────────────────────────────────────┐ │ │ │
+  Tiebreaker researcher/challenger/synthesis/decision → authored source.   │ │ │ │
+  Finalize baseline fallback → visible topology. Human gates → named       │ │ │ │
+  durable reentry points. Delete/fence tiebreaker handler routes.          ├─┤─┤─┤
+  ⚠ If S4 changes finalize, and S5 changes execute/review, and they        │ │ │ │
+  share handler surfaces (finalize.py, execute.py, review.py), there is     │ │ │ │
+  mid-chain conflict unless PR5 and PR6 land as separate PRs on the        │ │ │ │
+  same sprint boundary with a green receipt between.                       │ │ │ │
+                                                                            │ │ │ │
+PR6 (S5)  ──────────────────────────────────────────────────────────────┘ │ │ │ │
+  One reusable finalize→approve→execute→review→rework cycle. Delete        │ │ │ │
+  execute/review handler routes, _core transitions for corrected cycle.    ├─┤─┤─┤
+  ⚠ Same deadlock as PR4: auto.py and _core/workflow.py read the routes   │ │ │ │
+  being deleted. Without dual-run, the loop breaks mid-S5.                 │ │ │ │
+                                                                            │ │ │ │
+PR7 (S6)  ──────────────────────────────────────────────────────────────┐ │ │ │ │
+  Override/recovery/auto-drive/projection reduction. All override actions  │ │ │ │ │
+  authored. auto.py reduced to event consumer. Delete remaining:           │ │ │ │ │
+  LEGACY_ALIASES, _core product transitions, projected native programs,    ├─┤─┤─┤
+  CLI decision translation.                                                │ │ │ │ │
+  ⚠ This is where auto.py unblock happens, but PR4/PR6 already depended    │ │ │ │ │
+  on auto.py being changed. Chicken-and-egg.                               │ │ │ │ │
+                                                                            │ │ │ │ │
+PR8 (S7)  ──────────────────────────────────────────────────────────────┘ │ │ │ │ │
+  Extend M11 proof framework with native topology set equality. Run       ├─┤─┤─┤─┤
+  final_conformance_gate. Consume final-proof-map.json.                     │ │ │ │ │
+  ⚠ S7's validator must consume the proof map hash BEFORE appending,       │ │ │ │ │
+  but S1 defined the proof-map schema. If S1 schema doesn't match S7       │ │ │ │ │
+  actual implementation, the validator rejects its own receipt.            │ │ │ │ │
+                                                                            │ │ │ │ │
+Chain passes ──────────────────────────────────────────────────────────┘ │ │ │ │ │
+==============================================================================
+W1: PR1 (S1) independent
+W2: PR2 (S2) independent
+W3: PR3 (S3-stop/go) → PR4 (S3-carrier)
+W4: PR5 (S4) independent (but may conflict with PR6)
+W5: PR6 (S5) — depends on S4 complete
+W6: PR7 (S6) — depends on S5 complete
+W7: PR8 (S7) — consumes all receipts
+```
+
+---
+
+## 3. Safe Strangler Order (Position)
+
+**The chain must be re-ordered into 9 PRs across 7 sprints to avoid the deadlocks identified in §2.**
+
+### PR1 (S1) — Admission + Checker + Proof-map Schema
+No change to product code. Builds `final-proof-map.json` schema, validator receipt contract, and negative fixtures. Only the checker infrastructure changes. **Repo runnable at every commit.**
+
+### PR2 (S2) — Generic Constructs + Reference Pipeline
+Compiler changes only. Megaplan product code untouched. Reference pipeline is a separate test file, not Megaplan. **Repo runnable at every commit.**
+
+### PR3 (S3 stop/go) — Vertical Slice with Dual Carriers
+Add prep→plan native topology alongside existing carriers. Both old and new carriers live. The stop/go receipt proves the new carrier is load-bearing by: (a) mutating source changes trace, (b) mutating old carrier does not. **Repo runnable — old carrier still routes execution.**
+
+### PR4 (S3 carrier fence) — Quarantine, Not Delete
+After PR3 receipt passes: **hard-fence** front-half carriers (raise or no-op on read), do not delete files. The fencing makes every consumer that reads the old route authority get a deterministic failure unless it has migrated to the new topology reader. This forces:
+- `auto.py` → read from lowered topology API (already exists at `planning.py:resolve_lowered_route_target_for_signal`)
+- `_core/workflow.py` → `workflow_next()` reads from lowered topology, not `workflow_data`
+- `_core/topology.py` → `RunTopology.next_steps()` reads from lowered topology
+- `cli/` → reads from lowered topology
+
+**This PR does the wire-up that PR7's bugfix was supposed to do.** Repo runnable because consumers are updated before the old producers are removed.
+
+### PR5 (S4) — Tiebreaker + Finalize + Human Decisions
+Applies the same dual-carrier→fence pattern to tiebreaker and finalize surfaces. First add authored topology alongside handlers (dual-run), then fence old carriers after green receipt. **Repo runnable per sub-step.**
+
+### PR6 (S5 step 1) — Execute/Review Authored (add phase)
+Add execute and review as authored topology alongside existing handler-based execution. Dual-run. **Repo runnable — old handlers still work.**
+
+### PR7 (S5 step 2) — Fence execute/review carriers
+Fence old execute/review route authorities. Consumers were already updated in PR4 for the general pattern. **Repo runnable.**
+
+### PR8 (S6) — Override + Auto + Projection Reduction
+Authored override actions. Reduce auto.py to event consumer. Fence remaining `_core` routes, CLI translation, LEGACY_ALIASES, handler action dispatch. **Repo runnable because consumer migration was done in PR4.**
+
+### PR9 (S7) — Final Conformance
+Extend M11 proof framework. Run end-to-end with wheel/sdist/cloud. The `final_conformance_gate` consumes the complete proof-map and pre-receipt hash. **Repo runnable.**
+
+---
+
+## 4. Per-PR Stop/Go Receipts
+
+| PR | Receipt | How to verify | Rollback |
+|---|---|---|---|
+| PR1 | M11 admission lock passes; checker rejects current false-pass fixture; proof-map schema validates | `python -m scripts.validate_native_representation_conformance test-schema`; modify pypeline → checker fails | `git revert PR1` (no product change) |
+| PR2 | Neutral reference pipeline passes crash/retry/dynamic-fanout/suspend/resume in enforce mode | `python -m pytest tests/native/ref_pipeline_test.py -x` | `git revert PR2` (no Megaplan change) |
+| PR3 (stop/go) | Mutate pypeline prep→plan → trace changes; mutate old handler → trace unchanged; checkout + installed package match | `python -m pytest tests/native/vertical_slice_receipt.py -x` | Keep old carrier (it wasn't deleted yet) |
+| PR4 | All existing tests pass; auto.py runs from lowered topology; fencing produces deterministic error on old path read | `python -m pytest tests/ -x -q` — must match pre-PR4 count | `git revert PR4` restores old carriers and consumers |
+| PR5 | Tiebreaker/finalize scenarios pass from authored topology; stale human markers cannot resume | `python -m pytest tests/native/tiebreaker_receipt.py -x` | `git revert PR5` |
+| PR6 | Execute/review scenarios pass with both carriers live; mutation tests pass | `python -m pytest tests/native/execute_review_dual.py -x` | Keep old handler carrier |
+| PR7 | Execute/review scenarios pass with old carriers fenced | `python -m pytest tests/native/execute_review_single.py -x` | `git revert PR7` |
+| PR8 | Every override action produces exact target + WBC effect history; auto.py consumes events only; projection-forgery tests pass | `python -m pytest tests/native/override_auto_receipt.py -x` | `git revert PR8` |
+| PR9 | `final_conformance_gate` passes; validator consumed proof-map hash; refreshed old ledger fails | `python -m scripts.final_conformance_gate --proof-map .megaplan/.../final-proof-map.json` | `git revert PR9` retains S1–S6 work |
+
+---
+
+## 5. Rollback Points
+
+**Every PR boundary is a valid rollback point.** Within a PR, the strangler pattern (add carrier → fence carrier in separate commits) provides sub-step recovery:
+
+- **PR3 commit 1** (add authored prep→plan) → rollback = delete new topology, keep old carrier
+- **PR3 commit 2** (dual-run wiring) → rollback = revert wire-up, old carrier still works
+- **PR4 commit 1** (consumer migration) → rollback = keep old consumer code
+- **PR4 commit 2** (old carrier fence) → rollback = unfence, old carrier still works
+
+The **critical rollback constraint**: once old carriers are fenced (PR4/PR7/PR8), rolling back the fence commit without also reverting the consumer migration commit leaves consumers reading from a non-existent topology. **Rollback must be commit-atomically paired**: consumer migration + fencing in a single revert.
+
+---
+
+## 6. Minimal Plan Amendments (Epic Wording Changes Required)
+
+These are the only changes to sprint brief wording needed; everything else is sprint-planning detail.
+
+### Amendment 1: S3 — "Delete" → "Fence" in carrier disposition
+
+**File**: `briefs/s3-tiebreaker-replan-native.md:46-49`  
+**Change**: Replace "Delete or hard-quarantine" with "Hard-fence (make read-raise or no-op on read) — do not delete files until S7."
+
+**Rationale**: The files `_core/workflow_data.py`, `_core/topology.py`, `_core/workflow.py`, `auto.py`, and `cli/__init__.py` contain consumers that read the route authorities being fenced. Deleting the producers without updating consumers first creates a broken repo. The fence approach forces consumer migration (PR4) before removal (S7).
+
+### Amendment 2: S6 — Add consumer-migration dependency
+
+**File**: `briefs/s6-override-auto-compat-collapse.md:29-33`  
+**Change**: Add "Before fencing any _core, auto, or CLI route authority, all consumers (auto.py, _core/workflow.py, _core/topology.py, cli/__init__.py) must read from the lowered topology API (planning.py:resolve_lowered_route_target_for_signal, planning.py:lowered_workflow_topology) instead of legacy state machine data. This migration must be complete and tested in a separate PR before deletion."
+
+**Rationale**: This is the deadlock fix. Without it, S3–S5 break auto.py, but S6 is the sprint where auto.py is supposedly reduced. The migration must happen in a dedicated PR (PR4 in my sequence) that is dependency-ordered before any carrier fencing.
+
+### Amendment 3: Chain.yaml — Add per-sprint validation receipts
+
+**File**: `chain.yaml:milestones`  
+**Change**: Every milestone `s1` through `s6` must include a `validate` block. Example:
+
+```yaml
+- label: s1-custody-admission-semantic-preservation
+  validate:
+  - kind: receipt_gate
+    receipt: .megaplan/initiatives/megaplan-native-parity-corrective/receipts/s1.json
+    schema: receipt_schema_v1
+```
+
+**Rationale**: The corrective plan ($230-237) mandates "Every sprint emits a mandatory validation receipt." But the chain.yaml only validates S7. Without per-sprint enforcement, a sprint could claim semantic gate passage with no verifiable artifact.
+
+### Amendment 4: S2 — Specify the reference pipeline's scope
+
+**File**: `briefs/s2-front-half-native-loop.md:43-45`  
+**Change**: Replace "Build a neutral reference pipeline that exercises crash, retry, dynamic fanout..." with "Build a neutrally-named test pipeline (not in the Megaplan product namespace) that exercises: (1) `while True` with typed loop outcomes via if/return (not break/continue), (2) `parallel_map` over runtime-sized collections with per-item retry/fallback, (3) human suspension/reentry with checkpoint coordinates, (4) typed decision→accepted RA Decision→consumed transition equality. The compiler must reject break/continue, and the reference pipeline must use only supported constructs."
+
+**Rationale**: The native compiler (`arnold/pipeline/native/compiler.py:1030-1038`) explicitly rejects `break` and `continue`. The aspirational report uses them, but S2 must be explicit about what the compiler actually accepts. If S2's reference pipeline silently avoids break/continue while S3's Megaplan pipeline needs them, S2 passes but S3 discovers the gap.
+
+### Amendment 5: S4/S5 — Finalize handoff contract
+
+**File**: `briefs/s3-tiebreaker-replan-native.md:0` (or a new cross-brief contract)  
+**Change**: Add a binding section: "S4 owns finalize baseline fallback as authored topology. S5 owns execute/review/rework as authored topology. S4 may not change the execute or review semantics that S5 will later adopt. S5 may not re-declare finalize baseline fallback (that is S4's contract). The handoff receipt is the S4 milestone validation showing finalize routing produces authoritative Decision IDs consumable by S5's execute cycle."
+
+**Rationale**: Without an explicit handoff contract between S4 and S5, both sprints may independently modify the same handler surfaces (`handlers/finalize.py`, `handlers/execute.py`, `handlers/review.py`). This is the #1 source of merge conflicts in strangler migrations.
+
+---
+
+## 7. Separation: Sprint-Planning Detail vs. True Epic Ambiguity
+
+### Sprint-planning detail (don't put in epic briefs):
+- Which exact `_core` function names to fence in each PR
+- Test file names and directory layout for reference pipeline
+- CI script amendments for receipt validation
+- CLI flag changes for consumer migration mode
+- `handler_ref` string inventory
+
+### True epic ambiguity (must be resolved in briefs):
+1. **§A3 above**: Per-sprint validation receipts in chain.yaml — without this, the chain has no enforceable mid-point quality gates.
+2. **§A1/A2 above**: Delete-vs-fence plus consumer-migration ordering — without this, S3–S6 produce a broken, non-runnable repo.
+3. **§A4 above**: What the native compiler actually accepts — without this, S2's reference pipeline detects gaps S3 will hit but S2 won't report as blocking.
+4. **§A5 above**: S4/S5 handoff contract — without this, two sprints independently edit overlapping handler surfaces.
+5. **S1 proof-map schema vs S7 validator concretization**: The brief says "define the final proof-map schema now" but S7 says "Land the S1-planned harness plumbing." If the actual implementation diverges from the S1 schema (which it always does), the S7 validator must accept its own receipt. The briefs need a contract: the proof-map schema from S1 is normative and must be exercised by a running validator in S1 itself (not deferred to S7).
+
+### Why the plan can close on these five points without replanning:
+
+The corrective plan's core insight — one authored topology, four distinct identity domains, producer relocation before deletion, and the M11 prerequisite — is correct. The sequencing defects are preconditions that were underspecified, not architectural errors. Fixing them requires adding five bullets to existing briefs and one validate block per chain milestone. The PR structure I've laid out maps one-to-one to the existing sprint boundaries; it only changes the delete-vs-fence strategy within S3/S5/S6 and adds a consumer-migration PR between S3's stop/go and S3's carrier deletion.
+
+**The chain, amended, is safe. Without these five amendments, S3 breaks the repo at PR3 and S6 is insufficient to repair the damage.**

@@ -1,0 +1,19 @@
+diff --git a/tests/oracles/test_replay_oracle.py b/tests/oracles/test_replay_oracle.py
+--- a/tests/oracles/test_replay_oracle.py
++++ b/tests/oracles/test_replay_oracle.py
+@@ -586,6 +586,7 @@ def test_routed_recover_blocked_quality_matches_legacy(
+     frozen_now = "2026-01-02T03:04:05Z"
+     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
++    monkeypatch.setattr("arnold_pipelines.megaplan._core.io.now_utc", lambda: frozen_now)
+     _prepare_recoverable_quality_blocked(plan_fixture)
+     legacy = capture_legacy_action(
+         plan_fixture,
+@@ -607,6 +608,7 @@ def test_routed_recover_blocked_quality_matches_legacy(
+     )
+     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
++    monkeypatch.setattr("arnold_pipelines.megaplan._core.io.now_utc", lambda: frozen_now)
+     _prepare_recoverable_quality_blocked(fresh_fixture)
+     routed = capture_routed_action(
+         fresh_fixture,

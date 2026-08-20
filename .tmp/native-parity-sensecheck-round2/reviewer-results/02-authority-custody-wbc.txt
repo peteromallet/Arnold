@@ -1,0 +1,170 @@
+Now I have all the primary evidence needed. Let me write the decisive audit.
+
+---
+
+# Lens 2 — Authority, Custody, and WBC Composition Audit
+
+**Date:** 2026-07-21
+**Reviewer:** Independent read-only architecture adversary
+**Checkout:** `304c44476738e191f957890c438c5833b7c249be` plus dirty working tree
+
+---
+
+## 1. Decisive Lens Verdict
+
+**The seven-sprint plan is architecturally sound in its articulated contract but the current working tree is a material regression from that contract.** The canonical authored source (`workflow.pypeline`) is the exact forbidden component-call skeleton that NORTHSTAR, the corrective plan, and all seven active briefs explicitly prohibit. It imports `AUTHORING_*` wrappers and policy objects from `components.py`, contains 300+ lines of route-binding dictionaries and topology contracts, and calls those wrappers rather than real typed phases or subworkflows. The lowering path sees 85 detailed authored nodes and collapses them into 14 component-identified steps where component metadata overrides lowered metadata on merge (`planning.py:669`). Dynamic fanout policies are lowered as `width=None`, then discarded by the canonical builder, and the generic router only activates fanout for non-`None` width. The consequence is that editing the visible `workflow.pypeline` source can leave canonical runtime behavior unchanged, while editing a handler, component policy, or the route backend can change product behavior without an authored-source change.
+
+**The four-identity coordinate system is defined in contract documents but collapsed in code.** The `workflow.pypeline` uses `execute/{index}` path templates (not task ID + batch identity), `SUSPEND` routes to terminal `HALT` (not durable reentry), and tiebreaker researcher/challenger are sequential calls sharing a handler (`workflow.pypeline:472-488`), not parallel children. WBC producers remain attached to handler names; the custody substrate (M11) has not yet been completed in this tree. The conformance generator can iterate rows already labeled `implemented` and manufacture supporting hash records without semantic or behavioral proof; auxiliary red checks are generated but not made blocking.
+
+**Verdict: Native Parity is not presently established.** The corrective plan and briefs correctly diagnose the problem and specify the solution, but the seven sprints have produced auto-published commits that do not satisfy their own exit gates. The strongest safe claim is that the repository has substantial native-shaped authoring/compiler/runtime substrate, while canonical product semantics still execute through the component/handler/state/CLI/auto compatibility architecture and conformance can false-pass that fact.
+
+---
+
+## 2. Composition Invariant Table
+
+| # | Invariant | Producer / Carrier | Planned Sprint | Planned Proof | Actual Code Feasibility Evidence | Status |
+|---|---|---|---|---|---|---|
+| I-1 | One authored semantic topology is the exclusive product-route authority | `workflow.pypeline` + named subworkflows | S3, S7 | Reviewer can understand all routes without components/handlers/CLI/auto | Source imports `AUTHORING_*` from `components.py:14-34`, contains `DECLARED_STEP_INTERFACES` with `handler_ref` and route bindings (`workflow.pypeline:81-279`), topology contracts (`:281-385`). Cannot be understood without hidden carriers. | **Contradicted** |
+| I-2 | Source→lowered→runtime preserves every semantic node, decision, loop, fanout, call-site policy | `source_compiler.py` → `planning.py:build_pipeline()` → `manifest_backend.py` | S1, S3, S7 | Set equality between authored nodes, lowered topology, and runtime WBC attempts | Lowering parses 85 nodes with detailed maps (`source_compiler.py:3662-3810`). `_canonical_steps()` filters through 14 `PIPELINE_STEP_COMPONENTS` (`planning.py:650`), drops fanout policies. Component metadata wins on merge (`planning.py:669`). Direct probe: 85→14 collapse, 0 retained fanout. | **Contradicted** |
+| I-3 | Four identity domains are distinct: semantic node/child path, RA subject attempt/fence, WBC execution attempt/version, Custody target/lease epoch | Identity schema + `action_validator.py` (M11) + causal join tables | S1, S2 | Generated mappings with cardinality; no `attempt_id` collapse | `workflow.pypeline` uses `{index}` not task+batch (`:411,429`). Tiebreaker four calls share `handle_tiebreaker_run` handler (`:146,156,166`). No Custody code exists in this tree (M11 incomplete). Four-domain mapping is not generated. | **Missing** |
+| I-4 | Every authoritative action requires current RA grant/fence + current Custody lease/epoch + exact-version WBC evidence | M11 `action_validator.py` (future) bound to lowered node boundaries | S2, S3, S4, S5 | Enforce-mode crash/retry/idempotency/stale-fence/stale-epoch tests pass | `action_validator.py` does not exist in tree. M7 custody validators were shadow-only with `ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT` default-off (per custody-overlap-audit). No Native Parity binding exists. | **Missing (prerequisite)** |
+| I-5 | WBC evidence is never permission; lease is never permission | Contract definitions in NORTHSTAR + custody decisions | All sprints | Negative fixtures: WBC receipt/projection cannot dispatch, resume, retry, complete, cancel | `workflow.pypeline:741-743`: `SUSPEND` routes to `AUTHORING_HALT`. No durable reentry. Handler route signals still steer runtime (`manifest_backend.py:227-320`). Receipt-as-authority negative tests not present. | **Unproven** |
+| I-6 | WBC producers are relocated to canonical lowered nodes, not handler names | Producer registry binding to semantic node/child path | S3, S4, S5 | Handler-only instrumentation insufficient; quiesced handler mutation must not change WBC | Handlers remain primary producer attachment points. No producer relocation infrastructure exists in tree. Custody M8 added WBC evidence around existing handlers (per overlap audit). | **Missing** |
+| I-7 | Human suspension creates durable reentry at exact semantic point, survives process death, resumes only with current authority+custody | Native cursor/checkpoint (`arnold/pipeline/native/checkpoint`) + M11 lease lifecycle | S2, S4, S6 | Kill/restart resumes at same semantic path without repeating effects; stale marker/fence/epoch cannot resume | `evidence_pack/resume.py` exists with `classify_resume_cursor`, `read_native_cursor` (`:10-13`). `workflow.pypeline` maps `SUSPEND` to `HALT` (`:741-743`), not to durable reentry cursor. No kill/restart/resume of canonical Megaplan workflow exists. | **Partial substrate, contradicted canonical** |
+| I-8 | Dynamic fanout uses task ID + batch identity + item path child coordinates; index-only is forbidden | `source_compiler.py` `path_template` → canonical retention → runtime materialization | S2, S4, S5 | Collision tests, restart preserves child identity, only incomplete children rerun | Compiler accepts `{item_id}` or `{index}` (`source_compiler.py:3774`). `workflow.pypeline` uses `execute/{index}` (`:411,429`). Builder drops fanout policies. Generic router activates only for non-`None` width (`execution/routing.py:59-63` per final-audit). | **Contradicted** |
+| I-9 | Generic compiler/runtime has zero Megaplan semantic coupling | `source_compiler.py` must not import components, read Megaplan dicts, or special-case canonical path | S1, S2 | Coupling gate fails on product-specific imports; mutation re-hides a branch and checker fails | `source_compiler.py` literal-reads Megaplan dictionaries, imports `components.py` policy surfaces, special-cases canonical path (`source_compiler.py:990-1060,1142-1450,1734-1767,5532-5624` per final-audit). Coupling gate fails in focused tests. | **Contradicted** |
+| I-10 | Components, handler refs, route tables, `_core` state, CLI dispatch, auto-drive are downstream consumers only | Deletion/quarantine of `components.py` semantic exports, handler route strings, runtime maps, `_core` tables | S3, S6, S7 | Deleting components/handler routes/state tables does not change canonical traces | `components.py` (~3k lines) remains live import in source, builder, compiler, runtime. Handler refs: 13/14 canonical steps. `_core/workflow_data.py:45-125` defines state transitions. `auto.py` derives `next_step` and implements independent retry/escalation. Deletion suite currently fails (per final-audit). | **Contradicted** |
+| I-11 | Projections are rebuildable, disposable, and never authority | M11 projection framework + Native binding | S6, S7 | Forged/stale/consistent/cursor-divergent projections cannot trigger positive action | Projection infrastructure exists in M11 remote (not landed in this tree). Compatibility native program projections (`_compatibility.py:173-267`) exist but are not yet quarantined. Projection-forgery tests not present. | **Missing (prerequisite)** |
+| I-12 | Installed wheel/sdist and cloud runtime produce same topology, WBC history, identity joins, and decisions as checkout | Fingerprint + end-to-end installed execution | S7 | Clean venv installed-canonical workflow executes all split-outcome scenarios; loaded module paths verified | `package_fingerprints.py` exists for fingerprinting. No installed-canonical end-to-end execution exists. Compatibility shell still routes through component/handler paths in installed form. | **Unproven** |
+
+---
+
+## 3. Ranked Failure Routes
+
+### FR-1: The 85→14 Collapse Makes Authored Source Decorative
+
+**Severity:** Critical | **Confidence:** Very High | **Consequence:** Editing `workflow.pypeline` leaves runtime behavior unchanged; editing a handler changes product behavior without source change
+
+The lowering path in `source_compiler.py:3662-3810` correctly parses 85 detailed nodes with dynamic fanout policies, reducer references, and path templates. But `build_pipeline()` in `planning.py:695-721` calls `_canonical_steps()` which filters through `PIPELINE_STEP_COMPONENTS` — exactly 14 component identities (`planning.py:650`). The merge at `planning.py:669` (`{**lowered.metadata, **canonical.metadata}`) makes component metadata win over lowered metadata. Dynamic fanout policies are discarded because the canonical builder produces no nodes with `FanoutPolicy`. The generic router at `execution/routing.py:59-63` only treats a node as fanout when it has a non-`None` static width.
+
+**Minimal plan amendment:** Make `_canonical_steps()` return the lowered graph directly (or a semantics-preserving normalized graph) without filtering through component IDs. Add a blocking assertion that lowered node count equals canonical node count and that every `FanoutPolicy` in the lowered graph is retained. This is a one-function change in `planning.py` with cascading test implications; it must be the first patch before any other migration work.
+
+### FR-2: Circular Conformance Generator Can False-Pass Semantics
+
+**Severity:** Critical | **Confidence:** Very High | **Consequence:** The system can claim "implemented" for every row while the actual semantic carrier is the forbidden component architecture
+
+The evidence generator iterates rows already labeled `implemented` and manufactures `source_checker` hash records that reference whole-file spans. The validator checks path existence and SHA-256, not the claimed semantic construct or its authority. Auxiliary compatibility/purity/deletion checks are generated but omitted from the validator's `EvidenceBundle` data model — red checks do not block `implemented` status. The published conformance report says all 31 rows are implemented while explicitly recording `passed=False` for compatibility quarantine and deletion.
+
+**Minimal plan amendment:** Replace the self-declared evidence loop. The generator must consume signed checker results (rule ID, precise AST span, negative mutation result, executable command/version) and package them, never create them. Extend the validator schema so every required auxiliary gate must be present with `passed is True`. Reject unknown or unconsumed evidence sections. This is a generator-rewrite + validator-schema change, not a one-line fix.
+
+### FR-3: Forgotten Prerequisite — Custody M11 Does Not Exist
+
+**Severity:** Critical | **Confidence:** Very High | **Consequence:** The entire authority/custody/WBC adoption plan has no substrate to bind to; seven sprints would produce parallel stores and enforcement
+
+The custody-overlap-audit confirms: M9 is active with a dirty working tree, M10 and M11 have not begun. The remote checkout is provenance-divergent (M8A auto-publish carries a reconstructed tree without M6A/M7 merges as ancestors). `action_validator.py`, `run_authority/contracts.py`, `execution_attempt_ledger.py` — none exist in the current tree. The chain's prerequisite mechanism (`chain.yaml:9: require_manifest: true`) cannot validate a manifest that does not exist. Native Parity's S1 requires "Verify the prerequisite completion manifest against the final custody chain" — this cannot be done. If the seven sprints proceed, they will inevitably create parallel grant/lease/attempt stores because the admitted substrate is absent.
+
+**Minimal plan amendment:** This is a sequencing fix, not a design fix. The chain must not start. There is nothing to amend in Native Parity except the launch precondition — it must wait for a clean, accepted M11 revision with a valid completion manifest. If the organization needs forward progress on Native Parity before M11 lands, it must be scoped as substrate-neutral authoring work (typed outcomes, control primitives, compiler improvements) that explicitly does not claim custody adoption.
+
+### FR-4: The Canonical Source Is the Forbidden Component-Call Skeleton
+
+**Severity:** High | **Confidence:** Very High | **Consequence:** The current `workflow.pypeline` institutionalizes the exact anti-patterns the plan forbids; any "migration" that builds on it will perpetuate split authority
+
+`workflow.pypeline:14-34` imports `AUTHORING_PREP`, `AUTHORING_PLAN`, `AUTHORING_CRITIQUE`, `AUTHORING_GATE`, `AUTHORING_REVISE`, `AUTHORING_FINALIZE`, `AUTHORING_EXECUTE`, `AUTHORING_REVIEW`, `AUTHORING_HALT`, `AUTHORING_OVERRIDE`, and policy objects like `DEFAULT_POLICY`, `REVISE_LOOP_POLICY`, `CRITIQUE_PANEL_WORKFLOW`, etc. Lines 36-385 are dictionary declarations: `DECLARED_OVERRIDE_POLICY_ROUTES`, `DECLARED_OVERRIDE_OUTCOME_TARGETS`, `DECLARED_STEP_INTERFACES` (with `handler_ref` strings and `route_bindings`), and `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS`. The function body at lines 388-754 calls these component wrappers, not real typed phases.
+
+This is not "scaffolding." It is a second source of truth that duplicates and competes with the handler/component architecture. S1's semantic checker must reject this exact pattern before migration begins. Currently, the checker validates hashes of this file, not its structure.
+
+**Minimal plan amendment:** Add a concrete S1 negative gate: the checker must parse `workflow.pypeline`'s AST and fail on any import from `components.py` that provides an `AUTHORING_*` callable, any `handler_ref` string in a step declaration, any `DECLARED_*` dictionary containing route/topology semantics, and any product-specific compiler path reconstruction. This is an AST-level negative checker, not a hash check.
+
+### FR-5: Tiebreaker Concurrency Is Specified But Not Required
+
+**Severity:** High | **Confidence:** High | **Consequence:** A sequential tiebreaker implementation passes S3's exit gates while changing latency and failure semantics from the NORTHSTAR contract
+
+NORTHSTAR's aspirational code has `researcher, challenger = await parallel.gather(...)` at `megaplan-native-representation-report.md:487-490`. The corrective plan says "parallel researcher/challenger" (`megaplan-native-parity-corrective-plan.md:272`). But S3's brief only requires "four tiebreaker phases" (`s3-tiebreaker-replan-native.md:16-35`) and does not explicitly gate parallelism. The current `workflow.pypeline:472-488` executes researcher then challengenger sequentially, sharing the same handler (`handle_tiebreaker_run`). This satisfies the letter of S3 while violating the NORTHSTAR.
+
+**Minimal plan amendment:** Amend S3's exit criteria to require one explicit parallel child construct with independent failure capture, deterministic reducer order, and a mutation test that serializes the children and must fail the checker.
+
+### FR-6: SUSPEND → HALT, Not Durable Reentry
+
+**Severity:** High | **Confidence:** Very High | **Consequence:** Human suspension cannot survive process death; resume authority comes from status/projection state, not reacquired custody
+
+`workflow.pypeline:741-743`: `GateOutcome.SUSPEND` routes to `AUTHORING_HALT(id="gate_suspend")`. This is a terminal halt, not a durable suspension with reentry coordinates. The native cursor/checkpoint substrate exists (`arnold/pipeline/native/checkpoint` with `read_native_cursor`, `classify_resume_cursor` per `evidence_pack/resume.py:10-13`), but canonical Megaplan suspension is not wired through it. The existing resume machinery works for `evidence-pack` pipelines, not for `workflow.pypeline`. Every human gate (prep clarification, tiebreaker decision, review verification, override) uses the same halt pattern.
+
+**Minimal plan amendment:** Before S3 migration, make suspension produce a `SUSPEND` outcome with a persisted envelope containing capability, semantic reentry path, and WBC suspend lineage. Wire the native cursor machinery to materialize that envelope. Then migrate one gate at a time. Add kill/restart tests for every gate.
+
+### FR-7: Proof Scenarios Are Never Executed
+
+**Severity:** High | **Confidence:** Very High | **Consequence:** Split-outcome behavior claims have no runtime evidence; the system can claim `implemented` for paths that crash, hang, or route differently
+
+The scenario test at `test_final_conformance_scenarios.py:31-113` validates module/case names, file paths, and hashes — it does not execute the cases or compare observed outcomes. The generator at `generator:1450-1604` records scenario metadata without running them. This means every branch (clarification, critique retry/fallback, every gate outcome, every tiebreaker decision, finalize error, approval allow/deny, DAG partial/block/cancel, review retry/rework/cap/human, every override action) is claimed without behavioral verification.
+
+**Minimal plan amendment:** Run each scenario case in a clean subprocess, capture exit code/result/trace, and validate the exact observed route sequence against the expected semantic path. Make scenario execution part of the blocking validator, not a shape/path/hash check.
+
+---
+
+## 4. Items Correctly Left to Custody M11 vs. Genuinely Missing Native Parity Integration
+
+### Items correctly left to Custody M11:
+
+1. **Run Authority grant/fence contracts, reducers, stores, decisions** — M11 owns capability grants, subject attempts, coordinator fences, CAS/idempotency, and quarantine. Native Parity consumes them, does not recreate them. Correctly scoped.
+
+2. **WBC attempt/effect schema, transactional store, outbox/reconciliation** — M11 owns the durable execution-attempt ledger, idempotent dedup, terminal uniqueness, effect intent/outcome, and persistence failure/reconciliation. Native Parity binds to the API. Correctly scoped.
+
+3. **Custody lease/epoch lifecycle, action validator, controlled-writer registry** — M11 owns exclusive leases, monotonic epochs, transfer/reclaim, and the shared validator. Native Parity calls the validator, does not implement it. Correctly scoped.
+
+4. **Cross-host transfer/reclaim, recovery, retry infrastructure** — M11 owns generic handoff and recovery. Native Parity supplies semantic targets. Correctly scoped.
+
+5. **Rebuildable projections, observation APIs, captured replay** — M11 owns projection infrastructure. Native Parity adopts it for observation. Correctly scoped.
+
+6. **Installed-runtime attestation, zero-bypass inventory, generic conformance fixtures** — M11 owns these. Native Parity extends with topology-specific proof. Correctly scoped.
+
+### Genuinely missing Native Parity integration (not M11's responsibility):
+
+1. **Producer relocation from handlers to canonical nodes.** M11's M8 added WBC evidence around existing handlers. Native Parity must move producer identity to lowered node/child paths as handlers are demoted. This is Native Parity's responsibility and is not started.
+
+2. **Four-domain identity mapping.** M11 distinguishes RA subject attempt, WBC execution attempt, and Custody lease — but the mapping to semantic node/child path is Native Parity's topology concern. No generated mapping exists in the current tree.
+
+3. **Semantic checkpoint coordinates.** M11 provides `CheckpointPayload` but does not define what constitutes a Megaplan checkpoint. Native Parity must define task ID + batch identity + fanout item path; the current tree uses `{index}`.
+
+4. **Canonical builder fix (85→14 collapse).** M11's generic infrastructure does not know about Megaplan's lowering pipeline. The `build_pipeline()` → `_canonical_steps()` collapse is purely a Native Parity defect.
+
+5. **workflow.pypeline semantic ownership.** M11's migration matrix assigns `.pypeline`/named subworkflows to Native Parity. The current file's component imports and handler refs are Native Parity's problem.
+
+6. **Typed outcomes as runtime boundary.** M11 provides the WBC attempt schema; Native Parity must make handler return typed outcomes that the runtime consumes, not raw routing strings. `outcomes.py` has the types but `manifest_backend.py` still consumes handler route-signal strings.
+
+7. **Suspension wired to native cursor machinery.** M11 provides suspend/resume lifecycle in WBC. Native Parity must produce a durable reentry envelope and wire it to the existing `arnold/pipeline/native/checkpoint` cursor. Currently `SUSPEND → HALT`, not to a cursor.
+
+8. **Auto-drive demotion.** M11 provides event/query APIs. Native Parity must reduce auto-drive to event consumption. Currently `auto.py` derives `next_step`, dispatches CLI commands, and implements independent retry/escalation.
+
+9. **Conformance generator rewrite.** M11's proof framework will produce content-addressed receipts. Native Parity must replace the self-declared evidence loop with genuine checker/runtime receipts. This is a Native Parity proof concern, not M11's generic framework.
+
+10. **Tiebreaker parallelism, fresh-session semantics, config-change reentry, per-item fanout policy.** These are all topology-specific concerns that M11's generic contracts do not address. They are Native Parity's responsibility and are underspecified or missing from the current implementation.
+
+---
+
+## 5. Sound Composition Choices
+
+Several structural decisions in the plan and current substrate are correct and should be preserved:
+
+1. **The NORTHSTAR's conjunctive action rule** (`current RA grant + fence AND current Custody lease + epoch AND exact-version WBC evidence`) is precise and composable. It prevents any single contract from becoming a universal authority. The custody-overlap-audit confirms the remote custody decisions encode this identically.
+
+2. **The four-domain identity separation** (semantic node/child, RA subject attempt, Custody target/lease, WBC execution attempt) is the correct defense against identity collapse. Even though it is not yet implemented, the contract prevents a generic `attempt_id` from silently merging permission, ownership, evidence, and topology.
+
+3. **The "WBC is never permission, lease is never permission" discipline** is non-negotiable and correctly stated in every document. The custody-overlap-audit confirms the remote custody decision record states this identically. This invariant must survive all seven sprints.
+
+4. **The decomposition of pure phase bodies vs. topology-owning constructs** (`megaplan-native-parity-corrective-plan.md:134-158`) correctly identifies parsing, serialization, prompt construction, normalization, validation, lens selection, result merging, and ready-batch calculation as permissible phase internals, while routing, suspension, retry/cap/model policy, fanout topology, and checkpoint identity must be top-level. This boundary is the right one.
+
+5. **The chain's `require_manifest: true` prerequisite** on Custody M11 (`chain.yaml:7-9`) is the correct gating mechanism. The defect is that M11 does not yet exist, not that the gating mechanism is wrong.
+
+6. **The existing typed outcome infrastructure** (`outcomes.py:19-227`) provides closed `StrEnum` vocabularies for `GateOutcome`, `ReviewOutcome`, `TiebreakerOutcome`, and `OverrideOutcome`. This is sound groundwork even though raw handler strings still steer runtime.
+
+7. **The `source_compiler.py` dynamic `parallel_map` parsing** (`source_compiler.py:3662-3810`) correctly validates item references, reducer references, and path templates with coordinate variables. The gap is retention and runtime activation, not parsing absence. This is fixable without compiler redesign.
+
+8. **The native cursor/checkpoint substrate** (`arnold/pipeline/native/checkpoint`) with `classify_resume_cursor`, `read_native_cursor`, and `NativeCursorCorruptError` exists and is used by `evidence-pack` pipelines. The gap is wiring canonical Megaplan suspension to this machinery, not inventing it.
+
+9. **The NORTHSTAR's "semantic compression without erasure" principle** (`NORTHSTAR.md:60-73`) correctly distinguishes between reducing visible steps through typed abstractions (good) and hiding semantics in handlers/components (bad). The bounded-loop, dynamic-map/reducer, and human-suspension generalizations are the right abstractions.
+
+10. **The custody-overlap-audit's amended sprint structure** (`custody-overlap-audit.md:132-199`) correctly integrates Custody M11 adoption into every sprint with dual semantic + custody-adoption gates. This is a sound refinement of the corrective plan that should be adopted when M11 lands.
+
+---
+
+**Bottom line:** The plan is directionally correct and the custody substrate is complementary, not overlapping. The current working tree has not executed the plan. Seven sprints have produced auto-published commits that do not satisfy their own exit gates. The failure mode is not ambiguity in the contracts — it is that delivery was allowed to substitute for verification, and the evidence system was allowed to substitute for behavior. The three critical fixes (collapse removal, evidence-gen rewrite, M11 sequencing) plus the four high-severity fixes (source skeleton rejection, tiebreaker parallelism, durable suspension, scenario execution) are the minimum viable path to credible parity.

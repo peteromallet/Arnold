@@ -1,0 +1,13 @@
+--- a/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog
++++ b/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog
+@@ -2882,7 +2882,9 @@ repair_loop_busy_state() {
+   }
+   if [[ -r "$pidfile" ]]; then
+     read -r existing_pid < "$pidfile" || existing_pid=""
+-    if repair_loop_pid_matches_session "$existing_pid" "$session"; then
++    # Avoid a fresh Python interpreter for obviously stale ownership.  Besides
++    # being cheaper, this keeps stale-pidfile recovery inside the claim window.
++    if kill -0 "$existing_pid" 2>/dev/null && repair_loop_pid_matches_session "$existing_pid" "$session"; then
+       exec {guard_fd}>&-
+       echo "same_session"
+       return 0

@@ -1,0 +1,92 @@
+Now I have all the evidence. Here is the verified report:
+
+---
+
+## S0 Runner Pin + North Star Action Core — Audit Verdict
+
+### 1. Verdict: **not found** (design-only; zero implementation)
+
+No code, tests, scripts, artifacts, or sprint brief exist for S0. The entire component exists only in the two design documents. The initiative chain (`chain.yaml`) starts at m1 — S0 is not even scheduled as a milestone.
+
+---
+
+### 2. Existing or Prior Artifacts (adjacent only)
+
+**Design docs (no code):**
+- `docs/arnold/megaplan-native-semantic-parity-master-plan.md:344-406` — defines S0 scope, exit gates, evidence spec
+- `docs/arnold/megaplan-north-star-sense-checks-revise-design.md:1-481` — full design for north_star_actions in the revise loop
+
+**Adjacent infrastructure that exists (reusable):**
+
+| Existing construct | Location | Gap |
+|---|---|---|
+| `gate_carry.json` build/write | `handlers/gate.py:270-308` | No `north_star_actions` field |
+| `gate.json` schema | `schemas/runtime.py:510-577` | No `north_star_actions` |
+| `revise.json` schema | `schemas/runtime.py:465-509` | No `north_star_actions_addressed` |
+| `_gate_summary_for_transition()` | `handlers/gate.py:135-151` | Already has carry-before-gate fallback |
+| `handle_revise()` | `critique_runtime.py:1068-1187` | No north_star action handling |
+| North Star anchor concept | `anchors.py:15-16`, `briefs.py:124-138`, `chain/spec.py:304` | Anchor only; no sense-check questions or action routing |
+| Flag severity resolution | `flags.py:27-35`, `model_seam.py:678-694` | For critique flags only; no dangerous-category schema enforcement |
+| `north_star` chain field | `chain/spec.py:304` | No `north_star_critical` boolean |
+
+**Missing entirely (zero hits across entire repo):**
+- `north_star_actions` in any code file (2 doc-only hits)
+- `north_star_critical` in any code file (2 doc-only hits)
+- `add_human_halt` / `human_halt` in any code file (2 doc-only hits)
+- All 6 S0 test files (`tests/arnold_pipelines/megaplan/test_north_star_*.py`)
+- `scripts/pin_megaplan_runner.py` / `scripts/check_megaplan_runner_pin.py`
+- `artifacts/native-semantic-parity/` directory
+- S0 sprint brief in `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/`
+- S0 milestone in `chain.yaml:31-81` (starts at m1)
+
+**Unverified prior claim:** The `megaplan-native-representation-conformance-report.md` (tagged as a "historical false pass" at master-plan:6-9) does not claim any S0 work. It reports on 31 traceability rows (lines 26-56) but none relate to north_star_actions or runner pinning.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+1. **`gate_carry.json` pipeline** (`handlers/gate.py:270-308`, `_shared.py:21-71`): The carry artifact already flows gate→revise with a carry-first, gate-fallback pattern. Adding `north_star_actions` is a field addition to `_build_gate_carry()` return dict and the `gate.json` schema.
+
+2. **Flag severity system** (`flags.py:27-35`, `model_seam.py:678-694`): The `resolve_severity()` and `_normalize_critique_flag()` patterns can be generalized for schema-assigned blocking severity. The dangerous-category normalization described at design doc:339-348 can be modeled on the existing flag severity pipeline.
+
+3. **`_resolve_revise_transition`** (`handlers/gate.py:154-163`): Already reads `gate_carry.json` → `gate.json` → legacy. Adding a pre-worker halt guard for `add_human_halt`/unmappable blocking actions fits naturally before the worker dispatch at `critique_runtime.py:1086`.
+
+4. **`handle_revise` post-worker** (`critique_runtime.py:1124-1187`): The payload validation and meta-field extraction at lines 1155-1162 is the right insertion point for `north_star_actions_addressed` validation.
+
+5. **North Star anchor infrastructure** (`anchors.py`, `briefs.py`, `handlers/init.py`): Question parsing from `NORTHSTAR.md` and sprint briefs can extend the existing anchor snapshot/capture pipeline.
+
+---
+
+### 4. What Still Must Be Built
+
+Everything in the S0 scope (master-plan:346-373) is greenfield:
+
+1. **Schema changes**: Add `north_star_actions[]` to `gate.json`/`gate_carry.json` schema; add `north_star_actions_addressed[]` to `revise.json` schema; add `north_star_critical` boolean to `chain.yaml` driver/milestone spec.
+
+2. **Gate handler**: Render North Star questions in gate prompt; allow `north_star_actions` through gate scratch/key promotion; normalize dangerous categories to blocking in handler code (not just prompts).
+
+3. **Revise handler**: Pre-worker halt guard for `add_human_halt`/unmappable blocking actions; post-worker validation of `north_star_actions_addressed` (concrete plan refs required, prose-only fails); explicit `gate_carry.json` → `gate.json` fallback loading.
+
+4. **Finalize/review enforcement**: Lower North Star obligations into executable tasks; block unresolved `reject_closeout` at review.
+
+5. **Severity-by-schema**: Handler-side normalization for route authority, baseline rewrites, row/carrier exemptions, target narrowing, generated conformance authority, live-plan topology/resume risk — always `blocking`, agent cannot downgrade.
+
+6. **Clean-context auditor**: Independent reviewer agent infrastructure for explanation-style questions; canary defect seeding.
+
+7. **Runner pinning**: `scripts/pin_megaplan_runner.py`, `scripts/check_megaplan_runner_pin.py`, commit SHA/package fingerprint recording, auto-drive corpus hash.
+
+8. **`north_star_critical` rejection**: Reject `bare`/`light` robustness when `north_star_critical: true`.
+
+9. **All 6 test files** listed at master-plan:377-379.
+
+10. **S0 sprint brief** and chain.yaml milestone entry.
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**S0 should be inserted before S1a as a standalone milestone.** The master plan itself says "S0 rolls back as a runner/tooling change before any semantic extraction starts" (master-plan:400). But the current `chain.yaml:31-81` has no S0 — it jumps straight to m1 (checker/outcomes/builder). The S1a brief (`s1-checker-outcomes-builder-slice.md`) does not reference any S0 dependency or north_star_actions infrastructure.
+
+**Risk**: If S1a extraction sprints begin without S0, the North Star sense-check enforcement (blocking actions, severity normalization, human-halt guards, clean-context canaries) won't exist. The master plan explicitly relies on these to replace the "broad governance apparatus" (master-plan:94-105). Without them, the only programmatic gates are the checker rules, leaving no structured mechanism to catch the judgment-heavy false-pass patterns that checker rules can't encode.
+
+**Recommended ordering**: S0 → S1a → S1b → S2... as the master plan's own milestone numbering implies (S0 before S1a at master-plan:344). Add `north_star_critical: true` to the chain driver once S0 lands.

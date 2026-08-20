@@ -1111,14 +1111,14 @@ def test_render_credential_failure_non_tty_structure(monkeypatch) -> None:
 
 def test_preflight_feedback_slot_is_soft(monkeypatch) -> None:
     """The opt-in feedback slot must not gate the run. A Codex-only user can
-    run all-codex (which pins feedback=claude:low) without an Anthropic key."""
+    run partnered-codex with an optional cross-vendor feedback slot without that vendor's key."""
     from arnold_pipelines.megaplan.preflight import preflight_check_profile
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     profile = {"plan": "codex", "execute": "codex", "feedback": "claude:low"}
-    missing = preflight_check_profile(profile, profile_name="all-codex")
+    missing = preflight_check_profile(profile, profile_name="partnered-codex")
     # feedback's ANTHROPIC requirement is soft → nothing missing.
     assert missing == []
 
@@ -1213,7 +1213,7 @@ def test_render_credential_failure_recommends_available_vendor_profile(
     )
     assert "--profile all-claude" in msg
     assert "DEEPSEEK_API_KEY" in msg
-    assert "all-codex" not in msg
+    assert "partnered-codex" not in msg
 
 
 def test_render_credential_failure_no_self_recommendation(monkeypatch) -> None:

@@ -1,0 +1,81 @@
+## S4a Execute DAG + Scheduling — Swarm Audit
+
+### 1. Verdict: **Already exists (substantially complete)**
+
+Every named sub-capability has verified code artifacts, tests, and native workflow wiring. This is not a "partly exists" or "adjacent only" situation.
+
+---
+
+### 2. Existing Artifacts with File:Line Evidence
+
+**Dependency Batching (topological sort):**
+- `arnold_pipelines/megaplan/_core/io.py:67-121` — `compute_task_batches()`: pure topological sort over `depends_on` edges, cycle detection, completed-ID filtering. `completed_ids` is a pure input contract.
+- `arnold_pipelines/megaplan/_core/io.py:145-147` — `compute_global_batches()`: thin wrapper calling `compute_task_batches` on `finalize_data["tasks"]`.
+- `arnold_pipelines/megaplan/_core/io.py:124-142` — `split_oversized_batches()`: splits batches exceeding `max_batch_size`.
+- `arnold_pipelines/megaplan/_core/scheduler/topo.py:15-65` — `schedule_batches()`: documented F5 task-DAG scheduler facade with `max_batch_size`, `completed_ids`, cycle-safe.
+
+**Dynamic Task Batches at Runtime:**
+- `arnold_pipelines/megaplan/execute/batch.py:2874-2876` — `compute_task_batches(pending_tasks, completed_ids=completed_task_ids)` called during `handle_execute_auto_loop`.
+- `arnold_pipelines/megaplan/execute/batch.py:2896-2905` — dynamic batch splitting with `single_batch_mode` optimization and review-rework branch.
+- `arnold_pipelines/megaplan/execute/batch.py:1266-1296` — `handle_execute_one_batch()`: per-batch execution with overlay from prior batch artifacts, prereq reset sync.
+
+**Blocked Scheduling + Retry:**
+- `arnold_pipelines/megaplan/execute/policy.py:169-196` — `BlockedRetryOutcome` (RETRY_FRESH/NO_RETRY/RETRY) + `BlockedRetryDecision`.
+- `arnold_pipelines/megaplan/execute/policy.py:528-619` — `evaluate_blocker_recovery_policy()`: wraps `blocker_recovery.evaluate_blocker_recovery`, cross-session detection, terminal blocker escalation.
+- `arnold_pipelines/megaplan/blocker_recovery.py:1-757` — Full 757-line shared module: `PrerequisiteScope`, `BlockerDetail`, `BlockerRecoveryEvaluation`, `command_blocker_details`, `build_prerequisite_scopes`, quality/prerequisite blocker classification.
+- `arnold_pipelines/megaplan/execute/batch.py:2566-2594` — Cross-session blocked-task reset (`--retry-blocked-tasks`), baseline-unavailable checkpoint protection.
+
+**Model/Tier Policy:**
+- `arnold_pipelines/megaplan/workflows/components.py:1784-1827` — `MODEL_ROUTING_POLICY`: phase-model override, task-complexity routing with `topology_overlays` targeting `execute.batch.solo/standard/premium`.
+- `arnold_pipelines/megaplan/execute/policy.py:138-163` — `TierRouteOutcome` + `TierRouteDecision` typed outcomes.
+- `arnold_pipelines/megaplan/execute/policy.py:460-520` — `resolve_batch_tier()`: exact/fuzzy tier match from complexity ordinal + tier map.
+- `arnold_pipelines/megaplan/_core/io.py:150-179` — `compute_batch_complexity()`: max of `task.complexity` and `task.tier_override` with fail-safe=5.
+- `arnold_pipelines/megaplan/execute/_binding/tier.py` — `select_batch_tier` exported.
+
+**Batch Continuation:**
+- `arnold_pipelines/megaplan/execute/policy.py:203-230` — `NextExecuteTransition` (EXECUTE/REVIEW/BLOCKED/DONE/AWAITING_HUMAN) + `NextStepDecision`.
+- `arnold_pipelines/megaplan/execute/policy.py:411-457` — `resolve_single_batch_next_step()`: pure three-way branch (blocked/final-batch+tracked/more-batches).
+- `arnold_pipelines/megaplan/workflows/components.py:1621-1783` — Full `EXECUTE_POLICY` with `route_surface` declaring `batch_continuation`, `timeout_retry`, `aggregate_promotion`, `review_handoff`.
+
+**Native Workflow Wiring:**
+- `arnold_pipelines/megaplan/workflows/workflow.pypeline:406-412` — `parallel_map(id="execute-batches", items="megaplan.execute.batches", step=EXECUTE_BATCH_WORKFLOW, reducer=AUTHORING_EXECUTE)` — dynamic fanout wired at source level.
+- `arnold_pipelines/megaplan/workflows/components.py:2556-2616` — `SOURCE_EXECUTE_BATCH_WORKFLOW` with `dag_ref`, `batch_source_ref`, full topology contract.
+- `arnold/workflow/source_compiler.py:282-298` — `ParsedParallelMapCall` with `items_ref` for dynamic collection resolution.
+- `arnold/workflow/source_compiler.py:5346` — Compiler lowers dynamic fanout to `FanoutPolicy(mode="dynamic")`.
+
+**Tests:**
+- `tests/execute/test_tier_binding.py:1-222` — 12 tests for `select_batch_tier`, `validate_task_complexity`, `COMPLEXITY_SCALE` integrity, AST access scan.
+- `tests/execute/test_reducer_binding.py:1-371` — `BatchOutcome`, `BatchReduceResult`, `reduce_batch`, `apply_outcome_to_state` across four outcomes.
+- `tests/execute/test_envelope_flag.py` — envelope flag tests.
+- `tests/arnold_pipelines/megaplan/test_topology_golden.py:395-436` — `test_execute_node_exposes_batch_gate_and_escalation_policy`, `test_execute_route_bindings_not_authoritative_in_component`.
+- `tests/arnold_pipelines/megaplan/test_native_golden_manifest.py:67,818,1094` — D7-execute-dag committed in manifest.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **`compute_task_batches`** (`_core/io.py:67`) is already a pure function — directly reusable as the dependency-scheduling primitive.
+- **`blocker_recovery.py`** is already a standalone module imported by `handlers/execute.py`, `handlers/override.py`, `planning/control_binding.py`, `cli/resolutions.py`, `cli/status_view.py`, `cloud/meta_repair.py`, `auto.py` — no extraction needed.
+- **`execute/policy.py`** (1085 lines) is already handler-free pure policy — `resolve_execute_entry_route`, `evaluate_destructive_approval`, `resolve_batch_tier`, `resolve_single_batch_next_step`, `evaluate_blocker_recovery_policy` are all pure functions.
+- **`schedule_batches`** (`_core/scheduler/topo.py:15`) already has a documented "do not import from execute/handlers" constraint.
+- The `parallel_map` compiler path for `items_ref` strings is already implemented and lowering to `FanoutPolicy(mode="dynamic")`.
+
+---
+
+### 4. What Still Must Be Built
+
+- **No dedicated degenerate/solo execute handler for when dynamic fanout resolves to 1 batch.** The code has `single_batch_mode` optimization (`batch.py:2893-2895`) but routes through the same `handle_execute_one_batch`, not a distinct native path.
+- **The `parallel_map(items="megaplan.execute.batches")` runtime resolution chain is not end-to-end tested in CI with the compiler's dynamic fanout lowering.** The compiler supports it (`source_compiler.py:5346`), but S1b-1 runtime proof of suspension/reentry and loop exit for dynamic fanout was listed as a requirement in the master plan (`master-plan.md:58-60`).
+- **No dead-delete mutation test** proving old execute scheduling carriers (handler-backed auto-loop in `handlers/execute.py`) cannot route corrected behavior — this is called out as required in `gpt55-native-parity-endstate-gap-report.md:116`.
+- **No frozen deterministic baseline** for execute batch scheduling outcomes.
+
+---
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+S4a should be **reclassified from "extract/build" to "verify/harden."** The implementation exists and is substantially complete. The sprint should:
+
+1. **Capture golden split-outcome baselines** for dependency batching, blocked retry, tier routing, and batch continuation using the deterministic replay harness (per master plan controls).
+2. **Add dead-delete mutation tests** proving old handler-backed execute routing cannot produce corrected behavior.
+3. **Prove dynamic fanout runtime support** (the `items="megaplan.execute.batches"` → `FanoutPolicy(mode="dynamic")` path) with CI-verifiable suspension/reentry tests.
+4. **Remove or fence** any remaining handler-owned execute routing that the policy surfaces now cover.

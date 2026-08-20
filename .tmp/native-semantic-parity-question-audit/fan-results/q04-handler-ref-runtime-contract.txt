@@ -1,0 +1,49 @@
+---
+
+## Verdict: **Agrees** with the plan — but with a critical nuance that should amend S1b.
+
+### Evidence
+
+**`handler_ref` is nowhere in the runtime contract.** Trace the dispatch chain:
+
+| Layer | File:Line | What uses `handler_ref`? |
+|---|---|---|
+| DSL `Step` dataclass | `arnold/workflow/dsl.py:131-151` | **NOT a field.** Fields are `id, kind, label, inputs, outputs, capabilities, policy, source_span, subpipeline, metadata`. |
+| Runtime `Step` Protocol | `arnold/pipeline/types.py:173-189` | **NOT required.** Only `name`, `kind`, `run(ctx)`. |
+| Compiler | `arnold/workflow/compiler.py:249-272` | Passes `kind` to `WorkflowNode`. `handler_ref` is opaque metadata blob. |
+| Core execution layer | `arnold/execution/` (entire directory) | **Zero references.** `grep -r handler_ref arnold/execution/` → empty. |
+| Core pipeline layer | `arnold/pipeline/` (entire directory) | **Zero references.** |
+| Manifest backend | `arnold_pipelines/megaplan/runtime/manifest_backend.py:114-122` | Dispatches by `node_id` (step `id`). Checks `HANDLER_NODE_IDS` hard-coded set. |
+| Handler resolution | `manifest_backend.py:146-167` | Hard-coded `mapping[node_id]` → handler callable. No `handler_ref` lookup. |
+| Native phase compat path | `_compatibility.py:235-267` | **Explicitly deleted**: `del handler_ref` (line 243). Uses `COMMAND_HANDLERS.get(phase_name)`. |
+
+**`handler_ref` is only ever metadata —** slurped in at two points:
+
+1. `source_compiler.py:98` — `_LOWERED_STEP_METADATA_KEYS = frozenset({"handler_ref", "terminal"})` — it's classified as a metadata key alongside `terminal`.
+2. `planning.py:583-589` — `_metadata_for_step()` puts it into Step `.metadata` dict, falling back `declared.get("handler_ref", component.metadata.get("handler_ref"))`.
+
+And it's entirely optional:
+- `components.py:299`: `handler_ref: str | None = None`
+- `components.py:325`: `if handler_ref is not None: component_metadata["handler_ref"] = handler_ref`
+
+**The one diagnostic that references it** (`diagnostics.py:671-676`, `UNRESOLVED_CALLEE_PROVENANCE`) is a static checker rule, not a runtime dispatch mechanism.
+
+### Answer to the specific questions
+
+**Can the DSL/manifest runtime execute a step with no `handler_ref`?** Yes. A `Step(id="foo", kind="bar")` with no `handler_ref` in metadata will compile, produce a `WorkflowNode`, and be dispatched by `node_id` through `_resolve_handler()`. The runtime never reads `handler_ref`.
+
+**Is component consultation in `build_pipeline()` accidental?** It's not accidental — it's the current structural design. `_canonical_steps()` (`planning.py:643-672`) iterates over `PIPELINE_STEP_COMPONENTS` (component-backed) to build canonical steps, consulting component metadata for `handler_ref`, `route_bindings`, `policy_refs`, `override_actions`. But since `handler_ref` is never used at runtime, the component consultation for `handler_ref` is **vestigial**.
+
+### What this means for the plan
+
+The assumption "handlers become phase bodies is achievable in the existing runtime" **holds**. The runtime already dispatches by `node_id`/`kind`, not by `handler_ref`. The native phase path in `_compatibility.py` already deletes `handler_ref` and dispatches by `phase_name`.
+
+**However**, there's a hidden predecessor to S1b that the plan understates: the real dispatch mechanism is the **hard-coded node_id→handler mapping** in `manifest_backend.py:146-167`. That mapping is the true native-phase dispatch mechanism. S1b's goal of "prove `build_pipeline()` consumes lowered `.pypeline` topology" must also address how the manifest backend's `_resolve_handler()` mapping gets derived from source rather than being hand-maintained.
+
+### Smallest concrete plan amendment
+
+Add to S1b scope:
+
+> **S1b amendment**: The manifest backend's `_resolve_handler()` hard-coded mapping (`manifest_backend.py:146-167`) must be deriveable from lowered `.pypeline` `kind` fields, not hand-maintained. As a transitional step, prove that removing `handler_ref` from all component metadata and step metadata does not change runtime behavior — the dispatch is already `node_id`-based. The real predecessor to S1b native-phase dispatch is the `HANDLER_NODE_IDS` + `_resolve_handler()` mechanism, not `handler_ref`.
+
+Word count: ~870.

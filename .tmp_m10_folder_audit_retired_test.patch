@@ -1,0 +1,12 @@
+diff --git a/tests/pipelines/test_folder_audit.py b/tests/pipelines/test_folder_audit.py
+--- a/tests/pipelines/test_folder_audit.py
++++ b/tests/pipelines/test_folder_audit.py
+@@ -5,4 +5,7 @@ coverage lives in the active pipeline contract suites.
+ """
+ 
+ import pytest
+ 
+-pytest.skip("folder-audit pipeline was archived; current native targets remain covered", allow_module_level=True)
++@pytest.mark.skip(reason="folder-audit pipeline was archived; current native targets remain covered")
++def test_folder_audit_pipeline_retired() -> None:
++    pass

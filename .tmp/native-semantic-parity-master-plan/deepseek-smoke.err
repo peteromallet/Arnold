@@ -1,0 +1,6 @@
+[launch_hermes_agent] model=deepseek:deepseek-v4-pro → resolved=deepseek-v4-pro toolsets=['file', 'web', 'terminal'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] WARNING: 'terminal' toolset is enabled but the megaplan sandbox is NOT installed in this entrypoint. Shell commands will run with the invoking user's privileges.
+[launch_hermes_agent] streaming forced (provider + max_tokens > 4096)
+  [tool] ♪(´ε` ) 📖 .megaplan/initiatives/megap...
+  [done] ┊ 📖 read      ...e-parity-corrective/NORTHSTAR.md  0.9s (1.0s)
+[launch_hermes_agent] done in 8.3s

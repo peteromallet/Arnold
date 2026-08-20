@@ -1,0 +1,40 @@
+{
+  "schema": "arnold.delegation_smoke_receipt.v1",
+  "verdict": "PASS",
+  "completed_at": "2026-08-02T17:32:41Z",
+  "nonce": "SOL-LUNA-GPT56-20260802-PASS4-41D7",
+  "fixture": {
+    "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
+    "sha256": "fa174f33bc98b68504d8a2813a645e399015421c542ec9d43c374671dc11afb8",
+    "line": 37,
+    "predicate": "case-sensitive substring containment",
+    "needle": "Nested Sol → Luna delegation",
+    "observed": true
+  },
+  "parent": {
+    "requested_model": "gpt-5.6-sol",
+    "observed_model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "session_id": "019fc387-bc6f-75b3-8996-96ef48995c59",
+    "cwd": "/Users/peteromalley/Documents/Arnold",
+    "transcript_path": "/Users/peteromalley/.codex/sessions/2026/08/02/rollout-2026-08-02T19-31-20-019fc387-bc6f-75b3-8996-96ef48995c59.jsonl",
+    "transcript_sha256": "59ada0281e74862913a02804fce4ab0471ed6ade3e6da61fbda3fab01d8301f2"
+  },
+  "child": {
+    "requested_model": "gpt-5.6-luna",
+    "observed_model": "gpt-5.6-luna",
+    "reasoning_effort": "high",
+    "sandbox": "read-only",
+    "session_id": "019fc388-acd1-7653-867c-39ec295fd75a",
+    "cwd": "/Users/peteromalley/Documents/Arnold",
+    "exit_code": 0,
+    "stdout_sha256": "295369f1147ee497ccb57a7e1056b65c88c4bc81cc415dd8903e07ae2e7729e2",
+    "stderr_sha256": "71dfb249f17405ac6b920cb8bfe0fcb129504e21fd8f0d9dae12b4e63ca98f04",
+    "transcript_path": "/Users/peteromalley/.codex/sessions/2026/08/02/rollout-2026-08-02T19-32-22-019fc388-acd1-7653-867c-39ec295fd75a.jsonl",
+    "transcript_sha256": "6a91eebcd259bec5e0ed970f92e93d59e717a8d8cded9ef315a9b94b0ba28a6b"
+  },
+  "result": {
+    "passed": true,
+    "mutations_performed": false
+  }
+}

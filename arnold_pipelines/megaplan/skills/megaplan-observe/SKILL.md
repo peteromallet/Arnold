@@ -1,1 +1,1 @@
-../../data/observe_skill.md
+/Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/data/observe_skill.md

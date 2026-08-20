@@ -92,7 +92,7 @@ The symbolic `premium` spec is a vendor-neutral placeholder, **not a runnable wo
 2. **`[agent] vendor`** in user config (`~/.config/megaplan/config.json`).
 3. **Project default** — `claude` unless overridden.
 
-Choosing `--vendor codex` means every unresolved symbolic `premium` slot becomes `codex` (no implicit Claude invocation). Choosing `--vendor claude` means the reverse. Concrete premium profiles that are not marked `vendor_locked`, including `all-claude`, are still rewritable by `--vendor`. Profiles with `vendor_locked = true` (`all-codex`, `variable-claude`, `variable-codex`, `apex`) are exempt from vendor rewriting.
+Choosing `--vendor codex` means every unresolved symbolic `premium` slot becomes `codex` (no implicit Claude invocation). Choosing `--vendor claude` means the reverse. Concrete premium profiles that are not marked `vendor_locked`, including `all-claude`, are still rewritable by `--vendor`. Profiles with `vendor_locked = true` (`partnered-codex`, `variable-claude`, `variable-codex`, `apex`) are exempt from vendor rewriting.
 
 **Concrete-only user config.** The `agents.<phase>` keys in user config must be explicit worker names (`claude`, `codex`, `hermes`). `megaplan config set agents.plan premium` is rejected — the symbolic spec is a source-default/profile construct, not a user-facing value. Use the `--vendor` flag or `[agent] vendor` to control which vendor premium phases route to, and use `--phase-model` or explicit `agents.<phase> = claude`/`codex` to pin individual phases.
 

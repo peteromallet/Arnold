@@ -16,7 +16,6 @@ ALLOWED_RAW_FANOUT_MODULES = {
     Path("arnold/pipelines/megaplan/_core/hermes_fanout.py"),
     Path("arnold/pipelines/megaplan/_core/process_fanout.py"),
     Path("arnold/pipelines/megaplan/_core/worker_fanout.py"),
-    Path("arnold/pipelines/megaplan/workers/hermes.py"),
     # Legacy compatibility shim for tests that still import _run_check.
     # The production run_parallel_critique path below this shim dispatches
     # through WorkerUnit/scatter_worker_units.
@@ -26,7 +25,6 @@ ALLOWED_RAW_FANOUT_MODULES = {
 PROHIBITED_IMPORTS = {
     "concurrent.futures",
     "multiprocessing",
-    "arnold_pipelines.megaplan.workers.hermes",
 }
 
 PROHIBITED_NAMES = {

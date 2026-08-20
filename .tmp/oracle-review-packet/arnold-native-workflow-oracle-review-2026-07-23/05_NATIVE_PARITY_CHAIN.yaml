@@ -1,0 +1,284 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+
+launch_preconditions:
+- name: pre-merge milestone conformance-gate bootstrap completed
+  kind: chain_completed
+  chain: .megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
+  require_manifest: true
+- name: custody control plane M11 is completed with content-addressed proof
+  kind: chain_completed
+  chain: .megaplan/initiatives/custody-control-plane/chain.yaml
+  require_manifest: true
+- name: end-state report exists
+  path: docs/arnold/megaplan-native-representation-report.md
+  check:
+    kind: contains_text
+    text: Megaplan Native Python and Reusable Workflow Platform Representation Report
+- name: golden source-to-runtime trace contract exists
+  path: .megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md
+  check:
+    kind: contains_text
+    text: Native Megaplan golden source-to-runtime trace contract
+- name: current codebase map exists
+  path: docs/arnold/megaplan-native-current-codebase-map.md
+  check:
+    kind: contains_text
+    text: Megaplan Native Parity Current Codebase Map
+- name: oracle synthesis exists
+  path: docs/arnold/megaplan-native-oracle-synthesis.md
+  check:
+    kind: contains_text
+    text: Megaplan Native Parity Oracle Synthesis
+- name: corrective plan exists
+  path: docs/arnold/megaplan-native-parity-corrective-plan.md
+  check:
+    kind: contains_text
+    text: Megaplan Native Parity Corrective Plan
+- name: corrective initiative source is committed and clean
+  kind: git_tracked
+  path: .megaplan/initiatives/megaplan-native-parity-corrective
+- name: corrective plan is committed and clean
+  kind: git_tracked
+  path: docs/arnold/megaplan-native-parity-corrective-plan.md
+
+milestones:
+- label: s1-custody-admission-semantic-preservation
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s1-custody-admission-semantic-preservation.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/s1-proof-map.json
+  notes: Admit the exact M11 substrate, inventory and stage .pypeline-to-.pype migration without selecting it, freeze exact-one/private-step/shared-Python/identity semantics, and hand S2F a recoverable candidate plus negative corpus.
+- label: s2f-pype-compiler-identity-converter
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2f-pype-compiler-identity-converter.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s1-custody-admission-semantic-preservation
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_pype_authoring_contract.py
+    conformance: docs/arnold/pype-authoring-conformance.yaml
+    traceability: docs/arnold/pype-authoring-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-format-readiness-proof-map.json
+  transition:
+    kind: receipt_consuming_transition
+    transition_id: arnold.megaplan.pype_authoring_cutover.v1
+    handler: scripts/apply_megaplan_pype_authoring_cutover.py
+    input_receipts:
+    - current_validation
+    output_receipt: .megaplan/initiatives/megaplan-native-parity-corrective/transition-s2f-pype-authoring-cutover.json
+    verify:
+      kind: conformance_gate
+      validator: scripts/validate_pype_authoring_contract.py
+      conformance: docs/arnold/pype-authoring-conformance.yaml
+      traceability: docs/arnold/pype-authoring-traceability.yaml
+      proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-format-proof-map.json
+  notes: Implement the exact-one .pype compiler/linker, identity/descriptor integration, converter, diagnostics and preview; after readiness validation, the typed transition selects .pype and a post-transition GO-FORMAT verifier must pass before runtime work.
+- label: s2r-durable-control-primitives-custody-binding
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2r-durable-control-primitives-custody-binding.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s2f-pype-compiler-identity-converter
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-0-proof-map.json
+  notes: Implement product-neutral durable decisions, loops, fanout/fanin, retries, suspension and effect/checkpoint boundaries over admitted RA/Custody/WBC APIs; close GO-0 before product migration.
+- label: s3a-prep-plan-critique-native-cutover
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3a-prep-plan-critique-native-cutover.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s2r-durable-control-primitives-custody-binding
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-1a-readiness-proof-map.json
+  transition:
+    kind: receipt_consuming_transition
+    transition_id: arnold.megaplan.prep_plan_critique_cutover.v1
+    handler: scripts/apply_megaplan_native_cutover.py
+    input_receipts:
+    - current_validation
+    output_receipt: .megaplan/initiatives/megaplan-native-parity-corrective/transition-s3a-prep-plan-critique.json
+    verify:
+      kind: conformance_gate
+      validator: scripts/validate_megaplan_native_stage_gate.py
+      conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+      traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+      proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-1a-proof-map.json
+  notes: Reconsume go-format-receipt.json through scripts/validate_pype_authoring_contract.py before any S3A work; land workflow.pype and plan_quality/critique.pype non-authoritatively, then use the typed transition and post-transition GO-1A verifier to make prep, plan and critique load-bearing with exclusive resume-plane binding.
+- label: s3b-gate-revise-front-half-cutover
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3b-gate-revise-front-half-cutover.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s3a-prep-plan-critique-native-cutover
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-1b-readiness-proof-map.json
+  transition:
+    kind: receipt_consuming_transition
+    transition_id: arnold.megaplan.gate_revise_front_half_cutover.v1
+    handler: scripts/apply_megaplan_native_cutover.py
+    input_receipts:
+    - current_validation
+    output_receipt: .megaplan/initiatives/megaplan-native-parity-corrective/transition-s3b-gate-revise.json
+    verify:
+      kind: conformance_gate
+      validator: scripts/validate_megaplan_native_stage_gate.py
+      conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+      traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+      proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-1b-proof-map.json
+  notes: Land gate/revise non-authoritatively; the typed transition relocates producer/seam/fence ownership, and the post-transition GO-1B verifier proves the front-half cutover plus remaining old-carrier/scaffold inertness.
+- label: s4-tiebreaker-finalize-durable-reentry
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s4-tiebreaker-finalize-durable-reentry.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s3b-gate-revise-front-half-cutover
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/s4-readiness-proof-map.json
+  transition:
+    kind: receipt_consuming_transition
+    transition_id: arnold.megaplan.tiebreaker_finalize_cutover.v1
+    handler: scripts/apply_megaplan_native_cutover.py
+    input_receipts:
+    - current_validation
+    output_receipt: .megaplan/initiatives/megaplan-native-parity-corrective/transition-s4-tiebreaker-finalize.json
+    verify:
+      kind: conformance_gate
+      validator: scripts/validate_megaplan_native_stage_gate.py
+      conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+      traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+      proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/s4-proof-map.json
+  notes: Land tiebreaker/finalize/human durable reentry non-authoritatively, then use the exact accepted readiness receipt in the typed atomic producer/seam/fence transition and require the post-transition S4 verifier before completion.
+- label: s5a-delivery-shadow-effect-class-proof
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5a-delivery-shadow-effect-class-proof.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  phase_model:
+  - execute=codex:gpt-5.5
+  - loop_execute=codex:gpt-5.5
+  depends_on:
+  - s4-tiebreaker-finalize-durable-reentry
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-2-proof-map.json
+  notes: Build the delivery cycle in comparison/shadow mode, make the complete future-live NP-GT-004/005 behavior matrix green, inventory every external-effect protocol class, and close GO-2 without live cutover.
+- label: s5b-live-delivery-cutover-review-rework
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5b-live-delivery-cutover-review-rework.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  phase_model:
+  - execute=codex:gpt-5.5
+  - loop_execute=codex:gpt-5.5
+  depends_on:
+  - s5a-delivery-shadow-effect-class-proof
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/s5b-readiness-proof-map.json
+  transition:
+    kind: receipt_consuming_transition
+    transition_id: arnold.megaplan.live_delivery_cutover.v1
+    handler: scripts/apply_megaplan_native_cutover.py
+    input_receipts:
+    - current_validation
+    - milestone_validation:s5a-delivery-shadow-effect-class-proof
+    output_receipt: .megaplan/initiatives/megaplan-native-parity-corrective/transition-s5b-live-delivery.json
+    verify:
+      kind: conformance_gate
+      validator: scripts/validate_megaplan_native_stage_gate.py
+      conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+      traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+      proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/s5b-proof-map.json
+  notes: Validate current readiness, then use the typed live-delivery transition to consume both that receipt and the exact accepted S5A GO-2 receipt; the post-transition verifier proves the single cutover, bounded review/rework, reconciliation, and old-writer fence.
+- label: s6-override-auto-control-adoption
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s6-override-auto-compat-collapse.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s5b-live-delivery-cutover-review-rework
+  validate:
+  - kind: conformance_gate
+    validator: scripts/validate_megaplan_native_stage_gate.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-3-readiness-proof-map.json
+  transition:
+    kind: receipt_consuming_transition
+    transition_id: arnold.megaplan.control_authority_cutover.v1
+    handler: scripts/apply_megaplan_native_cutover.py
+    input_receipts:
+    - current_validation
+    output_receipt: .megaplan/initiatives/megaplan-native-parity-corrective/transition-s6-control-authority.json
+    verify:
+      kind: conformance_gate
+      validator: scripts/validate_megaplan_native_stage_gate.py
+      conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+      traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+      proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/go-3-proof-map.json
+  notes: Land authored overrides/recovery non-authoritatively, transition control authority once, and require post-transition GO-3 proof that auto/projections are non-authoritative consumers and old carriers are inert.
+- label: s7-native-topology-conformance
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s7-final-conformance-rollout.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s6-override-auto-control-adoption
+  validate:
+  - kind: final_conformance_gate
+    validator: scripts/validate_megaplan_native_parity_conformance.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/final-proof-map.json
+  notes: Extend the admitted M11 proof framework with native topology set equality, cross-file/root conformance, zero hidden durable Python or route authority, and zero live .pypeline authoring/admission surfaces.
+
+on_failure:
+  retry: retry_milestone
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+prerequisite_policy: required
+validation_policy: required
+driver:
+  auto_approve: true
+  max_iterations: 90
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0

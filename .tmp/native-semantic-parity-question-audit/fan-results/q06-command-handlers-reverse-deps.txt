@@ -1,0 +1,82 @@
+Now I have all evidence. Here is the complete answer.
+
+---
+
+## Q6 Audit: `COMMAND_HANDLERS`, CLI Surface, Reverse Dependencies
+
+### 1. Where `COMMAND_HANDLERS` Lives
+
+**`arnold_pipelines/megaplan/cli/__init__.py:2448–2491`** — NOT in `arnold/cli/`.
+
+```python
+# :2448
+COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
+    "anchors": handle_anchors,
+    "init": handle_init,
+    "plan": handle_plan,
+    "prep": handle_prep,
+    "critique": handle_critique,
+    "revise": handle_revise,
+    "gate": handle_gate,
+    "finalize": handle_finalize,
+    "execute": handle_execute,
+    "review": handle_review,
+    # ... 33 more entries through :2491
+}
+```
+
+This is the Megaplan pipeline CLI (`megaplan gate`, `megaplan execute`, etc.). It is imported by `_compatibility.py:255`:
+
+```python
+# _compatibility.py:255
+from arnold_pipelines.megaplan.cli import COMMAND_HANDLERS
+```
+
+The plan line 108 says `_compatibility.py:235-267` routes phases through `COMMAND_HANDLERS`. **Confirmed.**
+
+### 2. Is `arnold/cli` a Semantic Surface?
+
+**Yes, and the plan correctly identifies it as a closure bypass.**
+
+`arnold/cli/workflow.py` (the *library* CLI, not the Megaplan pipeline CLI) has four call sites that call `check_workflow_file(source_path)` **without evidence**, bypassing strict `AWF245_ROW_EVIDENCE_INSUFFICIENCY` enforcement:
+
+| Line(s) | Context | Evidence bypass |
+|---|---|---|
+| `arnold/cli/workflow.py:207-208` | `_cmd_check` | `workflow.check_workflow_file(source_path)` — no evidence |
+| `arnold/cli/workflow.py:433-438` | `_cmd_inspect` | `workflow.check_workflow_file(source_path)` — no evidence |
+| `arnold/cli/workflow.py:513-515` | `_cmd_compile` | `workflow.check_workflow_file(source_path)` — no evidence |
+| `arnold/cli/workflow.py:676-677` | `_cmd_graph` | `workflow.check_workflow_file(source_path)` — no evidence |
+
+All four verified at exact lines. The plan's S1a deletion/quarantine ledger (lines 198–202) correctly lists these and requires them to be routed through strict closeout or renamed non-semantic.
+
+**There are two distinct CLI surfaces and the plan conflates their names** — it calls the bypass sites `arnold/cli/workflow.py` (correct) but the `COMMAND_HANDLERS` dictionary lives in `arnold_pipelines/megaplan/cli/__init__.py`. The plan's line 108 correctly cites the import path though.
+
+### 3. Reverse-Dependency Check: Does Anything Outside Megaplan Import `components.py`?
+
+**All 19 importers are within `arnold_pipelines/megaplan/` or `tests/`.** No other pipeline package imports Megaplan `components.py`.
+
+However, `arnold/workflow/source_compiler.py` has **three hardcoded string-constant couplings** that reference Megaplan components by fully-qualified module path — they are not `import` statements but dynamic lookups:
+
+| Line | String | Purpose |
+|---|---|---|
+| `source_compiler.py:101` | `_MEGAPLAN_COMPONENT_MODULE = "arnold_pipelines.megaplan.workflows.components"` | Module path constant for dynamic component resolution |
+| `source_compiler.py:767` | `_TIEBREAKER_WORKFLOW_COMPONENT_REF = "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_WORKFLOW"` | Tiebreaker wrapper detection |
+| `source_compiler.py:1765` | `f"arnold_pipelines.megaplan.workflows.components:{export_name}"` | Boundary row spec lookup |
+
+These are string references used by the checker/rejection machinery itself to detect legacy carriers. **If S2–S6 deletions remove component exports that `source_compiler.py`'s string constants reference, the checker's own carrier-detection logic would break.** This is a cross-package impact not catalogued in the S2–S6 deletion lists.
+
+### Verdict: **Weakens the plan** (with a specific, small amendment)
+
+**What the plan gets right:**
+- `COMMAND_HANDLERS` location and `_compatibility.py` import are correctly identified.
+- `arnold/cli/workflow.py` bypass sites are correctly enumerated and classified.
+- No other pipeline packages import `components.py` — the assumption that deleting Megaplan route bindings won't break other pipelines holds.
+
+**What the plan misses:**
+The `source_compiler.py` string-constant couplings (lines 101, 767, 1765) mean the checker itself depends on specific `components.py` exports remaining importable. Deleting those exports in S2–S6 would break `_MEGAPLAN_COMPONENT_MODULE`, `_TIEBREAKER_WORKFLOW_COMPONENT_REF`, and the `_implemented_boundary_rows` row-spec builder. The plan's scan roots (line 137–139) correctly include `arnold/workflow` but the S2–S6 deletion lists never mention that `source_compiler.py`'s string references must be updated in lockstep.
+
+### Smallest Concrete Plan Amendment
+
+Add to the S1a scope (after line 144) or the S2–S6 shared deletion ledger:
+
+> **Cross-package impact entry:** `arnold/workflow/source_compiler.py:101,767,1765` contain hardcoded string constants referencing `arnold_pipelines.megaplan.workflows.components` exports. When S2–S6 delete component exports (e.g., `SOURCE_TIEBREAKER_WORKFLOW`, boundary-row exports), the corresponding string constants in `source_compiler.py` must be updated to reference the new native-source constructs, or the checker's own carrier-detection logic will fail. This is not an import dependency but a string-constant coupling that must be tracked in the per-sprint mutation gates.

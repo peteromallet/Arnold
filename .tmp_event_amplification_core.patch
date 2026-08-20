@@ -1,0 +1,95 @@
+diff --git a/arnold_pipelines/megaplan/_core/io.py b/arnold_pipelines/megaplan/_core/io.py
+--- a/arnold_pipelines/megaplan/_core/io.py
++++ b/arnold_pipelines/megaplan/_core/io.py
+@@ -722,6 +722,14 @@ def committed_framed_json_transactions(path: Path) -> dict[str, list[dict[str, A
+     return committed
+ 
+ 
++def framed_json_transaction_is_committed(path: Path, tx_id: str) -> bool:
++    """Stream the journal until *tx_id*'s durable commit marker is found."""
++    return any(
++        record.get("tx_id") == tx_id and record.get("event_type") == "_tx_commit"
++        for record in iter_framed_json_records(path)
++    )
++
++
+ def read_committed_framed_json_records(
+     path: Path,
+     *,
+@@ -824,12 +832,13 @@ def _apply_prepared_blob_promotions(payload: Mapping[str, Any]) -> None:
+         _rename_with_fsync(staging_path, final_path)
+ 
+ 
+-def _apply_prepared_event_logs(payload: Mapping[str, Any]) -> None:
++def _apply_prepared_event_logs(
++    payload: Mapping[str, Any], *, verify_existing: bool = False
++) -> None:
+     tx_id = payload["tx_id"]
+     for entry in payload.get("event_logs", []):
+         log_path = Path(entry["path"])
+-        committed_ids = set(committed_framed_json_transactions(log_path))
+-        if tx_id in committed_ids:
++        if verify_existing and framed_json_transaction_is_committed(log_path, tx_id):
+             continue
+         append_framed_json_transaction(log_path, tx_id, entry.get("records", []))
+ 
+@@ -858,8 +867,9 @@ def commit_journal_transaction(root: Path, tx_id: str) -> None:
+     if not isinstance(payload, dict):
+         raise ValueError(f"Malformed prepare payload at {prepare_path}")
+     payload["journal_root"] = str(root)
++    is_recovery = journal_commit_path(root, tx_id).exists()
+     write_journal_commit_marker(root, tx_id)
+     _apply_prepared_writes(payload)
+     _apply_prepared_blob_promotions(payload)
+-    _apply_prepared_event_logs(payload)
++    _apply_prepared_event_logs(payload, verify_existing=is_recovery)
+     _cleanup_prepared_transaction(payload)
+diff --git a/arnold_pipelines/megaplan/observability/events_projection.py b/arnold_pipelines/megaplan/observability/events_projection.py
+--- a/arnold_pipelines/megaplan/observability/events_projection.py
++++ b/arnold_pipelines/megaplan/observability/events_projection.py
+@@ -112,5 +112,31 @@ def _write_projection_seq(plan_dir: Path, seq: int) -> None:
+     _atomic_write_text(_projection_seq_path(plan_dir), str(seq))
+ 
+ 
++def _read_projection_tail_seq(path: Path) -> int | None:
++    """Read only the final NDJSON record and return its sequence."""
++    try:
++        with path.open("rb") as handle:
++            handle.seek(0, os.SEEK_END)
++            position = handle.tell()
++            buffer = b""
++            while position > 0:
++                chunk_size = min(64 * 1024, position)
++                position -= chunk_size
++                handle.seek(position)
++                buffer = handle.read(chunk_size) + buffer
++                stripped = buffer.rstrip(b"\r\n")
++                newline = stripped.rfind(b"\n")
++                if newline >= 0 or position == 0:
++                    line = stripped[newline + 1 :]
++                    if not line:
++                        return None
++                    record = json.loads(line.decode("utf-8"))
++                    seq = record.get("seq") if isinstance(record, dict) else None
++                    return seq if isinstance(seq, int) else None
++    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
++        return None
++    return None
++
++
+ def _project_emitted_event(event: Mapping[str, Any]) -> dict[str, Any]:
+     """Return the canonical compatibility projection for one emitted event."""
+@@ -153,7 +179,12 @@ def append_projection_event(
+         return write_projection(plan_dir, store, plan_id=plan_id, force=True)
+ 
+     projected_seq = _read_projection_seq(plan_dir)
+-    if not ndjson_path.exists() or projected_seq != raw_seq - 1:
++    if not ndjson_path.exists():
+         return write_projection(plan_dir, store, plan_id=plan_id, force=True)
++    if projected_seq != raw_seq - 1:
++        if _read_projection_tail_seq(ndjson_path) == raw_seq - 1:
++            _write_projection_seq(plan_dir, raw_seq - 1)
++        else:
++            return write_projection(plan_dir, store, plan_id=plan_id, force=True)
+ 
+     line = (_canonical_dumps(_project_emitted_event(event)) + "\n").encode("utf-8")

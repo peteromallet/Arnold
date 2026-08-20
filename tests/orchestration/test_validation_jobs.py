@@ -405,6 +405,64 @@ class TestSelectorLifecycleOwnership:
         assert lifecycle.status == SELECTOR_READY
         assert lifecycle.missing_selectors == ()
 
+    def test_missing_node_declared_by_other_task_is_deferred_with_graph_outputs(
+        self, tmp_path: Path
+    ) -> None:
+        """Graph-level ownership defers a selector another task will create."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            SELECTOR_DEFERRED,
+            SELECTOR_INVALID,
+            classify_selector_lifecycle,
+            graph_declared_output_paths,
+        )
+
+        repo = tmp_path / "repo"
+        (repo / "tests").mkdir(parents=True)
+        task = {"write_set": {"paths": ["pyproject.toml"]}}
+        other = {"write_set": {"paths": ["tests/test_catalog.py"]}}
+        graph_outputs = graph_declared_output_paths([task, other])
+
+        # Without the graph union the single-task rule stays fail-closed.
+        alone = classify_selector_lifecycle(
+            project_dir=repo,
+            job={"selectors": ["tests/test_catalog.py"]},
+            task=task,
+        )
+        assert alone.status == SELECTOR_INVALID
+
+        lifecycle = classify_selector_lifecycle(
+            project_dir=repo,
+            job={"selectors": ["tests/test_catalog.py"]},
+            task=task,
+            all_declared_outputs=graph_outputs,
+        )
+        assert lifecycle.status == SELECTOR_DEFERRED
+        assert lifecycle.undeclared_missing_selectors == ()
+        assert lifecycle.missing_selectors == ("tests/test_catalog.py",)
+
+    def test_missing_node_declared_by_nobody_is_invalid_even_with_graph_outputs(
+        self, tmp_path: Path
+    ) -> None:
+        """Graph ownership never admits a selector no task declares."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            SELECTOR_INVALID,
+            classify_selector_lifecycle,
+        )
+
+        repo = tmp_path / "repo"
+        (repo / "tests").mkdir(parents=True)
+        task = {"write_set": {"paths": ["src/owned.py"]}}
+
+        lifecycle = classify_selector_lifecycle(
+            project_dir=repo,
+            job={"selectors": ["tests/test_ghost.py"]},
+            task=task,
+            all_declared_outputs=("src/owned.py", "tests/test_catalog.py"),
+        )
+
+        assert lifecycle.status == SELECTOR_INVALID
+        assert lifecycle.undeclared_missing_selectors == ("tests/test_ghost.py",)
+
 
 # ---------------------------------------------------------------------------
 # Content-addressed evidence — deterministic and durable

@@ -1,0 +1,80 @@
+## 1. Verdict: Already exists, substantially complete
+
+S6a (Override/Human Control Surface) is **largely built**. All six override actions plus invalid-action rejection exist in production code with handlers, state-machine guards, authority receipts, boundary fixtures, semantic-health tests, auto-driver integration, and a parallel control-interface routing path behind a feature flag. The master plan's S6 sprint is not about building the override surface from scratch — it's about extracting the existing override route authority out of handler code and into source-visible `.pypeline` constructs, removing auto-drive as a second route brain, and quarantining compatibility projections.
+
+---
+
+## 2. Existing or prior artifacts (with file:line evidence)
+
+### Core handler (all 11 override actions)
+- **`arnold_pipelines/megaplan/handlers/override.py`** (1,944 lines): Complete dispatch table at L1910–1924 maps all 11 canonical actions to handler functions. Individual handlers:
+  - `_override_abort`: L735–760
+  - `_override_force_proceed`: L935+ (with strict-notes guard, debt registry, gate artifact rebuild)
+  - `_override_replan`: L260–272 (output builder), L436+ (state mutator via control path)
+  - `_override_recover_blocked`: L1224–1361 (resume-cursor validation, blocker resolution, predecessor recovery)
+  - `_override_resume_clarify`: L1857–1907 (prep-sourced clarification guard, STATE_AWAITING_HUMAN → STATE_PREPPED)
+  - `_override_adopt_execution`: L865–931 (execution.json + finalize.json completeness validation)
+  - Invalid-action rejection: L999–1004 (force-proceed state guard), L1032–1037 (recover-blocked state guard), L1865–1876 (resume-clarify state guard), L1941 (unknown action → `CliError("invalid_override")`)
+
+### Authority matrix (declarative override registry)
+- **`arnold_pipelines/megaplan/workflows/override_matrix.py`** L12–26: `_OVERRIDE_ACTION_KEYS` — all 11 actions. L54–151: `_DECLARED_OVERRIDE_AUTHORITY` — per-action family, route_signal, target_ref, dispatch_surface. L197: `OVERRIDE_ACTION_MATRIX` built tuple.
+- **`arnold_pipelines/megaplan/planning/operations.py`** L44–55: `_OVERRIDE_CATALOG` with kind classification (annotation, termination, transition, recovery, config).
+
+### Boundary contracts and fixtures (S6 authority evidence)
+- **`arnold_pipelines/megaplan/workflows/boundary_contracts.py`** L54–61: Eight S6 row IDs (`s6.override.abort.1`, `.force_proceed.1`, `.replan.1`, `.recover_blocked.1`, `.resume_clarify.1`, `.adopt_execution.1`, `.suspension.1`, `.human_gate.1`).
+- **Boundary fixture receipts exist** for all eight authorities in `docs/arnold/megaplan-native-representation-boundary-fixtures/override_*_authority/boundary_receipts/` — each contains `authority_records`, `row_id`, `state_observation`, and `evidence_refs` (verified by directory listing and two receipt reads).
+
+### Control interface routing (strangler path behind feature flag)
+- **`arnold_pipelines/megaplan/control_interface.py`** L42–44: `_OVERRIDE_AUTHORITY_TRANSITIONS = {"adopt-execution", "recover-blocked", "resume-clarify"}`. Full `apply_transition` dispatches through `ControlBinding`.
+- **`arnold_pipelines/megaplan/handlers/override.py`** L508–559: `_handle_routed_override` — builds `ControlTransition` → `apply_transition` → `ControlTransitionResult`. L1937–1938: gated behind `control_interface_routing_on()` (feature flag `MEGAPLAN_CONTROL_INTERFACE_ROUTING=1`).
+- **`arnold/control/interface.py`** L24–27: Domain-neutral control target constants (`CONTROL_TARGET_FORCE_ADVANCE`, `_REROUTE`, `_RECOVER_FROM_STUCK`, `_ABORT`). L58–66: `RunStateView`. L69–77: `ControlTransition`.
+- **`arnold_pipelines/megaplan/planning/control_binding.py`** L960–1217: `planning_control_binding` — `build_transition` handles abort, force-proceed, recover-blocked, resume-clarify, replan with full state-delta construction and invalid-transition guards.
+
+### Auto-driver integration
+- **`arnold_pipelines/megaplan/auto.py`** L914–921: `_override_force_proceed_in_process`. L939–952: `_override_adopt_execution_in_process`. L4330–4521: Escalation path (`EScalate → force-proceed`). L4909–4970: `invalid_transition` detection and loop-breaking (signature dedup, max-attempt gating, `requires_state_mismatch` detection).
+
+### Semantic health tests
+- **`tests/arnold_pipelines/megaplan/test_semantic_health.py`** L601–628: `test_active_override_with_invalid_authority_records_payload_generates_finding`. L631+: `test_override_authority_stale_freshness_token_generates_finding`.
+
+### Authority record carrier (adjacent, generalizable)
+- **`arnold/workflow/boundary_evidence.py`** L260–277: `AuthorityRecord` — "Covers approvals, denials, waivers, overrides, and force-proceed decisions." Reusable across any human-authority boundary.
+
+---
+
+## 3. What can be reused or generalized
+
+| Artifact | Generalization path |
+|---|---|
+| `OVERRIDE_ACTION_MATRIX` (`override_matrix.py`) | Already a clean declarative registry. The pattern of `family`, `route_signal`, `dispatch_surface`, `control_routed` can be lifted into a shared authority-registry base class for review-gate, tiebreaker, and execute-approval surfaces. |
+| `AuthorityRecord` (`boundary_evidence.py` L260) | Domain-neutral proof carrier for any human decision. Already used by override receipts; can be adopted for review approvals, tiebreaker decisions, and execute adoption without change. |
+| `ControlTransition` / `ControlTransitionResult` (`arnold/control/interface.py`) | Neutral out-of-band control carriers. The control-binding pattern in `planning/control_binding.py` is already a template for how any phase can expose a programmatic override surface. |
+| `_OVERRIDE_CATALOG` (`planning/operations.py` L44) | Kind-based classification (annotation/termination/transition/recovery/config) — generalizable to classify any control operation across phases. |
+| Boundary fixture pattern | Each S6 authority has a receipt fixture with `authority_records`, `evidence_refs`, `freshness_token`. This pattern is directly reusable for S5 (review caps) and S4 (execute approval). |
+
+---
+
+## 4. What still must be built
+
+Per the master plan (L764–797) and verified gaps:
+
+1. **Source-visible `.pypeline` extraction**: Override actions are currently dispatched through handler functions (`handlers/override.py`). The master plan requires extracting override route authority into named `.pypeline` source constructs. The override matrix already declares `route_signal` and `target_ref` for each action — these declarations must become actual `.pypeline` route nodes, not just metadata.
+
+2. **Collapse the dual-path dispatch**: The `control_interface_routing_on()` feature flag (L1937–1938) gates a parallel strangler path. S6 must collapse this to a single source-authoritative path. The flag is OFF by default — the production path still goes through handler functions.
+
+3. **Remove auto-drive as second route brain**: `auto.py` contains `_override_force_proceed_in_process` (L914), `_override_adopt_execution_in_process` (L939), and escalates independently of the override matrix. S6 must make auto-drive consume the same source-derived override surface.
+
+4. **Quarantine `_compatibility.py` and `route_dispatch.py`**: These still exist and may carry route authority. The master plan (L789) requires they "consume source-derived semantics or be fenced from evidence and runtime route authority."
+
+5. **Dedicated test file**: `test_override_auto_compat_quarantine.py` (referenced in master plan L773) does not exist. No override-specific test file was found in `tests/`.
+
+6. **Split-outcome scenarios not yet verified**: The master plan (L777) lists force-proceed from allowed states, abort, replan, recover-blocked, resume-clarify, adopt-execution, invalid force-proceed state. Semantic health tests exist for authority records but not full split-outcome behavioral tests.
+
+---
+
+## 5. Recommended adjustment to the native semantic parity sprint plan
+
+**S6 should be reframed from "build override surface" to "extract and collapse existing override surface."** The implementation is not greenfield. Specifically:
+
+- **S6a (this component) is ~80% done.** The risk is not missing functionality — it's that the dual-path dispatch (handler vs. control-interface) and auto-drive's independent override logic create a split-brain that the feature flag was meant to bridge but hasn't been collapsed yet.
+- **Priority order**: (1) Write split-outcome behavioral tests first to lock current behavior; (2) collapse the `MEGAPLAN_CONTROL_INTERFACE_ROUTING` flag by making the control-interface path the sole path; (3) make auto-drive consume the same surface; (4) extract override actions from handler functions into `.pypeline` route nodes using the existing `route_signal`/`target_ref` declarations in the override matrix as the target schema; (5) quarantine `_compatibility.py`/`route_dispatch.py`.
+- **Risk**: The override matrix's `dispatch_surface` field currently splits actions between `"workflow.route_binding"` (abort, force-proceed, replan) and `"workflow.native_policy"` (adopt-execution, recover-blocked, resume-clarify). This split must be reconciled during extraction — it's not clear whether `"workflow.route_binding"` actions have `.pypeline` carrier equivalents yet.

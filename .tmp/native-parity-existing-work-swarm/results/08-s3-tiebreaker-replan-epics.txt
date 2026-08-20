@@ -1,0 +1,117 @@
+## S3 Tiebreaker + Replan — Swarm Audit
+
+### 1. Verdict: **Partly exists**
+
+The four-phase structure is source-visible in `workflow.pypeline`, boundary contracts and fixtures exist, and the checker can detect single-wrapper anti-patterns. However, the components still carry `handler_ref`/`route_bindings` (cosmetic wrappers around legacy handlers), replan rejoin remains a side-effect function, no native flow test exists, old `TIEBREAKER_WORKFLOW` metadata lingers, and no split-outcome scenarios prove tiebreaker routing is truly native.
+
+---
+
+### 2. Existing Artifacts (with file:line)
+
+**Source-visible four-phase structure:**
+- `workflow.pypeline:30-33` — imports `TIEBREAKER_RESEARCHER, TIEBREAKER_CHALLENGER, TIEBREAKER_SYNTHESIS, TIEBREAKER_DECISION` directly (NOT `TIEBREAKER_WORKFLOW`)
+- `workflow.pypeline:471-488` — four individual phase calls chained with data flow
+
+**Component definitions (still handler-wrapped):**
+- `components.py:2102-2116` — `TIEBREAKER_RESEARCHER` with `handler_ref="...handle_tiebreaker_run"` and `route_bindings` with `target_ref`
+- `components.py:2117-2131` — `TIEBREAKER_CHALLENGER`, same handler, route_bindings
+- `components.py:2132-2149` — `TIEBREAKER_SYNTHESIS`, same handler, route_bindings
+- `components.py:2150-2179` — `TIEBREAKER_DECISION` with `handler_ref="...handle_tiebreaker_decide"` and three `route_bindings` (proceed→finalize, iterate→revise, escalate→override)
+- `components.py:2814-2815` — `TIEBREAKER_RUN`/`TIEBREAKER_DECIDE` marked "bridge-only: legacy carrier, no route authority"
+
+**Legacy metadata still alive:**
+- `components.py:1322-1333` — GATE_POLICY `tiebreaker` section references `call_ref: "TIEBREAKER_WORKFLOW"` with `rejoin` map (proceed→finalize, iterate→revise, escalate→override)
+- `components.py:2515-2555` — `SOURCE_TIEBREAKER_WORKFLOW` with canonical child metadata
+- `components.py:2783-2790` — `TIEBREAKER_WORKFLOW` as metadata clone of `SOURCE_TIEBREAKER_WORKFLOW`
+- `workflow.pypeline:281-300` — `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS["tiebreaker_child"]` with `decision_routes`
+
+**Boundary contracts (well-structured):**
+- `boundary_contracts.py:142-157` — `researcher_to_challenger`
+- `boundary_contracts.py:159-174` — `challenger_to_synthesis`
+- `boundary_contracts.py:176-192` — `synthesis_to_decision`
+- `boundary_contracts.py:194-211` — `decision_to_parent` (with `parent_rejoin_promotion: True`)
+- `boundary_contracts.py:213-227` — `replan_authority`
+- `boundary_contracts.py:229-243` — `parent_rejoin_promotion`
+
+**Boundary fixtures (present but representational):**
+- `tiebreaker_decision_to_parent/manifest.json`, `semantic_health.json`, `phase_result.json`, `state.json`, `boundary_receipts/` — all `status: healthy`
+- `parent_rejoin_promotion/` — same structure, `semantic_health.json` status `healthy`
+
+**Replan state helper:**
+- `replan_state.py:1-38` — `reset_replan_loop_state()` clears `tiebreaker_count`, `user_approved_gate`, `active_step`, etc., sets `current_state = target_state` — **side-effect function, not source-visible native rejoin**
+
+**Checker support:**
+- `source_compiler.py:756-761` — `_S3_TIEBREAKER_REQUIRED_ROW_IDS` tuple (all 4 phases)
+- `source_compiler.py:794-864` — `_tiebreaker_shape_diagnostics()` rejects single `SOURCE_TIEBREAKER_WORKFLOW` call, requires all 4 named phases
+- `source_compiler.py:1682-1767` — `_front_half_row_specs()` maps component refs including bare `TIEBREAKER_*` names to S3 row IDs
+- `source_compiler.py:722-749` — `_row_evidence_diagnostics()` emits `AWF245` for S3 rows lacking `SemanticEvidence`
+
+**Native interfaces (legacy 2-phase only):**
+- `native_interfaces.py:175-188` — `TIEBREAKER_RUN` (researcher/challenger combined)
+- `native_interfaces.py:192-205` — `TIEBREAKER_DECIDE` — no 4-phase canonical interfaces exist
+
+**Test coverage (structural only):**
+- `test_boundary_contracts.py:169-268` — tests boundary IDs and row IDs match (7 tiebreaker/replan contracts)
+- `test_row_evidence_checker.py:255-286` — confirms canonical source emits 9 AWF245 (5 S2 + 4 S3) when no evidence provided
+
+---
+
+### 3. What Can Be Reused
+
+| Artifact | Reusability | Notes |
+|---|---|---|
+| Four-phase source calls in `workflow.pypeline:471-488` | **High** | Already shows correct data flow. S3 must replace the component calls with true native phase bodies. |
+| Boundary contracts (`boundary_contracts.py:140-243`) | **High** | Well-structured with correct row IDs, artifact expectations, receipt requirements. These are the semantic specification. |
+| Boundary fixtures (tiebreaker_decision_to_parent, parent_rejoin_promotion) | **Medium** | Correct shape, but `semantic_health: healthy` was likely asserted without split-outcome proof. Regenerate from native flow. |
+| Checker `_tiebreaker_shape_diagnostics()` | **High** | Already rejects single-wrapper. Extend to also require no `handler_ref` in tiebreaker components. |
+| `replan_state.py:1-38` | **Low** | `reset_replan_loop_state()` logic is correct but must be elevated from side-effect to source-visible policy or explicit rejoin construct. |
+| `_front_half_row_specs()` matching bare `TIEBREAKER_*` names | **High** | Forward-compatible — handles the non-SOURCE/non-AUTHORING convention correctly. |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Native tiebreaker test** — `tests/arnold_pipelines/megaplan/test_tiebreaker_native_flow.py` does not exist (master plan `:667` exit gate: `pytest tests/.../test_tiebreaker_native_flow.py`)
+
+2. **Split-outcome scenarios**: pick/proceed, replan/iterate rejoin, escalate/override, parent rejoin receipt — none are tested in native flow
+
+3. **Remove `handler_ref` from 4 phase components** — `components.py:2107,2122,2137,2155` all carry `handler_ref` pointing to `handle_tiebreaker_run`/`handle_tiebreaker_decide`
+
+4. **Extract decision routing from handler code** — `components.py:2159-2177` `route_bindings` with `target_ref` values must become source-visible typed outcomes
+
+5. **Replan rejoin as source-visible flow** — `replan_state.py` side-effect must become an explicit source construct, not `reset_replan_loop_state()` called from handler dispatch
+
+6. **Delete/quarantine old wrapper metadata**:
+   - `components.py:1322-1333` — GATE_POLICY `tiebreaker` section
+   - `components.py:2783-2790` — `TIEBREAKER_WORKFLOW`
+   - `components.py:2814-2815` — `TIEBREAKER_RUN`/`TIEBREAKER_DECIDE` bridge carriers (or quarantine)
+   - `workflow.pypeline:281-300` — `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS["tiebreaker_child"]`
+
+7. **Dead-delete mutation proof** — mutate/delete old tiebreaker component routes and handler dispatch; scenarios unchanged vs frozen baselines
+
+8. **Baseline freeze** — `scripts/check_megaplan_baseline_freeze.py` does not exist
+
+9. **Canonical 4-phase native interfaces** — `native_interfaces.py` only has legacy `TIEBREAKER_RUN`/`TIEBREAKER_DECIDE`; needs `TIEBREAKER_RESEARCHER`, `TIEBREAKER_CHALLENGER`, `TIEBREAKER_SYNTHESIS`, `TIEBREAKER_DECISION`
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+**Status:** The prior closeout report (`megaplan-native-representation-conformance-report.md`) listed all 31 rows as "implemented" — a false pass. The current state is better but still incomplete.
+
+**Recommendation: S3 should be sequenced AFTER S2 completion**, because:
+
+- The 4 S3 rows currently fail AWF245 alongside S2 rows (`test_row_evidence_checker.py:269` — 9 diagnostics, 5 S2 + 4 S3)
+- The same evidence-generation pattern must be established for S2 first, then applied to S3
+- The tiebreaker components are the only non-AUTHORING/non-SOURCE step components — they need a distinct evidence strategy
+
+**Critical path for S3:**
+1. Remove `handler_ref` from the 4 phase components; replace with pure phase bodies
+2. Extract route-bindings to source-visible typed outcomes in `workflow.pypeline`
+3. Elevate `replan_state.py` reset logic to source-visible rejoin
+4. Dead-delete old `TIEBREAKER_WORKFLOW` carrier, GATE_POLICY tiebreaker rejoin map, and `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS` tiebreaker_child
+5. Write `test_tiebreaker_native_flow.py` with all 4 split-outcome scenarios
+6. Generate row-level SemanticEvidence for all 4 S3 rows
+7. Freeze pre-extraction baselines
+
+**Unverified prior claim:** The master plan `:162` says `test_row_evidence_checker.py` passes (25 passed). This is true for the test file as a unit, but the test at `:255-286` *expects* AWF245 failures on the canonical source — confirming S3 is not done.

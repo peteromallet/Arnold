@@ -1,0 +1,96 @@
+## S0 Runner Pin + North Star Action Core — Codebase Audit
+
+### 1. Verdict: **Adjacent only** — core infrastructure exists but the specific S0 feature is not built.
+
+---
+
+### 2. Existing Artifacts (with file:line evidence)
+
+**Gate/carry schema — fully implemented and production-grade:**
+
+- `handlers/gate.py:270-304` — `_build_gate_carry()` builds a structured `gate_carry.json` with `version`, `recommendation`, `passed`, `rationale_brief`, `settled_decisions`, `warnings`, `orchestrator_guidance`, `carried_flags`, `iteration`, `produced_at`.
+- `handlers/gate.py:307-308` — `_write_gate_carry()` persists it to `plan_dir / "gate_carry.json"`.
+- `handlers/gate.py:135-151` — `_gate_summary_for_transition()` reads `gate_carry.json` first, falls back to `gate.json`, then to `state["last_gate"]`.
+- `types.py:193-194` — `LastGateRecord` is explicitly deprecated: *"prefer plan_dir/gate_carry.json"*.
+- The carry artifact is consumed in finalize (`finalize.py:1533`), execute prompts (`prompts/execute.py:658`), creative/doc pipelines, and `critique_runtime.py:903`.
+- **Assessment:** The `gate_carry.json` **schema already exists** and is well-structured — but it does **not** yet contain a `north_star_actions` field. The S0 requirement to teach revise to load from `gate_carry.json` first is **already satisfied** by existing fallback logic.
+
+**Severity normalization — fully implemented:**
+
+- `flags.py:27-35` — `resolve_severity()` normalizes `severity_hint` values (`likely-significant`→`significant`, `likely-minor`→`minor`, `uncertain`→`significant`).
+- `flags.py:51-65` — `normalize_flag_record()` validates category and severity_hint against allowed sets.
+- `gate.py:372-397` — Severity-gated blocking: `_COSMETIC_SEVERITIES` (`frozenset({"minor", "likely-minor", "trivial", "cosmetic", "low", "nit"})`), `_CRITICAL_CATEGORIES` (`frozenset({"correctness", "security"})`), and `_is_cap_blocking_flag()`.
+- **Assessment:** Severity normalization is production-grade and reusable. S0's "severity schema-assigned for dangerous categories" maps directly onto the existing category+severity framework.
+
+**Human-halt machinery — exists across layers, not north_star_action-aware:**
+
+- `auto.py:1535-1609` — `human_required` detection and `awaiting_human_verify` state transitions.
+- `planning/state.py:22-43` — `STATE_AWAITING_HUMAN_VERIFY` and `AUTOMATION_TERMINAL_STATES`.
+- `handlers/verifiability.py:226` — `verify-human` requires `awaiting_human_verify` state.
+- `execute/policy.py:108, 393, 994` — `TERMINATE_AWAITING_HUMAN` action, target state routing.
+- `outcomes.py:23, 176` — typed `AWAITING_HUMAN` outcomes.
+- **Assessment:** The human-halt *mechanism* exists. What's missing is the **pre-worker halt guard** that S0 requires: detecting `north_star_actions` that are unmappable/blocking before invoking the revise worker.
+
+**North Star run-state resolver (cloud layer, not gate/revise):**
+
+- `run_state/model.py:18-53` — `CanonicalState` enum (9 states), `TypedHumanGate` enum (6 categories), `CanonicalRunState` frozen dataclass with serialization.
+- `run_state/classifiers.py` — Ordered classifiers for cloud supervision (running, repairing, human_action_required, completed, etc.).
+- `_northstar.py` (root) — Design assertion file confirming the 9-state contract with first-match ordering. **This is a design spec, not a runnable test** — it imports from `arnold_pipelines.megaplan.run_state` which exists and functions.
+- `tests/arnold_pipelines/megaplan/test_run_state_resolver.py` — 983-line test file with fixture coverage for incident shapes.
+- **Assessment:** This is the cloud/supervision North Star resolver, **not** the gate→revise→review north_star_actions pipeline S0 requires. Adjacent but distinct concerns.
+
+**Chain North Star anchors — exist:**
+
+- `chain/spec.py:304-320` — `NorthStarAnchor` with `north_star` field in chain.yaml.
+- `chain/__init__.py:1245-1254` — Manifest generation with North Star path + sha256.
+- **Assessment:** Chain-level North Star declaration exists. S0's `north_star_critical` chain/milestone schema field is a net-new addition.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Existing Component | Reuse Path |
+|---|---|
+| `gate_carry.json` schema (`handlers/gate.py:270`) | Add `north_star_actions` field; revise already reads carry first |
+| `resolve_severity()` (`flags.py:27`) | Directly applicable for north_star_action severity normalization |
+| `_COSMETIC_SEVERITIES` / `_CRITICAL_CATEGORIES` (`gate.py:372-376`) | Extend with S0's dangerous categories (route authority, baseline rewrites, etc.) |
+| `STATE_AWAITING_HUMAN_VERIFY` / auto-drive human-halt (`auto.py:1535`) | Wire into north_star_actions halt guard |
+| `CanonicalState` / `TypedHumanGate` (`run_state/model.py`) | May inform schema design but is a different layer |
+| `_normalize_settled_decisions()` (`gate.py:231`) | Pattern for normalizing north_star_actions in gate |
+| Flag registry persistence (`flags.py:114-169`) | Same pattern for north_star_action carry-through |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **`north_star_actions` field in `gate_carry.json`** — The carry schema (`gate.py:270`) has no `north_star_actions` key. Must be added to `_build_gate_carry()`.
+
+2. **Revise handler loads `north_star_actions` from carry** — Revise currently doesn't read `gate_carry.json` for actions. The gate handler already provides `_gate_summary_for_transition()`; revise needs a parallel consumption path.
+
+3. **`north_star_actions_addressed` in `revise.json`** — Net-new revise output field with concrete plan refs and structural markers.
+
+4. **Pre-worker halt guard** — Before invoking the revise worker, detect unmappable/blocking `north_star_actions` and halt for human.
+
+5. **Post-worker revise validation** — Structural validation that `north_star_actions_addressed` claims point to concrete refs (prose-only claims fail).
+
+6. **`north_star_critical` chain/milestone field** — Reject `north_star_critical: true` with `bare`/`light` robustness.
+
+7. **Finalize/review enforcement** — Lower North Star obligations into executable tasks; block closeout for unresolved `reject_closeout` actions.
+
+8. **Clean-context auditor** — Independent answerer for explanation-style North Star questions.
+
+9. **Runner pinning scripts** — `scripts/pin_megaplan_runner.py` and `scripts/check_megaplan_runner_pin.py` do not exist.
+
+10. **All 6 S0 test files** — None exist yet (`test_north_star_actions_gate_revise.py`, etc.).
+
+---
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+**S0 should be split into S0a (infrastructure reuse) and S0b (net-new north_star_actions pipeline):**
+
+- **S0a** can close quickly: the gate/carry schema, severity normalization, and human-halt machinery are production-grade and need only field extensions, not rewrites. The runner pinning scripts are a small standalone deliverable.
+
+- **S0b** (the north_star_actions pipeline through gate→revise→review) is a multi-handler change touching `handlers/gate.py`, `handlers/revise.py`, `handlers/finalize.py`, `handlers/review.py`, and the carry schema. It should not be treated as "plumbing" — it's substantial new product behavior.
+
+- The `run_state/` package and `_northstar.py` are **not** the S0 deliverable — they serve the cloud/supervision layer. Avoid conflating them with the gate/revise north_star_actions flow. The master plan's S0 scope references `_northstar.py`-style contracts but the implementation surface is different.

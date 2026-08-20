@@ -1,0 +1,13 @@
+--- a/arnold_pipelines/megaplan/observability/events_projection.py
++++ b/arnold_pipelines/megaplan/observability/events_projection.py
+@@ -194,7 +194,7 @@ def write_projection(
+         return False
+     content = "\n".join(_canonical_dumps(event) for event in events) + "\n"
+     _atomic_write_text(ndjson_path, content)
+-    seqs = [event.get("seq") for event in events if isinstance(event.get("seq"), int)]
+-    if seqs:
+-        _write_projection_seq(plan_dir, max(seqs))
++    tail_seq = events[-1].get("seq")
++    if isinstance(tail_seq, int):
++        _write_projection_seq(plan_dir, tail_seq)
+     return True

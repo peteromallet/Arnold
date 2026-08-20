@@ -26,7 +26,7 @@ from arnold_pipelines.megaplan.prompts.gate import (
 from arnold_pipelines.megaplan.schema_projection import schema_property_names
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.workers import WorkerResult
-from arnold_pipelines.megaplan.workers.hermes import clean_parsed_payload
+from arnold_pipelines.megaplan.workers._payload import clean_parsed_payload
 
 
 def _invocation() -> StepInvocation:

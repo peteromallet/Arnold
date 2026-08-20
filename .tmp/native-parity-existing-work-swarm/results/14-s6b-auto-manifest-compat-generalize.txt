@@ -1,0 +1,72 @@
+Here is my verified audit of **S6b Auto/Manifest/Compatibility Collapse**.
+
+---
+
+## 1. Verdict: **Partly exists**
+
+S6a (override extraction) is substantially complete with passing tests. S6b (auto quarantine, manifest quarantine, route_dispatch fallback removal, compatibility evidence rejection) has aspirational tests that define the desired end-state but nearly all fail against current code. The infrastructure for quarantine and evidence rejection *exists*, but the actual code refactoring of the targeted carriers has not been done.
+
+---
+
+## 2. Existing or Prior Artifacts
+
+### S6a override work (done — tests pass)
+- `handlers/override.py` — `_routed_override_response()` strips `next_step` from routed actions, emits `route_signal` instead (`handlers/override.py:319-347`). `_normalize_override_response()` generalizes this stripping (`handlers/override.py:496-501`).
+- **Test proof**: `test_s6_override_control.py` — 16 passed, `test_s6_override_routing.py` — 15 passed.
+
+### S6b aspirational tests (exist, define target, all fail)
+- `tests/arnold_pipelines/megaplan/test_s6_decision_translator_fence.py:61-242` — 8 of 9 FAIL. Expects `route_dispatch.py` to lack `_component_route_bindings_for_step` and `_declared_route_bindings_for_step`, to export `LegacyRouteDispatchDisabled`, and to gate resolution behind `allow_legacy=True`. Also expects `manifest_backend._branch_edge_id` return `None` when fed handler `next_step`/`route_signal` fields, and `cli/status_view` to fence `next_step` into `legacy_route_hints`.
+- `tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py:71-169` — 3 of 3 FAIL. Expects `auto.drive()` to block on cursor/source disagreement, stops on gate escalation rather than auto force-proceed, and status output to carry `status_route_authority: "workflow_source_only"`.
+
+### Adjacent quarantine infrastructure (exists, reusable)
+- `arnold/workflow/semantic_evidence.py:94-121` — `CompatibilityQuarantineCategory` enum with `ROUTE_DISPATCH_LEGACY`, `MANIFEST_SERIALIZATION`, `CLI_COMPATIBILITY`, `PERSISTED_PAYLOAD`, `EXTERNAL_SCHEMA_BOUNDARY`. `CompatibilityQuarantineEntry` dataclass records permitted enum-to-string serialization boundaries.
+- `arnold/workflow/semantic_evidence.py:124-189` — `SemanticEvidence` dataclass with `compatibility_quarantine` field; carries structured evidence records instead of bare string status.
+
+### Traceability/evidence rejection contracts (exist, pass)
+- `tests/arnold_pipelines/megaplan/test_s6_traceability_evidence.py:228-237` — `FORBIDDEN_PROOF_SOURCES` tuple explicitly lists `components.py`, `manifest_backend.py`, `route_dispatch.py`, `auto.py`, `cli/__init__.py`, `cli/status_view.py`, `pipeline.py`, `workflows/workflow.py` as inadmissible as evidence carriers. All 11 tests pass.
+
+### Targeted carriers (still active, untouched by S6b)
+- `route_dispatch.py:26-43` — `_component_route_bindings_for_step()` still reads `STEP_COMPONENTS_BY_ID` and `component.metadata`; `_declared_route_bindings_for_step()` still falls back to component when not front-half.
+- `runtime/manifest_backend.py:227-322` — `_branch_edge_id()` still maps `next_step`/`recommendation`/`decision` strings to hard-coded `"{node}:{target}"` edge ids. `_build_control_signals()` still builds `ControlTransition` from these same fields (`:334-392`).
+- `auto.py:1197-1245` — `_phase_command()` still translates `next_step` strings into CLI args. `auto.py:3661-3760` — drive loop reads `status.get("next_step")` directly.
+- `_compatibility.py:101-207` — `build_compatibility_shell()` and `_native_program_from_dsl()` still project DSL onto `NativeProgram` and `CompatibilityPipelineShell`.
+
+---
+
+## 3. What Can Be Reused or Generalized
+
+1. **`_normalize_override_response` pattern → gate/review/auto handlers.** The override handler already demonstrates stripping `next_step` and replacing with `route_signal`. This can generalize to gate (`handlers/gate.py`), review (`handlers/review.py`), and auto (`auto.py`) as a shared `_strip_next_step_authority(response, step_id)` utility.
+
+2. **`LegacyRouteDispatchDisabled` pattern.** The test at `test_s6_decision_translator_fence.py:68-83` defines the desired API: `resolve_route_target_for_signal(step, signal)` raises `LegacyRouteDispatchDisabled`, while `resolve_route_target_for_signal(step, signal, allow_legacy=True)` works. This is a clean opt-in fence pattern reusable for manifest backend branch translation and auto next-step derivation.
+
+3. **`CompatibilityQuarantineEntry` infrastructure.** Already fully defined in `semantic_evidence.py:94-121`. S6b can populate quarantine entries for each carrier it fences: `ROUTE_DISPATCH_LEGACY` for `route_dispatch.py` fallback, `MANIFEST_SERIALIZATION` for `manifest_backend.py` branch maps, `CLI_COMPATIBILITY` for `auto.py` phase command translation.
+
+4. **`FORBIDDEN_PROOF_SOURCES` / traceability test pattern.** The rejection test at `test_s6_traceability_evidence.py:276-282` already validates that conformance rows cannot cite forbidden sources. S6b extends this by making the actual carriers in those files *incapable* of routing behavior (not just inadmissible in conformance YAML).
+
+---
+
+## 4. What Still Must Be Built
+
+1. **`route_dispatch.py` refactor**: Remove `_component_route_bindings_for_step` and `_declared_route_bindings_for_step`. Add `LegacyRouteDispatchDisabled` exception. Gate all resolution behind `allow_legacy=False` default. Currently both private helpers exist (`route_dispatch.py:26-43`) and no fence exists.
+
+2. **`manifest_backend.py` branch translation quarantine**: Make `_branch_edge_id()` return `None` for handler-derived `next_step`/`recommendation` fields. It must consume lowered source routing only. Currently it maps raw strings at `manifest_backend.py:246-322`.
+
+3. **`auto.py` next-step derivation quarantine**: Remove `_phase_command()`'s role as a route brain. Make `drive()` consume canonical workflow events/cursor rather than `status.get("next_step")`. Currently `auto.py:1197-1245` and `auto.py:3661-3665`.
+
+4. **`_compatibility.py` evidence rejection**: Wire `NativeProgram` projections into the `CompatibilityQuarantine` infrastructure so the checker structurally rejects them as row evidence. The quarantine data structures exist (`semantic_evidence.py:94-121`), but the rejection rules don't yet consume them.
+
+5. **CLI `next_step` fence**: `cli/status_view.py` and `cli/__init__.py` must move `next_step` into `legacy_route_hints` with `"authority": "display_only_non_authoritative"`. Tests at `test_s6_decision_translator_fence.py:141-242` define the target but all fail.
+
+---
+
+## 5. Recommended Adjustment to Sprint Plan
+
+- **Acknowledge S6a/S6b split explicitly.** The current S6 brief (`s6-override-auto-compat-collapse.md`) bundles override extraction with auto/manifest/compat collapse. The passing override tests prove the split is real — override is done, the remaining three carriers are not.
+
+- **Prioritize `route_dispatch.py` first** (lowest blast radius, clearest fence pattern). It's 64 lines and already has a well-defined test contract. The `LegacyRouteDispatchDisabled` pattern then becomes the template for manifest backend and auto fences.
+
+- **Generalize the override `_normalize_override_response` pattern** into a shared `_strip_next_step_authority()` utility before applying it to gate/review/auto handlers. The override code at `handlers/override.py:496-501` is already the right shape.
+
+- **Wire `CompatibilityQuarantineEntry` into the checker before deleting carriers.** The quarantine data classes exist at `semantic_evidence.py:94-121` but nothing populates them yet. Populate quarantine entries as each carrier is fenced, so the S7 final report can prove what was quarantined vs. what was deleted.
+
+- **Treat AWF253 as a pre-requisite.** The master plan requires it (`master-plan.md:484`) and it still does not exist in `arnold/workflow/diagnostics.py`. S6b's compatibility rejection rules need this diagnostic code allocated before tests can pin to it.

@@ -1,0 +1,87 @@
+Now I have all the evidence. Let me compile the final report.
+
+---
+
+## Swarm Audit: S6a Override/Human Control Surface
+
+### 1. Verdict: **PARTLY EXISTS** — handler-level implementation is complete and verified; native source extraction is incomplete.
+
+The override runtime (the `handle_override` dispatch, all 11 actions, the authority matrix, control interface routing, blocked recovery, and tests) is fully built and functional. What remains undone is the S6 brief's core ask: extracting routing override actions into source-visible `.pypeline` constructs, removing the single opaque `override` handler node's internal dispatch for routing actions.
+
+---
+
+### 2. Existing Artifacts (verified against code/tests)
+
+#### Handler implementation (complete)
+- `arnold_pipelines/megaplan/handlers/override.py:1910-1924` — `_OVERRIDE_ACTIONS` dict: all 11 actions mapped to callables (add-note, abort, adopt-execution, force-proceed, replan, recover-blocked, resume-clarify, set-robustness, set-profile, set-model, set-vendor).
+- `arnold_pipelines/megaplan/handlers/override.py:1927-1944` — `handle_override()`: dual-path dispatch (control-interface-routed via `_handle_routed_override` at :508, or legacy via `_OVERRIDE_ACTIONS` dict).
+- `arnold_pipelines/megaplan/handlers/override.py:91-96` — `UnknownOverrideActionError` for invalid-action rejection.
+- `arnold_pipelines/megaplan/handlers/override.py:336,1941` — `CliError("invalid_override", ...)` on unknown actions.
+- **force-proceed**: `_override_force_proceed()` at :942; strict-notes enforcement (:951-974); routed output at :158-196.
+- **abort**: `_build_override_action_output()` at :152-157.
+- **replan**: `_build_override_action_output()` at :260-272; `arnold_pipelines/megaplan/replan_state.py:17-38` — `reset_replan_loop_state()` clears stale loop state.
+- **recover-blocked**: `_build_override_action_output()` at :218-247; `docs/ops/blocked-recovery.md` — 365-line operational runbook.
+- **resume-clarify**: `_override_resume_clarify()` at :1857-1907.
+- **adopt-execution**: `_override_adopt_execution()` at :865-939; validates execution.json/finalize.json exist (:769-784).
+
+#### Authority matrix (complete)
+- `arnold_pipelines/megaplan/workflows/override_matrix.py:12-26` — `_OVERRIDE_ACTION_KEYS`: all 11 canonical actions.
+- `arnold_pipelines/megaplan/workflows/override_matrix.py:54-151` — `_DECLARED_OVERRIDE_AUTHORITY`: each action classified as `terminal_route` or `additive_config`, with `route_signal`, `target_ref`, `dispatch_surface`, `control_routed` flag.
+- `arnold_pipelines/megaplan/workflows/override_matrix.py:197-231` — `OVERRIDE_ACTION_MATRIX`, `TERMINAL_ROUTE_ACTIONS` (6), `ADDITIVE_CONFIG_ACTIONS` (5), `CONTROL_ROUTED_ACTIONS`, `ROUTE_SIGNAL_BY_ACTION`.
+
+#### Control interface integration (complete)
+- `arnold_pipelines/megaplan/control_interface.py:1-582` — `apply_transition()`, `build_override_transition_request()`, `emit_override_authority_receipt()`, `DECLARED_OVERRIDE_POLICY_TARGETS`.
+- `arnold_pipelines/megaplan/control.py:1-789` — `ControlTarget`, `ControlTargetResolver`, `approve_gate_control_handler`, `reject_gate_control_handler`.
+- `arnold_pipelines/megaplan/planning/control_binding.py:384-389` — `_NEUTRAL_TO_INTERNAL_ACTIONS` maps neutral targets to internal actions (force-advance→force-proceed, reroute→replan, recover-from-stuck→recover-blocked, abort→abort).
+- `arnold_pipelines/megaplan/planning/control_binding.py:397-476` — `_supervisor_forward_targets()` and `_supervisor_recover_targets()` expose context-sensitive control targets per state.
+
+#### Boundary contracts (complete)
+- `arnold_pipelines/megaplan/workflows/boundary_contracts.py:749-774` — `override_adopt_execution_authority` boundary contract.
+- `arnold_pipelines/megaplan/workflows/boundary_contracts.py:59` — `S6_OVERRIDE_ADOPT_EXECUTION_ROW_ID`.
+
+#### Tests (verified)
+- `tests/arnold_pipelines/megaplan/test_s6_override_control.py:1-244` — parametrized tests for routed override responses, legacy normalization, gate control handlers, transition request building.
+- `tests/arnold_pipelines/megaplan/test_override_action_matrix.py:1-206` — completeness, disjoint classification, route binding consistency, convenience exports.
+- `tests/arnold_pipelines/megaplan/test_auto_recover_blocked.py:1-1296` — blocked recovery scenarios including `test_read_state_data_reconciles_failed_no_next_after_finalize`, `test_chain_recovers_failed_plan_before_auto_drive`.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **The authority matrix** (`override_matrix.py`) is the canonical taxonomy — it already classifies every action, declares `control_routed` flags, and maps route signals. This should directly feed native `.pypeline` declarations.
+- **The control interface** (`control_interface.py`, `control_binding.py`) already translates neutral control-plane targets into internal actions. The `apply_transition()` pipeline is material to generalize into native decision nodes.
+- **`DECLARED_OVERRIDE_OUTCOME_TARGETS`** in `workflow.pypeline:60-79` already declares abort, force-proceed, and replan as source-visible outcomes with `route_signal` and `target_ref`. This is the pattern to extend to recover-blocked, resume-clarify, and adopt-execution.
+- **The `_handle_routed_override()` path** (`override.py:508-559`) already routes through `apply_transition()` when `control_interface_routing_on()` — this is the bridge path to generalize.
+- **Tests** are comprehensive and can be adapted to verify native-source routing equivalents.
+
+---
+
+### 4. What Still Must Be Built
+
+Per the S6 brief (`s6-override-auto-compat-collapse.md`), M8 brief (`m8-override-control-surface.md`), MILESTONE_4_HANDOFF, and representation report:
+
+1. **Native source extraction of routing overrides.** Currently only 3 of 6 terminal-route actions have route_bindings in `workflow.pypeline:268-277` (abort→halt, force-proceed→finalize, replan→revise). Recover-blocked, resume-clarify, and adopt-execution remain handler-private dispatches (`workflow.pypeline:255-267` lists them in `override_actions` but without individual route_bindings).
+
+2. **Delete/fence `LEGACY_ALIASES`** for implemented routing rows. The S6 brief calls for this explicitly (line 25). The `_OVERRIDE_ACTIONS` dict dispatch at `override.py:1939` still falls through when `control_interface_routing_on()` is false.
+
+3. **Override routing in native compiler grammar.** `MILESTONE_4_HANDOFF.md:58`: "Override routing in native compiler grammar (`override_vocabulary` on decision stages)" is listed as a remaining runtime API gap. The `NativeDecision.override_routes` field exists (`ir.py:196`) but isn't populated for megaplan overrides.
+
+4. **Replace opaque override node.** The representation report (`megaplan-native-representation-report.md:908`) calls for replacing the single opaque `override` node with named top-level control-plane surface nodes (`override_abort`, `override_force_proceed`, `override_replan`, `override_resume_clarify`, `override_recover_blocked`, `override_config_change`).
+
+5. **Prove that deleting semantic metadata from `components.py` doesn't change routing traces** (S6 completion criterion, line 43-44).
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+- **Do not build from scratch.** The handler, matrix, control interface, and tests are already complete and passing. The sprint should focus on **extraction**: lifting routing override actions from the `_OVERRIDE_ACTIONS` dict into named `.pypeline` decision nodes with source-visible route_bindings.
+
+- **Prioritize recover-blocked, resume-clarify, adopt-execution** for extraction — these are the three terminal-route actions currently lacking individual route_bindings in `workflow.pypeline`.
+
+- **Add the `override_vocabulary` compiler pass** to populate `NativeDecision.override_routes` (the IR field already exists at `ir.py:196`).
+
+- **After extraction, fence or delete the handler-private dispatch** for extracted actions per the S6 brief's "delete as you extract" mandate.
+
+- **Keep config-effect overrides** (set-model, set-profile, set-robustness, set-vendor, add-note) as audited effects — this aligns with both briefs' explicit scoping that "config/effect-only overrides may remain effects."
+
+- **Update MILESTONE_4_HANDOFF** once override force-proceed and abort move from "known limitation" to "passing" in native parity fixtures.

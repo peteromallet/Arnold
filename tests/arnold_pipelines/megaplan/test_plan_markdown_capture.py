@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
 from arnold_pipelines.megaplan.model_seam import _normalize_plan_capture_payload
-from arnold_pipelines.megaplan.orchestration.plan_structure import (
-    PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
-    validate_plan_structure,
-)
-from arnold_pipelines.megaplan.schemas import SCHEMAS
-from arnold_pipelines.megaplan.workers.hermes import parse_agent_output
+from arnold_pipelines.megaplan.orchestration.plan_structure import validate_plan_structure
 
 
 PHASED_PLAN_PAYLOAD = {
@@ -239,50 +232,6 @@ def test_normalize_plan_capture_materializes_omitted_test_hints() -> None:
     }
 
 
-def test_parse_agent_output_prefers_plan_markdown_over_embedded_json(
-    tmp_path: Path,
-) -> None:
-    payload, raw_output = parse_agent_output(
-        object(),
-        {"final_response": PLAN_MARKDOWN, "messages": []},
-        output_path=tmp_path / "plan_output.json",
-        schema=SCHEMAS["plan.json"],
-        step="plan",
-        project_dir=tmp_path,
-        plan_dir=tmp_path,
-    )
-
-    assert raw_output == PLAN_MARKDOWN
-    assert payload["plan"] == PLAN_MARKDOWN
-    assert payload["success_criteria"][0]["criterion"] == "Narrative tests pass"
-    assert payload["test_blast_radius"]["selectors"][0]["value"] == (
-        "tests/test_edit_narrative.py"
-    )
-
-
-def test_parse_agent_output_accepts_omitted_optional_test_hints(
-    tmp_path: Path,
-) -> None:
-    response = {
-        "plan": "# Plan\n\n## Overview\nWork.\n\n## Step 1: Patch\nEdit.\n\n## Validation Order\n1. Validate.\n",
-        "questions": [],
-        "success_criteria": [],
-        "assumptions": [],
-    }
-
-    payload, _raw_output = parse_agent_output(
-        object(),
-        {"final_response": json.dumps(response), "messages": []},
-        output_path=tmp_path / "plan_output.json",
-        schema=SCHEMAS["plan.json"],
-        step="plan",
-        project_dir=tmp_path,
-        plan_dir=tmp_path,
-    )
-
-    assert payload["changed_surfaces"] == []
-    assert payload["test_blast_radius"]["strategy"] == "none"
-    assert payload["test_blast_radius"]["full_suite_fallback"] is False
 
 
 def test_normalize_phased_plan_payload_renders_flat_step_sections() -> None:

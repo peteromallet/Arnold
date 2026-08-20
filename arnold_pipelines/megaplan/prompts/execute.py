@@ -231,6 +231,7 @@ def render_reconcile_prompt(
     first_parent_log: str,
     candidate_commits: list[dict[str, Any]],
     target_branch: str = "main",
+    review_data: dict[str, Any] | None = None,
 ) -> str:
     """Build the codex reconcile-execution prompt.
 
@@ -266,6 +267,25 @@ def render_reconcile_prompt(
             f"   paths: {', '.join(paths) if paths else '(none listed)'}"
         )
     candidates_block = "\n".join(commit_lines) if commit_lines else "(no candidates)"
+    review_rework_block = ""
+    if isinstance(review_data, dict):
+        projected_review = project_rework_context(
+            review_data,
+            capabilities=PromptProjectionCapabilities.full(),
+        )
+        if projected_review.get("rework_items"):
+            review_rework_block = textwrap.dedent(
+                f"""
+
+                ## Persisted review rework contract
+                This is the authoritative review contract for this re-execution pass.
+                Preserve every applicable requirement below in
+                `verification_evidence.notes`, including the exact deterministic
+                check and operator-resolution evidence. This remains a read-only
+                selection task: do not edit files, create a PR, or mutate state.
+                {json_dump(projected_review).strip()}
+                """
+            ).strip()
     return textwrap.dedent(
         f"""
         {_RECONCILE_REQUIREMENTS_TEMPLATE.format(
@@ -284,6 +304,7 @@ def render_reconcile_prompt(
 
         ## Rubric documents
         {rubric_block}
+        {review_rework_block}
         """
     ).strip()
 

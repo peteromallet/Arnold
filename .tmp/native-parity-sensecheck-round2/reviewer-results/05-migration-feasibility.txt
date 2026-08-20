@@ -1,0 +1,198 @@
+Now I have the full picture. Here is the comprehensive analysis:
+
+---
+
+# Lens 5 — Current-State Migration Feasibility and Carrier Deletion
+
+## 1. Verdict
+
+**Feasible with guarded sequencing — but the plan has three survivable alternate-route brains that will retain positive-action control past S7 unless explicitly quarantined earlier.** The plan correctly identifies `build_pipeline()` (planning.py:25–28) as the critical choke point, the 85-to-14 node collapse as semantic erasure (corrective-plan.md:12–17), and the need to relocate WBC producers before deleting handlers (S3). However, the serialization through S1→S7 assumes each sprint deletes its own carriers — yet manifest_backend.py:72–84 (`HANDLER_NODE_IDS`), the `_ROBUSTNESS_OVERRIDES` table (workflow_data.py:95–126), and auto.py's `next_step` derivation (auto.py:1–15) are never individually named for deletion in any sprint brief. They survive as hidden route authorities unless explicit quarantine gates are added. Without a mid-plan quarantine sprint for these three specific brains, the plan reports success while they still choose product behavior.
+
+---
+
+## 2. Route/Carrier Table
+
+| Authoring Source → Lowering Carrier → Runtime Action/Effect | WBC/RA/Custody Integration | Planned Migration Sprint | Deletion/Quarantine Sprint | Planned Proof | Status |
+|---|---|---|---|---|---|---|
+| **`workflow.pypeline` → `source_compiler.lower_workflow_file()` → DSL `Pipeline` nodes** | Partial — lowered source provides node identity; RA/Custody/WBC not yet bound | S1 (checker), S2 (generic primitives) | None needed — this is the target | S1: semantic checker fails current 85→14 collapse | ✅ On track — correct target |
+| **`planning.py::build_pipeline()` → reads `.pypeline` but rebuilds from `components.py` + `ALL_STEP_COMPONENTS` → DSL `Pipeline` with 14 coarse steps** | Route authority via component `route_bindings` + `handler_ref` + policy metadata | S3 (first slice), S4 (tiebreaker), S5 (delivery) | **S3 — "delete or hard-quarantine"** per s3-brief.md:33–36 | S3: mutation tests prove surface has no influence | ⚠️ **Critical** — the brief names deletion but provides no quarantine mechanism name or validation gate for `build_pipeline()` itself |
+| **`components.py:StepComponent` objects** — `PREP`, `PLAN`, `CRITIQUE`, `GATE`, `REVISE`, `FINALIZE`, `EXECUTE`, `REVIEW`, `OVERRIDE` — with `handler_ref`, `route_bindings`, policy components | Primary route/identity carrier for current runtime; WBC producers attached to handler names (not canonical nodes) | S3–S6 incremental collapse | S7 (final) per s7-brief.md:31–33 (component/handler route tables) | S7: "zero hidden product-route authority remains in components" | 🔴 **Hazard** — `LEGACY_ALIASES` (components.py:119–120 per codebase-map) maps into handler-private override functions; not mentioned in any sprint brief |
+| **`_core/workflow_data.py:45–92` — `WORKFLOW` dict** — state→transition table mapping `STATE_CRITIQUED` → gate/revise/tiebreaker/override with condition strings like `"gate_iterate"`, `"gate_tiebreaker"`, `"gate_escalate"` | State machine selects `next_step`; overrides via `_ROBUSTNESS_OVERRIDES` (lines 95–126) | Not explicitly mentioned in any sprint brief | ⚠️ **Never named for deletion** — the `_core` table can survive S7 as a read-only projection | None planned | 🔴 **Surviving alternate brain** — this dict can still deterministically route if any code path calls it |
+| **`_core/workflow_data.py:95–126` — `_ROBUSTNESS_OVERRIDES` — `"bare"` and `"light"`** skip critique/review | Bypass entire phases via state-machine overrides | Not mentioned | Not mentioned | None planned | 🔴 **Surviving escape hatch** — `bare` robustness allows `planned→finalize` and `light` empties `STATE_EXECUTED` transitions |
+| **`runtime/manifest_backend.py:MegaplanManifestBackend` — `HANDLER_NODE_IDS` (line 72–84): `prep`, `plan`, `critique`, `gate`, `revise`, `finalize`, `execute`, `review`, `tiebreaker_run`, `tiebreaker_decide`, `override`** | Translates handler `StepResponse` (`next_step`, `route_signal`, `recommendation`, `review_verdict`, `override_action`) into `NodeOutcome` branch edges — **handler-returned strings become product routes** | Not explicitly named in any sprint brief for deletion | ⚠️ **Never named** — the briefs say "delete component route bindings, handler `next_step`/`route_signal` ownership" (s3-brief.md:33–36) but `manifest_backend.py` is the *consumer* of those strings, not the source | None planned | 🔴 **Surviving alternate brain** — deleting component `route_bindings` is insufficient if `manifest_backend.py` still interprets handler return values as route edges |
+| **`route_dispatch.py` — small resolver over component `route_bindings`** | Live path where component metadata decides product routing | S3 implied | S7 implied | S7: "no report-owned semantic can depend on resolving component route bindings" | ⚠️ Needs explicit quarantine in S3 |
+| **`handlers/gate.py:792` — `handle_gate()` — signal build, worker call, normalize, reprompt, debt, route selection via `_apply_gate_outcome()` (line 494)** | **Single largest hidden route owner** — gate decision, reprompt→downgrade, no-progress/cap termination, severity split | S3 — "move gate normalize/reprompt/backstops/debt into canonical source" | S3 — "delete/fence handler `next_step`/`route_signal` ownership" | S3 split-outcome scenarios | ⚠️ S3 scope includes gate, but cap/severity/no-progress logic is deeply entangled across lines 494–984 |
+| **`handlers/critique.py:279` — `handle_critique()` — bare skip, evaluator retry, lens selection, parallel fanout, sequential fallback** | Critique evaluation retry and fanout topology are hidden in handler | S3 (critique selection/retry/dynamic fanout) | S3 — delete component routes | S3 mutation tests | ⚠️ Dynamic `parallel_map` not yet available at source level — S2 must deliver it (s2-brief.md:12–16) |
+| **`handlers/_tiebreaker_impl.py:37,76` — `handle_tiebreaker_run()`, `handle_tiebreaker_decide()`** | Researcher/challenger split, decision routing | S4 — "author parallel researcher/challenger" | S4 — "delete component topology" | S4: legacy metadata cannot alter behavior | ✅ Explicitly planned |
+| **`handlers/finalize.py:1661` — `handle_finalize()` — baseline fallback to revise** | Error route topology (FinalizeBaselineSelectionError → revise) | S4 — "finalize error fallback" | S4 implied | S4: legacy mutation test | ⚠️ Handler error-to-route mapping is fragile |
+| **`handlers/execute.py:134` + `execute/batch.py:2278` — approval gates, batch vs auto-loop, blocked-task retry, no-review terminal, DAG scheduling** | Execute hides a complete sub-workflow with approval, DAG batching, blocked retries | S5 — "dependency-ready dynamic batches" | S5 — "delete/fence execute component routes" | S5: runtime child set equals authored set | ⚠️ DAG-aware `foreach` not yet in native runtime — S2 must deliver |
+| **`handlers/review.py:1297` — mode selection, infrastructure retry, parallel review, outcome classification, rework cap, force-proceed vs blocked** | Review outcome is a full state machine with routing decisions | S5 — "review fanout/reducer → bounded rework" | S5 — "delete/fence review component routes" | S5 scenarios | ⚠️ Outcome routing currently string-based (`review_verdict`) |
+| **`handlers/override.py:1763–1780` — `_OVERRIDE_ACTIONS` dispatch — abort, force-proceed, replan, recover-blocked, resume-clarify, set-model/vendor/profile/robustness** | **Opaque action-string dispatch** — all control edges hidden behind one handler | S6 — "author each action as closed typed decision" | S6 — "delete/fence handler action dispatch" | S6: source owns every action/reentry edge | ⚠️ `LEGACY_ALIASES` (components.py) maps into handler-private override functions — not addressed in any brief |
+| **`auto.py` — `next_step` derivation, retry/escalation/cost/stall policies independent of canonical source** | Auto-drive can own liveness and route behavior outside canonical source | S6 — "reduce auto-drive to event consumption/scheduling requests" | S6 — "auto/CLI/component/runtime mutations cannot alter product routes" | S6: auto mutations cannot alter canonical routes | ⚠️ auto.py is 5808 lines — "reduce to event consumption" is underspecified |
+| **`_compatibility.py` — `Pipeline.native_program` projection** | Projected native programs look native but still route through handlers | Not mentioned for deletion | S7 — "compatibility/native-program projections" see s7-brief.md:31–33 | S7: "zero hidden authority" | ⚠️ Compat projections can satisfy row evidence — s3-brief.md:63 warns of this |
+| **`workflows/workflow.py` — re-exports `build_pipeline()`** | Non-semantic shim, but if `build_pipeline()` is not replaced, this remains a live import path | S3–S7 | S7 — "must remain non-semantic" (codebase-map.md:172–175) | S7: removing/changing it cannot alter behavior | ⚠️ No quarantine gate |
+| **CLI dispatch + `COMMAND_HANDLERS`** | CLI phase dispatch routes to old handlers | S6 — "CLI can remain as operator surface" (codebase-map.md:265–269) | S6 — "CLI dispatch cannot be final proof" | S6: legacy CLI paths must be quarantined | ⚠️ No explicit COMMAND_HANDLERS deletion |
+| **WBC producers attached to handler names** (not canonical lowered nodes) | WBC evidence proves `handle_review()` ran, not that the authored review subworkflow executed | S3 — "Move WBC lifecycle producers from phase-handler names to canonical lowered node/child identities" | S3 — "WBC producers are rooted at lowered nodes/children, not merely retained handlers" (s3-brief.md:53–54) | S3: handler-only instrumentation insufficient | ✅ Correct pattern — but needs enforcement check |
+| **Generated dist artifacts (wheels/sdist)** | Installed package can diverge from checkout | S7 — "checkout, wheel/sdist, and pinned cloud runtime produce same topology" (s7-brief.md:7–8) | S7 — "clean wheel/sdist and pinned runtime scenarios" | S7 final conformance gate | ⚠️ No per-sprint installed-package gate |
+| **Projections (WBC/status/watchdog/auditor)** | Non-authoritative views, but can be treated as authority | S6 — "adopt M11 exact-version WBC queries and pure rebuildable projections" | S6 — "projection-forgery, stale-cursor, replay negative tests" | S6: forged/stale projections cannot increase authority | ✅ Correct treatment — but added tests needed |
+
+---
+
+## 3. Deletion-Order Hazards and Compatibility Escape Hatches (Ranked)
+
+### 🔴 Hazard 1: `manifest_backend.py` survives as handler-return-string-to-edge translator
+
+**Evidence:** manifest_backend.py:72–84 defines `HANDLER_NODE_IDS` — every product node name. Lines 63–100 override `_execute_node_payload` to dispatch to handlers and translate their `StepResponse` return values (`next_step`, `route_signal`, `recommendation`, `review_verdict`, `override_action`) into `NodeOutcome` branch edges. This is the *consumer* of handler route strings — even after `components.py` route_bindings are deleted, this backend still interprets whatever the handler returns as a routing decision. No sprint brief names this file for quarantine or replacement.
+
+**Mitigation needed:** Add a sprint-3 or sprint-4 task: "Replace `manifest_backend._execute_node_payload` branch-edge translation with canonical lowered topology routing; prove mutation to handler return values cannot change the trace."
+
+### 🔴 Hazard 2: `_core/workflow_data.py:45–92` + `_ROBUSTNESS_OVERRIDES` (lines 95–126)
+
+**Evidence:** `WORKFLOW` dict maps `STATE_CRITIQUED → gate/revise/tiebreaker/override` transitions keyed by condition strings like `"gate_iterate"`, `"gate_tiebreaker"`, `"gate_escalate"`. `_ROBUSTNESS_OVERRIDES` allows `"bare"` to skip critique entirely (`STATE_INITIALIZED → plan → STATE_PLANNED`). This is a **complete parallel state machine** that can still route independently. No sprint brief mentions deleting or freezing this table.
+
+**Mitigation needed:** Sprint 3 must hard-quarantine the `WORKFLOW` dict — either delete its write path or add a `FROZEN_SINCE` epoch check that raises if any code reads it as route authority. Add `_ROBUSTNESS_OVERRIDES` to the same quarantine.
+
+### 🔴 Hazard 3: `auto.py` (5808 lines) — "reduce to event consumption" is underspecified
+
+**Evidence:** auto.py:1–15 admits the driver reads `status`, derives `next_step`, and applies defaults (ESCALATE→force-proceed, stall detection). It imports `_core.active_phase_name`, `_core.state.write_plan_state`, handler `shared` modules, and `orchestration.recovery_policy`. The S6 brief (s6-brief.md:26–30) says "auto-drive may not derive product route, retry/cap policy, model choice, resume, completion, cancellation, publication, or delivery from state/status" — but provides no concrete mechanism to enforce this. Without a clear `EVENT_CONSUMER_ONLY` wrapper or delegation gate, auto.py's existing `next_step` derivation remains load-bearing.
+
+**Mitigation needed:** Sprint 6 must add an explicit `AUTO_MODE = "consumer" | "legacy"` flag with CI enforcement that `consumer` mode cannot call `next_step` derivation or handler dispatch. Old `auto.py` behavior must be gated behind `legacy` and excluded from S7 proof.
+
+### 🟠 Hazard 4: `LEGACY_ALIASES` (components.py) into handler-private override functions
+
+**Evidence:** codebase-map.md:119–120: "`LEGACY_ALIASES`, including mappings into handler-private override functions." The S6 brief (s6-brief.md:32–33) says "Delete/fence `LEGACY_ALIASES`, component override matrices, handler action dispatch" — but the aliases map **into** handler private functions, not just component module names. If the overrides are still importable, the alias is still live.
+
+**Mitigation needed:** Add a sprint-6 subtask: "Verify every `LEGACY_ALIASES` target is either deleted or wrapped in `@deprecated` with a monkey-patch guard that fails if called from a corrected code path."
+
+### 🟠 Hazard 5: Generator-native runtime (`arnold/pipeline/native/runtime.py`) as hidden route owner
+
+**Evidence:** The corrective plan (corrective-plan.md:183–192) says canonical Megaplan executes through `.pypeline` lowering into DSL/manifest runtime. But `arnold/pipeline/native/runtime.py` (cited in codebase-map.md:484–501) has `parallel_map`, suspension/resume, and human-gate behavior that could become a parallel execution path. If `build_pipeline()` is replaced with native runtime, two incompatible execution substrates coexist.
+
+**Mitigation needed:** The oracle synthesis (oracle-synthesis.md:32–45) correctly chooses `.pypeline→DSL/manifest` as canonical. But S2 (s2-brief.md:36–43) says "The generic compiler/runtime has zero Megaplan carrier imports" — this must be enforced with an import-blocking test, not just prose.
+
+### 🟠 Hazard 6: Dynamic `parallel_map` missing at source level — S2 must deliver
+
+**Evidence:** representation-report.md:785: "The current native `parallel()` helper requires a literal list/tuple of `@phase` callables." Critique fanout, execute DAG batches, and review checks all need runtime-list iteration. S2 (s2-brief.md:12–16) says implement "dynamic runtime map/reducer" but does not specify whether this is a new `foreach`/`parallel_map` source construct or a runtime-only hack.
+
+**Mitigation needed:** S2 must define the source-level syntax for `foreach`/`parallel_map` and prove it lowers to inspectable IR with deterministic child naming, worker cap, per-item retry/fallback, and reducer reference. Without this, S3's critique fanout and S5's execute batches cannot be authored.
+
+### 🟠 Hazard 7: WBC producer relocation must precede handler deletion
+
+**Evidence:** s3-brief.md:29–31: "Move WBC lifecycle producers from phase-handler names to canonical lowered node/child identities." But s3-brief.md:33–36: "Delete or hard-quarantine front-half component route bindings, handler `next_step`/`route_signal` ownership." The order matters — if WBC producers are still on handlers when handlers are deleted, WBC history breaks. The brief implies correct ordering but has no explicit sequence gate.
+
+**Mitigation needed:** Add a check in S3: "All WBC producers for front-half nodes must be registered against lowered node/child identities before any handler is deleted. Interim: both old and new producers run; failure exists if old producer fires without new producer."
+
+### 🟡 Hazard 8: `workflow.py` remains as non-semantic shim but re-exports `build_pipeline()`
+
+**Evidence:** workflow.py:1–19 re-exports `AUTHORING_SOURCE_PATH`, `WORKFLOW_MODULE_PATH`, `build_pipeline` from `planning.py`. As long as `build_pipeline()` is the canonical builder, this is the active import path. The codebase-map (lines 172–175) says "removing or changing `workflow.py` must not be able to change product routing" — but this is a non-goal if `build_pipeline()` still routes through components.
+
+**Mitigation needed:** Add a sprint-3 `@deprecated` wrapper that raises when `workflow.py.build_pipeline` is called outside test compatibility. Add an import-blocking test for production paths.
+
+### 🟡 Hazard 9: CLI `COMMAND_HANDLERS` still routes to old phase handlers
+
+**Evidence:** codebase-map.md:255–269: "CLI phase dispatch still routes to old phase handlers" and "any legacy CLI path must be quarantined or proven to delegate to canonical native workflow semantics." S6 (s6-brief.md:33–34) says "Delete/fence CLI decision translation" but does not name the COMMAND_HANDLERS registry.
+
+**Mitigation needed:** Sprint 6: add `CLI_DISPATCH_MODE = "native" | "legacy"` with CI mode that rejects legacy dispatch. Enumerate all COMMAND_HANDLERS entries and prove each either delegates to canonical source or is frozen.
+
+### 🟡 Hazard 10: Installed-package drift not verified per-sprint
+
+**Evidence:** s7-brief.md:7–8 requires checkout/wheel/sdist/cloud equivalence, but only as the final S7 gate. S3, S4, S5, S6 have no installed-package verification. The corrective-plan (corrective-plan.md:469) lists "installed drift" as a closure anti-pattern but provides no per-sprint prevention.
+
+**Mitigation needed:** Add a per-sprint `pip install -e .` and `run smoke test from installed location` acceptance criterion. The semantic checker (S1) must run against installed package source too.
+
+---
+
+## 4. Minimal Text-Level Amendments
+
+### A. Add `manifest_backend.py` to quarantine in S3 brief
+
+After s3-brief.md line 36 (`CLI decision translation, and auto route derivation.`), insert:
+
+> Quarantine `runtime/manifest_backend.py::MegaplanManifestBackend._execute_node_payload` branch-edge translation: prove that handler `StepResponse` return values (`next_step`, `route_signal`, `recommendation`, `review_verdict`, `override_action`) no longer determine product edges. Mutation tests against handler return values must produce the same trace.
+
+### B. Add `_core/workflow_data.py` to quarantine in S3 brief
+
+After s3-brief.md line 34 (`_core` route tables for corrected paths), insert:
+
+> Freeze or delete `_core/workflow_data.py:WORKFLOW` state-transition dict and `_ROBUSTNESS_OVERRIDES`. Prove that no code path reads these as product-routing authority. Add a `FROZEN_SINCE` raise-if-written guard.
+
+### C. Add `auto.py` consumer-only gate in S6 brief
+
+After s6-brief.md line 29 (`derive product route, retry/cap policy...`), insert:
+
+> Add `AUTO_DRIVE_MODE = "consumer" | "legacy"`. In `consumer` mode, `auto.py` must derive scheduling from canonical workflow events only; it may not call `next_step` derivation, handler dispatch, or route selection. CI tests enforce `consumer` mode. `legacy` mode is quarantined from S7 proof.
+
+### D. Add `LEGACY_ALIASES` transitive scan in S6 brief
+
+After s6-brief.md line 33 (`component override matrices, handler action dispatch`), insert:
+
+> Transitively scan every `LEGACY_ALIASES` target. For each target not deleted, add `@deprecated` and a runtime guard that fails when called from a canonical-lowered code path. Negative tests prove alias calls cannot alter product routes.
+
+### E. Add per-sprint installed-package verification to chain.yaml
+
+After `chain.yaml` line 67 (`notes: Prep through revise becomes load-bearing native topology; old carriers are deleted.`), add a `validate` section to S3:
+
+```yaml
+validate:
+  - kind: installed_smoke
+    scenario: front-half-split-outcome
+    packages: [wheel, sdist]
+```
+
+### F. Add WBC producer relocation sequence gate in S3 brief
+
+After s3-brief.md line 31 (`admitted exact contract versions.`), insert:
+
+> Sequence gate: before any front-half handler is deleted, verify that every WBC lifecycle producer for front-half nodes is registered against a lowered node/child identity. Run both old and new producers in shadow mode for at least one full split-outcome scenario. Failure: old producer fires but new producer does not.
+
+### G. Add dynamic foreach/parallel_map source syntax requirement in S2 brief
+
+After s2-brief.md line 16 (`retry/timeout/model/fallback policy attached at call sites.`), insert:
+
+> Source-level `foreach(items, phase_fn, max_workers=N, fallback="sequential", reducer=fn)` syntax must lower to inspectable IR with:
+> - deterministic child naming (task ID + batch identity + item path);
+> - per-item retry/fallback policy;
+> - worker cap and reducer reference.
+> List-index-only child identity fails closed.
+
+---
+
+## 5. Feasible/Sound Migration Choices
+
+### Choice 1 (Recommended): Add a mid-plan `S3.5 — Carrier Quarantine Sprint`
+
+**What:** A narrow 1-week sprint after S3 that quarantines the three surviving alternate brains — `manifest_backend.py`, `_core/workflow_data.py`, and `auto.py` route derivation — before S4 begins building tiebreaker/finalize on top of the corrected front-half foundation.
+
+**Why:** S3 deletes front-half component routes and handler route strings, but `manifest_backend.py` still interprets handler return values, `_core/workflow_data.py` still has a parallel state machine, and `auto.py` still derives `next_step`. Building S4–S6 on a foundation that looks corrected but still has live route spoofing underneath repeats the false-pass pattern. A dedicated quarantine sprint breaks this dependency.
+
+**Risk:** One week of no product-facing progress. Mitigation: quarantine means "freeze and guard" not "rewrite" — add runtime guards and negative tests, not new execution paths.
+
+### Choice 2 (Alternate): Enforce per-sprint carrier deletion gates in chain.yaml
+
+**What:** Add per-milestone `validate` blocks to the chain.yaml that prove specific carriers are dead before the next milestone starts. The current schema (corrective-plan.md:474–489) admits only `final_conformance_gate` on the final milestone, but generic per-milestone validators could be added.
+
+**Why:** Stronger than prose acceptance criteria. If the chain runner could execute `python -m arnold_pipelines.megaplan.verify_carrier_dead manifest_backend` after S3, the subsequent milestones cannot close on a false foundation.
+
+**Risk:** Chain schema changes are "useful harness follow-up but not duplicated inside this product epic" (corrective-plan.md:489). However, without schema enforcement, the plan relies entirely on brief-acceptance-criteria discipline, which was insufficient in the prior native-composition pass.
+
+### Choice 3 (Fallback): Accept the three survivors as "non-authoritative projections"
+
+**What:** Declare `manifest_backend.py`, `_core/workflow_data.py`, and `auto.py` as non-authoritative projections — like the status/watchdog projections already defined. Prove in S6 that they consume but do not decide.
+
+**Why:** Less work than quarantine. The oracle synthesis (oracle-synthesis.md:149–170) says "Adapters that translate data may remain. Adapters that translate decisions must die." If the three modules are proven to be pure data adapters downstream of canonical source, they can survive.
+
+**Risk:** The oracle also says "Drift factories unless deleted or quarantined" (line 158). `manifest_backend._execute_node_payload` is a decision translator — it turns handler strings into route edges. Calling it a "projection" after it has already decided product routes would repeat the false-pass error. This choice is sound only if every decision path in these modules is replaced with a canonical-source-derived lookup. That is equivalent to quarantine in effort.
+
+### Choice 4 (Minimum Viable): Add the six text amendments above and proceed
+
+**What:** Merge the six amendments into the briefs, ensure S2 delivers `foreach`/`parallel_map` source syntax, and rely on per-sprint acceptance criteria to catch survivors.
+
+**Why:** Lowest overhead. The corrective plan already identifies the false-pass risks. The amendments tighten the existing acceptance criteria without restructuring the sprint order.
+
+**Risk:** Without chain-schema enforcement or a dedicated quarantine sprint, nothing mechanically prevents a sprint from closing while `manifest_backend.py` still routes through handler strings. The S7 final conformance gate is the only blocking gate — and by then, the entire epic's structure depends on that survivor being dead. Late discovery means replan or late quarantine, which is the same risk the prior native-composition work encountered at M8/M9 (corrective-plan.md:58–60: "Intermediate M8/M9 receipts... do not satisfy admission").
+
+---
+
+### Summary Recommendation
+
+**Take Choice 1 (S3.5 Carrier Quarantine) + Amendments A–G.** The plan is structurally sound — the s1–s7 briefs correctly identify sequential dependency, the four-domain identity model, the need to relocate WBC producers first, and the closure anti-patterns. But the three surviving alternate brains (`manifest_backend.py`, `_core/workflow_data.py`, `auto.py`) are not individually named for quarantine in any sprint, and dynamic `foreach`/`parallel_map` source syntax is not required in S2's acceptance criteria. Without explicit mid-plan carrier quarantine, the plan repeats the prior false-pass pattern: source looks native, runtime still routes through strings and state tables. The amendments close these gaps; the S3.5 sprint makes closure mechanically enforced rather than prose-dependent.

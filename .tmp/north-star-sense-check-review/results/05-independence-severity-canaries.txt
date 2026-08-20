@@ -1,0 +1,60 @@
+**Verdict: mostly sound with amendments.**
+
+---
+
+## 1. Clean-context reviewer — implementable with existing mechanisms?
+
+**Yes, but only indirectly.** The subagent machinery is mature. `resident/subagent.py` (line 41-87) already dispatches to `launch_hermes_agent.py` with configurable model and toolsets; `fan.py` parallelizes N agents (subagent-launcher SKILL.md, line 102-115); the subagent review synthesis doc (`arnold-megaplan-subagent-review-synthesis.md`, lines 9-13) already runs DeepSeek + Codex + Claude panels as read-only architecture reviews. The anchors module (`anchors.py`, lines 15-16, 22-58) already captures `north_star` as a typed anchor, snapshots it into plans, and renders it for `gate`/`critique`/`review` audiences.
+
+**What's missing**: the design's requirement that the clean-context reviewer "predicts behavior from source *without reading the executor's narrative*" (`megaplan-north-star-sense-checks-revise-design.md`, lines 148-153) has no current enforcement mechanism. The existing subagent launcher accepts arbitrary `--query-file` content — nothing prevents the orchestrator from leaking the executor's answer into the reviewer's prompt. This needs a **prompt-construction contract**: when the question type is `clean_context_review`, the gate/critique phase must strip executor self-assessment from the subagent's brief and supply only source paths + behavioral questions.
+
+**Amendment**: add a `reviewer_prompt_policy` that discriminates question types. Questions tagged `kind: clean_context` receive a stripped prompt with source paths and the behavioral question only. The contract can sit in the `north_star_actions` schema. Existing subagent dispatch (`launch_subagent_task`) is sufficient to carry it.
+
+---
+
+## 2. Canary audits — where they live and how they halt
+
+**Where**: the design proposes "at least twice per epic, seed a known North Star defect into a disposable fixture or branch" (line 155-158). There is one existing canary precedent: `tests/fixtures/supervisor_canary/` (README.md, line 1-20) — a throwaway chain with `alpha`/`beta` milestones used as a *release gate* (`MEGAPLAN_SUPERVISOR_TIER=1 megaplan chain start`). This is the right model: canaries are **fixtures tested outside the main chain**, not inline checks that the answering agent can see.
+
+**How they halt**: the design says "if the reviewer passes the canary, halt the methodology" (line 158). The halt mechanism should be at two levels:
+
+1. **Epic-level pre-flight**: before an epic's first milestone executes, a canary runner checks the reviewer path against a known-defective fixture. Failure → `chain blocked` with a structured `canary_audit_failed` finding, not a soft warning. The cloud CLI already does North Star pre-flight checks (`cloud/cli.py`, lines 3048-3129, `_multi_sprint_north_star_findings`), so this extends that pattern.
+
+2. **In-chain periodic re-check**: at configurable intervals (every N milestones), the chain driver spawns a canary run against a parallel fixture. Failure → chain halt with `canary_failure` state. The chain driver's `on_failure`/`on_escalate` knobs (`epic_skill.md`, lines 128-136) already support `stop_chain`.
+
+**Amendment**: the design underspecifies where canary fixtures are stored vs. discovered. Recommend `tests/fixtures/north_star_canary/` with a `canary.yaml` declaring the fixture + expected failure pattern. The chain spec should reference a `canary_policy` stanza, not leave it to tribal knowledge.
+
+---
+
+## 3. Schema-assigned severity — enforcing that the answerer cannot downgrade
+
+The design says severity is "assigned by schema for dangerous categories, not by the answering agent's discretion" (lines 282-287), listing route authority, baseline rewrites, row/carrier exemptions, target narrowing, generated conformance authority, and live-plan topology/resume risk as always-`blocking`.
+
+The existing gate pipeline already has a **severity policy** in `workflows/components.py` (lines 1168-1173):
+- `significant_severities: ("significant", "likely-significant")`
+- `cosmetic_severities: ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit")`
+- `critical_categories: ("correctness", "security")`
+
+And the override matrix (`override_matrix.py`, line 17) already has `force-proceed`, with review-policy `force_proceed_blockers` (`components.py`, lines 452-458, 462-470) gating it to "advisory or cosmetic only."
+
+**How to enforce**: the design's category→severity mapping should be a **pre-validate step**, not prompt advice. When the gate receives a `north_star_action`, the handler inspects the `finding` content against a category classifier (regex or LLM classifier for the six dangerous categories). If the classifier returns a dangerous category, severity is set to `blocking` regardless of what the agent wrote. The existing `normalization_policy` (`components.py`, lines 1174-1188) already normalizes invalid gate recommendations — extend it with a `north_star_severity_override` rule that rewrites downgraded dangerous findings to `blocking`.
+
+The anti-force-proceed rule (line 330-331: "blocking North Star actions cannot be force-proceeded as cosmetic issues") is enforceable using the existing `_review_force_proceed_surface` (`components.py`, lines 462-470) which already checks `allowed_when: remaining review items are advisory or cosmetic only`. A blocking North Star action simply isn't cosmetic and will block `force_proceed`.
+
+**Amendment**: add a `north_star_category_map` config stanza (YAML/TOML) listing the six dangerous categories and their forced severities. Gate/review handlers consult it *after* agent output.
+
+---
+
+## 4. Risk of expense/bloat + smallest implementation
+
+**Risk**: yes, moderate. The clean-context reviewer path adds one subagent call per North Star question (potentially 3-6 questions per sprint). At DeepSeek V4 Pro costs, that's manageable. The bigger risk is the canary runs — two per epic, each a full mini-chain — which could add 10-20% overhead if not scoped tightly.
+
+**Smallest implementation**:
+
+1. Parse questions from `NORTHSTAR.md` and sprint brief `## Sprint Review / North Star Sense Check` sections (lines 310-312 of the design). One regex, ~30 lines.
+2. Add `north_star_actions: []` and `north_star_actions_addressed: []` to `gate.json` and `revise.json` schemas (lines 314-320). Schema-only change, zero orchestration new.
+3. Add one `add_human_halt` guard in the revise handler (`override.py` already dispatches `halt`-class actions via the override matrix — add it as a new entry in `_OVERRIDE_ACTION_KEYS`).
+4. Extend the existing gate severity `normalization_policy` to force `blocking` on dangerous categories.
+5. Skip the canary runner and pay-per-question subagent reviewer in v1 — the structured action path alone delivers 80% of value. Canaries and clean-context parallelism are v2.
+
+The design already warns against "LLM-generated questions, a database-backed governance ledger, or full worker/model I/O replay" as v1 scope (lines 354-360). That restraint is correct. The skeleton exists (lines 291-301): North Star anchors, chain scaffolding, gate→revise feedback, finalize, review with `needs_rework`. The missing piece is exactly one structured JSON object that rides existing rails.

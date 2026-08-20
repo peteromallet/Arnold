@@ -101,7 +101,7 @@ _CODEX_MODEL_TO_CLAUDE_SPEC: tuple[tuple[str, str], ...] = (
     ("gpt-5.4", "claude:claude-sonnet-4-6"),
     ("gpt-5.5", "claude:claude-opus-4-7"),
 )
-_NAMED_VENDOR_PROFILES = {"all-codex": "codex", "variable-codex": "codex"}
+_NAMED_VENDOR_PROFILES = {"partnered-codex": "codex", "variable-codex": "codex"}
 
 
 def _cli_error(code: str, message: str) -> Exception:

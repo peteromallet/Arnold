@@ -1,0 +1,42 @@
+{
+  "schema": "arnold.megaplan.predeploy_operator_exception.v1",
+  "exception_for": "canonical_router",
+  "written_by": "operator",
+  "written_at": "2026-08-13T01:10:00Z",
+  "deploy_sha": "4a830c6ac9a0700864f9ea3336e28f57eece6d5d",
+  "predeploy_verdict": "FAIL (canonical_router only)",
+  "basis": {
+    "total_violations": 74,
+    "missing_request_reference": 72,
+    "non_canonical_action": 2,
+    "all_historical": true,
+    "violation_dates": ["2026-07-16", "2026-07-17", "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25", "2026-08-03"],
+    "referenced_by_live_claims": 0,
+    "reference_our_session": 0,
+    "decision_accepted_among_74": 13,
+    "accepted_and_in_active_claims": 0,
+    "note": "13 of the 74 carry decision=accepted but NONE are referenced by any active-claims owner and NONE reference session megaplan-maintenance / plan m1-containment-and-truthful-20260811-0640. They are historical accepted-but-never-claimed records from the dead-fixer era (July 16 - Aug 3, pre-Phase-2), not live custody."
+  },
+  "session_scope": {
+    "session": "megaplan-maintenance",
+    "plan": "m1-containment-and-truthful-20260811-0640",
+    "plan_local_queue_clean": true,
+    "plan_local_requests": 6,
+    "plan_local_decisions": 60,
+    "plan_local_missing_request_refs": 0
+  },
+  "other_checks": "all PASS (baseline_proof, source_sha_bound, initiative, runtime/dep/wrapper provenance, session classification, default-off mutation, negative controls)",
+  "rationale": [
+    "The canonical_router check scans the CENTRAL /workspace/.megaplan/repair-queue (299 requests, 1921 decisions accumulated since July 3 from the broken-fixer era). The 74 violations are historical orphan decisions from other plans/sessions, zero of which are live custody (no active-claims owner references them) and zero of which reference this session.",
+    "The live dispatcher is request-first; orphan decisions are not claimable and do not affect this session's enqueue/claim/reclaim path.",
+    "T-0690 is NOT the closer for these: they are pre-existing historical dirt, not a reconcile candidate for the current epic.",
+    "Follow-up (NOT this deploy): session-scope the baseline/predeploy collector so canonical_router only audits the pinned session's records.",
+    "The 74 stay until a later explicit queue-reconcile with a collector that can skip disposed historical rows. That work must not block this deploy."
+  ],
+  "constraints_respected": [
+    "No mutation of the central queue (no stub requests, no deletes, no forced dispositions).",
+    "No code change to the gate to get a green check.",
+    "predeploy-verdict.json left as FAIL; this exception receipt documents the operator decision.",
+    "Deploy SHA unchanged (4a830c6ac9)."
+  ]
+}

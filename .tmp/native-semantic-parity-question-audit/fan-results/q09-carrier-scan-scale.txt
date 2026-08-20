@@ -1,0 +1,49 @@
+---
+
+## Q9 Audit: Package-Wide Carrier Scan Scale
+
+### Verdict
+
+**Weakens** the plan. The true carrier count is in the ~300 range, not ~30. The assumption that "registry reconciliation is tractable without exemption inflation" does not survive contact with source.
+
+### Evidence
+
+**Scan methodology.** I ran AST-based and regex-based heuristics across all Python files in `arnold_pipelines/megaplan`, counting carriers by the plan's own definitions: `handler_ref`, `route_bindings`, `target_ref`/`target_refs`, state-mutation sites (`state["current_state"]`, `state["next_step"]`, `state["resume_cursor"]`), policy route surfaces (`route_groups`, `reprompt_policy`, `fallback_routes`, `fanout_contract`, `reducer_routes`, `override_actions`, `force_proceed_authority`), `NativeProgram` references, `override_matrix` imports, `route_dispatch` fallback, and auto-drive `next_step` derivation.
+
+**Raw counts** (deduplicated by file:line):
+
+| Carrier category | Distinct sites |
+|---|---|
+| Route-shaped dict keys (`target_ref`, `next_step`, `route_groups`, etc.) | 170 |
+| State mutation (`state["current_state"/"next_step"/"resume_cursor"] = ...`) | 79 |
+| `target_ref` keyword arguments | 17 |
+| `route_bindings` assignments | 14 |
+| `NativeProgram` references | 14 |
+| `handler_ref` assignments (unique handler targets) | 11 |
+| `override_matrix` imports | 6 |
+| `component_import_as_authority` (`AUTHORING_*`, `TIEBREAKER_WORKFLOW`) | 3 |
+| `route_dispatch` fallback import | 1 |
+| `target_refs` keyword arguments | 1 |
+
+**Conservative deduped floor: 137** (unique `target_ref` route targets + `handler_ref` occurrences + state mutations + `NativeProgram` refs). With all categories, **~316 distinct carrier sites**.
+
+**Policy density within single sections confirms the ratio.** `components.py` alone contains:
+
+- **GATE_POLICY** (`components.py:1154-1237`): 14 `effect` entries, 51 `route_signal` entries, 86 `target_ref` entries, 7 fallback entries — approximately **158 route decisions** that would map to only **2 rows**: `s2.gate.1` and `s2.revise.1` (master plan:250).
+
+- **EXECUTE_POLICY** (`components.py:1694-1783`): 14 `effect` entries, 44 `route_signal` entries, 83 `target_ref` entries — approximately **141 route decisions** that would map to **~3 rows**: `s4.execute.*`.
+
+- Per the plan itself (lines 247-250, 320-321), S2 carriers span ~360 lines of code for 2 rows, and S4 carriers span ~1,100+ lines for 3 rows. The carrier-to-row ratio is **30:1 to 80:1 within individual sprints**.
+
+**Row registry size:** 31 rows in the (now-discredited) conformance report (`docs/arnold/megaplan-native-representation-conformance-report.md:26-56`), or 9 rows that survive strict checking (`master-plan.md:84-92`).
+
+### Smallest Concrete Plan Amendment
+
+Before the reconciliation gate (S1a exit gate at `master-plan.md:168-169`) can be realistic, the plan requires a **carrier-tiering heuristic** that splits every detected carrier into one of two buckets:
+
+1. **Route-authoritative carriers** — carriers that actually determine branch targets, state transitions, or handler dispatch at runtime. These map to row IDs.
+2. **Descriptive-metadata carriers** — carriers that exist as compatibility scaffolding, documentation, or inert policy surfaces that the runtime does not consult for routing decisions. These get `compat-metadata-inert` exemptions in bulk.
+
+Without this tiering, the reconciliation gate faces a ~300:31 carrier-to-row ratio. Either (a) exemption inflation explodes to absorb ~270 carriers as `compat-metadata-inert`, undermining the gate's purpose, or (b) rows become impossibly coarse-grained, each absorbing 30-80 semantically distinct route decisions, undermining the "source-authoritative" claim the plan is built on.
+
+The amendment should land in S1a's scope (`master-plan.md:132-179`) as a new exit gate artifact: `artifacts/native-semantic-parity/carrier-tier-classification.json`, produced by a heuristic that classifies carriers by whether they appear in runtime code paths (via AST dataflow from `handlers/`, `execute/`, `runtime/`, `route_dispatch.py`, `manifest_backend.py`, `auto.py`) or only in inert declaration sites (`native_interfaces.py`, `_compatibility.py`, component metadata dicts that are never consulted at decision points).

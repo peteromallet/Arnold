@@ -1,0 +1,84 @@
+Now I have all the evidence I need. Here is the audit.
+
+---
+
+## S4b Execute Approval + Resume — Audit
+
+### 1. Verdict: **PARTLY EXISTS**
+
+All five sub-capabilities have substantial partial implementations, but they are scattered across three different subsystems (native evidence-pack pipeline, Megaplan chain driver, and Megaplan auto driver) with no unified integration surface. No single file owns the "approval + resume" contract end-to-end.
+
+---
+
+### 2. Existing Artifacts with Evidence
+
+**A. Destructive approval (approved/denied)**
+- `arnold_pipelines/evidence_pack/resume.py:37-45` — `_normalize_human_input` enforces `human_input` with boolean `"approved"`, mapping `approved=True` → `choice="emit"`, `approved=False` → `choice="failed"`. This is a pristine structured approval model.
+- `arnold_pipelines/evidence_pack/resume.py:92-153` — `resume_evidence_pack` is the full resume-with-approval entry point: loads cursor, validates it targets `human_review`, runs reverify, then calls `run_native_pipeline` with `human_input`.
+- **BUT**: This is only wired for the native evidence-pack pipeline (`build_native_program()`). Megaplan chain has no equivalent.
+
+**B. Fresh-session forcing**
+- `arnold_pipelines/megaplan/chain/__init__.py:3655-3750` — `_rearm_fresh_session_execute_block`: "Reset a blocked execute plan back to finalized for a fresh-session retry." Clears `latest_failure`, `resume_cursor`, `active_step`, sets `current_state=STATE_FINALIZED`. Triggered when `resume_cursor.retry_strategy == "fresh_session"`.
+- `arnold_pipelines/megaplan/chain/__init__.py:3329-3356` — `_mark_plan_missing_base_ref` sets `resume_cursor = {phase: "recover-base-branch", retry_strategy: "manual_review"}` — another fresh-session path.
+- Tests: `test_chain_awaiting_human_retry.py:115-188` — `test_stale_prerequisite_block_revalidates_chain_preconditions_and_retries` verifies the rearm + revalidation flow with `chain_precondition_revalidation.json` audit trail.
+
+**C. Blocked retry**
+- `arnold_pipelines/megaplan/chain/__init__.py:3565-3652` — `_recover_stale_prerequisite_block`: revalidates launch preconditions, resets blocked tasks to `pending`, writes `chain_precondition_revalidation.json`. Returns `True` if preconditions now pass.
+- `arnold_pipelines/megaplan/chain/__init__.py:3398-3453` — `_recover_blocked_execute_if_tasks_done`: if execute reports `blocked` but all tasks are done, marks as `STATE_EXECUTED`.
+- `arnold_pipelines/megaplan/chain/__init__.py:4424-4555` — `_handle_outcome`: the central decision function. Routes `blocked` (lines 4488-4500) to `stop` on unresolved explicit blockers with `"not satisfied"` / `"settled"` in reason text. Routes `awaiting_human` (lines 4468-4480) to either retry or stop.
+- Tests at `test_chain_awaiting_human_retry.py:247-430` — four tests covering retry-on-finalized, stop-before-PR, stop-unresolved-prerequisite, stop-settled-gate.
+
+**D. Resume cursor**
+- Plan-level: `state.json::resume_cursor.phase` — used pervasively. Auto driver in `auto.py:1248-1264` (`_failure_resume_cursor_for_step`), chain in `chain/__init__.py:3343-3348` (`_mark_plan_missing_base_ref`), and `arnold_pipelines/megaplan/runtime/resume.py:28-39` (`load_resume_cursor_payload`).
+- Design doc: `docs/pipeline-resume.md:5-8` — cursor names a Pipeline stage, driver looks it up in `pipeline.stages` by name.
+- Native cursor: `evidence_pack/resume.py:48-68` — `_load_resume_cursor` uses `classify_resume_cursor` + `read_native_cursor` from `arnold.pipeline.native.checkpoint`.
+- Composite cursor: `runtime/resume.py:42-92` — `load_composite_resume_cursor`, `save_composite_resume_cursor` for parallel-stage suspension.
+- `docs/pipeline-resume.md:96-107` — ParallelStage resumption is documented as "entire barrier restarted from scratch; partial fan-out is out of scope."
+
+**E. Review / no-review / deferred-human handoff**
+- State constant: `planning/state.py:22-23` — `STATE_AWAITING_HUMAN_VERIFY = "awaiting_human_verify"`, aliased as `STATE_AWAITING_HUMAN`.
+- Review route decision: `handlers/review.py:1060-1071` — `has_deferred_must` criteria with `pass="deferred_human"` and `priority="must"` returns `ReviewRouteDecision("success", STATE_AWAITING_HUMAN_VERIFY, "deferred_human")`.
+- Chain integration: `chain/__init__.py:3826-3841` — `_awaiting_human_can_retry` reads `state.json` + `finalize.json` to check `user_action_resolutions.json`. If all satisfied, retries; otherwise stops.
+- Merge policy: `chain/spec.py:49` — `VALID_MERGE_POLICIES = ("auto", "review", "manual")`. `"review"` / `"manual"` force a human PR merge gate after each milestone (`spec.py:843-845`).
+- Human blocker classification: `cloud/human_blockers.py:36-85` — `BlockerVerdict` (TRUE_BLOCKER, STALE_MISMATCH, AMBIGUOUS_BLOCKER, MECHANICAL_BLOCKER) and `should_block` property.
+- Tests at `test_chain_awaiting_human_retry.py:191-244` — `test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions` and `test_handle_outcome_retries_finalized_plan_when_execute_finds_satisfied_gate`.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Artifact | Reuse value |
+|---|---|
+| `evidence_pack/resume.py` `resume_evidence_pack` | The `approved: bool` → `choice: emit/failed` contract is clean and could be generalized as the chain's approval surface. |
+| `chain/__init__.py` `_handle_outcome` | Already handles `awaiting_human`, `blocked`, retry/escalate/abort ladder. Add an `approved=False` case here. |
+| `chain/__init__.py` `_rearm_fresh_session_execute_block` | Directly reusable as the fresh-session forcing mechanism. |
+| `chain/__init__.py` `_recover_stale_prerequisite_block` | The revalidation+reset pattern is reusable for any blocked→retry flow. |
+| `planning/state.py` `STATE_AWAITING_HUMAN_VERIFY` | Already the canonical state for deferred-human handoff. |
+| `handlers/review.py` `deferred_human` route | Already produces the correct state transition. |
+| `orchestration/phase_result.py` | The new `ExitKind` enum and `PhaseResult` transport is the right abstraction for the auto↔phase boundary (per `auto-execute-boundary-diagnosis.md`). |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Unified approval surface for chain**: There is no chain entry point that accepts a destructive `approved: bool`. The evidence-pack's `resume_evidence_pack(human_input={"approved": True/False})` pattern needs to be wired into `run_chain` or a new `resume_chain` function.
+
+2. **Destructive denial**: When `approved=False`, the system must transition the plan to a terminal rejection state (e.g., `aborted` or `failed`) with audit trail. Currently only `authority_blocked` exists for authority divergence, not for explicit human denial.
+
+3. **Fresh-session forcing as a user-initiated command**: `_rearm_fresh_session_execute_block` is auto-triggered by `megaplan auto`. There's no CLI/user action to explicitly force a fresh-session restart with `retry_strategy: fresh_session`.
+
+4. **Structured human handoff protocol**: The deferred-human path goes through `STATE_AWAITING_HUMAN_VERIFY` but the chain's `_awaiting_human_can_retry` is an auto-detection heuristic (reads file artifacts), not a structured protocol. The human blocker classification in `cloud/human_blockers.py` exists but isn't integrated into the chain approval flow.
+
+5. **PhaseResult integration**: `orchestration/phase_result.py` is the new structured boundary but its adoption across phase handlers is partial. The `auto-execute-boundary-diagnosis.md` (Section 5) recommends a `phase_result.json` consumed by the auto driver — this exists but needs full integration for approval outcomes to flow cleanly.
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+- **S4b should be scoped as "wire existing parts, don't build from scratch."** The ladder retry, resume cursor, fresh-session rearm, and deferred-human state are all built. What's missing is the approval *decision surface* — a single `approve_plan(plan, approved: bool)` function that routes through `_handle_outcome`.
+
+- **Highest-priority gap**: Add `approved=False` → terminal rejection to `_handle_outcome` and expose it via `run_chain` / CLI. This is the only genuinely missing capability.
+
+- **Defer**: Full PhaseResult adoption and human-blocker classification integration into chain. These are adjacent work (S6 auto-execute boundary hardening), not S4b scope.
+
+- **Risk**: The evidence-pack's structured approval model (`resume.py`) and the chain's outcome model (`_handle_outcome`) live in separate packages (`arnold_pipelines.evidence_pack` vs `arnold_pipelines.megaplan.chain`). Bridging them requires a conscious decision about whether to generalize the evidence-pack model into the Arnold pipeline layer or replicate it in Megaplan.

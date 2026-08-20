@@ -1,0 +1,87 @@
+Here is the evidence-first audit.
+
+---
+
+## 1. Verdict: **partly exists**
+
+The "typed outcomes" half is substantially built and deployed. The "builder slice" half (build_pipeline consuming lowered .pypeline for one edge with dead-delete proof) has infrastructure wired but the S1b-2 specific exit gates (tests, installed-package parity smoke, single-edge dead-delete) are not present.
+
+---
+
+## 2. Existing or prior artifacts
+
+### Typed outcomes/interfaces — substantially complete
+
+- **`arnold_pipelines/megaplan/outcomes.py`** (252 lines): defines closed `StrEnum` types for every workflow domain: `PrepOutcome`, `CritiqueOutcome`, `GateOutcome` (10 members), `TiebreakerOutcome`/`TiebreakerDecisionOutcome`, `TiebreakerResearcherOutcome`, `TiebreakerChallengerOutcome`, `TiebreakerSynthesisOutcome`, `ReviewOutcome` (5 members), `ReviewDecisionResult`, `OverrideOutcome`, `OverridePolicyRoute`, `ExecuteOutcome`, `FinalizeOutcome`, `ReviseOutcome`, `SuspensionOutcome`, `HaltOutcome`, `SuspensionHaltOutcome` (`outcomes.py:19-177`).
+- **`OUTCOME_CLASS_BY_VOCABULARY_KEY`**: aggregate mapping of vocabulary keys to StrEnum types (`outcomes.py:183-195`).
+- **`assert_vocabulary_parity()`**: import-time guard that validates enum values match `RUNTIME_BRANCH_VOCABULARY` exactly (`outcomes.py:198-218`).
+- **`workflow.pypeline`** imports `GateOutcome`, `OverrideOutcome`, `OverridePolicyRoute`, `ReviewOutcome`, `TiebreakerOutcome` and uses them in declared override policy routes and route conditions (`workflow.pypeline:7-13`, `:36-79`).
+- **`execute/policy.py`**: typed execute constructs (`ExecuteEntryRoute`, `ApprovalOutcome`, `NoReviewTerminalOutcome`, `TierRouteOutcome`, `BlockedRetryOutcome`, `NextExecuteTransition` — `execute/policy.py:31-60`).
+- **`components.py`**: bridges `_OUTCOME_VOCABULARY_BY_STEP = OUTCOME_CLASS_BY_VOCABULARY_KEY` (`components.py:114`), with `check_outcome_vocabulary_parity()` (`components.py:226-240`) and `CRITIQUE_TYPED_REDUCER_OUTCOMES` (`components.py:924-927`).
+
+### Build pipeline consuming lowered topology — partially wired
+
+- **`_lowered_workflow()`**: lowers the canonical `.pypeline` file via `lower_workflow_file(AUTHORING_SOURCE_PATH)` (`planning.py:200-201`).
+- **`build_pipeline()`**: calls `_lowered_workflow()` and uses `lowered.steps` and `lowered.routes` structurally for `_canonical_steps` and `_canonical_routes` (`planning.py:695-721`).
+- **`_canonical_steps()`**: iterates `PIPELINE_STEP_COMPONENTS` but gates inclusion on presence in `lowered_by_id`; lowered source provides `inputs`, `outputs`, `source_span` overrides (`planning.py:643-672`).
+- **`_canonical_routes()`**: filters lowered routes through supported label sets (`planning.py:674-681`).
+- **`_topology_lowered_routes()`** / **`_canonical_lowered_route_targets_by_source()`**: extract topology from lowered routes for policy resolution and boundary contracts (`planning.py:299-330`).
+- **`lowered_workflow_topology()`** / **`lowered_route_bindings_by_step()`** / **`resolve_lowered_route_target_for_signal()`**: exported helpers that expose source-derived topology without component tables (`planning.py:724-783`).
+
+### Critical remaining component dependency
+
+- **`_route_id_for_lowered_route()`** still looks up `PIPELINE_STEP_COMPONENTS_BY_ID.get(source)` and consults `component.metadata.get("route_bindings", ())` for route IDs (`planning.py:247-268`).
+- **`_metadata_for_step()`** still reads `handler_ref`, `policy_refs`, `override_actions` from component metadata (`planning.py:583-598`).
+- **`_policy_for_step()`** gets the policy from `component.policy` (`planning.py:557-558`).
+
+### Prior partial extraction: front_half.pypeline
+
+- **`front_half.pypeline`** (63 lines): a named native subworkflow for prep→plan with `FRONT_HALF_HANDOFF_TOPOLOGY` declaring typed reducer outcomes and loop handoff (`front_half.pypeline:22-33`). This is the closest existing artifact to "one route edge source-owned."
+
+### Quarantine/dead-delete infrastructure
+
+- **`_compatibility_quarantine`** with `sunset_condition: "typed_interfaces_replace_component_metadata"` (`components.py:116-123`, `:207-223`).
+- **Execute route-binding dead-delete test**: `test_execute_route_authority_comes_from_policy_not_component_bindings` proves execute component's `route_bindings` must be empty and route comes from pypeline (`tests/arnold_pipelines/megaplan/test_workflows_components.py:141-165`).
+- **Evidence bundle dead-delete checks** in `test_generate_native_representation_evidence.py:125,293-308` — but scoped to source-path-reconciliation, not per-edge behavior scenarios.
+
+---
+
+## 3. What can be reused or generalized
+
+| Mechanism | Source | Generalizability |
+|---|---|---|
+| `outcomes.py` StrEnum pattern with `OUTCOME_CLASS_BY_VOCABULARY_KEY` | `outcomes.py:183-195` | Fully reusable for any workflow domain; the `assert_vocabulary_parity()` guardrail (`outcomes.py:198-218`) is a copy-paste pattern for new outcome domains. |
+| `_lowered_workflow()` → `_canonical_steps`/`_canonical_routes` pipeline | `planning.py:200-201`, `:643-681` | The pattern of lowering `.pypeline` and filtering component steps through lowered topology is generalizable. The hybrid (lowered for structure, component for metadata) is the current state. |
+| `_compatibility_quarantine` with `sunset_condition` | `components.py:116-123` | Reusable pattern for marking component metadata as inert bridge rather than authority. |
+| `front_half.pypeline` extracted subworkflow | `front_half.pypeline:36-63` | Demonstrates one edge (prep→plan) already partially extracted with typed outcomes. |
+| `lowered_workflow_topology()` / `resolve_lowered_route_target_for_signal()` | `planning.py:724-783` | Generalizable helper surface for any code that needs source-derived topology without touching components. |
+
+---
+
+## 4. What still must be built
+
+1. **S1b-2 exit gate tests do not exist.** No files match `test_workflows_planning_lowered_topology.py` or `test_installed_package_composition_smoke.py` in the test tree. These are the master plan's explicit exit gates (`master-plan.md:590`).
+
+2. **Single-edge dead-delete behavior test.** The master plan requires: "delete/mutate old component `route_bindings` for that edge and prove behavior/output unchanged" (`master-plan.md:594-595`). The existing execute test (`test_workflows_components.py:141`) only asserts empty bindings — it doesn't mutate them and re-run behavior scenarios against frozen baselines.
+
+3. **build_pipeline still hybrid, not source-owned for the selected edge.** `_route_id_for_lowered_route()` still consults component bindings (`planning.py:255-257`), `_metadata_for_step()` still reads `handler_ref` from components (`planning.py:587-589`), and `_policy_for_step()` gets its base policy from components (`planning.py:557-558`). For S1b-2 to close, one edge must route purely from lowered topology with component metadata inert or deleted.
+
+4. **Installed-package parity smoke.** No test or script validates that `workflow.pypeline` loaded via `importlib.resources` produces identical checker output to checkout mode. The master plan requires this at S1b-2 (`master-plan.md:584`).
+
+5. **No frozen S1a baselines exist to diff against.** The S1a pre-extraction baseline freeze script (`scripts/capture_megaplan_split_outcome_baselines.py`) has not been run (no `artifacts/native-semantic-parity/baselines/pre-extraction/` directory evidence), so S1b-2 parity checks cannot diff against frozen legacy behavior.
+
+---
+
+## 5. Recommended adjustment to the sprint plan
+
+**S1b-2 (Typed Outcomes + Builder Slice) is partly built.** The typed outcomes infrastructure (`outcomes.py`, 252 lines, 15+ StrEnum classes) is substantially complete and exceeds the "one edge" minimum. The builder infrastructure (`_lowered_workflow()`, topology helpers) is wired but still hybrid.
+
+**Recommendation: Narrow S1b-2 to the specific delta:**
+
+- **Keep:** `outcomes.py` as-is — it already covers all workflow domains and has parity guardrails.
+- **Add only:** (a) one concrete edge where `build_pipeline()` route resolution for that edge is proven to work with component `route_bindings` deleted/mutated, with a dead-delete behavior test; (b) the `test_workflows_planning_lowered_topology.py` test proving lowered topology is consumable; (c) the installed-package smoke test; (d) S1a baseline capture before this sprint starts, since the master plan requires it (`master-plan.md:596`).
+- **Do not expand:** The existing `outcomes.py` coverage means the "typed outcomes" workload for S1b-2 is essentially done. Do not add new outcome domains — use the sprint to prove one edge's source-ownership and installed-package parity, then move to S2.
+
+**Risk:** The hybrid builder could create a false-pass if the selected edge appears to route from lowered topology but a component fallback (`planning.py:255-257`) silently saves it. The dead-delete test must actually delete the component binding, not just assert it's empty.
+
+**Unverified prior claim:** The evidence YAML marks `typed-loop-outcomes` as having a proof artifact (`megaplan-native-representation-evidence.yaml:395-408`) but this is a carrier reference to the full `.pypeline` file, not behavior evidence that one specific edge routes without component bindings. Treat as descriptive metadata, not closure proof.

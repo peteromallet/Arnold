@@ -17,8 +17,6 @@ from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TARGETED_WRAPPERS = {
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain",
-    "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
-    "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
 }

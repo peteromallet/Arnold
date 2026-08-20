@@ -1,0 +1,48 @@
+diff --git a/arnold_pipelines/discovery.py b/arnold_pipelines/discovery.py
+index 0000000..0000000 100644
+--- a/arnold_pipelines/discovery.py
++++ b/arnold_pipelines/discovery.py
+@@ -236,6 +236,8 @@ PIPELINE_STATUS: dict[str, dict[str, object]] = {
+         "docs_path": "arnold_pipelines/evidence_pack/SKILL.md",
+         "disposition": "migrate",
+         "migrated": True,
++        "builder_contract": "native",
++        "diagnostic": "Returns a native Pipeline with a NativeProgram.",
+     },
+     "arnold_pipelines/_template": {
+         "id": "my-pipeline",
+diff --git a/tests/agentbox/test_resident_profile.py b/tests/agentbox/test_resident_profile.py
+index 0000000..0000000 100644
+--- a/tests/agentbox/test_resident_profile.py
++++ b/tests/agentbox/test_resident_profile.py
+@@ -1405,6 +1405,7 @@ def test_resident_runtime_injects_conversation_history_before_current_burst(
+         conversation_id=conversation.id,
+         direction="inbound",
+         content="earlier user message",
++        discord_message_id="earlier-user-message",
+     )
+     store.create_message(
+         epic_id=None,
+diff --git a/tests/arnold/agent/test_import_boundaries.py b/tests/arnold/agent/test_import_boundaries.py
+index 0000000..0000000 100644
+--- a/tests/arnold/agent/test_import_boundaries.py
++++ b/tests/arnold/agent/test_import_boundaries.py
+@@ -1,8 +1,8 @@
+ """Import-boundary tests for the neutral ``arnold.agent`` package.
+ 
+ ``arnold.agent`` must remain product-neutral: it must not statically import
+-``arnold_pipelines.megaplan`` or ``arnold_pipelines.megaplan``.  Dynamic
++``arnold.pipelines.megaplan``.  Dynamic
+ runtime forwards to vendored legacy agent tools are allowed only when they go
+ through ``arnold_pipelines.megaplan.agent`` (the M4 parity shim), not the new
+ product package.
+ """
+@@ -15,7 +15,7 @@ from pathlib import Path
+ import pytest
+ 
+ 
+-FORBIDDEN = ("arnold_pipelines.megaplan",)
++FORBIDDEN = ("arnold.pipelines.megaplan",)
+ 
+ 
+ def _is_forbidden(name: str) -> bool:

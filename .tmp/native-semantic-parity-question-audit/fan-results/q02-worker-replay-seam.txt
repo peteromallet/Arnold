@@ -1,0 +1,74 @@
+## Verdict: **Weakens the plan.**
+
+The plan assumes (line 36‑37, 151‑154) that S1a can deliver "a deterministic replay harness with hash-pinned canned worker payloads" as a contained deliverable — a single interception seam. **No such seam exists.** Worker/model invocation paths are heterogeneous, and what the codebase actually replays today are *driver-level route-label traces*, not model I/O.
+
+---
+
+## Evidence
+
+### 1. Heterogeneous invocation paths — no single seam
+
+`run_step_with_worker` (`workers/_impl.py:4568‑4593`) branches into **four structurally different dispatch paths**:
+
+| Path | Transport | Evidence |
+|---|---|---|
+| `run_hermes_step` | Direct API (OpenRouter SDK) | `workers/_impl.py:4642‑4656` → `workers/hermes.py:1813‑1838` |
+| `run_shannon_step` / `run_shannon_stream_step` | CLI subprocess via tmux | `workers/_impl.py:4657‑4710` → `workers/shannon.py`, `workers/shannon_stream.py:1043‑1058` |
+| `run_codex_step` | CLI subprocess (Codex CLI) | `workers/_impl.py:4711‑4744` → `workers/_impl.py:3808‑3842` |
+| `ArnoldDispatcher` (flag-gated) | Per-adapter closures wrapping each of the above | `workers/_impl.py:4773‑4843` |
+
+Each path has **distinct session management**: Hermes uses `session_key_for(step, "hermes", model=model)` (`hermes.py:1872`), Shannon uses tmux sessions, Codex uses `state["sessions"]` with `session_key_for(step, "codex", model=resolved_model)` (`handlers/execute.py:442‑445`). Session freshness is forced per-phase (`workers/_impl.py:4612`: `effective_refreshed = refreshed or step not in _CROSS_CALL_PERSISTENT_STEPS`), and the execute handler adds an additional fresh-session override after rework/blocked retry (`handlers/execute.py:423‑427`).
+
+There is **no single interceptor point** at which `record()` / `replay()` can be inserted across all four paths. Each would require a separate adapter, and the subprocess-based paths (Shannon, Codex) can't be meaningfully "canned" without mocking the subprocess boundary entirely.
+
+### 2. What the auto-drive corpus actually replays
+
+The `tests/characterization/auto_drive_corpus/MANIFEST.json` lists 35 golden fixtures. A representative sample:
+
+```json
+// happy_path_done.json:44
+{
+  "events": [
+    {"iteration": 1, "state": "executing", "next_step": "execute", "valid_next": ["execute"]},
+    {"msg": "running: megaplan execute --confirm-destructive ...", "phase": "execute", "timeout": 3600},
+    {"iteration": 2, "state": "done", "next_step": null, "valid_next": []},
+    {"msg": "terminal state reached: done"}
+  ],
+  "outcome": {"status": "done", "final_state": "done", "iterations": 2, ...}
+}
+```
+
+These are **`DriverOutcome` traces** — they capture the auto-drive loop's state transitions (`state`/`next_step`/`valid_next`), CLI phase commands, and terminal verdicts. They do **not** contain model prompts, responses, parameters, or hashes. The harness in `test_auto_drive.py` replays the *driver's routing*, not the worker's model I/O. This is confirmed by `test_auto_drive.py:27‑34`: "The corpus characterizes the 12-step auto-drive loop, not the optional git publish epilogue."
+
+### 3. The `RecordedModelIO` class is not a replay harness
+
+`observability/evaluand.py:84‑95` defines `RecordedModelIO` with `prompt`, `response`, `params`, and SHA-256 hashes. But it is used exclusively for **evaluand scoring** (`re_judge` at `evaluand.py:539‑633`) — replaying a captured I/O pair through a scorer for comparative judgment. It is **never instantiated at worker dispatch time**. Searches for `RecordedModelIO` in `workers/` and `handlers/` return zero hits.
+
+### 4. No existing record/can infrastructure at the dispatch point
+
+Searches for `record`, `replay`, `can`, `fixture`, `mock_worker` in `workers/_impl.py`, `workers/hermes.py`, `workers/shannon.py`, `workers/shannon_stream.py`, and `handlers/shared.py` yield no interception machinery. The only mock path is `workers/hermes.py:1831‑1833` which checks `MOCK_ENV_VAR` for test-only stub output — not a general record/replay harness.
+
+### 5. The plan's own baseline commands reference a non-existent harness
+
+The S1a exit gate (line 173‑174):
+```
+python scripts/validate_megaplan_replay_harness.py --fixtures tests/fixtures/megaplan/replay
+python scripts/capture_megaplan_split_outcome_baselines.py ... --harness tests/fixtures/megaplan/replay
+```
+Neither `tests/fixtures/megaplan/replay` exists (search returns 0 files for `*replay*` under `tests/fixtures/`), nor do the two scripts. The harness is entirely aspirational.
+
+---
+
+## Smallest Concrete Plan Amendment
+
+**Narrow the S1a replay scope from full artifact hashes to state-transition/route-label assertions.**
+
+Replace lines 151‑154:
+
+> Build the deterministic replay harness used for all split-outcome and mutation gates. It records/cans worker payloads for model-driven phases such as gate, critique, tiebreaker, execute, and review, and each fixture payload is hash-pinned in baseline evidence.
+
+With:
+
+> **S1a replay scope:** Freeze the auto-drive characterization corpus (`tests/characterization/auto_drive_corpus/`) as the deterministic baseline. Baselines assert `DriverOutcome.status`, `final_state`, and the sequence of `(state, next_step, valid_next)` tuples — not model artifact hashes. Worker/model invocation replay is deferred to S1b as a separate seam-hardening sprint that first introduces a single `InvocationInterceptor` protocol at `run_step_with_worker`, then adds per-agent adapters for hermes/shannon/codex. Until that seam exists, S2‑S6 mutation gates use route-label parity against frozen auto-drive baselines, not canned model output comparisons.
+
+This keeps S1a deliverable at the S1a size it claims, without silently committing to an epic-sized interception layer.
