@@ -796,7 +796,7 @@ def test_run_chain_repushes_deleted_remote_base_branch_from_local_ref(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",
@@ -876,7 +876,7 @@ def test_run_chain_surfaces_unrecoverable_missing_base_branch_as_terminal_state(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",
@@ -928,7 +928,7 @@ def test_run_chain_preserves_dirty_retry_attempt_before_reinit(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",
@@ -1374,7 +1374,7 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",
@@ -1448,7 +1448,7 @@ def test_run_chain_no_push_resume_does_not_checkout_milestone_branch(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",
@@ -1513,7 +1513,7 @@ def test_run_chain_resume_without_pr_opens_pr_before_resuming_plan(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",
@@ -1577,7 +1577,7 @@ def test_run_chain_creates_pr_once_before_phase_commits(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",
@@ -1732,7 +1732,7 @@ def test_run_chain_rechecks_pr_state_when_premerge_completion_guard_fails(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",

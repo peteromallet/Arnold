@@ -10,6 +10,7 @@ import pytest
 
 from arnold_pipelines.megaplan.chain import (
     ChainSpec,
+    _preflight_agent_backends,
     _write_completion_manifest,
     load_chain_state,
     run_chain,
@@ -102,11 +103,43 @@ def test_chain_spec_warns_when_merge_policy_is_not_auto(
     assert spec.merge_policy == normalized
 
 
+def test_backend_preflight_only_checks_the_active_milestone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ChainSpec.from_dict(
+        {
+            "milestones": [
+                {"label": "m1", "idea": "idea.md", "with_prep": True},
+                {"label": "m2", "idea": "idea.md"},
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers._is_agent_available",
+        lambda _backend: False,
+    )
+
+    # The historical m1 prep backend is unavailable, but a resumed m2 drive
+    # must still reach launch-seed creation and dispatch.
+    _preflight_agent_backends(
+        spec,
+        writer=lambda _message: None,
+        current_milestone_index=1,
+    )
+
+    with pytest.raises(CliError, match="m1:prep"):
+        _preflight_agent_backends(
+            spec,
+            writer=lambda _message: None,
+            current_milestone_index=0,
+        )
+
+
 @pytest.fixture()
 def chain_driver_monkeypatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._preflight_agent_backends",
-        lambda spec, *, writer: None,
+        lambda spec, *, writer, current_milestone_index=None: None,
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.resolve_execution_environment",

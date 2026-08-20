@@ -6517,9 +6517,26 @@ def _milestone_uses_hermes_backend(milestone: "MilestoneSpec") -> str | None:
     return None
 
 
-def _preflight_agent_backends(spec: "ChainSpec", *, writer) -> None:
+def _preflight_agent_backends(
+    spec: "ChainSpec",
+    *,
+    writer,
+    current_milestone_index: int | None = None,
+) -> None:
+    # A resumed chain must only preflight the milestone it is about to run.
+    # Completed milestones may legitimately reference an optional backend that
+    # is no longer installed; scanning the whole historical spec would block
+    # seed creation before the active milestone can be dispatched.
+    milestones = spec.milestones
+    if current_milestone_index is not None:
+        if 0 <= current_milestone_index < len(spec.milestones):
+            milestones = (spec.milestones[current_milestone_index],)
+        elif current_milestone_index < 0 and spec.milestones:
+            milestones = (spec.milestones[0],)
+        else:
+            milestones = ()
     offenders: list[tuple[str, str]] = []
-    for milestone in spec.milestones:
+    for milestone in milestones:
         phase = _milestone_uses_hermes_backend(milestone)
         if phase is not None:
             offenders.append((milestone.label, phase))
@@ -7540,7 +7557,6 @@ def run_chain(
     if anchor_requirement.warning:
         writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
-    _preflight_agent_backends(spec, writer=writer)
     # P1 admission gate: fires BEFORE any chain state load or execution
     # identity binding. Manifest present+valid passes; a manifestless session
     # passes only with a valid unexpired allow_manifestless permit; else block.
@@ -7552,6 +7568,11 @@ def run_chain(
     spec = ensure_reconcile_milestone(spec_path, root=root, writer=writer)
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     state = chain_spec.load_chain_state(spec_path)
+    _preflight_agent_backends(
+        spec,
+        writer=writer,
+        current_milestone_index=state.current_milestone_index,
+    )
     from arnold_pipelines.megaplan.chain.execution_binding import (
         bind_execution_identity,
     )
