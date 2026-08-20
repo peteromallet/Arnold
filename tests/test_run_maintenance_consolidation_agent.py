@@ -15,6 +15,11 @@ class FakeProcess:
         assert timeout == 30
         return b"resolved_model: openai-codex/gpt-5.6-luna\n", b""
 
+class StderrResolvedProcess(FakeProcess):
+    def communicate(self, timeout=None):
+        assert timeout == 30
+        return b"launcher started\n", b"model=codex:gpt-5.6-luna \u2192 resolved=openai-codex/gpt-5.6-luna\n"
+
 class FailedProcess(FakeProcess):
     returncode = 7
 
@@ -58,6 +63,17 @@ def test_invocation_id_generation_and_atomic_receipt_lifecycle(tmp_path, monkeyp
     assert Path(receipt["stderr_path"]).is_file()
     assert Path(receipt["result_path"]).is_file()
     assert (root / "evidence").resolve() not in (root / "project").resolve().parents
+def test_stderr_only_resolved_model_closes_completed_receipt(tmp_path, monkeypatch):
+    root = tmp_path / f"mrc-wrapper-stderr-{secrets.token_hex(6)}"
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda *args, **kwargs: StderrResolvedProcess())
+
+    assert launcher.main(_args(root)) == 0
+    receipt = next((root / "evidence/receipts").glob("mrc-*.json"))
+    closed = json.loads(receipt.read_text(encoding="utf-8"))
+
+    assert closed["status"] == "completed"
+    assert closed["exit_status"] == 0
+    assert closed["resolved_model"] == "openai-codex/gpt-5.6-luna"
 
 
 def test_routing_table_rejects_wrong_and_unclassified_routes(tmp_path):

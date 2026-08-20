@@ -131,9 +131,9 @@ def reject_allowance_overlap(allowance_file: Path, evidence_dir: Path, project_d
     return record, digest
 
 
-def _resolved_model(stdout: bytes) -> str | None:
-    text = stdout.decode("utf-8", errors="replace")
-    patterns = (r"resolved[_ -]?model\s*[:=]\s*[\"']?([^\"'\\s,}]+)", r"model\s*[:=]\s*[\"']?([^\"'\\s,}]+)")
+def _resolved_model(stdout: bytes, stderr: bytes = b"") -> str | None:
+    text = b"\n".join((stdout, stderr)).decode("utf-8", errors="replace")
+    patterns = (r"resolved(?:[_ -]?model)?\s*[:=]\s*[\"']?([^\"'\s,}]+)", r"model\s*[:=]\s*[\"']?([^\"'\s,}]+)")
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
@@ -227,7 +227,7 @@ def dispatch(args: argparse.Namespace) -> int:
     except OSError as exc:
         stderr = str(exc).encode("utf-8")
         exit_status = 127
-    resolved_model = _resolved_model(stdout)
+    resolved_model = _resolved_model(stdout, stderr)
     if exit_status == 0 and resolved_model is None:
         stderr += b"\nlauncher output did not expose a resolved model\n"
         exit_status = 78
