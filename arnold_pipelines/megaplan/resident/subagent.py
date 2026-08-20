@@ -4829,19 +4829,26 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         # Preserve the byte-exact provider stdout separately, then copy it into
         # run.log with an explicit provider-specific envelope. Stderr already
         # streams directly to run.log through the resident supervisor.
-        print(f"\n[managed-provider-raw begin backend={backend} path={raw_output_path}]", flush=True)
+        def _write_stdout_best_effort(data) -> None:
+            try:
+                buf = getattr(sys.stdout, "buffer", None)
+                if buf is not None:
+                    buf.write(data if isinstance(data, (bytes, bytearray)) else data.encode("utf-8", "replace"))
+                    buf.flush()
+                else:
+                    sys.stdout.write(data.decode("utf-8", "replace") if isinstance(data, (bytes, bytearray)) else data)
+                    sys.stdout.flush()
+            except (BrokenPipeError, OSError):
+                pass
+
+        _write_stdout_best_effort(f"\n[managed-provider-raw begin backend={backend} path={raw_output_path}]\n")
         try:
             with raw_output_path.open("rb") as source:
                 while chunk := source.read(1024 * 1024):
-                    binary_stdout = getattr(sys.stdout, "buffer", None)
-                    if binary_stdout is not None:
-                        binary_stdout.write(chunk)
-                    else:
-                        sys.stdout.write(chunk.decode("utf-8", errors="replace"))
-            sys.stdout.flush()
+                    _write_stdout_best_effort(chunk)
         except OSError as exc:
-            print(f"[managed-provider-raw unavailable: {exc.__class__.__name__}]", flush=True)
-        print(f"\n[managed-provider-raw end backend={backend}]", flush=True)
+            _write_stdout_best_effort(f"[managed-provider-raw unavailable: {exc.__class__.__name__}]\n")
+        _write_stdout_best_effort(f"\n[managed-provider-raw end backend={backend}]\n")
 
         evidence = collect_provider_evidence(
             backend=backend,
