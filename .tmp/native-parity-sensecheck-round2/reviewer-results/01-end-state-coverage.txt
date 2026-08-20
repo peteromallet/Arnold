@@ -1,0 +1,157 @@
+Now I have all primary sources loaded. Let me produce the audit.
+
+---
+
+## Lens 1 — End-State Coverage and Scope-Loss Audit
+
+### 1. Verdict
+
+**The corrective plan, North Star, and seven active s-briefs are architecturally comprehensive.** The m1→s1 through m10→s7 compression is justified at the milestone level—no whole domain was dropped. However, the audit reveals **four material normative gaps where the representation report or custody-overlap audit articulate requirements that the corrective plan and/or s-briefs weaken, omit, or leave at aspiration-only granularity**, and **one enforcement gap where chain.yaml lacks per-sprint executable gates**. The prior final audit (`final-audit.md`) correctly diagnosed the implementation state; this lens confirms its gap register is directionally sound and identifies the specific textual amendments needed in the *authoritative planning assets* to close the residual coverage holes.
+
+The strongest safe claim about current state remains the one from `final-audit.md:240`: "the repository has a substantial native-shaped authoring prototype and useful typed/compiler/runtime substrate, while canonical product semantics still execute through a component/handler/state/CLI/auto compatibility architecture and conformance can false-pass that fact."
+
+---
+
+### 2. Requirement Matrix
+
+Each requirement is atomized from the representation report (`RR`), prior final audit (`FA`), custody-overlap audit (`COA`), corrective plan (`CP`), North Star (`NS`), and the s-briefs.
+
+| ID | Source | Requirement | Revised location | Sprint | Executable proof/gate | Status | Explanation |
+|---|---|---|---|---|---|---|---|
+| NR-01 | RR§4:236-262; NS:3-15; CP:164-181 | One authored `.pypeline` is the sole product-topology authority; no route table, component table, handler ref, auto-drive, or CLI is required to understand it. | NS:3-15; CP "Canonical machinery boundary" :183-206; S1 semantic gate :42-49; S7 semantic gate :39-46 | S1+S7 | S1: current source fails checker for component-call skeleton. S7: zero hidden route authority in final conformance gate. | **partial** | S1 brief requires checker to reject skeleton (`:30-33`), but does not require a *passing* migrated source to exist in S1—correct by design. S7 gates the end state. The gap is that S7's `final_conformance_gate` in `chain.yaml:93-99` is the *only* schema-enforced validator; intermediate sprints rely on brief exit criteria without chain enforcement. |
+| NR-02 | RR§4:237; RR§5:102-119,325-337 | Prep has a named clarification gate; blocking questions suspend to a human gate with durable reentry; clear path resumes without suspension. | CP Phase 2 plan :358-386; S2 semantic gate :36-43 | S2 | S2 requires "prep blocking questions suspend/resume" as a scenario. | **covered** | M4 (`:10-16`) and S2 (`:19-22`) both require this. The compression is clean. |
+| NR-03 | RR§4:239-241; RR§5:360-380 | Critique subworkflow: bare skip, adaptive evaluator selection, evaluator retry (attempts=2), dynamic lens fanout, sequential fallback, merge. | CP Phase 2 :358-386; S3 product scope :12-18 | S3 | S3 semantic gate requires "critique retry and sequential fallback; empty/dynamic lens sets" (`:43-44`). | **partial** | S3 does not explicitly gate *per-item retry/fallback* on the dynamic fanout contract (item schema, max workers, deterministic naming, reducer). The final audit flagged this as gap A-02. See §3 Gap 1. |
+| NR-04 | RR§4:242-246; RR§5:421-455 | Gate subworkflow: signals→worker→normalize→flag-validate→reprompt→debt→typed decision, with preflight/high-complexity/no-progress backstops. | CP Phase 2 :358-386; S3 product scope :15-18 | S3 | S3 semantic gate requires "gate reprompt/downgrade" (:44) and "debt effect" (:45). | **partial** | The final audit (gap A-04) correctly notes that S3 does not enumerate gate *child steps* as separate required constructs. One opaque `AUTHORING_GATE` call could satisfy "gate" while retaining hidden internals. See §3 Gap 2. |
+| NR-05 | RR§4:247; RR§5:623-638 | Critique→gate→revise is an explicit bounded loop with typed exits, no-progress handling, and human override at exhaustion. | CP :358-386; S3 product scope :18 | S3 | S3 requires "one explicit bounded critique/gate/revise loop with severity-aware cap exits" (:18). | **covered** | Both S3 and the plan explicitly require this. |
+| NR-06 | RR§4:249-250; RR§5:467-492 | Tiebreaker: parallel researcher/challenger, synthesis, full typed decision (pick/reiterate/replan/escalate/abort/suspend), replan resets plan loop. | CP Phase 3 :388-408; S4 product scope :11-17 | S4 | S4 semantic gate: "parallel researcher/challenger" (:37). | **partial** | S4 correctly requires parallelism, but the plan (`CP:388-408`) weakens the report's full decision vocabulary—*reiterate* and *suspend* are absent from the plan's list. The final audit (gap A-01) identified the parallelism gap in the *old* S3; S4 now states it, but the decision vocabulary remains incomplete in the plan prose. See §3 Gap 3. |
+| NR-07 | RR§4:251; RR§5:495-497,672-677 | Finalize: typed phase, baseline-selection error fallback to revise, retry, scoped re-finalization. | CP Phase 5 :438-460; S5 product scope :25 | S5 | S5 requires "scoped re-finalization" (:25). | **covered** | Compression from m7 is clean. |
+| NR-08 | RR§4:252-254; RR§5:505-540 | Execute: visible approval gate, dynamic DAG batches, complexity routing, fresh sessions, result merge, no-review terminal. | CP Phase 4 :410-436; S5 product scope :17-25 | S5 | S5 semantic gate covers dynamic batch ordering, no-review done, etc. (:50-55). | **partial** | S5 brief does not explicitly gate *fresh-session receipts* (final audit gap A-05). Session reuse can pass topology tests while violating isolation semantics. See §3 Gap 4. |
+| NR-09 | RR§4:252-254; FA:54 | Execute: path-addressed checkpoints, blocked-task persistence, partial resume without repeating completed children. | CP :410-436; S5 | S5 | S5 custody-adoption gate: "rerun only incomplete children" (:61). | **partial** | S5 correctly requires this in the *custody-adoption gate*, but the source currently uses index-only paths (`FA:P-05`). The requirement is stated; the gap is implementation, not planning. Status: `deferred-detail` for proof-level specifics. |
+| NR-10 | RR§4:255-257; RR§5:543-605 | Review: visible subworkflow with worker/check fanout, merge, infrastructure retry, human verification, typed decision. | CP Phase 5 :438-460; S5 | S5 | S5 semantic gate: "review worker/check dynamic fanout" (:23). | **covered** | |
+| NR-11 | RR§5:571-577,679-718 | Execute→review→rework is one bounded cycle; rework re-finalizes scoped payload, re-executes, re-reviews. | CP :438-460; S5 | S5 | S5: "one reusable authored cycle" (:48). | **covered** | Final audit gap P-06 notes the current code *unrolls* this, but the plan correctly requires it. |
+| NR-12 | RR§4:258; RR§5:608-610,821-831 | Override: named abort, force-proceed, replan, recover-blocked, resume-clarify, adopt-execution, config changes—all with typed actions and visible targets. | CP Phase 6 :462-481; S6 :19-34 | S6 | S6 semantic gate: "source visibly owns every routing action" (:40). | **partial** | S6 lists the actions but does not explicitly require a *per-action target/reentry table* or *config-change reentry matrix* as proof artifacts. Final audit gap A-03 correctly identifies this. See §3 Gap 5. |
+| NR-13 | RR§5:821-831; FA:58 | Config overrides apply an explicit effect then re-enter the current phase; recover/resume have concrete reentry edges. | CP :462-481; S6 :19-49 | S6 | Not explicitly gated as a branch/proof. | **missing** | This is a genuine omission from the plan and s-briefs. See §3 Gap 5. |
+| NR-14 | RR§4:258; FA:59 | Every human gate declares capability, durable reentry identity, resumes at exact semantic point. | CP :281-282; S2-S6 custody-adoption gates | S2-S6 | S4 custody-adoption gate: "kill/restart resumes at the exact semantic point" (:45). | **covered** | Spread across multiple s-briefs; S4 is the primary proof point. |
+| NR-15 | RR§5:754; FA:60 | Child checkpoints are path-addressed by semantic coordinates (task ID + batch index + item path). | CP :388-408; S5 :29-30 | S5 | S5: "deterministic semantic child coordinates containing task ID, batch identity, and item path; list index alone is forbidden" (:29-30). | **covered** | Explicit in S5. |
+| NR-16 | RR§6:735-755; FA:16 | Phase results, decision vocabularies, terminal results are closed typed artifacts. | CP :316-356; S1 semantic gate | S1 | S1: "evidence schema that cannot begin from predeclared implemented rows" (:38-40). | **covered** | |
+| NR-17 | RR§6:748-755; FA:62 | Retry, timeout, escalation, model routing, robustness at call sites. | CP :358-386; S2 :13-15 | S2 | S2: "retry/timeout/model/fallback policy attached at call sites" (:15). | **covered** | |
+| NR-18 | RR§4:262; NS:66-68; FA:63 | Handlers are pure phase bodies: no state transition, loop, route, retry/escalation or model-choice ownership. | NS:66-68; CP :316-356; S7 semantic gate | S7 | S7 semantic gate: "zero hidden product-route authority remains" (:46). | **covered** | The gap is implementation, not plan coverage. |
+| NR-19 | CP :189-192; FA:64 | Generic lowering/compiler is product-neutral; no Megaplan coupling. | CP :189-192; S1+S7 | S1+S7 | S7: "Generic compiler/runtime code has no Megaplan semantic coupling" (plan :427). | **covered** | |
+| NR-20 | CP :183-188; FA:65 | `build_pipeline()` consumes lowered source; no second component truth. | CP :183-188; S1 semantic gate | S1 | S1: "a builder overlay cannot silently reconstruct a second graph" (:47). | **covered** | |
+| NR-21 | RR§6:783-806; FA:66; FA:A-02 | Dynamic list/DAG fanout: runtime collection, item schema, max workers, per-item retry/fallback, reducer, deterministic naming. | CP :358-460; S2 :12-15 | S2 | S2 semantic gate: "Dynamic fanout works for runtime-sized collections" (:40). | **partial** | S2 does not enumerate the full contract. See §3 Gap 1. |
+| NR-22 | RR§7:821-831; FA:67 | Auto-drive consumes events only; no route derivation. | CP :462-481; S6 :19-29 | S6 | S6: "auto-drive scheduling/event consumption and liveness only" (:17). | **covered** | |
+| NR-23 | NS:12-15; FA:68 | Compatibility shell, `Pipeline.native_program`, manifests, CLI are downstream only. | NS:12-15; S7 | S7 | S7 semantic gate. | **covered** | |
+| NR-24 | CP :518-612; FA:69 | Installed wheel/sdist/cloud runtime must execute same source-authoritative semantics. | CP :518-612; S7 | S7 | S7: "Run checkout, clean wheel/sdist, and pinned cloud runtime" (:329). | **covered** | |
+| NR-25 | RR§4:127,690; FA:70 | Robustness variants visibly change critique/review behavior. | CP distributed; S2+S5 | S2+S5 | Not a single gate. | **deferred-detail** | Legitimately distributed; no single brief gates the full robustness×phase matrix. Acceptable. |
+| NR-26 | FA:71 | Effects, receipts, checkpoints are idempotent boundaries from real execution. | CP :614-678; S4-S7 | S4-S7 | Evidence contract in plan. | **covered** | |
+| NR-27 | CP :483-516; FA:72 | Components/route tables deleted or quarantined only after consumers move. | CP :483-516; S7 | S7 | S7: "Delete remaining component/handler route tables...only after negative and rollback gates pass" (S7 :32-33). | **covered** | |
+| NR-28 | CP :264-315; FA:73 | Semantic checker rejects the current skeleton pattern. | CP :264-315; S1 | S1 | S1 semantic gate: "current implementation fails because semantics are erased" (:44). | **covered** | |
+| NR-29 | CP :518-612; FA:74 | Split-outcome behavior for every branch, cap, fallback, suspension path. | CP :518-612; S7 | S7 | S7: "Run the complete split-outcome suite" (:29-30). | **covered** | |
+| NR-30 | CP :264-315; FA:75 | Mutation/deletion gates prove removal of live carriers causes failure. | CP :264-315; S1+S7 | S1+S7 | S1+S7 criteria. | **covered** | |
+| NR-31 | CP :614-678; FA:76 | Evidence is generated, line-specific, cannot derive truth from ledger. | CP :614-678; S7 | S7 | S7: "row evidence containing...proof test, executable runtime trace" (:21-23). | **covered** | |
+| NR-32 | FA:77; chain.yaml:31-94 | Chain completion gates execute each brief's exit criteria. | chain.yaml | — | No per-milestone executable validator. | **missing** | See §3 Gap 6. |
+| NR-33 | FA:78 | Source readability: reviewer can understand paths directly. | S7 semantic gate :39-46 | S7 | S7: "smallest readable `.pypeline` fully determines actual behavior" (:331). | **covered** | |
+| COA-01 | COA:14-18; NS:33-45 | WBC evidence is not authority; authoritative action needs RA grant+fence AND Custody lease/epoch AND exact-version WBC evidence. | NS:33-45; CP :99-111; S1 custody-adoption gate :53-60 | S1+S7 | S1: "WBC evidence is explicitly non-authoritative" (:59-60). | **covered** | |
+| COA-02 | COA:108 | Topology ownership: .pypeline is semantic authority; component/handler routes must be deleted or adapter-only. | NS:3-15; CP :183-206; S7 | S7 | S7 semantic gate. | **covered** | |
+| COA-03 | COA:109 | Identity domains remain distinct; no shared `attempt_id`. | NS:47-58; S1 :28-29 | S1 | S1: "Keep those four identities distinct" (:28-29). | **covered** | |
+| COA-04 | COA:110 | Evidence-as-authority risk: receipts/projections cannot cause positive actions. | NS:33-45; S2-S6 custody gates | All | Each sprint's custody-adoption gate. | **covered** | |
+| COA-05 | COA:111 | Shadow-as-enforcement risk: shadow/default-off guards don't count. | S1 :18-20; CP :58-60 | S1 | S1: "Fail admission if any required guard is shadow-only/default-off" (:18-20). | **covered** | |
+| COA-06 | COA:112 | Wrong-boundary instrumentation: WBC on handler ≠ WBC on authored children. | S3 :53-54; S5 :64-65 | S3+S5 | S3: "WBC producers are rooted at lowered nodes/children, not merely retained handlers" (:53-54). | **covered** | |
+| COA-07 | COA:113 | Checkpoint ambiguity: Native Parity defines semantic coordinates; WBC records them. | S5 :29-30 | S5 | S5 explicitly requires task ID + batch + item path. | **covered** | |
+| COA-08 | COA:114 | Suspension lease: suspend creates WBC history; resume reacquires lease/epoch/fence. | S4 :25-28 | S4 | S4: "On resume, reacquire or validate the exact Custody lease/epoch" (:25-26). | **covered** | |
+
+**Status summary:** 27 `covered`, 6 `partial`, 2 `missing`, 1 `deferred-detail`, 0 `custody-substrate`.
+
+---
+
+### 3. Ranked Gaps (Smallest Text Amendments)
+
+**Gap 1 — Dynamic-fanout full contract not gated (NR-03, NR-21)**
+*Severity: High. Source: RR:849-866; FA:A-02; CP:358-460; S2:12-15,39-43.*
+
+The representation report specifies seven properties of the dynamic map contract: runtime collection source, item schema, max workers, per-item retry/fallback, sequential fallback, reducer, and deterministic naming. S2 says "dynamic runtime map/reducer, sequential fallback, per-item retry/fallback, deterministic child naming" (`:13-14`) but the *semantic gate* only requires "Dynamic fanout works for runtime-sized collections and collision tests prove identity is semantic, not list-position-only" (`:39-41`). It does not gate the *full contract*—max workers, item schema declaration, and per-item policy are not called out as exit-criteria proof items.
+
+**Amendment:** Add to S2's semantic gate: "The dynamic fanout lowerer retains and runtime-asserts: (a) collection source reference, (b) item schema, (c) max-workers, (d) per-item retry/fallback policy, (e) sequential fallback on worker failure, (f) reducer with deterministic input order, and (g) deterministic child naming from semantic coordinates. A mutation disabling any of these must fail the reference pipeline test." Apply the same clause to S4 (execute batches) and S5 (review checks) exit criteria.
+
+**Target:** `briefs/s2-front-half-native-loop.md` semantic gate section; `briefs/s4-execute-dag-approval-resume.md` semantic gate; `briefs/s5-review-rework-finalize.md` semantic gate.
+
+---
+
+**Gap 2 — Gate child steps not enumerated (NR-04)**
+*Severity: High. Source: RR:148-160,432-455; FA:A-04; S3:15-18.*
+
+The report identifies six named gate child steps: build signals, call worker, normalize, validate flags, reprompt, persist debt. S3 says "gate signal construction, worker call, normalization, flag validation, one reprompt/downgrade...debt effect, and closed typed decision" (`:15-18`) in the product scope, but the semantic gate only requires "gate reprompt/downgrade" and "debt effect" (`:44-45`). A single opaque `AUTHORING_GATE` call could satisfy these if the reprompt and debt are technically reachable inside the handler.
+
+**Amendment:** Add to S3's semantic gate: "Each of the six gate child steps (signal construction, worker call, normalization, flag validation, reprompt, debt persistence) is a separate named source construct or declared subphase. Deleting or mutating any one must change the canonical trace. A single opaque gate component call does not satisfy this gate."
+
+**Target:** `briefs/s3-tiebreaker-replan-native.md` semantic gate section.
+
+---
+
+**Gap 3 — Tiebreaker decision vocabulary incomplete in plan (NR-06)**
+*Severity: Medium. Source: RR:175-184,477-492; CP:388-408; S4:11-12.*
+
+The report lists six tiebreaker decisions: pick, reiterate, replan, escalate, abort, suspend. The corrective plan lists "pick, escalate, or replan" (`CP:388`). S4 lists "pick, reiterate, replan, escalate, abort, suspend" (`:12`)—which is complete. However, the *plan itself* remains the authoritative asset and its weaker list could be used to justify a narrower implementation.
+
+**Amendment:** In `megaplan-native-parity-corrective-plan.md` line ~389, change "pick, escalate, or replan" to "pick, reiterate, replan, escalate, abort, or suspend" to match S4 and the representation report.
+
+**Target:** `docs/arnold/megaplan-native-parity-corrective-plan.md` line 389.
+
+---
+
+**Gap 4 — Fresh-session semantics not gated (NR-08)**
+*Severity: Medium. Source: RR:198-204; FA:A-05; S5:17-19.*
+
+The report specifies that execute forces fresh sessions for review rework and blocked retries (`RR:201`). S5 mentions "fresh sessions" in passing (`S5:19`) but does not include session-identity receipts as a proof artifact.
+
+**Amendment:** Add to S5's custody-adoption gate: "Session isolation proof: blocked-retry and review-rework paths create new child session IDs; a mutation that reuses the prior session ID must fail a session-identity assertion."
+
+**Target:** `briefs/s5-review-rework-finalize.md` custody-adoption gate section.
+
+---
+
+**Gap 5 — Config-change reentry matrix missing (NR-12, NR-13)**
+*Severity: High. Source: RR:821-831; FA:A-03; FA:58; S6:19-49.*
+
+The report requires that configuration overrides (set-model, set-vendor, set-profile, set-robustness) apply an explicit effect and re-enter the current semantic phase. S6 lists these actions (`:14-15`) but does not require a proof matrix showing which phase each config action re-enters, nor does it require a negative test proving that a config change without authored reentry cannot alter subsequent routing.
+
+**Amendment:** Add to S6's semantic gate: "Each configuration override (model, vendor, profile, robustness) is followed by an authored explicit reentry edge at the current semantic phase. A per-action target/reentry table must exist and be tested; applying a config change without the authored reentry edge must fail the checker or leave canonical behavior unchanged."
+
+**Target:** `briefs/s6-override-auto-compat-collapse.md` semantic gate section.
+
+---
+
+**Gap 6 — No per-sprint executable chain enforcement (NR-32)**
+*Severity: High. Source: FA:77, C-06; chain.yaml:31-94.*
+
+`chain.yaml` declares seven milestones with serial dependencies and auto-approve/merge, but the only schema-supported executable validation is `final_conformance_gate` on S7 (`chain.yaml:93-99`). Sprints S1–S6 have no chain-enforced completion hook; auto-publish stands in for exit-gate satisfaction. The prior final audit identified S2's auto-publish as containing no implementation (`FA:87`).
+
+The corrective plan acknowledges this limitation (`CP:483-489`) and explicitly says each sprint's gates are "mandatory brief acceptance criteria backed by tests/proof artifacts, while S7 replays them all through the single schema-supported blocking final gate." This is a *deliberate architectural choice*, not an oversight—the chain schema cannot currently support per-milestone validators.
+
+**Amendment (honest acknowledgment, not plan change):** Add a one-paragraph note to `chain.yaml` or `README.md`: "Sprints S1–S6 rely on brief exit criteria enforced by human review and test artifacts, not chain-schema validators. The single `final_conformance_gate` on S7 replays all sprint criteria. If automated per-sprint enforcement becomes available in the chain schema, it should be adopted here." This preserves intellectual honesty without expanding scope.
+
+**Target:** `.megaplan/initiatives/megaplan-native-parity-corrective/README.md` or `chain.yaml` notes field.
+
+---
+
+### 4. Sound Areas That Should Not Be Reopened
+
+1. **The m1–m10 to s1–s7 compression is justified.** Every original milestone has an identifiable active-sprint home. M1–M3→S1, M4→S2, M5→S3, M6→S4, M7→S5, M8→S6, M9–M10→S7. No whole requirement domain was lost. The retained m-briefs are correctly described as "historical pre-custody decomposition appendices" (`README.md:49`).
+
+2. **The end-state destination statement is clean and complete.** "One authored semantic topology; one exact authority-decision history; one current exclusive custody owner; one durable boundary/effect history; any number of disposable projections" (`NS:15-17`) correctly summarizes the target and is repeated consistently across `NS`, `CP`, `COA`, and `README`.
+
+3. **The four-domain identity model is correctly specified.** `NS:47-58` and `CP:113-130` clearly distinguish authored node/invocation+child path, Run Authority subject attempt+fence, WBC execution attempt+boundary-contract version, and Custody target+lease owner+epoch. No identity collapse has crept in.
+
+4. **The non-duplication boundary is correctly drawn.** `NS:75-87` and `CP:160-179` clearly state what Native Parity consumes from M11 versus what it must not recreate. The custody-overlap audit confirms this is architecturally sound (`COA:88-96`).
+
+5. **The "WBC evidence is not authority" rule is consistently stated.** `NS:33-45`, `CP:99-111`, and `COA:59-68` all reinforce the conjunctive authorization model. Every sprint's custody-adoption gate references this.
+
+6. **The closure anti-patterns list is comprehensive and well-sourced.** `CP:447-471` catalogs twelve specific false-pass patterns. The prior final audit found these are "directionally correct" (`FA:229`).
+
+7. **The corrective diagnosis is sound.** The principal defect—semantic erasure disguised as compression—is correctly identified in both the corrective plan (`CP:16-17`) and confirmed by direct probe in the final audit (85→14 collapse, `FA:12`). This should not be relitigated.
+
+8. **Typed outcome infrastructure is real and useful.** `outcomes.py` provides closed `StrEnum` vocabularies. This is genuine substrate (`FA:231`).
+
+9. **Dynamic `parallel_map` authoring/lowering exists in the compiler.** The gap is canonical builder retention and runtime materialization, not total absence (`FA:26,232`).
+
+10. **The sprint dual-gate structure (semantic + custody-adoption) is architecturally correct.** Each sprint correctly requires both that authored topology determines behavior *and* that actual actions use the admitted control plane. These are independent concerns (`CP:209-215`).

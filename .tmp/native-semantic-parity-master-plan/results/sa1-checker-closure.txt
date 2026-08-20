@@ -1,0 +1,110 @@
+## SA1 Closure Report — `source_compiler.py` Validation Entry Points
+
+### Commands Run
+```
+search_files pattern="def check_workflow" path=arnold
+search_files pattern="check_workflow_file\(" path=arnold  (callers)
+read_file source_compiler.py 620:720, 1142:1234, 1682:1860
+search_files context for _row_evidence_diagnostics, _megaplan_review_finalize_diagnostics, _implemented_s5_boundary_rows, _front_half_row_specs
+```
+
+---
+
+### Finding 1 (CRITICAL): `check_workflow_file` bypasses all row-evidence checking
+
+**`arnold/workflow/source_compiler.py:623–631`** — `check_workflow_file` defaults `evidence=None`. It delegates to `check_workflow_source` at line 632, which receives `evidence=None`.
+
+**`arnold/workflow/source_compiler.py:687–691`** — The gate:
+
+```python
+row_evidence_diagnostics = (
+    _row_evidence_diagnostics(parsed_source, evidence_records)
+    if evidence is not None   # <-- False when check_workflow_file caller passes nothing
+    else ()
+)
+```
+
+When `evidence is None`, `_row_evidence_diagnostics` **never executes**. No AWF245 diagnostics are ever produced.
+
+**`arnold/workflow/source_compiler.py:642–649`** — `check_workflow_source` defaults `evidence=()`, which DOES trigger the check (empty `()` is not `None`). But this function is only called from `check_workflow_file` — never directly by any CLI or external caller.
+
+**All four CLI callers** (`arnold/cli/workflow.py:208`, `:437`, `:514`, `:677`) call `check_workflow_file(source_path)` with no `evidence` kwarg → evidence always `None` → AWF245 is **dead code in practice**.
+
+| Caller | Line | Path |
+|---|---|---|
+| `_cmd_check` | `cli/workflow.py:208` | `check_workflow_file(source_path)` |
+| `_cmd_inspect` | `cli/workflow.py:437` | `check_workflow_file(source_path)` |
+| `_cmd_explain` | `cli/workflow.py:514` | `check_workflow_file(source_path)` |
+| `_cmd_graph` | `cli/workflow.py:677` | `check_workflow_file(source_path)` |
+
+**Machine-checkable gate implication**: If `check_workflow_file` were changed to default `evidence=()` (matching `check_workflow_source`), all four CLI paths would immediately begin enforcing AWF245 for front-half rows. That alignment would be the single highest-leverage corrective.
+
+---
+
+### Finding 2 (CRITICAL): S5 review/finalize rows are structurally excluded from row-evidence validation
+
+**`arnold/workflow/source_compiler.py:722–749`** — `_row_evidence_diagnostics` calls `_implemented_front_half_rows` at line 726, not `_implemented_boundary_rows`.
+
+**`arnold/workflow/source_compiler.py:1682–1692`** — `_implemented_front_half_rows` uses `_front_half_row_specs()`.
+
+**`arnold/workflow/source_compiler.py:1734–1767`** — `_front_half_row_specs` only builds specs for phases in `front_half_phases`: `prep`, `plan`, `critique`, `gate`, `revise`, and four tiebreaker phases. **`review` and `finalize` are absent.**
+
+**`arnold/workflow/source_compiler.py:1770–1780`** — `_implemented_boundary_rows` does include both front-half AND S5 rows (via `_implemented_s5_boundary_rows` at line 1778), but this function is called only by `_boundary_evidence_diagnostics` (line 1254) — the **boundary** evidence path (AWF246–AWF249), NOT the row-evidence path (AWF245).
+
+**Result**: Even if AWF245 were activated (Finding 1 fixed), S5 review/finalize rows would still be exempt because `_row_evidence_diagnostics` never enumerates them.
+
+**Machine-checkable gate implication**: Replace `_implemented_front_half_rows` with `_implemented_boundary_rows` at line 726.
+
+---
+
+### Finding 3 (HIGH): S5 review/finalize rows pass on policy-surface existence alone
+
+**`arnold/workflow/source_compiler.py:1142–1233`** — `_megaplan_review_finalize_diagnostics` always runs (line 698, unconditional). It validates:
+
+- **Review path** (lines 1189–1209): `REVIEW_POLICY.route_surface` has `cap_thresholds`, `blocked_and_advisory_outcomes`, `force_proceed_authority` as `Mapping` types, and topology contract doesn't own thresholds → emits `AWF244` (HANDLER_PURITY_VIOLATION) if violated.
+- **Finalize path** (lines 1211–1231): `FINALIZE_POLICY.route_surface` has `fallback_routes` with `plan_contract_revise_needed` key and `final_projection_routes` with `revise_fallback` key → emits `AWF244` if violated.
+
+**`arnold/workflow/source_compiler.py:1783–1860`** — `_implemented_s5_boundary_rows` detects S5 rows by checking the same policy-surface `isinstance(..., Mapping)` conditions. For example:
+
+| S5 Row | Gate Condition | Line |
+|---|---|---|
+| `S5_REVIEW_CHILD_OUTPUTS` | `review_fan_in is not None` | 1795 |
+| `S5_REVIEW_REDUCER_PROMOTION` | `review_fan_in is not None` | 1804 |
+| `S5_REVIEW_REWORK_EFFECTS` | `review_rework` + `review_policy_surface["rework_cycle"]` is Mapping | 1812 |
+| `S5_REVIEW_CAP_AUTHORITY` | `review_fan_in` + all three cap fields are Mappings | 1821–1827 |
+| `S5_REVIEW_HUMAN_VERIFICATION` | `review_fan_in` + `human_verification` is Mapping | 1836 |
+| `S5_FINALIZE_ARTIFACTS` | `finalize_calls` + `canonical_artifacts` is Mapping | 1845–1847 |
+| `S5_FINALIZE_FALLBACK` | `finalize_calls` + `fallback_routes` is Mapping | 1856 |
+| `S5_FINAL_PROJECTION` | `finalize_calls` + `final_projection_routes` is Mapping | (continues past 1860) |
+
+**No row-level SemanticEvidence is ever required for any S5 row.** The only gate is that the policy object's `.metadata.route_surface` dict contains keys with `Mapping` values — a pure structural/type check.
+
+---
+
+### Finding 4 (MEDIUM): Boundary evidence and row evidence are separate, orthogonal paths
+
+**`arnold/workflow/source_compiler.py:687–713`** — Four diagnostic generators run independently:
+1. `_row_evidence_diagnostics` — AWF245, gated on `evidence is not None` (dead for all CLI paths)
+2. `_boundary_evidence_diagnostics` — AWF246–AWF249, gated on `boundary_contracts` or `boundary_evidence` being non-empty (line 1251)
+3. `_tiebreaker_shape_diagnostics` — AWF252, always runs
+4. `_megaplan_review_finalize_diagnostics` — AWF244, always runs
+
+A caller could supply boundary contracts/evidence and still skip row evidence entirely. These are independent concern silos — no cross-validation.
+
+---
+
+### Finding 5 (LOW): `_MEGAPLAN_AUTHORING_SOURCE_FILE = "***"` is a sentinel, not a real filename
+
+**`arnold/workflow/source_compiler.py:114`** — The literal `"***"` is used at line 986: `Path(module_file).with_name(_MEGAPLAN_AUTHORING_SOURCE_FILE)`. This resolves to `Path(...)/***` and checks `.is_file()`. A sentinel that would never match a real file unless one actually named `***` exists. Appears intentional but worth flagging as a closure blind spot — if a file named `***` were placed in the components directory, `_megaplan_authoring_source_path()` would return it.
+
+---
+
+### Summary Table
+
+| Rank | Finding | Primary Location | Gate |
+|---|---|---|---|
+| **CRITICAL** | `check_workflow_file` defaults `evidence=None`, skipping all AWF245 | `:623–631`, `:687–691` | All 4 CLI callers affected |
+| **CRITICAL** | S5 rows excluded from `_row_evidence_diagnostics` | `:726` (calls `_implemented_front_half_rows` not `_implemented_boundary_rows`) | Affects even if Finding 1 is fixed |
+| **HIGH** | S5 rows pass on `REVIEW_POLICY`/`FINALIZE_POLICY` surface shape alone | `:1142–1233`, `:1783–1860` | No SemanticEvidence gate exists for S5 |
+| **MEDIUM** | Row evidence, boundary evidence, and topology checks are independent silos | `:687–713` | No cross-validation |
+| **LOW** | `"***"` sentinel could resolve to a real file | `:114`, `:986` | Unlikely but possible collision |

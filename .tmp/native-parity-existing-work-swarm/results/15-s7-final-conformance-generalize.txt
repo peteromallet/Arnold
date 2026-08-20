@@ -1,0 +1,93 @@
+## S7 Audit: Final Generated Conformance + Rollout — Adjacent Mechanisms
+
+### 1. Verdict: **Partly exists**
+
+Significant adjacent infrastructure exists from prior epics (particularly the evidence bundle builder, scenario manifest, conformance validator, and installed-package smoke tests), but none of the S7-specific scripts, artifacts, or gate machinery exist. What's present is the "old conformance framework" that the master plan explicitly repudiates as a false pass. The S7 plan is a *rewrite to stricter standards*, not a greenfield build.
+
+---
+
+### 2. Existing / Prior Artifacts (with file:line evidence)
+
+**A. Evidence bundle builder (partial match, needs hardening)**
+- `scripts/generate_native_representation_evidence.py:1607-1712` — `generate_evidence_bundle()` produces split-outcome hashes, installed-package fingerprints, handler-purity checks, compatibility quarantine checks, dead-delete mutation checks, and approved carrier inventory. This is the closest single artifact to the S7 generated conformance concept.
+- `scripts/generate_native_representation_evidence.py:916-946` — `_build_installed_package_fingerprints()` captures source sha256, lowered semantics, compiled hashes. **Risk:** references checkout paths, not `importlib.resources`.
+
+**B. Split-outcome scenario manifest + hash builder**
+- `docs/arnold/megaplan-native-representation-scenarios.yaml:1-228` — 9 split-outcome records with executable modules, deterministic fixture paths, and scenario-to-row mapping.
+- `scripts/generate_native_representation_evidence.py:1397-1604` — `_build_split_outcome_hashes()` validates categories, builds stable hashes from scenarios + fixtures + source warrants.
+- `tests/arnold_pipelines/megaplan/test_final_conformance_scenarios.py:1-131` — tests scenario manifest coverage, hash stability, and non-competition with source authority.
+
+**C. Conformance ledger validator**
+- `scripts/validate_native_representation_conformance.py:707-906` — `validate_conformance_ledger()` validates rows against traceability, checks evidence bundle provenance, rejects stale/mismatched evidence, rejects historical reports as authority (`validate_native_representation_conformance.py:440-483`).
+
+**D. Installed-package smoke test with `importlib.resources`**
+- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py:437-500` — builds a wheel, installs in venv, loads `.pypeline` source via `resources.files("arnold_pipelines.megaplan.workflows").joinpath("workflow.pypeline")` (line 466), proves it's not from checkout (line 461-464).
+- `arnold_pipelines/megaplan/workflows/package_fingerprints.py:93-148` — `canonical_workflow_fingerprints()` produces stable source + lowered-semantic fingerprints.
+
+**E. Row evidence checker (the strict path — exists but has known gaps)**
+- `arnold/workflow/source_compiler.py:722-726` — `_row_evidence_diagnostics()` checks front-half rows only. S5 rows exist in `_implemented_s5_boundary_rows()` (`source_compiler.py:1783-1874`) but pass on `Mapping` existence, not row evidence.
+- `arnold/workflow/source_compiler.py:664` — `check_workflow_source()` is strict by default, emits AWF245.
+
+**F. Golden trace fixtures (not yet frozen baselines)**
+- `tests/arnold_pipelines/megaplan/fixtures/native_goldens/` — 8 scenario directories (D1-D8, D12) with events.ndjson, checkpoint.json, state.json, artifacts.json, stages.json. These are scenario goldens, not pre-extraction frozen baselines.
+
+---
+
+### 3. What Can Be Reused / Generalized
+
+| S7 Need | Nearby Reusable Artifact | Refactor Required |
+|---|---|---|
+| **Strict checker** (checkout + installed-package) | `source_compiler:722-726` + `test_installed_package_composition_smoke.py:466` | Wire `importlib.resources` source loading into `check_workflow_source()`. Currently the smoke test loads source but the checker uses file paths. |
+| **Package-wide carrier scan** | `generate_native_representation_evidence.py:867` — `_build_quarantine_scans()`. Heuristic pattern exists but is conformance-ledger-specific. | Generalize into `scripts/scan_megaplan_semantic_carriers.py` using the same AST/import scanning patterns. |
+| **Row registry reconciliation** | `source_compiler.py:1734-1767` — `_front_half_row_specs()` maps component exports to row IDs. | Extract into `arnold/workflow/megaplan_semantic_rows.yaml` data file; generalize to reconcile against carrier scan output. |
+| **Scenario-row matrix** | `scenarios.yaml:228+` — each scenario declares `rows`. `_build_split_outcome_hashes` already cross-validates row IDs. | `generate_megaplan_scenario_row_matrix.py` can consume existing scenario YAML + checker JSON. |
+| **Exemption closeout** | No exemption ledger exists. `FORBIDDEN_AUTHORITY_PATHS` (`generate_native_representation_evidence.py:249`) is a static set, not a dated exemption system. | Must be built; can reuse the approved-carrier pattern but add categories, owners, dates. |
+| **Baseline freeze** | Golden trace fixtures exist as scenario artifacts, not pre-extraction frozen baselines. | Must be built; can reuse fixture structure but needs freeze-record hashing + amendment ledger. |
+| **Runtime narrowing** | No narrowing contract exists (`megaplan-native-runtime-narrowing-contract.md` absent). Reference in master plan only. | Must be built. |
+| **Serialized plan rollout** | No rollout policy exists. | Must be built. |
+| **Generated conformance report** | `generate_native_representation_evidence.py:1607-1712` produces a bundle, not a markdown report. | Generalize the bundle builder into the final report generator; add markdown rendering. |
+| **Installed-package strict checker** | Smoke test loads via `importlib.resources` (line 466) but checker does not. | Wire `importlib.resources` into `check_workflow_source` or a wrapper. |
+
+---
+
+### 4. What Still Must Be Built
+
+All **eight S7 scripts** referenced in the exit gates do not exist. Zero S7 artifacts (`artifacts/native-semantic-parity/`) exist:
+
+| Script (from master plan lines 812-825) | Status |
+|---|---|
+| `scripts/check_megaplan_native_semantic_parity.py` | **Not found** |
+| `scripts/scan_megaplan_semantic_carriers.py` | **Not found** |
+| `scripts/classify_megaplan_semantic_carriers.py` | **Not found** |
+| `scripts/validate_megaplan_carrier_tier_boundary.py` | **Not found** |
+| `scripts/reconcile_megaplan_semantic_rows.py` | **Not found** |
+| `scripts/check_megaplan_exemption_ledger.py` | **Not found** |
+| `scripts/check_megaplan_baseline_freeze.py` | **Not found** |
+| `scripts/generate_megaplan_scenario_row_matrix.py` | **Not found** |
+| `scripts/generate_megaplan_native_semantic_conformance.py` | **Not found** |
+| `scripts/check_megaplan_serialized_plan_rollout.py` | **Not found** |
+| `scripts/validate_megaplan_runtime_narrowing.py` | **Not found** |
+
+Also missing:
+- `arnold/workflow/megaplan_semantic_rows.yaml` — canonical row registry data file
+- `artifacts/native-semantic-parity/baselines/pre-extraction/` — frozen baseline directory
+- `artifacts/native-semantic-parity/baseline-amendments.yaml` — amendment ledger
+- `artifacts/native-semantic-parity/carrier-scan-exclusions.yaml` — scan exclusions
+- `artifacts/native-semantic-parity/serialized-plan-rollout-policy.yaml` — rollout policy
+- `docs/arnold/megaplan-native-runtime-narrowing-contract.md` — narrowing contract
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**Risk: S7 is gated on 11 scripts + 6 data artifacts that don't exist yet, plus S1a-S6 completion.** The existing `generate_native_representation_evidence.py` provides ~40% of the evidence-collection surface, but none of the authoritative gate scripts. Recommended adjustments:
+
+1. **Split S7 into S7a (infrastructure) and S7b (execution).** S7a builds the scripts and data files S1a already depends on (carrier scan, row registry, baseline freeze). S7b runs the final gates.
+
+2. **Generalize, don't rewrite.** `generate_native_representation_evidence.py:1607-1712` already produces the evidence bundle that S7's generated report consumes. Refactor rather than build parallel infrastructure. The bundle builder's `_build_split_outcome_hashes`, `_build_installed_package_fingerprints`, `_build_handler_purity_checks`, `_build_compatibility_quarantine_checks`, and `_build_dead_delete_mutation_checks` all produce structured output already.
+
+3. **The installed-package strict checker path is the highest-risk gap.** The smoke test loads source via `importlib.resources` (`test_installed_package_composition_smoke.py:466`), but the strict checker (`check_workflow_source`) does not. This must be resolved in S1a before S7 can close.
+
+4. **Consider collapsing some S7 scripts.** The carrier scan → classification → reconciliation → exemption pipeline could be a single `scripts/reconcile_megaplan_semantic_carriers.py` with subcommands rather than four separate scripts. Similarly, baseline freeze + amendment validation could merge.
+
+5. **De-risk the scenario-row matrix.** `scenarios.yaml` already declares `rows` per scenario. The matrix script (`generate_megaplan_scenario_row_matrix.py`) can consume existing YAML + checker JSON without new data files.

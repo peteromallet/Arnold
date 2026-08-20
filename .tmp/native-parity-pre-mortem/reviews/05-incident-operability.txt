@@ -1,0 +1,213 @@
+Now I have the full picture. Let me synthesize the adversarial operability review.
+
+---
+
+# Isolated Review 5 — Incident Responder and Operability Adversary
+
+**Reviewer:** Clean-context adversarial review  
+**Scope:** Native Parity corrective plan, current code at `arnold_pipelines/megaplan`, plus repair/watchdog/auditor/suspension surfaces  
+**Method:** Simulate incidents from concrete operator-visible state surfaces; test whether a composed history lets a human explain and safely repair the run without hidden handler state.
+
+---
+
+## 1. Stale Coordinator / Expired Custody With No Causal Join to Plan State
+
+**Incident:** The watchdog detects a running phase that has exceeded its TTL. It classifies the plan as `repairing` and escalates. The coordinator fence was never persisted as a named, queryable artifact in the plan directory — it is a transient in-process lease in the auto-drive loop (`auto.py`). The custody lease was an execution lock at the store layer (`repair_lock.py:48-74`), not a plan-level field. When the operator runs `megaplan status --plan <name>`, they see `state: blocked`, `valid_next: []`, but **no field** tying the stale coordinator PID/fence to the plan's current state.
+
+**Permitting plan text:** Corrective plan §"Four-domain identity model" requires "Run Authority identity: subject attempt and its current independent coordinator fence" (`megaplan-native-parity-corrective-plan.md:122-123`); "Custody identity: exact action target, lease owner/process birth, and current custody epoch" (`:124-125`).
+
+**Current code shape:** `ChainStatusSnapshot` (`chain/status.py:53-75`) carries `operation_state` and `classification` but not coordinator identity or custody epoch. `RepairCustodyProjection` (`repair_contract.py:269-283`) has `custody_bucket` and `request_status_counts` but these are repair-layer abstractions, not the Run Authority lease the operator needs. `repair_lock.py` builds owner metadata with `session`, `pid`, `command`, `started_at`, `hostname` (`repair_lock.py:48-74`) but this is repair-specific locking, not the plan's authoritative coordinator fence.
+
+**Why proof can still be green:** The repair custody projection (`repair_contract.py:269-283`) carries `custody_bucket: "repairing"` or `"repairable_not_repairing"`. The status snapshot carries `operation_state`. Neither connects the plan's runtime lease to the plan's state.json. A proof harness that checks "repair custody projection exists" or "status snapshot classification is correct" passes without requiring the join.
+
+**Smallest amendment:** Add `coordinator_fence` and `custody_epoch` fields to `ChainStatusSnapshot` (`chain/status.py:53-75`), populated from `auto.py`'s active lease at snapshot time if a live lease exists, with a `stale_fence: true` field when the lease holder PID is dead. This joins the plan state to the custody identity in one human-readable status artifact. **Plan requirement:** Corrective plan §"Required final gates" #4: "Every authority-increasing Native action demonstrably passes through M11's admitted validator; missing/stale grant, fence, lease, epoch, target, or required boundary evidence fails closed" (`:465-467`). M11 generic substrate — mark out of scope for Native Parity, but the status projection field is Native Parity scope.
+
+---
+
+## 2. Cross-Host Handoff Has No Source-Visible Reentry Narrative
+
+**Incident:** The cloud worker dies. The repair loop acquires the lock on a new host, inspects `state.json`, and resumes. But `state.json` was written by a handler (`handlers/gate.py:414-520` mutates `state["current_state"]` and `state["meta"]`). The handler's internal decision tree (whether the critique cap hit `STATE_BLOCKED` vs `STATE_GATED`) is not source-auditable from `workflow.pypeline` — `critique_terminate_branch` at `handlers/gate.py:466-520` branches on internal `_open_blocking_flags(gate_summary)` logic. The operator inspects the plan after cross-host resume and sees `current_state: blocked` but cannot determine from `workflow.pypeline:393-470` whether the gate→blocked path was the critique cap exhaustion or something else—that causal join lives entirely in handler-local state mutation.
+
+**Permitting plan text:** Corrective plan end state: "A reviewer can read those files and understand prep, critique, gate, revise, tiebreaker, finalize, execute, review, rework, override, human gates, retries, caps, model routing, suspension, resume, checkpoint identity, and terminal outcomes without reading component tables, handler-local state mutation, runtime route maps..." (`megaplan-native-parity-corrective-plan.md:79-84`).
+
+**Current code shape:** The gate handler's `_critique_terminate_branch` (`handlers/gate.py:466-520`) sets `state["current_state"]` to `STATE_BLOCKED` or `STATE_GATED`. The workflow file (`workflow.pypeline:393-470`) has the loop structure but the cap/termination semantic lives in `handlers/gate.py:414-677` and `components.py:1154-1336`. After cross-host handoff, the new host reads `state.json` — the `blocked` vs `gated` distinction is preserved but the *why* (correctness/security vs cosmetic flags) requires reading `gate_summary` artifacts that may be on the dead host or stale.
+
+**Why proof can still be green:** The scenario tests (`test_handler_behaviors.py`) test the handler outcomes. The golden traces (`native_goldens/D4-gate-revise/`) capture the state transitions. If proof only checks that the state.json is valid and the status snapshot classification is correct, it passes regardless of whether the causal chain is reconstructable.
+
+**Smallest amendment:** In `critique_terminate_branch` (`handlers/gate.py:466`), write a `termination_reason` field into `state["meta"]` with the structured reason (e.g., `{"kind": "cap_exhausted", "open_critical_count": 3, "open_cosmetic_count": 2}`). This is a one-field addition to an existing mutation site. **Plan requirement:** S2 sprint scope (`master-plan.md:691-692`): "Extract... gate preflight/reprompt/downgrade/debt/severity, and revise loop caps/no-progress termination." The structured reason is the smallest diagnostic that bridges handler state to reviewer-visible source semantics.
+
+---
+
+## 3. Source/Policy/WBC-Version Drift During Suspension Has No Quarantine State
+
+**Incident:** A plan suspends at `human_review` in the evidence-pack pipeline (`evidence_pack/native.py:228-239`). The operator updates the source (new `.pypeline` version), changes a policy in `components.py`, or the WBC contract version changes. On resume, `resume_evidence_pack` (`evidence_pack/resume.py:92-153`) checks that the `resume_cursor` matches the persisted cursor (`:112-113`) and runs `reverify_resume_produces` (`:117-130`). But `reverify_resume_produces` only checks the suspension envelope's schema compatibility — it does **not** compare the current program/policy/WBC digests against the pinned originals.
+
+**Permitting plan text:** Corrective plan §"Four-domain identity model": "Every checkpoint/reentry envelope also binds the authored program/topology digest, call-site-policy digest, and exact WBC boundary-contract version. Resume after any drift uses the pinned original or an explicit accepted typed migration/new-attempt/quarantine decision, with new subject/WBC attempt and current custody epoch" (`megaplan-native-parity-corrective-plan.md:140-146`).
+
+**Current code shape:** The evidence-pack resume path (`evidence_pack/resume.py:92-153`) validates cursor shape but not version binding. The native checkpoint infrastructure (`arnold/pipeline/native/checkpoint`) has `classify_resume_cursor` and `read_native_cursor` but no program-digest comparison. `HumanSuspension` (`arnold/pipeline/types`) carries `resume_input_schema` but not a topology digest.
+
+**Why proof can still be green:** The evidence-pack verifier (`evidence_pack/verifier.py`) validates schemas, not version-drift provenance. A checkpoint that says `status: "passed"` with valid artifact refs passes verification regardless of whether the program that produced it matches the program that would now resume. The `reverify_resume_produces` call (`resume.py:117-130`) only checks `outcome == "invalid"` and returns early — it does not check for version drift.
+
+**Smallest amendment:** Add a `program_digest` field to `HumanSuspension` in `arnold/pipeline/types.py`. In `resume_evidence_pack` (`evidence_pack/resume.py`), after loading the cursor, compare the current `build_native_program()` digest against the cursor's `program_digest`. If they differ, return `resumed=False` with a `drift_detected` reason rather than silently resuming under changed code. **Plan requirement:** Corrective plan §"Minimum blocking regressions" #8: "Suspension survives process death and resumes at the same semantic point only with current authority/custody and matching program/topology, call-site-policy, and exact WBC contract version, or an explicit accepted drift decision" (`megaplan-native-parity-corrective-plan.md:474-478`). M11 generic program-digest computation out of scope; the digest comparison placement is Native Parity scope.
+
+---
+
+## 4. Crash Before/After Effect Intent/Outcome — No Durable Effect-Ambiguity Record
+
+**Incident:** The auto-drive loop (`auto.py`) executes a phase. The worker model completes and produces output. The handler (e.g., `handlers/execute.py:348-702`) writes output artifacts, updates `state.json`, emits boundary receipts, and saves `phase_result.json`. The process crashes between the artifact write and the `save_state_merge_meta` call. On restart, the repair loop sees artifacts exist but `state.json` still shows the pre-execute state. The operator cannot determine whether the effect was intended or partially applied.
+
+**Permitting plan text:** Corrective plan §"Minimum blocking regressions" #6: "Every node/child maps to the admitted WBC lifecycle with idempotency, monotonic order, terminal uniqueness, ambiguity and reconciliation" (`:470-471`). §"Contract ownership": "WBC: Exact-version boundary declarations and durable execution-attempt/effect/provenance history" (`:97`).
+
+**Current code shape:** The phase result guard (`orchestration/phase_result.py:phase_result_guard`) writes `phase_result.json` atomically. `handle_execute` (`handlers/execute.py:348`) writes artifacts and state in sequence but not in a transactional unit. Boundary receipts (`handlers/execute.py:377-401`) are `COMPLETE` or `INCOMPLETE` but the write of the receipt itself is not atomic with the state write. The execute handler writes `save_state_merge_meta` at `:406` and `:470`, but if crash occurs between them, the operator sees a partial state.
+
+**Why proof can still be green:** A scenario test that checks `phase_result.json` and `state.json` after a successful run will pass. The proof harness does not inject crashes between handler-internal state writes, so the atomicity gap is invisible.
+
+**Smallest amendment:** In `handle_execute` (`handlers/execute.py:348`), wrap the artifact-write + state-write sequence in a journal transaction (reusing `prepare_journal_transaction`/`commit_journal_transaction` from `_core/io.py`, as noted in `docs/ops/recovery-runbooks.md:16-17`). On resume after crash, `recover_journal()` either commits or rolls back the partial write. **Plan requirement:** Corrective plan §"Required final gates" #4: "Every authority-increasing Native action demonstrably passes through M11's admitted validator; missing/stale grant, fence, lease, epoch, target, or required boundary evidence fails closed" (`:465-467`). The journal pattern is M11 generic; wiring it into the handler is Native Parity scope.
+
+---
+
+## 5. Ambiguous Persistence — Handler `current_state` vs Source `route_signal`
+
+**Incident:** The plan is in `current_state: gated` (written by `handlers/gate.py:506`). The auto-drive loop calls `workflow_next(state)` to derive the next step. `workflow_next` consults `_core/workflow_data.py` transition tables. But the gate handler also returns a `route_signal` in its response (`handlers/gate.py:530-532`). The auto-driver comment at `handlers/gate.py:473-476` explicitly says: "The auto/chain loop is STATUS-DRIVEN: `auto.drive` re-derives the next step from STATE via `workflow_next`, IGNORING this handler's returned `next_step`." The operator sees `state: gated` in `status` output and a `route_signal: force_proceed` in `gate.json`. Which one is authoritative?
+
+**Permitting plan text:** Corrective plan end state: "The system need not maximize visible steps. It must use the minimum readable workflow that completely determines behavior" (`megaplan-native-parity-corrective-plan.md:87-88`). Master plan S2: "Extract... gate preflight/reprompt/downgrade/debt/severity, and revise loop caps/no-progress termination" (`master-plan.md:691-692`).
+
+**Current code shape:** The auto-driver comment at `handlers/gate.py:473-476` is the only documentation of the dual-authority problem. `workflow_data.py` state transitions and handler `route_signal` are distinct, and the operator cannot tell from `state.json` alone which won. The `termination_reason` is embedded in handler code paths (`:466-520`) but not persisted as a first-class field.
+
+**Why proof can still be green:** The golden traces (`native_goldens/D4-gate-revise/`) capture the resulting state transition. A proof that checks "state transition matches golden" passes regardless of dual authority. A status snapshot that reports `state: blocked` looks correct.
+
+**Smallest amendment:** Add a `decision_source` field to `state["meta"]` in every `state["current_state"] = ...` mutation in handlers, recording whether the transition was source-derived (from `workflow.pypeline` condition matching) or handler-policy-derived (from handler-local logic). This surfaces the dual authority as a diagnostic at `megaplan status`. **Plan requirement:** S2 North Star question #5: "Does `build_pipeline()` and runtime behavior consume lowered source for the changed slice, or reconstruct semantics from component metadata?" (`master-plan.md:335-336`). This field answers that question for every state transition.
+
+---
+
+## 6. Partial Installed-Version Skew — Checkout vs Wheel Divergence Is Not Diagnosable
+
+**Incident:** The operator installs `arnold_pipelines` from a wheel on the cloud host but the `megaplan` CLI runs from a checkout on a dev laptop. The `workflow.pypeline` on the cloud host was from the wheel at install time, but the operator's `megaplan status` against the cloud reads state files via the checkout's version of `chain/status.py`. If the status schema changed between versions, the operator sees corrupted or misinterpreted state.
+
+**Permitting plan text:** Master plan S1a: "Implement strict installed-package mode by loading `workflow.pypeline` and named subworkflows through `importlib.resources.files(...)` from the installed `arnold_pipelines` package" (`master-plan.md:517-521`). "Installed-package mode must load `.pypeline` source through package resources from the installed artifact, not through checkout-relative paths" (`:79-81`).
+
+**Current code shape:** `test_installed_package_composition_smoke.py` exists and proves wheel loading works. But `chain/status.py` has no version-skew detection. `ChainStatusSnapshot` (`chain/status.py:53-75`) does not carry a `status_schema_version`. If the cloud host runs v0.22.0 and the operator's CLI runs v0.21.0, the JSON is silently misinterpreted.
+
+**Why proof can still be green:** The installed-package smoke test proves that the wheel's `.pypeline` can be loaded via `importlib.resources`. It does not prove that two different versions of the status reader produce the same interpretation of the same state files.
+
+**Smallest amendment:** Add a `status_schema_version` field to `ChainStatusSnapshot.to_dict()` (`chain/status.py:76-96`). On load, the status consumer compares the version to its own expected version and warns on mismatch. This is a one-field addition. **Plan requirement:** Master plan S7: "Run checkout, clean wheel/sdist, and pinned cloud runtime. Generate the final proof map deliberately from accepted artifacts" (`master-plan.md:377`).
+
+---
+
+## 7. Forged/Stale Projections — No Consumer-Visible Provenance Chain
+
+**Incident:** The watchdog writes `watchdog-report.json` and the six-hour auditor writes `audit_input` briefs. A repair attempt fails and writes `repair-data.json` with `outcome: repairing`. Then the repair loop dies. The next watchdog sweep reads the stale `repair-data.json`, sees `outcome: repairing`, and classifies the plan as "already being repaired" — skipping it. The plan is now orphaned: stuck in `repairing` with no active repairer. The operator runs `megaplan status --all` and sees `status: repairing` but cannot determine that the repair owner is a dead process.
+
+**Permitting plan text:** Corrective plan §"Contract ownership": "Projections: Rebuildable observation at declared source cursors. Bearer token for any positive action" (`:97`). §"Minimum blocking regressions" #11: "Projection deletion/rebuild is deterministic and forged/stale projections cannot increase authority" (`:481-482`).
+
+**Current code shape:** `RepairLockResult` (`repair_lock.py:22-40`) has a `stale` status, and `inspect_repair_lock` checks PID liveness (`repair_lock.py:77-100`). But `repair_contract.project_repair_custody` (`repair_contract.py`) builds a projection from the repair-data JSON without cross-referencing the repair lock's liveness. The status snapshot (`status_snapshot.py:1-100`) reads watchdog reports and session markers but does not cross-validate repair ownership liveness.
+
+**Why proof can still be green:** The repair custody test (`test_repair_custody.py:36-52`) checks blocker ID stability. The repair lock test checks `busy` vs `stale` detection. No end-to-end test verifies that a stale repair projection is detected as stale by the status snapshot consumer.
+
+**Smallest amendment:** In `status_snapshot.py`, when reading repair markers, call `inspect_repair_lock` for any plan with `status: repairing` and add a `repair_owner_live: bool` field to the snapshot output. If the lock is stale, mark the plan as `repair_stale` rather than `repairing`. **Plan requirement:** Corrective plan §"Minimum blocking regressions" #11 (`:481-482`).
+
+---
+
+## 8. Missing Diagnostics: No Causal Join Between Watchdog Finding and Handler Decision
+
+**Incident:** The watchdog detects `state: blocked`, classifies the blocker via `blocker_fingerprint_from_evidence` (`repair_contract.py:326-350`), dispatches a repair. The repair agent runs `megaplan override recover-blocked`. The override handler (`handlers/override.py:218-247`) reads `state["meta"]["overrides"]`, finds the latest `recover-blocked` entry, and extracts `resume_cursor`. But the *watchdog's* classification (`failure_kind`, `retry_strategy`, `phase_or_step`) is written to `repair-data.json` while the *handler's* state mutation is written to `state.json`. These are separate artifacts with no cross-reference. The operator cannot answer: "Why did the repair agent choose `recover-blocked` instead of `force-proceed`?"
+
+**Permitting plan text:** Corrective plan: "Every authored typed product-decision occurrence and terminal acceptance must create or link exactly one accepted Run Authority Decision" (`megaplan-native-parity-corrective-plan.md:133-137`). Master plan S0: "Required sprint review questions: ... For every row this sprint claims, can a reviewer understand the branch/loop/fanout/join/suspension/retry/route from `workflow.pypeline`..." (`master-plan.md:324-328`).
+
+**Current code shape:** `incident_bridge.py` (`incident_bridge.py:1-100`) appends watchdog detection events to the incident ledger. But the override handler (`handlers/override.py:218-247`) does not read or reference the incident ledger — it reads `state["meta"]["overrides"]`. The two event streams (incident events and state history) are independent.
+
+**Why proof can still be green:** The repair custody test verifies that blocker fingerprints are stable. The override handler test verifies that `recover-blocked` transitions state correctly. Neither test verifies that the causal chain from detection → classification → dispatch → action is reconstructable from persisted artifacts.
+
+**Smallest amendment:** In `handle_override` (`handlers/override.py`), when processing a repair action (`recover-blocked`, `force-proceed`), write a `repair_decision_ref` into `state["meta"]` that points to the incident event ID or repair request ID that triggered it. This cross-references the incident ledger with the state history. **Plan requirement:** S6 sprint scope: "Extract override action routing into source-visible control surface" (`master-plan.md:837`).
+
+---
+
+## 9. Quarantine States: No "Suspended Under Drift" or "Resumed Under Migration" Terminal
+
+**Incident:** A plan is suspended mid-execute. The operator updates `workflow.pypeline` (topology change). Per the plan, topology-changing sprints require "a pre-sprint serialized fixture resumed on post-sprint code, or a deliberate drain/quarantine rollout decision" (`master-plan.md:262-263`). But there is no plan-level state that records "this plan was suspended under topology v1 and resumed under topology v2 with an accepted migration decision." The operator resumes, the plan quietly executes under the new topology, and if something breaks, the operator cannot distinguish "broken by the topology change" from "broken by the original plan logic."
+
+**Permitting plan text:** Corrective plan: "Resume after any drift uses the pinned original or an explicit accepted typed migration/new-attempt/quarantine decision, with new subject/WBC attempt and current custody epoch as applicable" (`megaplan-native-parity-corrective-plan.md:142-145`).
+
+**Current code shape:** The restore code (`replan_state.py:1-38`) resets replan loop state. Suspension cursors carry `artifact_stage` and `stage` fields (`evidence_pack/resume.py:76-79`). But there is no `topology_digest_at_suspend` field persisted alongside the cursor, and no `resumed_under_migration` flag set on resume.
+
+**Why proof can still be green:** The serialized-plan rollout check (`master-plan.md:891`) validates either migration fixtures or drain/quarantine policy. It does not validate that individual plan resumes after topology changes record their migration status.
+
+**Smallest amendment:** Add `topology_digest_at_suspend` to the native cursor schema (`arnold/pipeline/native/checkpoint`). On resume, compare to current topology digest; if they differ, set `state["meta"]["resumed_under_topology_migration"] = true` and record both digests. Expose in `megaplan status` output. **Plan requirement:** Master plan S1b-1: "If S1b-1 changes topology, a pre-S1b-1 serialized replay cursor fixture must resume or intentionally quarantine on post-S1b-1 code according to a documented migration/drain policy" (`master-plan.md:621-623`).
+
+---
+
+## 10. Decision-Consumption Visibility: No "Accepted Run Authority Decision" → "Consumed Transition" Trace
+
+**Incident:** The operator approves a human gate via `megaplan resume --plan <name> --approved`. The resume path (`handlers/` or `evidence_pack/resume.py`) writes the result to `state.json`. But the decision (who approved, when, under what fence) is a transient CLI argument. If the plan later enters a disputed state, there is no durable record connecting the approval decision to the resulting route transition.
+
+**Permitting plan text:** Corrective plan §"Four-domain identity model": "Every authored typed product-decision occurrence and terminal acceptance must create or link exactly one accepted Run Authority Decision under the current subject attempt/fence. The corresponding runtime transition/action consumes that exact decision ID, outcome, and CAS sequence" (`megaplan-native-parity-corrective-plan.md:133-137`).
+
+**Current code shape:** `handle_override` (`handlers/override.py:132-300`) consumes `args` from argparse but does not persist a decision record with fence/epoch. The `resume_evidence_pack` function (`evidence_pack/resume.py:92-153`) normalizes `human_input` but does not generate a decision ID. The boundary receipts (`handlers/execute.py:377-401`) emit `COMPLETE`/`INCOMPLETE` outcomes but with `authority_actor: "***"`, `authority_role: "***"`, `authority_decision: "***"` — placeholders.
+
+**Why proof can still be green:** The scenario tests check that the state transition occurred. The golden traces capture the post-decision state. Neither requires the decision ID → consumed-transition join.
+
+**Smallest amendment:** In every human-gate resume path (`handlers/override.py`, `evidence_pack/resume.py`), generate a deterministic decision ID (e.g., `sha256(plan_id + decision_kind + timestamp + actor)`), persist it to `state["meta"]["decisions"]`, and reference it in the state transition record. Replace the `"***"` authority placeholders in boundary receipts with real values. **Plan requirement:** Corrective plan §"Minimum blocking regressions" #3: "Every authored typed decision occurrence/terminal acceptance maps to exactly one accepted Run Authority decision and exactly one consumed matching runtime transition/action" (`:462-464`). M11 Run Authority decision schema is generic; the wiring into handler paths is Native Parity scope.
+
+---
+
+## 11. Repair Invariants That Must Be Plan-Level Acceptance Requirements
+
+The following repair invariants are currently enforced only by watchdog/repair-loop code, not by plan-level state that a human can inspect:
+
+a. **Repair idempotency:** If `megaplan override force-proceed` is run twice, the second invocation should be a no-op or fail with "already force-proceeded." Current code (`handlers/override.py:158-196`) re-applies the override each time, writing duplicate history entries.
+
+b. **Repair liveness:** The repair loop must not cycle indefinitely on the same blocker. There is no `repair_attempt_count` in `state.json` visible to the operator.
+
+c. **Repair escalation:** After N failed repair attempts, the system must escalate to human rather than retry silently. The escalation path (meta-repair → human) is in `docs/ops/tiered-repair-and-audit-loop.md:72-80` but not encoded as a plan-level field.
+
+**Smallest amendment:** Add `repair_attempts`, `last_repair_action`, and `repair_escalation_level` fields to `state["meta"]`, populated by the repair runner (`watchdog/repair_runner.py`). Expose in `megaplan status`. **Plan requirement:** Corrective plan §"Required final gates" #5: "WBC evidence/receipt/projection cannot become dispatch, resume, retry, completion, cancellation, publication, or delivery authority" (`:468-469`). The repair loop is a projection consumer; its escalation decisions must be visible to the human.
+
+---
+
+## Summary Table
+
+| # | Gap | Plan Text | Code Shape | Proof Bypass | Amendment |
+|---|---|---|---|---|---|
+| 1 | Stale coordinator invisible in status | `corrective-plan.md:122-125` | `chain/status.py:53-75` lacks fence/epoch | Passes if status schema valid | Add `coordinator_fence`, `custody_epoch`, `stale_fence` to `ChainStatusSnapshot` |
+| 2 | Cross-host reentry causal chain hidden | `corrective-plan.md:79-84` | `handlers/gate.py:466-520` mutation not source-traceable | Golden trace covers outcome only | Add `termination_reason` to `state["meta"]` in `_critique_terminate_branch` |
+| 3 | Suspension drift undetected on resume | `corrective-plan.md:140-146` | `evidence_pack/resume.py:92-153` no digest comparison | Schema validation passes | Add `program_digest` comparison in resume path |
+| 4 | Crash partial-write ambiguity | `corrective-plan.md:470-471` | `handlers/execute.py` writes not transactional | Scenarios don't inject mid-handler crashes | Journal-transaction wrapper around artifact+state writes |
+| 5 | Dual authority `route_signal` vs `workflow_next` | `corrective-plan.md:87-88` | `handlers/gate.py:473-476` comment only | State transition matches golden | Add `decision_source` to state meta |
+| 6 | Version skew between checkout and cloud | `master-plan.md:517-521` | `chain/status.py` no schema version | Installed-package smoke passes | Add `status_schema_version` to snapshot |
+| 7 | Stale repair projection silently consumed | `corrective-plan.md:481-482` | `repair_contract.py` projection ignores lock liveness | Blocker ID stability test passes | Cross-validate repair lock liveness in status snapshot |
+| 8 | Watchdog→handler causal join missing | `corrective-plan.md:133-137` | `incident_bridge.py` and `handlers/override.py` independent | Unit tests pass in isolation | Add `repair_decision_ref` cross-reference |
+| 9 | No "resumed under migration" quarantine | `corrective-plan.md:142-145` | Cursor lacks topology digest | Rollout policy check passes | Add `topology_digest_at_suspend` + `resumed_under_topology_migration` |
+| 10 | Decision→transition trace absent | `corrective-plan.md:133-137` | Authority placeholders `"***"` in receipts | Scenario tests check outcome, not provenance | Generate and persist decision IDs; fill authority fields |
+| 11 | Repair invariants not plan-visible | `corrective-plan.md:468-469` | Repair state in separate repair-data.json | Repair tests check repair artifacts | Add repair counters and escalation level to `state["meta"]` |
+
+---
+
+## Generic M11 Matters — Out of Scope
+
+The following are M11 generic substrate concerns, not Native Parity amendments:
+
+- Exact Run Authority decision schema and CAS sequence format
+- WBC attempt/effect transactional store implementation
+- Custody lease TTL, heartbeat, and cross-host reclaim protocol
+- Rebuildable projection infrastructure and observation APIs
+- Generic persistence with stale-fence/epoch detection
+- Captured replay and independent verification harness
+- The `final-proof-map.json` schema and chain-schema enforcement
+
+These are cited in plan text as M11 prerequisites (`corrective-plan.md:32-60`). Native Parity consumes them, does not repair them.
+
+---
+
+## Verdict
+
+**One composed history does not yet let a human explain and safely repair the run without hidden handler state.** The gaps are:
+
+1. **Missing diagnostics** (gaps 1, 2, 5, 8): The causal chain from source construct → handler decision → state transition is not reconstructable from persisted artifacts. An operator sees `state: blocked` but cannot determine whether that was a `workflow.pypeline` branch, a handler policy decision, or a watchdog-issued blocker classification.
+
+2. **Missing causal joins** (gaps 3, 9, 10): Suspension, resume, and human decisions lack durable identity linking the decision to the consumed transition. Drift is invisible.
+
+3. **Missing quarantine states** (gaps 3, 4, 7, 9): There is no plan-level indicator for "suspended under old topology," "partial crash recovery," "stale repair projection," or "resumed under migration." The system proceeds silently through states that a human operator needs to see.
+
+4. **Missing repair invariants** (gap 11): Repair idempotency, liveness, and escalation are enforced by repair-loop code but not surfaced in plan-visible state.
+
+Each amendment is small (one field, one comparison, one cross-reference) and directly addressable within the sprint structure. None requires M11 redesign.

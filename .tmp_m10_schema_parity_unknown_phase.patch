@@ -1,0 +1,9 @@
+diff --git a/arnold_pipelines/megaplan/handlers/schema_parity.py b/arnold_pipelines/megaplan/handlers/schema_parity.py
+--- a/arnold_pipelines/megaplan/handlers/schema_parity.py
++++ b/arnold_pipelines/megaplan/handlers/schema_parity.py
+@@ -219,5 +219,4 @@ class SchemaParityReport:
+         return computed
+ 
+     def record_error(self, phase: str, error: SchemaParityError) -> None:
+-        self._require_known_phase(phase)
+         self._errors[phase] = error

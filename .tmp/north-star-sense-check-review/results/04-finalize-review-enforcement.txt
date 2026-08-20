@@ -1,0 +1,65 @@
+## Verdict: **Mostly sound with amendments**
+
+The design direction is correct, but zero implementation exists yet. Below is evidence-cited analysis for each question.
+
+---
+
+### 1. Should finalize lower North Star actions into tasks/sense_checks/user_actions?
+
+**Correct in principle, nothing built.** The finalize prompt already instructs: *"For each `## Step N:` in the plan, emit 1-N tasks. For each task, emit one sense_check."* (`prompts/finalize.py:102-103`). The handler programmatically injects gate tasks for `before_execute` user_actions (`handlers/finalize.py:563-629`) and scrubs verification tasks. This is the natural place to lower North Star actions. But the string `north_star_action` appears **zero times** in the entire codebase — this is greenfield work.
+
+**Amendment:** The lowering logic should live in the finalize handler's mutation phase (alongside `_ensure_user_actions_pre_gate_task`), not just in the prompt. A prompt-only approach would be narrative-only.
+
+---
+
+### 2. Can review currently block on missing evidence for closeout-critical actions?
+
+**No — new schema and logic required.** Review blocks on incomplete verdict coverage (`handlers/review.py:1013-1019`): `verdict_count < total_tasks`, `check_count < total_checks`, or `missing_evidence`. It blocks on `needs_rework` (lines 1021-1057) and can escalate to `STATE_BLOCKED`. But review has no awareness of North Star actions. `_resolve_review_outcome` (line 995) uses only `review_verdict`, verdict counts, criteria, and rework_items — none of which carry North Star semantics.
+
+The `TransitionPolicy.evaluate_review_done` (`transition_policy.py:90-140`) checks review completeness, evidence freshness, and blocking contradictions — but nothing about closeout-critical North Star actions.
+
+**Amendment:** Add `north_star_actions_addressed` to `revise.json` (as the doc proposes at line 320), then have review inspect it. A `reject_closeout` action that is unresolved should cause `_resolve_review_outcome` to return `blocked` with `STATE_EXECUTED`.
+
+---
+
+### 3. How should `reject_closeout` be enforced after execution?
+
+The doc defines `reject_closeout` as *"Add closeout blocker enforced later by review/finalize"* (`megaplan-north-star-sense-checks-revise-design.md:233`). There is **no mechanism today**.
+
+Two integration points exist:
+
+- **Review handler** (`handlers/review.py:1375-1384`): `_resolve_review_outcome` could detect unresolved `reject_closeout` actions in finalize data and return `blocked` with an appropriate `route_signal`. This mirrors how `_enforce_review_execute_authority` (line 514) already sets `review_verdict = "needs_rework"` for execution authority gaps.
+
+- **Transition policy** (`transition_policy.py:86-140`): `evaluate_review_done` could reject a review→done transition when unresolved closeout-critical North Star actions exist. This is the stronger enforcement point because it catches force-proceed scenarios.
+
+**Amendment:** Enforce at both levels. The transition policy check is the backstop that prevents a `reject_closeout` from being force-proceeded through. The doc's severity schema already defines six categories as `blocking` by rule (lines 282-287) — tie `reject_closeout` enforcement to that list.
+
+---
+
+### 4. Any issue with overloading existing `sense_checks`?
+
+**Minor schema gap, not a design flaw.** The finalize template has `sense_checks: []` (`prompts/finalize.py:197`), and the prompt says *"one verification question per task"* (line 165). The current sense_check schema is `{id, task_id, question, verdict}` — all strings. A North Star action (as shown in the doc at lines 166-181) carries `severity`, `action_type`, `acceptance_evidence[]`, `halt_if_unmappable` — none of which fit the current shape.
+
+**Two paths, both viable:**
+1. Keep North Star actions as a **separate top-level key** (`north_star_actions`) in finalize.json/gate.json, which the doc already proposes (line 314-316). This avoids schema collision.
+2. Extend the sense_check schema with optional fields. Risk: polluting a clean task-verification concept.
+
+**Recommendation:** Keep them separate. The doc's proposed `north_star_actions[]` on `gate.json` and `north_star_actions_addressed` on `revise.json` is the right design. Don't overload `sense_checks`.
+
+---
+
+### 5. What tests would prove this is not narrative-only?
+
+The doc lists 10 tests (lines 339-350). To prove non-narrative, **gate, revise, and review must make programmatic routing decisions**, not just produce prose. Minimum:
+
+| Test | What It Proves |
+|---|---|
+| Bad answer → `north_star_actions[]` in `gate.json` | Gate handler writes structured data, not prose |
+| Gate routes to revise when blocking action unresolved | State machine transition, not a prompt suggestion |
+| Revise *programmatically* halts on `add_human_halt` | Revise returns non-success `StepResponse`, not just a paragraph |
+| `north_star_actions_addressed` with only prose → revise fails | Schema-level enforcement of concrete plan refs |
+| Review returns `blocked` when closeout-critical action lacks evidence (`review.py:1013-1019` pattern) | Review handler's `_resolve_review_outcome` branches on new data |
+| Force-proceed skips cosmetic but not `reject_closeout` actions | Transition policy blocks the review→done transition |
+| Canary: clean-context reviewer catches seeded North Star defect | End-to-end tripwire test proving questions aren't just answered by executor |
+
+The key differentiator between narrative and real: **does a bad answer change the state machine, or just the prose?** If gate writes `north_star_actions` and that alone causes `_resolve_review_outcome` to block, it's real. If the only observable effect is text in `review.json`, it's narrative.

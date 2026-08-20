@@ -1,0 +1,238 @@
+Now I have enough data. Let me produce the comprehensive audit.
+
+---
+
+# Megaplan Source/Topology Authority Audit Matrix
+
+**Audit date:** 2026-07-21  
+**Repo target:** `fc98a216b9` — "Integrate S7 native parity source and evidence fixtures"  
+**Uncommitted changes noted where relevant.**  
+**Method:** Trace actual call paths, handler entry points, lowering surfaces, CLI-driver dispatch, and runtime resolution — not claims.
+
+---
+
+## 1. DENSITY MATRIX
+
+### Legend
+| Code | Meaning |
+|------|---------|
+| **1** | Visibly source-authoritative in authored native topology |
+| **2** | Declared natively but semantically completed elsewhere |
+| **3** | Hidden in a component/handler/runtime/metadata/route/CLI/auto-drive surface |
+| **4** | Duplicated or contradictory authority |
+| **5** | Absent |
+
+### Semantic → Classification
+
+| Semantic | Class | Primary Authority | Evidence |
+|----------|-------|-------------------|----------|
+| **Prep/Research** | **1** | `workflow.pypeline:390` via `AUTHORING_PREP`; handler `handlers/plan.py:handle_prep` | Handler resolved at `components.py:1955-1965` (PREP step) |
+| **Plan** | **1** | `workflow.pypeline:391` via `AUTHORING_PLAN`; handler `handlers/plan.py:handle_plan` | `components.py:1966-1978` |
+| **Critique loop (fanout)** | **2** | Declared via `parallel_map` at `.pypeline:395-401`. Actual fanout topology is metadata-hidden in `DEFAULT_POLICY` metadata `critique_surface.fanout_contract` at `components.py:1032-1042` | The pypeline `parallel_map` call is syntactic; runtime reads `STEP_COMPONENTS_BY_ID["critique"].metadata["route_surface"]["fanout_contract"]` via `route_dispatch.py` |
+| **Critique lens selection** | **3** | `components.py:932-946` (`CRITIQUE_SELECTION_POLICY`), referenced only from component metadata | No visible path from pypeline function to selection logic; handled by `handlers/critique.py` |
+| **Gate (proceed/iterate/tiebreaker/escalate/abort/suspend/blocked_preflight/force_proceed)** | **2** | `DECLARED_STEP_INTERFACES["gate"]` at `.pypeline:100-129` declares 8 route bindings. Actual routing authority is `GATE_POLICY.config.control_transitions` at `components.py:1113-1149` (only 5 transitions) + `GATE_POLICY.metadata.route_surface.fallback_route_signals` at `components.py:1161-1167` | **Duplicate**: `.pypeline` has 8 bindings; `GATE_POLICY` has 5 control_transitions + 6 fallback signals. The extra `.pypeline` bindings (blocked_preflight→override, suspend→halt, force_proceed→finalize) rely on policy fallback resolution, not explicit transition routes. Contradiction: `.pypeline:114` maps `blocked`→`override` but `GATE_POLICY` maps `blocked_preflight` via fallback. |
+| **Critique revise loop** | **2** | `loop(policy=REVISE_LOOP_POLICY)` at `.pypeline:393` declares the loop. Actual iteration cap, reentry, and termination policy are in `REVISE_LOOP_POLICY` at `components.py:1239-1336` | The pypeline `while True` is syntactic; `REVISE_LOOP_POLICY.config.max_iterations=M4_LOOP_MAX_ITERATIONS(4)` governs actual loop count |
+| **Tiebreaker (researcher/challenger/synthesis/decision)** | **2** | `.pypeline:472-488` calls the four-phase sequence. The topology contracts at `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS["tiebreaker_child"]` (`.pypeline:282-300`) duplicate `SOURCE_TIEBREAKER_WORKFLOW.metadata.topology_contract` (`components.py:2533-2553`) | **Duplicate**: Two separate topology contracts for the same tiebreaker child. The canonical four-phase identity is in `components.py:2527-2532`. |
+| **Tiebreaker proceed path** | **2** | `.pypeline:489-561` encodes the tiebreaker→proceed→finalize→execute→review path in imperative Python. The `TIEBREAKER_POLICY.metadata.route_surface` (`components.py:1389-1402`) declares the decision routes separately | **Duplicate**: decision routing exists in two places with slightly different target_ref values (pypeline `tiebreaker_finalize` vs policy `finalize`) |
+| **Tiebreaker iteration** | **1** | `.pypeline:562-563` (`AUTHORING_REVISE`) is the only place indicating `tiebreaker:iterate` routes to `revise` | Matches `TIEBREAKER_POLICY` |
+| **Execute DAG batching/fanin** | **2** | `.pypeline:406-412` declares `parallel_map(id="execute-batches", ...)`. The fanout contract is at `EXECUTE_POLICY.metadata.route_surface.fanout_contract` (`components.py:1694-1701`) | The runtime reads `STEP_COMPONENTS_BY_ID["execute"].metadata.policy_refs` to find `EXECUTE_POLICY`, then its fanout_contract. Actual batching logic hidden in `execute/policy.py` and `handlers/execute.py` |
+| **Approval gates (execute)** | **3** | Absent from pypeline function. Declared in `EXECUTE_POLICY.metadata.route_surface.approval_gates` at `components.py:1674-1693` and in `SOURCE_EXECUTE_BATCH_WORKFLOW.metadata.topology_contract.approval_gates` at `components.py:2572-2591` | **Duplicate** in two places; enforceable by `execute/policy.py:ApprovalOutcome` typed enum; no visible boolean gating in pypeline |
+| **Finalize** | **1** | `.pypeline:405` (`AUTHORING_FINALIZE`). `FINALIZE_POLICY` at `components.py:1405-1508` adds skip-review routes | Functions called, but finalize's revise-fallback and no-review-terminal routes have no pypeline-level control flow — they are **hidden** in policy metadata |
+| **Review (fan-in)** | **2** | `.pypeline:413-464` declares review fan-in. `REVIEW_POLICY` at `components.py:1509-1602` owns the actual control transitions | Pypeline review routing repeats 3× (once per primary, once per rework, once per each variant path) — **extreme duplication** |
+| **Review rework loop** | **2** | `.pypeline:423-455` encodes rework branching in imperative Python. `REVIEW_POLICY.config.retry` at `components.py:1515-1518` declares retry policy | The pypeline's if/elif/else rework branch is a static inline copy of what `REVIEW_POLICY` declares declaratively. Auto-driver (`auto.py`) implements its own rework cap (`DEFAULT_MAX_REVIEW_REWORK_CYCLES=3` at `auto.py:155`) — **third authority** |
+| **Review→halt (pass)** | **1** | `.pypeline:420-422` | |
+| **Review→override (blocked)** | **1** | `.pypeline:456-458` | |
+| **Review→halt (deferred_human)** | **1** | `.pypeline:459-461` | |
+| **Override (abort/force_proceed/replan)** | **2** | `.pypeline:655-737` handles 3 `OverrideOutcome` values. `OVERRIDE_POLICY` at `components.py:1603-1620` plus `override_matrix.py` define 11 actions | The pypeline only handles 3 outcomes. 8 additive actions (add-note, set-model, adopt-execution, recover-blocked, resume-clarify, set-profile, set-robustness, set-vendor) are **hidden** in override_matrix dispatch surface |
+| **Override adopt-execution** | **4** | `DECLARED_OVERRIDE_POLICY_ROUTES["adopt-execution"]` at `.pypeline:37-43` claims target_ref="review". **But**: no code path in the pypeline function actually reaches review from override — override routes only to halt, finalize, or revise | Declared policy route has no concrete wiring in the authored topology |
+| **Override recover-blocked** | **4** | `DECLARED_OVERRIDE_POLICY_ROUTES["recover-blocked"]` at `.pypeline:44-50` claims target_rule="recovery_predecessor". The actual recovery dispatch is in `auto.py` (RecoveryPolicy) and `orchestration/recovery_policy.py` | The declared route in pypeline never resolves to a concrete step |
+| **Override resume-clarify** | **4** | `DECLARED_OVERRIDE_POLICY_ROUTES["resume-clarify"]` at `.pypeline:51-57` claims target_ref="plan". **No code path in pypeline function routes to "plan" from override** | Target_ref has no wiring in authored topology |
+| **Halt (terminal)** | **2** | `.pypeline` exits via `AUTHORING_HALT(...)` with 13 distinct halt IDs. `HALT` step (`components.py:2273-2281`) is terminal=True | All halt IDs collapse to the same `HALT` component; the distinct IDs are only for traceability, not routing |
+| **Override/abort/adopt** | **1** | `.pypeline:657-658` (abort), `.pypeline:660-732` (force_proceed), `.pypeline:733-734` (replan) | Visible in authored topology |
+| **Recovery** | **5** | No `recovery` step in pypeline. `auto.py` imports `RecoveryPolicy` from `orchestration/recovery_policy.py` | **Absent from authored topology entirely** |
+| **Suspend/resume** | **3** | `SUSPENSION_POLICY` at `components.py:1885-1952` declares suspension routes. Auto-driver at `auto.py` applies suspense via `_apply_envelope_handshake`. The pypeline `.pypeline:741-743` only routes `GateOutcome.SUSPEND` → `halt` | Suspension semantics are entirely runtime/metadata-driven; the pypeline only shows suspend→halt as a terminal dead-end, not as a resumable suspension |
+| **Checkpoints** | **5** | `search_files` found no checkpoint module. No checkpoint construct in pypeline or components | **Absent** from the entire authored topology |
+| **Policies (timing)** | **2** | `DEFAULT_POLICY` at `components.py:1013-1069` declares `timeout_seconds_ref`. Auto-driver enforces `DEFAULT_PHASE_TIMEOUT_SECONDS=3600` at `auto.py:95` | Declared in component metadata, enforced in auto-driver constants — **divergent default values** |
+| **Policies (model-routing)** | **3** | `MODEL_ROUTING_POLICY` at `components.py:1784-1827`. Resolved by `handlers/shared.py:configured_fallback_chain_for_phase` | No pypeline code path touches model routing |
+| **Policies (timeout/retry)** | **3** | `EXECUTE_POLICY.config.retry` at `components.py:1629-1633`. Auto-driver implements its own `context_retry` and `external_retry` logic (`auto.py:106-107`) | **Duplicate/contradictory**: policy says max_attempts=2; auto-driver has separate `DEFAULT_MAX_CONTEXT_RETRIES=2` and `DEFAULT_MAX_EXTERNAL_RETRIES=1` |
+| **Typed outcomes** | **1** | `outcomes.py` defines 14 StrEnum classes. `assert_vocabulary_parity()` at `outcomes.py:198-218` validates against `RUNTIME_BRANCH_VOCABULARY` at `components.py:87-112` | Self-consistent with one noted bridge: `tiebreaker_decide` maps to same enum as `tiebreaker_decision` |
+| **Gate→force_proceed shortcut** | **4** | `.pypeline:747-750` bypasses finalize entirely: `AUTHORING_FINALIZE` is called but the output is passed to bare `AUTHORING_EXECUTE` (not through finalize→execute routing) — contradicting the standard topology where execute always follows finalize | The pypeline's force_proceed gate path calls execute directly, but `EXECUTE_POLICY` still expects `finalize_payload` input — contradiction |
+| **Review→rework→revise path** | **2** | `.pypeline:441-443` maps `REWORK` after rework→revise. But `DECLARED_STEP_INTERFACES["review"]` at `.pypeline:231-245` says rework→execute, not rework→revise | **Contradiction**: The rework-routing after first rework iteration goes to revise (not execute), conflicting with the declared step interface |
+| **Fallback (unknown gate outcome)** | **1** | `.pypeline:751-754` — catch-all calls finalize+execute | |
+| **Tiebreaker fallback (unknown decision)** | **1** | `.pypeline:653` — `AUTHORING_OVERRIDE` | |
+
+---
+
+## 2. RANKED GAPS
+
+### GAP 1 (Critical): Duplicated Topology Contracts — Four Representations of Same Semantics
+
+| Representation | File:Line |
+|----------------|-----------|
+| `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS` (dict) | `.pypeline:281-385` |
+| `SOURCE_EXECUTE_BATCH_WORKFLOW.metadata.topology_contract` | `components.py:2566-2615` |
+| `SOURCE_REVIEW_PANEL_WORKFLOW.metadata.topology_contract` | `components.py:2637-2671` |
+| `SOURCE_TIEBREAKER_WORKFLOW.metadata.topology_contract` | `components.py:2533-2553` |
+| `EXECUTE_POLICY.metadata.route_surface.fanout_contract` | `components.py:1694-1701` |
+
+**Finding:** The same topology contracts (execute_batch, review_panel, tiebreaker_child) are declared in 3–4 different dicts/locations. The `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS` in `.pypeline` is not referenced by any runtime code path — `route_dispatch.py` reads `STEP_COMPONENTS_BY_ID` which reads `components.py` StepComponent objects.
+
+**Consequence:** The pypeline's `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS` are **decorative** — changing them has zero effect on runtime behavior unless the lowering layer reads them (no evidence found that it does).
+
+**Smallest corrective action:** Delete `.pypeline:281-385` entirely and re-route any consumer to `STEP_COMPONENTS_BY_ID[workflow_id].metadata["topology_contract"]`.
+
+---
+
+### GAP 2 (Critical): Pypeline Gate Route Bindings vs Policy Control Transitions — 8 vs 5
+
+| Source | Route Bindings |
+|--------|---------------|
+| `DECLARED_STEP_INTERFACES["gate"].route_bindings` at `.pypeline:105-129` | proceed, iterate, tiebreaker, escalate, abort, suspend, blocked, force_proceed |
+| `GATE_POLICY.config.control_transitions` at `components.py:1113-1149` | proceed→finalize, iterate→revise, tiebreaker→tiebreaker_researcher, escalate→override, abort→halt |
+| `GATE_POLICY.metadata.route_surface.fallback_route_signals` at `components.py:1160-1167` | retry_gate, reprompt_downgrade, blocked_preflight, unknown_recommendation, force_proceed |
+
+**Finding:** The pypeline declares 8 explicit route bindings. GatePolicy.control_transitions only has 5 explicit transitions. The remaining 3 (suspend, blocked/blocked_preflight, force_proceed) rely on fallback_route_signals. The pypeline uses `blocked` as condition_ref but the fallback uses `blocked_preflight` — different strings.
+
+**Consequence:** Changing a route binding in the pypeline (the source-of-truth advertisement) does not change actual routing unless the policy metadata is also updated. Silent divergence.
+
+**Smallest corrective action:** Remove `route_bindings` from `DECLARED_STEP_INTERFACES["gate"]` and the `GATE` StepComponent in `components.py`, making `GATE_POLICY.config.control_transitions` + `fallback_route_signals` the sole authority.
+
+---
+
+### GAP 3 (High): Adopt-Execution / Recover-Blocked / Resume-Clarify Have No Wiring
+
+| Policy Route | Pypeline Target | Actual Resolver |
+|--------------|----------------|-----------------|
+| `adopt-execution` | `.pypeline:39` → `target_ref: "review"` | **Nowhere**: No pypeline code path routes to `review` from `override` |
+| `recover-blocked` | `.pypeline:48` → `target_rule: "recovery_predecessor"` | `auto.py` imports `RecoveryPolicy` from `orchestration/recovery_policy.py` — **completely separate code path** |
+| `resume-clarify` | `.pypeline:55` → `target_ref: "plan"` | **Nowhere**: No pypeline code path routes to `plan` from `override` |
+
+**Consequence:** The `DECLARED_OVERRIDE_POLICY_ROUTES` dict is purely decorative. The actual override dispatch for these three actions is in the auto-driver and recovery policy, not in the authored topology.
+
+**Smallest corrective action:** Either (a) delete `DECLARED_OVERRIDE_POLICY_ROUTES` or (b) add explicit `if override_result == OverridePolicyRoute.ADOPT_EXECUTION: ...` branches in the pypeline function.
+
+---
+
+### GAP 4 (High): Review Rework Path Contradiction
+
+`.pypeline:441-443`: `REWORK` after first rework cycle → `AUTHORING_REVISE(...)`  
+`DECLARED_STEP_INTERFACES["review"].route_bindings` at `.pypeline:243`: `rework` → `target_ref: "execute"`  
+`REVIEW_POLICY.config.control_transitions` at `components.py:1540-1544`: `review:rework` → `target_ref: "execute"`
+
+**Finding:** After a rework cycle, the pypeline function routes to `revise` (line 442), but both the declared step interface and the review policy say rework routes to `execute`. These are contradictory.
+
+**Consequence:** The authored topology function disagrees with the declared component interface *in the same file*. The runtime (auto-driver) would follow the function code, but any metadata-driven tooling would see `execute`.
+
+**Smallest corrective action:** Decide which is correct. If revise-after-rework is intentional, update line 243's target_ref to `revise` and update REVIEW_POLICY.control_transitions. If execute is correct, change `.pypeline:442` to `AUTHORING_EXECUTE(...)`.
+
+---
+
+### GAP 5 (High): Gate→force_proceed Bypasses Finalize-Execute Routing
+
+`.pypeline:747-750`:
+```python
+finalize_payload = AUTHORING_FINALIZE(id="force_finalize", gate_payload=gate_route_signal)
+AUTHORING_EXECUTE(id="force_execute", finalize_payload=finalize_payload)
+```
+
+**Finding:** This calls finalize as a function (discarding its routing) then directly calls execute — bypassing the declared `finalize:execute` route binding. The standard topology says finalize routes to execute; this path calls execute as a sibling, not as a downstream step.
+
+**Consequence:** Any runtime that tracks step-to-step transitions (history, resume cursors) would see `finalize`→`execute` as a single-level parent-child, not as sequential steps. Resume from this state may mis-route.
+
+**Smallest corrective action:** Replace with standard finalize→execute flow (remove the direct `AUTHORING_EXECUTE` call and let the finalize route binding carry control to execute).
+
+---
+
+### GAP 6 (High): Suspension Is Only Terminal in Authored Topology
+
+`.pypeline:741-743`: `GateOutcome.SUSPEND` → `AUTHORING_HALT(id="gate_suspend", ...)` — terminal  
+`SUSPENSION_POLICY` at `components.py:1885-1952` declares 5 suspension routes with resume contracts
+
+**Finding:** The pypeline treats `suspend` as a terminal halt action. The suspension policy declares it as resumable (with resume schema refs, capability IDs, and reentry points). The authored topology does not represent the resume path at all.
+
+**Consequence:** Anyone reading the pypeline sees suspend→stop/dead-end. The actual semantics (suspend→resume→reenter) are hidden in policy metadata and the auto-driver.
+
+**Smallest corrective action:** Add a `SUSPEND` terminal step (not `HALT`) with a resume contract visible in the pypeline, or add explicit `suspension` nodes showing the resume reentry arc.
+
+---
+
+### GAP 7 (Medium): Checkpoints — Entirely Absent
+
+**Finding:** No `checkpoint` module, no checkpoint step, no checkpoint call in the pypeline function, no checkpoint references in any component metadata. The `EXECUTE_POLICY` mentions `artifact.execute.checkpoint` as an `effect_id` at `components.py:1664-1668` but this is an artifact idempotency key, not a checkpoint semantic.
+
+**Consequence:** There is no mechanism to persist and restore mid-phase progress. Resume is plan-level only.
+
+**Smallest corrective action:** Define the checkpoint semantic before adding it; file is clean.
+
+---
+
+### GAP 8 (Medium): Auto-Driver Retry Policy Contradicts Component Policy
+
+| Source | Retry Value |
+|--------|-------------|
+| `EXECUTE_POLICY.config.retry` at `components.py:1629-1633` | `max_attempts: 2` |
+| `auto.py:106-107` | `DEFAULT_MAX_CONTEXT_RETRIES = 2`, `DEFAULT_MAX_EXTERNAL_RETRIES = 1` |
+| `auto.py:150` | `DEFAULT_MAX_BLOCKED_RETRIES = 1` |
+| `auto.py:155` | `DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3` |
+| `REVIEW_POLICY.config.retry` at `components.py:1515-1518` | `max_attempts: M4_LOOP_MAX_ITERATIONS` (=4) |
+
+**Finding:** The component policy and auto-driver enforce different retry limits for review rework cycles (4 vs 3). The auto-driver has its own constants that don't reference the policy config values.
+
+**Consequence:** If someone updates `REVIEW_POLICY.config.retry.max_attempts`, the auto-driver ignores it. Review rework loops will stop 1 cycle earlier than policy claims.
+
+**Smallest corrective action:** Replace `DEFAULT_MAX_REVIEW_REWORK_CYCLES` in `auto.py` with a read from `REVIEW_POLICY.config.retry.max_attempts`.
+
+---
+
+### GAP 9 (Medium): Tiebreaker Child — Two Topology Contracts
+
+| Source | Entry | Decision |
+|--------|-------|----------|
+| `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS["tiebreaker_child"]` at `.pypeline:282-300` | `tiebreaker_run` | `tiebreaker_decide` |
+| `SOURCE_TIEBREAKER_WORKFLOW.metadata.topology_contract` at `components.py:2533-2553` | same | same |
+| `SOURCE_TIEBREAKER_WORKFLOW.metadata.canonical_child_phases` at `components.py:2527-2532` | `tiebreaker_researcher` | `tiebreaker_decision` |
+
+**Finding:** Three different identity schemes for the same child workflow. The pypeline function calls the four-phase canonical identities (researcher, challenger, synthesis, decision). The `child_steps` (components.py:2523) references the legacy two-phase bridge (`tiebreaker_run`, `tiebreaker_decide`). The `canonical_child_phases` (components.py:2527-2532) references the four-phase scheme.
+
+**Consequence:** Route dispatch via `_ROUTE_AUTHORITY_STEP_ALIASES` in `route_dispatch.py:8` maps `tiebreaker_run→tiebreaker_researcher` and `tiebreaker_decide→tiebreaker_decision` — a translation layer that should not exist.
+
+**Smallest corrective action:** Remove the two-phase bridge entirely: delete `TIEBREAKER_RUN`, `TIEBREAKER_DECIDE`, their schemas, and `child_steps`. Reference only `canonical_child_phases`.
+
+---
+
+### GAP 10 (Low): AUTHORING_* Names — No Semantic Difference from SOURCE_* Names
+
+**Finding:** `components.py:2675-2774` defines `AUTHORING_PREP`, `AUTHORING_PLAN`, etc. — these are identical to `SOURCE_PREP`, `SOURCE_PLAN`, etc. at `components.py:2324-2478` with the same handler refs, inputs, outputs, and quarantine metadata. The pypeline imports the `AUTHORING_*` variants (`.pypeline:14-34`) but the `SOURCE_*` variants serve identical roles in the component registry.
+
+**Consequence:** Duplicated definitions with zero semantic difference. Increases maintenance surface area.
+
+**Smallest corrective action:** Delete `AUTHORING_*` definitions and re-export `SOURCE_*` under `AUTHORING_*` names at module level, or delete `SOURCE_*` and rename `AUTHORING_*` to `SOURCE_*`.
+
+---
+
+## 3. DECORATIVE / NOT-HONORED-BY-LOWERING CONSTRUCTS
+
+| Construct | File:Line | Why Decorative |
+|-----------|-----------|----------------|
+| `DECLARED_STEP_INTERFACES` dict | `.pypeline:81-279` | Not read by any runtime code; `route_dispatch.py` reads `STEP_COMPONENTS_BY_ID` from `components.py` |
+| `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS` dict | `.pypeline:281-385` | Same — not referenced by runtime |
+| `DECLARED_OVERRIDE_POLICY_ROUTES` dict | `.pypeline:36-58` | No runtime resolution path to `adopt-execution`, `recover-blocked`, `resume-clarify` target refs |
+| `DECLARED_OVERRIDE_OUTCOME_TARGETS` dict | `.pypeline:60-79` | Override outcomes (abort, force_proceed, replan) are handled by the pypeline function's if/elif branches, not by this dictionary |
+| `_COMPATIBILITY_QUARANTINE` applied to SOURCE_*/AUTHORING_* steps | `components.py:116-125` | Explicitly marks these as compatibility-only; they are decorative copies of the real StepComponents |
+| `_adapter_metadata_quarantine` and `_pure_body_carrier_quarantine` wrappers | `components.py:189-224` | Self-declared as "non_authoritative_adapter_metadata" and "pure_body_component_metadata_bridge" — decorative metadata about metadata |
+
+---
+
+## 4. SUMMARY STATS
+
+| Category | Count |
+|----------|-------|
+| Semantics visibly source-authoritative (1) | 9 |
+| Declared natively, completed elsewhere (2) | 13 |
+| Hidden in component/handler/runtime/CLI (3) | 5 |
+| Duplicated or contradictory (4) | 6 |
+| Absent (5) | 2 (recovery, checkpoints) |
+| Decorative constructs (not honored) | 8 |
+| Total gaps ranked critical+high | 6 |
+
+**Key finding:** The `.pypeline` file is a **faithful but redundant representation** of Megaplan semantics. The real authority lives in `components.py` (StepComponents, PolicyComponents, metadata dicts) and `auto.py` (runtime enforcement loop). The pypeline's declarative dicts (`DECLARED_STEP_INTERFACES`, `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS`, `DECLARED_OVERRIDE_POLICY_ROUTES`, `DECLARED_OVERRIDE_OUTCOME_TARGETS`) are entirely decorative — changing them has no runtime effect. The imperative function body (`planning_workflow`) is authoritative for the flow it encodes but has 6 contradiction/duplication points with the component metadata layer and 3 unreachable declared routes.

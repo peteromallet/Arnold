@@ -1,0 +1,95 @@
+## Cross-cutting Audit: Tests, Fixtures, Harnesses
+
+### Reusable Assets
+
+**Native Pipeline Fixtures (checker + structural parity)**
+- `tests/arnold/pipeline/native/fixtures.py:1-397` — Complete toy native pipeline covering sequential phases, typed producer/consumer via `Port`/`PortRef`, decision branching, guarded loop (2 iterations), and forced resume via `max_phases` suspension. Includes a hand-built reference `Pipeline` graph (`get_reference_graph()`, :237) matching the compiled native program for structural parity assertions. All assertion-free — consumers run their own checks.
+
+**Execution Manifest Builders (fixture scenarios)**
+- `tests/arnold/execution/fixtures.py:1-278` — Thirteen reusable `WorkflowManifest` builders: `linear_manifest`, `branch_manifest`, `loop_manifest`, `fanout_manifest`, `retry_manifest`, `subpipeline_manifest`, `external_effect_manifest`, `suspension_manifest`, `replay_manifest` (:166–187, idempotency-keyed), `control_transition_manifest` (:189–210), `compensation_manifest`, `escalation_manifest`. All product-neutral, import nothing from Megaplan.
+
+**Pattern Purity Hooks**
+- `tests/arnold/patterns/_fixtures.py:1-25` — Stable importable callables (`agent_prompt`, `decide_condition`, `reducer`, `judge_winner`) plus a `HookFixtures` class for pattern-level purity testing.
+
+**Conformance Suite (15+ test modules)**
+- `tests/arnold/conformance/` — Covers: result/suite types (`test_conformance.py`), adapter protocol checks (`test_checks.py`), manifest shape contracts (`workflow_manifest_runtime/test_manifest_shape_contract.py`), golden regression rules (`workflow_manifest_runtime/test_golden_regression_rule.py`), import boundary isolation (`test_megaplan_coupling_gate.py`, :32–59 — subprocess `meta_path` blocker that proves `megaplan` never leaks into `sys.modules`), platform E2E (`test_platform_e2e.py` — 359 lines, lease stores, broker approval, durable ops, capacity gates), behavioral goldens, deleted surfaces, routing conformance, security conformance, evidence pack conformance, and legacy reference allowlists.
+
+**Native Golden Manifest & Trace Comparison**
+- `tests/arnold_pipelines/megaplan/test_native_golden_manifest.py:1-1096` — Validates manifest schema, committed/deferred scenario coverage (D1–D15), canonical import resolution, builder-to-native-program verification. `compare_native_golden_dir()` normalizes `seq`, `ts_utc`, `ts_rel_init_s` before comparison (:347–361). `GoldenRegressionRule` with `directory_is_explained()` requiring `.explanation.md` sidecar for rebaselines (:421–496).
+
+**Auto-Drive / Native Dispatch**
+- `tests/arnold_pipelines/megaplan/test_auto_native_dispatch.py:1-297` — Tests canonical phase dispatch preferring compiled `NativeProgram`, registry fallback for unsupported native, override command routing separate from phase dispatch, stable ID resolution (`megaplan:prep` → `prep`), and phase-name mapping completeness.
+
+**Approval/Resume/Headless Control**
+- `tests/arnold_pipelines/megaplan/test_control_resume_runner.py:1-49` — Resume runner anchors subprocess to editable engine root, passes `MEGAPLAN_PROGRESS_TOKEN` and `PYTHONSAFEPATH` env vars.
+- `tests/arnold/pipelines/evidence_pack/test_resume.py:1-265` — Native resume with approval, cursor validation, reverify hooks.
+- `tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py:1-224` — Approval outcome splits (`evaluate_destructive_approval`, `ResumeOutcome`, `NoReviewTerminalOutcome`), batch computation, blocked-task reset.
+- `arnold_pipelines/evidence_pack/resume.py:1-160` — Production-grade `resume_evidence_pack()` with cursor classification, `HumanSuspension` reverification, native runtime resume execution.
+
+**Installed Package Smoke**
+- `tests/installed_wheel/test_m5_wheel_smoke.py:1-107` — Builds wheel + sdist, verifies `py.typed`, `pipeline_ids.json`, composed rules, console entrypoint. Installs into clean venv, runs `arnold workflow check/manifest/dry-run` against shipped evidence-pack pipeline. Verifies `sha256:` in output (:106–107).
+- `tests/installed_wheel/conftest.py:1-65` — Module-scoped `installed_wheel` fixture with venv build/install.
+
+**Transition Policy**
+- `arnold_pipelines/megaplan/orchestration/transition_policy.py:1-233` — `TransitionPolicyDecision` (allowed/reasons/advisory), `TransitionWriter.write_review_done()` with evidence contract gating, denial artifact persistence.
+- `tests/arnold/workflow/test_source_compiler_api.py` — Extensive `control_transitions` shape and `policy_ref` testing (:554–2736).
+
+**Deleted Surfaces Enforcement**
+- `tests/arnold/conformance/test_deleted_surfaces.py:1-97` — Verifies `DELETED_SURFACES` inventory has doc traces, no ambiguous rows; physical absence of `DELETED_SOURCE_PATHS` and `DELETED_IMPORT_MODULES` from source tree.
+- `arnold/conformance/deleted_surfaces.py` — Authoritative deletion inventory referenced by `generate_native_representation_evidence.py:23`.
+
+**Canonical Manifest & Recovery**
+- `tests/arnold/execution/canonical_manifest.py` — Reusable canonical manifest for execution tests.
+- `tests/arnold_pipelines/megaplan/test_auto_recover_blocked.py:1-1296` — Recovery: state reconciliation, blocked task detection, auto-repair paths.
+- `tests/arnold_pipelines/megaplan/test_hermes_plan_recovery.py:1-50` — Plan payload recovery from raw markdown.
+- `scripts/simulate_watchdog_end_to_end.py:1-283` — End-to-end watchdog repair simulation with fake Megaplan CLI.
+
+**Conformance Ledger Validation**
+- `scripts/validate_native_representation_conformance.py:1-1139` — Full YAML-based conformance ledger validator with SHA-256 integrity checks, evidence bundle schema enforcement, boundary contract/receipt/semantic-health/phase-result record validation.
+
+**Smoke Tracing**
+- `_smoke_trace_test.py:1-66` — Standalone smoke: compiles and runs native pipeline with/without trace, verifies all 5 trace files emitted (`state.json`, `events.ndjson`, `stages.json`, `artifacts.json`, `checkpoint.json`), confirms state/stages/suspended parity.
+
+---
+
+### Gaps
+
+1. **Replay harness** — `replay_manifest()` (`tests/arnold/execution/fixtures.py:166`) declares idempotency policy but no test replays a full execution and verifies deterministic output against a golden trace directory. The infrastructure (`compare_native_golden_dir`, idempotent manifest) is present but unassembled.
+
+2. **Canary suite** — No dedicated lightweight (<10s), always-run canary test file. `_smoke_trace_test.py` exists at project root but is not integrated into the test runner as a canary marker.
+
+3. **Auto-drive characterization** — `test_auto_native_dispatch.py` covers dispatch plumbing but no end-to-end characterization test that drives a plan through all phases (prep→plan→critique→gate→revise→finalize→execute→review) and asserts expected state transitions per policy.
+
+4. **Transition policy — neutral conformance** — `TransitionPolicy` lives in `arnold_pipelines/megaplan/orchestration/`. No neutral-package conformance test validates the policy contract shape independently of the Megaplan implementation.
+
+5. **Deleted-surface resurrection guard** — `test_deleted_surfaces.py` verifies *current* physical absence, but no pre-commit/CI gate prevents new import references from being added back to `DELETED_IMPORT_MODULES`.
+
+6. **Headless-mode integration** — Headless resume is tested indirectly (`test_control_resume_runner.py`, `test_auto_recover_blocked.py`), but no explicit test simulates a full suspend→auto-resume (canned human_input)→completion cycle without any interactive prompt.
+
+7. **Installed package CLI surface coverage** — Wheel smoke (`test_m5_wheel_smoke.py:91`) only tests `workflow check/manifest/dry-run`. Remaining CLI subcommands (status, resume, operators, etc.) are untested from an installed wheel.
+
+8. **Checker fixtures — failure-mode characterization** — Existing fixtures are structural (toy pipeline, manifest builders). No fixtures pre-populate specific failure modes (gate contradiction, worker timeout, evidence staleness) to enable deterministic checker-behavior characterization.
+
+9. **Approval→transition-policy integration** — `TransitionWriter` denial logic and `evaluate_destructive_approval` are tested in isolation. No integration test validates that a policy denial correctly cascades through the approval→resume→routing pipeline.
+
+---
+
+### Plan Adjustments
+
+1. **Assemble replay harness** — Combine `replay_manifest()` + deterministic executor + `compare_native_golden_dir()` to verify full replay produces bit-identical trace directories.
+
+2. **Create canary suite** — Extract `_smoke_trace_test.py` into `tests/canary/` with 5–8 tests (native compile+run, manifest validation, import boundaries, golden trace comparison), all under 10s, marked `@pytest.mark.canary`.
+
+3. **Extend installed-wheel CLI coverage** — Add `test_m5_wheel_smoke.py` cases for `arnold workflow status`, `arnold workflow resume --help`, `arnold operators list`, verifying all shipped entrypoints.
+
+4. **Build auto-drive characterization** — Use native golden scenarios D1–D15 as inputs, drive a plan through all phases programmatically, assert resulting `state.json` and trace directories match golden records.
+
+5. **Add neutral transition-policy conformance test** — Validate `TransitionPolicyDecision` shape contract in `tests/arnold/conformance/` without importing `arnold_pipelines.megaplan`.
+
+6. **Add resurrection guard (CI)** — Pre-commit or CI gate using `scripts/check_workflow_pipeline_inventory.py` pattern to scan for new references to `DELETED_IMPORT_MODULES`.
+
+7. **Build headless integration fixture** — Create a test that suspends a native pipeline (via `HumanSuspension`), auto-resumes with canned `{"approved": true}`, and asserts completion without interactive I/O.
+
+8. **Add failure-mode checker fixtures** — Extend `tests/arnold/execution/fixtures.py` with pre-built manifests encoding specific failure modes (contradiction, timeout, staleness) for deterministic characterization.
+
+9. **Integrate approval→transition-policy test** — Chain `evaluate_destructive_approval` output into `TransitionWriter` and verify the resulting `transition_decision_review_done.json` artifact matches expected denial/accepted shape.

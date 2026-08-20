@@ -1,0 +1,79 @@
+---
+
+## Q3 Audit: Strict Checker Structure and Row Registry
+
+### Verdict: **Agrees with the plan**
+
+The plan correctly diagnoses both problems. The checker is name-based (not structural), and the row registry lives in Python code. S1a's scope to refactor rows into data is necessary and accurately targeted.
+
+---
+
+### Evidence
+
+**1. Checker is name-based, not truly structural**
+
+`_collect_front_half_rows()` (`source_compiler.py:1695-1731`) walks the parsed AST looking for `ParsedStepCall`/`ParsedParallelMapCall` — that's structural AST traversal. But the row-detection step is a string-key lookup:
+
+```python
+# source_compiler.py:1702
+row_spec = row_specs.get(statement.component_ref)
+```
+
+The `row_specs` map is built by `_front_half_row_specs()` (`source_compiler.py:1734-1767`), which reads `BOUNDARY_CONTRACTS` from `boundary_contracts.py` and builds entries only for known export name prefixes:
+
+```python
+# source_compiler.py:1763-1766
+for export_name in (f"SOURCE_{phase_name}", f"AUTHORING_{phase_name}", phase_name):
+    row_specs[f"arnold_pipelines.megaplan.workflows.components:{export_name}"] = (
+        contract.row_id, contract.phase.value
+    )
+```
+
+Synthetic probe confirmed: a component `GATE_HELPER_X` with identical AST shape to `AUTHORING_GATE` would NOT be detected. The 27-entry `_front_half_row_specs` map only recognizes the three hardcoded prefix patterns per phase.
+
+**2. Row IDs are hardcoded across three Python modules, not in data**
+
+The row registry is split across:
+
+| Registry component | Location | Format |
+|---|---|---|
+| Front-half row specs | `boundary_contracts.py:835-882` | Python tuple of `BoundaryContract` objects |
+| S2/S3/S4 row ID constants | `semantic_evidence.py` (imported at `boundary_contracts.py:22-36`) | Python string constants like `S2_GATE_ROW_ID` |
+| S5 row ID constants | `semantic_evidence.py:84-87` | Hardcoded strings: `"s5.review_child_outputs.1"` etc. |
+| S5 detection logic | `source_compiler.py:1783-1874` | Procedural code with hardcoded `if` chains checking `isinstance(..., Mapping)` on policy surfaces |
+| S5 boundary validation | `source_compiler.py:1417-1462` | Hardcoded `elif contract.row_id == S5_REVIEW_CHILD_OUTPUTS_ROW_ID:` chains with per-row validation logic |
+
+The S5 validation chain at `source_compiler.py:1417-1462` is the clearest example — eight hardcoded `elif` branches, each matching a specific row ID string and running ad-hoc validation (checking policy surface keys like `"cap_thresholds"`, `"human_verification"`, `"canonical_artifacts"`, etc.). Adding a new S5-style row requires adding a new `elif` branch with custom validation logic — this is not data-driven.
+
+**3. `megaplan_semantic_rows.yaml` does not exist**
+
+```
+$ search_files pattern='megaplan_semantic_rows.yaml' target='files' path='.'
+→ 0 results
+```
+
+The plan's target data registry (`arnold/workflow/megaplan_semantic_rows.yaml`, referenced at plan line 169) has not been created. The row registry lives entirely in `boundary_contracts.py` + `semantic_evidence.py` + `source_compiler.py`.
+
+**4. Closure bypass confirmed**
+
+`_row_evidence_diagnostics()` (`source_compiler.py:722-726`) only calls `_implemented_front_half_rows()` — it does NOT include S5 rows. S5 rows are in `_implemented_s5_boundary_rows()` (`source_compiler.py:1783-1874`). The S5 checker currently passes on `Mapping` existence checks (e.g., `isinstance(review_policy_surface.get("cap_thresholds"), Mapping)`), not on structural row evidence. The plan correctly notes this at line 121-122.
+
+---
+
+### Plan Assumption Tested
+
+The plan assumes: *structural rejection extends the existing checker rather than replacing it; the registry can be data (`megaplan_semantic_rows.yaml`) not code.*
+
+- **"Extends rather than replaces"**: Accurate. The AST-walking infrastructure in `_collect_front_half_rows()` is reusable as a structural scan substrate. But the name-match lookup must be replaced or augmented with true structural pattern detection (route-table-shaped literals, policy objects whose values determine branch targets, etc.).
+- **"Registry can be data not code"**: Accurate as a goal but not yet realized. Currently neither the row specs nor the detection logic are data-driven. Adding ~22 rows today means editing both `source_compiler.py` and `boundary_contracts.py`.
+
+---
+
+### Smallest Concrete Plan Amendment
+
+**None required.** S1a already correctly scopes:
+- "Produce a canonical semantic row registry reconciled against a structural AST carrier scan" (plan line 135-136)
+- References `arnold/workflow/megaplan_semantic_rows.yaml` as the target artifact (plan line 169)
+- Requires structural rejection rules that catch renamed/re-encoded carriers (plan lines 147-151)
+
+The plan already identifies that `_implemented_front_half_rows` feeds `_row_evidence_diagnostics` (plan line 121) and that S5 rows are excluded from the current evidence loop (plan line 121-122). S1a's refactoring scope is correctly sized: pull the row registry into YAML, add true structural rejection, and unify the front-half + S5 evidence loop under the same strict authority.

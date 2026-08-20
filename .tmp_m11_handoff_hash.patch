@@ -1,0 +1,23 @@
+--- HANDOFF.md
++++ HANDOFF.md
+@@ -8,8 +8,8 @@
+ - Milestone: `m11-conformance-and-legacy-retirement` (index 9)
+ - Amended brief SHA-256:
+-  `842653bf2f7b1e8a901878d2c3a03c5cacf11114675eee0a670037672eb25143`
++  `62ee59d4ff84ba88c12af1d5863fe241657f39434a8624fdb6feaee114ee1d7d`
+ - Amended brief semantic SHA-256:
+-  `cde2539110303f6a317e66664e80fd798e185cb848f7f01891af1a4552994ab3`
++  `6f24dcb30c0390c910de5d592d008da8ec5d83d1809fdeadbce316ebeb69f1e3`
+ - Patched chain SHA-256:
+   `3207fe7f6acb6689de3ee0c6ed52727f0bce5ebe9048462284c7017e6cb6289b`
+ - Chain prep-direction patch SHA-256:
+@@ -34,5 +34,9 @@
+   receipt overwrite and orphaned validation-process failures: execute attempts
+   are append-only with attempt-local worker scratch, and validation jobs require
+   explicit process-group custody with deterministic adoption or termination.
++  It also includes the large-journal restart amplification observed during M10:
++  chronological-tail cursor healing, bounded fresh append/recovery work, no
++  projection rewrite loop, and content-addressed compaction with authority and
++  legal-hold retention.
+ 
+ ## Required boundary procedure

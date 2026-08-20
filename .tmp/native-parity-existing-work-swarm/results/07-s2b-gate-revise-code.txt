@@ -1,0 +1,95 @@
+---
+
+## S2b Gate/Revise Native Loop — Audit Verdict
+
+### 1. Verdict: **Adjacent only**
+
+The gate/revise loop is fully implemented in handler code but has **zero native `.pypeline` source extraction**. The `front_half.pypeline` only covers prep/plan (S2a). The gate/revise critique loop remains handler-driven through `handlers/gate.py`, `handlers/critique.py` (which hosts `handle_revise`), `components.py` policy surfaces, and `orchestration/tiebreaker.py`. No native gate/revise subworkflow exists.
+
+---
+
+### 2. Existing or Prior Artifacts (with file:line evidence)
+
+**Handler implementation (complete, battle-tested reference):**
+
+- **Gate handler** — `handlers/gate.py` (1173 lines):
+  - `_build_gate_signals_artifact()` — preflight assembly at `:56-75`
+  - `_record_gate_debt_entries()` — debt recording at `:77-133`
+  - `_resolve_revise_transition()` — downgrade trigger at `:154-163`
+  - `_post_revise_gate_allowed()` — post-revise relaxed thresholds at `:176-187`
+  - `_critique_no_progress_streak()` — no-progress tracking at `:414-463`
+  - `_critique_terminate_branch()` — severity-gated cap termination at `:466-521`
+  - `_build_gate_route_signal()` — iterate/proceed/tiebreaker/abort/force-proceed/blocked_preflight routing at `:523-712`
+  - `_effective_critique_cap()` / `_prior_iterate_rounds()` — iteration cap logic at `:345-371`
+  - `handle_gate()` — main handler with reprompt/downgrade path at `:886-1100`
+  - Reprompt flow at `:993-1011`, auto-downgrade at `:1080-1094`
+
+- **Revise** — `handlers/critique.py:26-27` delegates to `orchestration/critique_runtime.py`
+
+- **Severity** — `flags.py:27-35` (`resolve_severity()`), `flags.py:51-65` (`normalize_flag_record()`), severity-hint triage at `:55-57`
+
+**Policy surfaces in `components.py`:**
+
+- `GATE_POLICY` — route groups, fallback signals, severity_policy, normalization_policy, debt_visibility, reprompt_policy at `:1154-1237`
+- `REVISE_LOOP_POLICY` — loop_id, iteration_caps, no_progress_cap, cap_outcomes, revise_reentries, termination_policy, suspension, tiebreaker delegation at `:1239-1336`
+- `REVISE_LOOP_TERMINATION_POLICY` frozen proxy at `:1338-1340`
+
+**Tiebreaker:** `orchestration/tiebreaker.py` (337 lines) — `_run_tiebreaker()` at `:53`
+
+**Preflight:** `orchestration/gate_checks.py` (204 lines) — `run_gate_checks()` at `:66-94`, `only_agent_availability_preflight_failed()` at `:101-103`
+
+**Routing:** `routing/__init__.py` — `planning_gate_edges()` at `:49-56`, override label maps at `:29-46`
+
+**Native interfaces (metadata only):** `native_interfaces.py` — GATE at `:157-173`, REVISE at `:138-153`, CRITIQUE at `:121-136`, TIEBREAKER_RUN at `:175-190`, TIEBREAKER_DECIDE at `:192-207`
+
+**Front-half .pypeline:** `workflows/front_half.pypeline` (63 lines) — prep/plan only; line 29 references `"next_loop_ref": "critique-gate-revise"` as handoff but does not implement it.
+
+**Policy catalogue:** `policy_catalogue.md:7-17` documents all gate transition policies with legacy references.
+
+**Master plan S2 scope:** `docs/arnold/megaplan-native-semantic-parity-master-plan.md:618-655` — defines the full S2 extraction scope including gate preflight/reprompt/downgrade/debt/severity and revise loop caps/no-progress.
+
+**Strict checker reality:** Current `workflow.pypeline` fails with 9 `AWF245_ROW_EVIDENCE_INSUFFICIENCY` diagnostics covering S2 (gate/revise) and S3 (tiebreaker) rows (`master-plan.md:146-161`).
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **Handler code is a complete semantic oracle.** `handlers/gate.py` implements every S2b behavior correctly and can serve as the reference for parity tests without modification.
+- **Policy catalogue** (`policy_catalogue.md:7-17`) precisely documents the semantics that native extraction must preserve.
+- **Native interfaces** already define stable IDs (`megaplan.native.gate.v1`, `megaplan.native.revise.v1`, etc.) and typed input/output contracts for wiring.
+- **Gate route signal vocabulary** (`_build_gate_route_signal()` at `:523-712`) maps all recommendations (PROCEED/ITERATE/TIEBREAKER/ESCALATE/ABORT/SUSPEND) to concrete `route_signal` strings — these become native branch labels.
+- **Flag/severity/debt infrastructure** (`flags.py`, `planning/control_binding.py:674-689`) is independent of handler dispatch and can be retained as phase bodies.
+- **`front_half.pypeline:29-31`** already declares the `critique-gate-revise` handoff contract, providing the anchor for native extension.
+- **Preflight checks** (`gate_checks.py`) are pure functions with no handler coupling and can be called directly from native source.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Native gate/revise `.pypeline` source.** The entire critique→gate→revise loop must be expressed as native source constructs (branches for PROCEED/ITERATE/TIEBREAKER/ESCALATE/ABORT, reprompt path, downgrade path, loop caps, no-progress termination). Currently zero lines exist.
+
+2. **Gate route signal → native branch lowering.** `_build_gate_route_signal()` returns string route signals consumed by the DSL router; these must become native branch constructs in source.
+
+3. **Reprompt and auto-downgrade as native source paths.** Currently at `handlers/gate.py:993-1094` as imperative logic. Must be visible control flow.
+
+4. **Severity-gated cap termination as native branches.** `_critique_terminate_branch()` at `:466-521` chooses escalate vs force-proceed based on flag categories. Must become a source-level branch.
+
+5. **Iteration caps and no-progress tracking as declared policy.** Currently scattered across `_effective_critique_cap()` (`:345-357`), `_prior_iterate_rounds()` (`:358-371`), `_critique_no_progress_streak()` (`:414-463`), and `components.py:1287-1308`. Must attach to native loop constructs as declared policy.
+
+6. **Debt recording as a phase body or declared policy effect.** `_record_gate_debt_entries()` at `:77-133` must be callable from native source or expressed as a policy side-effect.
+
+7. **Tests.** No gate/revise-specific test files found under `tests/arnold_pipelines/megaplan/`. The master plan requires `test_front_half_native_loop.py` including split-outcome scenarios for reprompt/downgrade, critical cap exhaustion, cosmetic cap exhaustion, force-proceed, and abort (`master-plan.md:628-632`).
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+- **S2 should remain one sprint** (not split into S2a/S2b). The master plan already treats gate/revise as one extraction unit because gate route groups and revise reentries are coupled (`components.py:1154-1158`, `:1276-1279` per `master-plan.md:624`).
+
+- **Add a pre-extraction baseline freeze step.** Before extracting gate/revise, capture golden baselines from the handler path for all gate recommendations (PROCEED/ITERATE/TIEBREAKER/ESCALATE) and cap-exhaustion outcomes. The master plan gates this at `:630`.
+
+- **Prioritize split-outcome scenarios early in the sprint.** The hardest native constructs to get right are the reprompt/downgrade path and severity-gated cap termination. Build these scenarios first, before the happy-path PROCEED.
+
+- **Retain flag/debt infrastructure as phase bodies.** `flags.py` and debt functions in `planning/control_binding.py` are pure data operations with no route authority — they don't need native extraction. Focus extraction on the control-flow decisions, not the data bookkeeping.
+
+- **Clear `components.py:1154-1336` gate/revise policy surfaces after extraction.** The sprint closeout must fence or delete these route groups, severity policies, and revise_reentries as route authority (`master-plan.md:642-644`).

@@ -1,0 +1,87 @@
+## Swarm Audit: S1c Runtime Substrate Proof
+
+### 1. Verdict: **Partly exists**
+
+The native runtime substrate (`arnold/pipeline/native/`) has comprehensive implementations of all four sub-components. However, the bridge from Megaplan's DSL workflow to this runtime has not been proven, and the required S1b-1 exit-gate tests don't exist. The old DSL-level executor (graph-based) does not resolve `items_ref` dynamically.
+
+---
+
+### 2. Existing Artifacts (with file:line evidence)
+
+**Dynamic `parallel_map` over `items_ref` — native runtime:**
+
+- `arnold/pipeline/native/ir.py:308-327` — `ParallelMapInstruction` with `items_ref: str`, `mapper`, `reducer`, `path_template`
+- `arnold/pipeline/native/runtime.py:421-443` — `_resolve_parallel_map_items()` resolves `items_ref` from `parameter_values` or `state` at runtime
+- `arnold/pipeline/native/runtime.py:1945-2250` — Full `parallel_map` execution: iterates items, spawns mapper per item, supports child suspension with progress tracking, reducer application
+- `arnold/pipeline/native/decorators.py:456-528` — `parallel_map()` decorator with `items`, `step`, `reducer`, `path_template`, `name`, `id`
+- `arnold/pipeline/native/graph_projection.py:197-300` — `NativeParallelMapStage` that creates a `native_parallel_map` stage and runs it via `_resolve_parallel_map_items`
+- `tests/arnold/pipeline/native/test_graph_projection.py:2672-2723` — Working tests: `test_parallel_map_becomes_dynamic_fanout_stage` confirms `items_ref` is consumed; `test_parallel_map_stage_run_preserves_item_order_and_paths` proves runtime execution with item paths and reducer
+
+**Suspension/reentry — native runtime:**
+
+- `arnold/pipeline/native/checkpoint.py:1-60` — Cursor shape with `native.pc`, `stages`, `loops`, `frames`, `stage_reentry_points`, cursor classification (`graph`/`native`/`none`)
+- `arnold/pipeline/native/runtime.py:787-789` — Suspension contract: persists via `persist_native_cursor` with `suspended=True`
+- `arnold/pipeline/native/runtime.py:943` — Resume path: `read_native_cursor(artifact_root)`
+- `arnold/pipeline/native/runtime.py:2187-2239` — Parallel-map-specific suspension: child suspension persists `_parallel_map_progress_key(pc)` with `completed_results`, `mapper_envelope`, `next_index`
+
+**Loop exits:**
+
+- `arnold/workflow/source_compiler.py:5041-5053` — Lowered loop handling with `exit_step_ids` and `pending_exits`
+- `arnold/workflow/diagnostics.py:187,208` — `UNDECLARED_LOOP_EXIT`, `LOOP_EXIT_SCHEMA_MISMATCH` diagnostics
+- `arnold/pipeline/executor.py:455` — Walk-loop terminal exit hooks
+- `arnold/pipeline/native/composition.py:129,373` — Loop region `exit_pc` in `derive_composition_graph`
+
+**DSL-level lowering (compiler, not runtime):**
+
+- `arnold/workflow/source_compiler.py:5326-5359` — `_lower_parallel_map_call` produces `Step(kind="parallel_map")` with `FanoutPolicy(mode="dynamic", reducer_ref=...)` and `items_ref` in metadata
+- `arnold/workflow/source_compiler.py:282-293` — `ParsedParallelMapCall` dataclass with `items_ref`, `mapper_ref`, `reducer_ref`
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Existing | Generalizable to |
+|---|---|
+| `_resolve_parallel_map_items()` (`runtime.py:421`) | Already generic — resolves from `state`/`parameter_values`. Ready to use for any pipeline. |
+| `NativeParallelMapStage.run()` (`graph_projection.py:231-300`) | Wraps `run_native_pipeline` for each mapper child. Can be extracted as a standalone bridge adapter. |
+| Checkpoint cursor format (`checkpoint.py`) | Already generic. `classify_resume_cursor` routes to native vs graph executor. |
+| `parallel_map` decorator (`decorators.py:456`) | Already framework-agnostic. Marks callables with `__parallel_map_items__`, etc. |
+| `project_graph` → `Pipeline` shell (`graph_projection.py`) | Bridges native programs into the DSL `Pipeline` shape with `native_program` attached. Can drive the Megaplan compatibility path. |
+| `_compatibility.py:173-207` — `_native_program_from_dsl` | Already projects DSL steps into `NativeProgram`. The route from `.pypeline` → `NativeProgram` → native runtime exists structurally. |
+
+**Key refactor path**: The native runtime already handles all substrate concerns. The gap is that Megaplan's `workflow.pypeline` is still routed through the old graph executor (or CLI `COMMAND_HANDLERS` via `_compatibility.py:235-267`). The substrate proof should demonstrate that lowering the `.pypeline` through `_native_program_from_dsl` and executing via `run_native_pipeline` satisfies all four sub-components without `handler_ref`.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Exit-gate tests don't exist.** None of these are present:
+   - `tests/arnold_pipelines/megaplan/test_native_runtime_dynamic_fanout.py`
+   - `tests/arnold_pipelines/megaplan/test_native_runtime_suspension_reentry.py`
+   - `tests/arnold_pipelines/megaplan/test_native_runtime_loop_exits.py`
+   - `tests/arnold_pipelines/megaplan/test_runtime_items_ref_resolution.py`
+   - `tests/arnold_pipelines/megaplan/test_manifest_backend_source_dispatch.py`
+
+2. **DSL-level dynamic fanout runtime proof.** The old graph executor's `FanoutPolicy` only has `width: int | None` (`arnold/manifest/manifests.py:96-101`), not `items_ref`. The master plan's Q1 audit confirmed this (`master-plan.md:204`): "the neutral router only fans out from static `width`; `items_ref` is not resolved at runtime." The proof must show that a `Step(kind="parallel_map")` with `mode="dynamic"` actually resolves `items_ref` and spawns children — either through the native runtime or a patched DSL executor.
+
+3. **Source-derived manifest dispatch without `handler_ref`.** `_compatibility.py:235-267` currently dispatches through `COMMAND_HANDLERS.get(phase_name)` (CLI handlers). The proof must demonstrate one builder edge (e.g., a single phase from `workflow.pypeline`) executing through lowered source constructs without `handler_ref` as semantic authority.
+
+4. **Megaplan-specific suspension/reentry fixtures.** Native runtime supports suspension generically, but no Megaplan workflow-specific fixture proves a `workflow.pypeline` phase can suspend, checkpoint, and resume correctly.
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**Risk**: The native runtime substrate is feature-complete internally, but the bridge to Megaplan's `.pypeline` source has not been wired or tested. The gap is integration, not substrate capability.
+
+**Recommendations:**
+
+1. **Consolidate S1b-1 into a bridge-proving sprint rather than a substrate-building sprint.** The native runtime already provides `parallel_map`, suspension, loop exits, and source-derived dispatch. Build the integration tests that prove the lowered DSL → native runtime path works for these constructs.
+
+2. **Add one explicit integration fixture**: lower a minimal `workflow.pypeline` fragment containing `parallel_map(items=..., step=...)` through `source_compiler.lower_workflow_source()` → project through `_compatibility._native_program_from_dsl()` → execute via `run_native_pipeline()` → verify children spawn and reducer runs. This single test covers items_ref resolution, suspension, and source-derived dispatch simultaneously.
+
+3. **`test_manifest_backend_source_dispatch.py` should verify that `handler_ref` is not consulted during native runtime execution.** The `_compatibility._run_megaplan_native_phase` function at `_compatibility.py:243` already does `del handler_ref` (ignores it), but the dispatch still goes through `COMMAND_HANDLERS`. The proof should instead show dispatch via `NativeInstruction.func` from lowered source.
+
+4. **Loop exit tests can be scoped down.** The native runtime already supports loop exits via `LoopGuard`/`exit_pc` in composition. Unless S2-S5 require typed exit payloads, existing support is probably sufficient.
+
+5. **Unverified prior claim**: The master plan references `runtime/manifest_backend.py:227-322` as a current carrier, but this file does not exist in the repo. This appears to be either a planned target or a removed file. The sprint should verify the reference or replace it with the actual dispatch path (CLI `COMMAND_HANDLERS` + `_compatibility.py`).

@@ -1,0 +1,97 @@
+--- a/arnold/workflow/attempt_ledger_store.py
++++ b/arnold/workflow/attempt_ledger_store.py
+@@ -1915,9 +1915,14 @@
+     # Versions
+     ver = d["versions"]
+     versions = VersionSet(
+-        code_version=ver.get("code_version", ""),
+-        config_version=ver.get("config_version", ""),
+-        template_version=ver.get("template_version", ""),
++        code_version=ver.get("code_version"),
++        # Preserve omitted optional versions as ``None``.  ``VersionSet``
++        # omits ``None`` fields from its durable representation; rebuilding
++        # them as empty strings makes a read-after-write event serialize
++        # differently and falsely turns an exact idempotent retry into an
++        # ``IdempotencyConflictError``.
++        config_version=ver.get("config_version"),
++        template_version=ver.get("template_version"),
+     )
+ 
+     # GrantRef
+--- a/tests/arnold/workflow/test_attempt_ledger_store.py
++++ b/tests/arnold/workflow/test_attempt_ledger_store.py
+@@ -28,6 +28,7 @@
+     AttemptLedgerStore,
+     AttemptReservation,
+     GateStatus,
++    IdempotencyConflictError,
+     MonotonicSequenceError,
+     PostTerminalAppendError,
+     SqliteAttemptLedgerStore,
+@@ -482,33 +483,31 @@
+                 os.unlink(path)
+ 
+     def test_append_dedups_on_duplicate_idempotency_key(self):
+-        """Duplicate idempotency keys return the existing event, not raise.
+-
+-        Step 4 contract: ``append_event`` returns an ``AppendResult`` with
+-        ``is_duplicate=True`` whose ``event`` is the existing persisted
+-        event. Two different events with the same key can never coexist,
+-        and the original sequence is preserved.
+-        """
++        """Exact retries dedup; divergent reuse of a key is rejected."""
+         path = _store_path()
+         try:
+             store = SqliteAttemptLedgerStore(path)
+             aid = _aid()
+             e1 = _make_event(attempt_id=aid, sequence=1, idempotency_key="dup")
+-            # Second event deliberately claims a different sequence to
+-            # prove the dedup short-circuits the monotonic-sequence check.
+-            e2 = _make_event(attempt_id=aid, sequence=2, idempotency_key="dup")
+             r1 = store.append_event(aid, e1)
+             assert isinstance(r1, AppendResult)
+             assert r1.is_duplicate is False
+             assert r1.sequence == 1
+ 
+-            r2 = store.append_event(aid, e2)
++            # An exact retry is a safe no-op and returns the durable event.
++            r2 = store.append_event(aid, e1)
+             assert isinstance(r2, AppendResult)
+             assert r2.is_duplicate is True
+-            # Existing event reference is returned — its sequence is the
+-            # original, not the second event's claimed sequence.
+             assert r2.event.sequence == 1
+             assert r2.event.idempotency_key == "dup"
++
++            # Reusing the key for different evidence must fail closed rather
++            # than silently hiding the divergent event.
++            divergent = _make_event(
++                attempt_id=aid, sequence=2, idempotency_key="dup"
++            )
++            with pytest.raises(IdempotencyConflictError):
++                store.append_event(aid, divergent)
+ 
+             # Store count remains 1 — the duplicate was not persisted.
+             assert store.event_count(aid) == 1
+@@ -1315,13 +1314,18 @@
+                 os.unlink(path)
+ 
+     def test_dedup_does_not_persist_duplicate_row(self):
+-        """Dedup path must not leave a partial INSERT behind."""
++        """Dedup/conflict paths must not leave a partial INSERT behind."""
+         path = _store_path()
+         try:
+             store = SqliteAttemptLedgerStore(path)
+             aid = _aid()
+-            store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="dup"))
+-            store.append_event(aid, _make_event(attempt_id=aid, sequence=2, idempotency_key="dup"))
++            first = _make_event(attempt_id=aid, sequence=1, idempotency_key="dup")
++            store.append_event(aid, first)
++            with pytest.raises(IdempotencyConflictError):
++                store.append_event(
++                    aid, _make_event(attempt_id=aid, sequence=2, idempotency_key="dup")
++                )
++            assert store.conn.in_transaction is False
+             # Exactly one row for this attempt_id.
+             cur = store.conn.cursor()
+             cur.execute(

@@ -1,0 +1,83 @@
+---
+
+## S4b Audit: Execute Approval + Resume
+
+### 1. Verdict: **Partly exists** (typed policy layer present; route authority still handler-owned; no extraction executed)
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**A. Typed approval gate policy (pure function layer)** — `execute/policy.py:311–357`
+- `evaluate_destructive_approval()` is a pure `@dataclass(frozen=True)` function returning `ApprovalDecision` with three typed outcomes: `APPROVED`, `DENIED_MISSING_CONFIRM`, `DENIED_MISSING_APPROVAL`.
+- This is the strongest existing artifact and is directly reusable.
+
+**B. Handler-owned enforcement** — `handlers/execute.py:322–345`, `:348–405`
+- `_enforce_approval_gate()` translates the typed decision into `CliError` raises. The handler still owns the decision translation; CLI flags (`--confirm-destructive`, `--user-approved`) are the sole control surface.
+- Q7 audit (master plan:227): "destructive approval denial/approval and tiebreaker decisions do not [have programmatic control paths]. S1a needs headless control-injection actions before those scenarios can be CI gates." **Unresolved.**
+
+**C. Fresh-session forcing** — `handlers/execute.py:423–445`
+- `_is_rework_reexecution` (line 81–88) and `_is_blocked_retry` (line 90–97) inspect state history. Handler forces fresh session via session-key pop. Not source-visible.
+
+**D. Blocked retry policy** — `execute/policy.py:528–610`
+- `evaluate_blocker_recovery_policy()` with `BlockedRetryOutcome` enum (RETRY, RETRY_FRESH, NO_RETRY). The full `EXECUTE_BRANCH_SURFACE` (line 860–1042) declares 10+ branch points including `blocked_recovery`, `timeout_retry`, and `review_handoff`. Typed and reusable.
+
+**E. Resume cursor** — `_core/workflow.py:650–700`
+- `_resolve_resume_cursor()` resolves cursor sources. `state.py:372–576` handles status/repair, review/rerun resume flows. Persisted via `store/plan_repository.py:457–482`. Functional but handler/auto-owned.
+
+**F. No-review terminal and deferred-human** — `execute/policy.py:360–408`, `handlers/execute.py:555–605`, `handlers/review.py:1061–1089`
+- `evaluate_no_review_terminal()` returns typed outcomes (`TERMINATE_DONE`, `TERMINATE_AWAITING_HUMAN`, `NOT_APPLICABLE`). Handler code in `execute.py:555–605` uses this for bare/light robustness routing. `review.py:1061–1089` routes `deferred_human` verdicts. Typed policy surfaces reusable.
+
+**G. Topology contracts in `.pypeline`** — `workflow.pypeline:301–384`
+- Declares `approval_gate`, `approval_gates`, `fanout_contract`, `retry_and_reentry`, `post_batch_routes`, `review_panel`, `reducer_routes`, and `rework_cycle`. These are topology *contracts*, not lowered source execution — the route decisions are still made by handlers.
+
+**H. Boundary contracts** — `boundary_contracts.py:247–331+`
+- `execute_approval`, `execute_approval_denial`, `execute_batch_checkpoint`, `execute_partial_failure`, `execute_blocked_anchor` — all exist.
+
+**I. Prior conformance report** — `megaplan-native-representation-conformance-report.md:38–41`
+- Claims rows 13–15 as "implemented": `execute-dependency-batches` (`canonical_source`), `execute-approval-gates` (`declared_policy`), `execute-review-rework-loop` (`canonical_source`).
+- **False pass per master plan** (master plan:167–170): the evidence bundle (`megaplan-native-representation-evidence.yaml:185–235`) cites the entire `workflow.pypeline:1–754` span as proof for all three rows, not specific extracted source constructs. The actual route decisions remain in `handlers/execute.py`, `auto.py`, and `components.py`.
+
+**J. S4 brief only, no closeout** — `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/s4-execute-dag-approval-resume.md`
+- Defines scope but no sprint artifacts (tests, baselines, closeout report) exist.
+
+**K. No S4 tests exist** — `test_execute_s4_behavior_parity.py` referenced in scenarios YAML (`megaplan-native-representation-scenarios.yaml:120`) but does not exist on disk.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Asset | File:Line | Reusability |
+|---|---|---|
+| `evaluate_destructive_approval()` | `execute/policy.py:311–357` | **Directly reusable** — pure `ApprovalDecision`, no IO, no CLI coupling |
+| `evaluate_no_review_terminal()` | `execute/policy.py:360–408` | **Directly reusable** — pure `NoReviewTerminalDecision` |
+| `evaluate_blocker_recovery_policy()` | `execute/policy.py:528–610` | **Reusable** — but currently calls `blocker_recovery.evaluate_blocker_recovery` which may carry component coupling |
+| `EXECUTE_BRANCH_SURFACE` | `execute/policy.py:860–1042` | **Reusable** — typed branch point inventory mapping route signals to targets |
+| `ApprovalOutcome`, `NoReviewTerminalOutcome`, `BlockedRetryOutcome` enums | `execute/policy.py:69–110`, `:528+` | **Reusable** — already typed, can be imported by lowered source |
+| Topology contracts in `.pypeline` | `workflow.pypeline:301–384` | **Anchors for extraction** — these declare what must become source-visible |
+| Boundary contracts | `boundary_contracts.py:247–331` | **Reusable** as parity acceptance criteria |
+| Resume cursor resolution | `_core/workflow.py:650–700` | **Reusable** — already protocolized |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Headless control-injection API** for destructive approval denial/approval (Q7 audit in master plan:227). Currently requires CLI interactive flags.
+2. **Source-visible approval gate branches** in lowered `.pypeline` source — the current `.pypeline` declares topology contracts (line 303–326) but the route decision (`proceed` vs `deny`) is handler-owned.
+3. **Source-visible blocked retry loop** — currently spread across `handlers/execute.py:510–545`, `auto.py:3390–5281`. The topology contract exists at `workflow.pypeline:335–348` but no lowered source implements the loop.
+4. **Resume cursor schema and resume-from-cursor logic in source** — cursor resolution is in `_core/workflow.py`; the `.pypeline` topology references it (line 341) but does not own it.
+5. **No-review terminal routing in source** — handler code at `handlers/execute.py:555–605` routes to `done`/`awaiting_human_verify`. The `.pypeline` has `post_batch_routes` (line 344–348) as contract only.
+6. **Deferred-human handoff as source-visible route** — currently in `handlers/review.py:1061–1089` and `.pypeline` topology contracts (line 347, 382, 449, 460).
+7. **Split-outcome baselines** (frozen pre-extraction) for `execute_approval`, `execute_approval_denial`, `blocked_retry`, `no_review_terminal`, `deferred_human` — none exist.
+8. **S4 test file** — `tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py` (referenced in scenarios YAML) does not exist.
+9. **Dead-delete of old execute carriers** — `components.py:1694–1781` execute fanout/route surfaces, `handlers/execute.py` route decisions, `auto.py` blocked retry loops must be deleted/quarantined.
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**S4 should be split into two sprints: S4a (Approval + Resume policy extraction) and S4b (Execute DAG + batch topology).** The current S4 scope in the master plan (line 693–728) conflates approval/resume (which has mature typed policy surfaces ready for extraction) with execute DAG/batching (which is deeply entangled with handler/auto code and has no typed pure-function layer yet).
+
+**S4a** (Approval + Resume): Extract the approval gate and resume cursor into source-visible lowered constructs first, since the typed policy layer (`evaluate_destructive_approval`, `evaluate_no_review_terminal`, `evaluate_blocker_recovery_policy`, `_resolve_resume_cursor`) already exists and is directly liftable. Add the headless control-injection API as a prerequisite.
+
+**S4b** (Execute DAG + batch): Build the batch topology extraction after S4a's policy surfaces are proven, since batch execution depends on approval having cleared and resume being source-owned. This is the harder half and should not block S4a closeout.

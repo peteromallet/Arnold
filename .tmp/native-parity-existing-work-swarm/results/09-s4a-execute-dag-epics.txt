@@ -1,0 +1,63 @@
+## Research Report: S4a Execute DAG + Scheduling
+
+### 1. Verdict: **Partly exists** — substantial infrastructure, zero tests, route authority still split with `components.py`
+
+### 2. Existing or Prior Artifacts
+
+**A. Typed execute policy (complete construct surface):**
+- `arnold_pipelines/megaplan/execute/policy.py:1-1085` — Full typed policy module explicitly labeled "S4 constructs" (line 8). Contains 7 outcome enums (`ExecuteEntryRoute`, `ApprovalOutcome`, `NoReviewTerminalOutcome`, `TierRouteOutcome`, `BlockedRetryOutcome`, `NextExecuteTransition`, `FutureParallelMarker`) plus pure functions: `resolve_execute_entry_route` (:261), `evaluate_destructive_approval` (:311), `evaluate_no_review_terminal` (:360), `resolve_single_batch_next_step` (:411), `resolve_batch_tier` (:460), `evaluate_blocker_recovery_policy` (:528).
+- `EXECUTE_BRANCH_SURFACE` (:860–1042) — Declares all 7 required branch categories (approval, batch_continuation, blocked_recovery, timeout_retry, aggregate_promotion, review_handoff, no_review_terminal) plus reserved parallel anchors.
+
+**B. Handler consumes policy types (integration exists):**
+- `arnold_pipelines/megaplan/handlers/execute.py:49-58` — Imports `ApprovalOutcome`, `ExecuteEntryRoute`, `NextExecuteTransition`, `NoReviewTerminalOutcome`, and all 4 pure helpers from `execute.policy`.
+- Entry dispatch through `resolve_execute_entry_route` at :312; approval gating through `evaluate_destructive_approval` at :335–345; no-review terminal through `evaluate_no_review_terminal` at :564, :611; blocked transition through `resolve_single_batch_next_step` at :540–544.
+
+**C. DAG dependency scheduler exists:**
+- `arnold_pipelines/megaplan/_core/scheduler/topo.py:15-65` — `schedule_batches()` wraps topological sort with completed-ID exclusion and oversize splitting.
+- `arnold_pipelines/megaplan/_core/scheduler/run.py:42-81` — `run_scheduler()` implements scatter → batch → process → reduce loop.
+- `arnold_pipelines/megaplan/_core/io.py:67-121` — `compute_task_batches()` uses Kahn's algorithm for dependency-ordered topological batching; `compute_global_batches()` at :145; `compute_batch_complexity()` at :150.
+
+**D. Batch auto-loop uses dependency scheduling:**
+- `arnold_pipelines/megaplan/execute/batch.py:2874-2878` — `handle_execute_auto_loop()` calls `compute_task_batches(pending_tasks, completed_ids=completed_task_ids)`. Uses `compute_global_batches` at :2897 for batch numbering.
+- Blocked-task retry (:2566-2594), cross-session reset, rework re-execution (:2676-2710), and baseline-unavailable deferral all integrated.
+
+**E. Prior conformance claim (false pass):**
+- `docs/arnold/megaplan-native-representation-conformance-report.md:38-39` — Claims `execute-dependency-batches` and `execute-approval-gates` as **`implemented`**. The master plan explicitly identifies this report as a "historical false pass" (:7–9), and the strict checker confirms 9 `AWF245_ROW_EVIDENCE_INSUFFICIENCY` diagnostics that the conformance report does not capture (:147).
+
+**F. Scenario spec exists:**
+- `docs/arnold/megaplan-native-representation-scenarios.yaml:430-463` — `D7-execute-dag` with rows `execute-dependency-batches`, `dynamic-parallel-map`, `model-routing-policy`, `path-addressed-checkpoints`, required cases (dependency_ordering, runtime_task_batch_map, partial_failure_resume, task_complexity_model_route), and `false_pass_guard: "Execute cannot remain one handler-backed stage with richer logs"`.
+
+### 3. What Can Be Reused or Generalized
+
+| Artifact | Reuse value |
+|---|---|
+| `execute/policy.py` typed constructs | **High** — Pure, tested design surface. Can be promoted to source-visible declared policy. |
+| `_core/scheduler/topo.py` + `run.py` | **High** — Dependency-aware topological batching is algorithmically correct and decoupled from Megaplan specifics. |
+| `_core/io.py` `compute_task_batches` | **High** — Kahn's algorithm implementation is simple, testable, and only depends on `id`/`depends_on` keys. |
+| `handlers/execute.py` policy integration | **Medium** — The pattern of handler translating typed outcomes to legacy errors is the right architecture. Must be inverted: source should own the decision, handler should be a pure phase body. |
+| `EXECUTE_BRANCH_SURFACE` | **High** — A complete, self-validating declaration of execute routing topology (self-check at :1078). Can serve as the template for all 7 required categories in source. |
+| `batch.py` continuous-execute loop | **Medium** — Batch iteration logic is mature but still handler-owned. The loop shape itself is generalizable. |
+
+### 4. What Still Must Be Built
+
+1. **Source-authoritative execute DAG in `.pypeline`**: Currently `workflow.pypeline:406-412` uses `parallel_map` over `EXECUTE_BATCH_WORKFLOW` (a `components.py` import). Dependency batching lives in `batch.py:2874`, not in source-visible constructs. The plan requires the DAG visible as a subworkflow or primitive (:458-459).
+
+2. **Delete/quarantine `components.py` execute route surfaces**: `components.py:1694-1781` still declares fanout contracts, retry/reentry, skip_review_routes, batch_continuation, and review_handoff as route authority. The `EXECUTE_POLICY` at :1621 carries `branch_surface_ref` pointing to `execute.policy` but the component itself remains a dual route brain.
+
+3. **Tests (zero exist)**: No `test_execute_native_dag_approval_resume.py` (required by master plan :702), no execute policy unit tests, no split-outcome scenarios for destructive approval denial, blocked retry, or partial resume. The scenario YAML defines `D7-execute-dag` but no test fixtures exist under `tests/arnold_pipelines/megaplan/fixtures/native_goldens/D7-execute-dag/`.
+
+4. **Model/tier policy from source**: `resolve_batch_tier` in policy.py is pure but `_extract_execute_tier_map` in `handlers/execute.py:115` still extracts tier config from handler args/state. Tier routing must be source-owned.
+
+5. **Batch continuation as explicit loop**: `resolve_single_batch_next_step` exists but is called from the handler (:540), not from a named source construct. The loop continuation (EXECUTE → EXECUTE) must be source-visible.
+
+6. **Headless control injection for approval denial**: Master plan requires headless control-injection actions for destructive approval scenarios (:445-448). The handler currently raises `CliError` for denied approvals — no headless inject path.
+
+### 5. Recommended Adjustment to Sprint Plan
+
+S4 should be **subdivided** into two slices because the infrastructure already exists but integration depth varies:
+
+- **S4a (pre-extraction): Policy audit + negative fixture + headless injection.** Lock down `execute/policy.py` as the source of truth, add the current-shape negative fixture mirroring `components.py:1694-1781` and `handlers/execute.py` route authority, implement headless control injection for destructive approval denial, and write the deterministic replay fixtures before any extraction begins.
+
+- **S4b (extraction): Source-owned DAG + quarantine components.** Extract the `compute_task_batches` dependency DAG into a named subworkflow or source-visible primitive. Replace `components.py` `EXECUTE_POLICY` route authority with `.pypeline` source constructs. Write `test_execute_native_dag_approval_resume.py` with split-outcome scenarios. Dead-delete old execute route surfaces against frozen S1a baselines.
+
+The scheduler substrate (`_core/scheduler/`) is reusable as-is; the main extraction risk is that `batch.py:3587` lines of handler-owned orchestration must be untangled without introducing regression. Baseline freeze must happen before any extraction mutates the execute loop.

@@ -1,0 +1,11 @@
+diff --git a/tests/arnold_pipelines/megaplan/test_codex_writable_roots.py b/tests/arnold_pipelines/megaplan/test_codex_writable_roots.py
+--- a/tests/arnold_pipelines/megaplan/test_codex_writable_roots.py
++++ b/tests/arnold_pipelines/megaplan/test_codex_writable_roots.py
+@@ -14,0 +15,7 @@
++@pytest.fixture(autouse=True)
++def _clear_ambient_trusted_container(monkeypatch: pytest.MonkeyPatch) -> None:
++    """Each case declares its own isolation authority."""
++    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
++    monkeypatch.delenv("MEGPLAN_TRUSTED_CONTAINER", raising=False)
++
++

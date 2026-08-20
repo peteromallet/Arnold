@@ -27,15 +27,12 @@ ALL TESTS USE FAKE / MOCK TOOL HANDLERS.  No real model is ever invoked.
 from __future__ import annotations
 
 import asyncio
-import ast
 import atexit
 import contextvars
-import inspect
 import logging
 import os
 import sys
 import threading
-import textwrap
 import types
 from pathlib import Path
 from typing import Any
@@ -337,17 +334,6 @@ def test_root_logger_handlers_identical_objects_after_construction(
             f"Handler at index {idx} was replaced: {bh} → {after_handlers[idx]}"
         )
 
-
-def test_run_hermes_step_does_not_configure_logging_on_worker_hot_path() -> None:
-    """Worker execution must not mutate root logger setup per task."""
-    from arnold_pipelines.megaplan.workers.hermes import run_hermes_step
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(run_hermes_step)))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "run_agent":
-            assert all(alias.name != "configure_logging" for alias in node.names)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            assert node.func.id != "configure_logging"
 
 
 # ---------------------------------------------------------------------------

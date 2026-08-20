@@ -1,0 +1,97 @@
+I now have sufficient evidence. Here is the audit.
+
+---
+
+## S6b Auto/Manifest/Compatibility Collapse — Audit
+
+### 1. Verdict: **Partly exists (data shapes + diagnostic codes only); all live carriers still active; all S6 exit-gate test files and scripts absent)**
+
+---
+
+### 2. Existing Artifacts with File:Line Evidence
+
+**Data shapes (passive infrastructure only):**
+
+- `arnold/workflow/semantic_evidence.py:94-101` — `CompatibilityQuarantineCategory` enum includes `ROUTE_DISPATCH_LEGACY`, `CLI_COMPATIBILITY`, `MANIFEST_SERIALIZATION`, `PERSISTED_PAYLOAD`, `EXTERNAL_SCHEMA_BOUNDARY`.
+- `arnold/workflow/semantic_evidence.py:104-118` — `CompatibilityQuarantineEntry` dataclass for recording permitted enum-to-string serialization boundaries.
+- `arnold/workflow/semantic_evidence.py:124-189` — `SemanticEvidence` dataclass carries `compatibility_quarantine` tuple but is data-shape only; no enforcement logic.
+- `arnold/workflow/diagnostics.py:97` — `NATIVE_PROGRAM_PROJECTION` diagnostic code (AWF204) exists.
+- `arnold/workflow/diagnostics.py:138` — `ROW_EVIDENCE_INSUFFICIENCY` (AWF245) exists.
+- `arnold/workflow/diagnostics.py:174-179` — Diagnostic families `MANUAL_GRAPH_NODES`, `MANUAL_PATH_STRINGS`, `NATIVE_PROGRAM_PROJECTION`, `MEGAPLAN_ONLY_HELPERS` exist.
+
+**Evidence-generation script (references broken imports):**
+
+- `scripts/generate_native_representation_evidence.py:1156-1191` — `_build_compatibility_quarantine_checks` builds quarantine output but imports `check_generic_arnold_megaplan_coupling` (which exists) and references `COMPATIBILITY_QUARANTINE_PROOF = "tests/arnold/conformance/test_megaplan_coupling_gate.py"` which **does not exist** (line 65).
+- `scripts/generate_native_representation_evidence.py:1194-1225` — `_build_dead_delete_mutation_checks` imports `DELETED_SOURCE_PATHS`, `DELETED_IMPORT_MODULES` from `arnold.conformance.deleted_surfaces` (line 23) — **that module does not exist**.
+
+**Coupling gate (exists but is generic, not S6-specific):**
+
+- `arnold/conformance/checks.py:450-510` — `check_generic_arnold_megaplan_coupling` checks that neutral `arnold` modules don't import Megaplan. This is a ratchet on cross-package imports, not a structural rejection of route_dispatch fallback, manifest branch translation, or compatibility evidence.
+
+---
+
+### 3. Live Carriers That S6 Must Quarantine/Collapse (all still active)
+
+Per master plan `docs/arnold/megaplan-native-semantic-parity-master-plan.md:769`:
+
+| Carrier | File:Line | Status |
+|---|---|---|
+| route_dispatch fallback to component route bindings | `route_dispatch.py:26-43` | **Live** |
+| manifest backend branch translation (`_branch_edge_id`) | `runtime/manifest_backend.py:227-322` | **Live** |
+| `_compatibility.py` `NativeProgram` projection | `_compatibility.py:173-207` | **Live** |
+| `_compatibility.py` CLI handler fallback | `_compatibility.py:235-267` | **Live** |
+| Auto next-step derivation (`_phase_command`) | `auto.py:1197-1245` | **Live** |
+| Auto override escalation loop | `auto.py:4496-4521` | **Live** |
+| Override dispatch surfaces | `components.py:399-433, 1603-1621` | **Live** |
+| Override matrix | `workflows/override_matrix.py:40-149` | **Live** |
+
+---
+
+### 4. What Can Be Reused or Generalized
+
+- `CompatibilityQuarantineCategory.ROUTE_DISPATCH_LEGACY` (`semantic_evidence.py:101`) can directly classify route_dispatch as quarantined.
+- `NATIVE_PROGRAM_PROJECTION` diagnostic code (`diagnostics.py:97`) can flag `_compatibility.py` NativeProgram usage.
+- `ROW_EVIDENCE_INSUFFICIENCY` (`diagnostics.py:138`) provides the rejection slot; S6 can add specific sub-diagnostics for manifest backend translation and auto next-step derivation.
+- `check_generic_arnold_megaplan_coupling` (`checks.py:450`) is a usable ratchet pattern but needs extension to check for route-authoritative coupling (not just import coupling).
+- The evidence bundle `_build_compatibility_quarantine_checks` (`generate_native_representation_evidence.py:1156`) is a scaffold but references nonexistent files.
+
+---
+
+### 5. What Still Must Be Built
+
+**All S6 exit-gate artifacts are missing — zero exist:**
+
+| Required per master plan:774-775 | Status |
+|---|---|
+| `tests/arnold_pipelines/megaplan/test_override_auto_compat_quarantine.py` | **Does not exist** |
+| `tests/arnold/conformance/test_megaplan_coupling_gate.py` | **Does not exist** |
+| `tests/arnold/workflow/test_row_evidence_checker.py` | **Does not exist** |
+| `tests/arnold/workflow/test_megaplan_checker_structural_rejection.py` | **Does not exist** |
+| `tests/arnold/workflow/test_megaplan_row_registry_completeness.py` | **Does not exist** |
+| `scripts/check_megaplan_baseline_freeze.py` | **Does not exist** |
+| `arnold/conformance/deleted_surfaces.py` | **Does not exist** (imported by evidence script) |
+| `arnold/workflow/megaplan_semantic_rows.yaml` | **Does not exist** |
+
+**Functional gaps:**
+
+1. **Structural rejection logic**: No checker code currently rejects `_compatibility.py` NativeProgram, manifest backend branch translation, route_dispatch fallback, CLI handlers, or auto next-step derivation as row evidence. The diagnostic codes exist but no enforcement consumes them for these specific carriers.
+
+2. **Dead-delete mutation tests**: No per-sprint mutation tests prove that mutating/deleting override matrix, auto next-step derivation, route_dispatch fallback, and manifest backend translation fails closed against frozen baselines.
+
+3. **Compatibility quarantine report with active rejection rules**: The evidence script has a stub (`:1156-1191`) but it references nonexistent proof artifacts and has no active structural rejection beyond the generic coupling check.
+
+4. **Split-outcome scenarios** for force-proceed, abort, replan, recover-blocked, resume-clarify, adopt-execution: Not found in any test file.
+
+---
+
+### 6. Recommended Sprint Plan Adjustment
+
+1. **Fix the broken evidence infrastructure first**: `arnold/conformance/deleted_surfaces.py` must be created before S6 can generate evidence. The evidence script currently has dead imports.
+
+2. **S6 cannot close as-is**: None of the seven exit-gate test/script files exist. The master plan's S6 exit gates (`:773-775`) reference five test files and one script that are entirely absent.
+
+3. **Prior claims of evidence infrastructure are unverifiable**: SA5's claim (`master-plan.md:195`) that compatibility quarantine (`:1156-1191`) and dead-delete checks (`:1194-1225`) exist is true for the *scaffolding code* but the scaffolding imports nonexistent modules and references nonexistent proof artifacts — the pipeline cannot run.
+
+4. **Recommend splitting S6 into S6a (infrastructure: create deleted_surfaces, row registry YAML, baseline freeze script) and S6b (quarantine/rejection logic)** since the substrate to verify S6b doesn't exist yet.
+
+5. **The actual carrier collapse work** (fencing route_dispatch fallback, quarantining manifest backend branch translation, removing auto next-step derivation as a route brain) still needs to be done — all carriers are live and routing behavior today.

@@ -1,0 +1,71 @@
+Now I have all the evidence I need. Let me compile the findings.
+
+---
+
+## Swarm Audit: S1c Runtime Substrate Proof — Findings
+
+### 1. Verdict: **Partly exists** (substrate code present, dedicated tests absent, loop exits unimplemented, dispatch still handler_ref-coupled)
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**A. Dynamic `parallel_map` items_ref fanout — largely implemented at runtime level:**
+
+- **IR**: `ParallelMapInstruction` at `arnold/pipeline/native/ir.py:309-370` declares `items_ref` (runtime collection reference), `mapper`, `reducer`, `path_template`, `merge_pc`, `collection_schema`. `NativeInstruction` with `op="parallel_map"` and `parallel_map_index` at `ir.py:388-416`.
+- **Compiler**: `_lower_yield_parallel_map` at `arnold/pipeline/native/compiler.py:766-814` parses `yield parallel_map(items=..., step=..., ...)` from AST, emits `NativeInstruction(op="parallel_map")` with `ParallelMapInstruction` block. `_parse_parallel_map_call` at `:639-744` validates keyword args including `items=` (must be string literal ref).
+- **Runtime**: Full execution loop at `arnold/pipeline/native/runtime.py:1945-2286`. `_resolve_parallel_map_items()` at `:421-443` resolves `items_ref` from state or `parameter_values` at runtime (not compile-time width). Items are iterated, mapper invoked (as `@phase` callable or compiled `NativeProgram` subpipeline), results collected, optional reducer applied, state merged.
+- **Suspension within parallel_map**: `_parallel_map_progress_key()` at `:3338-3339`, `_restore_parallel_map_progress()` at `:3342-3360` save/restore completed results and next-index across suspension. Composite parent/child cursor at `:2187-2239` handles child-suspended mid-map.
+- **Path resolution**: `_parallel_map_item_coordinate()` at `:466-483` resolves `path_template` (e.g. `"critique/{item_id}"`) against item attributes. `_parallel_map_item_state()` at `:639-652` sets per-item `__call_site_path__`, `__parallel_map_item__`, `__parallel_map_index__`.
+
+**B. Suspension/reentry — implemented:**
+
+- Contract suspension: `_contract_result_is_suspended()` at `runtime.py:3615-3620`.
+- Cursor persistence: `_persist_suspension()` at `:3533-3599` saves pc, state, envelope, loops, frames, path_metadata.
+- Resume: `run_native_pipeline()` reads cursor at `:941-1000`, restores state, envelope, run_path, path_stack. Supports composite parent/child cursors at `:958-979`.
+- Parent/child suspension: `_persist_parent_child_entry_cursor()` at `:3363-3481` for subpipeline/parallel_map item suspension.
+- Existing tests: `test_live_resume_from_suspension_smoke` at `tests/arnold_pipelines/megaplan/test_live_smoke.py:45`, `test_resume_from_suspension_cursor` at `tests/arnold/execution/test_canonical_fixture.py:281`, `test_clean_suspension_exits_with_suspended_state_and_event` at `tests/arnold/execution/test_runner.py:356`.
+
+**C. Loop exits (`break`/`continue`) — explicitly rejected:**
+
+- `arnold/pipeline/native/compiler.py:1030-1033`: `"'break' inside 'while' is not supported in the milestone grammar"`
+- `:1035-1038`: `"'continue' inside 'while' is not supported in the milestone grammar"`
+- Loop constructs exist (while + @decision guard), and loops exit when the guard decision returns a label that branches outside the loop body. But typed `break`/`continue` as language constructs do not compile.
+
+**D. Source-derived manifest dispatch — partly exists, still coupled to handler_ref:**
+
+- `arnold_pipelines/megaplan/workflows/events.py:19-41`: `WorkflowEvent` dataclass carries `source_dispatch_phase` and `target_dispatch_phase` derived from lowered workflow topology. `_dispatch_phase_for_source_phase()` at `:176-177` maps source phases to dispatch phases.
+- `WorkflowCursor` at `:44-52` exposes source-derived next-event/next-phase navigation.
+- **BUT**: `arnold_pipelines/megaplan/runtime/manifest_backend.py:173-189` still imports `STEP_COMPONENTS_BY_ID` from `components.py` and consults component `route_bindings` for route signal resolution.
+- `manifest_backend.py:227-322` has hard-coded per-node dispatch maps (gate, tiebreaker_decide, revise, review, override) keyed by `next_step`, `recommendation`, `decision`, `override_action`, `review_verdict` handler response fields. This is not source-derived.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **`parallel_map` runtime mechanics** (`runtime.py:421-483`, `:1945-2286`, `:3338-3360`) are production-ready and can be reused directly. The items_ref dynamic resolution, mapper invocation (both phase and subpipeline paths), reducer application, state merge, per-item path coordinates, and intra-map suspension/resume all work.
+- **Compiler `parallel_map` lowering** (`compiler.py:639-814`) correctly produces `ParallelMapInstruction` blocks with `items_ref`, mapper, reducer, path_template. Reusable as-is.
+- **Suspension/reentry infrastructure** (`runtime.py:3533-3599`, `:941-1000`, `:3363-3481`) is complete for both top-level and nested (parallel_map item, subpipeline) contexts. Reusable as-is.
+- **`events.py` source-derived dispatch** (`events.py:19-268`) provides a clean `WorkflowCursor`/`WorkflowEvent` projection from lowered source. This can be generalized into the manifest backend's dispatch path, replacing the hard-coded node-id maps.
+
+---
+
+### 4. What Still Must Be Built
+
+- **Loop exit constructs** (`break`/`continue`): The compiler at `compiler.py:1030-1038` must be extended to support them, and the runtime must handle early loop termination with correct path-stack unwinding. Unless the plan accepts decision-route-based loop exits as sufficient (the while guard returning an exit label).
+- **Dedicated substrate tests**: None of the S1b-1 exit-gate test files exist:
+  - `tests/arnold_pipelines/megaplan/test_native_runtime_dynamic_fanout.py` — missing
+  - `tests/arnold_pipelines/megaplan/test_native_runtime_suspension_reentry.py` — missing
+  - `tests/arnold_pipelines/megaplan/test_manifest_backend_source_dispatch.py` — missing
+  - `tests/arnold_pipelines/megaplan/test_native_runtime_loop_exits.py` — missing
+  - `tests/arnold_pipelines/megaplan/test_runtime_items_ref_resolution.py` — missing
+- **Manifest backend dispatch** must be decoupled from `handler_ref`/component `route_bindings`. Current `manifest_backend.py:173-189` imports `STEP_COMPONENTS_BY_ID` from `components.py`. The `_branch_edge_id()` at `:227-322` uses hard-coded per-node-id dispatch tables. The `events.py` source-derived cursor infrastructure should be wired in as the dispatch authority.
+- **Unverified prior claim**: The master plan at lines 202-206 claims Q1 audit found the "neutral router only fans out from static `width`; `items_ref` is not resolved at runtime." This appears to be about the DSL/manifest pipeline path, not the native runtime. The native runtime at `runtime.py:421-443` does resolve `items_ref` dynamically. This discrepancy needs reconciliation.
+
+---
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+- **Split S1b-1 into two slices**: (a) Write the 5 missing substrate test files proving dynamic fanout, suspension/reentry, and items_ref resolution already work in the native runtime — these should mostly pass with minor fixture work. (b) Implement loop exits (if required) and wire source-derived dispatch into manifest_backend.py, which is the actual new implementation work.
+- **Clarify the Q1 audit finding**: The claim that `items_ref` is not resolved at runtime should be verified against the native runtime path (not the DSL neutral router). If the finding is about the DSL/manifest path only, document it as a DSL-path limitation, not a native-runtime limitation.
+- **Loop exit priority**: If decision-route-based loop exits (the while guard returning non-loop labels) are sufficient for S2-S5 extraction, `break`/`continue` can be deferred. The compiler currently supports this pattern via `NativeDecision.vocabulary` and `branches` dict routing to non-loop PCs.

@@ -1,0 +1,87 @@
+Now I have all the evidence needed. Here is the report.
+
+---
+
+## S6a Override/Human Control Surface Audit
+
+### 1. Verdict: **Partly exists — substantially implemented, with remaining integration/fencing work.**
+
+The override control surface is not a gap. It has a complete three-layer architecture (neutral contracts → domain bridge → handler bindings), a full override action matrix, source-visible declarations in `workflow.pypeline`, typed outcome enums, comprehensive tests, and working invalid-action rejection. What remains is the S6 compat-quarantine closeout: deleting/fencing legacy route dispatch, removing auto-drive as a second route brain, and proving the quarantine under dead-delete mutation gates.
+
+---
+
+### 2. Existing Artifacts (with file:line evidence)
+
+**Neutral control surface (shared contracts):**
+- `arnold/control/interface.py:1-179` — `ControlTarget`, `ControlTransition`, `ControlTransitionRequest`, `ControlTransitionResult`, `ControlBinding` protocol, `RunStateView`, neutral target constants (`CONTROL_TARGET_FORCE_ADVANCE`, `CONTROL_TARGET_ABORT`, `CONTROL_TARGET_RECOVER_FROM_STUCK`, `CONTROL_TARGET_REROUTE`).
+- `arnold/kernel/control.py:1-49` — Kernel-level `ControlTransitionType` enum (OVERRIDE, FALLBACK, ESCALATION, etc.), separate from the main surface.
+
+**Domain bridge (megaplan-specific):**
+- `arnold_pipelines/megaplan/control_interface.py:1-582` — `apply_transition()`, `read_valid_targets()`, `synthesize_artifacts()`, `build_override_transition_request()`, `declared_override_policy_target()`, `emit_override_authority_receipt()`. Resolves bindings (string dispatch for "megaplan"/"planning" or direct `ControlBinding` injection), applies CAS-backed state writes, emits authority receipts.
+
+**Override action authority matrix:**
+- `arnold_pipelines/megaplan/workflows/override_matrix.py:1-231` — 11 canonical override actions in `OVERRIDE_ACTION_MATRIX`. Terminal route actions: abort, adopt-execution, force-proceed, recover-blocked, replan, resume-clarify. Additive config actions: add-note, set-model, set-profile, set-robustness, set-vendor. Each entry declares family, route_signal, target_ref, declared_target_ref, policy_route_ref, dispatch_surface, and control_routed flag.
+
+**Source-visible declarations:**
+- `arnold_pipelines/megaplan/workflows/workflow.pypeline:36-77` — `DECLARED_OVERRIDE_POLICY_ROUTES` (adopt-execution, recover-blocked, resume-clarify) and `DECLARED_OVERRIDE_OUTCOME_TARGETS` (abort, force-proceed, replan), using typed `OverrideOutcome` and `OverridePolicyRoute` StrEnums.
+- `arnold_pipelines/megaplan/outcomes.py:108-127` — `OverrideOutcome` (ABORT, FORCE_PROCEED, REPLAN) and `OverridePolicyRoute` (ADOPT_EXECUTION, RECOVER_BLOCKED, RESUME_CLARIFY).
+
+**Control binding implementation (planning):**
+- `arnold_pipelines/megaplan/planning/control_binding.py:1-1523` — `planning_control_binding()` implementing `valid_targets()`, `recover_targets()`, `apply_transition()`. Neutral-to-internal action mapping at :384-389. Supervisor forward targets at :397-455, recover targets at :458-476. Full state transitions for every override action including CAS version guards, strict_notes guard, unabsorbed note checks.
+
+**Handler implementations (all 11 actions):**
+- `arnold_pipelines/megaplan/handlers/override.py:1910-1944` — `_OVERRIDE_ACTIONS` dict mapping all 11 actions. `handle_override()` entry point. Individual handlers: `_override_abort`, `_override_force_proceed`, `_override_replan`, `_override_recover_blocked`, `_override_resume_clarify`, `_override_adopt_execution` (:865-917 with execution.json/finalize.json validation), plus config-only handlers.
+- `arnold_pipelines/megaplan/handlers/override.py:508-559` — `_handle_routed_override()` routes through `apply_transition()` when `control_interface_routing_on()`.
+
+**Invalid-action rejection (verified):**
+- `arnold_pipelines/megaplan/handlers/override.py:91-95` — `UnknownOverrideActionError`.
+- `arnold_pipelines/megaplan/handlers/override.py:144` — Raises `UnknownOverrideActionError` for unknown actions in `_build_override_action_output()`.
+- `arnold_pipelines/megaplan/handlers/override.py:316` — Falls through to `raise UnknownOverrideActionError(action)`.
+- `arnold_pipelines/megaplan/handlers/override.py:336` — Catches and wraps as `CliError("invalid_override", ...)`.
+- `arnold_pipelines/megaplan/handlers/override.py:1940-1941` — `CliError("invalid_override", f"Unknown override action: {action}")`.
+- `arnold_pipelines/megaplan/control.py:86-90, 314-322` — Unsupported control intent rejection.
+
+**Discord-independent control plane:**
+- `arnold_pipelines/megaplan/control.py:1-789` — `ControlTargetResolver` validates workflow targets, `ControlProcessor` claims and processes control messages with idempotency. Gate control handlers (approve/reject) at :484-560.
+
+**Blocker recovery:**
+- `arnold_pipelines/megaplan/blocker_recovery.py:1-757` — `evaluate_blocker_recovery()`, `command_blocker_details()`.
+
+**Bakeoff binding:**
+- `arnold_pipelines/megaplan/supervisor/bakeoff_binding.py:1-268` — `BakeoffControlBinding` with abort/resume/compare/pick/merge targets.
+
+**Tests:**
+- `tests/arnold_pipelines/megaplan/test_s6_override_control.py:1-244` — Routed override responses, normalization, gate control adapter transitions, invalid-action coverage.
+- `tests/arnold_pipelines/megaplan/test_s6_override_routing.py:1-610` — Override matrix structure, surface gap analysis, policy target declarations match `workflow.pypeline`, component metadata collapse resilience, authority contracts for all 8 routing/gate actions, actual `apply_transition` tests for recover-blocked, resume-clarify, adopt-execution with authority receipt verification and semantic health checks.
+- `tests/arnold_pipelines/megaplan/test_control_binding.py:1-92` — Binding behavior for blocked review recovery, set-profile/set-model transitions.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **`arnold/control/interface.py`** is the reusable neutral contract — directly applicable to any run type beyond Megaplan.
+- **`arnold_pipelines/megaplan/control_interface.py`** demonstrates the bridge pattern from neutral to domain-specific — generalizable as a template for other pipelines.
+- **`override_matrix.py`** is the canonical authority registry — reusable for any workflow needing auditable override actions.
+- **`planning/control_binding.py`** can be a reference implementation for other bindings (see bakeoff binding as proof).
+- **`workflow.pypeline:36-77`** declarations show the source-visible pattern that satisfies the North Star mandate.
+
+---
+
+### 4. What Still Must Be Built
+
+The override control surface itself is done. S6 remaining work per the master plan (`megaplan-native-semantic-parity-master-plan.md:764-798`):
+
+1. **Compat quarantine closeout**: `test_override_auto_compat_quarantine.py` does not yet exist.
+2. **Auto-drive removal as second route brain** — `auto.py` must consume canonical workflow events only, not derive product routes from state.
+3. **Delete/fence legacy carriers**: `route_dispatch.py`, manifest backend branch translation, `_compatibility.py` CLI-handler phase fallback must be fenced from evidence and runtime route authority.
+4. **Dead-delete mutation gates**: Per-sprint mutations must prove old carriers cannot route corrected behavior.
+5. **No override/auto feature flag alive after closeout** — `control_interface_routing_on()` must be removed or always-on.
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+S6a as a standalone component can be marked **substantially complete**. The remaining work is the S6 compat quarantine integration (removing dual-route paths, fencing legacy, proving quarantine under mutation). Recommend:
+
+- **Merge S6a into S6** as a single closeout sprint — the override surface code is ready; the remaining work is deletion/fencing/proving, not building new control-surface primitives.
+- **Keep the S6 exit gates** (`test_override_auto_compat_quarantine.py`, dead-delete mutations, strict checker rejection rules) as the closeout criteria; they already cover what's left.

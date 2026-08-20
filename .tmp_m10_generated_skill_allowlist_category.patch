@@ -1,0 +1,11 @@
+diff --git a/arnold/conformance/legacy_reference_allowlist.json b/arnold/conformance/legacy_reference_allowlist.json
+--- a/arnold/conformance/legacy_reference_allowlist.json
++++ b/arnold/conformance/legacy_reference_allowlist.json
+@@ -706,6 +706,6 @@
+     {
+       "path": "arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md",
+       "pattern": "arnold.pipelines.megaplan",
+-      "category": "generated-historical-non-shipped",
++      "category": "historical-non-shipped",
+       "reason": "Generated Codex skill bundle preserves the canonical skill's historical package-migration context."
+     },

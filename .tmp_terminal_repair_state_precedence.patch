@@ -1,0 +1,47 @@
+diff --git a/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop b/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop
+--- a/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop
++++ b/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop
+@@ -1163,7 +1163,22 @@ if chain_health_reason:
+     print(chain_health_reason)
+     raise SystemExit(0)
+-workspace = pathlib.Path(str(marker_payload.get("workspace") or ""))
+-if workspace.exists():
++current_signature = repair_payload.get("current_signature")
++if not isinstance(current_signature, dict):
++    current_signature = {}
++advancement_snapshot = repair_payload.get("current_advancement_snapshot")
++if not isinstance(advancement_snapshot, dict):
++    advancement_snapshot = {}
++current_state = str(
++    current_signature.get("current_state")
++    or advancement_snapshot.get("current_state")
++    or ""
++).strip()
++if current_state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
++    raise SystemExit(1)
++
++workspace_text = str(marker_payload.get("workspace") or "").strip()
++workspace = pathlib.Path(workspace_text) if workspace_text else None
++if workspace is not None and workspace.exists():
+     chain_files = sorted(
+         (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
+         key=lambda path: path.stat().st_mtime if path.exists() else 0,
+@@ -1187,16 +1202,3 @@ if workspace.exists():
+                 print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}:{phase or 'unknown'}")
+                 raise SystemExit(0)
+-current_signature = repair_payload.get("current_signature")
+-if not isinstance(current_signature, dict):
+-    current_signature = {}
+-advancement_snapshot = repair_payload.get("current_advancement_snapshot")
+-if not isinstance(advancement_snapshot, dict):
+-    advancement_snapshot = {}
+-current_state = str(
+-    current_signature.get("current_state")
+-    or advancement_snapshot.get("current_state")
+-    or ""
+-).strip()
+-if current_state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
+-    raise SystemExit(1)
+ failure_context = repair_payload.get("current_failure_context")
+ if isinstance(failure_context, dict):
+     latest_failure = failure_context.get("plan_latest_failure")

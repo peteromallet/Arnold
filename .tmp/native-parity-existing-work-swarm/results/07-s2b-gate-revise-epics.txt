@@ -1,0 +1,104 @@
+---
+
+## Swarm Audit: S2b Gate/Revise Native Loop
+
+### 1. Verdict: **Partly exists**
+
+The gate/revise handler logic and component policy surfaces are sophisticated and production-grade. However, all route authority, loop control, and semantic decision-making live inside handler-local state mutations and component policy surfaces — not in native `.pypeline` source. No S2b extraction sprint has been executed; the S2 sprint in the master plan (`master-plan.md:618–656`) specifies exactly this extraction scope.
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**Handler code — the gate/revise loop body (production-grade, handler-owned):**
+
+- `handlers/gate.py:77–133` — `_record_gate_debt_entries`: debt recording on accepted tradeoffs.
+- `handlers/gate.py:414–463` — `_critique_no_progress_streak`: consecutive no-net-progress round tracking, persisted on `state['meta']` with idempotent per-iteration stamping.
+- `handlers/gate.py:466–520` — `_critique_terminate_branch`: severity-gated cap termination — critical flags → `STATE_BLOCKED` (terminal, no auto-transition); cosmetic-only → `STATE_GATED` → force-proceed.
+- `handlers/gate.py:523–712` — `_build_gate_route_signal`: the full route decision engine — PROCEED with flag resolution validation, ITERATE with iteration/no-progress cap checks, TIEBREAKER, ESCALATE, ABORT/FORCE-PROCEED, unknown-recommendation fallback.
+- `handlers/gate.py:657–677` — critique loop caps: `_prior_iterate_rounds` vs `_effective_critique_cap`, no-progress streak vs `max_critique_no_progress`.
+- `handlers/gate.py:810` — `_GATE_RECOMMENDATIONS = frozenset({"PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER"})`.
+- `handlers/gate.py:813–1097` — `_normalize_gate_payload`, gate reprompt logic, `_build_gate_prompt_override`.
+- `handlers/shared.py:308–312` — `_build_gate_prompt_override` for targeted reprompt.
+
+**Component policy surfaces (route tables in disguise):**
+
+- `components.py:1110–1237` — `GATE_POLICY`: route groups mapping `revise→(iterate, retry_gate, reprompt_downgrade)`, `finalize→(proceed, force_proceed)`, severity policy, normalization policy, debt visibility, reprompt policy (`components.py:1154–1158`, `:1162`, `:1194–1201`).
+- `components.py:1239–1336` — `REVISE_LOOP_POLICY`: `max_iterations`, `until_ref: critique_gate_pass`, reentry routes (`:1276–1279` mapping `iterate→revise`, `retry_gate→gate_retry_revise`, `reprompt_downgrade→gate_reprompt_revise`), cap outcomes (`:1281–1285` — critical→escalate, cosmetic→force_proceed, no_progress→escalate), termination policy (`:1286–1314` — iteration caps, no_progress caps, severity policy, debt visibility).
+- `components.py:1338` — `REVISE_LOOP_TERMINATION_POLICY` (MappingProxyType, constants).
+
+**Canonical `.pypeline` source (encodes loop shape but still calls handler-backed `AUTHORING_*`):**
+
+- `workflow.pypeline:390–470` — the critique→gate→revise loop with typed outcomes: `GateOutcome.PROCEED`, `ITERATE`, `RETRY_GATE`, `REPROMPT_DOWNGRADE`, `TIEBREAKER`. Loop policy declared at `workflow.pypeline:393` via `loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")`.
+
+**Orchestration support:**
+
+- `orchestration/gate_checks.py:1–204` — preflight checks, agent availability, operational unverifiable classification, `build_gate_artifact`, `build_orchestrator_guidance`.
+- `orchestration/gate_signals.py:1–252` — signal scoring, flag weighting, loop diagnostics, `build_gate_signals`.
+- `orchestration/critique_runtime.py:1–1314` — critique orchestration feeding into gate.
+
+**Native interface declarations:**
+
+- `native_interfaces.py:157–173` — `GATE = NativeInterface(stable_id="megaplan.native.gate.v1", path_group="gate/tiebreaker")` with `handler_ref` pointing to `handle_gate`.
+- `native_interfaces.py:138–153` — `REVISE = NativeInterface(stable_id="megaplan.native.revise.v1", path_group="critique/revise")` with `handler_ref` pointing to `handle_revise`.
+
+**Native golden fixtures (substrate proof only, NOT semantic proof):**
+
+- `tests/arnold_pipelines/megaplan/fixtures/native_goldens/D3-gate-preflight/` — covers gate preflight via `writing_panel_strict`, manifest note: "Substrate proof only: validates native suspension mechanism and resume cursor contract" (`manifest.json:88`).
+- `tests/arnold_pipelines/megaplan/fixtures/native_goldens/D4-gate-revise/` — covers critique→revise→finalize loop via `creative` and `writing_panel_strict`, manifest note: "Substrate proof only: validates native revise loop stage sequencing and resume after human gate. Flag debt acceptance, reprompt, and typed outcomes require LLM — not covered by deterministic runners" (`manifest.json:115`).
+
+**Prior conformance claim (unverified / false pass):**
+
+- `docs/arnold/megaplan-native-representation-conformance-report.md:26–56` — claims rows 6–9 (`critique-gate-revise-loop`, `gate-preflight-normalization`, `gate-signal-reprompt`, `gate-flag-debt-fallback`) as "implemented" with `canonical_source` or `declared_policy` carrier. Master plan explicitly identifies this as a false pass: "The false conformance report lists all 31 rows as implemented... but strict source checking fails current canonical source with 9 AWF245 diagnostics" (`master-plan.md:167`).
+
+**S2 sprint scope in master plan (specifies extraction, not yet executed):**
+
+- `master-plan.md:618–656` — S2 "Front-Half Native Loop" maps exactly to S2b scope: "gate preflight/reprompt/downgrade/debt/severity, and revise loop caps/no-progress termination." Exit gates include split-outcome scenarios for "gate reprompt/downgrade, critical cap exhaustion, cosmetic cap exhaustion, force-proceed, and abort." Deletion requirement: "Front-half `components.py` route groups, `handler_ref` route ownership, and handler-local `current_state`/`next_step` routing for corrected rows must be gone or fenced."
+
+**No sprint brief found:**
+
+- Searched `.megaplan/initiatives/megaplan-native-parity-corrective/` — zero sprint brief files exist. S0 (North Star plumbing) and S1a–S2 are specified in the master plan but no per-sprint briefs or closeouts have been created yet.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **`handlers/gate.py` logic**: The 1173-line gate handler is a complete, tested implementation of preflight checks, reprompt, downgrade, debt recording, severity-gated termination, iteration/no-progress cap enforcement, and all route signals. The extraction task is to lift this semantics into native source constructs, not to re-implement it from scratch. The handler can initially serve as the phase body behind a typed native interface.
+- **`components.py` policy surfaces**: `GATE_POLICY` and `REVISE_LOOP_POLICY` contain the complete route vocabulary, severity taxonomy, and termination rules. These can be translated into declared policies on native source constructs rather than remaining as opaque component dicts.
+- **`native_interfaces.py`**: GATE and REVISE interfaces already define stable IDs, path groups, input/output schemas, and legacy alias mappings — directly usable for typed native phase declarations.
+- **`orchestration/gate_checks.py` and `gate_signals.py`**: Preflight and signal logic is well-factored and can be attached as pure phase bodies or invoked from declared policies behind typed interfaces.
+- **`workflow.pypeline:390–470`**: The loop shape (`loop(policy=REVISE_LOOP_POLICY)` with `GateOutcome` enum branches) is already in the right form — it just needs the `AUTHORING_GATE`/`AUTHORING_REVISE` calls replaced with native constructs that own their semantics rather than delegating to handlers.
+- **Native golden fixtures D3/D4**: Substrate evidence that the native runtime can execute gate-preflight and gate-revise stage sequences. These can be widened as extraction proceeds.
+- **`creative/pipeline.py`**: Demonstrates the pattern of native `@pipeline` with `@phase` wrappers delegating to existing step implementations, plus `compile_pipeline()` attachment — directly applicable as the S2b extraction template.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Native gate route authority**: Replace `AUTHORING_GATE(...)` handler delegation with source-owned gate semantics. The gate preflight, reprompt, downgrade, debt, severity policy must be declared policies on a native `@decision` or phase construct, not resolved by `_build_gate_route_signal` mutating `state['current_state']`.
+
+2. **Native revise loop control**: Replace `AUTHORING_REVISE(...)` handler call with a bounded-loop native construct whose iterate/proceed/tiebreaker/abort/force-proceed outcomes are typed source exits, not handler-local state transitions.
+
+3. **Loop cap and no-progress termination as source-visible policy**: The iteration cap (`_effective_critique_cap`), no-progress streak (`_critique_no_progress_streak`), and severity-gated termination branch (`_critique_terminate_branch`) must move from handler-local functions to declared loop policy on the native source construct.
+
+4. **Split-outcome scenarios**: Master plan requires scenarios for gate reprompt/downgrade, critical cap exhaustion, cosmetic cap exhaustion, force-proceed, and abort (`master-plan.md:632`). Zero exist today beyond substrate-only golden traces.
+
+5. **Dead-delete mutation tests**: Mutate/delete old front-half route groups in `components.py` and prove behavior unchanged under S2 scenarios vs frozen S1a baselines (`master-plan.md:633`).
+
+6. **Severity schema enforcement**: Blocking North Star actions must be treated as correctness/security flags for loop caps and cannot be force-proceeded through the cosmetic branch (`NORTHSTAR.md:336–337`; `north-star-design.md:336–343`). This gate/review logic doesn't yet exist.
+
+7. **Pre-sprint S0 plumbing**: North Star action schema (`gate.json`/`gate_carry.json` `north_star_actions[]`), revise prompt rendering, pre-worker halt guard, post-worker validation — none of this exists yet (`master-plan.md:344–401`).
+
+---
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+**S2 (Front-Half Native Loop) should be split into S2a (prep/plan/critique) and S2b (gate/revise)**, because gate/revise is the most semantically dense component in the entire Megaplan workflow:
+
+- Gate alone carries 6 route signals (proceed, iterate, tiebreaker, escalate, abort, force-proceed), 3 revise reentries (iterate, retry_gate, reprompt_downgrade), 2 cap outcomes (critical→escalate, cosmetic→force-proceed), no-progress tracking, debt recording, preflight normalization, reprompt, and severity policy — all currently distributed across `handlers/gate.py` (1173 lines) and `components.py` (200+ lines of policy surface).
+
+- The S0 North Star action plumbing (`master-plan.md:344–401`) is a prerequisite for any sprint that touches gate/revise semantics, because gate is the phase that creates North Star actions and routes them to revise. S0 must close before S2b extraction begins, or S2b will be building against a gate that cannot enforce the North Star severity schema.
+
+- The master plan's S2 scope already acknowledges the coupling: "Gate/revise is one extraction unit because gate route groups and revise reentries are coupled (`components.py:1154–1158`, `:1276–1279`)" (`master-plan.md:624`). This coupling argument is correct, but S2 should still sequence: S2a extracts prep/plan/critique first (lower risk, fewer route signals), then S2b tackles gate/revise with S0 plumbing already in place.
+
+- S2b exit gates should add: (a) North Star action blocking-severity integration test (blocking NS actions cannot be force-proceeded through cosmetic cap), (b) clean-context auditor can predict gate route from `.pypeline` source alone without reading `handlers/gate.py` or `components.py` route groups.

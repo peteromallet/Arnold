@@ -1,0 +1,35 @@
+--- a/arnold_pipelines/megaplan/cli/status_view.py
++++ b/arnold_pipelines/megaplan/cli/status_view.py
+@@ -7,7 +7,7 @@
+ 
+ from arnold_pipelines.megaplan.anchors import anchor_summary
+ from arnold_pipelines.megaplan.types import StepResponse
+-from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
++from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_FINALIZED
+ from arnold_pipelines.megaplan.user_actions import FALLBACK, OMIT
+ from arnold_pipelines.megaplan._core import (
+     active_phase_name,
+@@ -352,6 +352,12 @@
+ 
+ 
+ def _projected_valid_next(state: dict[str, Any]) -> list[str]:
++    # ``finalized`` is the normal execute-entry state, not a terminal
++    # completion label.  Keep execute routable even when finalize emitted
++    # pre-execute quality/admission diagnostics; the execute handler remains
++    # responsible for enforcing those authoritative gates.
++    if state.get("current_state") == STATE_FINALIZED:
++        return ["execute"]
+     history = state.get("history")
+     last = history[-1] if isinstance(history, list) and history else None
+     if (
+@@ -1146,6 +1152,10 @@
+             if isinstance(value, dict)
+         ],
+     }
++    if isinstance(state.get("latest_failure"), dict):
++        # Preserve the authoritative occurrence in status.  Fixed-name phase
++        # result artifacts are projections and may be stale.
++        response["latest_failure"] = state["latest_failure"]
+     if routing_degradation_summary is not None:
+         response["routing_degradations"] = routing_degradations
+         response["routing_degradation_summary"] = routing_degradation_summary

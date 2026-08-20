@@ -1,0 +1,76 @@
+## S2b Gate/Revise Native Loop — Swarm Audit
+
+---
+
+### 1. Verdict: **Partly exists**
+
+The gate/revise loop topology is source-visible in `workflow.pypeline`, the runtime handler machinery is mature, but semantic authority is split between source and handlers/components — and the North Star action plumbing (S0 prerequisite) has **zero code implementation**.
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**Loop topology (source-visible):**
+- `workflow.pypeline:393, 465-470` — `loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")` with `GateOutcome.ITERATE`/`RETRY_GATE`/`REPROMPT_DOWNGRADE` branching to `AUTHORING_REVISE`. The critique→gate→revise cycle is structurally present in source.
+
+**Gate handler machinery (handler-owned):**
+- `handlers/gate.py:77-133` — Debt recording on PROCEED with tradeoff tracking (`_record_gate_debt_entries`).
+- `handlers/gate.py:414-463` — No-progress streak tracking (`_critique_no_progress_streak`) with per-iteration idempotency.
+- `handlers/gate.py:466-520` — Severity-gated termination (`_critique_terminate_branch`): correctness/security → `STATE_BLOCKED`; cosmetic-only → `STATE_GATED` (force-proceed).
+- `handlers/gate.py:525-678` — Cap exhaustion and no-progress checking in `_build_gate_route_signal`, calling `_prior_iterate_rounds` (358-369) and `_effective_critique_cap` (345-355).
+- `handlers/gate.py:993-1097` — Reprompt/downgrade: re-runs gate worker, auto-downgrades PROCEED to ITERATE when blocking flags persist after reprompt.
+
+**Policy metadata (component-owned):**
+- `components.py:1154-1158` — Gate route groups: `finalize` (proceed, force_proceed), `revise` (iterate, retry_gate, reprompt_downgrade), `tiebreaker`, `override`, `halt`.
+- `components.py:1276-1279` — Revise reentries mapping iterate/retry_gate/reprompt_downgrade to revise step ids.
+- `components.py:1239-1336` — `REVISE_LOOP_POLICY` with termination_policy, cap_outcomes, severity_policy, debt_visibility.
+
+**Enums and contracts:**
+- `outcomes.py:32-44` — `GateOutcome` enum: PROCEED, ITERATE, TIEBREAKER, ESCALATE, ABORT, SUSPEND, BLOCKED_PREFLIGHT, FORCE_PROCEED, RETRY_GATE, REPROMPT_DOWNGRADE.
+- `outcomes.py:152-155` — `ReviseOutcome` enum: COMPLETED.
+- `boundary_contracts.py:107-138` — `gate_to_revise` and `revise_to_critique` boundary contracts.
+
+**Gate carry (existing structured feedback path):**
+- `handlers/gate.py:270-308` — `_build_gate_carry` and `_write_gate_carry` already pass structured data (recommendation, flags, warnings, rationale) from gate to revise via `gate_carry.json`. This is the exact carrier North Star actions should attach to.
+
+**Prior extraction artifact:**
+- `workflows/front_half.pypeline:1-63` — Only covers prep→plan; gate/revise NOT extracted.
+
+**Prior conformance claim (unverified false pass):**
+- `megaplan-native-representation-conformance-report.md:31` — Claims `critique-gate-revise-loop` as `implemented`. The master plan (lines 167-169) calls this a false pass: strict checking produces 9 `AWF245_ROW_EVIDENCE_INSUFFICIENCY` diagnostics.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+1. **`gate_carry.json` as the North Star action carrier.** The master plan (lines 295-296, 338-339) specifies `north_star_actions` should travel through `gate.json`/`gate_carry.json`. The carry infrastructure already exists at `handlers/gate.py:270-308`; it needs a `north_star_actions` field added, not a new transport.
+
+2. **Severity-gated termination pattern.** `_critique_terminate_branch` (466-520) already implements schema-assigned severity → blocking/force-proceed routing. This pattern directly generalizes to North Star action enforcement (master plan:333-337): blocking North Star actions should use the same correctness/security → BLOCKED, cosmetic → force-proceed branch.
+
+3. **Reprompt/downgrade loop as the North Star enforcement pattern.** The reprompt path (993-1097) already demonstrates: gate detects unresolved issue → re-runs worker → auto-downgrades on persistent failure. North Star blocking actions would follow the same pattern: unresolved blocking action → routes to revise → gate re-checks.
+
+4. **`REVISE_LOOP_POLICY` metadata as extraction target.** The policy metadata at `components.py:1239-1336` already declaratively specifies cap outcomes, severity policies, and termination rules. S2 extraction would make these source-visible in `.pypeline` constructs rather than component metadata.
+
+5. **Boundary contracts for gate↔revise.** `boundary_contracts.py:107-138` can carry North Star enforcement rules as contract-level constraints.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **North Star action plumbing (S0 prerequisite) — entirely absent.** No `north_star_actions` field in gate/carry schema, no revise prompt rendering, no `north_star_actions_addressed` in `revise.json`, no pre-worker halt guard, no severity schema override in handler code. Zero code; all references are only in docs.
+
+2. **Gate preflight as source-owned construct.** Preflight checks currently live in handler code (`gate_checks.py`, called from `handlers/gate.py:64`). Must be source-visible policy attachment.
+
+3. **Debt recording as source-owned.** `_record_gate_debt_entries` (77-133) mutates state within the handler; must be a source-declared side effect of the gate step.
+
+4. **Revise loop caps/no-progress termination as source-owned.** The cap logic (`_effective_critique_cap`, `_critique_no_progress_streak`) lives entirely in the handler. Must be declared policy on the loop construct.
+
+5. **Tests.** No gate/revise loop tests or North Star action tests exist in `tests/arnold_pipelines/megaplan/`.
+
+---
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+**S0 must execute before S2 can close.** The North Star action plumbing is a hard prerequisite — S0 exit gates reference files (`test_north_star_actions_gate_revise.py`, `test_north_star_actions_review_blocking.py`) that don't exist. S2's scope includes "iterate/proceed/tiebreaker/abort/force-proceed" routing and "revise caps/no-progress" — both of which the master plan says must respect North Star blocking action semantics (lines 330-337: "Blocking North Star actions count like blocking correctness/security flags for loop caps and no-progress termination. They cannot be force-proceeded through the cosmetic/low-risk branch.").
+
+**Risk:** If S2 extracts gate/revise into source without S0 North Star plumbing, the extraction will be incomplete — blocking North Star actions won't have a programmatic enforcement path, and the loop cap/force-proceed semantics won't distinguish North Star blocking from cosmetic flags. The `gate_carry.json` carrier that North Star actions need already exists; S0 should be scoped to add the `north_star_actions` field to what `_build_gate_carry` already produces, rather than building new transport.

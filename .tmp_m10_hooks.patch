@@ -1,0 +1,28 @@
+--- a/arnold/pipeline/native/hooks.py
++++ b/arnold/pipeline/native/hooks.py
+@@ -459,6 +459,12 @@ class EffectLedgerHooks:
+         result: Any,
+     ) -> Any:
+         result = self._inner.on_step_end(instr, ctx, result)
++        effect_ctx = ctx.get("effect")
++        if isinstance(effect_ctx, dict) and effect_ctx.get("duplicate_action") is not None:
++            if self._active_effect_metadata is not None:
++                self._last_effect_metadata = dict(self._active_effect_metadata)
++            self._active_effect_metadata = None
++            return result
+         if self._active_effect_metadata is not None and instr.idempotency_key:
+             self._ledger.mark_fulfilled(instr.idempotency_key)
+             self._active_effect_metadata["lifecycle_state"] = (
+@@ -483,6 +489,12 @@ class EffectLedgerHooks:
+         exc: BaseException,
+     ) -> None:
+         self._inner.on_step_error(instr, ctx, exc)
++        effect_ctx = ctx.get("effect")
++        if isinstance(effect_ctx, dict) and effect_ctx.get("duplicate_action") is not None:
++            if self._active_effect_metadata is not None:
++                self._last_effect_metadata = dict(self._active_effect_metadata)
++            self._active_effect_metadata = None
++            return
+         if self._active_effect_metadata is not None and instr.idempotency_key:
+             self._ledger.mark_failed(instr.idempotency_key)
+             self._active_effect_metadata["lifecycle_state"] = (

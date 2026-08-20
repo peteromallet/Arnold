@@ -1,0 +1,8 @@
+diff --git a/tests/pipelines/test_folder_audit.py b/tests/pipelines/test_folder_audit.py
+--- a/tests/pipelines/test_folder_audit.py
++++ b/tests/pipelines/test_folder_audit.py
+@@ -8,0 +9,4 @@
++
++@pytest.mark.skip(reason="folder-audit pipeline was archived; current native targets remain covered")
++def test_folder_audit_pipeline_retired() -> None:
++    pass

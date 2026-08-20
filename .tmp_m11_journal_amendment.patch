@@ -1,0 +1,25 @@
+--- m11-conformance-and-legacy-retirement.md
++++ m11-conformance-and-legacy-retirement.md
+@@ -131,6 +131,23 @@
+   suite, or infer success from an unowned raw log. Add SIGTERM/SIGKILL,
+   parent-death, restart, and duplicate-launch negative controls.
++- Make event-journal restart work bounded by new events, not historical journal
++  size. The projection cursor must follow the final event in chronological
++  append order rather than the maximum historical sequence value; a stale or
++  future sidecar cursor must self-heal from a bounded tail read without forcing
++  a full projection rewrite. A fresh transaction UUID must append without
++  scanning or materializing the full canonical journal; recovery may perform a
++  streaming historical membership check only when a pre-existing durable
++  commit marker makes recovery necessary.
++- Add a large-journal restart canary with stale/future sidecar values and
++  sequence resets. It must prove bounded resident memory, bounded bytes read and
++  written per fresh append, no rewrite of an already-current large projection,
++  deterministic recovery after crash, and no repeated rebuild loop. Provide an
++  explicit content-addressed compaction/checkpoint procedure whose retained
++  prefix/tail and legal-hold policy are verifiable; compaction may not silently
++  truncate authority, renumber surviving events, or make an accepted receipt
++  undiscoverable. Cursor advancement or process liveness alone does not pass
++  this canary.
+ - Add legacy-terminal authority regressions. A legacy `done` label without an
+   evidence-backed accepted kernel decision must remain typed
+   `legacy_terminal_without_authority` / `no_accepted_attempt`; emitting the same

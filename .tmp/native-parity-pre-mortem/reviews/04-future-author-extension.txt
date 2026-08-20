@@ -1,0 +1,235 @@
+Now I have all the source data needed. Let me compile the review.
+
+---
+
+# Isolated Review 4 — Future Workflow Author and Extension Test
+
+## Architecture Summary
+
+The system has **three authoring surfaces** with overlapping concerns:
+
+| Surface | Location | Role |
+|---|---|---|
+| **Native decorators + compiler** | `arnold/pipeline/native/{decorators,compiler,ir,runtime}.py` | Canonical Python-shaped authoring: `@pipeline`, `@phase`, `@decision` → AST compile → `NativeProgram` → `run_native_pipeline` |
+| **Explicit-node DSL** | `arnold/workflow/{dsl,compiler}.py` | Declarative `Pipeline(steps=..., routes=...)` → `WorkflowManifest` — no decisions, no effects, no human gates |
+| **Megaplan substrate (M11, locked)** | `arnold_pipelines/megaplan/` | Handler-based state-machine, auto-driver, recovery policy, override matrix, gate checks |
+
+The **evidence_pack** workflow (`arnold_pipelines/evidence_pack/`) demonstrates dual registration: a native program (`native.py:299-325`) **and** an independently-built projected shell (`pipeline.py:85-164`), with `build_pipeline()` attaching the native program to the shell at `pipeline.py:167-184`. This dual-registration pattern is the root of most extension ambiguity.
+
+---
+
+## Change 1: Add a Gate Outcome
+
+### Intended edit point
+**`arnold_pipelines/evidence_pack/native.py:254-257`** — the `@decision(name="verdict_is_fail", vocabulary=frozenset({"fail", "pass"}))` decorator. Add the new label to `vocabulary`, add a branch arm in the `if`/`else` at `native.py:317-324`, and add the label to the compiler's branch map.
+
+### Natural developer bypass
+**`arnold_pipelines/megaplan/orchestration/gate_checks.py`** — The megaplan gate infrastructure has rich signal processing (`build_gate_signals`, `run_gate_checks`, `build_gate_artifact`). A developer adds a new gate outcome constant (e.g., `GATE_CHECK_PENDING_REVIEW`) there, the auto-driver (`auto.py`) picks it up from the phase result, and the handler transitions to a new state. **The native topology never sees the new outcome.**
+
+### Why current gates miss this bypass
+The `@decision` vocabulary is validated at compile time (`compiler.py:876` — `vocabulary: frozenset[str] = dec_meta.get("vocabulary", frozenset())`). The runtime enforces that decisions return only vocabulary labels at `runtime.py` (decision invocation). But nothing validates that the megaplan handler's gate outcomes are a subset of the native decision vocabulary. The handler and the native program are independently authored — no cross-validation exists.
+
+### Anti-bypass proof
+A test that compiles the native program, extracts `NativeDecision.vocabulary` from the IR, and asserts it contains every gate outcome the handler can emit. This would fail if the handler added an outcome without updating the vocabulary.
+
+```python
+# Required extension test (does not exist)
+def test_gate_outcomes_are_authored_in_native_vocabulary():
+    program = build_native_program()
+    for decision in program.decisions:
+        if decision.name == "verdict_is_fail":
+            assert "pending_review" in decision.vocabulary  # Fails until authored
+```
+
+### Smallest amendment
+Add a conformance check in `arnold/workflow/validation.py` or a new test that cross-references handler outcome constants against compiled native `NativeDecision.vocabulary` fields. This is a **semantic-authority risk** — the native topology is the single source of truth for control flow, and handler-only outcomes create ghost branches.
+
+---
+
+## Change 2: Add a Dynamic Review Lens
+
+### Intended edit point
+**`arnold_pipelines/evidence_pack/native.py:303-314`** — add the new `@phase`-decorated function (e.g., `validator_license_compliance`) and add it to the `parallel([...])` block's branch list alongside the five existing validators. The compiler (`compiler.py:1170-1254`) resolves parallel branches from the literal list and emits `ParallelInstruction` entries.
+
+### Natural developer bypass
+**`arnold_pipelines/evidence_pack/steps.py:242-248`** — the `_VALIDATOR_FUNCS` dict maps `VALIDATOR_KIND_*` constants to validator functions. A developer adds a new `VALIDATOR_KIND_LICENSE = "license_compliance"` constant, writes `_validate_license`, and registers it in the dict. The `ContentValidatorStep.run()` at `steps.py:257-289` dispatches via `_VALIDATOR_FUNCS.get(self.checkpoint_kind)`. **The lens runs but the native topology and graph projection don't know it exists.**
+
+### Why current gates miss this bypass
+The evidence_pack projected shell at `pipeline.py:120-129` hard-codes `validator_step_names`:
+```python
+validator_step_names = (
+    "validator_structural_audit",
+    "validator_budget_enforcement",
+    "validator_suspension_propagation",
+    "validator_by_ref_validation",
+    "validator_human_review_gate",
+)
+```
+And native phases at `native.py:144-206` define corresponding `@phase` functions. A lens added only to `_VALIDATOR_FUNCS` would have no corresponding phase, no parallel branch slot, and no projected stage. But `ContentValidatorStep.run()` can still dispatch to it at runtime if someone constructs an ad-hoc `ContentValidatorStep(checkpoint_kind="license_compliance")` — which the handler layer could do without touching the native topology.
+
+### Anti-bypass proof
+A topology-audit test that walks `NativeProgram.parallel_blocks`, extracts all branch names, and asserts they match the projected `ParallelStage.steps`. Also: validate that every `VALIDATOR_KIND` constant has a corresponding `@phase` in `native.py`.
+
+```python
+def test_every_validator_kind_has_native_phase():
+    from arnold_pipelines.evidence_pack.verifier import VALIDATOR_KINDS
+    program = build_native_program()
+    phase_names = {p.name for p in program.phases}
+    validator_phases = {n for n in phase_names if n.startswith("validator_")}
+    # Every VALIDATOR_KIND must map to a phase name pattern
+    for kind in VALIDATOR_KINDS:
+        assert any(kind in name for name in validator_phases), \
+            f"VALIDATOR_KIND {kind!r} has no native phase"
+```
+
+### Smallest amendment
+A `conformance` test that calls `derive_topology(program)` and asserts `TopologyNode` coverage for every registered step handler. This is a **semantic-authority risk** — runtime-only lenses bypass audit, projection, and topology inspection.
+
+---
+
+## Change 3: Add a Retry Policy
+
+### Intended edit point
+**`arnold/pipeline/native/runtime.py:693-714`** (`_resolve_phase_max_attempts`) and **`runtime.py:1088-1143`** (the attempt loop). Set `__phase_max_attempts__` on the `@phase` decorator, or pass a `phase_max_attempts: Mapping[str, int]` to `run_native_pipeline()`. The runtime loops `for attempt in range(1, max_attempts + 1)` at `runtime.py:1094`.
+
+### Natural developer bypass
+**`arnold_pipelines/megaplan/orchestration/recovery_policy.py:1-80`** — The `RecoveryPolicy` has a sophisticated action taxonomy: `retry_fresh`, `retry_transient`, `escalate`, `halt`. It classifies errors by `ExitKind` and layer. A developer adds a new `Action` literal, adjusts budget caps (`DEFAULT_MAX_CONTEXT_RETRIES`), and the auto-driver (`auto.py`) applies it. **The native runtime's simple attempt loop doesn't know about retry classification — it just retries blindly N times.**
+
+### Why current gates miss this bypass
+The native runtime retry loop at `runtime.py:1137-1143` catches `BaseException`, calls `_hooks.on_step_error()`, and retries up to `max_attempts`:
+```python
+try:
+    result = instr.func(ctx)
+    break
+except BaseException as exc:
+    _hooks.on_step_error(instr, ctx, exc)
+    if attempt >= max_attempts:
+        raise
+```
+But the megaplan `RecoveryPolicy.classify()` can produce `escalate` or `halt` decisions that the auto-driver enforces — entirely outside the native runtime's purview. A retry policy added to megaplan would never be visible in the native program's phase metadata.
+
+### Anti-bypass proof
+A test that compiles the native program and asserts that every phase that can produce a retryable error has `__phase_max_attempts__` set, and that the value matches the corresponding `RecoveryPolicy` budget constant.
+
+### Smallest amendment
+Add a `retry_policy` field to the `@phase` decorator (`decorators.py:18-104`) that maps to the `RecoveryPolicy.Action` vocabulary, making retry semantics declarative on the native surface. Currently only `max_attempts` exists — no classification vocabulary. This is **both a semantic-authority risk** (retry logic lives outside the native authoring surface) **and ergonomic polish** (the taxonomy doesn't flow from decorator → IR → runtime → hooks).
+
+---
+
+## Change 4: Add a Human Decision
+
+### Intended edit point
+**`arnold_pipelines/evidence_pack/native.py:269-296`** — the existing `@decision(name="human_review_decision", human_gate=True, choices=("emit", "failed"), ...)` is the prototype. Add a second `@decision(human_gate=True, ...)` in the native pipeline body at `native.py:299-325`.
+
+### Natural developer bypass
+**`arnold_pipelines/evidence_pack/steps.py:329-388`** — `HumanReviewStep.run()` handles the suspension/resume logic with `Suspension(kind="human", ...)`. The megaplan handler layer has `STATE_AWAITING_HUMAN` and `STATE_AWAITING_HUMAN_VERIFY`. A developer adds a new human step class or a new state transition in megaplan's state machine **without declaring a corresponding `@decision(human_gate=True)` in the native topology.**
+
+### Why current gates miss this bypass
+The native runtime's human-gate suspension at `runtime.py:1423-1584` checks `_is_human_gate` by inspecting `instr.func.__decision_human_gate__`. If a human suspension is triggered via a plain `StepResult` with `ContractResult(status=SUSPENDED, suspension=Suspension(kind="human"))` (as `HumanReviewStep.run()` does at `steps.py:355-368`), the runtime enters the phase-suspended path (`runtime.py:1212-1280`), NOT the human-gate path. The human-gate path (`runtime.py:1410-1584`) is only entered for `@decision(human_gate=True)` instructions. **The handler can suspend for human input without going through a native decision at all.**
+
+### Anti-bypass proof
+A test that compiles the native program, extracts all `NativeDecision` nodes with `human_gate=True`, and asserts they match every human suspension point in the handler layer:
+
+```python
+def test_human_gates_are_authored_as_native_decisions():
+    program = build_native_program()
+    gate_decisions = [d for d in program.decisions if d.human_gate]
+    assert len(gate_decisions) >= 2  # Fails if handler has more human gates
+```
+
+### Smallest amendment
+Require that any `Suspension(kind="human")` emitted by a step be gated through a `@decision(human_gate=True)` in the enclosing native program. The runtime already has the mechanism — the gap is that `@phase` functions can emit human suspensions directly without going through a `@decision`. This is a **semantic-authority risk**: human gates can proliferate in the handler layer without native topology registration.
+
+---
+
+## Change 5: Add an Override
+
+### Intended edit point
+**There is no native pipeline primitive for overrides.** The closest is `@decision(override_routes={"emit": "emit_attestation", "failed": None})` at `native.py:269-277`, which is only for human-gate routing, not general plan overrides. The override authority mechanism lives entirely in the locked M11 substrate:
+
+- **`arnold_pipelines/megaplan/workflows/override_matrix.py`** — declares 11 override actions (`abort`, `add-note`, `adopt-execution`, `force-proceed`, `recover-blocked`, `replan`, `resume-clarify`, `set-model`, `set-profile`, `set-robustness`, `set-vendor`) with `family`, `route_signal`, `target_ref`, `dispatch_surface`
+- **`arnold_pipelines/megaplan/handlers/override.py`** — 1944-line handler dispatching each override
+- **`arnold_pipelines/megaplan/orchestration/override_authority.py`** — receipt validation and freshness tokens
+
+### Natural developer bypass
+**This is not a bypass — the megaplan path IS the only path.** A developer must edit `override_matrix.py` to add a new action, then `handlers/override.py` to dispatch it, then the handler's `_OVERRIDE_ACTIONS` dict. There is no native alternative to bypass.
+
+### Why current gates miss this bypass
+This is a **design gap**, not a bypass. The `run_native_pipeline()` function accepts `override: Mapping[str, Any] | str | None = None` at `runtime.py:752`, but it's only plumbed into the human-gate resume path (`_select_native_human_gate_resume_label` at `runtime.py:1592`). General overrides (force-proceed, replan, abort) are invisible to the native runtime.
+
+### Anti-bypass proof
+Cannot write an anti-bypass test because the native surface has no override primitive. The smallest proof is: `grep -r "override" arnold/pipeline/native/` returns only human-gate routing references.
+
+### Smallest amendment
+Add an `override` intrinsic to the native pipeline grammar. The existing `RESERVED_INTRINSIC_NAMES` at `arnold/workflow/authoring.py:410-416` includes `halt`, `suspend`, `transition` — add `override` here, and add keyword args to the `IntrinsicDeclaration` that carry `action`, `target_ref`, and `route_signal`. This is a **semantic-authority risk** — overrides are the only control primitive with zero native topology representation.
+
+---
+
+## Change 6: Add an External Effect
+
+### Intended edit point
+**`arnold/pipeline/native/effect_taxonomy.py:19-41`** — extend `_OPERATION_LITERALS` and `_EFFECT_CLASS_LITERALS` with the new operation (e.g., `"send_email"`, `"api_call"`). Then add `operation="send_email"`, `effect_class="external_service_call"` to a `@phase` decorator at the call site. The compiler reads these from `get_phase_meta()` at `compiler.py` and the IR carries them in `NativePhase.operation` and `NativePhase.effect_class`.
+
+### Natural developer bypass
+**`arnold_pipelines/megaplan/observability/effect_ledger.py`** — the megaplan effect ledger tracks effect enforcement. A developer adds a new effect handler there, emits effect events, and the auto-driver processes them. **But the effect is never declared on the `@phase` decorator — the native IR has `operation=None` and `effect_class=None` for that phase.**
+
+Also: the `NativeRuntimeHooks` protocol at `arnold/pipeline/native/hooks.py:58` has `on_step_start`, `on_step_end`, `on_step_error` — but no `on_effect_commit` hook. The `EffectLedgerHooks` at `hooks.py:42` handles effect record state but only within the hook protocol's existing callbacks.
+
+### Why current gates miss this bypass
+The effect taxonomy validation (`effect_taxonomy.py:62-69` — `is_valid_operation`, `is_valid_effect_class`) only validates that a string is in the literal set. It does NOT validate that every effect emitted by the handler layer is declared on a `@phase` decorator. The native runtime's reconcile logic (`runtime.py:1118-1134`) checks `_reconcile_resumed_effect` only for phases that have `operation` declared. A phase with no `operation` but side effects in its body runs unchecked.
+
+### Anti-bypass proof
+A conformance test that walks every `@phase` in the compiled program, extracts its `operation` and `effect_class` fields, and asserts non-`None` for any phase that the handler layer treats as side-effecting:
+
+```python
+def test_side_effecting_phases_declare_effect_metadata():
+    program = build_native_program()
+    for phase in program.phases:
+        if _handler_has_side_effect(phase.name):  # cross-reference
+            assert phase.operation is not None, \
+                f"Phase {phase.name!r} has handler side effects but no operation declared"
+            assert phase.effect_class is not None, \
+                f"Phase {phase.name!r} has handler side effects but no effect_class declared"
+```
+
+### Smallest amendment
+Add `on_effect_commit` to the `NativeRuntimeHooks` protocol at `hooks.py:58` so the effect ledger integrates with the native runtime at the correct insertion point. Also: add a compile-time validation that any `@phase` whose body calls a known side-effecting function must declare `operation=` and `effect_class=`. This is **both semantic-authority risk** (effects undeclared on the decorator can't be audited, reconciled, or replayed) **and ergonomic polish** (the hook insertion point doesn't exist).
+
+---
+
+## Future-Extension Table
+
+| Change | Intended Edit Point | Likely Bypass | Why Gates Miss It | Anti-Bypass Proof | Smallest Amendment |
+|---|---|---|---|---|---|
+| **Gate outcome** | `@decision(vocabulary=)` in native.py:254 | `orchestration/gate_checks.py` constant + handler | No cross-validation between handler outcomes and decision vocabulary | `test_gate_outcomes_are_authored_in_native_vocabulary` | Conformance check: handler outcomes ⊆ vocabulary |
+| **Dynamic review lens** | `@phase` + `parallel([...])` in native.py:303 | `_VALIDATOR_FUNCS` dict in steps.py:242 | Lens runs via `ContentValidatorStep` dispatch without phase/topology | `test_every_validator_kind_has_native_phase` | Topology-audit conformance test |
+| **Retry policy** | `__phase_max_attempts__` on `@phase` | `RecoveryPolicy.classify()` + auto.py | Native runtime has simple retry count, megaplan has classified retry taxonomy | `test_retry_policy_matches_native_max_attempts` | Add `retry_policy` to `@phase` decorator |
+| **Human decision** | `@decision(human_gate=True)` in native.py:269 | `HumanReviewStep` + `Suspension(kind="human")` in steps.py:355 | `@phase` can emit human suspensions without a `@decision(human_gate=True)` | `test_human_gates_are_authored_as_native_decisions` | Require human suspensions through `@decision(human_gate=True)` only |
+| **Override** | No native primitive exists | `override_matrix.py` + `handlers/override.py` (only path) | Native surface has `override_routes` only for human-gate routing | `grep override arnold/pipeline/native/` returns only human-gate refs | Add `override` intrinsic to `authoring.py` |
+| **External effect** | `operation=`/`effect_class=` on `@phase` | `observability/effect_ledger.py` handler | No compile-time validation that side-effecting phases declare effects | `test_side_effecting_phases_declare_effect_metadata` | Add `on_effect_commit` hook + compile-time check |
+
+---
+
+## Semantic-Authority Risks vs. Ergonomic Polish
+
+### Semantic-authority risks (threaten the correctness of audit, topology, replay)
+
+1. **Override has no native topology** — The most severe gap. Overrides affect control flow (force-proceed skips gate, abort terminates, replan rewinds) but have zero representation in `NativeProgram`, `NativeTopology`, or the compiler. Any audit of "what can this workflow do?" is incomplete without reading megaplan handler code.
+
+2. **Human gates can bypass `@decision`** — `@phase` functions can emit `Suspension(kind="human")` directly (as `HumanReviewStep.run()` does). The runtime enters the phase-suspended path instead of the human-gate path, meaning the `@decision`'s `choices`, `override_routes`, `resume_input_schema`, and `artifact_stage` are never consulted. The compiler doesn't detect this.
+
+3. **Handler outcomes drift from decision vocabulary** — The native `@decision(vocabulary={"fail", "pass"})` is the declared control surface. But megaplan handlers can emit outcomes that the auto-driver processes without any vocabulary check. A `verdict_is_fail` decision returning `"needs_review"` would compile fine but break at runtime — or worse, be silently added as a handler path.
+
+4. **Effects undeclared on phases are invisible to reconcile/replay** — The native runtime's `_reconcile_resumed_effect` at `runtime.py:1118` only activates for phases with `operation` declared. A phase that writes files but omits `operation="file_write"` has no reconcile protection on resume — the runtime will re-execute it.
+
+### Ergonomic polish (friction, not correctness)
+
+1. **Dual registration burden** — The evidence_pack's `pipeline.py` builds a projected shell independently of `native.py`. Every new phase must be added in THREE places: the `@phase` in `native.py`, the `parallel()` branch list, AND the `validator_step_names` tuple in `pipeline.py`. The graph projection at `graph_projection.py` can derive stages from the native program, but the evidence pack doesn't use it — it rebuilds the shell by hand.
+
+2. **No `@phase` → `Step` auto-registration** — Adding a `@phase` function doesn't automatically register it in the projected shell or the handler dispatch. A developer must remember to add it to the parallel block AND the projected stage list.
+
+3. **Retry taxonomy mismatch** — The native runtime has `max_attempts: int` (a single number) while megaplan's `RecoveryPolicy` has `retry_fresh | retry_transient | escalate | halt` with per-budget counters. These don't map naturally.
+
+4. **Effect taxonomy needs synchronized extension** — Adding an operation requires edits to `effect_taxonomy.py` (the literal), the `@phase` decorator call site, any reconcile table entries in `reconcile.py`, AND any handler code in megaplan. Four synchronized edits for one effect.
+
+5. **The `native.py` generator syntax is discoverable only by example** — The `@pipeline`-decorated generator with `yield` and `if`/`else` (`evidence_pack_native` at `native.py:299-325`) is the only complete example in the repository. There's no tutorial or template generator.

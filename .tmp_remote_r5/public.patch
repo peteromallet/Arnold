@@ -1,0 +1,69 @@
+--- a/arnold/workflow/attempt_ledger_store.py
++++ b/arnold/workflow/attempt_ledger_store.py
+@@ -226,6 +226,16 @@
+     return json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False)
+ 
+ 
++def canonical_event_json(event: LedgerEvent) -> str:
++    """Compatibility name for the shared canonical event serializer.
++
++    The ledger/outbox contract historically called this helper
++    ``canonical_event_json``.  Keep that public spelling as a thin alias so
++    callers cannot accidentally reintroduce a second serialization rule.
++    """
++    return canonical_event_content(event)
++
++
+ def events_canonical_equal(a: LedgerEvent, b: LedgerEvent) -> bool:
+     """Return ``True`` when *a* and *b* have byte-equivalent canonical content.
+ 
+@@ -2060,6 +2070,9 @@
+     "AttemptLedgerError",
+     "AttemptLedgerStore",
+     "AttemptReservation",
++    "canonical_event_content",
++    "canonical_event_json",
++    "events_canonical_equal",
+     "GapEntry",
+     "GateStatus",
+     "IdempotencyConflictError",
+--- a/arnold/workflow/__init__.py
++++ b/arnold/workflow/__init__.py
+@@ -221,6 +221,8 @@
+     AttemptLedgerError,
+     AttemptLedgerStore,
+     AttemptReservation,
++    canonical_event_content,
++    canonical_event_json,
+     GateStatus,
+     GapEntry,
+     IdempotencyConflictError,
+@@ -306,6 +308,9 @@
+     "AttemptLedgerError",
+     "AttemptLedgerStore",
+     "AttemptReservation",
++    "canonical_event_content",
++    "canonical_event_json",
++    "events_canonical_equal",
+     # ── M6A substrate: outbox ──
+     "AppendWithOutboxResult",
+     "AccessContext",
+--- a/arnold/workflow/ledger_outbox.py
++++ b/arnold/workflow/ledger_outbox.py
+@@ -30,6 +30,7 @@
+     _TERMINAL_EVENT_TYPE_VALUES,
+     _deserialize_ledger_event,
+     AppendResult,
++    canonical_event_content,
+     events_canonical_equal,
+     IdempotencyConflictError,
+     MonotonicSequenceError,
+@@ -369,7 +370,7 @@
+                 f"does not match store attempt_id {attempt_id!r}"
+             )
+ 
+-        event_json = json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False)
++        event_json = canonical_event_content(event)
+         conn = self._conn
+         now_ns = time.time_ns()
+ 

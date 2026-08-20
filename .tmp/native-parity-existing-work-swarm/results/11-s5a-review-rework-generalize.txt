@@ -1,0 +1,100 @@
+Now I have enough evidence. Let me compile the final report.
+
+---
+
+## S5a Swarm Audit: Review + Rework — adjacent/generalizable mechanisms
+
+**Verdict:** **Partly exists** — the review handler contains the full pass/rework/blocked/force-proceed/deferred-human state machine, the native workflow source has fanout/fanin/reducer topology, and boundary contracts are declared. But these are handler/policy-surface-owned, not source-authoritative. The false-pass pattern described in the master plan (line 190, 909) is still active: S5 rows pass on `Mapping` existence checks, not source-construct ownership.
+
+---
+
+### 1. Existing artifacts (verified)
+
+**Review outcome state machine** — `handlers/review.py:995-1074`
+- `_resolve_review_outcome` produces `ReviewRouteDecision(result, next_state, route_signal)` with five outcomes: `pass`, `rework`, `blocked`, `force_proceeded`, `deferred_human`.
+- Rework cap at lines 1034-1056: counts prior rework entries in history, compares against `max_review_rework_cycles`, branches into `blocked` (blockers present) or `force_proceeded` (cosmetic-only).
+- `_force_proceed_blockers` at lines 964-985: inspects criteria/rework_items for `priority="must"` failures.
+
+**Native workflow source topology** — `workflow.pypeline:413-464`
+- Review fan-in via `parallel_map(id="review-fan-in", reducer=AUTHORING_REVIEW)`.
+- Rework cycle via second `parallel_map(id="review-rework-fan-in", reducer=AUTHORING_REVIEW)`.
+- All five outcomes handled as `if/elif` branches over `ReviewOutcome` enum with explicit `AUTHORING_HALT`, `AUTHORING_OVERRIDE`, `AUTHORING_REVISE` calls.
+
+**REVIEW_POLICY component surface** — `components.py:1509-1588`
+- Declares `cap_thresholds` (line 1526), `blocked_and_advisory_outcomes` (line 1527), `force_proceed_authority` (line 1528), `human_verification` (line 1529), `control_transitions` (line 1538-1574), `authored_topology` (line 1575).
+- `_review_route_surface()` at lines 593-641 contains the fan_in_contract, route_groups, rework_cycle, retry_and_cap.
+
+**S5 boundary contracts** — `boundary_contracts.py:420+`
+- 8 contracts: `review_child_outputs`, `review_reducer_promotion`, `review_rework_effects`, `review_cap_authority`, `review_human_verification`, `finalize_artifacts`, `finalize_fallback`, `final_projection`.
+- Tagged as "local to the registry until the downstream checker adds first-class S5 row matching" (lines 39-41).
+
+**Checker S5 boundary rows** — `source_compiler.py:1783-1872`
+- `_implemented_s5_boundary_rows` builds rows from `review_fan_in`, `review_rework`, `finalize_calls` in source, then validates `Mapping` existence on `REVIEW_POLICY`/`FINALIZE_POLICY` subsurface keys.
+- This is the false-pass mechanism: passes on policy-surface shape, not source ownership.
+
+**S5 test fixtures** — `test_row_evidence_checker.py:971-1033`
+- `test_s5_invalid_authoring_fixtures_match_sidecars`: tests rejection of handler-owned review cap, hidden finalize fallback, single-handler review fanout.
+- `test_s5_canonical_fixture_accepts_source_visible_review_finalize_evidence`: positive test using boundary contracts + receipts.
+
+**Finalize fallback** — `handlers/finalize.py:1758-1764`
+- `_route_finalize_baseline_selection_failure_to_revise` routes baseline contract failures to revise.
+
+**No-review terminal** — `execute/policy.py:360-408`, `FINALIZE_POLICY` surface at `components.py:1450-1468`.
+
+---
+
+### 2. Adjacent mechanisms (generalizable)
+
+**Gate critique cap** (`handlers/gate.py:466-520`, `:658-677`) — strongest generalization candidate
+- `_critique_terminate_branch` is structurally identical to review's rework-cap logic: checks for open correctness/security flags → `STATE_BLOCKED`/`escalate`, else cosmetic-only → `STATE_GATED`/`force_proceed`. Comment at lines 658-660 explicitly references the review rework cap as its mirror.
+- `_prior_iterate_rounds` (line 358-369) mirrors `prior_rework_count` in review handler (line 1034-1036) — same history-scanning pattern.
+- `_critique_no_progress_streak` (line 456-463) mirrors the concept of tracking no-progress for cap exhaustion.
+- Gate's `_build_gate_route_signal` (line 523-712) is the same pattern as review's `_resolve_review_outcome`: recommendation → route_signal + state transition.
+
+**REVISE_LOOP_POLICY termination surface** (`components.py:1284-1336`)
+- `termination_policy.iteration_caps` with `default_config_key`/`robust_config_key` pattern (line 1287-1293)
+- `termination_policy.cap_outcomes` with `critical_or_security_blockers` → `escalate`, `cosmetic_only` → `force_proceed` (line 1304-1308) — directly reusable for review rework cap.
+- `severity_policy` (line 1298-1303): `blocking_statuses`, `significant_severities`, `cosmetic_severities`, `critical_categories`.
+
+**Gate route groups pattern** (`components.py:1154-1160`)
+- `route_groups` mapping `finalize`/`revise`/`tiebreaker`/`override`/`halt` → signal tuples. Review has the same pattern at `_review_route_surface().route_groups` (lines 603-607).
+
+---
+
+### 3. What can be reused / generalized
+
+| Artifact | Reusability |
+|---|---|
+| Gate's `_critique_terminate_branch` + severity policy | Extract into a shared `_cap_termination` helper accepting `(open_blockers, reason)` → `(route_signal, state, summary)`. Both gate and review cap use the same branching logic. |
+| `REVISE_LOOP_POLICY.termination_policy` schema | Generalize into a `LoopCapPolicy` type usable by both critique loop and review rework loop. The cap thresholds, severity policy, no-progress config, and cap outcomes are identical in shape. |
+| `workflow.pypeline` parallel_map + reducer pattern | Already the canonical source-authoritative representation. S4's execute parallel_map and S5's review parallel_map use the same structural idiom (`parallel_map(id=..., items=..., step=..., reducer=...)`). |
+| Review handler's `ReviewRouteDecision` dataclass | Already generic enough. `_resolve_review_outcome` is a pure function over inputs — it can be lifted into a policy module independent of the handler. |
+| Boundary contracts | Already declared for all 8 S5 rows. These can be promoted from "local until checker adds matching" to first-class evidence sources. |
+
+---
+
+### 4. What still must be built
+
+1. **Source-authoritative rework cap** — The cap threshold logic lives in `_resolve_review_outcome` (handler) and `_review_cap_threshold_surface` (components.py:443-458). Must migrate into named source constructs visible in `.pypeline`.
+
+2. **Review fanout/fanin as named source constructs** — Currently `parallel_map(reducer=AUTHORING_REVIEW)`. The reducer `AUTHORING_REVIEW` is a component import. S5 must own this reducer in source with source-visible route signals.
+
+3. **Pass/rework/blocked routing from source, not handler** — The five-branch `if/elif` in `workflow.pypeline:420-463` already maps outcomes to destination phases. But the outcome *decision* (`_resolve_review_outcome`) happens inside the handler. The decision must be lifted so source constructs own the routing logic.
+
+4. **Policy-as-route-table rejection** — `REVIEW_POLICY.metadata.route_surface` (components.py:593-641) is a route table. The structural rejection rules at `source_compiler.py:1189-1209` currently flag missing keys but don't reject the table itself. S5 requires rejecting `Mapping`-valued `cap_thresholds`, `blocked_and_advisory_outcomes`, `force_proceed_authority` as row authority (master plan lines 431-433, 754-755).
+
+5. **`test_review_finalize_native_flow.py`** — Referenced as exit gate at master plan line 738 but does not exist in the test tree.
+
+6. **No-review terminal in source** — Currently lives in `execute/policy.py:360-408` and `FINALIZE_POLICY` metadata. Must be source-visible.
+
+---
+
+### 5. Recommended sprint plan adjustment
+
+- **Generalize gate's `_critique_terminate_branch` into a shared `LoopCapOutcome` resolver first** (before S5a extraction). This de-risks the rework cap extraction by proving the severity-gated branching works in a shared pure function that both gate and review consume. The cap threshold config, no-progress tracking, and force-proceed-vs-blocked logic are identical in shape.
+
+- **Add the missing `test_review_finalize_native_flow.py`** as a pre-extraction baseline gate to capture current review output shapes before refactoring.
+
+- **Promote boundary contracts to first-class** by adding row-matching in the checker (`_implemented_s5_boundary_rows` should validate against contracts, not `Mapping` existence).
+
+- **Extract the five-outcome routing from `_resolve_review_outcome`** into a pure function in a policy module (analogous to `execute/policy.py`). The handler then becomes a thin caller of this policy function, making the extraction path clear: policy function → source construct → delete handler routing.

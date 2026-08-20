@@ -1,0 +1,16 @@
+diff --git a/tests/arnold_pipelines/megaplan/test_incident_bridge.py b/tests/arnold_pipelines/megaplan/test_incident_bridge.py
+--- a/tests/arnold_pipelines/megaplan/test_incident_bridge.py
++++ b/tests/arnold_pipelines/megaplan/test_incident_bridge.py
+@@ -56,9 +56,13 @@ def _recovery_verification(
+         or {
+             "kind": "plan_state",
+             "blocker_id": "blocker-100",
+             "blocker_cleared": True,
+             "directly_observed": True,
+             "independent": True,
++            "canonical_runner_live": True,
++            "fresh_progress_beyond_checkpoint": True,
++            "continued_progress": True,
++            "first_progress_observed_at": "2026-07-03T19:59:30+00:00",
+             "observed_at": "2026-07-03T20:00:00+00:00",
+         },

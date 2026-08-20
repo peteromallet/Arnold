@@ -1,0 +1,72 @@
+*** Begin Patch
+*** Update File: vibecomfy/comfy_nodes/__init__.py
+@@
+-        vibecomfy = properties.get("vibecomfy")
+-        vibecomfy = vibecomfy if isinstance(vibecomfy, dict) else {}
++        raw_vibecomfy = properties.get("vibecomfy")
++        # Prompt metadata belongs to ComfyUI's queued prompt. Copy the layers
++        # we enrich below so a node execution never mutates that shared prompt.
++        vibecomfy = dict(raw_vibecomfy) if isinstance(raw_vibecomfy, dict) else {}
+@@
+-        vibecomfy.setdefault("intent", {})
+-        vibecomfy.setdefault("runtime", {})
++        existing_intent = vibecomfy.get("intent")
++        vibecomfy["intent"] = dict(existing_intent) if isinstance(existing_intent, dict) else {}
++        existing_runtime = vibecomfy.get("runtime")
++        vibecomfy["runtime"] = dict(existing_runtime) if isinstance(existing_runtime, dict) else {}
+@@
+-        vibecomfy["execution_mode"] = widget_mode
++        # Dynamic CodeIntent widgets are the live runtime contract. The
++        # executor validates vibecomfy.runtime, not the historical top-level
++        # execution_mode, so copy every contract field before dispatch.
++        runtime: dict[str, Any] = vibecomfy["runtime"]
++        runtime_widget_fields = (
++            "runtime_backed", "runtime_contract_version", "timeout_ms",
++            "max_source_bytes", "allowed_builtins", "allowed_imports",
++            "redaction_policy", "policy_version", "passthrough_on_non_json",
++            "unrestricted_ack",
++        )
++        for field in runtime_widget_fields:
++            if field in kwargs:
++                runtime[field] = kwargs[field]
++        runtime["execution_mode"] = widget_mode
++        vibecomfy["execution_mode"] = widget_mode
+*** Update File: vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js
+@@
+-      url: "/vibecomfy/agent-edit",
+-      next_action: "retry",
++      url: "/vibecomfy/agent-executor",
++      next_action: "resubmit_or_refresh",
+@@
+-      url: "/vibecomfy/agent-edit",
+-      next_action: "retry",
++      url: "/vibecomfy/agent-executor",
++      next_action: "resubmit_or_refresh",
+*** Update File: vibecomfy/comfy_nodes/web/agent_edit_lifecycle.js
+@@
+-    url: failure.url || "/vibecomfy/agent-edit",
+-    next_action: failure.next_action || "retry",
++    url: failure.url || "/vibecomfy/agent-executor",
++    next_action: failure.next_action || "resubmit_or_refresh",
+*** Update File: tests/browser/agent_edit_lifecycle.test.mjs
+@@
+-      url: "/vibecomfy/agent-edit",
+-      next_action: "retry",
++      url: "/vibecomfy/agent-executor",
++      next_action: "resubmit_or_refresh",
+@@
+-      url: "/vibecomfy/agent-edit",
+-      next_action: "retry",
++      url: "/vibecomfy/agent-executor",
++      next_action: "resubmit_or_refresh",
+@@
+-  assert.equal(panel.state.failure.url, "/vibecomfy/agent-edit");
+-  assert.equal(panel.state.failure.next_action, "retry");
++  assert.equal(panel.state.failure.url, "/vibecomfy/agent-executor");
++  assert.equal(panel.state.failure.next_action, "resubmit_or_refresh");
+@@
+-      url: "/vibecomfy/agent-edit",
+-      next_action: "retry",
++      url: "/vibecomfy/agent-executor",
++      next_action: "resubmit_or_refresh",
+*** End Patch

@@ -1,0 +1,67 @@
+Now I have sufficient evidence. Here is the analysis:
+
+---
+
+**Verdict: mostly sound with amendments**
+
+---
+
+### 1. Does the doc correctly describe existing mechanisms?
+
+**Partially.** It accurately describes that `NORTHSTAR.md` is required for epics (`briefs.py:124-138` scaffolds it; `chain/spec.py:303-320` validates `AnchorSpec(north_star=…)`). The North Star is captured as an immutable anchor at init time (`anchors.py:137-189`), rendered to every phase via `render_anchor_context` (`anchors.py:375-397`), and milestone anchors extend but don't replace the epic anchor — confirmed at `epic_skill.md:91` and `anchors.py:347-350`.
+
+The claim that briefs carry a sprint-specific extension path is correct: `epic_skill.md:124` shows `anchors.north_star` at the milestone level, and `chain/spec.py` supports per-milestone `AnchorSpec`.
+
+**However, the doc overstates what exists.** The current `NORTHSTAR.md` template (`briefs.py:261-288`) contains only `End State`, `Non-Negotiables`, `Explicit Non-Goals`, `Allowed Temporary Bridges`, and `Drift Signals` — there is **no** `## Sprint Review / North Star Sense Check` section. Sense checks already exist in the finalize flow (`_core/io.py:847-859`), but they are task-level execution acknowledgments, not North Star alignment Q&A. The phrase "North Star Sense Check" appears nowhere in the codebase. The `north_star_critical` flag does not exist anywhere.
+
+### 2. Is the proposal compatible with existing `--north-star`, chain anchors, and robustness?
+
+**Compatible in concept; has gap with `bare`/`light` robustness.**
+
+The `--north-star` and `--north-star-file` CLI flags (`cli/__init__.py:319-320`) write `NORTHSTAR.md` into the initiative directory (`cli/__init__.py:1499-1502`). The proposed parsing from `NORTHSTAR.md` and sprint briefs would be additive — nothing contradicts.
+
+However, the robustness compatibility claim at line 135-138 is **incomplete**. `_ROBUSTNESS_WORKFLOW_LEVELS` (`_core/workflow_data.py:120-126`) shows:
+- `bare`: skips critique entirely, has no gate, goes plan→finalize→execute→done. There is **no revise step** in bare.
+- `light`: skips gate tiebreaker and review (`_core/workflow_data.py:103-111` sets `STATE_CRITIQUED → revise → STATE_GATED` and `STATE_EXECUTED → []`).
+
+The doc says "For bare/light, either disallow North-Star-critical mode or automatically raise robustness to full" (line 138). That's the right instinct, but the doc elsewhere (lines 86-88) says bare/light are "optional" and the questions should be skipped. This is a **contradiction**: you can't have North-Star-critical epics in bare/light mode without either auto-raising or hard-disallowing. The design needs to pick one.
+
+The existing anchor rendering system already provides audience-specific instructions (`anchors.py:22-39` includes gate, critique, revise, review instructions). The proposal's plan/critique/gate/revise/review routing (lines 131-135) maps cleanly onto existing `ANCHOR_AUDIENCE_INSTRUCTIONS`.
+
+### 3. Exact implementation touch points
+
+| What the doc proposes | Files needing edits | Evidence |
+|---|---|---|
+| Parse `## Sprint Review / North Star Sense Check` from NORTHSTAR.md + briefs | `briefs.py` (add parser), `anchors.py` (extend `AnchorBundle`), possibly new module | Current anchor loading only reads raw content (`anchors.py:274-300`) |
+| Add `north_star_actions` to gate.json | `handlers/gate.py:56-75` (modify `_build_gate_signals_artifact`), `content_types.py:88-99` (`_GATE_SIGNAL_SCHEMA`), `step_contracts.py:129-138` (gate contract uses `gate.json` schema) | Gate signals currently have `signals`, `robustness`, `warnings`, `criteria_check`, `preflight_results`, `unresolved_flags` |
+| Add `north_star_actions_addressed` to revise.json | `handlers/revise.py`, `flags.py:255-302` (revise already tracks `flags_addressed`), `step_contracts.py:169-178` | Revise contract uses `revise.json` schema |
+| Rendering north_star_actions in revise prompt | `prompts/revise.py` (or wherever revise prompt is built) | Revise currently consumes flag feedback via `flags.py:255-302` |
+| Pre-worker guard in revise (hunt on `add_human_halt`, etc.) | `handlers/revise.py` (worker dispatch), `handlers/shared.py` (`_run_worker`) | Revise handler at `handlers/revise.py` |
+| Gate routing logic for unresolved blocking actions | `handlers/gate.py:77+` (`_record_gate_debt_entries` and routing logic), `orchestration/gate_signals.py` | Gate already routes ITERATE/ESCALATE/TIEBREAKER |
+| Review block on unresolved closeout actions | `handlers/review.py`, `orchestration/completion_contract.py` | Review already produces `needs_rework`/blocked |
+| Loop/no-progress caps | `auto.py` or `chain/epic_chain.py` (retry counters) | Chain has `retry_counts` and `DEFAULT_MILESTONE_RETRY_CAP = 2` (`chain/spec.py:63`) |
+| `north_star_critical` flag + robustness enforcement | `chain/spec.py` (new field in `ChainSpec` or `FailurePolicy`), `_core/workflow.py:273-298` (workflow for robustness) | No such flag exists |
+
+### 4. Contradictions, missing fields, and dangerous assumptions
+
+**Contradictions:**
+- Lines 86-88 say bare/light skip questions (optional). Line 135-138 says bare/light should either disallow North-Star-critical or auto-raise. These are incompatible defaults.
+- Line 97-103 says missing questions create a warning for non-North-Star-critical epics. But `north_star_critical` doesn't exist yet. The doc relies on a field it hasn't defined in any schema.
+
+**Missing fields:**
+- `north_star_critical` is undefined anywhere in the codebase. The doc proposes it at line 87 without specifying where it lives (chain.yaml? milestone? init flag?).
+- The `AnchorSpec` dataclass (`chain/spec.py:302-320`) only has `north_star: str | None`. No `north_star_critical` boolean.
+- The `_GATE_SIGNAL_SCHEMA` (`content_types.py:88-99`) has no `north_star_actions` field.
+- No schema exists for the `north_star_action` JSON structure shown at lines 166-181.
+
+**Dangerous assumptions:**
+- "Revise must add the requested concrete plan change" (line 262) relies on the agent model correctly interpreting structured JSON and producing plan edits. The existing revise flow (`flags.py:255-302`) only tracks *which* flags were addressed — it doesn't verify *how*. The proposal's `north_star_actions_addressed` tracking (lines 238-247) is a good countermeasure but doesn't exist yet.
+- The canary audit path (lines 155-158) requiring a clean-context reviewer to catch seeded defects is ambitious. The existing parallel critique system (`orchestration/critique_runtime.py`) could be extended, but there's no "clean-context reviewer" concept today.
+- "Blocking actions cannot be force-proceeded as cosmetic issues" (line 331) assumes the override system (`control_interface.py`, `OVERRIDE_ACTION_MATRIX`) can distinguish North Star severity from other flag severities. The current flag system (`flags.py:51-65`) has severity categories (`correctness`, `security`, `completeness`, etc.) but no `north_star` category.
+
+**Summary of amendments needed:**
+1. Define `north_star_critical` as a concrete field in `chain.yaml` (likely under `anchors` or `driver`).
+2. Resolve the bare/light contradiction: either auto-raise robustness to `full` when `north_star_critical` is true, or hard-reject the combination at spec parse time.
+3. Add `## Sprint Review / North Star Sense Check` to the `NORTHSTAR.md` template scaffolded by `briefs.py:261-288`.
+4. Add `north_star_actions` to `_GATE_SIGNAL_SCHEMA` and `north_star_actions_addressed` to the revise schema.
+5. Add a `north_star` category to the flag severity system or create a parallel action tracking mechanism.

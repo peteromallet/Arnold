@@ -1,0 +1,85 @@
+## SA4 Audit Findings
+
+### 1. Review Outcome State Machine
+
+**A. Rework-cap enforcement is split across two distinct caps with different behaviors**
+- `handlers/review.py:1032-1033` — Review handler uses `max_robust_review_rework_cycles` for thorough/extreme, `max_review_rework_cycles` otherwise. Counts prior reworks from history.
+- `auto.py:155` — Auto-driver declares its own `DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3`, applied at `auto.py:4154` as `rework_cycles_observed > max_review_rework_cycles + 1`.
+- These caps can diverge: handler bails to `blocked` (L1039-1050) with unresolved blockers, auto-driver bails with a different threshold (`+1` offset). If `execution.max_review_rework_cycles` is configured to 5 but the auto-driver cap is 3, the driver bails before the handler's internal cap fires.
+- **Gate: S5 (review-rework-finalize)**
+
+**B. `_resolve_review_outcome` returns `STATE_DONE` on rework-cap-exhausted-with-no-blockers (L1052-1056)**
+- The handler force-proceeds to done when rework cycles are exhausted but all remaining items are non-blocking. This is a silent auto-approve path. The auto-driver may also have already bailed with `rework_cycles_observed > max_review_rework_cycles + 1` at `auto.py:4154`, creating a race between handler-level and driver-level caps.
+- **Gate: S5**
+
+**C. No-review terminal routing evaluated post-execute, not pre-execute**
+- `execute/policy.py:360-408` — `evaluate_no_review_terminal` gates on `robustness` string. `bare` → `TERMINATE_DONE`, `light` → `TERMINATE_DONE` (unless `has_deferred_must`), `standard`/`thorough` → `NOT_APPLICABLE`.
+- `handlers/execute.py:562-572` — The decision is made after execute completes. If the robustness level changes between planning and execution (e.g., via `override set-robustness`), the no-review terminal decision may not match the user's expectation at commit time.
+- **Gate: S6 (override-auto-compat)**
+
+### 2. Parallel Review
+
+**D. Parallel review only activates for extreme robustness hermes path**
+- `handlers/review.py:1706` — Falls through to parallel only when `agent_type == "hermes"` and MOCK_ENV_VAR is not set.
+- `handlers/review.py:1784-1792` — Checks are from `review_checks.checks_for_robustness("extreme")`, hardcoded to "extreme" regardless of actual robustness level. Parallel review synthesis at L1805-1808 appends `_synthesize_review_rework_items` into the merged payload.
+- **Gate: S5**
+
+### 3. Force-Proceed & Override Dispatch
+
+**E. `_build_override_action_output` has no validation that `force-proceed` target matches current state**
+- `handlers/override.py:158-196` — Force-proceed checks `state["current_state"] == STATE_DONE` for a review-skip path, otherwise forces to `STATE_GATED` with `next_step="finalize"`. There is no validation that the plan is actually in a gate or executed state. Calling `override force-proceed` on a plan in `planned` state would incorrectly route to `finalize`.
+- **Gate: S6**
+
+**F. Override matrix declares `adopt-execution` as non-control-routed (`control_routed: False`)**
+- `workflows/override_matrix.py:79-80` — `adopt-execution` is the only override action with `control_routed: False`. It bypasses the `_control_routed_override_actions()` guard in `handlers/override.py:129`. This means `_override_response_owns_next_step` returns `True` for it (since its family is `terminal_route`, not caught by `family != "terminal_route"` check), making the auto-driver treat it as owning its own next-step — but the control interface won't route it.
+- **Gate: S6**
+
+**G. `_OVERRIDE_ACTION_KEYS` (override_matrix.py:12-26) lists 11 actions; `_build_override_action_output` (override.py:132-316) handles only 9**
+- Actions `adopt-execution` is declared in the matrix but has no branch in `_build_override_action_output`. It falls through to `raise UnknownOverrideActionError`. The `_routed_override_response` is only called from the CLI path, so the matrix declares authority for an action the handler doesn't implement inline. The `handle_override` entry in `handlers/override.py` has a separate path for it.
+- **Gate: S6**
+
+### 4. Auto-Driver Next-Step Derivation
+
+**H. `_phase_command` translates `execute` to always include `--confirm-destructive --user-approved --retry-blocked-tasks`**
+- `auto.py:1218-1231` — This is correct for auto mode but means auto-driver can never run execute in a safe/dry-run mode. There is no opt-out mechanism. Combined with force-proceed routing to `finalize` (L179), auto-driver can chain execute→review→force-proceed→done with escalating model tiers without any human gate.
+- **Gate: S6**
+
+**I. ESCALATE handling defaults to `force-proceed` with only two alternatives**
+- `auto.py:189` — `ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")`. No "pause" or "await-human" option. A plan stuck in a gate→critique→revise→gate loop will escalate to force-proceed after `add-note` attempts exhaust (L4496-4521), silently passing the gate.
+- **Gate: S6**
+
+### 5. Baseline Fallback & Failure Routes
+
+**J. `_run_planning_phase` has a three-tier dispatch: native → compatibility fallback → hard error**
+- `auto.py:628-667` — Native dispatch via `_run_native_planning_phase` (L670-727), fallback via `_run_planning_phase_compatibility_fallback` (L730-774). The compatibility fallback path (`auto.py:740-774`) dispatches through `registry.dispatch_operation_for` with `CANONICAL_BUILTIN_PIPELINE` — this is the same registry path `_compatibility.py:255-266` uses. If the registry is misconfigured, both paths fail silently.
+- **Gate: S7 (compat collapse)**
+
+**K. `auto_escalation.py:50-61` — `CATEGORY_POLICY` has `review_non_convergence` escalate=True, retries_first=0**
+- This triggers immediate tier escalation on review non-convergence (auto.py:4058-4095). The escalation climbs the tier ladder with no retry at current tier. If the top tier also fails, the plan falls to the review rework cap without further escalation. There is no cross-tier model diversity check — if the same model is at multiple tiers (duplicate specs), escalation is a no-op but increments the counter.
+- **Gate: S6**
+
+### 6. Compatibility Load-Bearing
+
+**L. `_compatibility.py:255-266` — `_run_megaplan_native_phase` imports `COMMAND_HANDLERS` at runtime**
+- The `COMMAND_HANDLERS` dict from `arnold_pipelines.megaplan.cli` is imported lazily inside the phase function. If the CLI module is refactored, this breaks silently — the handler returns `"native phase ... is unsupported"` without any startup-time validation.
+- **Gate: S7**
+
+**M. `_compatibility.py:104` — `build_compatibility_shell` passes `pipeline.entry` directly**
+- The `entry` field from the DSL pipeline is used as the neutral shell's entry point. If the DSL pipeline's entry step ID doesn't match any stage name, the shell will have a dangling entry reference. There's no validation here.
+- **Gate: S7**
+
+**N. `_compatibility.py:186-187` — `_default_next_pc` returns `None` for routes targeting `"halt"`**
+- `auto.py:373-379` — This means the NativeProgram treats `halt` as terminal, but the CompatibilityPipelineShell (L126) sets `default_next = "halt"` for steps with no routes. These are semantically identical but tracked in two different places: the native program has `next_pc=None` and the shell has `default_next="halt"`. If the native program is used without the shell, `halt` is not a resolvable target.
+- **Gate: S7**
+
+---
+
+### Summary: Gate Assignments
+
+| Gate | Findings | Focus |
+|------|----------|-------|
+| **S5** | A, B, D | Review state machine: rework cap divergence, parallel review hardcoding, silent done transition |
+| **S6** | C, E, F, G, H, I, K | Override/auto compat: force-proceed validation gaps, adopt-execution routing, ESCALATE default, tier escalation policy |
+| **S7** | J, L, M, N | Compatibility collapse: dual dispatch fragility, runtime imports, entry validation, halt semantics |
+
+**Commands run:** `search_files` (12 calls), `read_file` (16 calls). No modifications made.

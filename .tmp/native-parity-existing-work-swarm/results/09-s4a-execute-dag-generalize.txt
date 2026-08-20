@@ -1,0 +1,92 @@
+## S4a Audit Report: Execute DAG + Scheduling
+
+### 1. Verdict
+
+**Partly exists** — substantial typed policy constructs and a clean scheduler abstraction exist, but they are not yet wired into a source-authoritative execute path. The prior conformance report's claim of "implemented" is an **unverified prior claim** that the master plan correctly identifies as a false pass.
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**A. Dependency batching (topological sort) — exists and is clean:**
+
+- `compute_task_batches()` — pure topological sort with cycle detection, `completed_ids` filtering, and deterministic ordering (`_core/io.py:67-121`)
+- `split_oversized_batches()` — size-based split (`_core/io.py:124-142`)
+- `compute_global_batches()` — facade over `compute_task_batches` on finalize tasks (`_core/io.py:145-147`)
+- `compute_batch_complexity()` — complexity scoring for tier routing (`_core/io.py:150-167`)
+
+**B. Generic scheduler abstraction — exists, reusable, but unused in execute path:**
+
+- `schedule_batches()` — thin facade with `completed_ids` filtering (`_core/scheduler/topo.py:15-65`)
+- `run_scheduler()` — scatter→batch→process→reduce generic loop (`_core/scheduler/run.py:42-81`)
+- `Reduce[T]` — frozen generic reduction type (`_core/scheduler/types.py:21-27`)
+- Exported via `_core/__init__.py:190-192` but NOT imported by `execute/batch.py`
+
+**C. Model/tier policy — purely typed, exists:**
+
+- `resolve_batch_tier()` — complexity→tier spec mapping with fallback (`execute/policy.py:460-520`)
+- `TierRouteDecision` / `TierRouteOutcome` enums (`execute/policy.py:138-162`)
+
+**D. Batch continuation — purely typed, exists:**
+
+- `resolve_single_batch_next_step()` — determines EXECUTE/REVIEW/BLOCKED after batch (`execute/policy.py:411-457`)
+- `NextExecuteTransition` / `NextStepDecision` (`execute/policy.py:203-229`)
+
+**E. Blocked scheduling/retry — purely typed, exists:**
+
+- `evaluate_blocker_recovery_policy()` (`execute/policy.py:528-623`)
+- `BlockedRetryDecision` / `BlockedRetryOutcome` (`execute/policy.py:169-197`)
+
+**F. Partial failure resume — purely typed, exists:**
+
+- `resolve_partial_failure_resume()` and `PartialFailureResumeDecision` (`execute/policy.py:640-698+`)
+
+**G. Components.py EXECUTE_POLICY — route table still alive:**
+
+- Fanout contract, retry/reentry, batch_continuation, timeout_retry, review_handoff, skip_review_routes (`components.py:1694-1781`). This is exactly the "policy as route table" anti-pattern the plan rejects.
+
+**H. Handler/execute integration — delegates to typed policy but still owns scheduling loop:**
+
+- `handle_execute()` translates typed policy into legacy `CliError` and state mutations (`handlers/execute.py:304-345`, `:348+`)
+- `handle_execute_one_batch()` directly calls `compute_global_batches`/`split_oversized_batches`, not the scheduler abstraction (`execute/batch.py:1266-1295`)
+- `handle_execute_auto_loop()` contains the full scheduling loop with blocked/rework handling (`execute/batch.py:2531+`)
+
+**I. Prior conformance claim (unverified):**
+
+- `execute-dependency-batches` listed as "implemented" with `canonical_source` authority (`megaplan-native-representation-conformance-report.md:38`). The master plan explicitly marks this as a false pass (`master-plan.md:7`).
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+1. **`_core/scheduler/` package** (`topo.py`, `run.py`, `types.py`) — this is the highest-value adjacent mechanism. It provides a generic, typed, dependency-aware scheduler with topological sort, completed-ID filtering, and a clean ProcessDriver protocol. It was clearly built as a refactoring target but the execute path never migrated to it. Generalizing it into S4a's execute DAG would be straightforward.
+
+2. **`execute/policy.py` typed constructs** — almost all required decisions (approval, tier routing, batch continuation, blocked retry, partial resume) already exist as frozen, typed dataclasses/enums. They are handler-agnostic. The remaining work is proving they are source-visible and not smuggled through handler-local state.
+
+3. **`_core/io.py:67-167`** — the topological sort and complexity scoring are mature and well-tested. The scheduler facade (`schedule_batches`) wraps these cleanly.
+
+---
+
+### 4. What Still Must Be Built
+
+| Gap | Evidence |
+|-----|----------|
+| Wire `_core/scheduler/` into execute path | `execute/batch.py` directly calls `compute_global_batches`, not `schedule_batches` or `run_scheduler`. The scheduler package is decoupled infrastructure. |
+| Remove `components.py:1694-1781` as execute route authority | EXECUTE_POLICY still carries fanout contracts, batch_continuation route signals, and retry/reentry as component metadata |
+| Source-visible DAG topology | The `workflow.pypeline:406-418` uses `parallel_map(...)` with `items="megaplan.execute.batches"` — a string reference, not source-owned topology |
+| Prove tier policy is source-visible | `resolve_batch_tier` is pure but called from `execute/batch.py`, not a named subworkflow |
+| Dead-delete handler-owned scheduling | `handlers/execute.py:304-345` still translates policy into `CliError` and owns route dispatch for entry/approval gates |
+| S4 test file | `test_execute_native_dag_approval_resume.py` (referenced in `master-plan.md:702`) does not exist |
+| Dynamic task batches (blocked→reschedule) | `handle_execute_auto_loop` handles blocked re-scheduling inline (`batch.py:2660-2750`), not as a visible DAG recomputation |
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**Risk: The scheduler abstraction exists but is a parallel artifact.** The `_core/scheduler/` package was built as a clean refactoring target but the execute code never migrated. This creates a risk that S4a either rewires to the scheduler (moderate refactor) or duplicates scheduling logic.
+
+**Recommendation:** Add an explicit S4a subtask: "Migrate `execute/batch.py` from direct `compute_global_batches` calls to `_core/scheduler/` path (`schedule_batches` + `run_scheduler` with a typed `ProcessDriver`)." This kills two birds: it proves the scheduler works and eliminates handler-owned batch loop logic.
+
+**Additional concerns:**
+- The `components.py:1743-1752` `batch_continuation` entry is a literal route table (`route_signal: "execute"`, `target_ref: "execute-batches"`) — it must be deleted or fenced before closeout per the "no dual route authority" rule.
+- No tests exist for the scheduler package itself — add `test_scheduler_topo.py` and `test_scheduler_run.py` as S4a prerequisites.

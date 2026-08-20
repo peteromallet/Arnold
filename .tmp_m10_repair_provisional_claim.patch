@@ -1,0 +1,36 @@
+--- a/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop
++++ b/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop
+@@ -627,6 +627,22 @@ acquire_repair_lock() {
+   local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json="" repair_lock_output=""
+   local -a _repair_lock_result=()
+   mkdir -p "$(dirname "$REPAIR_PID_FILE")"
++  # Establish cheap process custody before importing the heavier durable-lock
++  # machinery.  The EXIT/TERM traps above release this provisional claim if the
++  # durable lock later reports a competing owner.
++  if [[ -r "$REPAIR_PID_FILE" ]]; then
++    read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
++    if [[ -n "$existing_pid" ]] && ! kill -0 "$existing_pid" 2>/dev/null; then
++      log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
++      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
++      existing_pid=""
++    fi
++  fi
++  if [[ ! -e "$REPAIR_PID_FILE" ]] \
++    && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
++    REPAIR_PID_FILE_OWNED=1
++    log "repair pid provisionally claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
++  fi
+   repair_lock_output="$(
+     PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REPAIR_LOCK_DIR" "$SESSION" "$$" "$WORKSPACE" "$0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY'
+ import json
+@@ -754,6 +770,10 @@ result = acquire_repair_lock(
+       log "stale repair lock reclaimed session=$SESSION lock_dir=$REPAIR_LOCK_DIR"
+     fi
+   fi
++  if [[ "$REPAIR_PID_FILE_OWNED" == "1" ]]; then
++    log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
++    return 0
++  fi
+   while true; do
+     if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+       REPAIR_PID_FILE_OWNED=1

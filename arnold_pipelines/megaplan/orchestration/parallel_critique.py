@@ -92,6 +92,19 @@ class _RetryableCritiqueShapeError(_RetryableCritiqueContractError):
 
 def _critique_raw_output_path(output_path: Path) -> Path:
     return output_path.with_name(f"{output_path.stem}_raw.txt")
+def critique_seed_output_name(check_id: str, *, agent: str | None = None) -> str:
+    """Return the schema seed filename used by the critique capture contract."""
+    suffix = ".seed.json" if agent == "codex" else ".json"
+    return f"critique_check_{check_id}{suffix}"
+
+
+def _unit_evidence_path(plan_dir: Path, unit: WorkerUnit) -> Path:
+    """Resolve a worker's evidence path, including an unbound seed fallback."""
+    if unit.output_path is not None:
+        return unit.output_path
+    check_id = unit.extra.get("check_id", "unknown")
+    return plan_dir / critique_seed_output_name(str(check_id), agent="codex")
+
 
 
 def _persist_critique_raw_output(
@@ -290,208 +303,6 @@ def _flags_only_unverifiable_payload(
     }
 
 
-def _run_check(
-    index: int,
-    check: dict[str, Any],
-    *,
-    state: PlanState,
-    plan_dir: Path,
-    root: Path,
-    model: str | None,
-    schema: dict[str, Any],
-    project_dir: Path,
-    output_stream: Any | None = None,
-) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
-    """Legacy Hermes-specific check runner — kept for test compatibility.
-
-    .. deprecated::
-        :func:`run_parallel_critique` now dispatches through
-        :func:`~megaplan._core.scatter_worker_units` instead.  This
-        function is retained only so existing tests that import it
-        continue to compile.
-    """
-    import uuid as _uuid
-
-    from arnold_pipelines.megaplan._core import with_429_openrouter_fallback as _with_429_fallback
-    from arnold_pipelines.megaplan.workers.hermes import (
-        _import_hermes_runtime,
-        _pre_dispatch_budget_check,
-        _streaming_run_kwargs,
-        _toolsets_for_phase,
-        _worker_db_path,
-        clean_parsed_payload,
-        parse_agent_output,
-    )
-    from arnold_pipelines.megaplan.runtime.key_pool import resolve_model as _resolve_model
-
-    AIAgent, SessionDB = _import_hermes_runtime()
-
-    _critique_db_path = _worker_db_path(plan_dir, f"critique_{check['id']}")
-    output_path = write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json")
-    prompt_builder = (
-        single_check_critique_joke_prompt
-        if state.get("config", {}).get("mode", "code") == "joke"
-        else single_check_critique_prompt
-    )
-    prompt = prompt_builder(state, plan_dir, root, check, output_path)
-    resolved_model, agent_kwargs = _resolve_model(model)
-
-    _model_lower = (resolved_model or "").lower()
-    _reasoning_families = ("qwen/qwen3", "deepseek/deepseek-r1")
-    _reasoning_off = (
-        {"enabled": False}
-        if any(_model_lower.startswith(prefix) for prefix in _reasoning_families)
-        else None
-    )
-
-    # Cap output tokens to match the main-line hermes worker (Qwen repetition
-    # mitigation). Drives the Fireworks streaming gate below.
-    agent_max_tokens = 32768
-    _stream = output_stream if output_stream is not None else sys.stderr
-
-    def _make_agent(m: str, kw: dict) -> "AIAgent":
-        a = AIAgent(
-            model=m,
-            quiet_mode=True,
-            skip_context_files=True,
-            skip_memory=True,
-            enabled_toolsets=_toolsets_for_phase("critique"),
-            session_id=str(_uuid.uuid4()),
-            session_db=SessionDB(db_path=_critique_db_path),
-            max_tokens=agent_max_tokens,
-            reasoning_config=_reasoning_off,
-            **kw,
-        )
-        a._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=_stream)
-        return a
-
-    def _failure_reason(exc: Exception) -> str:
-        if isinstance(exc, CliError):
-            return exc.message
-        return str(exc) or exc.__class__.__name__
-
-    def _run_attempt(current_agent, current_output_path: Path, *, current_model: str | None = None) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str], float, int, int, int]:
-        # Force streaming for providers that require it at this max_tokens
-        # (Fireworks rejects max_tokens > 4096 unless stream=true).  The
-        # streaming response is reassembled into the same shape non-streaming
-        # would return — downstream code is unchanged.
-        run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens)
-        # _pre_dispatch_budget_check sentinel: budget guard for dispatch
-        _pre_dispatch_budget_check(
-            current_agent,
-            conversation_history=None,
-            user_message=prompt,
-            system=None,
-            tool_manifest=None,
-            schema=schema,
-            step="critique",
-            model_name=getattr(current_agent, "model", current_model or model),
-            tier=ModelTier.NON_ENFORCED,
-            worker="hermes",
-        )
-        current_result = current_agent.run_conversation(
-            user_message=prompt,
-            **run_kwargs,
-        )
-        try:
-            payload, raw_output = parse_agent_output(
-                current_agent,
-                current_result,
-                output_path=current_output_path,
-                schema=schema,
-                step="critique",
-                project_dir=project_dir,
-                plan_dir=plan_dir,
-                run_kwargs=run_kwargs,
-                check_id=str(check.get("id", "")) or None,
-                question=str(check.get("question", "")) or None,
-            )
-        except CliError as exc:
-            _persist_critique_raw_output(
-                current_output_path,
-                exc.extra.get("raw_output") or exc.message,
-            )
-            raise
-        clean_parsed_payload(payload, schema, "critique")
-        payload_checks = payload.get("checks")
-        if not isinstance(payload_checks, list) or len(payload_checks) != 1 or not isinstance(payload_checks[0], dict):
-            raise CliError(
-                "worker_parse_error",
-                f"Parallel critique output for check '{check['id']}' did not contain exactly one check",
-                extra={"raw_output": raw_output},
-            )
-        verified = payload.get("verified_flag_ids", [])
-        disputed = payload.get("disputed_flag_ids", [])
-        return (
-            current_result,
-            payload_checks[0],
-            verified if isinstance(verified, list) else [],
-            disputed if isinstance(disputed, list) else [],
-            float(current_result.get("estimated_cost_usd", 0.0) or 0.0),
-            int(current_result.get("prompt_tokens", 0) or 0),
-            int(current_result.get("completion_tokens", 0) or 0),
-            int(current_result.get("total_tokens", 0) or 0),
-        )
-
-    agent = _make_agent(resolved_model, agent_kwargs)
-    try:
-        _result, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = _run_attempt(agent, output_path)
-    except Exception as exc:
-        _result, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = _with_429_fallback(
-            model=model,
-            agent_kwargs=agent_kwargs,
-            exc=exc,
-            log_prefix="[parallel-critique]",
-            rebuild_template_fn=lambda: write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json"),
-            make_agent_fn=lambda m, kw: _make_agent(m, kw),
-            run_attempt_fn=lambda a, op: _run_attempt(a, op),
-            on_fail_message=lambda primary_exc, fallback_exc: (
-                f"Parallel critique failed for check '{check['id']}' "
-                f"(both MiniMax and OpenRouter): primary={_failure_reason(primary_exc)}; "
-                f"fallback={_failure_reason(fallback_exc)}"
-            ),
-            stream=_stream,
-        )
-    return (
-        index,
-        check_payload,
-        verified_ids,
-        disputed_ids,
-        cost_usd,
-        pt,
-        ct,
-        tt,
-    )
-
-
-def critique_seed_output_name(check_id: str, *, agent: str | None) -> str:
-    """Return the single-check template file name for *agent*.
-
-    Codex workers require an EMPTY response path (the local-response
-    contract forbids overwriting existing evidence), so their schema seed is
-    written to ``critique_check_<id>.seed.json`` and the WorkerUnit output
-    path is left ``None`` (the runner mints a per-occurrence response path).
-    Hermes intentionally reads a filled template from its output path, so its
-    seed stays ``critique_check_<id>.json`` and doubles as the output.
-    """
-    if agent == "codex":
-        return f"critique_check_{check_id}.seed.json"
-    return f"critique_check_{check_id}.json"
-
-
-def _unit_evidence_path(plan_dir: Path, unit: WorkerUnit) -> Path:
-    """Resolve the deterministic audit path for a unit's raw output.
-
-    Codex units run with ``output_path=None`` (a per-occurrence response path
-    is minted at dispatch); raw evidence is persisted beside the check's
-    schema seed so the audit trail stays deterministic and replayable.
-    """
-    path = unit.output_path
-    if path is None:
-        check_id = str(unit.extra.get("check_id", "?"))
-        path = plan_dir / f"critique_check_{check_id}.seed.json"
-    return Path(path)
-
 
 def run_parallel_critique(
     state: PlanState,
@@ -564,7 +375,7 @@ def run_parallel_critique(
     # own session db (the legacy _run_check path did this); the override is
     # plumbed through WorkerUnit.extra["worker_options"]["session_db_path"]
     # (worker_fanout.py) → run_hermes_step db_override (hermes.py).
-    from arnold_pipelines.megaplan.workers.hermes import _worker_db_path
+    from arnold_pipelines.megaplan.workers._payload import _worker_db_path
 
     units: list[WorkerUnit] = []
     for _idx, _check in enumerate(checks):
@@ -576,14 +387,10 @@ def run_parallel_critique(
                 "the critique handler must attach a resolved AgentMode per SD1",
             )
 
-        _is_codex = getattr(_resolved, "agent", None) == "codex"
-        _seed_name = critique_seed_output_name(
-            _check["id"], agent=getattr(_resolved, "agent", None)
+        _output_path = write_single_check_template(
+            plan_dir, state, _check, f"critique_check_{_check['id']}.json",
         )
-        _seed_path = write_single_check_template(
-            plan_dir, state, _check, _seed_name,
-        )
-        _prompt = _prompt_builder(state, plan_dir, root, _check, _seed_path)
+        _prompt = _prompt_builder(state, plan_dir, root, _check, _output_path)
         _seam_tier = (
             ModelTier.ENFORCED if _resolved.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
         )
@@ -593,7 +400,7 @@ def run_parallel_critique(
                 step="critique",
                 resolved=_resolved,
                 prompt=_prompt,
-                output_path=None if _is_codex else _seed_path,
+                output_path=_output_path,
                 read_only=True,
                 validation_step="critique",
                 schema=_schema,
@@ -737,7 +544,7 @@ def run_parallel_critique(
     def _repair_unit(unit: WorkerUnit, retry_number: int) -> WorkerUnit:
         extra = dict(unit.extra)
         extra["wbc_dispatch_key"] = (
-            f"critique:{unit.extra.get('check_id', _unit_evidence_path(plan_dir, unit).stem)}:"
+            f"critique:{unit.extra.get('check_id', unit.output_path.stem)}:"
             f"shape-repair:{retry_number}"
         )
         return WorkerUnit(
@@ -762,7 +569,7 @@ def run_parallel_critique(
             error_kind = None
             if isinstance(exc, CliError):
                 _persist_critique_raw_output(
-                    _unit_evidence_path(plan_dir, unit),
+                    unit.output_path,
                     exc.extra.get("raw_output") or exc.message,
                 )
                 cause = str(exc.extra.get("source") or "") or None
@@ -770,7 +577,7 @@ def run_parallel_critique(
                 retryable = retryable_raw if isinstance(retryable_raw, bool) else None
                 error_kind = str(exc.code or "") or None
             else:
-                _persist_critique_raw_output(_unit_evidence_path(plan_dir, unit), str(exc))
+                _persist_critique_raw_output(unit.output_path, str(exc))
             reason = f"parallel critique worker failed for check '{check_id}': {exc}"
             return (
                 {
@@ -836,7 +643,7 @@ def run_parallel_critique(
         )
         if isinstance(_item, WorkerUnitResult):
             _persist_critique_raw_output(
-                _unit_evidence_path(plan_dir, units[_idx]),
+                units[_idx].output_path,
                 _item.raw_output,
                 iteration=int(state["iteration"]),
             )
@@ -845,7 +652,7 @@ def run_parallel_critique(
             _parsed_results[_idx] = _parse_result(_idx, _payload, units[_idx])
         except _RetryableCritiqueContractError as exc:
             if isinstance(_item, WorkerUnitResult):
-                _persist_critique_raw_output(_unit_evidence_path(plan_dir, units[_idx]), _item.raw_output)
+                _persist_critique_raw_output(units[_idx].output_path, _item.raw_output)
             _failures[_idx] = exc
 
     _retry_units = units
@@ -885,7 +692,7 @@ def run_parallel_critique(
             )
             if isinstance(_item, WorkerUnitResult):
                 _persist_critique_raw_output(
-                    _unit_evidence_path(plan_dir, _unit),
+                    _unit.output_path,
                     _item.raw_output,
                     iteration=int(state["iteration"]),
                 )
@@ -894,7 +701,7 @@ def run_parallel_critique(
                 _parsed_results[_original_idx] = _parse_result(_original_idx, _payload, _unit)
             except _RetryableCritiqueContractError as exc:
                 if isinstance(_item, WorkerUnitResult):
-                    _persist_critique_raw_output(_unit_evidence_path(plan_dir, _unit), _item.raw_output)
+                    _persist_critique_raw_output(_unit.output_path, _item.raw_output)
                 _next_failures[_original_idx] = exc
         _failures = _next_failures
         for _idx, _unit in _retry_units_by_index.items():

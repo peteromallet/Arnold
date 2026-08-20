@@ -1,0 +1,104 @@
+{
+  "cloud_config_path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/critique-ledger-accountability-v2-20260728/.megaplan/initiatives/critique-ledger/cloud.yaml",
+  "cloud_config_sha256": "5e509cfaac981010a0d837f6771786ce8754894171dccc2a32a722e730c3e217",
+  "container_observation": {
+    "collector": {
+      "reason": "container_stopped",
+      "status": "unavailable"
+    },
+    "container": "megaplan-cloud-agent",
+    "container_id": "277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab",
+    "error": "failed to mount : mkdir /var/lib/docker/rootfs/overlayfs/277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab: no space left on device",
+    "exit_code": 137,
+    "image_id": "sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94",
+    "image_ref": "megaplan-cloud-agent",
+    "lifecycle": "stopped",
+    "oom_killed": false,
+    "returncode": 0,
+    "schema": "arnold.cloud.ssh_container_observation.v1",
+    "status": "available",
+    "workspace_bind": {
+      "destination": "/workspace",
+      "rw": true,
+      "source": "/opt/megaplan-cloud/workspace",
+      "status": "present",
+      "type": "bind"
+    }
+  },
+  "disposition": {
+    "bounded_relaunch_blockers": [
+      "lifecycle_first_cli_no_exec_when_collector_unavailable",
+      "preserve_old_container_and_fence_host_units",
+      "scoped_capacity_reclaim_then_fresh_expiring_predeploy_receipt"
+    ],
+    "follow_up": [
+      "platform_wide_owner_storage_capacity_enospc_hardening",
+      "24h_72h_7d_durability_and_retention_policy"
+    ]
+  },
+  "interfaces": [
+    "SshProvider.observe_container",
+    "SshProvider.observe_prelaunch_capacity"
+  ],
+  "observed_at_end": "2026-08-02T21:48:55.838924+00:00",
+  "observed_at_start": "2026-08-02T21:48:53.724154+00:00",
+  "prelaunch_capacity_observation": {
+    "capacity": {
+      "free_bytes": 0,
+      "free_inodes": 33138248
+    },
+    "checks": {
+      "byte_floor": false,
+      "inode_floor": true
+    },
+    "container": {
+      "collector": {
+        "reason": "container_stopped",
+        "status": "unavailable"
+      },
+      "container": "megaplan-cloud-agent",
+      "container_id": "277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab",
+      "error": "failed to mount : mkdir /var/lib/docker/rootfs/overlayfs/277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab: no space left on device",
+      "exit_code": 137,
+      "image_id": "sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94",
+      "image_ref": "megaplan-cloud-agent",
+      "lifecycle": "stopped",
+      "oom_killed": false,
+      "returncode": 0,
+      "schema": "arnold.cloud.ssh_container_observation.v1",
+      "status": "available",
+      "workspace_bind": {
+        "destination": "/workspace",
+        "rw": true,
+        "source": "/opt/megaplan-cloud/workspace",
+        "status": "present",
+        "type": "bind"
+      }
+    },
+    "errors": [
+      "prelaunch_free_bytes_below_reserve"
+    ],
+    "mount": {
+      "device_major": 8,
+      "device_minor": 1,
+      "filesystem": "ext4",
+      "inode": 258653,
+      "mount_point": "/",
+      "mount_source": "/dev/sda1",
+      "st_dev": 2049
+    },
+    "returncode": 3,
+    "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+    "status": "no-go",
+    "thresholds": {
+      "min_free_bytes": 1073741824,
+      "min_free_inodes": 10000,
+      "receipt_reserve_bytes": 1048576
+    },
+    "verdict": "NO-GO",
+    "workspace": "/opt/megaplan-cloud/workspace"
+  },
+  "provider_source_commit": "26aca6ace7f0af3279ca5b311e6983d4904a4d3a",
+  "provider_source_tree": "5503c69c36bbd5a404742139d5c93cddad48edf3",
+  "schema": "arnold.critique_ledger.live_containment_capacity_observation.v1"
+}

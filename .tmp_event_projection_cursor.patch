@@ -1,0 +1,92 @@
+diff --git a/arnold_pipelines/megaplan/observability/events_projection.py b/arnold_pipelines/megaplan/observability/events_projection.py
+--- a/arnold_pipelines/megaplan/observability/events_projection.py
++++ b/arnold_pipelines/megaplan/observability/events_projection.py
+@@ -194,7 +194,7 @@ def write_projection(
+         return False
+     content = "\n".join(_canonical_dumps(event) for event in events) + "\n"
+     _atomic_write_text(ndjson_path, content)
+-    seqs = [event.get("seq") for event in events if isinstance(event.get("seq"), int)]
+-    if seqs:
+-        _write_projection_seq(plan_dir, max(seqs))
++    tail_seq = events[-1].get("seq")
++    if isinstance(tail_seq, int):
++        _write_projection_seq(plan_dir, tail_seq)
+     return True
+diff --git a/tests/observability/test_events_projection.py b/tests/observability/test_events_projection.py
+--- a/tests/observability/test_events_projection.py
++++ b/tests/observability/test_events_projection.py
+@@ -7,8 +7,10 @@ from pathlib import Path
+ from arnold_pipelines.megaplan.observability.events import EventKind, read_events
+ from arnold_pipelines.megaplan.observability.events_projection import (
+     _canonical_dumps,
++    append_projection_event,
+     project_events,
+     project_events_ndjson,
+     schema_equivalence_triples,
++    write_projection,
+ )
+-from arnold_pipelines.megaplan.store import FileStore, PlanRepository
++from arnold_pipelines.megaplan.store import FileStore, PlanRepository, StoredEvent
+@@ -148,6 +151,62 @@ def test_event_writer_rebuilds_projection_when_cursor_is_stale(tmp_path: Path) -
+     assert [event["seq"] for event in read_events(plan_dir)] == [0, 1]
+ 
+ 
++def test_projection_cursor_tracks_chronological_tail_after_sequence_reset(
++    tmp_path: Path, monkeypatch
++) -> None:
++    """A historic high seq must not force every later event to rebuild."""
++
++    from arnold_pipelines.megaplan.observability import events_projection
++
++    plan_id = "reset-plan"
++    plan_dir = tmp_path / ".megaplan" / "plans" / plan_id
++    stored = [
++        StoredEvent(
++            kind=EventKind.PHASE_END,
++            phase="execute",
++            payload={"phase": "execute"},
++            seq=5924,
++        ),
++        StoredEvent(
++            kind=EventKind.PHASE_START,
++            phase="review",
++            payload={"phase": "review"},
++            seq=0,
++        ),
++    ]
++
++    class ResetSequenceStore:
++        def events_for_plan(self, requested_plan_id: str):
++            assert requested_plan_id == plan_id
++            return iter(stored)
++
++    store = ResetSequenceStore()
++    assert write_projection(plan_dir, store, plan_id=plan_id, force=True)
++    assert (plan_dir / ".events.projection.seq").read_text(encoding="ascii") == "0"
++
++    real_write_projection = events_projection.write_projection
++    rebuilds: list[int] = []
++
++    def counted_write_projection(*args, **kwargs):
++        rebuilds.append(1)
++        return real_write_projection(*args, **kwargs)
++
++    monkeypatch.setattr(events_projection, "write_projection", counted_write_projection)
++    assert append_projection_event(
++        plan_dir,
++        store,
++        {
++            "seq": 1,
++            "kind": EventKind.LLM_TOKEN_HEARTBEAT,
++            "phase": "review",
++            "payload": {"tokens": 1},
++        },
++        plan_id=plan_id,
++    )
++    assert rebuilds == []
++    assert (plan_dir / ".events.projection.seq").read_text(encoding="ascii") == "1"
++
++
+ def test_atomic_projection_rebuild_never_exposes_truncated_destination(
+     tmp_path: Path, monkeypatch
+ ) -> None:

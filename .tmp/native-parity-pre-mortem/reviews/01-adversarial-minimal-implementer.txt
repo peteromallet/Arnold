@@ -1,0 +1,204 @@
+Now I have all the evidence needed. Let me construct the report.
+
+---
+
+# Native Parity Implementation Pre-Mortem — Adversarial Review
+
+**Premise**: M11 `custody-control-plane` is locked. This review judges only Native Parity's authored/runtime result against the representation report's smallest readable Python topology.
+
+---
+
+## S1 — Custody Admission & Semantic-Preservation Gate
+
+### Exploit 1: Alias-collapse proof laundering
+
+**Permitting sentence** (s1 brief, line 64–65): *"Editing canonical source changes the lowered semantic set; a builder overlay cannot silently reconstruct a second graph."*
+
+**Plausible green-but-wrong implementation**: `planning.py:110–139` (`_LOWERED_STEP_ID_ALIASES`) maps 30+ detailed lowered node IDs (`critique-fanout`, `execute-batches`, `tiebreaker_fallback_override`, `override_review_rework_override`, etc.) into ~14 canonical step IDs (`critique`, `execute`, `override`, `revise`). The `_canonical_lowered_routes` function at `planning.py:271–296` **drops any route whose source or target isn't in `PIPELINE_STEP_COMPONENTS_BY_ID`** (line 278: `if source not in PIPELINE_STEP_COMPONENTS_BY_ID or target not in PIPELINE_STEP_COMPONENTS_BY_ID: continue`). The S1 semantic checker tests "source-to-lowered set-equality" but only checks that the lowered step count matches `PIPELINE_STEP_COMPONENTS` count — aliases aren't counted as missing because the canonicalizer absorbs them. The proof shows "85 lowered nodes produce a 14-step canonical graph" and the checker accepts because that's the declared architecture.
+
+**Why written proof could miss it**: The S1 brief at line 40 requires "retention of decisions, bounded loops, dynamic fanout/reducer policy, call-site policy, suspension/reentry, and child identity." But if the checker merely verifies that each of those semantic *categories* is present somewhere in the lowered graph (not that every instance survives), then aliases collapsing `tiebreaker_fallback_override` → `override` and `review_rework_override` → `override` are invisible. The collapsed routes still have *some* fanout policy, *some* loop, so the categorical check passes.
+
+**Severity**: **CRITICAL**. This is the exact "85-to-14 collapse" the corrective plan warns about at `corrective-plan.md:12–15`. If the alias table survives S1, all subsequent sprints inherit a pre-permissioned route to collapse detail into canonical IDs.
+
+**Smallest amendment**: Strike `planning.py:110–139` entirely and make `_canonical_step_id` return its input unchanged. Add a checker rule at S1 that counts lowered step IDs and rejects any canonicalization that reduces the set. The S1 brief at line 40 must add: *"No alias table, string-rewrite map, or step-ID canonicalization may reduce the lowered step ID set. The semantic checker must compare exact lowered step IDs against runtime node IDs."*
+
+---
+
+## S2 — Generic Authored Control Primitives
+
+### Exploit 2: `_RouteSignalAlias` as semantic smuggling
+
+**Permitting sentence** (s2 brief, line 49–50): *"Source-to-lowered-to-runtime set equality passes for every reference node, decision, loop, dynamic child, reducer, policy, and reentry edge."*
+
+**Plausible green-but-wrong implementation**: `components.py:43–52` defines `_RouteSignalAlias(str)` whose `__eq__` matches aliases beyond the string value. `_SupersetComparableMapping` at line 55–63 uses `issubset` for equality. During S2 testing of the neutral reference pipeline, the generic constructs emit typed route signals. The proof generator maps source-level outcomes to runtime signals through these alias/subset matchers. A "collision test" for fanout identity checks that `item_path != list_position_only`, but the proof generator uses `_RouteSignalAlias` in its comparison layer so semantically different routes that happen to share an alias member pass the equality check. The reference pipeline's "PROCEED" from gate and "PROCEED" from tiebreaker_decision both alias-match without distinguishing context.
+
+**Why written proof could miss it**: S2 at line 52 requires "collision tests prove identity is semantic, not list-position-only." This tests *child identity*, not *route signal identity*. A clever implementer creates robust child path tests while leaving the route signal comparison layer full of aliased matching. The proof shows green on child identity and the reviewer sees "set equality passes" at line 49 and moves on.
+
+**Severity**: **HIGH**. This is permitted by S2's wording because the collision test is scoped only to child paths, not to route signal identity. Once the `_RouteSignalAlias` class and `_SupersetComparableMapping` survive S2, every subsequent sprint can smuggle mismatched routes through their fuzzy equality.
+
+**Smallest amendment**: S2 brief line 52: change "collision tests prove identity is semantic, not list-position-only" to *"collision tests prove every identity domain (child paths AND route signals AND decision outcomes) is exact-string-comparable without aliased matching, fuzzy subset equality, or canonicalization rewrite."* Delete `_RouteSignalAlias` and `_SupersetComparableMapping` from `components.py`.
+
+---
+
+### Exploit 3: Collapsed attempt_id via derived identity
+
+**Permitting sentence** (s2 brief, line 71): *"A common `attempt_id` collapses the four identity domains."* (This is in "Do not close if" — it forbids collapse.)
+
+**Plausible green-but-wrong implementation**: The four identity domains (semantic, Run Authority, WBC, Custody) each get a distinct string stored separately. The proof generator reads four fields and confirms they differ (`"semantic:prep/1" != "ra:subj-7/fence-3" != "wbc:exec-42/v2" != "custody:lease-99/epoch-5"`). But all four are derived from a single `base_attempt_id = uuid4()` via deterministic suffixes. A validator that checks "fields are not string-equal" passes. However, the causal join — the fact that all four are deterministically linked to one seed — means they don't provide independent identity guarantees. If the base ID is replayed, all four replay.
+
+**Why written proof could miss it**: The proof generator emits four rows with different strings. A schema check verifies non-empty, distinct values. No rule in S2 requires *independent random generation* or forbids deterministic derivation from a single seed. The S2 "do not close if" at line 71 only forbids a *common* `attempt_id` — literally one field used for all four. It doesn't forbid a single seed.
+
+**Severity**: **MEDIUM**. Already-forbidden in spirit but technically permitted by the literal wording. The practical blast radius is that replay/forgery of one seed compromises all four domains.
+
+**Smallest amendment**: S2 brief line 71: replace *"A common `attempt_id` collapses the four identity domains"* with *"The four identity domains share a single seed, derive deterministically from one source, or can be reproduced without independent authority actions. Each must be independently generated and causally joined, not derived."*
+
+---
+
+## S3 — Front-Half Native Vertical Slice & Carrier Deletion
+
+### Exploit 4: Handler route ownership via `_branch_edge_id` fallback maps
+
+**Permitting sentence** (s3 brief, line 56–57): *"A reviewer can follow prep, critique, gate, and revise without consulting components, handlers, runtime maps, CLI, or auto-drive."*
+
+**Plausible green-but-wrong implementation**: The `.pypeline` is made load-bearing — `build_pipeline()` consumes its lowered topology. `workflow.pypeline` has visible branches (the `if gate_route_signal == GateOutcome.PROCEED:` etc. at lines 404–754). A reviewer reads it and sees the complete flow. BUT the runtime execution path in `manifest_backend.py:227–312` (`_branch_edge_id`) still resolves routing through handler output fields (`route_signal`, `next_step`, `recommendation`, `review_verdict`, `decision`). The `.pypeline` source compiles to a manifest with route edges, but the **runtime bridge** at lines 242–244 tries `route_binding_for_signal(node_id, route_signal)` first (using the source-compiled bindings), then at lines 246–312 falls back to hardcoded string maps like `{"PROCEED": "gate:finalize", "ITERATE": "gate:revise", ...}`. The implementer proves the reviewer can follow the `.pypeline` source (satisfying the semantic gate) while the runtime uses handler-emitted strings resolved through hardcoded fallback maps. The mutation test at S3 line 62 proves "source mutations change runtime topology" by mutating a `.pypeline` branch that happens to align with the handler fallback, and the test's handler responds with the same signal. A mutation that changes the `.pypeline` but the handler overrides with a different `route_signal` is never tested.
+
+**Why written proof could miss it**: The S3 semantic gate at line 56 says *"A reviewer can follow..."* — this is a readability claim, not a runtime-authority claim. The mutation test at line 62 says *"Source mutations change runtime topology and traces"* but doesn't require *"handler mutations do NOT change runtime topology."* If the test only mutates source in directions the handler agrees with, both change in lockstep and the test looks green.
+
+**Severity**: **CRITICAL**. This is the core semantic erasure pattern. The `_branch_edge_id` fallback maps at `manifest_backend.py:246–312` are the hidden route brain. They survive S3 because the brief's mutation test is unidirectional.
+
+**Smallest amendment**: S3 brief line 62–63: after *"Source mutations change runtime topology and traces"* add *"Handler mutations to route_signal/next_step/recommendation/decision fields must NOT change the runtime topology or trace — the compiled source topology must be the exclusive runtime routing authority."* Then add a negative test: mutate a handler to return a different `route_signal` and verify the trace follows the source topology, not the handler output.
+
+---
+
+### Exploit 5: Auto-drive bypass via `workflow_next` state machine
+
+**Permitting sentence** (s3 brief, line 56–57, same as above, plus line 62 about "mutations to deleted or quarantined legacy route carriers cannot change behavior")
+
+**Plausible green-but-wrong implementation**: The `.pypeline` compiles and `build_pipeline()` consumes it. The manifest backend routes through source-compiled edges. Everything looks clean. However, the auto-drive loop in `auto.py` uses `workflow_next(state)` which reads the `WORKFLOW` dict at `_core/workflow_data.py:45–92`. This is a completely separate state machine with its own transitions (`STATE_CRITIQUED: [Transition("gate", STATE_GATED, "gate_unset"), Transition("revise", STATE_PLANNED, "gate_iterate"), ...]`). The implementer quarantines the old component route bindings as required by S3 but keeps the `WORKFLOW` dict because it's in `_core/`, not `workflows/`. The `workflow_data.py:1–13` header explicitly states *"This is the single source of truth"* — a direct contradiction. The mutation test at S3 line 62 mutates source, observes manifest change, and claims green. But if the test only exercises the manifest backend execution path (not auto-drive), the auto-drive path still uses `WORKFLOW`.
+
+**Why written proof could miss it**: S3 line 48 says delete *"`_core` route tables for corrected paths"* but `workflow_data.py` isn't explicitly listed. The `_core` reference at line 48 could be read as only the transition logic in `_core/workflow.py` (the `workflow_next` function), not the data dict it reads. An implementer deletes the function but not the data, or keeps both and claims `_core` route tables only means the ones in `workflows/planning.py`.
+
+**Severity**: **CRITICAL**. The `WORKFLOW` dict is a complete parallel route authority. The gate handler at `gate.py:473–476` explicitly documents: *"The auto/chain loop is STATUS-DRIVEN: auto.drive re-derives the next step from STATE via workflow_next, IGNORING this handler's returned next_step."* This is a fully acknowledged bypass.
+
+**Smallest amendment**: S3 brief line 48: after *"`_core` route tables for corrected paths"* add *"(specifically including `_core/workflow_data.py:WORKFLOW` and all `_ROBUSTNESS_OVERRIDES`)"*. Add a mutation test that changes a `WORKFLOW` transition and verifies it has zero effect on any execution path.
+
+---
+
+## S4 — Tiebreaker, Finalize, Human Decisions, Durable Reentry
+
+### Exploit 6: Sequential tiebreaker disguised as parallel
+
+**Permitting sentence** (s4 brief, line 37–38): *"Source visibly expresses parallel researcher/challenger, synthesis, every decision route, replan rejoin/reset, finalize fallback, and scoped retry."*
+
+**Plausible green-but-wrong implementation**: The `.pypeline` at lines 471–488 shows:
+```python
+research_findings = TIEBREAKER_RESEARCHER(id="tiebreaker_researcher", ...)
+challenge_findings = TIEBREAKER_CHALLENGER(id="tiebreaker_challenger", research_findings=research_findings, ...)
+```
+The challenger **takes `research_findings` as input** — a sequential data dependency. The source "visibly expresses" two separate callables, which a reviewer might read as parallel. But `challenge_findings` depends on `research_findings`, making execution sequential. The implementer adds a `parallel.gather` wrapper in the manifest compilation layer that executes them concurrently anyway (ignoring the data dependency), and the proof traces show overlapping timestamps. The S4 *"Do not close if"* at line 58 says *"Researcher/challenger execute sequentially while source or proof claims parallelism"* — but the proof shows overlapping execution, satisfying this gate. The source **still has the sequential dependency** — it just doesn't matter because the runtime ignores it.
+
+**Why written proof could miss it**: The gate checks runtime parallelism. The proof shows overlapping execution. The *source* has a data dependency that implies sequential execution, but no check validates that the source topology matches the runtime topology for this specific edge. The proof tests "do researcher and challenger run concurrently?" not "does the source declare them as parallel?"
+
+**Severity**: **MEDIUM**. The runtime achieves parallelism, so product behavior is correct. But the source is semantically wrong — it declares a sequential dependency that the runtime ignores. This violates the principle that the source completely determines behavior.
+
+**Smallest amendment**: S4 brief line 58: change *"Researcher/challenger execute sequentially while source or proof claims parallelism"* to *"Researcher/challenger source has a data dependency between them (one consumes the other's output) OR execute sequentially while source or proof claims parallelism."* Fix the `.pypeline` to make `challenge_findings` independent of `research_findings` input, or wrap them in an explicit parallel construct.
+
+---
+
+### Exploit 7: Marker-only resume via stale WBC receipt
+
+**Permitting sentence** (s4 brief, line 45–47): *"Kill/restart resumes at the same semantic path with the correct four-domain identity joins and without repeating accepted effects."*
+
+**Plausible green-but-wrong implementation**: The reentry system stores a checkpoint record with the semantic path, a Run Authority decision ID, and a WBC receipt hash. On resume, the system validates: semantic path matches, Run Authority decision exists, WBC receipt exists. The proof shows all four identity domains are referenced. BUT the WBC receipt is **stale** — it proves a prior execution attempt, not current state. The Run Authority decision was accepted under a **previous fence** that has since been superseded. The implementer's validation checks "does this ID exist?" not "is this ID current?" The S4 *"Do not close if"* at line 61 says *"Resume authority comes from status/projection state or a historical receipt"* — but the authority doesn't *come from* the receipt; the receipt is just one of four validated artifacts. The actual resume decision comes from the Run Authority decision (which is stale-fence but technically exists).
+
+**Why written proof could miss it**: The proof checks that all four domains are present and non-null. S4 at line 47 says *"Stale approval, stale marker, stale coordinator fence, stale custody epoch, wrong target, and forged WBC success cannot resume or advance"* — but the test for "stale fence" only checks the fence validity against the *semantic* target, not against the *temporal* state. If the fence is "current" at the moment of test (because the test sets it up right before checking), the stale case isn't exercised.
+
+**Severity**: **HIGH**. The S4 brief forbids stale-fence resume but the positive test only proves the current-fence case. The missing negative test is the gap.
+
+**Smallest amendment**: S4 brief line 46–47: add an explicit negative scenario: *"A checkpoint created under fence N, with fence N+1 subsequently established, must fail resume when presenting fence N's Run Authority decision. The failure mode must be tested, not just asserted."*
+
+---
+
+## S5 — One Reusable Delivery Cycle
+
+### Exploit 8: Index-only child identity with decorative task/batch fields
+
+**Permitting sentence** (s5 brief, line 29–30): *"Use deterministic semantic child coordinates containing task ID, batch identity, and item path; list index alone is forbidden."*
+
+**Plausible green-but-wrong implementation**: The child coordinate is a string like `"execute/0/task-abc/batch-1"`. It *contains* task ID and batch identity. The proof checks that the coordinate string has three segments and the third isn't just a number. BUT the coordinate is constructed by concatenating `f"execute/{list_index}/{task_id}/{batch_id}"` where `list_index` is the primary sort key and `task_id`/`batch_id` are decorative — they always appear but don't affect uniqueness or routing. If tasks are reordered, the `list_index` changes and the child gets a new coordinate regardless of task/batch identity. The proof shows "coordinates contain task ID and batch identity" (structural check) but doesn't test "changing task ordering preserves child identity" (behavioral check).
+
+**Why written proof could miss it**: The structural check at line 29–30 is satisfied by string inspection. The behavioral property — that identity follows task ID, not list position — requires a reordering scenario. S5 at line 51 lists scenarios: *"batch 2-of-4 block and exact resume"* but this tests resume of a specific index, not reordering.
+
+**Severity**: **MEDIUM**. The identity contains the right fields but uses the wrong primary key.
+
+**Smallest amendment**: S5 brief line 30: after *"list index alone is forbidden"* add *"Child coordinates must be stable under task reordering: moving task T from position i to position j must not change the semantic identity of any child except those for T itself."* Add a reordering scenario to line 51.
+
+---
+
+### Exploit 9: One duplicated review/rework pass disguised as a cycle
+
+**Permitting sentence** (s5 brief, line 48–49): *"One reusable authored cycle, not manually duplicated passes, determines all execute/review/rework routes and cap outcomes."*
+
+**Plausible green-but-wrong implementation**: The `.pypeline` has a single review/rework path at lines 423–442 that branches on `ReviewOutcome.REWORK` and creates a second `parallel_map` block (lines 424–430) with a different `id` (`"review-rework-execute-batches"` vs `"execute-batches"`). The proof shows one cycle because both paths go through the same `AUTHORING_EXECUTE` component. But the paths have different lowered node IDs, meaning the topology has two distinct execute fanout nodes, not one reused node. The proof counts the cycle as "one" because both paths share the same reducer component, but the lowering produces distinct node instances. The S5 semantic gate at line 48 says *"not manually duplicated passes"* — the implementer argues that using the same component isn't "duplication" even though the lowered graph has separate nodes.
+
+**Why written proof could miss it**: The proof checks component reuse, not lowered node identity. If all review-rework paths use `AUTHORING_EXECUTE` and `EXECUTE_BATCH_WORKFLOW`, a component-level diff shows identity. But the lowered graph has `execute-batches` and `review-rework-execute-batches` as separate nodes with separate WBC attempts. The proof would need to check lowered node ID uniqueness, not component identity.
+
+**Severity**: **MEDIUM**. The product behavior is functionally correct (rework works), but the lowered topology has duplicated structure that the source obscures. This violates "one reusable cycle."
+
+**Smallest amendment**: S5 brief line 49: after *"not manually duplicated passes"* add *"The lowered topology must contain exactly one execute fanout node and one review fan-in node per delivery cycle instance; rework must reuse the same lowered node IDs, not create new ones with different IDs."*
+
+---
+
+## S6 — Override, Recovery, Auto-Drive & Projection Adoption
+
+### Exploit 10: Auto-drive still derives behavior from status
+
+**Permitting sentence** (s6 brief, line 29–32): *"Reduce auto-drive to consuming canonical events and requesting topology-declared actions. It may not derive product route, retry/cap policy, model choice, resume, completion, cancellation, publication, or delivery from state/status."*
+
+**Plausible green-but-wrong implementation**: The `auto.py` driver is refactored to read from a new `canonical_events` stream instead of directly calling `workflow_next(state)`. The events are generated by... replaying `workflow_next(state)` and wrapping the result in an event envelope. The auto-drive consumes "canonical events" but the event generator still derives them from the state machine. The proof shows auto-drive imports no state constants directly — it consumes events from a queue. The test at S6 line 48 says *"Auto/CLI/runtime/component mutations cannot alter canonical product routes"* and the test mutates auto.py (adds a dead import of `STATE_CRITIQUED`) and verifies no route change. But the event generator, which is in `orchestration/` not `auto.py`, still uses the WORKFLOW dict.
+
+**Why written proof could miss it**: The mutation test targets `auto.py` directly. The indirect dependency through the event generator isn't tested because the proof schema only traces direct imports from the auto module. The event generator is classified as "orchestration infrastructure," not "auto-drive."
+
+**Severity**: **HIGH**. This is the same auto-drive bypass from S3 (Exploit 5), surviving into S6 because the quarantine boundary is drawn around direct imports rather than transitive data flow.
+
+**Smallest amendment**: S6 brief line 48: change to *"No code path reachable from auto-drive, CLI, or runtime entry points may consult `_core/workflow_data.py:WORKFLOW`, `_core/workflow.py:workflow_next`, or any function that derives product routes from state/status strings. Mutation of the WORKFLOW dict or workflow_next function must have zero effect on any execution path."*
+
+---
+
+### Exploit 11: `add-note` avoids durable WBC effect history
+
+**Permitting sentence** (s6 brief, line 63–65): *"An add-note/annotation action can change route, omit exact target/fencing, or avoid durable WBC effect history."* (This is in "Do not close if")
+
+**Plausible green-but-wrong implementation**: The `add-note` action is implemented as a typed effect-only action with an `effect_id` and a `no_route_change` outcome. The WBC producer is registered and emits a `NOTE_ADDED` event to the WBC store. The proof shows a WBC event exists with the correct effect_id. But the WBC event is emitted **before** the custody lease is validated — it's an optimistic write. If custody validation fails after the write, the note appears in WBC history but was never authorized. The S6 "Do not close if" says *"avoid durable WBC effect history"* which the implementer reads as "the event must exist in WBC" (it does). The implementer argues that durable = persisted, not durable = authorized. The test checks WBC event existence, not WBC event authorization ordering.
+
+**Why written proof could miss it**: The proof reads the WBC event log, finds the note event, and checks green. It doesn't check the temporal ordering: custody grant → WBC write → custody release. An unauthorized WBC write that survives is still "durable WBC effect history" by a literal reading.
+
+**Severity**: **LOW-MEDIUM**. The Do not close if condition is written as a prohibition, and the implementer technically creates durable WBC history. The exploit is in the optimistic-write ordering.
+
+**Smallest amendment**: S6 brief line 63–65: change to *"An add-note/annotation action writes its WBC event before custody validation, can change route, omits exact target/fencing, or avoids validation-gated durable WBC effect history."*
+
+---
+
+## S7 — Native-Topology Conformance
+
+### Exploit 12: Proof-map consumption without semantic validation
+
+**Permitting sentence** (s7 brief, line 41–45): *"the validator consumes the complete per-sprint receipt registry, and missing/extra/unknown/unconsumed/stale/non-executed/non-commit-bound/red receipts are blocking."*
+
+**Plausible green-but-wrong implementation**: The validator reads `final-proof-map.json`, iterates every receipt, and checks: file exists, exit status is 0, commit hash matches current HEAD, receipt hash matches stored hash. All receipts are "consumed." The validator's own receipt binds the proof-map hash. Everything looks green. BUT the validator only checks **receipt metadata** — it never replays or independently verifies the semantic claims inside each receipt. A receipt that says "S3 semantic gate: PASS" is accepted because its exit status is 0 and its commit matches. The validator never re-runs the S3 tests. The S7 "Do not close if" at line 96 says *"The validator did not consume the declared proof map or its pre-receipt hash is absent from the validation receipt"* — both are satisfied. The validator "consumed" the map by reading and hashing it.
+
+**Why written proof could miss it**: The word "consumed" at line 42 is interpreted as "read and validated structurally," not "independently re-executed." The S7 brief at line 12–18 requires set equality generation but doesn't say the **validator** must regenerate it. The generator could produce the set equality report, the receipt records its hash, and the validator only checks the receipt chain without re-deriving the sets.
+
+**Severity**: **CRITICAL**. This is the capstone exploit — every sprint's proof can be manufactured receipts that pass structural validation without semantic re-execution.
+
+**Smallest amendment**: S7 brief line 42: after *"the validator consumes the complete per-sprint receipt registry"* add *"by independently re-executing every blocking subcheck declared in each receipt against the exact audited commit/tree. Receipt metadata validation (exit status, hash match, commit match) is necessary but insufficient. The validator must regenerate the semantic/identity/decision sets from source and compare against the receipt's claimed sets."*
+
+---
+
+## Position
+
+**Already-forbidden vs. genuinely permitted**: Exploits 3 (derived identity) and 11 (optimistic WBC write) are arguably already forbidden by the spirit of the documents but have literal wording gaps. Exploits 1, 2, 4, 5, 6, 8, 9, 10, 12 are **genuinely permitted** by the sprint briefs as written — each has an exact permitting sentence quoted above.
+
+**Hidden route brain**: The central exploit pattern across all sprints is the dual-path routing architecture. The `.pypeline` → manifest path produces one topology; the handler `route_signal`/`next_step` → `_branch_edge_id` fallback maps AND the `workflow_data.py:WORKFLOW` dict produce two independent routing authorities. Any sprint that doesn't explicitly delete both legacy paths and prove their deletion leaves a route brain. The current architecture at `manifest_backend.py:227–312` preserves three fallback routing mechanisms (route_bindings lookup, hardcoded string maps for gate/tiebreaker/review, and override action dispatch), while `auto.py` preserves the `workflow_next` state machine. S3 and S6 briefs order deletion of *some* of these but the language is specific enough that an implementer can delete component route bindings while keeping the hardcoded string maps in `_branch_edge_id`.
+
+**Recommendation**: The smallest fix with the highest leverage is deleting `_branch_edge_id` lines 246–312 and requiring that every route edge match comes exclusively from the compiled source topology with no string-matching fallback. Combined with deleting `workflow_data.py:WORKFLOW` and making auto-drive consume only the compiled manifest topology, this eliminates the dual-path architecture. Without this, every sprint's green proof can be manufactured by testing only the path where source and legacy agree.

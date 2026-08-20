@@ -1,0 +1,524 @@
+I now have a complete picture. Let me deliver the full review.
+
+---
+
+# Isolated Review 3 — Golden Source-to-Runtime Trace Designer
+
+## 1. Compact Executable Acceptance Oracle
+
+Derived from the aspirational Python-authored workflow at `docs/arnold/megaplan-native-representation-report.md:613–720`. The oracle is the set of trace events any conforming execution MUST produce. It is expressed as a machine-checkable ordered-event schema.
+
+### Oracle event types
+
+| Event | Trigger | Mandatory fields |
+|---|---|---|
+| `phase.enter` | Any `@phase` call boundary | `semantic_node_id`, `parent_path`, `program_digest`, `policy_digest`, `wbc_contract_version` |
+| `phase.exit` | Phase return (success) | As above + `outcome_type` |
+| `decision.evaluate` | Any `@decision` call | `decision_id`, `vocabulary_set`, `inputs_hash` |
+| `decision.accept` | Decision outcome chosen | `decision_id`, `accepted_outcome`, `ra_decision_id`, `ra_fence_seq`, `cas_seq` |
+| `decision.consume` | Runtime transition consumes decision | `ra_decision_id`, `consumed_by_node`, `transition_action`, `outcome_match` |
+| `loop.enter` | While-loop entry | `loop_id`, `max_iterations`, `iteration` |
+| `loop.exit` | Loop exit (typed) | `loop_id`, `exit_kind` ∈ {`proceed`, `cap_exhausted_critical`, `cap_exhausted_cosmetic`, `abort`} |
+| `fanout.dispatch` | Dynamic map item dispatched | `fanout_id`, `child_semantic_path`, `item_identity` (task_id + batch_id + item_path) |
+| `fanout.collect` | Reducer runs | `fanout_id`, `child_count`, `reducer_id` |
+| `human.suspend` | Suspension reached | `suspension_id`, `capability`, `reentry_path`, `wbc_lineage` |
+| `human.resume` | Resume from suspension | `reentry_path`, `ra_decision_id`, `custody_epoch`, `lease_owner`, `program_digest` (must match) |
+| `custody.acquire` | Lease acquired | `target`, `epoch`, `owner_pid` |
+| `custody.renew` | Lease renewal | `target`, `old_epoch`, `new_epoch` |
+| `custody.release` | Lease released | `target`, `epoch` |
+| `wbc.effect_intent` | Pre-effect boundary | `boundary_version`, `intent_id`, `node_id` |
+| `wbc.effect_outcome` | Post-effect boundary | `intent_id`, `outcome`, `idempotency_key` |
+| `checkpoint.write` | Durable checkpoint | `semantic_path`, `program_digest`, `policy_digest`, `wbc_version` |
+| `checkpoint.resume` | Resume from checkpoint | `semantic_path`, `must_match`: {program, policy, wbc_version}, `drift_disposition` |
+| `terminal.accept` | Terminal outcome | `result_kind` ∈ {`done`, `aborted`, `blocked`}, `ra_decision_id` |
+
+### Oracle predicates (must be true for every trace)
+
+1. **Set equality**: Authored semantic node/child set == lowered node/child set == runtime WBC-producer set.
+2. **Decision closure**: Every typed decision occurrence has exactly one `decision.accept` with matching outcome and exactly one `decision.consume` with matching `ra_decision_id`/CAS.
+3. **Four-domain separation**: No single ID appears in more than one of: semantic path, RA subject attempt/fence, WBC attempt, custody lease.
+4. **Causal joins**: Every `fanout.dispatch` child has explicit parent→child WBC attempt join.
+5. **Checkpoint integrity**: Every `checkpoint.resume` verifies program/policy/WBC-version digests match the pinned originals, or records an explicit `migration`/`new_attempt`/`quarantine` decision.
+6. **No string-routing**: No handler-returned string (`next_step`, `route_signal`, `recommendation`, `verdict`) appears as an event source for any routing transition.
+7. **Authority before action**: Every `custody.acquire` or `phase.enter` with authority-increasing effect is preceded by a current RA grant/fence in the trace.
+
+---
+
+## 2. Six Scenario Trace Specifications
+
+### Scenario 1 — Ordinary plan/critique/gate/revise/finalize success
+
+**Stable scenario ID**: `S1-ORDINARY-SUCCESS`
+
+**Authored node/child path sequence** (`docs/arnold/megaplan-native-representation-report.md:613–720`):
+```
+prep → prep_clarification_gate(clear) → plan → critique → gate → gate_decision(proceed) → finalize → execute → review → review_decision(approved) → done
+```
+
+**Typed decisions and terminal acceptance**:
+
+| Step | Decision node | Vocabulary | Accepted outcome | Terminal |
+|---|---|---|---|---|
+| prep_clarification_gate | `@decision` line 330 | {clear, needs_human} | clear | — |
+| gate_decision | `@decision` line 421 | {proceed, iterate, tiebreaker, escalate, abort, blocked} | proceed | — |
+| review_decision | `@decision` line 561 | {approved, needs_rework, blocked, human_verify, retry_review} | approved | MegaplanResult.done |
+
+**Run Authority decision/fence events**:
+- RA subject attempt opens at pipeline entry; fence seq 1
+- `prep_clarification_gate(clear)` → RA decision `RAD-001`, CAS `cas-1`, fence seq 2
+- `gate_decision(proceed)` → RA decision `RAD-002`, CAS `cas-2`, fence seq 3
+- `review_decision(approved)` → RA decision `RAD-003`, CAS `cas-3`, fence seq 4 (terminal)
+
+**Custody targets/epochs**:
+- Execution custody: target=`execute:batch-0`, epoch=1, acquired before first batch, released after review
+
+**WBC attempts, boundary versions, intents/outcomes**:
+- WBC contract version: `megaplan-planning-v4`
+- `prep` → WBC attempt `wbc-prep-1`: intent `prep-start`, outcome `prep-done`
+- `plan` → WBC attempt `wbc-plan-1`
+- `critique` subworkflow produces one parent + N child attempts for lenses
+- `gate` → WBC attempt `wbc-gate-1` with effect_intent `debt-record` on proceed
+- `execute` → task-batch child attempts with `wbc-exec-{task_id}-{batch}`
+- `review` → `wbc-review-1`: outcome=approved
+
+**Checkpoint and reentry coordinates**:
+- `checkpoint("plan_complete", plan_payload)` after plan returns
+- `checkpoint("gate_passed", gate_payload)` after gate_decision=proceed
+- `checkpoint("execution_complete", execute_payload)` before review
+
+**All four identity-domain joins**:
+
+| Semantic | Run Authority | WBC | Custody |
+|---|---|---|---|
+| `prep` | `subj-att-1/fence-1` | `wbc-prep-1` | — |
+| `plan` | `subj-att-1/fence-2` | `wbc-plan-1` | — |
+| `critique/gate/revise::iter-0` | `subj-att-1/fence-3` | `wbc-critique-parent-1` | — |
+| `execute/batch-0` | `subj-att-1/fence-4` | `wbc-exec-{tid}-0` | `lease:execute-batch-0/epoch-1` |
+| `review` | `subj-att-1/fence-5` | `wbc-review-1` | — |
+
+**Expected terminal outcome**: `MegaplanResult.done(review_payload)`
+
+**Forbidden observations**:
+- Handler-returned `route_signal` or `next_step` string in any routing event
+- `components.py` route_bindings consulted for any transition
+- `_core/workflow_data.py` transition table read
+- `manifest_backend.py` branch-edge-id translation used
+
+**Mutation assertions**:
+- Remove `gate` route_bindings from `components.py` → trace unchanged
+- Remove `handle_gate` return value parsing → trace unchanged (decision owns route)
+- Change `_core/workflow_data.py` transitions → trace unchanged
+
+---
+
+### Scenario 2 — Dynamic critique fanout with one retry and sequential fallback
+
+**Stable scenario ID**: `S2-CRITIQUE-RETRY-FALLBACK`
+
+**Authored node/child path sequence** (report:340–380):
+```
+critique_evaluator(ctx, plan_payload) → retry fails → retry succeeds → 
+  selection.active_checks = [check-A, check-B, check-C] →
+  parallel.map(selection.active_checks, critique_lens) → 
+  parallel attempt fails (infrastructure) → sequential fallback → 
+  merge_critique(findings) → gate
+```
+
+**Typed decisions**: None (critique evaluator retry is a policy, not a product decision). Gate decision follows after.
+
+**Run Authority events**: RA subject attempt same as parent. Each critique lens invocation and retry is non-authority-increasing (no new fence needed).
+
+**WBC attempts**:
+- `wbc-critique-eval-1`: failed (infrastructure)
+- `wbc-critique-eval-2`: success, produces `selection`
+- `wbc-critique-lens-check-A-1`: success
+- `wbc-critique-lens-check-B-1`: success
+- `wbc-critique-lens-check-C-1`: success
+- `wbc-critique-merge-1`: parent reducer
+
+**Custody**: Not applicable (no external effects in critique)
+
+**Checkpoint**: None within critique subworkflow (atomic from caller perspective)
+
+**Child identity coordinates**:
+- `critique/lens/check-A`, `critique/lens/check-B`, `critique/lens/check-C`
+
+**Forbidden observations**:
+- Single `handle_critique()` WBC attempt wrapping all lenses
+- Parallel failure silently swallowed without sequential fallback trace
+- Lens list position as sole identity (must use check identity, not index)
+
+**Mutation assertions**:
+- Break sequential fallback code path → runtime fails, auth path fails
+- Change `max_eval_attempts` from 2 to 1 → trace shows only one evaluator WBC attempt
+
+---
+
+### Scenario 3 — Human clarification suspension and cross-host resume
+
+**Stable scenario ID**: `S3-HUMAN-SUSPEND-RESUME`
+
+**Authored node/child path sequence** (report:613–618):
+```
+prep → prep_clarification_gate(needs_human) → collect_prep_clarification → SUSPEND →
+  [cross-host transfer, process death] →
+  RESUME at collect_prep_clarification reentry → plan
+```
+
+**Typed decisions**: `prep_clarification_gate` → `needs_human`
+
+**RA decision/fence events**:
+- `prep_clarification_gate(needs_human)` → `RAD-SUS-001`, fence seq N
+- Resume: new RA subject attempt (or same with validated fence), explicit resume decision `RAD-RES-001`
+
+**Custody**: On resume, custody must be reacquired with new epoch:
+- Old: `target=prep-clarification`, epoch=1, owner=pid-A
+- Transfer: epoch=2, owner=pid-B (new process)
+
+**WBC attempts**:
+- `wbc-prep-1`: outcome=needs_clarification
+- `wbc-suspend-prep-clarification`: suspend lineage stored
+- On resume: new WBC attempt `wbc-resume-prep-clarification-1`
+
+**Checkpoint/reentry coordinates**:
+- `checkpoint("prep_clarification_pending", prep_payload)` with `program_digest`, `policy_digest`, `wbc_contract_version=v4`
+- Resume must match all three digests or produce explicit `migration`/`new_attempt`/`quarantine` decision
+
+**Identity joins on resume**:
+
+| Semantic | RA | WBC | Custody |
+|---|---|---|---|
+| `prep_clarification_gate` | `RAD-SUS-001` (original) | `wbc-prep-1` | lease expired |
+| `collect_prep_clarification(resume)` | `RAD-RES-001` (new) | `wbc-resume-prep-clarification-1` | `lease:prep-clarification/epoch-2/pid-B` |
+
+**Expected terminal outcome**: Plan proceeds normally after clarification
+
+**Forbidden observations**:
+- Resume from marker/status field only (no RA decision)
+- Stale lease accepted on resume
+- Program/policy/WBC-version drift silently compiled
+- WBC receipt used as resume authority
+
+**Mutation assertions**:
+- Change program source during suspension → resume must fail or quarantine
+- Forge stale custody epoch → resume blocked
+- Delete RA resume decision → resume impossible
+
+---
+
+### Scenario 4 — Partial execute-batch crash after external effect but before receipt
+
+**Stable scenario ID**: `S4-EXECUTE-CRASH-PARTIAL`
+
+**Authored node/child path sequence** (report:520–540):
+```
+execute → require_execute_approval(pass) → 
+  foreach.dag_batches → batch-0 succeeds (external git push done) →
+  batch-1 starts → CRASH (before WBC outcome written) →
+  RESUME → batch-1 re-executes (idempotency check) → 
+  batch-2, batch-3 complete → merge_execution_results → review
+```
+
+**Typed decisions**: `require_execute_approval` → approved
+
+**RA events**: RA decision for approval. On resume, new fence for re-execution.
+
+**Custody**:
+- `target=task-{batch-0-task-id}/execute`, epoch=1: acquired, effect emitted, released
+- `target=task-{batch-1-task-id}/execute`, epoch=1: effect intent written, crash before outcome
+- On resume: `target=task-{batch-1-task-id}/execute`, epoch=2, re-acquired
+
+**WBC attempts**:
+- `wbc-exec-batch-0-task-X`: effect_intent + effect_outcome = success
+- `wbc-exec-batch-1-task-Y`: effect_intent present, NO effect_outcome (ambiguous)
+- Resume: reconciliation detects ambiguity → new attempt `wbc-exec-batch-1-task-Y-retry` with idempotency check
+- Idempotency key prevents duplicate external effect
+
+**Checkpoint/reentry**:
+- `checkpoint("execution_progress", {completed: [batch-0], pending: [batch-1, batch-2, batch-3]})`
+- Resume: batch-0 skipped (WBC confirms done), batch-1 re-attempted, batch-2/3 run fresh
+
+**Child identity**: Task ID + batch identity + item path for each child (not list index)
+
+**Forbidden observations**:
+- Batch-0 external effect duplicated on resume
+- Batch list index 1 used to identify resume point instead of task ID
+- WBC effect_outcome receipt used as authority to skip batch-1 re-execution
+
+**Mutation assertions**:
+- Remove checkpoint → full re-execute from batch-0 (wasteful but correct with idempotency)
+- Tamper with idempotency key → duplicate effect detected and blocked
+
+---
+
+### Scenario 5 — Review failure, bounded rework, scoped refinalization, re-review
+
+**Stable scenario ID**: `S5-REVIEW-REWORK-RETRY`
+
+**Authored node/child path sequence** (report:679–718):
+```
+execute → review → review_decision(needs_rework) → 
+  finalize_payload.scope_to_rework(review_payload.rework_items) →
+  execute (scoped) → review → review_decision(approved) → done
+```
+
+**Typed decisions**:
+- `review_decision` iteration 1 → `needs_rework`
+- `review_decision` iteration 2 → `approved`
+- Terminal: `MegaplanResult.done`
+
+**RA decisions**:
+- `RAD-REV-001`: review iteration 1, outcome=needs_rework, fence seq N
+- `RAD-EXE-002`: scoped re-execute approval, fence seq N+1
+- `RAD-REV-003`: review iteration 2, outcome=approved, fence seq N+2
+
+**WBC attempts**:
+- `wbc-review-iter-1`: outcome=needs_rework, rework_items=[item-A, item-B]
+- `wbc-exec-scoped-1`: only tasks matching rework_items executed
+- `wbc-review-iter-2`: outcome=approved
+
+**Custody**: Scoped re-execute acquires custody only for rework-scoped tasks, not all tasks
+
+**Loop state**: `rework_loop.max_iterations=3`, iteration 1 consumed, iteration 2 succeeds
+
+**Forbidden observations**:
+- Full re-execute instead of scoped rework
+- Review cap exhausted after single rework when cap=3
+- Handler code choosing rework scope instead of source-visible `scope_to_rework`
+
+**Mutation assertions**:
+- Change `max_review_rework_cycles` to 1 → trace shows cap exhausted after first rework
+- Remove scoping logic → full re-execute triggered (inefficient but not incorrect)
+
+---
+
+### Scenario 6 — Override/config change, cancellation race, publication, effect-only note
+
+**Stable scenario ID**: `S6-OVERRIDE-CANCEL-CONFIG`
+
+**Authored node/child path sequence** (report:608–610, 658–670):
+```
+gate → gate_decision(blocked) → override_control("gate blocked", gate_payload) →
+  concurrent cancellation signal arrives →
+  override_control returns action.kind=abort → MegaplanResult.aborted
+```
+
+ALTERNATE path (config change):
+```
+gate → gate_decision(escalate) → override_control → 
+  action.kind=set_profile → config effect (no route change) → re-enter gate
+```
+
+**Typed decisions**:
+- `gate_decision` → `blocked` or `escalate`
+- `override_control` → `abort` or config-change with `no_route_change`
+
+**RA decisions**:
+- `RAD-GATE-001`: gate blocked, fence N
+- `RAD-OVR-001`: override abort decision, fence N+1 (terminal) **or**
+- `RAD-OVR-002`: config change, fence N+1, outcome=`no_route_change` with WBC effect record
+
+**WBC**:
+- Abort path: `wbc-override-abort-1` with effect_outcome=aborted
+- Config path: `wbc-override-config-1` with `no_route_change` outcome, durable effect history
+
+**Custody**: Override acquires custody for the action target, released on completion
+
+**Race handling**: If cancellation arrives during override processing, the decision with the later fence CAS wins. The loser produces a stale-fence rejection.
+
+**Forbidden observations**:
+- Override action string (`"abort"`, `"force-proceed"`) parsed by handler without typed decision
+- Config change without explicit `no_route_change` outcome
+- Effect-only note (`add-note`) lacking exact target and WBC effect history
+- Publication/delivery triggered by WBC receipt rather than RA decision
+
+**Mutation assertions**:
+- Remove cancellation race handling → double-effect possible
+- Make add-note change route → must fail closed
+- Remove `no_route_change` outcome class → config changes incorrectly route
+
+---
+
+## 3. S1–S7 Plan-Gap Verdict
+
+### DECISIVE VERDICT: The current S1–S7 wording does NOT necessarily produce the six golden traces. Three gaps are fatal.
+
+#### Gap 1 — No dynamic fanout identity specification (FATAL)
+
+**Evidence**: S2 defines dynamic map/reducer (`briefs/s2-front-half-native-loop.md:13`) and requires "deterministic child naming" (`:14`), "deterministic semantic identity" (`:23`), and states "collision tests prove identity is semantic, not list-position-only" (`:52`). S5 requires "deterministic semantic child coordinates containing task ID, batch identity, and item path; list index alone is forbidden" (`s5-review-rework-finalize.md:29–30`).
+
+**The gap**: Neither S2 nor S5 specifies the concrete identity schema. They say what it must NOT be (list index) but not what it IS. The acceptance oracle requires `task_id + batch_identity + item_path`. Without this specification, two independent implementations will produce incompatible fanout identities. This breaks scenarios 2, 4, and 5.
+
+**Fix**: Add to S2 deliverables: a concrete `ChildIdentity` schema `{task_id: str, batch_id: str, item_path: str}` with a deterministic serialization format, plus a reference collision test with concrete inputs.
+
+#### Gap 2 — Decision-occurrence to RA-decision to consumed-transition wiring is underspecified (FATAL)
+
+**Evidence**: S1 mentions "accepted Run Authority decision ID, outcome, and CAS sequence" (`s1-checker-outcomes-builder-slice.md:30–31`). S2 requires "Every closed typed decision... creates or links exactly one accepted Run Authority Decision" (`s2-front-half-native-loop.md:30–33`). The corrective plan requires this (`docs/arnold/megaplan-native-parity-corrective-plan.md:132–138`).
+
+**The gap**: No sprint specifies HOW the link is established. Is it:
+- (a) The decision call site emits the RA decision ID into the trace?
+- (b) The runtime transition reads the ID from a shared store?
+- (c) The compiler statically binds them?
+
+Without this, scenarios 1–6 cannot produce the required `decision.accept` → `decision.consume` pairing with deterministic IDs. The oracle's "exactly one" constraint cannot be verified.
+
+**Fix**: Add to S2: a `DecisionBinding` protocol specifying that each `@decision` call site produces a `(decision_id, ra_decision_id, cas_seq)` triple written to the WBC attempt record before the dependent transition executes, and the runtime must consume that exact triple.
+
+#### Gap 3 — Program/policy/WBC-version drift detection lacks concrete digest algorithm (FATAL)
+
+**Evidence**: S2 requires "Bind every checkpoint/reentry envelope to the authored program/topology digest, call-site-policy digest, and exact WBC boundary-contract version" (`s2-front-half-native-loop.md:37–42`). S4 extends this to suspension (`s4-execute-dag-approval-resume.md:52–54`).
+
+**The gap**: No sprint defines what "program/topology digest" or "call-site-policy digest" means. Is it:
+- Source-file SHA256?
+- Lowered IR hash?
+- AST structural hash?
+- Semantic hash of the lowered graph?
+
+Different choices produce different resume behavior. Scenario 3 (cross-host resume) critically depends on this—resume must verify the exact same digest was pinned at suspend time. Without specification, silent drift is possible.
+
+**Fix**: Add to S2: the digest algorithm is `SHA256(lowered_ir_canonical_form + policy_manifest_canonical_form)`. The lowered IR canonical form must be specified (sorted keys, stable node ordering).
+
+#### Secondary gaps (non-fatal but high-risk)
+
+4. **S3's internal stop/go gate lacks concrete pass criteria** (`s3-tiebreaker-replan-native.md:11–20`). It says "emit a green builder/adoption receipt" but the receipt format is deferred to S1's proof-map schema. If S1's schema is incomplete, S3's gate is unenforceable.
+
+5. **S6's override effect-only actions** (`s6-override-auto-compat-collapse.md:16–18`) reference "exact target, current required authority/custody, durable WBC effect history, and an explicit `no_route_change` outcome" but never specify the `add-note` WBC schema, leaving scenario 6's effect-only note path unvalidatable.
+
+6. **S5's cycle is described as "one reusable authored cycle"** (`s5-review-rework-finalize.md:48`) but the current `.pypeline` at `arnold_pipelines/megaplan/workflows/workflow.pypeline:388–754` hardcodes separate execute/review/rework chains for gate-proceed, tiebreaker-proceed, and override-force-proceed paths—each with its own rework duplicate block. S5's wording does not require collapsing these, so the "one" cycle may remain three copies.
+
+---
+
+## 4. Smallest Durable Golden-Trace Contract
+
+The contract that must survive any implementation choice:
+
+### Fixture-Oriented Schema
+
+```yaml
+# golden-trace-contract.yaml
+schema: arnold.golden_trace.v1
+
+identity_schema:
+  semantic_path:
+    kind: string
+    pattern: "{phase}[/{child_type}/{child_identity}]"
+    child_identity:
+      task_id: string       # required for execute children
+      batch_id: string      # required for execute children  
+      item_path: string     # required for fanout children
+  ra_subject_attempt: string
+  ra_fence_seq: integer
+  wbc_attempt_id: string
+  wbc_contract_version: string
+  custody_target: string|null
+  custody_epoch: integer|null
+
+event_ordering: total        # events must appear in this exact sequence
+
+required_events:
+  - phase.enter
+  - phase.exit
+  - decision.evaluate
+  - decision.accept
+  - decision.consume
+  - loop.enter
+  - loop.exit
+  - fanout.dispatch
+  - fanout.collect
+  - human.suspend
+  - human.resume
+  - custody.acquire
+  - custody.renew
+  - custody.release
+  - wbc.effect_intent
+  - wbc.effect_outcome
+  - checkpoint.write
+  - checkpoint.resume
+  - terminal.accept
+
+invariants:
+  - name: set_equality
+    check: |
+      authored_semantic_set == lowered_semantic_set == runtime_wbc_producer_set
+  - name: decision_one_to_one
+    check: |
+      for each authored decision occurrence:
+        count(decision.accept where outcome == authored.outcome) == 1
+        count(decision.consume where ra_decision_id == accept.ra_decision_id) == 1
+  - name: no_shared_attempt_id
+    check: |
+      semantic_path_set ∩ ra_subject_set == ∅
+      semantic_path_set ∩ wbc_attempt_set == ∅
+      semantic_path_set ∩ custody_target_set == ∅
+  - name: custody_before_effect
+    check: |
+      for each wbc.effect_intent:
+        exists custody.acquire with matching target and epoch BEFORE this event
+  - name: checkpoint_integrity
+    check: |
+      for each checkpoint.resume:
+        resume.program_digest == checkpoint.pinned.program_digest
+        OR exists explicit migration_decision
+
+digest_spec:
+  program_digest: SHA256(canonical_lowered_ir)
+  policy_digest: SHA256(canonical_policy_manifest)
+  canonical_lowered_ir: |
+    Sorted JSON with stable key ordering: nodes sorted by semantic_path,
+    edges sorted by (source, target, label), policies sorted by policy_id.
+  canonical_policy_manifest: |
+    All declared policies merged, sorted by policy_id, with deterministic
+    field ordering.
+
+forbidden_event_sources:
+  - handler_return_value.next_step
+  - handler_return_value.route_signal
+  - handler_return_value.recommendation
+  - handler_return_value.verdict
+  - component_metadata.route_bindings
+  - _core_workflow_data.transitions
+  - manifest_backend.branch_edge_id
+```
+
+### Exact Amendments Required (minimal set)
+
+1. **NORTHSTAR.md amendment**: Add after line 56 (`docs/arnold/megaplan-native-parity-corrective/NORTHSTAR.md:56`):
+   > Child identity is the triple `(task_id, batch_id, item_path)`. Fanout child paths follow `{parent_path}/{child_type}/{task_id}/{batch_id}/{item_path}`. Two children with identical triples are the same child regardless of list position.
+
+2. **S2 brief amendment** (`briefs/s2-front-half-native-loop.md`): Add after `:14`:
+   > Concrete `ChildIdentity` = `NamedTuple('ChildIdentity', [('task_id', str), ('batch_id', str), ('item_path', str)])`. Deterministic serialization: `f"{task_id}/{batch_id}/{item_path}"`. Fanout path template: `{parent_semantic_path}/{child_type}/{task_id}/{batch_id}/{item_path}`.
+
+3. **S2 brief amendment** (`briefs/s2-front-half-native-loop.md`): Add after `:34`:
+   > `DecisionBinding` protocol: the `@decision` decorator runtime writes `(decision_id, ra_decision_id, cas_sequence)` into the current WBC attempt's `decision_bindings` array. The consuming phase/transition reads from that array. Mismatch (missing, duplicate, wrong outcome) is a fence violation.
+
+4. **S2 brief amendment** (`briefs/s2-front-half-native-loop.md`): Add after `:42`:
+   > Concrete digests: `program_digest = SHA256(canonical_lowered_ir)` where canonical form is stable-sorted JSON. `policy_digest = SHA256(canonical_policy_manifest)`. Both digests are written into the checkpoint envelope and verified on every resume.
+
+5. **S5 brief amendment** (`briefs/s5-review-rework-finalize.md`): Add to `Required work`:
+   > The one reusable delivery cycle must be exactly one source construct (function/subworkflow), not duplicated per entry path. The current `.pypeline` triplication (gate-proceed, tiebreaker-proceed, override-force-proceed) must collapse into a single `deliver(finalize_payload)` call site.
+
+6. **S6 brief amendment** (`briefs/s6-override-auto-compat-collapse.md`): Add after `:18`:
+   > `add-note` WBC schema: `{action: "add-note", target: SemanticPath, note_text: str, authority: RADecisionId, custody: CustodyTarget, timestamp: DateTime, outcome: "no_route_change"}`. Notes without exact target, current authority, and custody are rejected.
+
+---
+
+## 5. Decisive Plan-Gap Verdict
+
+### Plan-Gap Decision Matrix
+
+| Scenario | Traceable today? | Blocked by | Fix sprint |
+|---|---|---|---|
+| S1 (ordinary success) | PARTIAL | Gap 2 (decision binding) | S2 amendment |
+| S2 (critique retry+fallback) | NO | Gap 1 (child identity), Gap 2 | S2 amendments |
+| S3 (human suspend/resume) | NO | Gap 3 (digest spec) | S2 + S4 amendments |
+| S4 (execute crash partial) | NO | Gap 1 (child identity), Gap 2 | S2 + S5 amendments |
+| S5 (review rework) | NO | Gap 1, Gap 2, secondary gap 6 | S2 + S5 amendments |
+| S6 (override cancel config) | NO | Gap 2, secondary gap 5 | S2 + S6 amendments |
+
+### Final Verdict
+
+**The current S1–S7 plan is sufficient in spirit but insufficient in specification.** The plan correctly identifies WHAT must happen (semantic ownership, identity separation, authority gating). It fails to specify HOW with enough precision that two independent teams would produce compatible traces.
+
+The three fatal gaps (child identity schema, decision binding protocol, digest algorithm) and three secondary gaps (S3 gate criteria, S6 note schema, S5 cycle deduplication) are each fixable with the exact amendments above. The amendments are additive (no sprint renumbering) and collectively under 30 lines of specification text.
+
+**Recommended action**: Apply the six amendments, re-baseline the acceptance oracle against the amended briefs, and then proceed. Without the amendments, S7's conformance gate cannot pass because the validator will have no specification for what constitutes a matching trace.

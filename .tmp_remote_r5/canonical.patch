@@ -1,0 +1,20 @@
+--- a/arnold/workflow/attempt_ledger_store.py
++++ b/arnold/workflow/attempt_ledger_store.py
+@@ -1915,9 +1915,14 @@
+     # Versions
+     ver = d["versions"]
+     versions = VersionSet(
+-        code_version=ver.get("code_version", ""),
+-        config_version=ver.get("config_version", ""),
+-        template_version=ver.get("template_version", ""),
++        code_version=ver.get("code_version"),
++        # Preserve omitted optional versions as ``None``.  ``VersionSet``
++        # omits ``None`` fields from its durable representation; rebuilding
++        # them as empty strings makes a read-after-write event serialize
++        # differently and falsely turns an exact idempotent retry into an
++        # ``IdempotencyConflictError``.
++        config_version=ver.get("config_version"),
++        template_version=ver.get("template_version"),
+     )
+ 
+     # GrantRef

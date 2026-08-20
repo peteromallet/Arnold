@@ -1,0 +1,2026 @@
+{
+  "version": 8,
+  "timestamp": "2026-07-22T20:53:00Z",
+  "hash": "sha256:7e725c04797fb20091d83833ed962918d37f94b0b18cd237772ff1e4ea27eb49",
+  "questions": [
+    "What exact freshness/lag SLO and bounded reread policy should M9 encode for each dimension when source evidence is present but older than the projection snapshot?",
+    "Which concrete Run Authority and Custody source APIs are the canonical reread surfaces for positive control paths in this repo, and are any still missing a shared adapter?",
+    "Which historical compatibility projections must remain readable at M9 closeout, and what explicit zero-reader evidence is acceptable for expiry?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Generated reader inventory and `research/wbc-boundary-adoption-matrix.md` show zero unapproved raw authority readers and every remaining compatibility projection is explicitly marked non-authoritative with an expiry gate.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Deleting and rebuilding every in-scope projection yields byte-stable ordered views and matching digests from authoritative records plus immutable evidence only.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Forged or stale Run Authority, WBC, custody, and status projections cannot produce a positive action until current source grant/fence and lease/epoch records are reread and joined.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Resident, cloud, CLI, watchdog, and auditor views agree for identical fixture inputs; disagreements emit structured drift with exact evidence IDs instead of optimistic status collapse.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Observer-purity tests prove reads from status, resident, watchdog, and introspection surfaces do not append progress, activity, lifecycle, delivery, or repair evidence.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Discord `/whats-cooking` keeps `attention` as an overlay only: live execution or active repair remains listed, labels prefer `progress.display_state`, and attention reasons do not replace execution truth.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Work-ledger outputs distinguish productive, replayed, validation-only, retry/rework, and unavailable categories without classifying legitimate implementation or required review as orchestration waste.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Deterministic reason fixtures each fire exactly once with exact evidence IDs for the required M9 block/drift/coverage classes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Retention/privacy/migration tests cover stored payloads, legal hold, cross-tenant denial, missing keys, expiry/tombstones, interrupted migration, and explicitly unbackfillable legacy history; metadata-only validation does not pass.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "All generated M9 evidence artifacts are present, tracked as expected, and regenerated diff-clean at finalize.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "parse_diff",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The final execution graph remains below the 48-minute hard threshold with a documented 42-minute critical path and 46-minute dispatch graph.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Shared projection helpers remain small enough that consumer migrations mostly wire existing data through one contract instead of duplicating parallel status logic in each consumer.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Compatibility bridges are isolated behind explicit adapter seams and reader-count/expiry evidence so M10 can delete them without another status-system redesign.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Stakeholder sign-off on the chosen freshness/lag SLO values is recorded before promotion from shadow comparison to any control-path use.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Existing exact-version query surfaces from M6A/M8A are available or can be wrapped without reopening the milestone architecture.",
+    "Positive control actions remain disabled during shadow comparison and canary work, so M9 can harden readers before authorizing any promotion.",
+    "`research/wbc-boundary-adoption-matrix.md` and `evidence/m9-f01-f17-consumer-cutover.json` either already exist or may be created as milestone artifacts.",
+    "The adjacent review/rework presentation slice at commit `07f428d361f63c465b0dafaca9783585efeaa4b9` remains the behavior baseline for display-state parity and should not be redesigned.",
+    "Any scope pressure should remove compatibility bridges last and only with explicit zero-reader evidence; it should not weaken fail-closed authority or observer purity."
+  ],
+  "north_star_actions_addressed": [
+    {
+      "action_id": "NSA7",
+      "resolution": "addressed",
+      "reason": "The 66-step plan now gives observability/introspect.py, resident/cli.py, and resident/context_tree.py explicit write ownership and named targeted regression coverage instead of relying on broad inventory wording.",
+      "where": "Phase 3, Steps 26, 29, and 30; Phase 4, Steps 54, 56, and 59",
+      "plan_refs": [
+        "plan_v8a.md#step-26-t26-upgrade-observability-introspect-to-exact-cursor-projections",
+        "plan_v8a.md#step-30-t30-add-separately-owned-resident-cli-context-introspect-write-paths",
+        "plan_v8a.md#step-56-t56-add-resident-cli-context-introspect-targeted-regression-tests"
+      ],
+      "action_type": "change_plan"
+    },
+    {
+      "action_id": "NSA8",
+      "resolution": "addressed",
+      "reason": "The execution graph is re-sharded to a documented 42-minute critical path and 46-minute estimated dispatch graph, both strictly below the 48-minute admission threshold.",
+      "where": "North Star Blocking-Action Closeout; Execution Order item 9",
+      "plan_refs": [
+        "plan_v8a.md#north-star-blocking-action-closeout",
+        "plan_v8a.md#execution-order"
+      ],
+      "action_type": "change_plan"
+    }
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_phase_scoped_llm_liveness.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_status_projection.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_work_ledger.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_progress_auditor.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_progress_auditor_liveness.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_status_snapshot.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_context_tree.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_currently_running_command.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_status_tree.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_watchdog_cli.py",
+        "reason": "changed test file"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_current_target.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/cloud/current_target.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_human_blockers.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/cloud/human_blockers.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_six_hour_auditor.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/cloud/six_hour_auditor.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_doctor.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/observability/doctor.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_cli.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/resident/cli.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/execution/test_cli.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/resident/cli.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_cli.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/resident/cli.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/test_discovery.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/watchdog/discovery.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_registry.py",
+        "reason": "bounded basename match for arnold_pipelines/megaplan/watchdog/registry.py"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/watchdog/test_repair_runner.py",
+        "reason": "deterministic mirror for arnold_pipelines/megaplan/watchdog/repair_runner.py"
+      },
+      {
+        "kind": "path",
+        "value": "arnold_pipelines/megaplan/orchestration/test_selection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_cli_bootstrap_day2.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_credentials.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_guardian_notifications.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_local_smoke.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_notify.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_reset_notifications.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_resident_profile.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_services.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_smoke.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/agentbox/test_tmux_restart_worker.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/agent/test_codex_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/agent/test_contracts.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/agent/test_deepseek_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/agent/test_import_boundaries.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/agent/test_run_agent_query_file.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/agent/test_shannon_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/conformance/test_deleted_surfaces.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/conformance/test_megaplan_coupling_gate.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/execution/test_fixture_scenarios.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/kernel/test_journal.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_media_cost.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_profiles.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_profiles_opaque.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_registry_manifest_discovery.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_registry_python_discovery.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_resume.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold/pipeline/test_token_cost.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/pipelines/test_creative_native_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/pipelines/test_doc_native_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/pipelines/test_jokes_native_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/pipelines/test_live_supervisor_native_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/pipelines/test_native_truth.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/pipelines/test_select_tournament_native_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/pipelines/test_writing_panel_strict_native_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_acceptance_commit.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_acceptance_transaction.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_acceptance_transaction_cas.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_advancement_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_agentbox_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_anchors.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_authority_batch_scope.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_authority_dispatch_grants.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_authority_incident_cycles.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_authority_inventory.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_authority_inventory_cli.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_authority_views.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_auto_engine_isolation_default.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_auto_native_dispatch.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_auto_recover_blocked.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_bakeoff_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_boundary_receipt_dispatch.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_boundary_receipts.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_canonical_source_admission.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_authority_shadow.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_diff_ref_resolution.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_launch_preconditions.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_m5a_successor_gate.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_self_hosted_editable.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_chain_worktree_safety.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_cli_check_validator.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_cli_command_parser_parity.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_cli_commands.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_cli_describe_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_cli_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_cli_ticket_lifecycle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_cloud_status_authority_shadow.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_codex_writable_roots.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_completion_io.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_compositional_workflow.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_control_binding.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_control_resume_runner.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_custody_canary.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_custody_control_plane_unattended_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_doctor_llm_liveness.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_editor_setup.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_engine_fix_ports.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_epic_chain.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_execute_completed_task_receipts.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_execute_flag_compat.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_execute_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_execute_prompt_worktree.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_fallback_chains_characterization.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_fallback_chains_profile_validation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_fallback_observability.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_final_conformance_scenarios.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_gate_checks.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_gate_schema_derived_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_generate_native_representation_evidence.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_gpt56_execution_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_handler_behaviors.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_handler_route_signals.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_heartbeat_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_hermes_plan_recovery.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_human_gate_view.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_import_boundaries.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_incident_bridge.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_initiative_scaffold.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_install_sync.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_journal_cas.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_manifest_backend.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_model_seam_recovery.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_native_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_native_golden_traces.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_native_representation_alignment_artifacts.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_north_star_actions_gate_revise.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_north_star_actions_review_blocking.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_north_star_critical_robustness.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_north_star_revise_post_validation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_observability_events_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_operator_pause.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_override_action_matrix.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_package.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_path_resume_proofs.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_phase_result_classify.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_pipeline.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_pipeline_contracts.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_plan_markdown_capture.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_plan_text_normalization.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_policy_view_conformance.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_prep_payload_compat.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_prerequisite_resolution_sync.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_profile_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_promotion.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_real_producer_boundary_fixtures.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_resume_routing.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_run_state_resolver.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_runtime_pipeline_native_program.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_s6_decision_translator_fence.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_s6_override_control.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_s6_override_routing.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_semantic_health.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_semantics_carrier.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_state_reconciliation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_status_cli.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_adoption.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_apply_migration.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_cli.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_compatibility_e2e.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_lossless_edits.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_migration.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_validator.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_strategy_version_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_structured_phase_schema_projections.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_task_feasibility.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_template_registry.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_topology_golden.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_transition_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_worker_fanout_fallback.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_workflows_components.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_workflows_planning.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_zero_write_mutation_gate.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/workflows/test_workflows_planning.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_channel_shadow.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_comparison.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_integration.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_judge.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_merge.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_metrics.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_orchestrator.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_state.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/bakeoff/test_worktree.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_auto_drive.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_blocked_retry_byte_stability.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_cli_parser_snapshot.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_context_retry_byte_stability.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_external_retry_byte_stability.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_import_surface.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_m4_plugin_registry_characterization.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/characterization/test_pipeline_golden.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cli/test_megaplan_recovery_command_parser.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_cloud_chain_command.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_cloud_hot_upload.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_cloud_status.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_cloud_status_custody.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_dependency_manifest_repair.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_editable_install_sync.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_feature_flags.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_github_sync.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_human_review_diagnostic.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_m1_containment_acceptance.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_manual_repair_trigger.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_meta_repair.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_meta_repair_wrapper_retrigger.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_operator_control.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_phase_command_shim.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_post_fixer_recovery_gate.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_progress_auditor_controller.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_progress_auditor_escalation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_progress_auditor_ownership.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_recovery_decision_systemic.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_claim_cleanup.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_custody.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_dispatch_classifier.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_goal.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_investigation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_lock.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_loop_advancement_policy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_loop_done_chain_stale_completion.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_loop_summary.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_loop_terminal_stale_chain.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_recurrence.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_request_hooks.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_requests.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_revalidation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_repair_trigger_wrapper.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_resolver_enforcement.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_resolver_enforcement_dispatch.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_runtime_provenance.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_session_retirement.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_ssh_deploy.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_ssh_spec.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_status_retirement.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_status_snapshot_cli.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_status_snapshot_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_superfixer_custody_systemic.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_supervisor_runtime_isolation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_terminal_audit.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_watchdog_finalized_wait_state.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/cloud/test_watchdog_wrappers.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/contract/test_store_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_authority_dispatch_validation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_durable_evidence_accounting.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_envelope_flag.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_execute_frontier_authority.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_m8a_execute_wiring.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_merge_scope.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_quality_deviations.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_reducer_binding.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/execute/test_tier_binding.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/fixtures/state_json/test_load_resume.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/handlers/test_session_cache_noop.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/m8/regression/test_budget_suspension_regressions.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/m8/regression/test_structural_regressions.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/megaplan/test_authority_divergence_recovery.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/megaplan/test_incident_cli.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/megaplan/test_status_blocked_recovery_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/observability/test_concurrent_telemetry_ordering.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/observability/test_events.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/observability/test_events_projection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracle/test_m5d_substrate_swap.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracles/test_calibration_loop_oracle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracles/test_crash_isolation_oracle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracles/test_effect_ledger_replay_oracle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracles/test_evaluand_replay_oracle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracles/test_evaluand_transaction_boundary_oracle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracles/test_journal_join_key_oracle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/oracles/test_replay_oracle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_blast_radius_floor.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_codex_output_schema.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_completion_contract_atomic.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_completion_contract_suite_selection.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_critique_custody.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_critique_evaluator_validation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_full_suite_backstop.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_import_graph.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_parallel_critique.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_phase_result_classify.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_plan_test_blast_radius.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_revise_blast_radius.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/orchestration/test_validation_jobs.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/profiles/test_pipeline_profiles.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/prompts/test_finalize_task_feasibility_prompt.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/prompts/test_template_read_instruction.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_authorizer.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_codex_cli_runner.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_delegation_delivery_instruction.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_delegation_provenance.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_discord_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_discord_outbound.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_discord_reaction_lifecycle.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_discord_reply_chain.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_discord_subagent_followup_routing.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_discord_voice_transcription.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_dropped_threads_command.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_escalation_reply.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_git_custody.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_launch_subagent.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_megaplan_initiatives.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_query_relationship_and_aggregation.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_request_summary_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_restart_resident_command.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_scheduled_turn_provenance.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_scheduler_notifications.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_subagent_followup.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_subagent_queue.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_subagent_restart_persistence.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_subagent_terminal_delivery_contract.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_task_routing.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_timezone_localization.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_turn_handoff.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_vp_todo_state.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_vp_todo_sweep_handler.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_vp_todo_tools.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resume/test_pre_m6_alias.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/store/test_capsule_storage.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/store/test_warrant_sources.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_append_completed_atomic.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_arnold_dispatcher.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_chain_completion_guard.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_codex_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_deepseek_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_doc_assembly.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_execute_compat_argv.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_managed_agent.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_packaging_skills.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_pipeline_composability.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_pipeline_compose.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_pipeline_discovery_integrity.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_pipeline_elegance.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_pipeline_run_cli.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_pipelines_new.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_plan_completed_atomic_gate.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_receipts.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_reconciliation_atomic_gate.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_shannon_adapter.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_state_reader_audit.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_store_layout.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_ticket_relationships.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_worker_concurrency.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_worker_exports_compatibility.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/test_workers_shannon_session.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/workers/test_hermes_execute_recovery.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/workers/test_hermes_tool_markup.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/workers/test_session_cache_regression.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/arnold_pipelines/megaplan/test_work_class_telemetry.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_context_tree_attention_priority.py",
+        "reason": "import-graph dependent of changed surface"
+      },
+      {
+        "kind": "path",
+        "value": "tests/resident/test_knowledge_context.py",
+        "reason": "import-graph dependent of changed surface"
+      }
+    ],
+    "changed_surfaces": [
+      "arnold_pipelines/megaplan/cli/status_view.py",
+      "arnold_pipelines/megaplan/cloud/current_target.py",
+      "arnold_pipelines/megaplan/cloud/human_blockers.py",
+      "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+      "arnold_pipelines/megaplan/cloud/status_format.py",
+      "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+      "arnold_pipelines/megaplan/cloud/watchdog.py",
+      "arnold_pipelines/megaplan/observability/doctor.py",
+      "arnold_pipelines/megaplan/observability/introspect.py",
+      "arnold_pipelines/megaplan/observability/work_ledger.py",
+      "arnold_pipelines/megaplan/resident/cli.py",
+      "arnold_pipelines/megaplan/resident/context_tree.py",
+      "arnold_pipelines/megaplan/resident/currently_running.py",
+      "arnold_pipelines/megaplan/resident/discord.py",
+      "arnold_pipelines/megaplan/resident/status_tree.py",
+      "arnold_pipelines/megaplan/status_projection.py",
+      "arnold_pipelines/megaplan/watchdog/discovery.py",
+      "arnold_pipelines/megaplan/watchdog/log.py",
+      "arnold_pipelines/megaplan/watchdog/orphans.py",
+      "arnold_pipelines/megaplan/watchdog/processes.py",
+      "arnold_pipelines/megaplan/watchdog/registry.py",
+      "arnold_pipelines/megaplan/watchdog/repair_runner.py",
+      "arnold_pipelines/megaplan/watchdog/retry.py",
+      "arnold_pipelines/megaplan/watchdog/signals.py",
+      "arnold_pipelines/megaplan/watchdog/snapshot.py",
+      "arnold_pipelines/megaplan/watchdog/tmux_scan.py",
+      "research/wbc-boundary-adoption-matrix.md",
+      "evidence/m9-f01-f17-consumer-cutover.json",
+      "tests/arnold_pipelines/megaplan/test_status_projection.py",
+      "tests/arnold_pipelines/megaplan/test_phase_scoped_llm_liveness.py",
+      "tests/cloud/test_status_snapshot.py",
+      "tests/cloud/test_progress_auditor.py",
+      "tests/cloud/test_progress_auditor_liveness.py",
+      "tests/resident/test_status_tree.py",
+      "tests/resident/test_context_tree.py",
+      "tests/resident/test_currently_running_command.py",
+      "tests/test_watchdog_cli.py",
+      "tests/arnold_pipelines/megaplan/test_work_ledger.py"
+    ],
+    "always_run": [
+      "tests/arnold_pipelines/megaplan/test_status_projection.py",
+      "tests/resident/test_currently_running_command.py",
+      "tests/cloud/test_status_snapshot.py"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Included 10 changed pytest file(s) directly. Tracked 26 changed non-test Python surface(s). Used bounded basename search under tests/ for at least one changed surface. Added 366 import-graph dependent test selector(s). Some changed Python surfaces have no deterministic selector, so the default stays on the full-suite path. Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: evidence/m9-f01-f17-consumer-cutover.json. Ignored documentation-only change(s) for selector derivation: research/wbc-boundary-adoption-matrix.md. Candidate: The change is broad but clustered around projection/status/watchdog/resident surfaces. A scoped baseline catches the shared-contract regressions quickly, while full-suite fallback remains necessary because many indirect consumers may depend on the same projection semantics. Floor widened the candidate by preserving deterministic selector(s). Dropped nonexistent pytest path(s) from plan-time baseline metadata: tests/archive/m5/_pipeline/test_step_protocol_test_locals.py, tests/archive/m5/cli/test_arnold_parser_snapshot.py, tests/archive/m5/docs/test_arnold_external_builder.py, tests/archive/m5/pipelines/test_creative_pipeline.py, tests/archive/m5/pipelines/test_jokes_pipeline.py, tests/archive/m5/pipelines/test_select_tournament_pipeline.py, tests/archive/m5/test_arnold_cli.py, tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/native/test_resume_routing.py, tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py, tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py, tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py, tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_execute_authority.py, tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 366,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "tests/archive/m5/_pipeline/test_step_protocol_test_locals.py",
+      "tests/archive/m5/cli/test_arnold_parser_snapshot.py",
+      "tests/archive/m5/docs/test_arnold_external_builder.py",
+      "tests/archive/m5/pipelines/test_creative_pipeline.py",
+      "tests/archive/m5/pipelines/test_jokes_pipeline.py",
+      "tests/archive/m5/pipelines/test_select_tournament_pipeline.py",
+      "tests/archive/m5/test_arnold_cli.py",
+      "tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/native/test_resume_routing.py",
+      "tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py",
+      "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py",
+      "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py",
+      "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_execute_authority.py",
+      "tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}

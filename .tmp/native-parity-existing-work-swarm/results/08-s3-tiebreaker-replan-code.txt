@@ -1,0 +1,89 @@
+## S3 Tiebreaker + Replan: Audit Findings
+
+### 1. Verdict: **PARTLY EXISTS**
+
+The four-phase tiebreaker is source-visible in `workflow.pypeline` and the checker validates it, but the phases are cosmetic wrappers around legacy handler dispatch. Execution still routes through `handle_tiebreaker_run`/`handle_tiebreaker_decide` in the runtime, and old component metadata survives undeleted. Replan rejoins the normal path but through handler state mutation, not native source authority.
+
+---
+
+### 2. Existing Artifacts with Evidence
+
+**A. Four-phase tiebreaker in `workflow.pypeline` (source-visible but handler-backed)**
+
+- `workflow.pypeline:471-488` — researcher, challenger, synthesis, decision as individual step calls, imported from `components.py:30-34`.
+- The checker recognizes these four as front-half rows: `source_compiler.py:1747-1750` includes all four tiebreaker phases in `_front_half_row_specs()`.
+- `AWF252_TIEBREAKER_SHAPE_VIOLATION` diagnostic (`diagnostics.py:145`) fires when a single-call wrapper is detected without all four phases: `source_compiler.py:794-864`.
+
+**B. Checker row evidence integration**
+
+- `_row_evidence_diagnostics` at `source_compiler.py:722-726` calls `_implemented_front_half_rows` which covers S3 tiebreaker rows.
+- Row ID namespace in `semantic_evidence.py:60-70`: `S3_TIEBREAKER_RESEARCHER_ROW_ID`, `S3_TIEBREAKER_CHALLENGER_ROW_ID`, `S3_TIEBREAKER_SYNTHESIS_ROW_ID`, `S3_TIEBREAKER_DECISION_ROW_ID`, `S3_REPLAN_AUTHORITY_ROW_ID`, `S3_PARENT_REJOIN_ROW_ID`.
+- Invalid fixture test: `tests/fixtures/workflow_authoring/m3/invalid_m3_tiebreaker_single_call_carrier.py` + expected JSON proving AWF252 fires.
+
+**C. Tiebreaker orchestration runtime (the actual behavior engine)**
+
+- `orchestration/tiebreaker_runtime.py:56-95` — `handle_tiebreaker_run` orchestrates the researcher→challenger→synthesis chain via `_run_tiebreaker()`.
+- `orchestration/tiebreaker_runtime.py:98-171` — `handle_tiebreaker_decide` handles pick/replan/escalate actions, writes `tiebreaker_decisions.json`, updates flag registry.
+- `orchestration/tiebreaker.py:53-141` — `_run_tiebreaker()` does the actual model invocations: researcher prompt → worker, challenger prompt → worker, synthesis render.
+- Handler bridge: `handlers/_tiebreaker_impl.py:1-29` re-exports from `tiebreaker_runtime`; `handlers/tiebreaker.py:1-30` re-exports from `_tiebreaker_impl`.
+
+**D. Replan rejoin (handler-owned, not native source)**
+
+- `tiebreaker_runtime.py:149-151` — on "replan" action: `state["current_state"] = STATE_PLANNED; next_step_val = "critique"`.
+- `replan_state.py:1-38` — standalone `reset_replan_loop_state()` clears `tiebreaker_count`, `user_approved_gate`, `active_step`, `latest_failure`, `resume_cursor`.
+
+**E. Parent receipts**
+
+- Full receipts subsystem: `receipts/__init__.py`, `receipts/schema.py` (Receipt TypedDict with 24 fields), `receipts/canonical.py`, `receipts/drift.py`, `receipts/query.py`, `receipts/writer.py`, `receipts/extractors.py`.
+- `boundary_contracts.py:194-211` — `decision_to_parent` BoundaryContract with `receipt_required=True`, `parent_rejoin_promotion=True`.
+- `boundary_contracts.py:229-243` — `parent_rejoin_promotion` BoundaryContract with `receipt_required=True`.
+- Boundary fixture: `docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_decision_to_parent/` with manifest, boundary_receipts (row_id `s3.tiebreaker_decision.1`), phase_result, state, semantic_health.
+
+**F. Old wrapper metadata (NOT deleted)**
+
+- `components.py:2048-2100` — `TIEBREAKER_RUN` and `TIEBREAKER_DECIDE` steps with full `handler_ref`, `route_bindings`, `policy`.
+- `components.py:2101-2189` — `TIEBREAKER_RESEARCHER`, `TIEBREAKER_CHALLENGER`, `TIEBREAKER_SYNTHESIS`, `TIEBREAKER_DECISION` canonical four-phase steps — each labeled `"bridge: reuses legacy handler as phase body"`.
+- `components.py:2532-2555` — `SOURCE_TIEBREAKER_WORKFLOW` with `topology_contract` containing `canonical_run_completion_target_ref: "tiebreaker_decision"` and `decision_routes`.
+- `workflow.pypeline:145-176` — `route_bindings` block still declares `handler_ref` for all four tiebreaker phases.
+- `native_interfaces.py:175-207` — `TIEBREAKER_RUN` and `TIEBREAKER_DECIDE` `NativeInterface` definitions carry `handler_ref` and `legacy_aliases`.
+
+**G. Tests**
+
+- `tests/arnold_pipelines/megaplan/test_handler_route_signals.py:121-130` — `TestTiebreakerSignals` verifies no forbidden transition helpers and route-label-only signals.
+- **`test_tiebreaker_native_flow.py` does not exist** (master plan exit gate at line 667).
+
+---
+
+### 3. What Can Be Reused / Generalized
+
+- **Checker shape validation**: `_tiebreaker_shape_diagnostics` (`source_compiler.py:794-864`) and `_front_half_row_specs` (`source_compiler.py:1734-1767`) already detect four-phase presence vs single-call wrapper. This is reusable as-is for enforcement.
+- **Boundary contracts** (`boundary_contracts.py:142-243`): all four tiebreaker boundaries + replan authority + parent rejoin are defined. Can be used directly for semantic evidence generation and parity gates.
+- **Receipts subsystem** (`receipts/`): mature, with schema, canonicalization, drift detection. The parent receipt pattern is already wired into boundary contracts.
+- **Row ID namespace** (`semantic_evidence.py:60-70`): stable, versioned under `s3.*`, already consumed by checker and boundary contracts.
+- **Tiebreaker runtime prompts** (`prompts/tiebreaker_researcher.py`, `tiebreaker_challenger.py`, `tiebreaker_synthesis.py`): these are pure phase bodies that can be promoted to native phase implementations.
+- **Replan state clearing** (`replan_state.py`): the key-clearing logic is correct and can be lifted into a typed native phase body.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **True native phase bodies**: Replace `handler_ref` bridges on the four tiebreaker phases with actual typed native phase implementations (or pure prompt bodies). Currently every phase delegates to `handle_tiebreaker_run`/`handle_tiebreaker_decide`.
+2. **`test_tiebreaker_native_flow.py`**: Does not exist. Required as S3 exit gate per master plan line 667.
+3. **Replan as source-authoritative construct**: Currently `replan_state.py` side-effects state and `handle_tiebreaker_decide` mutates `state["current_state"]`. Must be an explicit typed outcome/transition in native source.
+4. **Delete/fence old wrapper metadata**: `TIEBREAKER_RUN`/`TIEBREAKER_DECIDE` (components.py:2048-2100), `SOURCE_TIEBREAKER_WORKFLOW` topology contract (components.py:2532-2555), `handler_ref` declarations in `workflow.pypeline:145-176`, and `native_interfaces.py:175-207` all survive as route-capable. Per-sprint dead-delete mutation required by master plan line 672.
+5. **Split-outcome scenarios**: pick/proceed, replan/iterate rejoin, escalate/override, and parent rejoin receipt scenarios (master plan line 671). The existing `test_handler_route_signals.py` only checks AST-level signal hygiene, not behavioral scenarios.
+6. **Pre-S3 serialized fixture resume**: Required per master plan lines 673-674.
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+**Current assessment**: S3 is approximately 40% done. The checker infrastructure, boundary contracts, row IDs, and receipts subsystem are solid. The gap is that the four-phase source is cosmetic — it still delegates to legacy handler dispatch — and old metadata survives undeleted.
+
+**Recommendation**: Split S3 into two sub-sprints:
+
+- **S3a** (the current sprint): Promote the four tiebreaker phases to true native phase bodies. The prompts already exist in `prompts/tiebreaker_researcher.py`, `tiebreaker_challenger.py`, `tiebreaker_synthesis.py`. Wire them as typed native phases instead of `handler_ref` bridges. Keep `tiebreaker_runtime.py` as the orchestration glue but ensure it's invoked through native source constructs. Add `test_tiebreaker_native_flow.py`.
+
+- **S3b** (new): Delete/fence old wrapper metadata (`TIEBREAKER_RUN`, `TIEBREAKER_DECIDE`, `SOURCE_TIEBREAKER_WORKFLOW` topology contract). Make replan an explicit source-authoritative transition. Add dead-delete mutation proof and split-outcome scenarios. This absorption is already implied by the S3 brief ("Absorbs `m5-tiebreaker-source-extraction.md`") but the brief understates the deletion work needed given how much old metadata survives.
+
+**Risk**: The S3 brief's "Do Not Close If — Tiebreaker source is a cosmetic wrapper around old runtime dispatch" condition currently applies. The four phases in `workflow.pypeline:471-488` pass the checker's AWF252 shape check but still route through `handle_tiebreaker_run` (each phase at `components.py:2107,2122,2137,2155` carries `# bridge: reuses legacy handler as phase body`). This is exactly the cosmetic-wrapper pattern the brief forbids.

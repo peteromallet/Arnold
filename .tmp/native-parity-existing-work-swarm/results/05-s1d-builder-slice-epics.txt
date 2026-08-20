@@ -1,0 +1,81 @@
+## S1d Typed Outcomes + Builder Slice — Audit Findings
+
+### 1. Verdict: **Partly exists** (significantly more than "adjacent only")
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**Typed outcomes — substantially complete:**
+
+- Full `StrEnum` classes for all report-owned phases at `arnold_pipelines/megaplan/outcomes.py:19-176`: `PrepOutcome`, `CritiqueOutcome`, `GateOutcome`, `TiebreakerOutcome`/`TiebreakerDecisionOutcome`, `TiebreakerResearcherOutcome`, `TiebreakerChallengerOutcome`, `TiebreakerSynthesisOutcome`, `ReviewOutcome`, `ReviewDecisionResult`, `OverrideOutcome`, `OverridePolicyRoute`, `ExecuteOutcome`, `FinalizeOutcome`, `ReviseOutcome`, `SuspensionOutcome`, `HaltOutcome`, `SuspensionHaltOutcome`.
+- Vocabulary parity assertion at `outcomes.py:198-218` enforces sync with `RUNTIME_BRANCH_VOCABULARY` from `components.py` at import time.
+- `OUTCOME_CLASS_BY_VOCABULARY_KEY` mapping at `:183-195`.
+
+**build_pipeline() already consumes lowered `.pypeline` topology — but interleaves component metadata:**
+
+- `_lowered_workflow()` at `planning.py:200-201` calls `lower_workflow_file(AUTHORING_SOURCE_PATH)` — the builder already reads from `.pypeline` source.
+- `build_pipeline()` at `:695-721` constructs the DSL `Pipeline` from `lowered.steps` and `lowered.routes`.
+- `lowered_workflow_topology()` at `:724-753` exposes a source-derived topology view for boundary contracts.
+- **BUT** `_canonical_steps()` at `:643-672` iterates `PIPELINE_STEP_COMPONENTS` (from `components.py`) and only includes steps present in both — the step universe is still component-gated.
+- **BUT** `_route_id_for_lowered_route()` at `:247-268` falls back to `component.metadata.get("route_bindings", ())` when declared bindings are absent — exactly the fallback the plan calls out at `planning.py:247-268`.
+- `declared_step_route_bindings()` at `:391-394` reads from `DECLARED_STEP_INTERFACES` in `workflow.pypeline`, which still contains `handler_ref` and `route_bindings` entries.
+
+**Checker infrastructure — substantial but incomplete:**
+
+- `AWF245_ROW_EVIDENCE_INSUFFICIENCY` allocated at `diagnostics.py:138, :219`.
+- `LOWERED_TOPOLOGY_DISCARD` at `:217`, `RAW_STRING_ROUTE_BRANCH` at `:216`, `UNKNOWN_OUTCOME_TYPE` at `:224`/`:143`, `INVALID_OUTCOME_MEMBER` at `:225`/`:144`.
+- AWF code range runs AWF001–AWF252 (`:70-145`). **AWF253 is NOT allocated** — zero search results for `PROHIBITED_SEMANTIC_CARRIER` or `AWF253` in `arnold/`.
+- `semantic_evidence.py` exists with `ConstructType` enum and S2–S5 row IDs.
+- `source_compiler.py` already handles `outcome_type` on route bindings at `:171, :2087-2104, :3499-3518`.
+- `test_row_evidence_checker.py` (1033 lines) proves strict checker emits 9× `AWF245` for current S2/S3 rows (`:255-286`).
+- `WorkflowEvent`/`WorkflowCursor` at `events.py:19-62` already project lowered topology for auto/status consumers.
+
+**NOT found (must be built):**
+
+| Missing artifact | Plan reference |
+|---|---|
+| `AWF253_PROHIBITED_SEMANTIC_CARRIER` allocation + spec | Master plan `:484` |
+| `scripts/check_megaplan_native_semantic_parity.py` | Master plan `:484` |
+| `tests/fixtures/.../current_false_pass_shape.py` negative fixture | Master plan `:484, :855` |
+| `test_workflows_planning_lowered_topology.py` | Master plan `:590` |
+| `test_installed_package_composition_smoke.py` | Master plan `:590` |
+| `test_megaplan_checker_structural_rejection.py` | Master plan `:591` |
+| `test_megaplan_row_registry_completeness.py` | Master plan `:591` |
+| Dead-delete mutation tests for one builder edge | Master plan `:594-595` |
+| Installed-package source loading parity proof | Master plan `:584, :590` |
+| Frozen S1a baselines for parity comparison | Master plan `:596-597` |
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **`outcomes.py`** — fully reusable as-is. All typed outcome enums match `RUNTIME_BRANCH_VOCABULARY` and the `assert_vocabulary_parity()` guard is already called at import time.
+- **`_lowered_workflow()` → `lower_workflow_file()` path** — the lowered-topology reading is correct. The fix is removing the component-metadata fallback in `_route_id_for_lowered_route()` (`planning.py:255-266`) and `_canonical_steps()` (`:650-653`), not replacing the lowering path.
+- **`semantic_evidence.py`** — `ConstructType`, `SemanticEvidence`, and row ID namespaces can be used directly for row-evidence schema scaffolding.
+- **`diagnostics.py`** — `DiagnosticCode` enum is extensible; `AWF253` slots in after `AWF252`.
+- **`events.py` `WorkflowCursor`** — already consumes `lowered_workflow_topology()` and provides a read-only API that auto/status consumers use; can serve as the template for the "one route edge source-owned" proof.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Allocate `AWF253_PROHIBITED_SEMANTIC_CARRIER`** with diagnostic spec that structurally rejects `handler_ref`, `route_bindings`, component route authority, manifest/backend route translation, and compatibility projection evidence.
+2. **Write `scripts/check_megaplan_native_semantic_parity.py`** — strict checker CLI with `--strict`, `--expect-diagnostic`, `--mode checkout/installed-package`.
+3. **Write the current-shape negative fixture** capturing the component-call skeleton's forbidden carriers.
+4. **Remove component-metadata fallback** from `_route_id_for_lowered_route()` (`planning.py:255-266`) — route IDs must derive solely from lowered `.pypeline` topology for the selected edge. This is the core "one route edge source-owned" deliverable.
+5. **Remove `PIPELINE_STEP_COMPONENTS` gating** from `_canonical_steps()` for the selected slice — the slice must survive without `PIPELINE_STEP_COMPONENTS_BY_ID` membership checks.
+6. **Dead-delete mutation test** — delete/mutate component `route_bindings` for the selected edge, prove behavior unchanged against frozen baseline.
+7. **Installed-package smoke** — prove strict checker source loaded via `importlib.resources` matches checkout behavior.
+8. **Five missing test files** listed above.
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+**The sprint is overloaded** (as the GPT-5.5 gap report flagged at `gpt55-native-parity-endstate-gap-report.md:98`), but the typed outcomes work is already done — this significantly de-risks the sprint. Recommended adjustments:
+
+- **Drop "Add closed typed outcomes" from the sprint scope** — it's already done (`outcomes.py`). Move to verification-only: confirm vocabulary parity, confirm source branches can route on enum members (not raw strings), confirm `AWF242_RAW_STRING_ROUTE_BRANCH` fires on raw-string routing.
+- **Focus the builder slice on a single edge** (prep→plan as the brief suggests at `s1-checker-outcomes-builder-slice.md:41`). The fix is surgical: remove the component fallback in `_route_id_for_lowered_route(:255-266)` and prove that one edge routes identically.
+- **Allocate `AWF253` before writing the negative fixture** — the fixture must assert `AWF253` on structural carriers, not just `AWF245` on missing evidence. The diagnostic spec (`diagnostics.py:235+`) needs the `PROHIBITED_SEMANTIC_CARRIER` entry.
+- **Defer installed-package smoke to a fast-follow** if the builder slice + checker + fixture work consumes the sprint. The installed-package path is already exercised by the existing `package_fingerprints.py`; the risk of regression is low if deferred to S2.

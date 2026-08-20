@@ -1,0 +1,17 @@
+{
+  "approved_at": "2026-08-06T14:53:54Z",
+  "expires_at": null,
+  "grant_id": "grant_codex_critique_r7_superfixer_20260806_v2",
+  "launch_origin": {
+    "applicability": "not_applicable",
+    "custody_id": "codex-critique-r7-superfixer-20260806-v2",
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "source_kind": "codex_operator_request",
+    "source_record_id": "codex-thread-20260806-fix-r7-superfixer-relaunch",
+    "timezone_name": "Europe/Berlin",
+    "transport": "codex"
+  },
+  "maximum_work_intent": "execution",
+  "route_ref": "operator:codex-thread",
+  "source_envelope_digest": "sha256:04303ffd16bdcb860d1667cf22e35e7d8013db4f8577fcdc40dcd3c38401a2fc"
+}

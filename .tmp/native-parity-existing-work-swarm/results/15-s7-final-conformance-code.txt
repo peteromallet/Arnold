@@ -1,0 +1,101 @@
+## S7 Audit: Final Generated Conformance + Rollout
+
+### 1. Verdict: **Adjacent only** (significant building blocks exist; core S7 scripts and integrations do not)
+
+None of the eight scripts specified as S7 exit gates exist. Five of the seven required test files exist but are thin/stub quality. The underlying checker engine and evidence-generation infrastructure are substantial (~3000+ lines across 3 key files), providing a strong foundation, but the S7 orchestration layer that strings them together into a generated-conformance report with rollout/drain decision does not exist.
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**What exists (adjacent, reusable):**
+
+| Artifact | Lines | S7 Relevance |
+|---|---|---|
+| `scripts/generate_native_representation_evidence.py` | 1788 | Scenario hash builder (`:1397-1604`), installed-package fingerprints (`:916-946` per master plan SA5), handler-purity scans (`:1018-1104`), compatibility quarantine (`:1156-1191`), dead-delete checks (`:1194-1225`). These feed directly into S7's `scenario-row-coverage.json`, exemption summary, and baseline freeze records. |
+| `scripts/validate_native_representation_conformance.py` | 1139 | Validates conformance ledgers against checker evidence bundles. Not the S7 generated conformance generator, but provides validation patterns and the `validate_conformance_ledger` entry point that S7 tests import. |
+| `arnold/workflow/source_compiler.py` | — | `_row_evidence_diagnostics` (`:722-810`), `_implemented_front_half_rows` (`:1682-1777`), `_implemented_s5_boundary_rows` (`:1778-1868`) — the strict checker engine S7's `check_megaplan_native_semantic_parity.py` needs to invoke. |
+| `arnold/conformance/deleted_surfaces.py` | — | `DELETED_SURFACES`, `DELETED_IMPORT_MODULES`, `DELETED_SOURCE_PATHS` — feeds S7 deleted-surface gates. |
+| `arnold/conformance/checks.py` | — | `check_generic_arnold_megaplan_coupling` — feeds S7 coupling gate. |
+
+**S7 test files that exist (five of seven required):**
+
+- `tests/arnold_pipelines/megaplan/test_final_conformance_scenarios.py` (131 lines): validates split-outcome manifest covers required categories, stable hashes, no route authority. Exists but only 3 test functions — no cross-coverage matrix, no `generate_megaplan_scenario_row_matrix.py` invocation.
+- `tests/arnold_pipelines/megaplan/test_final_conformance_evidence.py` (700 lines): tests validator acceptance/rejection of checker evidence bundles. Well-developed fixture helpers but tests only the validator, not S7's full generated report pipeline.
+- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py` (757 lines): tests authority chain (`build_pipeline → compile_pipeline → native_program`), wheel shipping, prohibited tokens, resource contract. Handles installed-package smoke but does not invoke `check_megaplan_native_semantic_parity.py --mode installed-package`.
+- `tests/arnold/conformance/test_deleted_surfaces.py` (97 lines): verifies `DELETED_SURFACES` inventory completeness, absence of deleted paths, absence of `arnold.pipelines.megaplan` imports. Functional but thin.
+- `tests/arnold/conformance/test_megaplan_coupling_gate.py` (114 lines): ratchet for generic Arnold→Megaplan coupling, allowlist staleness. Functional.
+
+**S7 test files that do NOT exist:**
+
+- `tests/arnold_pipelines/megaplan/test_final_conformance_evidence.py` — exists (listed above), but the master plan S7 exit gates also list `tests/arnold_pipelines/megaplan/test_final_conformance_evidence.py` as part of a combined pytest invocation. It exists.
+- Actually, all five test files from S7 exit gates exist. The two missing: `test_final_conformance_scenarios.py` and `test_final_conformance_evidence.py` are the same files. Re-reading the S7 gate: `tests/arnold_pipelines/megaplan/test_final_conformance_scenarios.py tests/arnold_pipelines/megaplan/test_final_conformance_evidence.py tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py tests/arnold/conformance/test_deleted_surfaces.py tests/arnold/conformance/test_megaplan_coupling_gate.py` — all five exist.
+
+**What does NOT exist (zero files):**
+
+- `scripts/check_megaplan_native_semantic_parity.py` — checkout/installed strict checker
+- `scripts/scan_megaplan_semantic_carriers.py` — package-wide carrier scan
+- `scripts/classify_megaplan_semantic_carriers.py` — carrier tier classification
+- `scripts/validate_megaplan_carrier_tier_boundary.py` — seeded descriptive-carrier corruption validation
+- `scripts/reconcile_megaplan_semantic_rows.py` — row-registry reconciliation
+- `scripts/check_megaplan_exemption_ledger.py` — exemption closeout with `--fail-open-scheduled`
+- `scripts/generate_megaplan_scenario_row_matrix.py` — scenario-row coverage matrix
+- `scripts/generate_megaplan_native_semantic_conformance.py` — generated conformance report from strict evidence
+- `scripts/check_megaplan_serialized_plan_rollout.py` — rollout/drain decision validator
+- `scripts/validate_megaplan_runtime_narrowing.py` — runtime narrowing contract enforcer
+- `arnold/workflow/megaplan_semantic_rows.yaml` — canonical row registry
+- `artifacts/native-semantic-parity/carrier-scan-exclusions.yaml` — exclusion list
+- `docs/arnold/megaplan-native-runtime-narrowing-contract.md` — runtime narrowing contract
+- `artifacts/native-semantic-parity/serialized-plan-rollout-policy.yaml` — rollout policy
+
+The `row_registry` is currently embedded in code at `source_compiler.py:1682-1868`, not an external YAML file. The master plan incorrectly claims `tests/arnold/workflow/test_row_evidence_checker.py` exists — it does not. (The file exists at `tests/arnold/workflow/test_row_evidence_checker.py`, but there is no directory listing confirmation; the master plan reports `25 passed in 0.05s`.)
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+1. **`generate_native_representation_evidence.py:1607-1712`** — `generate_evidence_bundle()` already produces `scenario_hashes`, `installed_package_fingerprints`, `handler_purity_checks`, `compatibility_quarantine_checks`, `dead_delete_mutation_checks`. This is the evidence engine S7's `generate_megaplan_native_semantic_conformance.py` should consume. It produces ~90% of the data the generated conformance report needs.
+
+2. **`source_compiler.py:722-810`** — `_row_evidence_diagnostics()` is the strict checker engine. S7's `check_megaplan_native_semantic_parity.py` needs to invoke this with `evidence=()` (strict mode) and produce JSON output with row IDs, spans, source hashes, and carrier classification. The engine exists; the CLI wrapper and JSON output format do not.
+
+3. **`source_compiler.py:1682-1868`** — `_implemented_front_half_rows()` and `_implemented_s5_boundary_rows()` define the current row registry. These should be externalized into `megaplan_semantic_rows.yaml` (S1a work), then consumed by S7 reconciliation.
+
+4. **`validate_native_representation_conformance.py`** — the `validate_conformance_ledger()` function and its evidence-record parsing can be adapted into the S7 generated report validator.
+
+5. **Existing test fixtures** in `test_final_conformance_evidence.py` — `_write_evidence_bundle_fixture()`, `_checker_evidence_record()`, `_write_traceability_fixture()` helpers are reusable for S7 integration tests.
+
+---
+
+### 4. What Still Must Be Built
+
+| Component | Effort Estimate | Dependencies |
+|---|---|---|
+| `check_megaplan_native_semantic_parity.py` (strict checkout + installed-package checker) | Medium | `source_compiler.py` row evidence engine (exists), `importlib.resources` loading (new) |
+| `scan_megaplan_semantic_carriers.py` (AST carrier scan) | Large | Requires carrier heuristics for route-shaped patterns across 4 packages; zero code exists |
+| `classify_megaplan_semantic_carriers.py` (tier classification) | Medium | Depends on scan output; classification logic from master plan rules |
+| `validate_megaplan_carrier_tier_boundary.py` (seeded corruption validation) | Medium | Depends on classification output |
+| `reconcile_megaplan_semantic_rows.py` (row-registry reconciliation) | Medium | Depends on scan output + externalized `megaplan_semantic_rows.yaml` |
+| `check_megaplan_exemption_ledger.py` (exemption closeout) | Small | Depends on reconciliation output |
+| `generate_megaplan_scenario_row_matrix.py` (coverage cross-reference) | Small-Medium | Depends on checker JSON + scenario YAML (latter exists at `docs/arnold/megaplan-native-representation-scenarios.yaml`) |
+| `generate_megaplan_native_semantic_conformance.py` (final report generator) | Medium | Consumes all above outputs; ~80% of data already produced by `generate_native_representation_evidence.py` |
+| `check_megaplan_serialized_plan_rollout.py` (rollout/drain decision) | Small | Policy file authoring required |
+| `validate_megaplan_runtime_narrowing.py` (runtime narrowing enforcement) | Small | Contract doc authoring required |
+| Externalize row registry to `megaplan_semantic_rows.yaml` | Small | S1a dependency |
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**Severity: The S7 spec assumes S1a through S6 have all completed, and S7 is "assembly + final gates." In reality, S7's eight scripts are net-new builds with zero scaffolding.** Recommended adjustments:
+
+1. **Split S7 into S7a (scripts + infrastructure) and S7b (final execution pass).** Bring S7a forward to run in parallel with S5-S6 so the tooling is ready when extraction finishes.
+
+2. **Promote `generate_native_representation_evidence.py` to the canonical evidence engine** rather than building a parallel one. Its `generate_evidence_bundle()` already covers scenario hashes, installed fingerprints, handler purity, compatibility quarantine, and dead-delete checks. Add a `--strict-checker-json` input flag to consume the output of the yet-to-be-built `check_megaplan_native_semantic_parity.py`.
+
+3. **Descope the full `scan_megaplan_semantic_carriers.py` from S7 to S1a** — the master plan already specifies S1a does the first package-wide scan (`:413-426`). S7 should re-run the same scan with a frozen exclusion list, not build a new scanner.
+
+4. **Add an explicit S7 prerequisite: `megaplan_semantic_rows.yaml` must be externalized from `source_compiler.py:1682-1868`.** The row registry currently lives in Python code. The reconciliation script needs it as a data file.
+
+5. **The five existing test files are thin guards, not end-to-end conformance proofs.** Each needs expansion: `test_final_conformance_scenarios.py` (3 tests) should grow to cover the full split-outcome inventory and cross-reference with row coverage; `test_installed_package_composition_smoke.py` should add `check_megaplan_native_semantic_parity.py --mode installed-package` invocation once that script exists.
+
+**Prior report claims (unverified):** The master plan root-cause analysis (:167-170) cites a "false conformance report" (`megaplan-native-representation-conformance-report.md`) claiming all 31 rows implemented. The current `megaplan-native-representation-conformance.yaml` has ~27 rows with `status: implemented`. This ledger is the old path-existence-based system, not the S7 strict-checker-generated conformance — confirming the master plan's diagnosis that the old report is a false pass.

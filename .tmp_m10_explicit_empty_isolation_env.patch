@@ -1,0 +1,9 @@
+diff --git a/arnold_pipelines/megaplan/runtime/engine_isolation.py b/arnold_pipelines/megaplan/runtime/engine_isolation.py
+--- a/arnold_pipelines/megaplan/runtime/engine_isolation.py
++++ b/arnold_pipelines/megaplan/runtime/engine_isolation.py
+@@ -36 +36 @@
+-    env_vars = env_vars or os.environ
++    env_vars = os.environ if env_vars is None else env_vars
+@@ -128 +128 @@
+-    env_vars = env_vars or os.environ
++    env_vars = os.environ if env_vars is None else env_vars

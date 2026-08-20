@@ -1,0 +1,73 @@
+diff --git a/tests/arnold/kernel/test_journal_event_log_amplification.py b/tests/arnold/kernel/test_journal_event_log_amplification.py
+new file mode 100644
+--- /dev/null
++++ b/tests/arnold/kernel/test_journal_event_log_amplification.py
+@@ -0,0 +1,68 @@
++from __future__ import annotations
++
++from pathlib import Path
++
++from arnold_pipelines.megaplan._core import io
++
++
++def _prepare(root: Path, log: Path, tx_id: str) -> None:
++    io.prepare_journal_transaction(
++        root,
++        tx_id,
++        event_logs=[
++            {
++                "path": str(log),
++                "records": [{"event_type": "state_change", "value": tx_id}],
++            }
++        ],
++    )
++
++
++def _commit_count(log: Path, tx_id: str) -> int:
++    return sum(
++        record.get("tx_id") == tx_id and record.get("event_type") == "_tx_commit"
++        for record in io.iter_framed_json_records(log)
++    )
++
++
++def test_fresh_event_log_commit_does_not_scan_historical_transactions(
++    tmp_path: Path, monkeypatch
++) -> None:
++    root = tmp_path / "journal"
++    log = tmp_path / "events.jsonl"
++    _prepare(root, log, "fresh")
++
++    def fail_aggregate_scan(*args, **kwargs):
++        raise AssertionError("fresh commit must not aggregate the historical journal")
++
++    monkeypatch.setattr(io, "committed_framed_json_transactions", fail_aggregate_scan)
++    io.commit_journal_transaction(root, "fresh")
++
++    assert _commit_count(log, "fresh") == 1
++
++
++def test_recovery_after_event_append_does_not_duplicate_transaction(tmp_path: Path) -> None:
++    root = tmp_path / "journal"
++    log = tmp_path / "events.jsonl"
++    _prepare(root, log, "recovered")
++    io.write_journal_commit_marker(root, "recovered")
++    io.append_framed_json_transaction(
++        log,
++        "recovered",
++        [{"event_type": "state_change", "value": "recovered"}],
++    )
++
++    io.commit_journal_transaction(root, "recovered")
++
++    assert _commit_count(log, "recovered") == 1
++
++
++def test_recovery_after_marker_before_event_append_commits_once(tmp_path: Path) -> None:
++    root = tmp_path / "journal"
++    log = tmp_path / "events.jsonl"
++    _prepare(root, log, "missing")
++    io.write_journal_commit_marker(root, "missing")
++
++    io.commit_journal_transaction(root, "missing")
++
++    assert _commit_count(log, "missing") == 1

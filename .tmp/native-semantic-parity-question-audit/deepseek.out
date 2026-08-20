@@ -1,0 +1,180 @@
+Now I have all the evidence needed. Let me produce the final audit.
+
+---
+
+# Native Semantic Parity Question Audit
+
+## Executive Verdict
+- **Overall**: The plan contains 4 high-risk disagreements between plan assumptions and actual codebase state, 2 medium-risk weakenings, and 4 agrees. The worst is Q10: `.pypeline` source is absent from the built wheel, rendering `--mode installed-package` a no-op.
+- **Highest-risk disagreements**: Q10 (broken installed-package mode), Q9 (carrier count likely ~3x row registry scale), Q3 (row registry is hardcoded in compiler code, not data), Q1 (parallel_map lowers to metadata passthrough, not real fanout IR; compiler actually supports loop/branch constructs the plan treats as missing).
+
+---
+
+## Q1 — What does `parallel_map` lower to today?
+
+- **Answer**: `parallel_map` lowers to a `Step` with `kind="parallel_map"` and metadata passthrough (`FanoutPolicy(mode="dynamic", reducer_ref=...)`), NOT a real fanout IR that the manifest backend independently executes. The source compiler *does* support suspension points (branch dispatch), dynamic fanout (ParsedParallelMapCall with `items_ref`), loop policies with typed exits (ParsedLoopBlock with `max_iterations`, `reentry_id`, `until_ref`), and `break`. These are parsed but lowered to metadata, not independently executable IR nodes.
+- **Evidence**:
+  - `source_compiler.py:5326-5359`: `_lower_parallel_map_call` produces a `Step` with `kind="parallel_map"` and `FanoutPolicy(mode="dynamic")` plus metadata dict `{"parallel_map": True, "items_ref": ..., "mapper_ref": ..., ...}`.
+  - `source_compiler.py:355-372`: `ParsedLoopPolicy` with `max_iterations`, `reentry_id`, `until_ref`; `ParsedLoopBlock` wraps a `while True` body.
+  - `source_compiler.py:2940-2958`: `while` loops parsed into `ParsedLoopBlock`.
+  - `workflow.pypeline:393-394`: `loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")` followed by `while True:`.
+  - `workflow.pypeline:395-401`: `parallel_map(id="critique-fanout", items="megaplan.policy.critique_lenses", ...)` is actual dynamic fanout over a runtime list.
+  - The manifest backend (`runtime/manifest_backend.py`) has no independent parallel_map execution; it processes `Step` metadata.
+- **Plan assumption status**: **weakens**. The plan's premise that "extraction sprints are extraction, not compiler development" (line: S2-S5 description) and that the original report listed "dynamic parallel map and loop expressiveness as missing substrate" is partially wrong. The constructs already parse. The real gap is that they lower to metadata the manifest backend wraps rather than being first-class executable IR. This means S2-S5 need less "add parsing" work but more "switch lowering target from metadata to native IR" work.
+- **Amendment if needed**: Add S1b predecessor: "Define lowered fanout/loop/branch IR that the manifest backend executes independently, without consulting component metadata." This is a lowering-target change, not new compiler parsing. Estimates shift: S2-S5 are ~30% easier (parsing exists) but S1b scope expands to include the lowering-switch.
+
+---
+
+## Q2 — Is there a single seam for worker/model invocations that record/replay can intercept?
+
+- **Answer**: Yes. `_run_worker()` in `handlers/shared.py:230-290` is the single seam. All handlers (gate:897, plan:168, finalize:1728, review:1641, prep via plan:238) route through `_run_worker` → `worker_module.run_step_with_worker`. Critique delegates to `orchestration.critique_runtime.handle_critique`. Execute uses `_run_worker` only for model invocations; execute's subprocess code calls are for code execution, not model calls. The replay harness can intercept at `run_step_with_worker`.
+- **Evidence**:
+  - `handlers/shared.py:230-290`: `_run_worker` calls `worker_module.run_step_with_worker(step, state, plan_dir, args, ...)`.
+  - `handlers/gate.py:897`: `worker, agent, mode, refreshed = _run_worker("gate", ...)`.
+  - `handlers/plan.py:168`: `worker, agent, mode, refreshed = _pkg._run_worker("plan", ...)`.
+  - `handlers/execute.py:348-428`: uses `worker_module.resolve_agent_mode` and `force_fresh` logic, then delegates to worker. Subprocess/Popen calls are for codex/swarm execution only.
+  - `workers/_impl.py:4568`: `def run_step_with_worker` — single dispatch target.
+- **Plan assumption status**: **agrees**. The replay harness can be S1a-sized. One seam exists.
+- **Amendment if needed**: None. But note: `handle_execute` has `force_fresh` logic (line 425-427) that bypasses the normal session refresh — the replay harness must account for this by canning worker payloads with session state, not just inputs.
+
+---
+
+## Q3 — Is the existing strict checker structural or token-based? Are row IDs hardcoded?
+
+- **Answer**: **Hardcoded in compiler code, not data.** Row IDs are discovered by `_implemented_front_half_rows` (line 1682) and `_implemented_s5_boundary_rows` (line 1783) which scan parsed source for component references matching specific export names (e.g., `AUTHORING_PREP`, `SOURCE_GATE`). The row registry lives in `boundary_contracts.py:BOUNDARY_CONTRACTS` (imported at line 1736), but the mapping from component names to row IDs is computed in `_front_half_row_specs()` (line 1734-1767) by string-matching export names. Adding ~22 rows requires editing the compiler to add new phases/export patterns, not just a YAML registry. The checker is structural (it inspects AST-parsed source for specific constructs), not token-based.
+- **Evidence**:
+  - `source_compiler.py:1734-1767`: `_front_half_row_specs()` hardcodes the set of phases (`front_half_phases`), import module path, and export name patterns (`SOURCE_{PHASE}`, `AUTHORING_{PHASE}`, bare `{PHASE}`). New rows require new entries in this function or in `boundary_contracts.py`.
+  - `source_compiler.py:1783-1874`: `_implemented_s5_boundary_rows` hardcodes S5 row IDs like `S5_REVIEW_CHILD_OUTPUTS_ROW_ID` — these are imported constant names from elsewhere in source_compiler.py.
+  - `source_compiler.py:756-761`: S3 row IDs are hardcoded as `_S3_TIEBREAKER_REQUIRED_ROW_IDS`.
+  - A synthetic file with correct constructs under different names **would not pass** — `_collect_front_half_rows` (line 1695) matches `statement.component_ref` against `row_specs` keys which are tied to specific import paths and export names.
+- **Plan assumption status**: **weakens**. The plan assumes `megaplan_semantic_rows.yaml` can be data, not code (S1a line: "row registry reconciled against a structural AST carrier scan"). But the row discovery logic is distributed across `_front_half_row_specs`, `_implemented_s5_boundary_rows`, and the S3 hardcoded list. Refactoring these into a data-driven registry is prerequisite work.
+- **Amendment if needed**: S1a must include predecessor: "Refactor `_front_half_row_specs`, `_implemented_s5_boundary_rows`, and `_S3_TIEBREAKER_REQUIRED_ROW_IDS` into a data-driven `megaplan_semantic_rows.yaml` with phase, component_pattern, row_id, and source_span columns, consumed by checker without code changes per row."
+
+---
+
+## Q4 — Can the DSL/manifest runtime execute a step with no `handler_ref`?
+
+- **Answer**: Yes, structurally. `handler_ref` is NOT a field on `Step` (`arnold/workflow/dsl.py:131-151`). It is stored only in `Step.metadata["handler_ref"]` (line 5158). The `Step` class requires only `id` and `kind`. The manifest runtime reads `handler_ref` from metadata to dispatch to handler functions, but a step without it would simply have no metadata entry — the runtime would fail at dispatch time but not at construction time. The plan's "handlers become phase bodies" is achievable: the runtime must be taught to dispatch native phases that don't rely on `handler_ref`.
+- **Evidence**:
+  - `dsl.py:131-151`: `Step` dataclass has fields: `id`, `kind`, `label`, `inputs`, `outputs`, `capabilities`, `policy`, `source_span`, `subpipeline`, `metadata`. No `handler_ref` field.
+  - `source_compiler.py:98`: `_LOWERED_STEP_METADATA_KEYS = frozenset({"handler_ref", "terminal"})`.
+  - `source_compiler.py:5153-5174`: `_lower_step_metadata` reads `handler_ref` from `DECLARED_STEP_INTERFACES` dict and writes it into `Step.metadata`.
+  - `runtime/manifest_backend.py:162`: `"override": handlers.handle_override` — dispatch is direct function reference, not metadata lookup.
+- **Plan assumption status**: **agrees**. Native-phase dispatch without `handler_ref` is achievable. The runtime already has a pattern for direct function dispatch.
+- **Amendment if needed**: None.
+
+---
+
+## Q5 — What happens to in-flight serialized plans across a topology change?
+
+- **Answer**: State serializes `current_state` (canonical string like `"awaiting_human_verify"`, `"blocked"`) and `resume_cursor` (dict with `phase`, `retry_strategy`). There is NO route ID or step ID embedded that would break across topology changes. However, there is **minimal** migration machinery: `_apply_legacy_state_migration` (line 924) handles `clarified→initialized` and `evaluated→critiqued` renames. No general migration framework exists. `resume_cursor.phase` values like `"execute"`, `"gate"` could change if sprint extraction renames phases.
+- **Evidence**:
+  - `planning/state.py:7-25`: Canonical states are string constants like `STATE_BLOCKED = "blocked"`, `STATE_AWAITING_HUMAN_VERIFY = "awaiting_human_verify"`.
+  - `state.py:924-939`: `_apply_legacy_state_migration` handles two specific renames; no general versioning/migration framework.
+  - `runtime/resume.py:28-39`: `load_resume_cursor_payload` reads `state.json["resume_cursor"]` — a dict with `kind`, `version`, `children`, phase name.
+  - `handlers/execute.py:108`: `resume_cursor={"phase": "execute", "batch_index": None, "retry_strategy": "fresh_session"}` — phase is a plain string.
+- **Plan assumption status**: **agrees**. Label compatibility suffices for most cases because state is identified by canonical state names, not route/step IDs. But phase-name changes in `resume_cursor` could break.
+- **Amendment if needed**: Add to S1a: "Document that `resume_cursor.phase` values are part of the public contract and must not be renamed in extraction sprints without migration. Add a freeze-file test that asserts current phase-name constants against a pinned list."
+
+---
+
+## Q6 — Where do `COMMAND_HANDLERS` live, and do other packages import Megaplan `components.py`?
+
+- **Answer**: `COMMAND_HANDLERS` lives at `arnold_pipelines/megaplan/cli/__init__.py:2448-2491`. **Zero** non-test, non-Megaplan modules import `arnold_pipelines.megaplan.workflows.components`. However, `arnold_pipelines.megaplan` has **many** reverse dependencies from `arnold/` core (`arnold/agent/tools/process_registry.py`, `arnold/agent/adapters/codex.py`, `arnold/agent/tools/code_execution_tool.py`, `arnold/supervisor/model.py`, `arnold/supervisor/outcomes.py`, `arnold/workflow/source_compiler.py` itself, and `scripts/`). These import `megaplan.runtime.process`, `megaplan.workers`, `megaplan.run_state`, `megaplan.run_outcome`, etc. — NOT `megaplan.workflows.components`.
+- **Evidence**:
+  - `cli/__init__.py:2448-2491`: `COMMAND_HANDLERS` dict with 44 handler entries.
+  - `grep` for `from arnold_pipelines.megaplan.workflows.components` outside megaplan: **0 matches** (confirmed above).
+  - `grep` for `from arnold_pipelines.megaplan` outside megaplan/tests: 30+ hits including `arnold/agent/tools/process_registry.py`, `arnold/supervisor/model.py`, `acceptance/`, `scripts/`, etc.
+- **Plan assumption status**: **agrees** for `components.py` specifically. But the scan-root completeness assumption (S1a: "package-wide coverage of `arnold_pipelines/megaplan` plus relevant `arnold/workflow`, `arnold/runtime`, and `arnold/conformance` surfaces") is correct for the deletion scope.
+- **Amendment if needed**: None for `components.py`. But S2-S6 deletion lists must verify that reverse dependencies on `megaplan.runtime.process`, `megaplan.workers`, etc. are not broken by handler-phase-body refactoring that touches shared infrastructure.
+
+---
+
+## Q7 — Can every split-outcome scenario be driven headlessly today?
+
+- **Answer**: **Partially.** Destructive-approval denial (`execute.py:370-389`), override actions (`control_binding.py:226-1145`), and state transitions (`state.py`) are all programmatic — they raise `CliError` on invalid conditions and can be called with constructed `argparse.Namespace`. However, there is **no separate headless API** — all handlers accept `argparse.Namespace` and assume CLI invocation. The split-outcome scenarios (force-proceed, abort, replan, recover-blocked, resume-clarify) are implemented as `control_binding.py` dispatch functions that validate state and return `ControlTargetRef` tuples. Tests can construct `Namespace` and call handlers directly.
+- **Evidence**:
+  - `handlers/execute.py:348-428`: `handle_execute(root, args)` accepts `argparse.Namespace`; approval gates are programmatic checks.
+  - `planning/control_binding.py:1032-1145`: `recover-blocked` logic validates `state["current_state"]`, `resume_cursor`, and blockers — all programmatic.
+  - `handlers/override.py:1-36`: imports `argparse`; no headless/programmatic entry point exported.
+  - All handlers follow `(root: Path, args: argparse.Namespace) -> StepResponse` signature.
+- **Plan assumption status**: **weakens**. Baselines can be captured by constructing `Namespace` objects with CLI-equivalent args, but this is fragile. The plan's "baseline capture and scenario gates can run in CI" (S1a exit gates) requires building `Namespace` objects that mirror CLI arg parsing. This works but is brittle.
+- **Amendment if needed**: S1a must explicitly scope: "Harness constructs `argparse.Namespace` objects programmatically for each split-outcome scenario." Or better: add a lightweight `StepRequest` dataclass that both CLI and harness populate, decoupling from argparse.
+
+---
+
+## Q8 — Do artifacts embed nondeterminism that would break hash-pinned baselines?
+
+- **Answer**: **Yes.** Timestamps (`now_utc()`, `datetime.now()`), plan names with embedded timestamps, model/session IDs, and absolute paths are embedded in artifacts. There is **no canonicalization layer**. `sha256_file` is used for content hashing but the content includes volatile fields. The semantic replay has `ignore_paths`/`unordered_paths` (line 192-193) but those are for diff comparison, not canonicalization.
+- **Evidence**:
+  - `handlers/review.py:924`: `{"timestamp": now_utc(), "note": note}` in notes.
+  - `handlers/init.py:441-442`: `timestamp = datetime.now().strftime("%Y%m%d-%H%M")` in plan name.
+  - `handlers/shared.py:650`: `"timestamp": now_utc()` in step metadata.
+  - `handlers/shared.py:557`: `sha256_file(plan_dir / filename)` — hashes volatile content.
+  - No `canonicalize_artifact` or `strip_volatile` function found anywhere (confirmed by grep).
+- **Plan assumption status**: **weakens**. Hash-pinned baselines will break on every run due to timestamps and model IDs. The plan acknowledges "hash-pinned canned worker payloads" but those are worker payloads, not output artifacts.
+- **Amendment if needed**: S1a must add: "Canonicalization layer that strips/normalizes timestamps, UUIDs, absolute paths, model/session IDs, and plan names from artifacts before hash computation. Define `megaplan_artifact_canonical_form(artifact: dict) -> dict` with a stable sort order."
+
+---
+
+## Q9 — True carrier count: ~30 or ~300?
+
+- **Answer**: **~76 unique carrier patterns across just 9 key files.** The heuristic scan (target_ref, route_signal, handler_ref, policy route surfaces, state literals, dispatch tables) found 76 unique patterns. A full package-wide scan across `arnold_pipelines/megaplan` (~100 .py files), `arnold/workflow`, `arnold/runtime`, and `arnold/conformance` would conservatively produce **200-350 carriers**. The row registry today tracks 22 front-half + S5 rows (9+8). The plan's ~30 scale matches current row registry size, not actual semantic carrier count.
+- **Evidence**:
+  - Heuristic scan of 9 key files: `components.py` (61), `workflow.pypeline` (45), `front_half.pypeline` (1), `handlers/gate.py` (5), others (0) = **76 unique patterns**.
+  - `components.py` alone has 2,978 lines with 210 route_bindings/signal/target occurrences and 53 handler_ref occurrences.
+  - Full package: ~100 .py files in `arnold_pipelines/megaplan`, plus `arnold/workflow`, `arnold/runtime`, `arnold/conformance`.
+  - Row registry scale: 9 front-half rows (line 82-92 of plan) + 8 S5 rows = 17 + tiebreaker (4) = ~21 rows tracked.
+- **Plan assumption status**: **contradicts**. The plan assumes registry reconciliation is tractable at ~30 rows. Real carrier count is 5-10x higher. Many carriers will need exemptions.
+- **Amendment if needed**: Add tiered mapping strategy: **Route-authoritative carriers** (~20) map to row IDs. **Descriptive metadata carriers** (~150) get `compat-metadata-inert` exemptions. **Remaining** (~50-100) get `scheduled-for-sprint-N` exemptions. Without this tiering, exemption inflation makes S7 reconciliation gate unachievable.
+
+---
+
+## Q10 — Does `.pypeline` source actually ship in the built package?
+
+- **Answer**: **No.** Despite `pyproject.toml:92` listing `"arnold_pipelines/**/*.pypeline"` in artifacts, the built wheel (`dist/arnold-0.23.0-py3-none-any.whl`) contains **zero** `.pypeline` files. The entire `workflows/` subdirectory (`components.py`, `planning.py`, `boundary_contracts.py`, `workflow.pypeline`, `front_half.pypeline`) is absent from the wheel. The files install as `arnold/pipelines/megaplan/...` (not `arnold_pipelines/...`), and the `workflows/` directory is simply not included.
+- **Evidence**:
+  - `pyproject.toml:92`: `"arnold_pipelines/**/*.pypeline"` in `artifacts`.
+  - `pyproject.toml:85`: `packages = ["arnold", "arnold_pipelines", "agentbox"]`.
+  - Wheel inspection: 1438 files total, 0 `.pypeline`, 0 `workflows/` directory under `arnold/pipelines/megaplan/`.
+  - `arnold/pipelines/megaplan/_core/workflow_data.py` and `arnold/pipelines/megaplan/_core/workflow.py` ARE in the wheel — only `workflows/` is missing.
+- **Plan assumption status**: **contradicts**. The plan's `--mode installed-package` exit gates (S1a, S1b, S7) cannot inspect `.pypeline` source because it is not present in the installed package. `check_workflow_source` would find no file to check.
+- **Amendment if needed**: **Critical fix to S1a**: "Fix hatchling build configuration to include `arnold_pipelines/megaplan/workflows/` in the built wheel. Verify with `python -c 'import zipfile; ...'` that `.pypeline` files and `components.py` are present. Add this as a CI gate." This is likely a hatchling `artifacts` vs `packages` configuration issue — `artifacts` may not force-include files not already captured by `packages` traversal. Alternatively, switch to explicit `force-include` or move workflows under a location already included.
+
+---
+
+## Required Plan Patches
+
+1. **Q10 (CRITICAL)**: Fix packaging so `.pypeline` files and `workflows/` ship in the wheel. Add CI gate. This blocks S1a/S1b/S7 `--mode installed-package` exit gates.
+
+2. **Q9**: Add carrier tiering to the reconciliation plan: route-authoritative (~20 rows), compat-metadata-inert exemptions (~150), scheduled-for-sprint-N (~50-100). Without tiering, S7 reconciliation gate is unachievable.
+
+3. **Q3**: S1a must refactor `_front_half_row_specs`, `_implemented_s5_boundary_rows`, and S3 hardcoded row IDs into `megaplan_semantic_rows.yaml` before the "carrier-scan reconciliation" gate is meaningful.
+
+4. **Q1**: The plan's framing of extraction as "extraction, not compiler development" is oversimplified. The constructs parse already; the work is switching lowering targets from metadata passthrough to native IR. S1b scope should be adjusted: add "Define native fanout/loop/branch IR that manifest backend executes independently."
+
+5. **Q8**: Add canonicalization layer for artifacts before hash-pinned baseline comparison can be meaningful. Scope into S1a.
+
+6. **Q7**: Document that the replay harness constructs `argparse.Namespace` programmatically. Alternatively, add `StepRequest` dataclass to decouple from argparse.
+
+7. **Q5**: Freeze `resume_cursor.phase` values as public contract; add frozen-constant test.
+
+---
+
+## Commands Run
+```
+grep -n "parallel_map" arnold/workflow/source_compiler.py (Q1)
+grep -rn "def _lower_parallel_map_call" arnold/workflow/source_compiler.py (Q1)
+grep -rn "_run_worker" arnold_pipelines/megaplan/handlers/ (Q2)
+grep -rn "_implemented_front_half_rows\|_implemented_s5_boundary_rows" arnold/workflow/source_compiler.py (Q3)
+grep -rn "class Step" arnold/workflow/dsl.py (Q4)
+grep -rn "handler_ref" arnold/workflow/dsl.py arnold/workflow/source_compiler.py (Q4)
+grep -rn "current_state\|resume_cursor\|migrate.*state" arnold_pipelines/megaplan/_core/state.py (Q5)
+grep -rn "from arnold_pipelines.megaplan" --include="*.py" | grep -v "arnold_pipelines/megaplan/" | grep -v __pycache__ | grep -v tests/ | grep -v ".claude/" (Q6)
+grep -rn "from arnold_pipelines.megaplan.workflows.components" outside megaplan (Q6)
+python3 heuristic carrier scan over 9 files (Q9)
+python3 wheel zipfile inspection for .pypeline files (Q10)
+grep -rn "now_utc\|datetime.now\|timestamp" arnold_pipelines/megaplan/handlers/ (Q8)
+grep -rn "canonicaliz\|normaliz" arnold/ arnold_pipelines/ (Q8)
+grep -rn "handle_override\|control_binding" arnold_pipelines/megaplan/planning/ (Q7)
+```

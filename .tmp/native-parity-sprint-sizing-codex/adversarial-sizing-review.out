@@ -1,0 +1,2229 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.0
+--------
+workdir: /Users/peteromalley/Documents/Arnold
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: medium
+reasoning summaries: none
+session id: 019f4866-86ab-75f2-8d63-6e97bc6952ca
+--------
+user
+# Codex Task: Adversarial Review of Native Semantic Parity Sprint Sizing
+
+Working directory: `/Users/peteromalley/Documents/Arnold`
+
+You are the skeptic. Read:
+
+- `docs/arnold/megaplan-native-semantic-parity-master-plan.md`
+- `docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md`
+
+Your job is to challenge the sprint decomposition. Look for:
+
+- hidden overloading inside "aggressive two-week sprint" labels;
+- places where the plan assumes existing code lowers effort but actually only
+  creates integration risk;
+- places where two adjacent sprints are artificial and can be safely merged;
+- places where one sprint must be split to avoid mid-sprint improvisation;
+- false-closure risks created by condensing.
+
+You may inspect source/tests to verify claims, but do not edit files.
+
+Hard constraints:
+
+- The end-state is source-authoritative semantic parity, not representational
+  parity.
+- The known failure mode is agents closing on representational proof.
+- Existing execute/override code can reduce implementation effort, but old route
+  authority must still be dead-deleted or fenced.
+- S7 cannot be treated as pure final assembly if required scripts are unbuilt.
+
+Output format:
+
+1. Overall sizing verdict.
+2. Sprints that are too large.
+3. Sprints that can be merged.
+4. Sprints that must not be merged.
+5. A recommended spine, if different from the current one.
+6. For every sprint in that recommended spine, a short reason why it is or is not
+   truly a two-week sprint.
+
+Be direct. Keep it under 1800 words.
+codex
+I’m using the planning skill because this is an adversarial review of a sprint decomposition. I’ll read its instructions, then inspect the two plans and only the source/tests needed to verify contested sizing assumptions.
+exec
+/bin/zsh -lc "sed -n '1,240p' /Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/planning/skills/planning/SKILL.md && wc -l docs/arnold/megaplan-native-semantic-parity-master-plan.md docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+---
+name: planning
+description: "Planning Pipeline — Skill Reference"
+---
+
+# Planning Pipeline — Skill Reference
+
+## Overview
+
+The `megaplan` pipeline (packaged at `arnold_pipelines/megaplan/`) is the built-in megaplan plan-production substrate.
+Its canonical registry identity is `megaplan` with the legacy alias `planning → megaplan`.
+It orchestrates the full prepare → plan → critique/gate/revise loop →
+finalize → execute → review lifecycle.
+
+---
+
+## Gate verdict vocabulary
+
+The gate stage emits a `PipelineVerdict` whose `recommendation` field is one
+of the following `GateRecommendation` literals:
+
+| Verdict | Meaning |
+|---|---|
+| `proceed` | Gate approved the plan; advance to finalize (and optionally execute). |
+| `iterate` | Gate rejected the plan; re-enter the critique → revise loop. |
+| `tiebreaker` | Evaluators are split; hand off to the tiebreaker stage for adjudication. |
+| `escalate` | Quality ceiling reached at current tier; escalate to a higher-complexity model. |
+
+---
+
+## Robustness levels
+
+Robustness controls the depth of the critique/gate loop and the number of
+evaluators engaged. Canonical names (accepted by `--robustness` / config):
+
+| Level | Alias(es) | Behaviour |
+|---|---|---|
+| `bare` | `tiny` | Single-pass, no gate loop. Fastest; for quick drafts. |
+| `light` | — | One critique + revise round, minimal gate criteria. |
+| `full` | `standard` | Standard gate loop (default). Balanced quality/cost. |
+| `thorough` | `robust` | Extended gate loop, stricter criteria, more evaluators. |
+| `extreme` | `superrobust` | Maximum depth, all evaluators enabled. |
+
+The default robustness when no `--robustness` flag is supplied is `full`.
+
+---
+
+## Stage topology
+
+```
+prep → plan → critique ──→ gate ──proceed──→ finalize [→ execute → review]
+                 ↑             │
+                 └──iterate────┘
+                               │
+                               └──tiebreaker──→ [adjudication] → finalize
+```
+
+Driver substrate: `subprocess_isolated` (execute/review) + `graph+loop-node`
+(critique→gate→revise subloop).
+
+`arnold_api_version`: `1.0`
+`capabilities`: `plan, execute, review`
+    1039 docs/arnold/megaplan-native-semantic-parity-master-plan.md
+     424 docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md
+    1463 total
+
+exec
+/bin/zsh -lc "rg -n '"'^#{1,4} |''^Sprint |''^S[0-9]|two-week|2-week|aggressive|merge|split|existing|script|authority|representational|semantic'"' docs/arnold/megaplan-native-semantic-parity-master-plan.md docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:1:# Megaplan Native Parity Existing-Work Swarm Synthesis
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:5:Source: 48 DeepSeek reports in `.tmp/native-parity-existing-work-swarm/results/`.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:9:## Executive Verdict
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:11:The swarm did not find that the native semantic parity work is already complete.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:15:source-readable semantic authority.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:18:existing evidence generator, row/conformance YAMLs, runtime substrate, typed
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:23:## High-Confidence Findings
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:25:### 1. S0 North Star Actions and Runner Pinning Are Greenfield
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:43:- No runner pin scripts.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:48:- Keep S0 as one aggressive sprint, but structure it as two internal workstreams:
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:50:- Do not split it into multiple calendar sprints unless implementation proves it
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:51:  cannot fit. The actual code change rides existing gate/revise plumbing; the
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:52:  feature is greenfield, but not a semantic extraction.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:54:### 2. Checker Authority Partly Exists, but the Hard Bar Is Not Built
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:63:- `arnold/workflow/semantic_evidence.py`, `boundary_contracts.py`, and the old
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:65:- `scripts/generate_native_representation_evidence.py` has reusable declarative
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:71:- `arnold/workflow/megaplan_semantic_rows.yaml`.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:80:- Reuse `generate_native_representation_evidence.py` and the existing row evidence
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:85:### 3. Evidence Substrate Has Strong Pieces, Not the Required Harness
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:92:- `arnold/runtime/semantic_replay.py` has structural semantic comparison and event
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:95:  is a useful split-outcome inventory.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:104:- Baseline freeze/check scripts.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:106:  and other interactive split outcomes.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:113:- Build the harness from `semantic_replay.py`, `ReplayCursor`, native goldens, and
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:114:  the existing scenarios YAML.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:116:### 4. Native Runtime Substrate Is Better Than Expected
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:141:### 5. Typed Outcomes and Builder Slice Are Substantially Started
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:164:### 6. Front-Half Work Has Skeletons, Not Authority
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:188:### 7. Tiebreaker Is Source-Visible but Still Cosmetic
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:201:- Replan rejoin remains state mutation rather than source authority.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:207:  with semantic ownership and proving replan rejoin.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:209:### 8. Execute Scheduling Is the Most Reusable Domain
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:215:- `compute_task_batches`, `schedule_batches`, `split_oversized_batches`, and batch
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:234:  dead-delete, and collapse route authority."
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:238:### 9. Review and Finalize Have Policy Scaffolding, but S5 False-Passes Today
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:261:### 10. Override Surface Is Largely Built, but Split-Brained
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:263:Verdict: substantially exists, not semantically complete.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:268:- `workflows/override_matrix.py` is a strong declarative authority matrix.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:271:- Boundary contracts and authority receipts exist.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:283:- Reframe S6a as "collapse/extract existing override surface," not "build
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:288:### 11. S7 Tooling Is Not Just Final Assembly
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:294:- `scripts/generate_native_representation_evidence.py` is a strong evidence
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:296:- `scripts/validate_native_representation_conformance.py` validates the old
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:303:- `check_megaplan_native_semantic_parity.py`.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:304:- Carrier scan/classify/reconcile scripts.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:314:  strict checker, baseline freeze, and scenario validation scripts. S7 should
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:319:## Existing Assets To Reuse Directly
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:321:- `scripts/generate_native_representation_evidence.py`
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:322:- `scripts/validate_native_representation_conformance.py`
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:327:- `arnold/workflow/semantic_evidence.py`
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:329:- `arnold/workflow/handler_semantics.py`
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:341:- `arnold/runtime/semantic_replay.py`
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:347:## Assets To Avoid Treating As Proof
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:354:  checker evidence and dead-delete tests prove source authority.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:357:  the extracted source route authority.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:362:## Recommended Plan Delta
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:365:2. Keep S0 to one aggressive sprint, but explicitly call it greenfield runner and
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:366:   gate/revise plumbing over existing carry paths.
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:368:   - checker authority and carrier reconciliation,
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:376:6. Reclassify S6 override as collapse/extraction of an existing split-brain
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:378:7. Split large extraction phases into aggressive two-week sprints:
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:390:## Suggested Updated Sprint Spine
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:410:This is still roughly 15 aggressive two-week sprints. The swarm bought
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:413:## Open Follow-Up Checks
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:419:- Decide whether S7 script consolidation is acceptable. A single
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:420:  `reconcile_megaplan_semantic_carriers.py` with subcommands may be cleaner than
+docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md:421:  separate scan/classify/reconcile/exemption scripts.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1:# Megaplan Native Semantic Parity Corrective Master Plan
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:7:historical false pass and makes closure depend on source-derived semantic
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:13:native subworkflows match the semantic shape described by
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:19:split-outcome baselines, and mutation gates.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:23:semantic closure impossible while keeping the implementation focused on the
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:31:  for discovering route-authoritative hidden semantic carriers, and every such
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:34:- Golden split-outcome baselines are captured before extraction while the old
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:37:- Rejection rules are structural for prohibited route authority, not token/name
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:39:  `route_bindings`, component route authority, manifest/backend route
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:43:  dual route authority alive; rollback is by reverting the sprint.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:54:  quarantined as semantic evidence. "Quarantine" means it cannot prove source
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:55:  authority, not that the existing DSL/manifest runtime must be deleted in this
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:59:  dynamic `items_ref` fanout, suspension/reentry, and loop exit semantics before
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:65:- Headless split-outcome gates require an explicit control-injection API. A
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:67:  but the API should cover only required split outcomes such as approval,
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:73:  closeout unless mapped or removed; descriptive metadata must be classified and
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:74:  reviewable so exemption volume cannot hide live route authority. The tier
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:76:  descriptive classifications, corrupt them, and prove the split-outcome
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:77:  scenario suite is unchanged. One sampled "descriptive" carrier that changes
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:86:  severity is schema-assigned for route authority, baselines, exemptions, target
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:87:  narrowing, generated conformance authority, and live-plan topology/resume risk.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:103:  authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:114:Expected size after the 48-report existing-work swarm: roughly 15 aggressive
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:115:two-week sprints. The swarm found substantial reusable scaffolding, especially in
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:118:also confirmed that S0, the strict semantic checker hard bar, carrier
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:124:`docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md`. Treat it
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:131:- Keep S0 to one aggressive sprint, but recognize it is greenfield runner and
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:132:  gate/revise plumbing built on existing gate-carry/revise feedback paths.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:135:  evidence scripts. S7 reruns and aggregates them; it must not invent them at the
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:139:  manifest/backend dispatch authority, not rebuild the whole native runtime.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:142:  but legacy handler/auto route authority still needs dead-delete proof.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:143:- Reclassify override/control as collapse/extract of an existing split-brain
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:146:  source-authority proof.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:147:- Split overloaded extraction domains into aggressive two-week sprints:
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:152:## 1. Ground-Truth Status
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:157:PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py --toolsets="file,web,terminal" --query-file=.tmp/native-semantic-parity-master-plan/deepseek-smoke-brief.md --project-dir="$PWD" > .tmp/native-semantic-parity-master-plan/deepseek-smoke.out 2> .tmp/native-semantic-parity-master-plan/deepseek-smoke.err
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:160:The result cited `.megaplan/initiatives/megaplan-native-parity-corrective/NORTHSTAR.md:3`, and stderr showed the file read tool ran. Then I ran 5 DeepSeek audits through `fan.py`; `.tmp/native-semantic-parity-master-plan/results/_report.json` records `succeeded_count: 5`, `failed_count: 0`.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:206:Remaining semantic carriers verified in current source:
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:209:- `planning.py` still merges lowered source with component metadata and route bindings: `_route_id_for_lowered_route` consults declared/component `route_bindings` (`planning.py:247-268`), `_metadata_for_step` preserves `handler_ref`, `policy_refs`, and `override_actions` (`planning.py:583-598`), and `build_pipeline()` still builds canonical DSL steps/routes from component-backed structures (`planning.py:695-716`).
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:215:- The historical handler purity inventory still classifies 9 of 11 Megaplan handlers as report-semantic owners and 2 as pure phase bodies (`docs/arnold/megaplan-composition-conformance-report.md:74-88`).
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:217:Runtime narrowing: this plan delivers source-authoritative `.pypeline` lowered into the existing DSL/manifest runtime. It does not deliver the full ordinary-async-Python resumable runtime described in `.megaplan/initiatives/legacy-loose-briefs/research/native-python-runtime-full-spec-codex.md:5-16` or the final ordinary-Python example in `.megaplan/initiatives/native-python-pipelines/research/native-python-pipelines-end-goal-megaplan-example.md:3-10`. Any closeout artifact that claims full ordinary async Python runtime parity fails S1/S7.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:219:## 2. Verified Subagent Synthesis
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:225:- SA2 found front-half semantics concentrated in `handlers/gate.py` and `components.py`. Verified examples: debt recording in `handlers/gate.py:77-133`, no-progress tracking and termination in `handlers/gate.py:414-677`, reprompt/downgrade in `handlers/gate.py:993-1097`, gate route groups in `components.py:1154-1158`, and revise reentries in `components.py:1276-1279`.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:227:- SA3 found execute route semantics still owned by execute handlers/policy: approval gate in `handlers/execute.py:322-345`, approval policy in `execute/policy.py:311-357`, fresh-session force in `handlers/execute.py:423-445`, execute route surfaces in `components.py:1740-1781`, and batch loop semantics in `execute/batch.py`.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:229:- SA5 found evidence infrastructure exists but is not sufficient: generated evidence bundle builder (`scripts/generate_native_representation_evidence.py:1607-1712`), scenario hash builder (`:1397-1604`), installed-package fingerprints (`:916-946`), handler-purity scans (`:1018-1104`), compatibility quarantine (`:1156-1191`), and dead-delete checks (`:1194-1225`). Missing pieces are current-shape negative fixture, policy-as-route-table rejection, strict checker closure authority, per-sprint mutation gates, and row-to-scenario coverage cross-check.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:232:question under `.tmp/native-semantic-parity-question-audit/`. Nine returned
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:250:  without semantic dependence on
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:267:  not about 30. S1a must tier carriers into route-authoritative vs descriptive
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:273:## 3. Milestone Plan
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:275:Execution should use this aggressive two-week sprint spine. The detailed
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:277:one sprint, split it according to this spine rather than running it as one large
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:317:3. Are all behavior claims covered by split-outcome scenarios, including
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:322:   changed slice, or reconstruct semantics from component metadata?
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:329:   resume semantics, and installed-package behavior, or explicitly document a
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:334:- Missing source authority: add or amend source constructs, then rerun strict row
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:338:- Scenario gap: add a split-outcome scenario before claiming parity for that row.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:339:- New route-authoritative carrier: move authority into source or add it to row
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:363:  "finding": "Plan allows handler refs to remain semantic authority.",
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:389:  authority, baselines, row/carrier exemptions, target narrowing, generated
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:390:  conformance authority, or live-plan topology/resume risk are always
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:399:### S0 - Runner Pinning and North Star Action Plumbing
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:424:- Make severity schema-assigned for dangerous categories: route authority,
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:426:  conformance authority, and live-plan topology/resume risk are always blocking.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:435:- `PYENV_VERSION=3.11.11 python scripts/pin_megaplan_runner.py --out artifacts/native-semantic-parity/runner-pin-s0.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:436:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_runner_pin.py --pin artifacts/native-semantic-parity/runner-pin-s0.json --auto-drive-corpus tests/characterization/auto_drive_corpus`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:455:- S0 rolls back as a runner/tooling change before any semantic extraction starts.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:462:### S1a - Checker Authority Hard Bar
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:466:- Make strict semantic checking the sole closeout route before any extraction closes.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:467:- Produce a canonical semantic row registry reconciled against a structural AST
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:480:  evidence-authoritative, compatibility metadata, or descriptive metadata before
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:483:- Add checker rules that reject `AUTHORING_*` imports as row authority, canonical-source `handler_ref`, canonical-source `route_bindings`, compatibility `NativeProgram` projections, and policy-as-route-table constructs.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:486:  identifiers, imported component callables used as route authority, reducer/fanout
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:490:- Build the deterministic replay harness used for all split-outcome and
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:502:  other split outcome that currently requires interactive CLI steering.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:507:  path exists; S7 is the full installed-package semantic gate.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:512:  full split-outcome inventory and a completeness check against the required
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:522:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --source arnold_pipelines/megaplan/workflows/workflow.pypeline --strict --require-row-evidence --mode checkout --out .tmp/native-semantic-parity-master-plan/s1-current-checkout.json` must fail current source before correction, with row IDs, spans, hashes, and carrier classification.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:525:  installed-package semantic failure/pass is required at S7 and any sprint that
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:527:- `PYENV_VERSION=3.11.11 python scripts/scan_megaplan_semantic_carriers.py --roots arnold_pipelines/megaplan arnold/workflow arnold/runtime arnold/conformance --exclude-from artifacts/native-semantic-parity/carrier-scan-exclusions.yaml --out artifacts/native-semantic-parity/carrier-scan.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:528:- `PYENV_VERSION=3.11.11 python scripts/classify_megaplan_semantic_carriers.py --carrier-scan artifacts/native-semantic-parity/carrier-scan.json --out artifacts/native-semantic-parity/carrier-tier-classification.json` must identify route-authoritative carriers separately from descriptive metadata.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:529:- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_carrier_tier_boundary.py --carrier-tier artifacts/native-semantic-parity/carrier-tier-classification.json --sample-seed artifacts/native-semantic-parity/carrier-tier-sample-seed.txt --sample-size 20 --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --out artifacts/native-semantic-parity/carrier-tier-boundary-validation.json` corrupts a seeded sample of descriptive carriers and fails the whole classification run if any sampled carrier changes behavior.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:530:- `PYENV_VERSION=3.11.11 python scripts/reconcile_megaplan_semantic_rows.py --carrier-scan artifacts/native-semantic-parity/carrier-scan.json --row-registry arnold/workflow/megaplan_semantic_rows.yaml --out artifacts/native-semantic-parity/row-registry-reconciliation.json` must fail if any carrier is unmapped and unexempted.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:532:- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_native_semantic_checker_authority.py -q` must pass.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:533:- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_split_outcome_scenarios.py --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --required docs/arnold/megaplan-native-required-split-outcomes.yaml`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:534:- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_replay_harness.py --fixtures tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/replay-harness.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:535:- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_baseline_canonicalizer.py --fixtures tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/baseline-canonicalizer.json` is required only if baseline artifacts include content hashes beyond route/state/next-command/suspension assertions.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:537:- `PYENV_VERSION=3.11.11 python scripts/capture_megaplan_split_outcome_baselines.py --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --scope s1b,s2 --harness tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/baselines/pre-extraction --freeze` captures the first frozen legacy behavior corpus before extraction.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:538:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml --mode verify`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:539:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --fixture tests/fixtures/workflow_authoring/megaplan/current_false_pass_shape.py --strict --expect-diagnostic AWF245_ROW_EVIDENCE_INSUFFICIENCY --expect-diagnostic AWF253_PROHIBITED_SEMANTIC_CARRIER` must fail forever with the specified diagnostic codes. S1a must allocate `AWF253_PROHIBITED_SEMANTIC_CARRIER` in `arnold/workflow/diagnostics.py` and its diagnostic spec before pinned fixture tests are written.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:543:- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_runtime_narrowing.py --docs docs/arnold/megaplan-native-runtime-narrowing-contract.md docs/arnold/megaplan-native-semantic-parity-master-plan.md --forbid-full-runtime-overclaim`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:556:  evidence-authoritative, compatibility-metadata, and descriptive-metadata
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:559:  descriptive sample, corruption method, scenario command, and result; one
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:572:- `check_workflow_file(..., evidence=None)` may remain only as legacy source-shape validation and must be named non-semantic in docs/tests.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:576:  as explicitly non-semantic source-shape checks.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:585:- Current state names, artifact names, route labels, auto-drive labels, override/resume commands remain unchanged per `_core/workflow_data.py`; S1a only changes closure evidence authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:587:### S1b-1 - Runtime Substrate Proof
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:597:  authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:598:- Keep this as substrate work only. Do not extract Megaplan semantics in this
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:621:  without it as semantic authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:633:### S1b-2 - Typed Outcomes, Builder Slice, Installed Package
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:673:### S2 - Front-Half Native Loop
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:683:- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_front_half_native_loop.py tests/arnold/workflow/test_megaplan_native_semantic_checker_authority.py -q`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:685:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s2 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:691:- Any native-source feature flag used during S2 must be deleted before S2 closes. Closeout fails if both legacy and native front-half route authority remain selectable.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:710:- Preserve `prep`, `plan`, `critique`, `gate`, `revise`, `override add-note`, `override force-proceed`, `abort`, and resume labels. Auto-drive characterization must still select the same next command for existing state fixtures.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:712:### S3 - Tiebreaker and Replan Native Flow
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:718:- Replan rejoin must be explicit source authority, not state-clear side effect.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:724:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s3 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:730:- No S3 feature flag or alternate tiebreaker route authority may remain after closeout.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:738:- Old tiebreaker workflow metadata may remain only as compatibility metadata and cannot be cited as semantic authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:748:### S4 - Execute DAG, Approval, Resume
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:759:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s4 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:760:- Strict checker must reject handler-owned execute route decisions and hidden scheduler authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:778:- Roll back execute native route authority as one unit; keep artifact schema and state compatibility fixtures intact.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:782:- Preserve task artifact names, `execute`, `review`, `no_review`, `deferred_human`, `blocked`, `recover-blocked`, and fresh-session CLI semantics.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:784:### S5 - Review, Rework, Finalize
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:795:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s5 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:809:- `reducer_routes`, `target_ref`, `force_proceed_authority`, `fallback_routes`, and review cap route decisions in policy metadata are not sufficient as row authority unless attached to named source constructs and free of route-table behavior.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:819:### S6 - Override, Auto, Compatibility Collapse
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:830:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s6 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:844:- `route_dispatch.py`, manifest backend branch maps, and `_compatibility.py` CLI-handler phase fallback must consume source-derived semantics or be fenced from evidence and runtime route authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:848:- Keep compatibility shell executable for legacy runs, but rollback cannot restore compatibility projection as evidence authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:854:### S7 - Final Generated Conformance and Rollout
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:862:- Run full split-outcome, installed-package, mutation, compatibility, handler-purity, and auto-drive characterization gates.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:867:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --source arnold_pipelines/megaplan/workflows/workflow.pypeline --strict --require-row-evidence --mode checkout --out artifacts/native-semantic-parity/checker-checkout.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:869:- `PYENV_VERSION=3.11.11 python scripts/scan_megaplan_semantic_carriers.py --roots arnold_pipelines/megaplan arnold/workflow arnold/runtime arnold/conformance --exclude-from artifacts/native-semantic-parity/carrier-scan-exclusions.yaml --out artifacts/native-semantic-parity/carrier-scan-final.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:870:- `PYENV_VERSION=3.11.11 python scripts/classify_megaplan_semantic_carriers.py --carrier-scan artifacts/native-semantic-parity/carrier-scan-final.json --out artifacts/native-semantic-parity/carrier-tier-classification-final.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:871:- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_carrier_tier_boundary.py --carrier-tier artifacts/native-semantic-parity/carrier-tier-classification-final.json --sample-seed artifacts/native-semantic-parity/carrier-tier-final-sample-seed.txt --sample-size 20 --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --out artifacts/native-semantic-parity/carrier-tier-boundary-validation-final.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:872:- `PYENV_VERSION=3.11.11 python scripts/reconcile_megaplan_semantic_rows.py --carrier-scan artifacts/native-semantic-parity/carrier-scan-final.json --row-registry arnold/workflow/megaplan_semantic_rows.yaml --fail-unmapped --out artifacts/native-semantic-parity/row-registry-reconciliation-final.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:873:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_exemption_ledger.py --reconciliation artifacts/native-semantic-parity/row-registry-reconciliation-final.json --fail-open-scheduled --out artifacts/native-semantic-parity/exemption-summary.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:874:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml --mode final --require-reviewed-amendments`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:875:- `PYENV_VERSION=3.11.11 python scripts/generate_megaplan_scenario_row_matrix.py --checker artifacts/native-semantic-parity/checker-checkout.json --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --baselines artifacts/native-semantic-parity/baselines/pre-extraction --harness tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/scenario-row-coverage.json`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:876:- `PYENV_VERSION=3.11.11 python scripts/generate_megaplan_native_semantic_conformance.py --checker artifacts/native-semantic-parity/checker-checkout.json --installed-checker artifacts/native-semantic-parity/checker-installed.json --row-registry-reconciliation artifacts/native-semantic-parity/row-registry-reconciliation-final.json --scenario-row-coverage artifacts/native-semantic-parity/scenario-row-coverage.json --baseline-freeze artifacts/native-semantic-parity/baselines/pre-extraction/freeze-record.json --baseline-amendments artifacts/native-semantic-parity/baseline-amendments.yaml --exemption-summary artifacts/native-semantic-parity/exemption-summary.json --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --require-runtime-narrowing --out docs/arnold/megaplan-native-semantic-parity-conformance.generated.md`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:877:- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_serialized_plan_rollout.py --policy artifacts/native-semantic-parity/serialized-plan-rollout-policy.yaml --out artifacts/native-semantic-parity/serialized-plan-rollout-final.json` validates either migration fixtures for live suspended plans or an explicit drain/quarantine rollout decision.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:880:- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_runtime_narrowing.py --docs docs/arnold/megaplan-native-semantic-parity-conformance.generated.md docs/arnold/megaplan-native-runtime-narrowing-contract.md --forbid-full-runtime-overclaim`
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:899:- Rollback is a release rollback: restore previous runtime package and previous generated conformance artifact, while S1a strict checker still blocks semantic parity claims.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:905:## 4. Correction Traceability
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:909:| 1. S1 hard bar | S0, S1a | S0 pins runner and lands North Star action plumbing; S1a `scripts/check_megaplan_native_semantic_parity.py --strict --mode checkout/installed-package` fails current source before extraction and becomes closeout path; package-wide carrier-scan row registry reconciliation must fail on unmapped route-authoritative carriers or unapproved exclusions | `runner-pin-s0.json`, `s1-current-checkout.json`, `s1-current-installed.json`, `row-registry-reconciliation.json`, `carrier-scan-exclusions.yaml` |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:911:| 3. Policy-as-route-table rejection | S1a, S5 | Checker diagnostic structurally rejects policy `target_ref`, reducer routes, route groups, fanout contracts, override dispatch, or route-shaped mappings as row authority | checker JSON diagnostic records |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:913:| 5. Compat quarantine | S1a, S6, S7 | Checker forbids `_compatibility.py` `NativeProgram`/CLI fallback as semantic evidence | compatibility quarantine rejection report |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:925:| Headless control injection | S1a targeted | Programmatic control actions drive only required non-interactive split outcomes in CI | `test_control_injection_headless.py` |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:927:| Carrier tiering | S1/S7, targeted per sprint | Package-wide scan is tiered at S1/S7; seeded descriptive-carrier corruption validates the route/descriptive boundary; per-sprint changed-file scan plus North Star review catches new route authority | `carrier-tier-classification*.json`, `carrier-tier-boundary-validation*.json`, sprint review answers |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:932:## 5. Prohibited Proofs
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:934:These must never satisfy a semantic row:
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:943:- Boundary receipts without source-visible authority.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:948:  component callables used as route authority, and dispatch tables hidden under
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:958:## 6. Red Team: False Closure Routes and Patches
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:966:| Cite `_compatibility.py` `NativeProgram` as native authority. | S1a/S6/S7 checker rejects compatibility projection evidence. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:970:| Use happy-path smoke tests for behavior parity. | S2-S7 require split-outcome scenarios before rollout. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:971:| Mutate old carriers in a way tests never exercise. | Each mutation gate must run the relevant split-outcome scenarios with the old carrier disabled/deleted. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:975:| Leave a feature flag that keeps legacy and native route authorities both alive. | Each sprint close gate deletes temporary feature flags; rollback is by reverting the sprint, not by retaining dual authority. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:977:| Compare "unchanged" behavior against the current post-extraction build. | S1a freezes golden split-outcome baselines before extraction; later mutation/parity gates diff against those baselines. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:983:| Drive split outcomes manually through interactive CLI and call them CI scenarios. | S1a requires headless control-injection actions for destructive approval and tiebreaker branches. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:985:| Bury hundreds of route-shaped candidates under generic carrier exemptions. | S1a carrier tiering separates route-authoritative carriers from descriptive metadata, and route-authoritative carriers need row mapping or removal. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:988:| Downgrade a dangerous North Star action to advisory. | Severity is schema-assigned as blocking for route authority, baselines, exemptions, target narrowing, generated conformance authority, and live-plan topology/resume risk. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:989:| Misclassify live route authority as descriptive metadata. | S1/S7 seeded descriptive-carrier corruption must leave behavior unchanged; one behavior-changing sample invalidates the tier classification run. |
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:992:## 7. Open Questions
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1000:Recommended default: only compatibility metadata may contain them, and the checker must mark those objects inadmissible as row authority. Declared policy evidence must attach to named source constructs and avoid route tables.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1002:3. S1 split decision.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1003:Resolved: S1 does not remain one sprint. The plan is split into S0 runner/North
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1004:Star action plumbing, S1a checker authority, S1b-1 runtime substrate proof, and
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1005:S1b-2 typed outcomes/builder slice. Each depends on the prior slice.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1008:Recommended default: yes for runtime continuity, but quarantine it from semantic evidence and require source-derived route authority for corrected flows.
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1010:## Appendix A: Command Log
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1015:mkdir -p .tmp/native-semantic-parity-master-plan/briefs .tmp/native-semantic-parity-master-plan/results .tmp/native-semantic-parity-master-plan/logs
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1018:PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py --toolsets="file,web,terminal" --query-file=.tmp/native-semantic-parity-master-plan/deepseek-smoke-brief.md --project-dir="$PWD" > .tmp/native-semantic-parity-master-plan/deepseek-smoke.out 2> .tmp/native-semantic-parity-master-plan/deepseek-smoke.err
+docs/arnold/megaplan-native-semantic-parity-master-plan.md:1030:PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/fan.py --briefs-dir=.tmp/native-semantic-parity-master-plan/briefs --output-dir=.tmp/native-semantic-parity-master-plan/results --max-workers=5 --model="deepseek:deepseek-v4-pro" --toolsets="file,web,terminal" --task-timeout=1800 --project-dir="$PWD"
+
+exec
+/bin/zsh -lc "sed -n '1,424p' docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md && sed -n '100,151p' docs/arnold/megaplan-native-semantic-parity-master-plan.md && sed -n '273,904p' docs/arnold/megaplan-native-semantic-parity-master-plan.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+# Megaplan Native Parity Existing-Work Swarm Synthesis
+
+Generated: 2026-07-09
+
+Source: 48 DeepSeek reports in `.tmp/native-parity-existing-work-swarm/results/`.
+The swarm checked each planned component through three lenses where possible:
+current code, prior epics, and reusable/generalizable adjacent machinery.
+
+## Executive Verdict
+
+The swarm did not find that the native semantic parity work is already complete.
+It found a large amount of reusable scaffolding and several domains where the
+behavioral machinery is already substantial, but the central North Star remains
+unmet: `workflow.pypeline` and named native subworkflows are still not the sole
+source-readable semantic authority.
+
+The most important adjustment is sequencing, not destination. We should reuse the
+existing evidence generator, row/conformance YAMLs, runtime substrate, typed
+outcomes, execute policies, override matrix, boundary contracts, native goldens,
+and installed-wheel smoke tests. We should not accept any of the old conformance
+ledgers as closure proof.
+
+## High-Confidence Findings
+
+### 1. S0 North Star Actions and Runner Pinning Are Greenfield
+
+Verdict: adjacent only.
+
+What exists:
+
+- Gate already writes `gate_carry.json` through `handlers/gate.py`.
+- Revise already has meta-field extraction and feedback plumbing in
+  `orchestration/critique_runtime.py`.
+- Runtime schemas for gate/revise exist under `arnold_pipelines/megaplan/schemas/`.
+- Runner identity concepts exist nearby in pipeline identity/fingerprint artifacts.
+
+What does not exist:
+
+- No `north_star_actions` field in `gate.json` or `gate_carry.json`.
+- No `north_star_actions_addressed` field in `revise.json`.
+- No schema-assigned severity for dangerous North Star categories.
+- No clean-context auditor/canary path.
+- No runner pin scripts.
+- No `north_star_critical` chain/milestone field.
+
+Plan adjustment:
+
+- Keep S0 as one aggressive sprint, but structure it as two internal workstreams:
+  runner pinning, and gate-to-revise North Star action plumbing.
+- Do not split it into multiple calendar sprints unless implementation proves it
+  cannot fit. The actual code change rides existing gate/revise plumbing; the
+  feature is greenfield, but not a semantic extraction.
+
+### 2. Checker Authority Partly Exists, but the Hard Bar Is Not Built
+
+Verdict: partly exists.
+
+What exists:
+
+- `arnold/workflow/source_compiler.py` already has row-evidence checking and
+  strict paths for some S2/S3 rows.
+- `tests/arnold/workflow/test_row_evidence_checker.py` exists.
+- `arnold/workflow/semantic_evidence.py`, `boundary_contracts.py`, and the old
+  conformance YAMLs form a usable starting vocabulary.
+- `scripts/generate_native_representation_evidence.py` has reusable declarative
+  scan shapes and evidence assembly.
+
+What does not exist:
+
+- `AWF253_PROHIBITED_SEMANTIC_CARRIER`.
+- `arnold/workflow/megaplan_semantic_rows.yaml`.
+- Package-wide carrier scanner/classifier/reconciler.
+- Current-shape negative fixture.
+- Renamed/re-encoded structural evasion fixtures.
+- Strict installed-package checker mode.
+
+Plan adjustment:
+
+- S1a must stay first and must externalize the row registry before rows expand.
+- Reuse `generate_native_representation_evidence.py` and the existing row evidence
+  tests, but do not build a parallel evidence stack.
+- Build structural carrier detection as shared machinery consumed by both checker
+  rules and final conformance generation.
+
+### 3. Evidence Substrate Has Strong Pieces, Not the Required Harness
+
+Verdict: adjacent only.
+
+What exists:
+
+- `arnold/kernel/replay.py` has replay cursor and content-hash validation.
+- `arnold/runtime/semantic_replay.py` has structural semantic comparison and event
+  journal replay.
+- `docs/arnold/megaplan-native-representation-scenarios.yaml` exists locally and
+  is a useful split-outcome inventory.
+- `tests/arnold_pipelines/megaplan/fixtures/native_goldens/` contains D1-D8 and
+  D12 native golden traces.
+- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py`
+  already proves important installed-wheel/package-resource behavior.
+
+What does not exist:
+
+- Deterministic replay harness with canned worker payloads.
+- Baseline freeze/check scripts.
+- Headless control-injection API for destructive approval, tiebreaker choices,
+  and other interactive split outcomes.
+- Installed-package strict checker path.
+
+Plan adjustment:
+
+- Use route/state/next-command/suspension baselines first; defer artifact-hash
+  canonicalization unless artifact content becomes parity proof.
+- Build the harness from `semantic_replay.py`, `ReplayCursor`, native goldens, and
+  the existing scenarios YAML.
+
+### 4. Native Runtime Substrate Is Better Than Expected
+
+Verdict: partly exists, with a narrower hard gap than earlier audits implied.
+
+What exists:
+
+- Native `parallel_map(items=...)` lowering exists in
+  `arnold/pipeline/native/compiler.py`.
+- Runtime `items_ref` resolution exists in `arnold/pipeline/native/runtime.py`.
+- Parallel-map suspension/reentry exists in the native runtime.
+- Generic native suspension/reentry tests exist.
+
+What remains:
+
+- Megaplan-specific substrate tests are missing.
+- Manifest backend dispatch still consults components/handler-like route maps.
+- `break`/`continue` loop syntax is explicitly rejected by the compiler.
+
+Plan adjustment:
+
+- S1 runtime substrate should be reframed from "prove/build all substrate" to
+  "prove native runtime capabilities, then replace Megaplan manifest dispatch."
+- Do not implement `break`/`continue` unless S2-S5 truly require language-level
+  loop exits. Decision-route loop exits may be sufficient.
+
+### 5. Typed Outcomes and Builder Slice Are Substantially Started
+
+Verdict: partly exists.
+
+What exists:
+
+- Typed outcomes exist for gate, tiebreaker, review, override, and execute policy.
+- `workflow.pypeline` already imports and branches on these types in places.
+- Some source-derived topology helpers exist.
+
+What remains:
+
+- `build_pipeline()` still reconstructs much from component metadata.
+- `handler_ref` and `route_bindings` remain in canonical source and component
+  declarations.
+- Installed-package parity is not strict-checker parity.
+
+Plan adjustment:
+
+- Make one builder edge source-owned early and prove the old component route
+  binding cannot affect behavior.
+- Treat this as the bridge between checker infrastructure and later extraction.
+
+### 6. Front-Half Work Has Skeletons, Not Authority
+
+Verdict: partly exists.
+
+What exists:
+
+- `workflow.pypeline:390-470` has the front-half shape.
+- `front_half.pypeline` exists as a prior partial extraction target.
+- Native goldens include prep/plan, critique, gate preflight, and gate/revise
+  substrate traces.
+
+What remains:
+
+- The live workflow still calls `AUTHORING_PREP`, `AUTHORING_PLAN`,
+  `AUTHORING_CRITIQUE`, `AUTHORING_GATE`, and `AUTHORING_REVISE` from
+  `components.py`.
+- Gate/critique/revise behavioral decisions still live in handlers and metadata.
+
+Plan adjustment:
+
+- Split front-half into two extraction sprints: prep/plan/critique first, then
+  gate/revise loop. This keeps the coupled gate/revise work intact while avoiding
+  an overloaded all-front-half sprint.
+
+### 7. Tiebreaker Is Source-Visible but Still Cosmetic
+
+Verdict: partly exists.
+
+What exists:
+
+- Four tiebreaker phases are visible in `workflow.pypeline`.
+- Boundary contracts and fixtures exist.
+- Checker shape checks can detect a single-wrapper anti-pattern.
+
+What remains:
+
+- The four phases still route through legacy handler-backed component calls.
+- Replan rejoin remains state mutation rather than source authority.
+- Old component workflow metadata survives.
+
+Plan adjustment:
+
+- Keep S3 as a full sprint, but focus it on replacing cosmetic source visibility
+  with semantic ownership and proving replan rejoin.
+
+### 8. Execute Scheduling Is the Most Reusable Domain
+
+Verdict: substantially exists, needs verify/harden and extraction.
+
+What exists:
+
+- `compute_task_batches`, `schedule_batches`, `split_oversized_batches`, and batch
+  complexity are pure and reusable.
+- `execute/policy.py` already contains pure typed policy for blocked retry,
+  destructive approval, tier routing, and next-step decisions.
+- `execute/batch.py` runs dynamic task batches.
+- `workflow.pypeline` already has execute `parallel_map` shape.
+- Tests exist for tier binding, reducer binding, topology golden, and native
+  manifest pieces.
+
+What remains:
+
+- No end-to-end strict proof that `parallel_map(items="megaplan.execute.batches")`
+  runs from lowered source through the current Megaplan runtime path.
+- Old handler/auto execute routing can still own behavior.
+- Dead-delete and frozen baseline tests are missing.
+
+Plan adjustment:
+
+- Reclassify execute DAG scheduling from "build" to "verify, baseline,
+  dead-delete, and collapse route authority."
+- Split execute into scheduling/fanout and approval/resume to keep approvals,
+  blocked retry, and fresh-session behavior reviewable.
+
+### 9. Review and Finalize Have Policy Scaffolding, but S5 False-Passes Today
+
+Verdict: partly exists.
+
+What exists:
+
+- Review fanout/fanin shape is visible in `workflow.pypeline`.
+- `ReviewOutcome` and policy surfaces exist.
+- Finalize handlers and fallback/baseline logic exist.
+
+What remains:
+
+- S5 checker rows can pass on `Mapping` existence in `REVIEW_POLICY` or
+  `FINALIZE_POLICY`, which is the old false-pass pattern.
+- Final projection routes still live in component policy metadata rather than
+  source-owned constructs.
+
+Plan adjustment:
+
+- Split S5 into review/rework and finalize/terminal projection.
+- Allocate a specific negative fixture where policy metadata exists but named
+  source constructs are absent.
+
+### 10. Override Surface Is Largely Built, but Split-Brained
+
+Verdict: substantially exists, not semantically complete.
+
+What exists:
+
+- `handlers/override.py` implements all override actions.
+- `workflows/override_matrix.py` is a strong declarative authority matrix.
+- `planning/control_binding.py` and `arnold/control/interface.py` provide a
+  generalizable control-transition abstraction.
+- Boundary contracts and authority receipts exist.
+- Some auto-driver integration exists.
+
+What remains:
+
+- Handler dispatch is still the production route.
+- Control-interface routing is feature-flagged.
+- Auto-drive can still act as a second route brain.
+- Compatibility and route dispatch projections still need quarantine/fencing.
+
+Plan adjustment:
+
+- Reframe S6a as "collapse/extract existing override surface," not "build
+  override surface."
+- Use `OVERRIDE_ACTION_MATRIX`, `AuthorityRecord`, and `ControlTransition` as
+  templates for other human/control boundaries.
+
+### 11. S7 Tooling Is Not Just Final Assembly
+
+Verdict: adjacent only.
+
+What exists:
+
+- `scripts/generate_native_representation_evidence.py` is a strong evidence
+  bundle generator.
+- `scripts/validate_native_representation_conformance.py` validates the old
+  conformance model.
+- Local final-conformance tests and scenarios files exist, though not all swarm
+  agents saw them because some are untracked local assets.
+
+What does not exist:
+
+- `check_megaplan_native_semantic_parity.py`.
+- Carrier scan/classify/reconcile scripts.
+- Exemption ledger checker.
+- Baseline freeze checker.
+- Scenario-row matrix generator.
+- New strict generated conformance report generator.
+- Runtime narrowing validator.
+
+Plan adjustment:
+
+- Pull S7 tooling forward. S1a/S1b should create the scanner, row registry,
+  strict checker, baseline freeze, and scenario validation scripts. S7 should
+  rerun and aggregate them, not invent them at the end.
+- Refactor `generate_native_representation_evidence.py` rather than writing a
+  parallel evidence generator.
+
+## Existing Assets To Reuse Directly
+
+- `scripts/generate_native_representation_evidence.py`
+- `scripts/validate_native_representation_conformance.py`
+- `docs/arnold/megaplan-native-representation-scenarios.yaml`
+- `docs/arnold/megaplan-native-representation-conformance.yaml`
+- `docs/arnold/megaplan-native-representation-traceability.yaml`
+- `docs/arnold/proof-map.json`
+- `arnold/workflow/semantic_evidence.py`
+- `arnold/workflow/source_compiler.py`
+- `arnold/workflow/handler_semantics.py`
+- `arnold_pipelines/megaplan/workflows/boundary_contracts.py`
+- `arnold_pipelines/megaplan/workflows/override_matrix.py`
+- `arnold_pipelines/megaplan/workflows/events.py`
+- `arnold_pipelines/megaplan/native_interfaces.py`
+- `arnold_pipelines/megaplan/outcomes.py`
+- `arnold_pipelines/megaplan/execute/policy.py`
+- `arnold_pipelines/megaplan/_core/io.py`
+- `arnold_pipelines/megaplan/_core/scheduler/topo.py`
+- `arnold/control/interface.py`
+- `arnold_pipelines/megaplan/planning/control_binding.py`
+- `arnold/kernel/replay.py`
+- `arnold/runtime/semantic_replay.py`
+- `tests/arnold_pipelines/megaplan/fixtures/native_goldens/`
+- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py`
+- `tests/arnold/conformance/test_deleted_surfaces.py`
+- `tests/arnold/conformance/test_megaplan_coupling_gate.py`
+
+## Assets To Avoid Treating As Proof
+
+- `docs/arnold/megaplan-native-representation-conformance-report.md`
+- Old `conformance.yaml` rows that mark source/component existence as implemented.
+- `Pipeline.native_program` claims unless the runtime object actually exposes and
+  executes that path.
+- `workflow.pypeline` existence by itself. It is an authored skeleton until strict
+  checker evidence and dead-delete tests prove source authority.
+- Component policy `Mapping` existence for S5 rows.
+- `override_matrix.py` as final proof; it is a strong source for extraction, not
+  the extracted source route authority.
+- Handler purity inventories by themselves.
+- Installed-wheel smoke tests that do not run the strict checker on installed
+  source.
+
+## Recommended Plan Delta
+
+1. Keep the North Star and end-state unchanged.
+2. Keep S0 to one aggressive sprint, but explicitly call it greenfield runner and
+   gate/revise plumbing over existing carry paths.
+3. Split early infrastructure into:
+   - checker authority and carrier reconciliation,
+   - deterministic evidence/baseline substrate,
+   - native runtime/manifest dispatch proof,
+   - builder edge slice.
+4. Pull S7 tooling forward: build the scanner, row registry, strict checker,
+   baseline freeze, and scenario-row matrix before extraction sprints depend on
+   them.
+5. Reclassify S4 execute scheduling as hardening/extraction, not greenfield build.
+6. Reclassify S6 override as collapse/extraction of an existing split-brain
+   surface, not greenfield build.
+7. Split large extraction phases into aggressive two-week sprints:
+   - S2a prep/plan/critique
+   - S2b gate/revise
+   - S4a execute DAG/scheduling
+   - S4b execute approval/resume
+   - S5a review/rework
+   - S5b finalize/terminal projection
+   - S6a override/control
+   - S6b auto/manifest/compatibility
+8. Use S0 North Star questions as review tripwires, not substitutes for strict
+   checker, carrier scan, baseline, and mutation gates.
+
+## Suggested Updated Sprint Spine
+
+This is the lean, evidence-backed spine after absorbing the swarm:
+
+1. S0 - Runner Pinning and North Star Action Plumbing
+2. S1a - Checker Authority, Row Registry, Carrier Scan, Current-Shape Rejection
+3. S1b - Deterministic Evidence Substrate and Baseline Freeze
+4. S1c - Runtime Substrate and Manifest Source Dispatch Proof
+5. S1d - Typed Outcomes and First Builder Edge
+6. S2a - Prep, Plan, Critique Native Authority
+7. S2b - Gate and Revise Native Loop
+8. S3 - Tiebreaker and Replan Native Flow
+9. S4a - Execute DAG and Scheduling Hardening
+10. S4b - Execute Approval, Blocked Retry, Fresh Session, Partial Resume
+11. S5a - Review Fanout, Rework, Caps
+12. S5b - Finalize Fallback and Terminal Projection
+13. S6a - Override and Human Control Surface Collapse
+14. S6b - Auto, Manifest Backend, Compatibility Quarantine
+15. S7 - Final Generated Conformance and Rollout
+
+This is still roughly 15 aggressive two-week sprints. The swarm bought
+confidence and reuse, not a collapse to a few sprints.
+
+## Open Follow-Up Checks
+
+- Confirm whether S2-S5 require language-level `break`/`continue`, or whether
+  decision-route loop exits are sufficient.
+- Confirm whether route/state/next-command baselines are enough for all planned
+  parity gates, avoiding artifact-hash canonicalization until needed.
+- Decide whether S7 script consolidation is acceptable. A single
+  `reconcile_megaplan_semantic_carriers.py` with subcommands may be cleaner than
+  separate scan/classify/reconcile/exemption scripts.
+- Decide whether S0 clean-context auditor/canaries are exit-gate required in the
+  first implementation sprint or allowed as immediate follow-up. For this epic,
+  keeping them in S0 is safer because they are the review substitute.
+  mutation-artifact framework.
+- Full package-wide carrier scans run in S1 and S7. Per-sprint scans are targeted
+  to changed files plus a North Star review question about newly introduced route
+  authority.
+- Baseline amendment and exemption ledgers are simple reviewed records, not
+  autonomous governance machinery.
+
+Escalate back to the full apparatus if any sprint passes while a
+route-authoritative carrier remains unmapped, a checker bypass is used for
+closeout, a renamed/re-encoded carrier evades the focused structural suite,
+deterministic scenarios flake or require baseline regeneration, old carriers
+still affect behavior after dead-delete tests, installed-package behavior diverges
+at S7, or live suspended plans must survive topology-changing rollout.
+
+Expected size after the 48-report existing-work swarm: roughly 15 aggressive
+two-week sprints. The swarm found substantial reusable scaffolding, especially in
+native runtime support, execute scheduling, override/control, boundary evidence,
+native goldens, installed-wheel smoke tests, and the old evidence generator. It
+also confirmed that S0, the strict semantic checker hard bar, carrier
+reconciliation, deterministic baseline freeze, strict installed-package checker,
+and generated final conformance tooling are not already built. The swarm bought
+reuse and confidence, not a collapse to a few sprints.
+
+Research delta: see
+`docs/arnold/megaplan-native-parity-existing-work-swarm-synthesis.md`. Treat it
+as the current reuse map. It supersedes any assumption in this plan that S7 is
+only final assembly or that execute/override are greenfield implementation
+domains.
+
+Plan adjustments from that swarm:
+
+- Keep S0 to one aggressive sprint, but recognize it is greenfield runner and
+  gate/revise plumbing built on existing gate-carry/revise feedback paths.
+- Pull S7 tooling forward. S1a/S1b must create or generalize the scanner, row
+  registry, strict checker, baseline freeze, scenario validation, and generated
+  evidence scripts. S7 reruns and aggregates them; it must not invent them at the
+  end.
+- Treat native runtime dynamic fanout and suspension as mostly implemented at the
+  generic native runtime layer. S1b-1/S1c must prove the Megaplan path and replace
+  manifest/backend dispatch authority, not rebuild the whole native runtime.
+- Reclassify execute DAG/scheduling as verify/harden/extract rather than
+  greenfield build. The pure scheduling and execute policy functions are reusable,
+  but legacy handler/auto route authority still needs dead-delete proof.
+- Reclassify override/control as collapse/extract of an existing split-brain
+  surface rather than greenfield build. `override_matrix.py`,
+  `AuthorityRecord`, and `ControlTransition` are extraction inputs, not final
+  source-authority proof.
+- Split overloaded extraction domains into aggressive two-week sprints:
+  prep/plan/critique; gate/revise; execute scheduling; execute approval/resume;
+  review/rework; finalize/terminal projection; override/control; auto/manifest/
+  compatibility.
+
+## 3. Milestone Plan
+
+Execution should use this aggressive two-week sprint spine. The detailed
+milestone sections below provide scope and gates; where a section is broader than
+one sprint, split it according to this spine rather than running it as one large
+milestone:
+
+1. S0 - Runner Pinning and North Star Action Plumbing.
+2. S1a - Checker Authority, Row Registry, Carrier Scan, Current-Shape Rejection.
+3. S1b - Deterministic Evidence Substrate and Baseline Freeze.
+4. S1c - Runtime Substrate and Manifest Source Dispatch Proof.
+5. S1d - Typed Outcomes and First Builder Edge.
+6. S2a - Prep, Plan, Critique Native Authority.
+7. S2b - Gate and Revise Native Loop.
+8. S3 - Tiebreaker and Replan Native Flow.
+9. S4a - Execute DAG and Scheduling Hardening.
+10. S4b - Execute Approval, Blocked Retry, Fresh Session, Partial Resume.
+11. S5a - Review Fanout, Rework, Caps.
+12. S5b - Finalize Fallback and Terminal Projection.
+13. S6a - Override and Human Control Surface Collapse.
+14. S6b - Auto, Manifest Backend, Compatibility Quarantine.
+15. S7 - Final Generated Conformance and Rollout.
+
+Every sprint brief and sprint closeout must include a `Sprint Review / North Star
+Sense Check` section immediately before `Do Not Close If`. These answers are not
+substitutes for the core programmatic gates above; they replace the broad
+governance apparatus that would otherwise try to automate every exception.
+Review answers must name file paths and rows. Any `no`, `unclear`, or
+`not applicable` answer creates an explicit action item before closeout, or a
+human-reviewed halt-and-ask decision. For question 1 and any other
+source-explanation test, the answer must be produced by a clean-context reviewer
+agent that has not read the executor's closeout narrative. It predicts behavior
+from source alone, then verifies against run/generated evidence and records any
+divergence.
+
+Required sprint review questions:
+
+1. For every row this sprint claims, can a reviewer understand the
+   branch/loop/fanout/join/suspension/retry/route from `workflow.pypeline`, a
+   named native subworkflow, an attached declared policy, or a typed pure phase
+   body without reading `components.py`, handler-local state transitions,
+   manifest maps, auto-drive, CLI handlers, or compatibility projections?
+2. Which old carriers did this sprint replace, and are they deleted, fenced as
+   inert compatibility, or proven unable to route behavior by a dead-delete test?
+3. Are all behavior claims covered by split-outcome scenarios, including
+   failure/alternate branches, not just happy path?
+4. Did the sprint introduce any new route-authoritative carrier outside
+   canonical source or named native subworkflows?
+5. Does `build_pipeline()` and runtime behavior consume lowered source for the
+   changed slice, or reconstruct semantics from component metadata?
+6. Are any feature flags, fallback dispatches, policy route tables, string label
+   maps, or control handlers now a second route brain?
+7. If a target was narrowed, is there both a checker rule blocking the old
+   false-pass pattern and a behavior scenario proving the narrowed path cannot
+   smuggle routing?
+8. Does the sprint preserve public state names, route labels, artifact names,
+   resume semantics, and installed-package behavior, or explicitly document a
+   rollout/drain decision?
+
+Default action mapping:
+
+- Missing source authority: add or amend source constructs, then rerun strict row
+  evidence.
+- Old carrier still route-capable: add a dead-delete behavior test or delete/fence
+  the carrier before closeout.
+- Scenario gap: add a split-outcome scenario before claiming parity for that row.
+- New route-authoritative carrier: move authority into source or add it to row
+  registry reconciliation as a blocking carrier.
+- Dual route brain: remove the fallback/feature flag before closeout, or halt for
+  an explicit rollout decision.
+- Packaging or live-plan uncertainty: defer to S7 installed-package proof unless
+  packaging changed, and choose either migration fixture or drain/quarantine for
+  live suspended plans.
+
+Megaplan revise-stage implementation note:
+
+- North Star sense checks should enter revise as structured
+  `north_star_actions` carried by `gate.json`/`gate_carry.json`, not as prose in
+  critique text. In the current Megaplan implementation, revise is handled by
+  `arnold_pipelines/megaplan/orchestration/critique_runtime.py` and prompted via
+  `arnold_pipelines/megaplan/prompts/critique.py`; it consumes gate summary and
+  unresolved flags, while finalize can synthesize an iterate gate and carry
+  feedback back to revise.
+- Minimal action schema:
+
+```json
+{
+  "id": "NS-ACT-001",
+  "source": {"phase": "critique|gate|finalize|review", "artifact": "gate.json", "ref": "flag-or-check-id"},
+  "north_star_ref": "NORTHSTAR.md:31-34",
+  "finding": "Plan allows handler refs to remain semantic authority.",
+  "severity": "blocking|advisory",
+  "severity_source": "schema|reviewer",
+  "action_type": "add_plan_item|add_exit_gate|add_scenario_test|add_checker_row|add_dead_delete_test|add_human_halt|escalate_robustness|reject_closeout",
+  "target": "phase/step/milestone or null",
+  "required_change": "Concrete change revise must make or halt on.",
+  "acceptance_evidence": ["test/check/artifact expected"],
+  "halt_if_unmappable": true
+}
+```
+
+- Revise applies actions by rewriting the plan, not by recording a narrative
+  answer. `add_plan_item` adds a numbered step with files and evidence;
+  `add_exit_gate` adds a must-pass gate with concrete `requires`;
+  `add_scenario_test` widens test blast radius; `add_checker_row` adds checker
+  implementation and diagnostic/command criteria; `add_dead_delete_test` adds
+  deletion/fencing plus behavior proof; `reject_closeout` becomes a must-pass
+  closeout gate enforced later by review/finalize.
+- Revise must refuse to silently rewrite `add_human_halt`, unmappable blocking
+  actions, route-authoritative exemptions, baseline rewrites, target narrowing,
+  and live-plan topology decisions. Those become blocked/halt outcomes or gate
+  escalation, not vague plan text.
+- Blocking North Star actions count like blocking correctness/security flags for
+  loop caps and no-progress termination. They cannot be force-proceeded through
+  the cosmetic/low-risk branch.
+- Severity is schema-assigned for dangerous categories. Findings touching route
+  authority, baselines, row/carrier exemptions, target narrowing, generated
+  conformance authority, or live-plan topology/resume risk are always
+  `blocking` with `severity_source: "schema"`; the answering agent cannot
+  downgrade them to advisory.
+- Smallest useful Make-A-Plan slice: add `north_star_actions` to gate/carry
+  schema; render them in the revise prompt; add `north_star_actions_addressed`
+  to `revise.json`; add a pre-worker guard for human-halt/unmappable blocking
+  actions; test schema validation, prompt rendering, halt behavior, plan metadata
+  output, and gate cap handling for unresolved blocking actions.
+
+### S0 - Runner Pinning and North Star Action Plumbing
+
+Scope:
+
+- Land the `north_star_actions` plumbing in the pinned runner before S1a starts:
+  gate/carry schema, revise prompt rendering, `north_star_actions_addressed` in
+  `revise.json`, pre-worker halt guard for human-halt/unmappable blocking
+  actions, and review blocking for unresolved closeout-critical actions.
+- Define `north_star_critical` as an explicit chain/milestone schema field.
+  Reject `north_star_critical: true` with `bare` or `light` robustness rather
+  than silently upgrading robustness.
+- Teach revise to explicitly load `north_star_actions` from `gate_carry.json`
+  first and `gate.json` as fallback; the carry artifact is not currently a
+  guaranteed revise input.
+- Add post-worker revise validation: `north_star_actions_addressed` claims must
+  point to concrete plan refs and action-specific structural markers. Prose-only
+  "handled" claims fail.
+- Add finalize/review enforcement: finalize lowers North Star obligations into
+  executable tasks/user actions/checks without overloading task `sense_checks`;
+  review and transition policy block unresolved `reject_closeout` or
+  closeout-critical actions.
+- Enforce independent clean-context answerers for explanation-style North Star
+  questions. The auditor predicts behavior from source alone, then verifies
+  against generated/run evidence. The executor's closeout narrative is not
+  admissible as the answer.
+- Make severity schema-assigned for dangerous categories: route authority,
+  baseline rewrites, row/carrier exemptions, target narrowing, generated
+  conformance authority, and live-plan topology/resume risk are always blocking.
+- Pin the Megaplan runner used to drive the epic. Record commit SHA/package
+  fingerprint, profile, robustness, and auto-drive corpus version.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_north_star_actions_gate_revise.py tests/arnold_pipelines/megaplan/test_north_star_actions_review_blocking.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_north_star_clean_context_auditor.py tests/arnold_pipelines/megaplan/test_north_star_severity_schema.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_north_star_critical_robustness.py tests/arnold_pipelines/megaplan/test_north_star_revise_post_validation.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/pin_megaplan_runner.py --out artifacts/native-semantic-parity/runner-pin-s0.json`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_runner_pin.py --pin artifacts/native-semantic-parity/runner-pin-s0.json --auto-drive-corpus tests/characterization/auto_drive_corpus`
+- Two cheap canary audits must run against seeded North Star defects. If the
+  clean-context auditor passes a canary, S0 fails and the methodology halts.
+
+Evidence spec:
+
+- Runner pin record with commit/package fingerprint and auto-drive corpus hash.
+- North Star action schema tests and canary audit results.
+- Example `gate.json`/`gate_carry.json` carrying a blocking North Star action
+  into revise, plus `revise.json` proving the action was addressed or halted.
+
+Deletion/quarantine:
+
+- Prose-only North Star answers cannot satisfy a blocking sense check.
+- Executor-authored closeout narrative cannot be the sole answer for
+  source-explanation questions.
+
+Rollback:
+
+- S0 rolls back as a runner/tooling change before any semantic extraction starts.
+
+Parity checks:
+
+- Existing gate/revise/review behavior remains unchanged when no explicit North
+  Star questions are present.
+
+### S1a - Checker Authority Hard Bar
+
+Scope:
+
+- Make strict semantic checking the sole closeout route before any extraction closes.
+- Produce a canonical semantic row registry reconciled against a structural AST
+  carrier scan for route-authoritative carriers. The S1/S7 scan must default to
+  package-wide coverage of
+  `arnold_pipelines/megaplan` plus relevant `arnold/workflow`, `arnold/runtime`,
+  and `arnold/conformance` surfaces, with explicit exclusions rather than narrow
+  inclusions. Every exclusion requires the same dated-exemption treatment as an
+  unmapped route-authoritative carrier. Every route-authoritative carrier,
+  including `handler_ref`, route
+  bindings, state mutation sites, policy route surfaces, dispatch tables, reducer
+  routes, fanout contracts, and route-like mapping literals, must map to either a
+  row ID, deletion/fencing proof, or an explicit dated exemption with owner,
+  category, date, and reason.
+  The scan must also classify each candidate as route-authoritative,
+  evidence-authoritative, compatibility metadata, or descriptive metadata before
+  row reconciliation can pass.
+- Required current-shape negative fixture must mirror `workflow.pypeline:14-34`, `:81-280`, `:281-383`, `:390-540`; `planning.py:247-268`, `:583-716`; `components.py:1154-1781`, `:2664-2669`; `_compatibility.py:101-115`, `:173-207`.
+- Add checker rules that reject `AUTHORING_*` imports as row authority, canonical-source `handler_ref`, canonical-source `route_bindings`, compatibility `NativeProgram` projections, and policy-as-route-table constructs.
+- Add structural rejection rules for renamed or re-encoded carriers: route-table
+  shaped dict/list literals, mapping values that resolve to known state/step/route
+  identifiers, imported component callables used as route authority, reducer/fanout
+  topology encoded under innocuous names, and policy objects whose values can
+  determine branch targets. This is a focused adversarial suite for the known
+  carrier classes, not an unbounded fixture treadmill.
+- Build the deterministic replay harness used for all split-outcome and
+  dead-delete gates. The first admissible baseline layer is deterministic state transition,
+  route label, next-command, suspension/terminal status, and canonical artifact
+  comparison. Do not build full worker/model I/O replay unless a later sprint
+  explicitly chooses it as an escalation.
+- Build the baseline canonicalizer only before artifact hashes are accepted as
+  parity proof. If used, it must
+  normalize timestamps, UUIDs, absolute paths, invocation ids, snapshot ids,
+  model/session ids, and generated-at/provenance fields, and publish a
+  canonicalizer version in every baseline record.
+- Add headless control-injection actions for destructive approval denial,
+  destructive approval approval, tiebreaker proceed/iterate/escalate, and any
+  other split outcome that currently requires interactive CLI steering.
+- Implement strict installed-package mode by loading `workflow.pypeline` and
+  named subworkflows through `importlib.resources.files(...)` from the installed
+  `arnold_pipelines` package, then feeding the loaded source through the same
+  strict checker path used in checkout mode. S1a requires a smoke proof that the
+  path exists; S7 is the full installed-package semantic gate.
+- Create a cross-package coupling ledger for source compiler references to
+  Megaplan component export names. Component deletion sprints must update or
+  retire those checker couplings in the same change.
+- Author `docs/arnold/megaplan-native-representation-scenarios.yaml` with the
+  full split-outcome inventory and a completeness check against the required
+  scenario list.
+- Capture staged pre-extraction golden baselines while legacy carriers still own
+  behavior. S1a does not need to capture every later sprint's full workflow
+  baseline before it closes, but sprint N extraction may not begin until sprint
+  N's baselines were frozen while legacy routing remained authoritative for those
+  flows.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --source arnold_pipelines/megaplan/workflows/workflow.pypeline --strict --require-row-evidence --mode checkout --out .tmp/native-semantic-parity-master-plan/s1-current-checkout.json` must fail current source before correction, with row IDs, spans, hashes, and carrier classification.
+- Same command with `--mode installed-package --smoke` must prove the checker
+  loads source from the installed artifact rather than checkout paths. Full
+  installed-package semantic failure/pass is required at S7 and any sprint that
+  changes packaging.
+- `PYENV_VERSION=3.11.11 python scripts/scan_megaplan_semantic_carriers.py --roots arnold_pipelines/megaplan arnold/workflow arnold/runtime arnold/conformance --exclude-from artifacts/native-semantic-parity/carrier-scan-exclusions.yaml --out artifacts/native-semantic-parity/carrier-scan.json`
+- `PYENV_VERSION=3.11.11 python scripts/classify_megaplan_semantic_carriers.py --carrier-scan artifacts/native-semantic-parity/carrier-scan.json --out artifacts/native-semantic-parity/carrier-tier-classification.json` must identify route-authoritative carriers separately from descriptive metadata.
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_carrier_tier_boundary.py --carrier-tier artifacts/native-semantic-parity/carrier-tier-classification.json --sample-seed artifacts/native-semantic-parity/carrier-tier-sample-seed.txt --sample-size 20 --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --out artifacts/native-semantic-parity/carrier-tier-boundary-validation.json` corrupts a seeded sample of descriptive carriers and fails the whole classification run if any sampled carrier changes behavior.
+- `PYENV_VERSION=3.11.11 python scripts/reconcile_megaplan_semantic_rows.py --carrier-scan artifacts/native-semantic-parity/carrier-scan.json --row-registry arnold/workflow/megaplan_semantic_rows.yaml --out artifacts/native-semantic-parity/row-registry-reconciliation.json` must fail if any carrier is unmapped and unexempted.
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_megaplan_row_registry_completeness.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_native_semantic_checker_authority.py -q` must pass.
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_split_outcome_scenarios.py --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --required docs/arnold/megaplan-native-required-split-outcomes.yaml`
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_replay_harness.py --fixtures tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/replay-harness.json`
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_baseline_canonicalizer.py --fixtures tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/baseline-canonicalizer.json` is required only if baseline artifacts include content hashes beyond route/state/next-command/suspension assertions.
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_control_injection_headless.py tests/arnold_pipelines/megaplan/test_installed_package_strict_source_loading.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/capture_megaplan_split_outcome_baselines.py --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --scope s1b,s2 --harness tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/baselines/pre-extraction --freeze` captures the first frozen legacy behavior corpus before extraction.
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml --mode verify`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --fixture tests/fixtures/workflow_authoring/megaplan/current_false_pass_shape.py --strict --expect-diagnostic AWF245_ROW_EVIDENCE_INSUFFICIENCY --expect-diagnostic AWF253_PROHIBITED_SEMANTIC_CARRIER` must fail forever with the specified diagnostic codes. S1a must allocate `AWF253_PROHIBITED_SEMANTIC_CARRIER` in `arnold/workflow/diagnostics.py` and its diagnostic spec before pinned fixture tests are written.
+- A focused renamed/re-encoded adversarial fixture suite under
+  `tests/fixtures/workflow_authoring/megaplan/renamed_carrier_evasion/` must fail
+  with structural carrier diagnostics, not merely `ok=False`.
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_runtime_narrowing.py --docs docs/arnold/megaplan-native-runtime-narrowing-contract.md docs/arnold/megaplan-native-semantic-parity-master-plan.md --forbid-full-runtime-overclaim`
+- All final/initiative closeout commands must call this strict command, not `check_workflow_file(..., evidence=None)`.
+
+Evidence spec:
+
+- Generated JSON only from the strict checker: each row has `row_id`, `construct_type`, `source_span`, `source_sha256`, `carrier_classification`, `negative_fixture_ids`, `installed_package_fingerprint`, and `checker_version`.
+- `row-registry-reconciliation.json` records every route-authoritative carrier,
+  row mapping/deletion/fencing proof or exemption, carrier kind, source span,
+  source hash, exemption owner, exemption category, date, and reason. The
+  route-authoritative registry cannot shrink without a reconciliation diff.
+  Exemption categories are `compat-metadata-inert`,
+  `scheduled-for-sprint-N`, and `out-of-scope-with-justification`.
+- `carrier-tier-classification.json` records route-authoritative,
+  evidence-authoritative, compatibility-metadata, and descriptive-metadata
+  classifications. Route-authoritative carriers cannot be cleared by a generic
+  exemption. `carrier-tier-boundary-validation.json` records the seeded
+  descriptive sample, corruption method, scenario command, and result; one
+  behavior-changing sample invalidates the classification run.
+- Golden baseline artifacts are immutable inputs to later parity gates and include
+  command, fixture hash, serialized state hash, artifacts hash, route label,
+  next-command/auto-drive observation, replay fixture hashes, and expected
+  terminal/suspension outcome. Raw artifacts are hashed only if canonicalizer
+  normalization is active, and the canonicalizer version is part of the frozen
+  record. Baseline amendment records are short reviewed records with dated
+  justification, reviewer, old/new hashes, and affected rows.
+- No manually authored conformance table can set row status.
+
+Deletion/quarantine:
+
+- `check_workflow_file(..., evidence=None)` may remain only as legacy source-shape validation and must be named non-semantic in docs/tests.
+- The four current CLI bypass call sites, `arnold/cli/workflow.py:207-208`,
+  `:433-438`, `:513-515`, and `:676-677`, must be listed in the S1a
+  deletion/quarantine ledger and either routed through strict closeout or renamed
+  as explicitly non-semantic source-shape checks.
+- `_compatibility.py` `NativeProgram` must be marked prohibited evidence by checker diagnostic.
+
+Rollback:
+
+- Revert S1a checker wiring as one slice. Because no extraction has occurred yet, rollback restores old validation behavior without stranding native source changes.
+
+Parity checks:
+
+- Current state names, artifact names, route labels, auto-drive labels, override/resume commands remain unchanged per `_core/workflow_data.py`; S1a only changes closure evidence authority.
+
+### S1b-1 - Runtime Substrate Proof
+
+Scope:
+
+- Prove compiler/runtime substrate readiness for constructs later sprints rely on:
+  dynamic `parallel_map` over runtime `items_ref`, suspension/reentry fixtures, and
+  loop exits. If typed loop exits are required, implement and test them here
+  before S2-S5 use them.
+- Prove manifest backend phase dispatch can be derived from lowered source
+  constructs or inert compatibility metadata, without `handler_ref` as route
+  authority.
+- Keep this as substrate work only. Do not extract Megaplan semantics in this
+  sprint; the point is to remove hidden prerequisites before builder/extraction
+  pressure starts.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_native_runtime_dynamic_fanout.py tests/arnold_pipelines/megaplan/test_native_runtime_suspension_reentry.py tests/arnold_pipelines/megaplan/test_manifest_backend_source_dispatch.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_native_runtime_loop_exits.py tests/arnold_pipelines/megaplan/test_runtime_items_ref_resolution.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- If S1b-1 changes topology, a pre-S1b-1 serialized replay cursor fixture must resume
+  or intentionally quarantine on post-S1b-1 code according to a documented
+  migration/drain policy.
+
+Evidence spec:
+
+- Runtime fixture evidence for dynamic fanout, suspension/reentry, loop exits,
+  and source-derived dispatch. Evidence must show runtime behavior, not just
+  lowered metadata.
+
+Deletion/quarantine:
+
+- `handler_ref` or manifest/backend node-id dispatch may remain only as inert
+  compatibility during this sprint; S1b-2 proves one builder edge can route
+  without it as semantic authority.
+
+Rollback:
+
+- Roll back substrate changes as a unit. Do not keep partial dynamic fanout
+  support if reducer/reentry behavior is unproven.
+
+Parity checks:
+
+- Existing Megaplan state names and route labels are unchanged; substrate tests
+  are additive.
+
+### S1b-2 - Typed Outcomes, Builder Slice, Installed Package
+
+Scope:
+
+- Add closed typed outcomes/interfaces for one runtime-load-bearing edge.
+- Prove `build_pipeline()` consumes lowered `.pypeline` topology for that edge instead of component route metadata. Current component fallback is in `planning.py:247-268`, `:557-598`, `:695-716`.
+- Establish installed-package parity smoke for strict checker source and runtime behavior.
+- Use the proven S1b-1 substrate; do not implement new fanout/suspension/loop
+  substrate in this sprint.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_workflows_planning_lowered_topology.py tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- Strict checker checkout and installed-package smoke both pass only for the
+  S1b-2 slice and still fail all unextracted rows.
+- Dead-delete behavior test for the S1b-2 edge: delete/mutate old component
+  `route_bindings` for that edge and prove behavior/output unchanged.
+- Dedicated parity checks diff S1b-2 behavior against frozen S1a baselines, not
+  against the current build.
+- Repin the Megaplan runner only after S1b-2 if the runner code changed. Repin
+  requires auto-drive characterization, strict checker smoke, and North Star
+  action smoke to pass.
+
+Evidence spec:
+
+- Strict checker slice record plus installed package fingerprint from source loaded out of the built artifact.
+
+Deletion/quarantine:
+
+- The replaced edge's component route binding cannot route behavior; component metadata may remain only as inert compatibility metadata.
+
+Rollback:
+
+- Revert typed outcome/builder edge and restore component edge for that single slice, with S1a checker still blocking broad closeout.
+
+Parity checks:
+
+- State names and route labels are preserved; `build_pipeline()` output route labels match `_core/workflow_data.py` and current CLI status/autodrive vocabulary.
+
+### S2 - Front-Half Native Loop
+
+Scope:
+
+- Extract prep clarify/suspend/resume, plan artifact contract, critique fanout/retry/skip, gate preflight/reprompt/downgrade/debt/severity, and revise loop caps/no-progress termination.
+- Current carriers: `workflow.pypeline:390-470`, `handlers/gate.py:77-133`, `:414-677`, `:993-1097`, `components.py:1154-1336`, `workflows/front_half.pypeline:31`, and `outcomes.py:43-44`.
+- Gate/revise is one extraction unit because gate route groups and revise reentries are coupled (`components.py:1154-1158`, `:1276-1279`).
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_front_half_native_loop.py tests/arnold/workflow/test_megaplan_native_semantic_checker_authority.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s2 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+- Strict checker must produce row evidence for every S2 row with source spans in `workflow.pypeline` or named native subworkflows, not `components.py`.
+- Split-outcome scenarios must cover prep suspend/resume, gate reprompt/downgrade, critical cap exhaustion, cosmetic cap exhaustion, force-proceed, and abort.
+- Per-sprint dead-delete mutation: mutate/delete old front-half route groups, reprompt metadata, and handler route decisions; behavior remains unchanged under S2 scenarios compared to frozen S1a baselines.
+- A pre-S2 serialized/suspended fixture must resume on post-S2 code or be covered
+  by the sprint's explicit drain/quarantine rollout record.
+- Any native-source feature flag used during S2 must be deleted before S2 closes. Closeout fails if both legacy and native front-half route authority remain selectable.
+
+Evidence spec:
+
+- Generated S2 checker evidence with positive/negative fixtures and mutation report tied to S2 carrier IDs.
+
+Deletion/quarantine:
+
+- Front-half `components.py` route groups, `handler_ref` route ownership, and handler-local `current_state`/`next_step` routing for corrected rows must be gone or fenced before S2 closes.
+
+Rollback:
+
+- A temporary native-source feature flag may exist only during S2 development and
+  scenario hardening. It must be removed before closeout. Rollback after close is
+  by reverting the S2 sprint commit(s), not by leaving a permanent dual-path
+  toggle.
+
+Parity checks:
+
+- Preserve `prep`, `plan`, `critique`, `gate`, `revise`, `override add-note`, `override force-proceed`, `abort`, and resume labels. Auto-drive characterization must still select the same next command for existing state fixtures.
+
+### S3 - Tiebreaker and Replan Native Flow
+
+Scope:
+
+- Replace `TIEBREAKER_WORKFLOW`/component child metadata with named native tiebreaker subworkflow phases: researcher, challenger, synthesis, decision.
+- Current carriers: `workflow.pypeline:471-488`, `workflow.pypeline:281-300`, `components.py:2546-2550`, `replan_state.py:1-38`, `boundary_contracts.py:142-243`.
+- Replan rejoin must be explicit source authority, not state-clear side effect.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_tiebreaker_native_flow.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s3 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+- Strict checker must reject a single `TIEBREAKER_WORKFLOW(...)` wrapper and require all four named phases plus decision routes.
+- Split-outcome scenarios: pick/proceed, replan/iterate rejoin, escalate/override, and parent rejoin receipt.
+- Per-sprint dead-delete mutation: mutate/delete old tiebreaker component routes and handler decision dispatch; scenarios remain unchanged compared to frozen S1a baselines.
+- A pre-S3 serialized/suspended fixture must resume on post-S3 code or be covered
+  by the sprint's explicit drain/quarantine rollout record.
+- No S3 feature flag or alternate tiebreaker route authority may remain after closeout.
+
+Evidence spec:
+
+- S3 row evidence with child workflow spans, parent rejoin policy, and negative fixture for the old wrapper.
+
+Deletion/quarantine:
+
+- Old tiebreaker workflow metadata may remain only as compatibility metadata and cannot be cited as semantic authority.
+
+Rollback:
+
+- Roll back the tiebreaker subworkflow as a unit; do not leave researcher/challenger native while decision remains handler-owned.
+
+Parity checks:
+
+- Preserve tiebreaker artifacts (`research_findings.json`, `challenge_findings.json`, `tiebreaker_payload.json`, `tiebreaker_decisions.json`) and route labels `proceed`, `iterate`, `escalate`.
+
+### S4 - Execute DAG, Approval, Resume
+
+Scope:
+
+- Extract execute dependency batching, destructive approval denial/approval, blocked retry, fresh-session forcing, partial resume cursor, no-review handoff, and execute model/tier route policy.
+- Current carriers: `workflow.pypeline:405-418`, `:424-435`, `:491-502`, `components.py:1694-1781`, `handlers/execute.py:322-345`, `:402-445`, `:562-572`, `execute/policy.py:31-600`, `execute/batch.py:1201+`, `:2278+`.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_execute_native_dag_approval_resume.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s4 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+- Strict checker must reject handler-owned execute route decisions and hidden scheduler authority.
+- Split-outcome scenarios: partial resume, destructive approval denial, destructive approval approval, blocked retry, review handoff, no-review terminal.
+- Per-sprint dead-delete mutation: mutate/delete old execute route surfaces and handler next-step scheduling; execute scenarios remain unchanged compared to frozen S1a baselines.
+- A pre-S4 serialized/suspended fixture must resume on post-S4 code or be covered
+  by the sprint's explicit drain/quarantine rollout record.
+- No execute native/legacy route feature flag may remain after closeout.
+
+Evidence spec:
+
+- Generated execute row evidence includes DAG/batch spans, approval gate spans, resume cursor schema, and installed-package behavior proof.
+
+Deletion/quarantine:
+
+- `components.py` execute fanout contracts and route surfaces cannot route corrected behavior.
+- Handler/auto execute state mutation may remain only as phase-body side effects after native route decision is already determined.
+
+Rollback:
+
+- Roll back execute native route authority as one unit; keep artifact schema and state compatibility fixtures intact.
+
+Parity checks:
+
+- Preserve task artifact names, `execute`, `review`, `no_review`, `deferred_human`, `blocked`, `recover-blocked`, and fresh-session CLI semantics.
+
+### S5 - Review, Rework, Finalize
+
+Scope:
+
+- Extract review fanout/fanin, reducer routes, rework loop, review caps, no-review terminal, deferred-human terminal, finalize fallback/baseline routes, and final projection.
+- Current carriers: `workflow.pypeline:413-463`, `:498-540`, `components.py:1509-1581`, `:2634-2669`, `source_compiler.py:1142-1233`, `:1783-1868`, `handlers/review.py`, `handlers/finalize.py`.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_review_finalize_native_flow.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s5 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+- Strict checker must require S5 row evidence; S5 cannot pass on `Mapping` existence in `REVIEW_POLICY` or `FINALIZE_POLICY`.
+- Split-outcome scenarios: review pass, review rework, review cap with blockers, review cap without blockers, no-review terminal, deferred-human terminal, finalize fallback revise.
+- Per-sprint dead-delete mutation: mutate/delete old review/finalize route surfaces and handler state transition paths; S5 scenarios remain unchanged compared to frozen S1a baselines.
+- A pre-S5 serialized/suspended fixture must resume on post-S5 code or be covered
+  by the sprint's explicit drain/quarantine rollout record.
+- No review/finalize native/legacy route feature flag may remain after closeout.
+
+Evidence spec:
+
+- Generated S5 checker evidence plus S5-specific negative fixture where policy metadata contains route tables but named source constructs are absent.
+
+Deletion/quarantine:
+
+- `reducer_routes`, `target_ref`, `force_proceed_authority`, `fallback_routes`, and review cap route decisions in policy metadata are not sufficient as row authority unless attached to named source constructs and free of route-table behavior.
+
+Rollback:
+
+- Review/finalize extraction rolls back together; do not leave review native with finalize fallback handler-owned.
+
+Parity checks:
+
+- Preserve `review_output.json`, review receipt fields, `pass`, `rework`, `blocked`, `force_proceeded`, `deferred_human`, and final plan artifact names.
+
+### S6 - Override, Auto, Compatibility Collapse
+
+Scope:
+
+- Extract override action routing into source-visible control surface; remove auto-drive as a second route brain; quarantine compatibility projections.
+- Current carriers: `workflow.pypeline:36-79`, `:250-280`, `components.py:399-433`, `:1603-1621`, `workflows/override_matrix.py:40-149`, `handlers/override.py`, `auto.py:1198-1245`, `:4496-4521`, `route_dispatch.py:26-43`, `runtime/manifest_backend.py:227-380`, `_compatibility.py:101-115`, `:173-267`.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_override_auto_compat_quarantine.py tests/arnold/conformance/test_megaplan_coupling_gate.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --scope s6 --require-pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml`
+- Strict checker rejects `_compatibility.py` `NativeProgram`, manifest backend branch translation, route dispatch fallback, CLI handlers, and auto next-step derivation as row evidence.
+- Split-outcome scenarios: force-proceed from allowed states, abort, replan, recover-blocked, resume-clarify, adopt-execution, invalid force-proceed state.
+- Per-sprint dead-delete mutation: mutate/delete override matrix route targets, auto next-step derivation, route_dispatch fallback, and manifest backend translation; corrected behavior remains source-derived or fails closed against frozen S1a baselines.
+- A pre-S6 serialized/suspended fixture must resume on post-S6 code or be covered
+  by the sprint's explicit drain/quarantine rollout record.
+- No override/auto native/legacy route feature flag may remain after closeout.
+
+Evidence spec:
+
+- Compatibility quarantine report has active rejection rules, not just a static scan.
+
+Deletion/quarantine:
+
+- `route_dispatch.py`, manifest backend branch maps, and `_compatibility.py` CLI-handler phase fallback must consume source-derived semantics or be fenced from evidence and runtime route authority.
+
+Rollback:
+
+- Keep compatibility shell executable for legacy runs, but rollback cannot restore compatibility projection as evidence authority.
+
+Parity checks:
+
+- `_core/workflow_data.py` state names and CLI control commands remain compatible until an explicit switch gate changes them.
+
+### S7 - Final Generated Conformance and Rollout
+
+Scope:
+
+- Generate final report from strict generated evidence only: checker output,
+  installed-package checker output, package-wide carrier scan, row-registry
+  reconciliation, deterministic baseline freeze records, exemption summary, and
+  scenario-row coverage.
+- Run full split-outcome, installed-package, mutation, compatibility, handler-purity, and auto-drive characterization gates.
+- Document runtime narrowing in every closeout artifact.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --source arnold_pipelines/megaplan/workflows/workflow.pypeline --strict --require-row-evidence --mode checkout --out artifacts/native-semantic-parity/checker-checkout.json`
+- Same command with `--mode installed-package`.
+- `PYENV_VERSION=3.11.11 python scripts/scan_megaplan_semantic_carriers.py --roots arnold_pipelines/megaplan arnold/workflow arnold/runtime arnold/conformance --exclude-from artifacts/native-semantic-parity/carrier-scan-exclusions.yaml --out artifacts/native-semantic-parity/carrier-scan-final.json`
+- `PYENV_VERSION=3.11.11 python scripts/classify_megaplan_semantic_carriers.py --carrier-scan artifacts/native-semantic-parity/carrier-scan-final.json --out artifacts/native-semantic-parity/carrier-tier-classification-final.json`
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_carrier_tier_boundary.py --carrier-tier artifacts/native-semantic-parity/carrier-tier-classification-final.json --sample-seed artifacts/native-semantic-parity/carrier-tier-final-sample-seed.txt --sample-size 20 --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --out artifacts/native-semantic-parity/carrier-tier-boundary-validation-final.json`
+- `PYENV_VERSION=3.11.11 python scripts/reconcile_megaplan_semantic_rows.py --carrier-scan artifacts/native-semantic-parity/carrier-scan-final.json --row-registry arnold/workflow/megaplan_semantic_rows.yaml --fail-unmapped --out artifacts/native-semantic-parity/row-registry-reconciliation-final.json`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_exemption_ledger.py --reconciliation artifacts/native-semantic-parity/row-registry-reconciliation-final.json --fail-open-scheduled --out artifacts/native-semantic-parity/exemption-summary.json`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml --mode final --require-reviewed-amendments`
+- `PYENV_VERSION=3.11.11 python scripts/generate_megaplan_scenario_row_matrix.py --checker artifacts/native-semantic-parity/checker-checkout.json --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --baselines artifacts/native-semantic-parity/baselines/pre-extraction --harness tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/scenario-row-coverage.json`
+- `PYENV_VERSION=3.11.11 python scripts/generate_megaplan_native_semantic_conformance.py --checker artifacts/native-semantic-parity/checker-checkout.json --installed-checker artifacts/native-semantic-parity/checker-installed.json --row-registry-reconciliation artifacts/native-semantic-parity/row-registry-reconciliation-final.json --scenario-row-coverage artifacts/native-semantic-parity/scenario-row-coverage.json --baseline-freeze artifacts/native-semantic-parity/baselines/pre-extraction/freeze-record.json --baseline-amendments artifacts/native-semantic-parity/baseline-amendments.yaml --exemption-summary artifacts/native-semantic-parity/exemption-summary.json --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --require-runtime-narrowing --out docs/arnold/megaplan-native-semantic-parity-conformance.generated.md`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_serialized_plan_rollout.py --policy artifacts/native-semantic-parity/serialized-plan-rollout-policy.yaml --out artifacts/native-semantic-parity/serialized-plan-rollout-final.json` validates either migration fixtures for live suspended plans or an explicit drain/quarantine rollout decision.
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_final_conformance_scenarios.py tests/arnold_pipelines/megaplan/test_final_conformance_evidence.py tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py tests/arnold/conformance/test_deleted_surfaces.py tests/arnold/conformance/test_megaplan_coupling_gate.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_runtime_narrowing.py --docs docs/arnold/megaplan-native-semantic-parity-conformance.generated.md docs/arnold/megaplan-native-runtime-narrowing-contract.md --forbid-full-runtime-overclaim`
+
+Evidence spec:
+
+- The final conformance report is generated from checker JSON,
+  row-registry reconciliation, carrier scan, and scenario-row coverage only. It
+  includes command, git SHA, installed-package fingerprint, row evidence hashes,
+  scenario hashes, mutation results, prohibited-proof rejection results, unmapped
+  carrier count of zero, exemption counts and diffs since S1a, reviewed baseline
+  amendment records, carrier tier counts, carrier-tier boundary validation,
+  serialized-plan rollout decision, baseline canonicalizer version when artifact
+  hashes are used, and row-to-scenario coverage.
+
+Deletion/quarantine:
+
+- No implemented row cites `components.py`, `handler_ref`, route bindings, manifest backend routing, auto next-step derivation, CLI handlers, or projected-native compatibility.
+
+Rollback:
+
+- Rollback is a release rollback: restore previous runtime package and previous generated conformance artifact, while S1a strict checker still blocks semantic parity claims.
+
+Parity checks:
+
+- Auto-drive characterization corpus, override/resume commands, serialized state consumers, state names, route labels, and artifact names remain compatible unless a separate gated migration changes them.
+
+
+codex
+The decomposition already shows a structural tension: it calls the spine “15 sprints,” but several milestone sections still bundle multiple nominal sprints behind one shared rollback/deletion gate. I’m checking whether those splits are independently closable or merely labels laid over coupled work.
+exec
+/bin/zsh -lc "sed -n '273,672p' docs/arnold/megaplan-native-semantic-parity-master-plan.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+## 3. Milestone Plan
+
+Execution should use this aggressive two-week sprint spine. The detailed
+milestone sections below provide scope and gates; where a section is broader than
+one sprint, split it according to this spine rather than running it as one large
+milestone:
+
+1. S0 - Runner Pinning and North Star Action Plumbing.
+2. S1a - Checker Authority, Row Registry, Carrier Scan, Current-Shape Rejection.
+3. S1b - Deterministic Evidence Substrate and Baseline Freeze.
+4. S1c - Runtime Substrate and Manifest Source Dispatch Proof.
+5. S1d - Typed Outcomes and First Builder Edge.
+6. S2a - Prep, Plan, Critique Native Authority.
+7. S2b - Gate and Revise Native Loop.
+8. S3 - Tiebreaker and Replan Native Flow.
+9. S4a - Execute DAG and Scheduling Hardening.
+10. S4b - Execute Approval, Blocked Retry, Fresh Session, Partial Resume.
+11. S5a - Review Fanout, Rework, Caps.
+12. S5b - Finalize Fallback and Terminal Projection.
+13. S6a - Override and Human Control Surface Collapse.
+14. S6b - Auto, Manifest Backend, Compatibility Quarantine.
+15. S7 - Final Generated Conformance and Rollout.
+
+Every sprint brief and sprint closeout must include a `Sprint Review / North Star
+Sense Check` section immediately before `Do Not Close If`. These answers are not
+substitutes for the core programmatic gates above; they replace the broad
+governance apparatus that would otherwise try to automate every exception.
+Review answers must name file paths and rows. Any `no`, `unclear`, or
+`not applicable` answer creates an explicit action item before closeout, or a
+human-reviewed halt-and-ask decision. For question 1 and any other
+source-explanation test, the answer must be produced by a clean-context reviewer
+agent that has not read the executor's closeout narrative. It predicts behavior
+from source alone, then verifies against run/generated evidence and records any
+divergence.
+
+Required sprint review questions:
+
+1. For every row this sprint claims, can a reviewer understand the
+   branch/loop/fanout/join/suspension/retry/route from `workflow.pypeline`, a
+   named native subworkflow, an attached declared policy, or a typed pure phase
+   body without reading `components.py`, handler-local state transitions,
+   manifest maps, auto-drive, CLI handlers, or compatibility projections?
+2. Which old carriers did this sprint replace, and are they deleted, fenced as
+   inert compatibility, or proven unable to route behavior by a dead-delete test?
+3. Are all behavior claims covered by split-outcome scenarios, including
+   failure/alternate branches, not just happy path?
+4. Did the sprint introduce any new route-authoritative carrier outside
+   canonical source or named native subworkflows?
+5. Does `build_pipeline()` and runtime behavior consume lowered source for the
+   changed slice, or reconstruct semantics from component metadata?
+6. Are any feature flags, fallback dispatches, policy route tables, string label
+   maps, or control handlers now a second route brain?
+7. If a target was narrowed, is there both a checker rule blocking the old
+   false-pass pattern and a behavior scenario proving the narrowed path cannot
+   smuggle routing?
+8. Does the sprint preserve public state names, route labels, artifact names,
+   resume semantics, and installed-package behavior, or explicitly document a
+   rollout/drain decision?
+
+Default action mapping:
+
+- Missing source authority: add or amend source constructs, then rerun strict row
+  evidence.
+- Old carrier still route-capable: add a dead-delete behavior test or delete/fence
+  the carrier before closeout.
+- Scenario gap: add a split-outcome scenario before claiming parity for that row.
+- New route-authoritative carrier: move authority into source or add it to row
+  registry reconciliation as a blocking carrier.
+- Dual route brain: remove the fallback/feature flag before closeout, or halt for
+  an explicit rollout decision.
+- Packaging or live-plan uncertainty: defer to S7 installed-package proof unless
+  packaging changed, and choose either migration fixture or drain/quarantine for
+  live suspended plans.
+
+Megaplan revise-stage implementation note:
+
+- North Star sense checks should enter revise as structured
+  `north_star_actions` carried by `gate.json`/`gate_carry.json`, not as prose in
+  critique text. In the current Megaplan implementation, revise is handled by
+  `arnold_pipelines/megaplan/orchestration/critique_runtime.py` and prompted via
+  `arnold_pipelines/megaplan/prompts/critique.py`; it consumes gate summary and
+  unresolved flags, while finalize can synthesize an iterate gate and carry
+  feedback back to revise.
+- Minimal action schema:
+
+```json
+{
+  "id": "NS-ACT-001",
+  "source": {"phase": "critique|gate|finalize|review", "artifact": "gate.json", "ref": "flag-or-check-id"},
+  "north_star_ref": "NORTHSTAR.md:31-34",
+  "finding": "Plan allows handler refs to remain semantic authority.",
+  "severity": "blocking|advisory",
+  "severity_source": "schema|reviewer",
+  "action_type": "add_plan_item|add_exit_gate|add_scenario_test|add_checker_row|add_dead_delete_test|add_human_halt|escalate_robustness|reject_closeout",
+  "target": "phase/step/milestone or null",
+  "required_change": "Concrete change revise must make or halt on.",
+  "acceptance_evidence": ["test/check/artifact expected"],
+  "halt_if_unmappable": true
+}
+```
+
+- Revise applies actions by rewriting the plan, not by recording a narrative
+  answer. `add_plan_item` adds a numbered step with files and evidence;
+  `add_exit_gate` adds a must-pass gate with concrete `requires`;
+  `add_scenario_test` widens test blast radius; `add_checker_row` adds checker
+  implementation and diagnostic/command criteria; `add_dead_delete_test` adds
+  deletion/fencing plus behavior proof; `reject_closeout` becomes a must-pass
+  closeout gate enforced later by review/finalize.
+- Revise must refuse to silently rewrite `add_human_halt`, unmappable blocking
+  actions, route-authoritative exemptions, baseline rewrites, target narrowing,
+  and live-plan topology decisions. Those become blocked/halt outcomes or gate
+  escalation, not vague plan text.
+- Blocking North Star actions count like blocking correctness/security flags for
+  loop caps and no-progress termination. They cannot be force-proceeded through
+  the cosmetic/low-risk branch.
+- Severity is schema-assigned for dangerous categories. Findings touching route
+  authority, baselines, row/carrier exemptions, target narrowing, generated
+  conformance authority, or live-plan topology/resume risk are always
+  `blocking` with `severity_source: "schema"`; the answering agent cannot
+  downgrade them to advisory.
+- Smallest useful Make-A-Plan slice: add `north_star_actions` to gate/carry
+  schema; render them in the revise prompt; add `north_star_actions_addressed`
+  to `revise.json`; add a pre-worker guard for human-halt/unmappable blocking
+  actions; test schema validation, prompt rendering, halt behavior, plan metadata
+  output, and gate cap handling for unresolved blocking actions.
+
+### S0 - Runner Pinning and North Star Action Plumbing
+
+Scope:
+
+- Land the `north_star_actions` plumbing in the pinned runner before S1a starts:
+  gate/carry schema, revise prompt rendering, `north_star_actions_addressed` in
+  `revise.json`, pre-worker halt guard for human-halt/unmappable blocking
+  actions, and review blocking for unresolved closeout-critical actions.
+- Define `north_star_critical` as an explicit chain/milestone schema field.
+  Reject `north_star_critical: true` with `bare` or `light` robustness rather
+  than silently upgrading robustness.
+- Teach revise to explicitly load `north_star_actions` from `gate_carry.json`
+  first and `gate.json` as fallback; the carry artifact is not currently a
+  guaranteed revise input.
+- Add post-worker revise validation: `north_star_actions_addressed` claims must
+  point to concrete plan refs and action-specific structural markers. Prose-only
+  "handled" claims fail.
+- Add finalize/review enforcement: finalize lowers North Star obligations into
+  executable tasks/user actions/checks without overloading task `sense_checks`;
+  review and transition policy block unresolved `reject_closeout` or
+  closeout-critical actions.
+- Enforce independent clean-context answerers for explanation-style North Star
+  questions. The auditor predicts behavior from source alone, then verifies
+  against generated/run evidence. The executor's closeout narrative is not
+  admissible as the answer.
+- Make severity schema-assigned for dangerous categories: route authority,
+  baseline rewrites, row/carrier exemptions, target narrowing, generated
+  conformance authority, and live-plan topology/resume risk are always blocking.
+- Pin the Megaplan runner used to drive the epic. Record commit SHA/package
+  fingerprint, profile, robustness, and auto-drive corpus version.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_north_star_actions_gate_revise.py tests/arnold_pipelines/megaplan/test_north_star_actions_review_blocking.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_north_star_clean_context_auditor.py tests/arnold_pipelines/megaplan/test_north_star_severity_schema.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_north_star_critical_robustness.py tests/arnold_pipelines/megaplan/test_north_star_revise_post_validation.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/pin_megaplan_runner.py --out artifacts/native-semantic-parity/runner-pin-s0.json`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_runner_pin.py --pin artifacts/native-semantic-parity/runner-pin-s0.json --auto-drive-corpus tests/characterization/auto_drive_corpus`
+- Two cheap canary audits must run against seeded North Star defects. If the
+  clean-context auditor passes a canary, S0 fails and the methodology halts.
+
+Evidence spec:
+
+- Runner pin record with commit/package fingerprint and auto-drive corpus hash.
+- North Star action schema tests and canary audit results.
+- Example `gate.json`/`gate_carry.json` carrying a blocking North Star action
+  into revise, plus `revise.json` proving the action was addressed or halted.
+
+Deletion/quarantine:
+
+- Prose-only North Star answers cannot satisfy a blocking sense check.
+- Executor-authored closeout narrative cannot be the sole answer for
+  source-explanation questions.
+
+Rollback:
+
+- S0 rolls back as a runner/tooling change before any semantic extraction starts.
+
+Parity checks:
+
+- Existing gate/revise/review behavior remains unchanged when no explicit North
+  Star questions are present.
+
+### S1a - Checker Authority Hard Bar
+
+Scope:
+
+- Make strict semantic checking the sole closeout route before any extraction closes.
+- Produce a canonical semantic row registry reconciled against a structural AST
+  carrier scan for route-authoritative carriers. The S1/S7 scan must default to
+  package-wide coverage of
+  `arnold_pipelines/megaplan` plus relevant `arnold/workflow`, `arnold/runtime`,
+  and `arnold/conformance` surfaces, with explicit exclusions rather than narrow
+  inclusions. Every exclusion requires the same dated-exemption treatment as an
+  unmapped route-authoritative carrier. Every route-authoritative carrier,
+  including `handler_ref`, route
+  bindings, state mutation sites, policy route surfaces, dispatch tables, reducer
+  routes, fanout contracts, and route-like mapping literals, must map to either a
+  row ID, deletion/fencing proof, or an explicit dated exemption with owner,
+  category, date, and reason.
+  The scan must also classify each candidate as route-authoritative,
+  evidence-authoritative, compatibility metadata, or descriptive metadata before
+  row reconciliation can pass.
+- Required current-shape negative fixture must mirror `workflow.pypeline:14-34`, `:81-280`, `:281-383`, `:390-540`; `planning.py:247-268`, `:583-716`; `components.py:1154-1781`, `:2664-2669`; `_compatibility.py:101-115`, `:173-207`.
+- Add checker rules that reject `AUTHORING_*` imports as row authority, canonical-source `handler_ref`, canonical-source `route_bindings`, compatibility `NativeProgram` projections, and policy-as-route-table constructs.
+- Add structural rejection rules for renamed or re-encoded carriers: route-table
+  shaped dict/list literals, mapping values that resolve to known state/step/route
+  identifiers, imported component callables used as route authority, reducer/fanout
+  topology encoded under innocuous names, and policy objects whose values can
+  determine branch targets. This is a focused adversarial suite for the known
+  carrier classes, not an unbounded fixture treadmill.
+- Build the deterministic replay harness used for all split-outcome and
+  dead-delete gates. The first admissible baseline layer is deterministic state transition,
+  route label, next-command, suspension/terminal status, and canonical artifact
+  comparison. Do not build full worker/model I/O replay unless a later sprint
+  explicitly chooses it as an escalation.
+- Build the baseline canonicalizer only before artifact hashes are accepted as
+  parity proof. If used, it must
+  normalize timestamps, UUIDs, absolute paths, invocation ids, snapshot ids,
+  model/session ids, and generated-at/provenance fields, and publish a
+  canonicalizer version in every baseline record.
+- Add headless control-injection actions for destructive approval denial,
+  destructive approval approval, tiebreaker proceed/iterate/escalate, and any
+  other split outcome that currently requires interactive CLI steering.
+- Implement strict installed-package mode by loading `workflow.pypeline` and
+  named subworkflows through `importlib.resources.files(...)` from the installed
+  `arnold_pipelines` package, then feeding the loaded source through the same
+  strict checker path used in checkout mode. S1a requires a smoke proof that the
+  path exists; S7 is the full installed-package semantic gate.
+- Create a cross-package coupling ledger for source compiler references to
+  Megaplan component export names. Component deletion sprints must update or
+  retire those checker couplings in the same change.
+- Author `docs/arnold/megaplan-native-representation-scenarios.yaml` with the
+  full split-outcome inventory and a completeness check against the required
+  scenario list.
+- Capture staged pre-extraction golden baselines while legacy carriers still own
+  behavior. S1a does not need to capture every later sprint's full workflow
+  baseline before it closes, but sprint N extraction may not begin until sprint
+  N's baselines were frozen while legacy routing remained authoritative for those
+  flows.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --source arnold_pipelines/megaplan/workflows/workflow.pypeline --strict --require-row-evidence --mode checkout --out .tmp/native-semantic-parity-master-plan/s1-current-checkout.json` must fail current source before correction, with row IDs, spans, hashes, and carrier classification.
+- Same command with `--mode installed-package --smoke` must prove the checker
+  loads source from the installed artifact rather than checkout paths. Full
+  installed-package semantic failure/pass is required at S7 and any sprint that
+  changes packaging.
+- `PYENV_VERSION=3.11.11 python scripts/scan_megaplan_semantic_carriers.py --roots arnold_pipelines/megaplan arnold/workflow arnold/runtime arnold/conformance --exclude-from artifacts/native-semantic-parity/carrier-scan-exclusions.yaml --out artifacts/native-semantic-parity/carrier-scan.json`
+- `PYENV_VERSION=3.11.11 python scripts/classify_megaplan_semantic_carriers.py --carrier-scan artifacts/native-semantic-parity/carrier-scan.json --out artifacts/native-semantic-parity/carrier-tier-classification.json` must identify route-authoritative carriers separately from descriptive metadata.
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_carrier_tier_boundary.py --carrier-tier artifacts/native-semantic-parity/carrier-tier-classification.json --sample-seed artifacts/native-semantic-parity/carrier-tier-sample-seed.txt --sample-size 20 --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --out artifacts/native-semantic-parity/carrier-tier-boundary-validation.json` corrupts a seeded sample of descriptive carriers and fails the whole classification run if any sampled carrier changes behavior.
+- `PYENV_VERSION=3.11.11 python scripts/reconcile_megaplan_semantic_rows.py --carrier-scan artifacts/native-semantic-parity/carrier-scan.json --row-registry arnold/workflow/megaplan_semantic_rows.yaml --out artifacts/native-semantic-parity/row-registry-reconciliation.json` must fail if any carrier is unmapped and unexempted.
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_megaplan_row_registry_completeness.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_native_semantic_checker_authority.py -q` must pass.
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_split_outcome_scenarios.py --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --required docs/arnold/megaplan-native-required-split-outcomes.yaml`
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_replay_harness.py --fixtures tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/replay-harness.json`
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_baseline_canonicalizer.py --fixtures tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/baseline-canonicalizer.json` is required only if baseline artifacts include content hashes beyond route/state/next-command/suspension assertions.
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_control_injection_headless.py tests/arnold_pipelines/megaplan/test_installed_package_strict_source_loading.py -q`
+- `PYENV_VERSION=3.11.11 python scripts/capture_megaplan_split_outcome_baselines.py --scenarios docs/arnold/megaplan-native-representation-scenarios.yaml --scope s1b,s2 --harness tests/fixtures/megaplan/replay --out artifacts/native-semantic-parity/baselines/pre-extraction --freeze` captures the first frozen legacy behavior corpus before extraction.
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_baseline_freeze.py --baselines artifacts/native-semantic-parity/baselines/pre-extraction --amendments artifacts/native-semantic-parity/baseline-amendments.yaml --mode verify`
+- `PYENV_VERSION=3.11.11 python scripts/check_megaplan_native_semantic_parity.py --fixture tests/fixtures/workflow_authoring/megaplan/current_false_pass_shape.py --strict --expect-diagnostic AWF245_ROW_EVIDENCE_INSUFFICIENCY --expect-diagnostic AWF253_PROHIBITED_SEMANTIC_CARRIER` must fail forever with the specified diagnostic codes. S1a must allocate `AWF253_PROHIBITED_SEMANTIC_CARRIER` in `arnold/workflow/diagnostics.py` and its diagnostic spec before pinned fixture tests are written.
+- A focused renamed/re-encoded adversarial fixture suite under
+  `tests/fixtures/workflow_authoring/megaplan/renamed_carrier_evasion/` must fail
+  with structural carrier diagnostics, not merely `ok=False`.
+- `PYENV_VERSION=3.11.11 python scripts/validate_megaplan_runtime_narrowing.py --docs docs/arnold/megaplan-native-runtime-narrowing-contract.md docs/arnold/megaplan-native-semantic-parity-master-plan.md --forbid-full-runtime-overclaim`
+- All final/initiative closeout commands must call this strict command, not `check_workflow_file(..., evidence=None)`.
+
+Evidence spec:
+
+- Generated JSON only from the strict checker: each row has `row_id`, `construct_type`, `source_span`, `source_sha256`, `carrier_classification`, `negative_fixture_ids`, `installed_package_fingerprint`, and `checker_version`.
+- `row-registry-reconciliation.json` records every route-authoritative carrier,
+  row mapping/deletion/fencing proof or exemption, carrier kind, source span,
+  source hash, exemption owner, exemption category, date, and reason. The
+  route-authoritative registry cannot shrink without a reconciliation diff.
+  Exemption categories are `compat-metadata-inert`,
+  `scheduled-for-sprint-N`, and `out-of-scope-with-justification`.
+- `carrier-tier-classification.json` records route-authoritative,
+  evidence-authoritative, compatibility-metadata, and descriptive-metadata
+  classifications. Route-authoritative carriers cannot be cleared by a generic
+  exemption. `carrier-tier-boundary-validation.json` records the seeded
+  descriptive sample, corruption method, scenario command, and result; one
+  behavior-changing sample invalidates the classification run.
+- Golden baseline artifacts are immutable inputs to later parity gates and include
+  command, fixture hash, serialized state hash, artifacts hash, route label,
+  next-command/auto-drive observation, replay fixture hashes, and expected
+  terminal/suspension outcome. Raw artifacts are hashed only if canonicalizer
+  normalization is active, and the canonicalizer version is part of the frozen
+  record. Baseline amendment records are short reviewed records with dated
+  justification, reviewer, old/new hashes, and affected rows.
+- No manually authored conformance table can set row status.
+
+Deletion/quarantine:
+
+- `check_workflow_file(..., evidence=None)` may remain only as legacy source-shape validation and must be named non-semantic in docs/tests.
+- The four current CLI bypass call sites, `arnold/cli/workflow.py:207-208`,
+  `:433-438`, `:513-515`, and `:676-677`, must be listed in the S1a
+  deletion/quarantine ledger and either routed through strict closeout or renamed
+  as explicitly non-semantic source-shape checks.
+- `_compatibility.py` `NativeProgram` must be marked prohibited evidence by checker diagnostic.
+
+Rollback:
+
+- Revert S1a checker wiring as one slice. Because no extraction has occurred yet, rollback restores old validation behavior without stranding native source changes.
+
+Parity checks:
+
+- Current state names, artifact names, route labels, auto-drive labels, override/resume commands remain unchanged per `_core/workflow_data.py`; S1a only changes closure evidence authority.
+
+### S1b-1 - Runtime Substrate Proof
+
+Scope:
+
+- Prove compiler/runtime substrate readiness for constructs later sprints rely on:
+  dynamic `parallel_map` over runtime `items_ref`, suspension/reentry fixtures, and
+  loop exits. If typed loop exits are required, implement and test them here
+  before S2-S5 use them.
+- Prove manifest backend phase dispatch can be derived from lowered source
+  constructs or inert compatibility metadata, without `handler_ref` as route
+  authority.
+- Keep this as substrate work only. Do not extract Megaplan semantics in this
+  sprint; the point is to remove hidden prerequisites before builder/extraction
+  pressure starts.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_native_runtime_dynamic_fanout.py tests/arnold_pipelines/megaplan/test_native_runtime_suspension_reentry.py tests/arnold_pipelines/megaplan/test_manifest_backend_source_dispatch.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_native_runtime_loop_exits.py tests/arnold_pipelines/megaplan/test_runtime_items_ref_resolution.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- If S1b-1 changes topology, a pre-S1b-1 serialized replay cursor fixture must resume
+  or intentionally quarantine on post-S1b-1 code according to a documented
+  migration/drain policy.
+
+Evidence spec:
+
+- Runtime fixture evidence for dynamic fanout, suspension/reentry, loop exits,
+  and source-derived dispatch. Evidence must show runtime behavior, not just
+  lowered metadata.
+
+Deletion/quarantine:
+
+- `handler_ref` or manifest/backend node-id dispatch may remain only as inert
+  compatibility during this sprint; S1b-2 proves one builder edge can route
+  without it as semantic authority.
+
+Rollback:
+
+- Roll back substrate changes as a unit. Do not keep partial dynamic fanout
+  support if reducer/reentry behavior is unproven.
+
+Parity checks:
+
+- Existing Megaplan state names and route labels are unchanged; substrate tests
+  are additive.
+
+### S1b-2 - Typed Outcomes, Builder Slice, Installed Package
+
+Scope:
+
+- Add closed typed outcomes/interfaces for one runtime-load-bearing edge.
+- Prove `build_pipeline()` consumes lowered `.pypeline` topology for that edge instead of component route metadata. Current component fallback is in `planning.py:247-268`, `:557-598`, `:695-716`.
+- Establish installed-package parity smoke for strict checker source and runtime behavior.
+- Use the proven S1b-1 substrate; do not implement new fanout/suspension/loop
+  substrate in this sprint.
+
+Exit gates:
+
+- `PYENV_VERSION=3.11.11 pytest tests/arnold_pipelines/megaplan/test_workflows_planning_lowered_topology.py tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py -q`
+- `PYENV_VERSION=3.11.11 pytest tests/arnold/workflow/test_row_evidence_checker.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold/workflow/test_megaplan_row_registry_completeness.py -q`
+- Strict checker checkout and installed-package smoke both pass only for the
+  S1b-2 slice and still fail all unextracted rows.
+- Dead-delete behavior test for the S1b-2 edge: delete/mutate old component
+  `route_bindings` for that edge and prove behavior/output unchanged.
+- Dedicated parity checks diff S1b-2 behavior against frozen S1a baselines, not
+  against the current build.
+- Repin the Megaplan runner only after S1b-2 if the runner code changed. Repin
+  requires auto-drive characterization, strict checker smoke, and North Star
+  action smoke to pass.
+
+Evidence spec:
+
+- Strict checker slice record plus installed package fingerprint from source loaded out of the built artifact.
+
+Deletion/quarantine:
+
+- The replaced edge's component route binding cannot route behavior; component metadata may remain only as inert compatibility metadata.
+
+Rollback:
+
+- Revert typed outcome/builder edge and restore component edge for that single slice, with S1a checker still blocking broad closeout.
+
+Parity checks:
+
+- State names and route labels are preserved; `build_pipeline()` output route labels match `_core/workflow_data.py` and current CLI status/autodrive vocabulary.
+
+
+exec
+/bin/zsh -lc 'for p in scripts/check_megaplan_native_semantic_parity.py scripts/scan_megaplan_semantic_carriers.py scripts/classify_megaplan_semantic_carriers.py scripts/validate_megaplan_carrier_tier_boundary.py scripts/reconcile_megaplan_semantic_rows.py scripts/check_megaplan_exemption_ledger.py scripts/capture_megaplan_split_outcome_baselines.py scripts/check_megaplan_baseline_freeze.py scripts/generate_megaplan_scenario_row_matrix.py scripts/generate_megaplan_native_semantic_conformance.py scripts/validate_megaplan_runtime_narrowing.py scripts/check_megaplan_serialized_plan_rollout.py scripts/pin_megaplan_runner.py scripts/check_megaplan_runner_pin.py arnold/workflow/megaplan_semantic_rows.yaml tests/fixtures/megaplan/replay; do if test -e "$p"; then echo "EXISTS $p"; else echo "MISSING $p"; fi; done
+wc -l arnold_pipelines/megaplan/handlers/gate.py arnold_pipelines/megaplan/components.py arnold_pipelines/megaplan/handlers/execute.py arnold_pipelines/megaplan/execute/policy.py arnold_pipelines/megaplan/execute/batch.py arnold_pipelines/megaplan/handlers/review.py arnold_pipelines/megaplan/handlers/finalize.py arnold_pipelines/megaplan/handlers/override.py arnold_pipelines/megaplan/auto.py arnold_pipelines/megaplan/runtime/manifest_backend.py arnold_pipelines/megaplan/workflows/planning.py' in /Users/peteromalley/Documents/Arnold
+ exited 1 in 0ms:
+MISSING scripts/check_megaplan_native_semantic_parity.py
+MISSING scripts/scan_megaplan_semantic_carriers.py
+MISSING scripts/classify_megaplan_semantic_carriers.py
+MISSING scripts/validate_megaplan_carrier_tier_boundary.py
+MISSING scripts/reconcile_megaplan_semantic_rows.py
+MISSING scripts/check_megaplan_exemption_ledger.py
+MISSING scripts/capture_megaplan_split_outcome_baselines.py
+MISSING scripts/check_megaplan_baseline_freeze.py
+MISSING scripts/generate_megaplan_scenario_row_matrix.py
+MISSING scripts/generate_megaplan_native_semantic_conformance.py
+MISSING scripts/validate_megaplan_runtime_narrowing.py
+MISSING scripts/check_megaplan_serialized_plan_rollout.py
+MISSING scripts/pin_megaplan_runner.py
+MISSING scripts/check_megaplan_runner_pin.py
+MISSING arnold/workflow/megaplan_semantic_rows.yaml
+MISSING tests/fixtures/megaplan/replay
+wc: arnold_pipelines/megaplan/components.py: open: No such file or directory
+    1173 arnold_pipelines/megaplan/handlers/gate.py
+     702 arnold_pipelines/megaplan/handlers/execute.py
+    1085 arnold_pipelines/megaplan/execute/policy.py
+    3587 arnold_pipelines/megaplan/execute/batch.py
+    1854 arnold_pipelines/megaplan/handlers/review.py
+    1776 arnold_pipelines/megaplan/handlers/finalize.py
+    1944 arnold_pipelines/megaplan/handlers/override.py
+    5808 arnold_pipelines/megaplan/auto.py
+     428 arnold_pipelines/megaplan/runtime/manifest_backend.py
+     795 arnold_pipelines/megaplan/workflows/planning.py
+   19152 total
+
+exec
+/bin/zsh -lc "rg --files arnold_pipelines/megaplan | rg 'components\\.py"'$|workflow'"\\.pypeline"'$|front_half'"\\.pypeline"'$|override_matrix'"\\.py"'$|route_dispatch'"\\.py"'$|_compatibility'"\\.py"'$'"' && for p in tests/arnold_pipelines/megaplan/test_north_star_actions_gate_revise.py tests/arnold/workflow/test_megaplan_checker_structural_rejection.py tests/arnold_pipelines/megaplan/test_control_injection_headless.py tests/arnold_pipelines/megaplan/test_native_runtime_dynamic_fanout.py tests/arnold_pipelines/megaplan/test_workflows_planning_lowered_topology.py tests/arnold_pipelines/megaplan/test_front_half_native_loop.py tests/arnold_pipelines/megaplan/test_execute_native_dag_approval_resume.py tests/arnold_pipelines/megaplan/test_review_finalize_native_flow.py tests/arnold_pipelines/megaplan/test_override_auto_compat_quarantine.py tests/arnold_pipelines/megaplan/test_final_conformance_scenarios.py; do if test -e \""'$p"; then echo "EXISTS $p"; else echo "MISSING $p"; fi; done
+rg -n '"'gate_carry|north_star_actions|north_star_critical|route_bindings|handler_ref' arnold_pipelines/megaplan | head -120" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+arnold_pipelines/megaplan/_compatibility.py
+arnold_pipelines/megaplan/workflows/front_half.pypeline
+arnold_pipelines/megaplan/workflows/components.py
+arnold_pipelines/megaplan/workflows/override_matrix.py
+arnold_pipelines/megaplan/workflows/workflow.pypeline
+arnold_pipelines/megaplan/route_dispatch.py
+MISSING tests/arnold_pipelines/megaplan/test_north_star_actions_gate_revise.py
+MISSING tests/arnold/workflow/test_megaplan_checker_structural_rejection.py
+MISSING tests/arnold_pipelines/megaplan/test_control_injection_headless.py
+MISSING tests/arnold_pipelines/megaplan/test_native_runtime_dynamic_fanout.py
+EXISTS tests/arnold_pipelines/megaplan/test_workflows_planning_lowered_topology.py
+MISSING tests/arnold_pipelines/megaplan/test_front_half_native_loop.py
+MISSING tests/arnold_pipelines/megaplan/test_execute_native_dag_approval_resume.py
+MISSING tests/arnold_pipelines/megaplan/test_review_finalize_native_flow.py
+MISSING tests/arnold_pipelines/megaplan/test_override_auto_compat_quarantine.py
+EXISTS tests/arnold_pipelines/megaplan/test_final_conformance_scenarios.py
+arnold_pipelines/megaplan/_compatibility.py:93:    handler_ref: str | None = None
+arnold_pipelines/megaplan/_compatibility.py:129:        handler_ref = _handler_ref(step)
+arnold_pipelines/megaplan/_compatibility.py:135:                handler_ref=handler_ref,
+arnold_pipelines/megaplan/_compatibility.py:211:    handler_ref = _handler_ref(step)
+arnold_pipelines/megaplan/_compatibility.py:221:                handler_ref=handler_ref,
+arnold_pipelines/megaplan/_compatibility.py:228:    _run.__handler_ref__ = handler_ref
+arnold_pipelines/megaplan/_compatibility.py:239:    handler_ref: str | None,
+arnold_pipelines/megaplan/_compatibility.py:243:    del handler_ref
+arnold_pipelines/megaplan/_compatibility.py:382:def _handler_ref(step: DslStep) -> str | None:
+arnold_pipelines/megaplan/_compatibility.py:383:    value = step.metadata.get("handler_ref")
+arnold_pipelines/megaplan/native_interfaces.py:66:    handler_ref: str = ""
+arnold_pipelines/megaplan/native_interfaces.py:95:    handler_ref="arnold_pipelines.megaplan.handlers:handle_prep",
+arnold_pipelines/megaplan/native_interfaces.py:114:    handler_ref="arnold_pipelines.megaplan.handlers:handle_plan",
+arnold_pipelines/megaplan/native_interfaces.py:133:    handler_ref="arnold_pipelines.megaplan.handlers:handle_critique",
+arnold_pipelines/megaplan/native_interfaces.py:150:    handler_ref="arnold_pipelines.megaplan.handlers:handle_revise",
+arnold_pipelines/megaplan/native_interfaces.py:170:    handler_ref="arnold_pipelines.megaplan.handlers:handle_gate",
+arnold_pipelines/megaplan/native_interfaces.py:187:    handler_ref="arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+arnold_pipelines/megaplan/native_interfaces.py:204:    handler_ref="arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
+arnold_pipelines/megaplan/native_interfaces.py:223:    handler_ref="arnold_pipelines.megaplan.handlers:handle_finalize",
+arnold_pipelines/megaplan/native_interfaces.py:240:    handler_ref="arnold_pipelines.megaplan.handlers:handle_execute",
+arnold_pipelines/megaplan/native_interfaces.py:257:    handler_ref="arnold_pipelines.megaplan.handlers:handle_review",
+arnold_pipelines/megaplan/native_interfaces.py:276:    handler_ref="arnold_pipelines.megaplan.handlers:handle_override",
+arnold_pipelines/megaplan/native_interfaces.py:293:    handler_ref="",
+arnold_pipelines/megaplan/workflows/package_fingerprints.py:22:    "handler_ref",
+arnold_pipelines/megaplan/workflows/package_fingerprints.py:23:    "route_bindings",
+arnold_pipelines/megaplan/workflows/package_fingerprints.py:35:    "handler_ref",
+arnold_pipelines/megaplan/workflows/package_fingerprints.py:36:    "route_bindings",
+arnold_pipelines/megaplan/workflows/components.py:132:            "handler_ref",
+arnold_pipelines/megaplan/workflows/components.py:133:            "route_bindings",
+arnold_pipelines/megaplan/workflows/components.py:299:    handler_ref: str | None = None,
+arnold_pipelines/megaplan/workflows/components.py:303:    route_bindings: tuple[Mapping[str, Any], ...] = (),
+arnold_pipelines/megaplan/workflows/components.py:315:        "route_bindings": route_bindings,
+arnold_pipelines/megaplan/workflows/components.py:325:    if handler_ref is not None:
+arnold_pipelines/megaplan/workflows/components.py:326:        component_metadata["handler_ref"] = handler_ref
+arnold_pipelines/megaplan/workflows/components.py:1007:        "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+arnold_pipelines/megaplan/workflows/components.py:1063:                "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+arnold_pipelines/megaplan/workflows/components.py:1959:    handler_ref=f"{HANDLER_MODULE}:handle_prep",
+arnold_pipelines/megaplan/workflows/components.py:1962:    route_bindings=({"id": "prep:plan", "label": "default", "target_ref": "plan"},),
+arnold_pipelines/megaplan/workflows/components.py:1971:    handler_ref=f"{HANDLER_MODULE}:handle_plan",
+arnold_pipelines/megaplan/workflows/components.py:1975:    route_bindings=({"id": "plan:critique", "label": "default", "target_ref": "critique"},),
+arnold_pipelines/megaplan/workflows/components.py:1984:    handler_ref=f"{HANDLER_MODULE}:handle_critique",
+arnold_pipelines/megaplan/workflows/components.py:1988:    route_bindings=({"id": "critique:gate", "label": "default", "target_ref": "gate"},),
+arnold_pipelines/megaplan/workflows/components.py:1998:    handler_ref=f"{HANDLER_MODULE}:handle_gate",
+arnold_pipelines/megaplan/workflows/components.py:2002:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2036:    handler_ref=f"{HANDLER_MODULE}:handle_revise",
+arnold_pipelines/megaplan/workflows/components.py:2040:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2052:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",
+arnold_pipelines/megaplan/workflows/components.py:2056:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2066:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_decide",
+arnold_pipelines/megaplan/workflows/components.py:2070:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2107:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",  # bridge: reuses legacy handler as phase body
+arnold_pipelines/megaplan/workflows/components.py:2111:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2122:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",  # bridge: reuses legacy handler as phase body
+arnold_pipelines/megaplan/workflows/components.py:2126:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2137:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",  # bridge: reuses legacy handler as phase body
+arnold_pipelines/megaplan/workflows/components.py:2144:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2155:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_decide",  # bridge: reuses legacy handler as phase body
+arnold_pipelines/megaplan/workflows/components.py:2159:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2195:    handler_ref=f"{HANDLER_MODULE}:handle_finalize",
+arnold_pipelines/megaplan/workflows/components.py:2199:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2210:            preserved_fields=("handler_ref", "policy_refs", "route_bindings"),
+arnold_pipelines/megaplan/workflows/components.py:2221:    handler_ref=f"{HANDLER_MODULE}:handle_execute",
+arnold_pipelines/megaplan/workflows/components.py:2242:    handler_ref=f"{HANDLER_MODULE}:handle_review",
+arnold_pipelines/megaplan/workflows/components.py:2246:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2263:                "handler_ref",
+arnold_pipelines/megaplan/workflows/components.py:2265:                "route_bindings",
+arnold_pipelines/megaplan/workflows/components.py:2286:    handler_ref=f"{HANDLER_MODULE}:handle_override",
+arnold_pipelines/megaplan/workflows/components.py:2290:    route_bindings=(
+arnold_pipelines/megaplan/workflows/components.py:2328:    handler_ref=f"{HANDLER_MODULE}:handle_prep",
+arnold_pipelines/megaplan/workflows/components.py:2336:    handler_ref=f"{HANDLER_MODULE}:handle_plan",
+arnold_pipelines/megaplan/workflows/components.py:2345:    handler_ref=f"{HANDLER_MODULE}:handle_critique",
+arnold_pipelines/megaplan/workflows/components.py:2354:    handler_ref=f"{HANDLER_MODULE}:handle_gate",
+arnold_pipelines/megaplan/workflows/components.py:2364:    handler_ref=f"{HANDLER_MODULE}:handle_revise",
+arnold_pipelines/megaplan/workflows/components.py:2374:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",
+arnold_pipelines/megaplan/workflows/components.py:2383:        preserved_fields=("handler_ref", "inputs", "outputs", "runtime_branch_vocabulary"),
+arnold_pipelines/megaplan/workflows/components.py:2390:    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_decide",
+arnold_pipelines/megaplan/workflows/components.py:2401:            "handler_ref",
+arnold_pipelines/megaplan/workflows/components.py:2413:    handler_ref=f"{HANDLER_MODULE}:handle_finalize",
+arnold_pipelines/megaplan/workflows/components.py:2421:        preserved_fields=("handler_ref",),
+arnold_pipelines/megaplan/workflows/components.py:2428:    handler_ref=f"{HANDLER_MODULE}:handle_execute",
+arnold_pipelines/megaplan/workflows/components.py:2437:        preserved_fields=("handler_ref", "inputs", "outputs", "runtime_branch_vocabulary"),
+arnold_pipelines/megaplan/workflows/components.py:2444:    handler_ref=f"{HANDLER_MODULE}:handle_review",
+arnold_pipelines/megaplan/workflows/components.py:2453:        preserved_fields=("handler_ref", "runtime_branch_vocabulary"),
+arnold_pipelines/megaplan/workflows/components.py:2467:    handler_ref=f"{HANDLER_MODULE}:handle_override",
+arnold_pipelines/megaplan/workflows/components.py:2476:        preserved_fields=("handler_ref", "inputs", "outputs", "runtime_branch_vocabulary"),
+arnold_pipelines/megaplan/workflows/components.py:2508:                "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+arnold_pipelines/megaplan/workflows/components.py:2679:    handler_ref=f"{HANDLER_MODULE}:handle_prep",
+arnold_pipelines/megaplan/workflows/components.py:2687:    handler_ref=f"{HANDLER_MODULE}:handle_plan",
+arnold_pipelines/megaplan/workflows/components.py:2696:    handler_ref=f"{HANDLER_MODULE}:handle_critique",
+arnold_pipelines/megaplan/workflows/components.py:2705:    handler_ref=f"{HANDLER_MODULE}:handle_gate",
+arnold_pipelines/megaplan/workflows/components.py:2715:    handler_ref=f"{HANDLER_MODULE}:handle_revise",
+arnold_pipelines/megaplan/workflows/components.py:2725:    handler_ref=f"{HANDLER_MODULE}:handle_finalize",
+arnold_pipelines/megaplan/workflows/components.py:2733:        preserved_fields=("handler_ref",),
+arnold_pipelines/megaplan/workflows/components.py:2740:    handler_ref=f"{HANDLER_MODULE}:handle_execute",
+arnold_pipelines/megaplan/workflows/components.py:2748:    handler_ref=f"{HANDLER_MODULE}:handle_review",
+arnold_pipelines/megaplan/workflows/components.py:2757:        preserved_fields=("handler_ref", "runtime_branch_vocabulary"),
+arnold_pipelines/megaplan/workflows/components.py:2771:    handler_ref=f"{HANDLER_MODULE}:handle_override",
+arnold_pipelines/megaplan/workflows/planning.py:166:        "handler_ref": REVISE.metadata["handler_ref"],
+arnold_pipelines/megaplan/workflows/planning.py:167:        "route_bindings": (
+arnold_pipelines/megaplan/workflows/planning.py:186:        "handler_ref": TIEBREAKER_DECIDE.metadata["handler_ref"],
+arnold_pipelines/megaplan/workflows/planning.py:187:        "route_bindings": (
+arnold_pipelines/megaplan/workflows/planning.py:257:        bindings = declared_step_route_bindings(source) or component.metadata.get("route_bindings", ())
+arnold_pipelines/megaplan/workflows/planning.py:340:                declared_step_route_bindings(step_id) or component.metadata.get("route_bindings", ())
+arnold_pipelines/megaplan/workflows/planning.py:364:    handler_ref = declared_step_interface(step_id).get("handler_ref")
+arnold_pipelines/megaplan/workflows/planning.py:365:    return handler_ref if isinstance(handler_ref, str) and handler_ref else None
+arnold_pipelines/megaplan/workflows/planning.py:391:def declared_step_route_bindings(step_id: str) -> tuple[Mapping[str, Any], ...]:
+arnold_pipelines/megaplan/workflows/planning.py:392:    raw_bindings = declared_step_interface(step_id).get("route_bindings")
+arnold_pipelines/megaplan/workflows/planning.py:587:    handler_ref = declared.get("handler_ref", component.metadata.get("handler_ref"))
+arnold_pipelines/megaplan/workflows/planning.py:588:    if isinstance(handler_ref, str):
+arnold_pipelines/megaplan/workflows/planning.py:589:        metadata["handler_ref"] = handler_ref
+arnold_pipelines/megaplan/workflows/planning.py:756:def lowered_route_bindings_by_step(
+arnold_pipelines/megaplan/workflows/planning.py:792:    "lowered_route_bindings_by_step",
+arnold_pipelines/megaplan/workflows/__init__.py:88:    declared_step_route_bindings,
+arnold_pipelines/megaplan/workflows/__init__.py:91:    lowered_route_bindings_by_step,
+arnold_pipelines/megaplan/workflows/__init__.py:122:    "declared_step_route_bindings",
+arnold_pipelines/megaplan/workflows/__init__.py:192:    "lowered_route_bindings_by_step",
+arnold_pipelines/megaplan/workflows/workflow.pypeline:83:        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
+arnold_pipelines/megaplan/workflows/workflow.pypeline:84:        "route_bindings": (
+arnold_pipelines/megaplan/workflows/workflow.pypeline:89:        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
+arnold_pipelines/megaplan/workflows/workflow.pypeline:90:        "route_bindings": (
+
+codex
+## 1. Overall sizing verdict
+
+The 15-sprint spine is under-sized and internally inconsistent. A credible aggressive plan is about **19 two-week sprints**, not 15.
+
+The main sizing error is counting reusable code as completed semantic extraction. Existing execute policies, override matrices, typed outcomes, native goldens, and replay utilities reduce invention, but they increase integration and authority-collapse work: every old handler, component route binding, manifest branch, auto-drive decision, and compatibility fallback must be proven inert or removed.
+
+The repository confirms the tooling gap. Fourteen named closeout scripts are currently absent, including the strict checker, carrier scanner/reconciler, baseline tools, final conformance generator, rollout checker, and runner-pin scripts. The replay fixture directory and semantic row registry are also absent. Most proposed domain-level tests are unbuilt.
+
+“Two weeks” is credible only where a sprint has one semantic cutover, its own frozen scenarios, and an independent dead-delete/fencing gate.
+
+## 2. Sprints that are too large
+
+- **S0:** Greenfield schema, gate/carry propagation, revise validation, halt behavior, finalize/review enforcement, clean-context auditing, canaries, robustness policy, and runner pinning. This is two control-plane changes disguised as plumbing.
+
+- **S1a:** Grossly overloaded. It combines checker design, row ontology, package-wide structural discovery, adversarial evasion detection, carrier classification, behavior-based classification validation, replay, headless controls, installed-package loading, scenarios, baseline capture, diagnostic allocation, and CLI bypass quarantine. It is at least two sprints.
+
+- **S2b:** Gate/revise is correctly kept coupled at the loop boundary, but gate preflight, reprompt/downgrade, debt/severity, multiple cap classes, no-progress termination, revise reentry, source extraction, and legacy deletion are too much for one sprint.
+
+- **S4b:** Destructive approval, blocked retry, fresh-session forcing, partial resume, and handoff behavior cross several state and control boundaries. Existing policy code lowers coding effort but raises cutover risk.
+
+- **S6b:** Auto-drive authority collapse, manifest backend dispatch, route-dispatch fallback, compatibility projection, CLI behavior, and suspended-plan compatibility are separate failure surfaces. Combining them invites “checker rejects it as evidence” to be confused with “runtime no longer uses it.”
+
+- **S7:** It is not assembly while required scripts remain absent. Final generator completion, package-wide reconciliation, installed-artifact verification, mutation reruns, serialized-plan policy, rollout, and release rollback cannot safely share one closeout window.
+
+## 3. Sprints that can be merged
+
+- **Current S1c + S1d:** Runtime/manifest source-dispatch proof and the first source-owned builder edge are one proof obligation. S1c explicitly permits old dispatch to remain until S1d proves an edge works without it, so S1c alone produces weak closure. Merge them into one vertical slice: lowered source → builder → runtime → installed package → old binding mutation.
+
+No other proposed adjacent merge is safe.
+
+## 4. Sprints that must not be merged
+
+- **Checker authority and baseline harness:** Otherwise representational checker success can arrive before behavioral evidence is trustworthy.
+- **Prep/plan/critique and gate/revise:** The latter owns recursive control and termination.
+- **Tiebreaker/replan and front-half:** Replan rejoin is an independently dangerous source-authority boundary.
+- **Execute scheduling and execute control/resume:** Pure scheduling reuse says nothing about approval or recovery authority.
+- **Review/rework and finalize:** Combining them recreates the current policy-`Mapping` false pass across an even larger surface.
+- **Override/control and auto-drive collapse:** Auto-drive must be tested as a consumer, not allowed to remain a second route brain.
+- **Compatibility quarantine and final rollout:** “Inadmissible as evidence” is not proof that compatibility code cannot route production behavior.
+- **Final tooling and release closeout:** A generator built during the same sprint that consumes it has no stable history as an enforcement gate.
+
+## 5. Recommended spine
+
+1. S0a — North Star action schema, carry, revise, halt semantics  
+2. S0b — Review/finalize enforcement, clean-context auditor, canaries, runner pin  
+3. S1a — Row registry, strict checker, structural rejection, carrier reconciliation  
+4. S1b — Replay/control-injection harness, scenarios, baseline freeze  
+5. S1c — Runtime source dispatch plus first builder edge  
+6. S2a — Prep, plan, critique authority  
+7. S2b — Gate decision/preflight authority  
+8. S2c — Revise reentry, caps, and no-progress loop  
+9. S3 — Tiebreaker and replan  
+10. S4a — Execute DAG and scheduling  
+11. S4b — Approval and blocked recovery  
+12. S4c — Fresh-session, partial resume, and handoff  
+13. S5a — Review, rework, and caps  
+14. S5b — Finalize and terminal projection  
+15. S6a — Override and human-control collapse  
+16. S6b — Auto-drive authority collapse  
+17. S6c — Manifest/route-dispatch/compatibility quarantine and live-plan policy  
+18. S7a — Final evidence toolchain, full dry run, defect burn-down  
+19. S7b — Installed-package conformance, rollout, release rollback proof  
+
+## 6. Why each is or is not truly two weeks
+
+1. **S0a — Yes, aggressive:** One artifact flow and enforcement contract, without auditor infrastructure.
+2. **S0b — Yes:** Auditor independence, canaries, closeout enforcement, and pinning form one runner-release slice.
+3. **S1a — Yes, barely:** Only if replay, baselines, and headless controls are excluded. Package-wide structural classification remains substantial.
+4. **S1b — Yes, aggressive:** Deterministic harness plus control injection and frozen baselines is a complete behavioral-evidence product.
+5. **S1c — Yes:** Existing runtime pieces help, but the vertical dead-delete proof consumes the saved implementation time.
+6. **S2a — Yes:** Three relatively linear phases with one authority cutover.
+7. **S2b — Yes:** Gate classification, preflight, reprompt, downgrade, debt, and severity are already a full semantic surface.
+8. **S2c — Yes:** Reentry, cap classes, force-proceed restrictions, and no-progress termination deserve an isolated loop proof.
+9. **S3 — Yes:** Four visible phases exist, but replan rejoin and old metadata removal make this a real extraction sprint.
+10. **S4a — Yes:** Pure scheduling code is reusable; source-owned fanout and hidden-scheduler deletion are the actual work.
+11. **S4b — Yes:** Approval denial/acceptance and blocked recovery require destructive split-outcome coverage.
+12. **S4c — Yes:** Resume cursor compatibility and fresh-session behavior carry migration risk beyond ordinary routing.
+13. **S5a — Yes, aggressive:** The 1,800-line review handler and policy false-pass history make this no smaller.
+14. **S5b — Yes:** Finalize fallback and terminal projection are closure-critical even if policy scaffolding exists.
+15. **S6a — Yes:** The matrix accelerates extraction but is not authority; production handler dispatch must be collapsed.
+16. **S6b — Yes:** Proving auto-drive merely follows source decisions requires broad characterization and negative tests.
+17. **S6c — Yes, aggressive:** Runtime dispatch fencing, compatibility behavior, CLI continuity, and suspended-plan policy are integration-heavy.
+18. **S7a — Yes:** Today it is a construction sprint because major scripts do not exist. It must finish with a clean full dry run.
+19. **S7b — Yes:** Installed artifact verification, rollout decision, mutation reruns, and rollback rehearsal constitute a release sprint.
+
+The largest false-closure risk is letting each condensed sprint prove that canonical source contains the right representation while shared legacy machinery still determines behavior. Every sprint must therefore close on a changed-slice runtime test with the old carrier deleted or corrupted—not merely rejected as evidence.
+tokens used
+50,094
+## 1. Overall sizing verdict
+
+The 15-sprint spine is under-sized and internally inconsistent. A credible aggressive plan is about **19 two-week sprints**, not 15.
+
+The main sizing error is counting reusable code as completed semantic extraction. Existing execute policies, override matrices, typed outcomes, native goldens, and replay utilities reduce invention, but they increase integration and authority-collapse work: every old handler, component route binding, manifest branch, auto-drive decision, and compatibility fallback must be proven inert or removed.
+
+The repository confirms the tooling gap. Fourteen named closeout scripts are currently absent, including the strict checker, carrier scanner/reconciler, baseline tools, final conformance generator, rollout checker, and runner-pin scripts. The replay fixture directory and semantic row registry are also absent. Most proposed domain-level tests are unbuilt.
+
+“Two weeks” is credible only where a sprint has one semantic cutover, its own frozen scenarios, and an independent dead-delete/fencing gate.
+
+## 2. Sprints that are too large
+
+- **S0:** Greenfield schema, gate/carry propagation, revise validation, halt behavior, finalize/review enforcement, clean-context auditing, canaries, robustness policy, and runner pinning. This is two control-plane changes disguised as plumbing.
+
+- **S1a:** Grossly overloaded. It combines checker design, row ontology, package-wide structural discovery, adversarial evasion detection, carrier classification, behavior-based classification validation, replay, headless controls, installed-package loading, scenarios, baseline capture, diagnostic allocation, and CLI bypass quarantine. It is at least two sprints.
+
+- **S2b:** Gate/revise is correctly kept coupled at the loop boundary, but gate preflight, reprompt/downgrade, debt/severity, multiple cap classes, no-progress termination, revise reentry, source extraction, and legacy deletion are too much for one sprint.
+
+- **S4b:** Destructive approval, blocked retry, fresh-session forcing, partial resume, and handoff behavior cross several state and control boundaries. Existing policy code lowers coding effort but raises cutover risk.
+
+- **S6b:** Auto-drive authority collapse, manifest backend dispatch, route-dispatch fallback, compatibility projection, CLI behavior, and suspended-plan compatibility are separate failure surfaces. Combining them invites “checker rejects it as evidence” to be confused with “runtime no longer uses it.”
+
+- **S7:** It is not assembly while required scripts remain absent. Final generator completion, package-wide reconciliation, installed-artifact verification, mutation reruns, serialized-plan policy, rollout, and release rollback cannot safely share one closeout window.
+
+## 3. Sprints that can be merged
+
+- **Current S1c + S1d:** Runtime/manifest source-dispatch proof and the first source-owned builder edge are one proof obligation. S1c explicitly permits old dispatch to remain until S1d proves an edge works without it, so S1c alone produces weak closure. Merge them into one vertical slice: lowered source → builder → runtime → installed package → old binding mutation.
+
+No other proposed adjacent merge is safe.
+
+## 4. Sprints that must not be merged
+
+- **Checker authority and baseline harness:** Otherwise representational checker success can arrive before behavioral evidence is trustworthy.
+- **Prep/plan/critique and gate/revise:** The latter owns recursive control and termination.
+- **Tiebreaker/replan and front-half:** Replan rejoin is an independently dangerous source-authority boundary.
+- **Execute scheduling and execute control/resume:** Pure scheduling reuse says nothing about approval or recovery authority.
+- **Review/rework and finalize:** Combining them recreates the current policy-`Mapping` false pass across an even larger surface.
+- **Override/control and auto-drive collapse:** Auto-drive must be tested as a consumer, not allowed to remain a second route brain.
+- **Compatibility quarantine and final rollout:** “Inadmissible as evidence” is not proof that compatibility code cannot route production behavior.
+- **Final tooling and release closeout:** A generator built during the same sprint that consumes it has no stable history as an enforcement gate.
+
+## 5. Recommended spine
+
+1. S0a — North Star action schema, carry, revise, halt semantics  
+2. S0b — Review/finalize enforcement, clean-context auditor, canaries, runner pin  
+3. S1a — Row registry, strict checker, structural rejection, carrier reconciliation  
+4. S1b — Replay/control-injection harness, scenarios, baseline freeze  
+5. S1c — Runtime source dispatch plus first builder edge  
+6. S2a — Prep, plan, critique authority  
+7. S2b — Gate decision/preflight authority  
+8. S2c — Revise reentry, caps, and no-progress loop  
+9. S3 — Tiebreaker and replan  
+10. S4a — Execute DAG and scheduling  
+11. S4b — Approval and blocked recovery  
+12. S4c — Fresh-session, partial resume, and handoff  
+13. S5a — Review, rework, and caps  
+14. S5b — Finalize and terminal projection  
+15. S6a — Override and human-control collapse  
+16. S6b — Auto-drive authority collapse  
+17. S6c — Manifest/route-dispatch/compatibility quarantine and live-plan policy  
+18. S7a — Final evidence toolchain, full dry run, defect burn-down  
+19. S7b — Installed-package conformance, rollout, release rollback proof  
+
+## 6. Why each is or is not truly two weeks
+
+1. **S0a — Yes, aggressive:** One artifact flow and enforcement contract, without auditor infrastructure.
+2. **S0b — Yes:** Auditor independence, canaries, closeout enforcement, and pinning form one runner-release slice.
+3. **S1a — Yes, barely:** Only if replay, baselines, and headless controls are excluded. Package-wide structural classification remains substantial.
+4. **S1b — Yes, aggressive:** Deterministic harness plus control injection and frozen baselines is a complete behavioral-evidence product.
+5. **S1c — Yes:** Existing runtime pieces help, but the vertical dead-delete proof consumes the saved implementation time.
+6. **S2a — Yes:** Three relatively linear phases with one authority cutover.
+7. **S2b — Yes:** Gate classification, preflight, reprompt, downgrade, debt, and severity are already a full semantic surface.
+8. **S2c — Yes:** Reentry, cap classes, force-proceed restrictions, and no-progress termination deserve an isolated loop proof.
+9. **S3 — Yes:** Four visible phases exist, but replan rejoin and old metadata removal make this a real extraction sprint.
+10. **S4a — Yes:** Pure scheduling code is reusable; source-owned fanout and hidden-scheduler deletion are the actual work.
+11. **S4b — Yes:** Approval denial/acceptance and blocked recovery require destructive split-outcome coverage.
+12. **S4c — Yes:** Resume cursor compatibility and fresh-session behavior carry migration risk beyond ordinary routing.
+13. **S5a — Yes, aggressive:** The 1,800-line review handler and policy false-pass history make this no smaller.
+14. **S5b — Yes:** Finalize fallback and terminal projection are closure-critical even if policy scaffolding exists.
+15. **S6a — Yes:** The matrix accelerates extraction but is not authority; production handler dispatch must be collapsed.
+16. **S6b — Yes:** Proving auto-drive merely follows source decisions requires broad characterization and negative tests.
+17. **S6c — Yes, aggressive:** Runtime dispatch fencing, compatibility behavior, CLI continuity, and suspended-plan policy are integration-heavy.
+18. **S7a — Yes:** Today it is a construction sprint because major scripts do not exist. It must finish with a clean full dry run.
+19. **S7b — Yes:** Installed artifact verification, rollout decision, mutation reruns, and rollback rehearsal constitute a release sprint.
+
+The largest false-closure risk is letting each condensed sprint prove that canonical source contains the right representation while shared legacy machinery still determines behavior. Every sprint must therefore close on a changed-slice runtime test with the old carrier deleted or corrupted—not merely rejected as evidence.

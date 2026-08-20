@@ -1,1 +1,1 @@
-/private/tmp/arnold-port/arnold_pipelines/megaplan/data/epic_skill.md
+/Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/data/epic_skill.md

@@ -1,0 +1,176 @@
+Now I have sufficient evidence. Let me compile the comprehensive requirement matrix.
+
+---
+
+# Lens 1 — End-State Contract Inventory
+
+## Requirement Matrix
+
+### 1. Phase & Workflow Structure
+
+| ID | End-State Wording | Evidence (path:line) | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-001 | The top-level Megaplan product flow must be a single Python function (`@pipeline`) whose control structure directly represents the full workflow topology—no separate route table, manifest graph, or step list carries product semantics. | `docs/arnold/megaplan-native-representation-report.md:5-8`, `:724`; `megaplan-native-parity-corrective/NORTHSTAR.md:5-10` | Phase-structure / source-authority | A reviewer can determine every possible phase transition by reading only the `@pipeline` function body and its imported subworkflows; no `planning.py` route table or `components.py` handler-ref table is consulted. |
+| ES-002 | Prep must be a `@phase` call producing a `PrepPayload` artifact. | `megaplan-native-representation-report.md:11`, `:111-114`, `:325-328` | Phase definition | `prep()` is decorated `@phase` and returns a typed `PrepPayload`. |
+| ES-003 | Plan must be a `@phase` call producing a `PlanPayload` artifact. | `megaplan-native-representation-report.md:119`, `:340-342` | Phase definition | `plan()` is decorated `@phase` and returns a typed `PlanPayload`. |
+| ES-004 | Critique must be a `@subworkflow` containing evaluator selection, parallel lens dispatch, and merge—all as named sub-steps. | `megaplan-native-representation-report.md:137-146`, `:360-380` | Subworkflow | The `critique` subworkflow contains visible `critique_evaluator`, `parallel.map`, and `merge_critique` calls. |
+| ES-005 | Gate must be a `@subworkflow` containing signal build, worker call, normalization, validation, optional reprompt, and decision—each as a named sub-step. | `megaplan-native-representation-report.md:149-158`, `:432-455` | Subworkflow | The `gate` subworkflow contains visible calls to `build_gate_signals`, `gate_worker`, `normalize_gate_payload`, `validate_flag_resolution`, `reprompt_gate_worker`, `persist_gate_debt`, and `gate_decision`. |
+| ES-006 | Tiebreaker must be a `@subworkflow` containing researcher/challenger parallel branches and a human decision gate. | `megaplan-native-representation-report.md:169-183`, `:485-492` | Subworkflow | The `tiebreaker` subworkflow contains visible `parallel.gather` of `tiebreaker_researcher` and `tiebreaker_challenger`, followed by `decide_tiebreaker`. |
+| ES-007 | Finalize must be a `@phase` call with an explicit error-fallback edge back to revise on `FinalizeBaselineSelectionError`. | `megaplan-native-representation-report.md:186-190`, `:495-497`, `:672-677` | Phase + error edge | The `try/except FinalizeBaselineSelectionError` block is visible in the top-level flow. |
+| ES-008 | Execute must be a `@subworkflow` containing a `foreach.dag_batches` dynamic iteration over finalized tasks. | `megaplan-native-representation-report.md:194-206`, `:520-540` | Subworkflow / dynamic loop | The `execute` subworkflow contains a visible `async for batch in foreach.dag_batches(...)` loop. |
+| ES-009 | Review must be a `@subworkflow` containing worker/check dispatch, merge, and a typed decision function. | `megaplan-native-representation-report.md:209-223`, `:580-600` | Subworkflow | The `review` subworkflow contains visible `review_worker`/`review_check`, `merge_review`, and `review_decision` calls. |
+
+### 2. Ordered Edges & Control Flow
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-010 | The phase ordering `prep → plan → critique → gate → (proceed/iterate/tiebreaker) → finalize → execute → review` must be directly readable from the `@pipeline` body as sequential Python statements. | `megaplan-native-representation-report.md:48-54`, `:724` | Ordered edge | Line-by-line reading of the pipeline function yields the phase order without consulting any external routing table. |
+| ES-011 | The critique/gate/revise loop must be expressed as an explicit `while` loop in the pipeline body, not hidden inside handler state mutations. | `megaplan-native-representation-report.md:725`, `:623-638` | Loop | The pipeline body contains a `while True:` block whose body calls `critique()`, `gate()`, and conditionally `revise()`. |
+| ES-012 | The execute/review/rework loop must be expressed as an explicit `while` loop in the pipeline body. | `megaplan-native-representation-report.md:725`, `:680-718` | Loop | The pipeline body contains a `while True:` block whose body calls `execute()`, `review()`, and conditionally re-enters with rework-scoped finalize. |
+| ES-013 | The finalize baseline-selection error must route back to revise, not silently swallow or terminate. | `megaplan-native-representation-report.md:190`, `:672-677` | Error edge | The `except FinalizeBaselineSelectionError` block calls `revise()` and retries `finalize()`. |
+
+### 3. Conditions / Branches
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-014 | Prep must branch on `has_blocking_questions`: if true, suspend for human clarification; if false, proceed to plan. | `megaplan-native-representation-report.md:106-115`, `:330-337`, `:616-618` | Condition / branch | The pipeline body contains `if prep_clarification_gate(prep_payload) == "needs_human":` followed by `await collect_prep_clarification(...)`. |
+| ES-015 | Gate must branch into exactly these outcomes: `proceed`, `iterate`, `tiebreaker`, `escalate`, `abort`, `blocked_preflight`, `blocked`, `force_proceed`. | `megaplan-native-representation-report.md:292-300`, `:421-429` | Decision vocabulary | `GateDecision` literal type enumerates all values; `gate_decision()` function returns one of them. |
+| ES-016 | Gate's high-complexity unverifiable-check backstop must auto-downgrade `proceed` to `iterate`. | `megaplan-native-representation-report.md:245`, `:425-426` | Condition | `gate_decision()` contains `if signals.has_high_complexity_unverifiable_checks and payload.recommendation == "proceed": return "iterate"`. |
+| ES-017 | Gate's agent-availability preflight block must auto-downgrade `proceed` to `blocked_preflight`. | `megaplan-native-representation-report.md:423-424` | Condition | `gate_decision()` contains `if signals.has_agent_availability_preflight_block and payload.recommendation == "proceed": return "blocked_preflight"`. |
+| ES-018 | Review must branch into exactly these outcomes: `approved`, `needs_rework`, `blocked`, `human_verify`, `retry_review`. | `megaplan-native-representation-report.md:302-308`, `:561-577` | Decision vocabulary | `ReviewDecision` literal type enumerates all values; `review_decision()` returns one of them. |
+| ES-019 | Review's infrastructure failure must trigger `retry_review` before any other outcome. | `megaplan-native-representation-report.md:567-568` | Condition | `review_decision()` checks `review_payload.infrastructure_failure` first. |
+| ES-020 | Review's deferred human criteria must trigger `human_verify` before rework logic. | `megaplan-native-representation-report.md:569-570` | Condition | `review_decision()` checks `review_payload.deferred_human_musts` before rework branching. |
+| ES-021 | Review rework exhaustion with blocking items must yield `blocked`; without blocking items must yield `approved` (force-proceed on cosmetic). | `megaplan-native-representation-report.md:571-577` | Condition / cap branch | `review_decision()` contains the `has_blocking_rework` check on the exhausted branch. |
+| ES-022 | Robustness `bare` must skip critique entirely and return a `CritiquePayload.skipped`. | `megaplan-native-representation-report.md:127-128`, `:140-141`, `:362-363` | Condition / robustness gate | The `critique` subworkflow checks `ctx.robustness == "bare"` and returns early. |
+| ES-023 | Robustness `bare` and `light` must skip review when execute does not require human verify, returning `MegaplanResult.done` directly. | `megaplan-native-representation-report.md:690-691` | Condition / robustness gate | The pipeline body checks `ctx.robustness in {"bare", "light"} and not execute_payload.requires_human_verify`. |
+
+### 4. Loops & Cap/Exhaustion Paths
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-024 | The critique/gate/revise loop must be bounded by `max_critique_iterations` (default 4). | `megaplan-native-representation-report.md:316`, `:622` | Loop cap | `LoopState(max_iterations=ctx.max_critique_iterations)` is created before the loop. |
+| ES-025 | On critique-loop exhaustion (`can_continue` false), the system must suspend to `override_control` for a human decision between `force-proceed` and `abort`. | `megaplan-native-representation-report.md:631-636` | Cap / human gate | The `if not critique_loop.can_continue:` block calls `await override_control("critique loop exhausted", ...)`. |
+| ES-026 | Gate's no-progress streak must be tracked and, when exceeded, route to `blocked` (if correctness/security blockers exist) or `force_proceed` (cosmetic only). | `megaplan-native-representation-report.md:427-428` | Loop / no-progress cap | `gate_decision()` checks `loop.no_progress_streak_exceeded` and branches on `signals.has_correctness_or_security_blockers`. |
+| ES-027 | Gate's reprompt (second attempt on unresolved blocking flags) must be limited to one retry; unresolved flags after reprompt must downgrade recommendation to `iterate`. | `megaplan-native-representation-report.md:157-158`, `:443-450` | Retry cap / downgrade | The `gate` subworkflow shows exactly one `reprompt_gate_worker` call, followed by `payload.downgrade_to_iterate(...)` if still unresolved. |
+| ES-028 | The review rework loop must be bounded by `max_review_rework_cycles` (default 3). | `megaplan-native-representation-report.md:317`, `:679` | Loop cap | `LoopState(max_iterations=ctx.max_review_rework_cycles)` is created before the review loop. |
+| ES-029 | On review rework cap exhaustion, the review decision function must distinguish blocking rework (`blocked`) from advisory-only rework (`approved`). | `megaplan-native-representation-report.md:571-577` | Cap branch | `review_decision()` contains the two-branch exhaustion check. |
+| ES-030 | Execute blocked tasks (non-retryable) must break the DAG batch iteration and checkpoint the blocked state. | `megaplan-native-representation-report.md:534-539` | Loop break / checkpoint | The `execute` subworkflow contains `if batch_result.blocked and not batch_result.retryable: break` followed by `await checkpoint("execution_blocked", ...)`. |
+
+### 5. Fanout / Fan-in
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-031 | Critique must support dynamic parallel fanout over `selection.active_checks` with `parallel.map`, max-worker cap, and sequential fallback. | `megaplan-native-representation-report.md:135`, `:374-379` | Dynamic fanout / fan-in | `parallel.map(selection.active_checks, ..., max_workers=..., fallback="sequential")` is visible in the critique subworkflow. |
+| ES-032 | Tiebreaker must fan out researcher and challenger in parallel via `parallel.gather`. | `megaplan-native-representation-report.md:487-490` | Static fanout | `parallel.gather(tiebreaker_researcher(...), tiebreaker_challenger(...))` is visible. |
+| ES-033 | Review (extreme robustness) must support dynamic parallel fanout over `ReviewCheck.for_robustness(...)` checks. | `megaplan-native-representation-report.md:587-590` | Dynamic fanout | `parallel.map(ReviewCheck.for_robustness(ctx.robustness), ...)` is visible in the review subworkflow. |
+| ES-034 | Execute must fan out over DAG-ordered task batches via `foreach.dag_batches`. | `megaplan-native-representation-report.md:526-530`, `:728` | Dynamic DAG fanout | `async for batch in foreach.dag_batches(...)` is visible in the execute subworkflow. |
+| ES-035 | Every fanout must have a visible reducer/merge step producing a single typed artifact. | `megaplan-native-representation-report.md:374-380`, `:516-517`, `:553-558` | Fan-in | Each fanout is followed by a merge call: `merge_critique`, `merge_execution_results`, `merge_review`. |
+
+### 6. Policy Authority (Model/Timeout/Retry)
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-036 | Model routing must be declared at the phase decorator or call site, not hidden in handler/profile code. | `megaplan-native-representation-report.md:730`, `:752`, `:811-817` | Model routing | Each `@phase(model=model_route(...))` decorator is visible; no handler-internal model selection logic carries product semantics. |
+| ES-037 | Phase timeouts must be declared at the phase decorator or call site. | `megaplan-native-representation-report.md:325`, `:340`, `:345`, `:392`, `:407`, `:458`, `:495`, `:543` | Timeout | Each `@phase(timeout=timeout(...))` decorator is visible on the phase definition. |
+| ES-038 | Critique evaluator retry must be declared as a call-site policy: `retry(critique_evaluator, attempts=ctx.max_eval_attempts, recover_with="raw_output_json")`. | `megaplan-native-representation-report.md:365-369` | Retry | The retry wrapper is visible in the critique subworkflow, not hidden in the evaluator function. |
+| ES-039 | Review worker retry on infrastructure failure must be declared as a call-site policy: `retry(review_worker, attempts=2, retry_on={"infrastructure_failure"})`. | `megaplan-native-representation-report.md:594` | Retry | The retry wrapper is visible in the review subworkflow. |
+| ES-040 | `max_eval_attempts` (default 2), `max_critique_iterations` (default 4), `max_review_rework_cycles` (default 3), and `max_gate_reprompts` (default 1) must be fields on `MegaplanContext`, not handler-local constants. | `megaplan-native-representation-report.md:316-319` | Policy authority | These fields exist on the `MegaplanContext` dataclass. |
+
+### 7. Human Gates & Approval
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-041 | Prep clarification must be a `@human_gate` with `capability="human:prep-clarification"` and a `reentry="resume_clarify"` cursor. | `megaplan-native-representation-report.md:335-337` | Human gate / suspension | `collect_prep_clarification` is decorated `@human_gate(...)`. |
+| ES-042 | Tiebreaker decision must be a `@human_gate` with `capability="human:tiebreaker"` and `reentry="tiebreaker_decide"`. | `megaplan-native-representation-report.md:477-482` | Human gate | `decide_tiebreaker` is decorated `@human_gate(...)`. |
+| ES-043 | Execute approval (destructive/user-approved modes) must be a `@human_gate` with `capability="human:execute-approval"`. | `megaplan-native-representation-report.md:505-507` | Human gate | `require_execute_approval` is decorated `@human_gate(...)`. |
+| ES-044 | Review human verification (deferred human criteria) must be a `@human_gate` with `capability="human:review-verification"`. | `megaplan-native-representation-report.md:603-605` | Human gate | `verify_human_criteria` is decorated `@human_gate(...)`. |
+| ES-045 | Override (human/control-plane intervention) must be a `@human_gate` with `capability="human:override"`. | `megaplan-native-representation-report.md:608-610` | Human gate | `override_control` is decorated `@human_gate(...)`. |
+| ES-046 | Every `@human_gate` must declare a `reentry` id for durable resume. | `megaplan-native-representation-report.md:726` | Resume cursor | Each `@human_gate` decorator includes a `reentry=...` keyword. |
+
+### 8. Override & Force-Proceed Routes
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-047 | Override must dispatch to named actions: `abort`, `force-proceed`, `replan`, `recover-blocked`, `resume-clarify`, and configuration changes—each as a visible graph edge, not an opaque action string. | `megaplan-native-representation-report.md:229-231`, `:821-831` | Override / control-plane | The pipeline body contains explicit `if action.kind == "abort"`, `if action.kind == "force-proceed"`, `if action.kind == "replan"` branches after each `override_control` call. |
+| ES-048 | `abort` override must return `MegaplanResult.aborted(action.reason)`. | `megaplan-native-representation-report.md:636`, `:654`, `:661`, `:670` | Terminal edge | The pipeline body returns `MegaplanResult.aborted(...)` on abort. |
+| ES-049 | `force-proceed` override must break out of the current loop to finalize or done. | `megaplan-native-representation-report.md:634`, `:656`, `:667`, `:687`, `:713` | Force-proceed edge | The pipeline body contains `break` after `force-proceed` action. |
+| ES-050 | `replan` override must restart the plan phase and reset the critique loop. | `megaplan-native-representation-report.md:662-665`, `:714-718` | Replan edge | The pipeline body calls `plan(ctx, prep_payload)` and resets `LoopState`. |
+| ES-051 | `recover-blocked` override must re-enter the execute loop. | `megaplan-native-representation-report.md:684-685` | Recovery edge | The pipeline body contains `if action.kind == "recover-blocked": continue`. |
+| ES-052 | `resume-clarify` must route back to prep state. | `megaplan-native-representation-report.md:828`; `megaplan/_core/workflow_data.py:84` | Resume edge | The state machine contains `Transition("resume-clarify", STATE_PREPPED)`. |
+
+### 9. Suspension / Resume & Checkpoint Identity
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-053 | Every human suspension point must have a durable checkpoint identity (reentry id) enabling resume from a persisted state. | `megaplan-native-representation-report.md:726`, `:754` | Checkpoint / resume | All `@human_gate` decorators declare `reentry=...` strings. |
+| ES-054 | The execution blocked state must be checkpointed via `await checkpoint("execution_blocked", execute_payload)`. | `megaplan-native-representation-report.md:539` | Checkpoint | The `execute` subworkflow contains an explicit `checkpoint(...)` call. |
+| ES-055 | Resume cursors must be supported by the native runtime for human gates and long-running loops. | `megaplan-native-representation-report.md:754` | Resume | The native runtime supports suspension-route resume with reentry ids. |
+
+### 10. Typed Outcomes & Artifacts
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-056 | Every phase must produce a typed artifact (`PrepPayload`, `PlanPayload`, `CritiquePayload`, `GatePayload`, `FinalizePayload`, `ExecutePayload`, `ReviewPayload`, `TiebreakerArgument`, `TiebreakerDecision`, etc.). | `megaplan-native-representation-report.md:269-292`, `:311-323`, `:325-610` | Typed outcome | Each `@phase`/`@subworkflow` function signature has typed return annotation. |
+| ES-057 | The pipeline must return a typed `MegaplanResult` with variants: `.done(...)`, `.aborted(...)`, `.blocked(...)`. | `megaplan-native-representation-report.md:636`, `:654`, `:670`, `:688`, `:696`, `:700`, `:713`, `:719` | Terminal outcome | All terminal returns are `MegaplanResult.done(...)`, `.aborted(...)`, or `.blocked(...)`. |
+| ES-058 | Critique must have a `CritiquePayload.skipped(reason=...)` and `CritiquePayload.empty(reason=...)` variant for bare robustness and no-active-checks cases. | `megaplan-native-representation-report.md:363`, `:372` | Typed variant | The critique subworkflow returns these variants in the appropriate branches. |
+| ES-059 | Gate decision outcomes must be typed as `GateDecision = Literal[...]`. | `megaplan-native-representation-report.md:292-300` | Typed vocabulary | `GateDecision` is defined as a `Literal` type alias. |
+| ES-060 | Review decision outcomes must be typed as `ReviewDecision = Literal[...]`. | `megaplan-native-representation-report.md:302-308` | Typed vocabulary | `ReviewDecision` is defined as a `Literal` type alias. |
+
+### 11. Finalization Path
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-061 | Finalize converts a gated plan into executable tasks, sense checks, watch items, user actions, validation metadata, and baseline/test-selection details. | `megaplan-native-representation-report.md:186-188` | Finalize semantics | `finalize()` returns a `FinalizePayload` containing tasks and validation data. |
+| ES-062 | Finalize baseline-selection error must fall back to revise and retry finalize exactly once. | `megaplan-native-representation-report.md:672-677` | Error fallback | The `try/except` block catches `FinalizeBaselineSelectionError`, calls `revise()`, and retries `finalize()`. |
+| ES-063 | Finalize result must support `.scope_to_rework(review_payload.rework_items)` for rework loops. | `megaplan-native-representation-report.md:706` | Rework scoping | The review loop calls `finalize_payload.scope_to_rework(...)`. |
+
+### 12. Source / Topology Visibility Rules
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-064 | There must be no route table separate from the product flow. | `megaplan-native-representation-report.md:724` | Source visibility | No `Route` objects or route tables carry product semantics; all routing is visible in Python control flow. |
+| ES-065 | There must be no `metadata["handler_ref"]` pointing to handler files that carry product semantics. | `megaplan-native-representation-report.md:42` | Negative: no hidden routing | Handler refs exist only as phase-body implementations behind typed interfaces, not as semantic carriers. |
+| ES-066 | The separate state-machine data in `_core/workflow_data.py` must not own any product topology not also visible in the native source. | `megaplan-native-representation-report.md:66-80` | Negative: no duplicate authority | Every transition in `WORKFLOW` dict is also represented as a visible edge in the native pipeline. |
+| ES-067 | `components.py` must not carry route/policy/handler truth that is not also declared in the native workflow source. | `megaplan-native-representation-report.md:33-37` | Negative: no split authority | `components.py` is a consumer/adapter, not a semantic authority. |
+| ES-068 | The builder/lowering adapter (`planning.py`) must not carry second-source route/policy truth. | `megaplan-native-representation-report.md:30-37` | Negative: no split authority | `planning.py` consumes lowered topology from `.pypeline` source, not its own route declarations. |
+| ES-069 | Robustness overlays (`bare`, `light`) must be visible as branch conditions in the native source, not as external state-machine mutation tables. | `megaplan-native-representation-report.md:80`; `workflow_data.py:95-117` | Robustness visibility | Robustness checks appear as `if ctx.robustness == "bare":` in the pipeline body, not only in `_ROBUSTNESS_OVERRIDES`. |
+
+### 13. Semantic Authority / No-Hidden-Route-Brain Constraint
+
+| ID | End-State Wording | Evidence | Category | Proof Criterion |
+|---|---|---|---|---|
+| ES-070 | Handlers must become phase bodies; they must not contain product control-flow logic (branching, looping, routing) that is not also visible in the native workflow source. | `megaplan-native-representation-report.md:896-904`, `:932` | Negative: no hidden brain | A handler function contains only the implementation of a single phase; all routing decisions are in the `@pipeline`/`@subworkflow` that calls it. |
+| ES-071 | The auto-drive loop must not re-derive product topology or apply retry/escalation policies that are not declared in the native workflow source. | `megaplan-native-representation-report.md:260` | Negative: no hidden brain | Auto-drive is a consumer of declared topology, not a co-author of it. |
+| ES-072 | Profile/runtime code must not silently override model routing, retry, or timeout policies declared in the workflow source. | `megaplan-native-representation-report.md:730`, `:819` | Negative: no hidden brain | Phase-call-site policies are authoritative; runtime/profile can augment but not contradict. |
+| ES-073 | CLI command handlers must not carry product routing logic. | `megaplan-native-parity-corrective/NORTHSTAR.md:14` | Negative: no hidden brain | CLI is a consumer, not a semantic authority. |
+| ES-074 | Graph projections and `Pipeline.native_program` compatibility shells must not be required to understand report-owned product topology. | `megaplan-native-parity-corrective/NORTHSTAR.md:14`; `native-python-pipelines-completion/NORTHSTAR.md:7-11` | Negative: no hidden brain | These are substrate compatibility layers, not semantic sources. |
+
+---
+
+## Contradictions & Omissions in the Articulation
+
+| # | Issue | Evidence | Severity |
+|---|---|---|---|
+| C-01 | **Gate reprompt count inconsistency.** `MegaplanContext.max_gate_reprompts = 1` is declared (line 318) but the gate subworkflow (lines 443-450) hardcodes exactly one reprompt attempt without consulting `max_gate_reprompts`. The context field is unused. | `megaplan-native-representation-report.md:318` vs `:443-450` | Medium — policy field declared but not wired |
+| C-02 | **`force_proceed` dual meaning.** `GateDecision` includes both `"blocked_preflight"` and `"force_proceed"` (line 299), but the loop-body handler for `gate_action == "iterate"` exhaustion (line 632-636) returns `force-proceed` from `override_control`, while the `force_proceed` gate decision (line 428) also breaks. The two force-proceed origins are conflated at the break site (line 627: `gate_action in {"proceed", "force_proceed"}`). | `megaplan-native-representation-report.md:299`, `:428`, `:627` | Medium — semantic ambiguity on force-proceed provenance |
+| C-03 | **Tiebreaker escalate path missing force-proceed branch.** When tiebreaker action is `"escalate"` (line 651), `override_control` is called but only `abort` and `force-proceed` are handled. If the human returns `replan` from a tiebreaker escalate, it is not handled (unlike the gate escalate path at line 662 which handles `replan`). | `megaplan-native-representation-report.md:651-656` vs `:658-667` | Medium — incomplete action set on tiebreaker escalate |
+| C-04 | **Execute blocked → override → force-proceed exits review loop entirely.** At line 687, `break` exits the execute/review loop, but the code after the loop has no explicit return. Control would fall off the function. The `force-proceed` on execute-blocked should return `MegaplanResult.done(...)` or proceed to review. | `megaplan-native-representation-report.md:686-688` | Medium — missing terminal return on force-proceed from execute-blocked |
+| C-05 | **Review blocked → replan path uses stale gate_payload.** At line 715, `revise(ctx, plan_payload, gate_payload)` uses the original `gate_payload` from the critique loop, not review feedback. This is semantically questionable for a review-triggered replan. | `megaplan-native-representation-report.md:714-716` | Low — questionable reuse of stale gate data |
+| C-06 | **NORTHSTAR articulation split.** The `native-python-pipelines-completion` NORTHSTAR (lines 6-11) says `Pipeline.native_program` is substrate evidence "only unless report-owned semantics are visible at that higher level," while the parity-corrective NORTHSTAR (line 14) says the system must not require `Pipeline.native_program` to understand topology. These are consistent but the dual-articulation creates confusion about whether `native_program` is permitted or forbidden in the end state. | `native-python-pipelines-completion/NORTHSTAR.md:6-11` vs `megaplan-native-parity-corrective/NORTHSTAR.md:14` | Low — articulation tension, not contradiction |
+| C-07 | **Robustness `light` not handled in critique.** The `critique` subworkflow checks only `robustness == "bare"` (line 362). The report mentions `light` skipping critique via `_ROBUSTNESS_OVERRIDES` in `workflow_data.py:107-109` (critiqued → gated directly), but the native aspiration doesn't show a `light` branch in the critique subworkflow. | `megaplan-native-representation-report.md:362` vs `workflow_data.py:107-109` | Low — light robustness handling omitted from native critique |
+| C-08 | **`confirm_destructive` and `auto_approve` context fields unused in native flow.** `MegaplanContext` declares `confirm_destructive` and `auto_approve` (lines 321-322), but the execute subworkflow only checks `ctx.auto_approve and ctx.user_approved` (line 522). `confirm_destructive` is never referenced. | `megaplan-native-representation-report.md:321-322`, `:522` | Low — dead context field |
+
+---
+
+## Ranked Articulation-Risk List
+
+| Rank | Risk | Affected ES IDs | Impact |
+|---|---|---|---|
+| **1** | **Hidden-handler residual.** The aspirational native flow calls `@phase` functions whose implementations may still contain routing/branching logic (e.g., `finalize` handler currently routes back to revise internally). Until handlers are audited for control-flow extraction, ES-070 compliance is unverifiable. | ES-070, ES-065, ES-066, ES-067 | Any hidden routing in a handler defeats the entire visibility contract. |
+| **2** | **Dynamic runtime topology gap.** `parallel.map` and `foreach.dag_batches` do not exist in the current compiler (ES-031, ES-034). The entire execute and critique fanout depends on a missing substrate feature. | ES-031, ES-034, ES-035 | Critique and execute cannot be represented natively without this. |
+| **3** | **Loop expressiveness gap.** Both compilers reject `break`/`continue` (source_compiler:2916-2922, native/compiler:1030-1034). The aspirational flow uses `break` and `continue` extensively. Without typed loop outcomes or compiler relaxation, the native flow cannot compile. | ES-011, ES-012, ES-024-ES-030 | No loop in the aspirational flow can compile today. |
+| **4** | **Model-routing policy slot missing from workflow manifest.** The report notes "no first-class workflow policy slot was found" for model routing (line 752). All `model_route(...)` decorators are aspirational. | ES-036 | Model routing authority remains scattered until this is built. |
+| **5** | **Override action incompleteness.** The tiebreaker-escalate path doesn't handle all override actions (contradiction C-03), and the execute-blocked force-proceed path may lack a terminal return (C-04). These represent missing edges in the aspirational topology. | ES-047, ES-049, ES-051 | Live override scenarios could hit unhandled branches. |
+| **6** | **Dual source-authority during migration.** Both `components.py` and the native `.pypeline` will coexist during migration. Without a hard semantic-checker gate, stale handler refs and route tables can silently carry routing that the native source doesn't show. | ES-067, ES-068, ES-074 | Migration period permits hidden routing to persist undetected. |
+| **7** | **Unused context policy fields.** `max_gate_reprompts` and `confirm_destructive` are declared but not wired (C-01, C-08), suggesting the aspirational flow is not yet fully designed for these policies. | ES-040, ES-043 | Policy authority is declared but not enforced. |
+| **8** | **Robustness overlay completeness.** Only `bare` is handled in the native critique subworkflow; `light` and other robustness levels lack explicit native branches. | ES-022, ES-023, ES-069 | Robustness-driven behavior may not be fully visible in native source. |

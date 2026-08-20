@@ -1,0 +1,103 @@
+## S2a Audit: Prep/Plan/Critique Native Front Half — Codebase Evidence
+
+### 1. Verdict: **PARTLY EXISTS**
+
+The four sub-components exist in varying degrees across `workflow.pypeline`, `front_half.pypeline`, `components.py`, handler code, and critique runtime — but **none** are fully extracted into canonical native source constructs. The prior conformance report's claim of "implemented" for rows 1-5 (`prep-clarification-gate`, `plan-artifact-version-metadata`, `critique-bare-skip`, `critique-evaluator-retry`, `critique-parallel-lenses`) is **not verified by code**: every listed semantic carrier is either `planning.py` (a bridge/builder) or `workflow.pypeline` (which still imports `AUTHORING_*` carriers from `components.py`). This mirrors the gap report's finding: "The file is still not final semantic parity" (`gpt55-native-parity-endstate-gap-report.md:41`).
+
+---
+
+### 2. Existing Artifacts with Evidence
+
+#### A. Prep Suspend/Resume
+
+- **`front_half.pypeline:36-63`** — A `@workflow(id="megaplan-front-half")` function with explicit `if prep_outcome == "awaiting_human"` → `AUTHORING_HALT(id="prep_suspend")`. This demonstrates the desired source shape but still imports `AUTHORING_HALT`, `AUTHORING_PREP`, `AUTHORING_PLAN`, `PREP_CLARIFY_POLICY` from `components.py` (`:12-20`). It is a **declaration/demonstration file** — not wired into the actual runtime. The real runtime uses `workflow.pypeline:390` (`AUTHORING_PREP(id="prep", brief=brief)`) with no suspend branch.
+
+- **`components.py:1070-1103`** — `PREP_CLARIFY_POLICY` declares `transition_type: "suspension"`, `trigger_ref: "prep.open_questions.blocking"`, `target_ref: "awaiting_human"`. This is **policy metadata**, not source-visible topology.
+
+- **`components.py:2675-2681`** — `AUTHORING_PREP` points to `handler_ref="...handlers:handle_prep"` with `_COMPATIBILITY_QUARANTINE` metadata. The real prep logic lives in the handler.
+
+- **Test**: `tests/arnold_pipelines/megaplan/test_prep_payload_compat.py` — Tests prep payload shape compatibility only, not suspend/resume semantics.
+
+#### B. Plan Artifact Contract
+
+- **`components.py:1858-1884`** — `ARTIFACT_CONTRACT_POLICY` with `policy_id="megaplan:artifact-contract"`, `policy_type="artifact_contract"`, effects for finalize, execute, review. Lives entirely in component metadata.
+
+- **`workflow.pypeline:31-33`** — `FRONT_HALF_HANDOFF_TOPOLOGY` (in `front_half.pypeline`) describes `plan_handoff` with `typed_reducer_outcome`, `selection_modes`, `retry_exhausted_route`, `next_loop_ref`. Present only in the declaration file, not the real workflow.
+
+- **`components.py:1828-1845`** — `BLAST_RADIUS_POLICY` with `policy_id="megaplan:blast-radius"`. Artifact boundaries for plan exist as policy metadata, not source-visible contracts.
+
+- **`arnold_pipelines/megaplan/store/base.py:179-189`** — `validate_plan_artifact_name()` and artifact read/write primitives. Infrastructure exists but is not tied to a native plan artifact contract.
+
+#### C. Critique Evaluator Retry
+
+This is the **most implemented** sub-component in runtime code:
+
+- **`orchestration/critique_runtime.py:392-500`** — Evaluator retry loop: `_MAX_EVAL_ATTEMPTS = 2` (`:397`), raw output recovery (`:466-482`), scratch promotion (`:431-461`), verdict validation with dedup warnings (`:484-499`). Full retry + recovery logic exists in the handler runtime.
+
+- **`orchestration/parallel_critique.py:39-43, 639-689`** — Worker shape retries: `_CRITIQUE_WORKER_SHAPE_RETRIES = 2` (`:39`), repair unit generation (`:542-554`), retry loop with scatter (`:639-672`), exhausted → unverifiable fallback (`:674-689`).
+
+- **`components.py:947-953`** — `CRITIQUE_RETRY_POLICY` declares `max_attempts: 2`, `on_exhausted: "blocked"`.
+
+- **`components.py:990-1004`** — `CRITIQUE_ROUTE_SURFACE["skip_and_retry"]["evaluator_retry"]` declares `max_attempts: 2`, `on_exhausted: "blocked"`.
+
+- **Test**: `tests/orchestration/test_critique_evaluator_validation.py` — Tests verdict validation (hard floor complexity coercion), not retry semantics.
+
+**Critical finding**: The retry logic exists entirely in handler runtime code (`critique_runtime.py`, `parallel_critique.py`) and component metadata (`components.py`). It is **not expressed as native source constructs** in `workflow.pypeline`.
+
+#### D. Selected-Lens Fanout/Fallback
+
+- **`components.py:932-946`** — `CRITIQUE_SELECTION_POLICY` with `skip`, `static`, `adaptive` modes. `adaptive.fallback: "static"` (`:944`).
+
+- **`components.py:928-931`** — `CRITIQUE_LENS_CARDINALITY` with `minimum: 0`, `maximum_ref: "len(megaplan.policy.critique_lenses)"`.
+
+- **`workflow.pypeline:395-401`** — `parallel_map(id="critique-fanout", items="megaplan.policy.critique_lenses", step=CRITIQUE_PANEL_WORKFLOW, reducer=AUTHORING_CRITIQUE)`. The fanout is expressed in source, but `items` is a policy reference string, not a resolved lens list — and `CRITIQUE_PANEL_WORKFLOW` / `AUTHORING_CRITIQUE` are component imports.
+
+- **`audits/critique_evaluator.py:254-280`** — `CritiqueSelection`, `CritiqueSkip`, `EvaluatorVerdict` TypedDicts define the selection schema. The `selected_lens` concept exists in the evaluator's output vocabulary (`selections[].check_id`).
+
+- **`audits/critique_evaluator.py:289-480`** — `validate_evaluator_verdict()` enforces coverage union (selections ∪ skipped = all catalog lenses), deduplication, complexity floors, and bespoke "other" areas.
+
+- **`orchestration/critique_runtime.py:392-396`** — Comment explicitly states: "Adaptive critique is the ONLY critique path: there is no static lens fallback. If the evaluator fails we retry once, then block." This means the fallback from adaptive→static declared in `components.py:944` is **dead letter**: the runtime blocks, it does not fall back.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Artifact | Reusability | Notes |
+|---|---|---|
+| `parallel_critique.py` retry loop (:639-689) | **Direct reuse** as pure phase body | Already well-factored; needs to be extracted behind a typed native subworkflow interface |
+| `critique_evaluator.py` verdict validation (:289-480) | **Direct reuse** | Pure validation logic, already importable |
+| `critique_runtime.py` evaluator retry (:397-500) | **Reuse after extraction** | Currently handler-coupled; retry/recovery logic is sound |
+| `PREP_CLARIFY_POLICY` (:1070-1103) | **Declare as source-attached policy** | Config already describes suspension semantics; must be attached to a native prep phase |
+| `ARTIFACT_CONTRACT_POLICY` (:1858-1884) | **Declare as source-attached policy** | Effects model exists; must be visible on plan/finalize/execute source constructs |
+| `CRITIQUE_SELECTION_POLICY` / `CRITIQUE_LENS_CARDINALITY` | **Declare as source-attached policy** | Skip/static/adaptive modes exist but must not include route signals |
+| `front_half.pypeline` (:36-63) | **Template for source shape** | Shows desired `if/elif/else` prep branching; needs to replace `workflow.pypeline:390-391` |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Prep suspend/resume in canonical source** — `workflow.pypeline:390` is a bare `AUTHORING_PREP(...)` call with no suspend branch. The `front_half.pypeline` shape must be promoted into `workflow.pypeline` and the handler-based prep must be quarantined. The `AUTHORING_HALT` call must become a native halt/suspend construct.
+
+2. **Plan artifact contract as source-visible policy** — `workflow.pypeline:391` calls `AUTHORING_PLAN(...)` with no declared artifact contract. `ARTIFACT_CONTRACT_POLICY` and `BLAST_RADIUS_POLICY` must be attached as declared policies on the native plan step, not component metadata.
+
+3. **Critique evaluator retry as native construct** — The retry loop exists in `critique_runtime.py` (handler code). It must be extracted as a native subworkflow with typed outcomes or a declared retry policy attached to the critique fanout construct. The adaptive→static fallback declared in `components.py:944` must be either implemented (currently dead letter per `critique_runtime.py:392-396`) or removed.
+
+4. **Selected-lens fanout/fallback as source-visible topology** — `workflow.pypeline:395-401` uses `items="megaplan.policy.critique_lenses"` — a runtime-resolved string reference. The lens fanout cardinality and selection/fallback behavior must be source-visible. The evaluator's per-lens complexity routing (in `critique_evaluator.py`) must either be source-attached policy or a native subworkflow.
+
+5. **S2 exit-gate test missing** — `test_front_half_native_loop.py` is referenced in the master plan (`:628`) but **does not exist** in the tree. This test must be created.
+
+6. **`front_half.pypeline` wiring** — Currently imported only by `route_dispatch.py:21` for routing step ID resolution. It is not a real execution path — it must become the canonical source or its constructs must be absorbed into `workflow.pypeline`.
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+1. **S2 must produce `workflow.pypeline` with prep suspend/resume branching** as shown in `front_half.pypeline` — not defer to a separate file. The `front_half.pypeline` can serve as the extraction template but must become canonical or be deleted.
+
+2. **Critique evaluator retry and selected-lens fanout** should be extracted together: the retry loop in `critique_runtime.py` AND the evaluator verdict logic in `critique_evaluator.py` form a single extraction unit. Extracting retry without lens selection/fanout visibility reproduces the false-pass pattern.
+
+3. **Plan artifact contract** should be extracted as a **declared policy** attached to the native `plan` step in `workflow.pypeline`, not as a separate subworkflow. The existing `ARTIFACT_CONTRACT_POLICY` metadata can be promoted.
+
+4. **Add the missing `test_front_half_native_loop.py`** as an S2a exit gate before proceeding to S2b (gate/revise). The test filename already appears in the exit-gate spec at `master-plan.md:628`.
+
+5. **Resolve the adaptive→static fallback dead letter**: either implement it or remove `"fallback": "static"` from `CRITIQUE_SELECTION_POLICY` (`components.py:944`). The runtime comment at `critique_runtime.py:392-396` says no lens fallback exists — the policy declaration is misleading.

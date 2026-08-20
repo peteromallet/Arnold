@@ -1,0 +1,76 @@
+**Cross-cutting audit: prior epics and executed work**
+
+---
+
+## 1. What is actual code vs. narrative
+
+**Three epic chains exist, only one has delivered running code:**
+
+- **`native-python-pipelines-completion`** (M1–M7): Delivered the single-root migration (`arnold/pipelines/megaplan` → `arnold_pipelines/megaplan`), 30 deleted-surface conformance tests, and installed-wheel packaging. This is real, verifiable code. Evidence: `completion-manifest.json:8-59` records 7 milestones `done`, the M3 closeout at `docs/arnold/m3-merge-result-closeout-20260626.md:17` shows 152 conformance tests passing, and `git log` confirms the merge (`e6dc24b3c`).
+
+- **`megaplan-native-parity-corrective`** (M1–M7): The centerpiece epic. Delivered `workflow.pypeline` (754 lines), `boundary_contracts.py`, `override_matrix.py`, `events.py`, the `evidence.yaml` bundle (6,062 lines), and the `conformance.yaml` ledger claiming 31 `implemented` rows. The test files exist and are substantial: `test_semantics_carrier.py` (671 lines), `test_boundary_contracts.py` (870 lines), `test_semantic_health.py` (2,371 lines). All import real modules that compile.
+
+- **`canonical-run-state-control-plane`**: Delivered working code — `arnold_pipelines/megaplan/run_state/` with `model.py`, `resolver.py`, `evidence.py`, `classifiers.py`. The `_northstar.py:1-50` smoke test demonstrates all 9 canonical states and first-match ordering. This is real, not narrative.
+
+- **`progress-auditor-stage-metrics`**: Mostly narrative/North Star. No code module found matching its proposal; appears to be design-stage (`NORTHSTAR.md` describes end-state, non-negotiables, drift signals — all planning language).
+
+---
+
+## 2. Reusable artifacts
+
+| Artifact | File:line | Reusability |
+|---|---|---|
+| Semantic checker infrastructure | `scripts/generate_native_representation_evidence.py:1-80` — imports `arnold.workflow.handler_semantics`, `arnold.conformance.checks` | **High** — AST-based purity scanner, state-mutation visitor, forbidden-routing-call detectors |
+| Conformance validation script | `scripts/validate_native_representation_conformance.py:1-80` — validates schema, row fields, carrier evidence, boundary receipts | **High** — directly reusable for any future ledger |
+| Boundary contract registry | `arnold_pipelines/megaplan/workflows/boundary_contracts.py` — frozen dataclass contracts with covered effects | **High** — the `BOUNDARY_CONTRACTS_BY_ID` dict is the canonical contract surface |
+| Run-state resolver | `arnold_pipelines/megaplan/run_state/` — `resolve_run_state()` with ordered classifiers | **High** — pure, fixture-testable, wired into `_northstar.py` |
+| Canonical workflow source | `arnold_pipelines/megaplan/workflows/workflow.pypeline:1-754` | **Medium** — readable top-level skeleton, but imports component constants from `components.py` |
+
+---
+
+## 3. Stale / false-pass artifacts to avoid
+
+**Critical finding: `Pipeline.native_program` is absent at runtime.**
+
+The `native-python-pipelines-completion/NORTHSTAR.md:5` states: *"Every package builds native declarations and returns projected Pipeline compatibility shells through `Pipeline.native_program`."* But:
+
+- `build_pipeline()` returns `arnold.workflow.dsl.Pipeline` — confirmed at runtime: `type(p).__name__` = `Pipeline`, `module` = `arnold.workflow.dsl`, and `hasattr(p, 'native_program')` = `False`.
+- `test_native_contract.py:38` asserts `pipeline.native_program is not None` — this would fail if run against the actual `build_pipeline()` output.
+- The conformance report at `megaplan-native-representation-conformance-report.md:24-56` claims 31 `implemented` rows, all citing `canonical_source` or `declared_policy` carriers from `workflow.pypeline`. But `workflow.pypeline` itself **imports from `components.py`** (line 14-34), which is exactly the indirection the North Star forbids.
+
+**`components.py` is still 2,977 lines and lives.**
+
+`workflow.pypeline:14-34` imports `AUTHORING_PREP`, `AUTHORING_PLAN`, etc. from `components.py`. The North Star (`megaplan-native-parity-corrective/NORTHSTAR.md:12-14`) says: *"The final system must not require `components.py`, route bindings, handler refs, manifest backend route translation..."*. The conformance ledger marks `source-path-reconciliation` (row 29) and `behavior-parity` (row 30) as `implemented` — but `components.py` still defines 2,977 lines of `StepComponent`, `ComponentContract`, `handler_ref`, `route_bindings`, and `timeout_seconds_ref` metadata.
+
+**Referenced but nonexistent/suspect files:**
+
+- `docs/arnold/megaplan-composition-conformance-report.md` — referenced by `megaplan-native-parity-corrective-plan.md:20` as superseded, but the file does not exist in the tree. The plan says it "supersedes" a report that was never committed.
+- `tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py` — cited by `conformance.yaml:310` as proof artifact for `autodrive-event-liveness`; not found in tree.
+
+**Narrative-heavy documents to treat as design, not evidence:**
+
+- `docs/arnold/megaplan-boundary-turn-load-bearing-questions.md` — design Q&A, no code artifact.
+- `.megaplan/initiatives/progress-auditor-stage-metrics/NORTHSTAR.md` — pure end-state description, drift signals, no delivered module.
+
+---
+
+## 4. Branch / merge state
+
+- **Current branch:** `main` at `3744b91d2` ("Fix profile execute tier routing")
+- **Other branches:** `editible-install`, `worktree-watchdog-snapshot-staleness` (local); `origin/cloud/extension-reality-chain-restart-continuation` (remote). None carry unmerged corrective work.
+- **Uncommitted files:** `.tmp/`, several new docs (`gpt55-native-parity-endstate-gap-report.md`, `megaplan-native-semantic-parity-master-plan.md`, `megaplan-north-star-sense-checks-revise-design.md`, `repair-system/`) — all untracked, none in the conformance ledger.
+- **Chain state:** `megaplan-native-parity-corrective/chain.yaml:31-80` defines 7 milestones (m1–m7) all `partnered-5`/`extreme`/`max` with a linear dependency chain. The M8 report at `docs/arnold/m8-merge-result-conformance-report.md:57-63` explicitly states M7 is *"not certified as complete"* — chain state has M7 as `finalized` not `done`.
+
+---
+
+## 5. Recommended plan adjustments
+
+1. **Do not treat the conformance ledger as final.** `conformance.yaml` marks all 31 rows `implemented`, but the `Pipeline.native_program` gap and `components.py` survival contradict the North Star's "Done Means." Any new plan must re-verify the top ~5 load-bearing rows (prep-clarification-gate, gate decision, tiebreaker, execute-approval, override-surface) against runtime behavior, not just evidence-bundle hashes.
+
+2. **Reuse, don't rebuild:** The `run_state/` resolver, `boundary_contracts.py` registry, `generate_native_representation_evidence.py` checker, and the AST purity scanner in `arnold.workflow.handler_semantics` are all solid, importable code. Build on them.
+
+3. **Audit `components.py` extraction first.** The oracle synthesis (`docs/arnold/megaplan-native-oracle-synthesis.md:25-28`) identified `build_pipeline()` as *"the immediate high-risk function"* — it consumes `.pypeline` but rebuilds from `components.py`. This is still true. A new plan should make `build_pipeline()` consume lowered `.pypeline` topology exclusively as milestone zero.
+
+4. **Wire the run-state resolver into consumers.** The `canonical-run-state-control-plane` NORTHSTAR lists 11 integration points (watchdog, Discord, repair-loop, etc.). The `_northstar.py` smoke test proves the resolver works. Wiring it is lower risk than new greenfield.
+
+5. **Treat `workflow.pypeline` as an authored skeleton, not a proven semantic owner.** Its 754 lines are mostly `DECLARED_STEP_INTERFACES` route tables (lines 81–300+) and override dispatch trees (lines 650–754) that still call through `AUTHORING_*` component constants. The report at `megaplan-native-representation-report.md:68-81` itself documents that the pypeline "does not fully own" prep internals, gate semantics, tiebreaker internals, execute dependency scheduling, or review mode selection.
