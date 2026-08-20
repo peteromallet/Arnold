@@ -1,0 +1,8 @@
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/initiatives/astrid-first/chain.yaml
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m1-event-core-and-20260814-2340/state.json
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m2-executor-and-media-20260816-1054/state.json
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m3-execution-references-and-20260817-1114/state.json
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m4-bridge-sdk-and-cli-domains-20260818-0642/state.json
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m5-cli-and-sdk-completion-20260819-1119/state.json
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m6-serve-backup-doctor-and-20260819-1405/state.json
+/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m7-dogfood-and-hardening-20260820-0835/state.json

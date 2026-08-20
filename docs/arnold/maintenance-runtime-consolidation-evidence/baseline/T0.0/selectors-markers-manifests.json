@@ -1,0 +1,116 @@
+{
+  "capture_status": "captured",
+  "host": "cloud",
+  "records": [
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/astrid-first.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/astrid-first.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/astrid-first.chain-health.progress.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/astrid-first.liveness-fence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/astrid-first.liveness-lease.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/megaplan-maintenance.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/megaplan-maintenance.chain-health.progress.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/megaplan-maintenance.liveness-fence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/megaplan-maintenance.liveness-lease.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/megaplan-maintenance.repair-progress.json",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/cloud-sessions/.megaplan-maintenance.liveness-fence.lock",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/astrid-first.json.lock",
+      "status": "captured"
+    },
+    {
+      "content_digest_source": "raw-control-digests.txt",
+      "metadata_command": "sha256sum + stat -c %n|%s|%Y|%F",
+      "metadata_source": "raw-control-stat.txt",
+      "role": "runtime selector/marker/manifest or lock",
+      "source_path": "/workspace/.megaplan/astrid-first.json.promotion.lock",
+      "status": "captured"
+    },
+    {
+      "role": "runtime selector/manifest",
+      "source_path": "/workspace/.megaplan/astrid-first.json",
+      "status": "captured"
+    }
+  ],
+  "schema_version": "T0.0.selectors.v1"
+}

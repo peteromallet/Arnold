@@ -1,0 +1,2877 @@
+{
+  "name": "reconcile-outcome-select-and-20260819-1828",
+  "idea": "# Reconcile\n\n## Outcome\n\nSelect and publish the epic's engine-source commits that were\nnot already promoted, as a reviewed PR onto `main`.\n\n## Rubric\n\nThis milestone is governed by the per-epic runtime end-state\nand megaplan reference architecture docs:\n\n- `docs/megaplan-reference-architecture-20260807.md`\n- `docs/per-epic-runtime-end-state-20260809.md`\n\n## Scope\n\nEngine-source changes (`arnold_pipelines/`, `arnold/`) not\ncovered by promotion evidence.\n\n## Constraints\n\n- Selection is evidence, not narrative: output the chosen\n  commit SHAs plus verification evidence.\n- A verified no-op still records `reconcile-verification.json`.\n\n## Done Criteria\n\n- Selected commits are cherry-picked onto\n  `reconcile/<slug>-<date>` from `main`.\n- PR merged, intentionally rejected, or verified no-op.",
+  "idea_snapshot_path": "idea_snapshot.md",
+  "current_state": "done",
+  "iteration": 8,
+  "created_at": "2026-08-19T18:28:59Z",
+  "config": {
+    "project_dir": "/workspace/megaplan-maintenance/Arnold",
+    "auto_approve": false,
+    "adaptive_critique": false,
+    "strict_adaptive_critique": false,
+    "critic_model": "",
+    "critic_model_explicit": false,
+    "robustness": "full",
+    "mode": "code",
+    "strict_notes": false,
+    "max_tasks_per_batch": 5,
+    "agent": "",
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "test_command": null,
+    "test_baseline_timeout": 900,
+    "phase_model": [
+      "plan=codex:gpt-5.6-sol:high",
+      "prep=codex:gpt-5.6-terra:medium",
+      "critique=codex:gpt-5.6-terra:medium",
+      "critique_evaluator=codex:gpt-5.6-sol:high",
+      "revise=codex:gpt-5.6-luna:medium",
+      "gate=codex:gpt-5.6-terra:medium",
+      "finalize=codex:gpt-5.6-sol:high",
+      "execute=codex:gpt-5.6-sol:medium",
+      "feedback=codex:gpt-5.6-sol:medium",
+      "loop_plan=codex:gpt-5.6-sol:high",
+      "loop_execute=codex:gpt-5.6-sol:medium",
+      "review=codex:gpt-5.6-sol:medium",
+      "tiebreaker_researcher=codex:gpt-5.6-sol:high",
+      "tiebreaker_challenger=codex:gpt-5.6-sol:high"
+    ],
+    "phase_timeout_seconds": 3600.0,
+    "profile": "partnered-codex",
+    "profile_binding": {
+      "profile_source": "built-in",
+      "profile_content_sha256": "f990620de933892b0b9398726628f40bf2887244088b4ce771e5424149551b51"
+    },
+    "tier_models": {
+      "critique": {
+        "1": "codex:gpt-5.6-luna:low",
+        "2": "codex:gpt-5.6-terra:medium",
+        "3": "codex:gpt-5.6-terra:high",
+        "4": "codex:gpt-5.6-terra:xhigh",
+        "5": "codex:gpt-5.6-sol:max"
+      },
+      "execute": {
+        "1": "codex:gpt-5.6-luna:low",
+        "2": "codex:gpt-5.6-luna:medium",
+        "3": "codex:gpt-5.6-luna:high",
+        "4": "codex:gpt-5.6-luna:high",
+        "5": "codex:gpt-5.6-luna:xhigh",
+        "6": "codex:gpt-5.6-luna:max",
+        "7": "codex:gpt-5.6-terra:xhigh",
+        "8": "codex:gpt-5.6-terra:max",
+        "9": "codex:gpt-5.6-sol:xhigh",
+        "10": "codex:gpt-5.6-sol:max"
+      }
+    },
+    "vendor": "codex",
+    "prep_models": {
+      "triage": "codex:gpt-5.6-terra:medium",
+      "fanout": "hermes:deepseek:deepseek-v4-pro",
+      "distill": "codex:gpt-5.6-terra:medium"
+    },
+    "prep_model_resolver_trace": {
+      "flat_prep_input": "codex:gpt-5.6-terra:medium",
+      "explicit_prep_models": {},
+      "resolved_stage_models": {
+        "triage": "codex:gpt-5.6-terra:medium",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "codex:gpt-5.6-terra:medium"
+      },
+      "canonical_fallback_used": {
+        "triage": false,
+        "fanout": true,
+        "distill": false
+      }
+    }
+  },
+  "sessions": {
+    "hermes_planner": {
+      "id": "3fe76e8f-25ac-4df3-adf7-e0cc2bfd6f3a",
+      "mode": "persistent",
+      "created_at": "2026-08-19T19:15:30Z",
+      "last_used_at": "2026-08-20T01:23:00Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_flash",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-flash",
+        "provider": "deepseek-v4-flash",
+        "resolved_model": "deepseek-v4-flash",
+        "wbc_dispatch": {
+          "attempt_id": "77214409-8421-5361-93ad-0668af8bdb9a",
+          "writer_id": "megaplan.worker_dispatch.direct",
+          "surface_name": "megaplan.worker_dispatch.direct",
+          "expected_source_version": "revise:bfc1675c43374965:direct:revise:hermes:deepseek:deepseek-v4-flash:0",
+          "start_source_lookup_key": "revise:revise:direct:0:start",
+          "terminal_source_lookup_key": "revise:revise:direct:0:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": "direct",
+          "selected_spec": "hermes:deepseek:deepseek-v4-flash",
+          "attempt_index": 0,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "hermes",
+          "auth_channel": "deepseek-v4-flash"
+        }
+      }
+    },
+    "hermes_gatekeeper": {
+      "id": "961e51bc-ef50-4b80-b3dc-c88da14fe375",
+      "mode": "persistent",
+      "created_at": "2026-08-19T19:23:02Z",
+      "last_used_at": "2026-08-20T01:31:23Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_pro",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-pro",
+        "provider": "deepseek-v4-pro",
+        "resolved_model": "deepseek-v4-pro",
+        "wbc_dispatch": {
+          "attempt_id": "14e2dccb-6d38-5d4d-b22f-16b169a17ce8",
+          "writer_id": "megaplan.worker_dispatch.direct",
+          "surface_name": "megaplan.worker_dispatch.direct",
+          "expected_source_version": "gate:c1a692ff5943448a:direct:gate:hermes:deepseek:deepseek-v4-pro:0",
+          "start_source_lookup_key": "gate:gate:direct:0:start",
+          "terminal_source_lookup_key": "gate:gate:direct:0:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": "direct",
+          "selected_spec": "hermes:deepseek:deepseek-v4-pro",
+          "attempt_index": 0,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "hermes",
+          "auth_channel": "deepseek-v4-pro"
+        }
+      }
+    },
+    "hermes_finalizer": {
+      "id": "b3d15f4a-d3ef-4164-aa5a-73b170d0755d",
+      "mode": "persistent",
+      "created_at": "2026-08-20T01:07:27Z",
+      "last_used_at": "2026-08-20T01:42:32Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_pro",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-pro",
+        "provider": "deepseek-v4-pro",
+        "resolved_model": "deepseek-v4-pro",
+        "wbc_dispatch": {
+          "attempt_id": "ffbdee46-5d96-547d-bd39-26994abd8052",
+          "writer_id": "megaplan.worker_dispatch.direct",
+          "surface_name": "megaplan.worker_dispatch.direct",
+          "expected_source_version": "finalize:1098ad3a2d9044b7:direct:finalize:hermes:deepseek:deepseek-v4-pro:0",
+          "start_source_lookup_key": "finalize:finalize:direct:0:start",
+          "terminal_source_lookup_key": "finalize:finalize:direct:0:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": "direct",
+          "selected_spec": "hermes:deepseek:deepseek-v4-pro",
+          "attempt_index": 0,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "hermes",
+          "auth_channel": "deepseek-v4-pro"
+        }
+      }
+    },
+    "hermes_executor_5ef643cf": {
+      "id": "e36e585b-e465-41d7-94ad-3506afabc5da",
+      "mode": "persistent",
+      "created_at": "2026-08-20T01:54:11Z",
+      "last_used_at": "2026-08-20T02:09:08Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_pro",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-pro",
+        "provider": "deepseek-v4-pro",
+        "resolved_model": "deepseek-v4-pro",
+        "wbc_dispatch": {
+          "attempt_id": "77e28a33-b1d6-52a7-8274-36331edb0130",
+          "writer_id": "megaplan.execute.dispatch_wbc",
+          "surface_name": "megaplan.execute.dispatch_wbc",
+          "expected_source_version": "execute-batch:1:sha256:2ca7d72769525f9cdeca2cc8d64d110bf94039f9f5e89fd526d8252db4e95c59:2:reconcile-outcome-select-and-20260819-1828:execute:batch:1:2e018219a50b",
+          "start_source_lookup_key": "execute-batch:1:start",
+          "terminal_source_lookup_key": "execute-batch:1:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": null,
+          "selected_spec": null,
+          "attempt_index": null,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "hermes",
+          "auth_channel": "deepseek-v4-pro"
+        }
+      }
+    },
+    "hermes_executor_a6538c34": {
+      "id": "7951cd21-d819-4b60-9331-2a8d86425b19",
+      "mode": "persistent",
+      "created_at": "2026-08-20T02:17:20Z",
+      "last_used_at": "2026-08-20T04:32:29Z",
+      "refreshed": false,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_flash",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-flash",
+        "provider": "deepseek-v4-flash",
+        "resolved_model": "deepseek-v4-flash",
+        "wbc_dispatch": {
+          "attempt_id": "90af9a93-ea30-583b-b6b9-59ad4618d7f7",
+          "writer_id": "megaplan.execute.dispatch_wbc",
+          "surface_name": "megaplan.execute.dispatch_wbc",
+          "expected_source_version": "execute-batch:1:sha256:2ca7d72769525f9cdeca2cc8d64d110bf94039f9f5e89fd526d8252db4e95c59:1:reconcile-outcome-select-and-20260819-1828:execute:batch:1:2e018219a50b",
+          "start_source_lookup_key": "execute-batch:1:start",
+          "terminal_source_lookup_key": "execute-batch:1:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": null,
+          "selected_spec": null,
+          "attempt_index": null,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "hermes",
+          "auth_channel": "deepseek-v4-flash"
+        }
+      }
+    },
+    "hermes_reviewer": {
+      "id": "05c0834b-9448-4e1f-9da1-4a79d3444054",
+      "mode": "persistent",
+      "created_at": "2026-08-20T03:29:35Z",
+      "last_used_at": "2026-08-20T04:24:18Z",
+      "refreshed": true
+    },
+    "codex_reviewer_419255f2": {
+      "id": "01a01f14-b914-7a90-9fe2-c5c121a3b62a",
+      "sandbox_fingerprint": "read-only"
+    },
+    "codex_reviewer": {
+      "id": "01a01f14-b914-7a90-9fe2-c5c121a3b62a",
+      "mode": "persistent",
+      "created_at": "2026-08-20T09:49:16Z",
+      "last_used_at": "2026-08-20T12:12:28Z",
+      "refreshed": true
+    },
+    "codex_executor_e33230db": {
+      "id": "01a01f08-97a2-7273-912b-c756fe6457a6",
+      "mode": "persistent",
+      "created_at": "2026-08-20T12:05:03Z",
+      "last_used_at": "2026-08-20T12:05:03Z",
+      "refreshed": false,
+      "worker_channel": "codex_cli",
+      "auth_metadata": {
+        "wbc_dispatch": {
+          "attempt_id": "a201bd74-f917-5245-b17b-2d476fad3597",
+          "writer_id": "megaplan.execute.dispatch_wbc",
+          "surface_name": "megaplan.execute.dispatch_wbc",
+          "expected_source_version": "execute-batch:1:sha256:2ca7d72769525f9cdeca2cc8d64d110bf94039f9f5e89fd526d8252db4e95c59:8:reconcile-outcome-select-and-20260819-1828:execute:batch:1:2e018219a50b",
+          "start_source_lookup_key": "execute-batch:1:start",
+          "terminal_source_lookup_key": "execute-batch:1:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": null,
+          "selected_spec": null,
+          "attempt_index": null,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "codex_cli",
+          "auth_channel": null
+        }
+      },
+      "last_total_tokens": {
+        "input_tokens": 3460674,
+        "cached_input_tokens": 3290624,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 21496,
+        "reasoning_output_tokens": 10835,
+        "total_tokens": 3482170
+      }
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:d57aeff564b3c28f6264b39af1b7f8151637ee68eee1ccfa0a0c87dff36a5a72",
+      "timestamp": "2026-08-19T19:15:30Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:7d56ce4f55b670b3f0eb0c401c5ac36cf03fc73c241d8320962142d0e01b512a",
+      "timestamp": "2026-08-19T19:29:44Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:1a8e225d1cfdb9a790f92713730b1fc9ef57af9bfe8c7837796d1b3039321485",
+      "timestamp": "2026-08-19T19:51:50Z"
+    },
+    {
+      "version": 4,
+      "file": "plan_v4.md",
+      "hash": "sha256:ee08baa0dea18746a4a24850bd1521a15d593de0c9072cd1ea57372a694a8f0d",
+      "timestamp": "2026-08-19T20:11:23Z"
+    },
+    {
+      "version": 5,
+      "file": "plan_v5.md",
+      "hash": "sha256:0842e82eeeac6ff5b37f2e8bf796e6c40faeb05cd1621128b20b6d8ca919fa1d",
+      "timestamp": "2026-08-19T20:23:49Z"
+    },
+    {
+      "version": 6,
+      "file": "plan_v6.md",
+      "hash": "sha256:3a9c1f276ab27692677020b5416ca8dfdd45a752bf4b10c1b8d0aeb7268e7d8e",
+      "timestamp": "2026-08-19T23:57:19Z"
+    },
+    {
+      "version": 7,
+      "file": "plan_v7.md",
+      "hash": "sha256:4f5ec9924210477dc2eb714cf0ec4e23bd678a1c1c8d5d8069a3e142c4da223c",
+      "timestamp": "2026-08-20T00:52:13Z"
+    },
+    {
+      "version": 8,
+      "file": "plan_v8.md",
+      "hash": "sha256:2ca7d72769525f9cdeca2cc8d64d110bf94039f9f5e89fd526d8252db4e95c59",
+      "timestamp": "2026-08-20T01:23:00Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-08-19T18:28:59Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-08-19T18:29:28Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Codex quota exceeded. Do not retry immediately. Restore Codex credits/capacity or wait until the provider-stated reset, then re-run the same step on Codex exactly once."
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-08-19T19:15:30Z",
+      "duration_ms": 597625,
+      "cost_usd": 0.09447677999999998,
+      "result": "success",
+      "prompt_tokens": 1725630,
+      "completion_tokens": 47363,
+      "total_tokens": 1772993,
+      "session_mode": "persistent",
+      "session_id": "8b9c3db8-23f9-4f92-89bb-3616e2622768",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-sol"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:d57aeff564b3c28f6264b39af1b7f8151637ee68eee1ccfa0a0c87dff36a5a72"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-19T19:20:57Z",
+      "duration_ms": 306012,
+      "cost_usd": 0.202630453,
+      "result": "success",
+      "prompt_tokens": 3096373,
+      "completion_tokens": 92857,
+      "total_tokens": 3189230,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:3b885aa40a088e3d8959c7fd1c70e0df89014726fc5386ae47816495476aecd0",
+      "flags_count": 15
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-19T19:23:02Z",
+      "duration_ms": 114065,
+      "cost_usd": 0.025530643,
+      "result": "success",
+      "prompt_tokens": 249533,
+      "completion_tokens": 7522,
+      "total_tokens": 257055,
+      "session_mode": "persistent",
+      "session_id": "485827e3-3e79-43fa-a780-72ef7b909879",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:2c5cc8b2f137fb966be5d4cef4b5d7297dd5f70a826283885d364fe18188bbe1",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-19T19:29:44Z",
+      "duration_ms": 393344,
+      "cost_usd": 0.0214893,
+      "result": "success",
+      "prompt_tokens": 704327,
+      "completion_tokens": 35048,
+      "total_tokens": 739375,
+      "session_mode": "persistent",
+      "session_id": "7f5dae64-2576-4a11-9e32-63b984ac57b2",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:7d56ce4f55b670b3f0eb0c401c5ac36cf03fc73c241d8320962142d0e01b512a",
+      "flags_addressed": [
+        {
+          "id": "CF-1F24AC063567F60E3D4C",
+          "resolution": "addressed",
+          "reason": "Plan now treats reconcile_inputs.json as authoritative: 108 candidates enumerated and classified in Step 3, count-checked in Step 1 and Validation Order; no occurrence of '14' remains.",
+          "where": "Overview; Step 1; Step 3; Step 4; Validation Order; Assumption 4"
+        },
+        {
+          "id": "CF-62D5914DBFF52C51D932",
+          "resolution": "addressed",
+          "reason": "Candidate count corrected to 108 and changed_surfaces regenerated from the actual union of candidate paths (52 files); stale maintenance_canary.py/current_target.py/efficiency_analysis.py entries removed.",
+          "where": "Overview; changed_surfaces; test_blast_radius"
+        },
+        {
+          "id": "CF-BA480CDAED23229E6388",
+          "resolution": "addressed",
+          "reason": "All '14 SHAs' references replaced with the 108-candidate set; Step 3 complexity raised to 4 with bulk classification to match real workload.",
+          "where": "Step 3; Execution Order; Assumption 4"
+        },
+        {
+          "id": "CF-60D78BAFBF4CBCBEC1E2",
+          "resolution": "addressed",
+          "reason": "Every instruction that said 'confirm the 14 candidate_commits' now says verify exactly 108 and stop-and-report on mismatch; per_phase evidence must cover all 108.",
+          "where": "Step 1; Step 3; Step 4; Validation Order"
+        },
+        {
+          "id": "CF-3A0A6C93CBA46CF7A474",
+          "resolution": "addressed",
+          "reason": "Plan no longer hardcodes 14; classification loop covers all 108 candidates with explicit exclusion reasons so none are silently dropped.",
+          "where": "Overview; Step 3; Success Criteria"
+        },
+        {
+          "id": "CF-AF0FEEFDAC4709829F15",
+          "resolution": "addressed",
+          "reason": "Brief requirement (full unpromoted engine-source set) restored: all 108 classified; allowlist corrected to ENGINE_SOURCE_ROOTS including arnold/ root, with ead33b1d's arnold/agent/run_agent.py explicitly handled.",
+          "where": "Overview; Step 3.3; Assumption 3"
+        },
+        {
+          "id": "CF-22EF54D9B3202C92A065",
+          "resolution": "addressed",
+          "reason": "The load-bearing count is now 108 (verified against the staged file); Steps, Success Criteria, and Assumption 5 all reference the full set.",
+          "where": "Overview; Step 1; Step 3; Success Criteria; Assumptions"
+        },
+        {
+          "id": "CF-B45BFFDD0E694A354B2A",
+          "resolution": "addressed",
+          "reason": "changed_surfaces rebuilt from the actual 108 candidates' paths (union of 52 files); files absent from candidate paths (maintenance_canary.py, current_target.py, incident_bridge.py, maintenance_dispatch.py, efficiency_analysis.py, boundaries.py, receipts/query.py, etc.) removed.",
+          "where": "changed_surfaces; test_blast_radius"
+        },
+        {
+          "id": "CF-0E3C044B07E07B183738",
+          "resolution": "addressed",
+          "reason": "Cardinal number fixed to 108 everywhere; the arnold/ root allowlist point corrected (ENGINE_SOURCE_ROOTS at chain/__init__.py:273) and arnold/agent/run_agent.py included in changed_surfaces.",
+          "where": "Overview; Step 3.3; changed_surfaces; Assumption 3"
+        },
+        {
+          "id": "CF-56FDF0C809380C5E4423",
+          "resolution": "addressed",
+          "reason": "Step 3 redesigned to build ancestor sets once (git rev-list origin/main, HEAD, promotion refs \u2014 ~5-10 invocations) then classify by set membership, with per-SHA git checks only for boundary cases and a spot-verify protocol; complexity bumped to 4 with a no-partial-evidence guard.",
+          "where": "Step 3; Execution Order; Validation Order"
+        },
+        {
+          "id": "CF-4301392B96C44B6730ED",
+          "resolution": "addressed",
+          "reason": "All 108 candidates must be classified and either selected or excluded-with-evidence; per_phase count == 108 is now a must success criterion and validation check.",
+          "where": "Step 3.5; Validation Order; Success Criteria"
+        },
+        {
+          "id": "CF-D1B8758E14155872FB44",
+          "resolution": "addressed",
+          "reason": "changed_surfaces now lists the actual heavily-touched candidate files (execute/batch.py, workers/hermes.py, fallback_chains.py, model_seam.py, handlers/finalize.py, runtime_provenance.py, runtime_root_registry.py, etc.) and drops the m1-m5-derived list; arnold/agent/run_agent.py added per the real allowlist.",
+          "where": "changed_surfaces; Overview"
+        },
+        {
+          "id": "CF-43CB2D6164FFF4F49CBC",
+          "resolution": "addressed",
+          "reason": "Empty-selection contract corrected to the real caller behavior: _read_reconcile_selection skips [] and returns None, _publish_reconcile_selection fails closed, driver sets STATE_BLOCKED; _write_reconcile_verification_waiver is documented as pre-execute-only (compute_reconcile_scope, __init__.py:7075). Step 4.2/5.4 and Assumption 6 encode this.",
+          "where": "Overview; Step 4.2; Step 5.4; Success Criteria; Assumption 6"
+        },
+        {
+          "id": "CF-ABED499CA0985ED8620B",
+          "resolution": "addressed",
+          "reason": "Precondition handling added: Step 1.2 verifies exactly 108 candidates and stops-and-reports on mismatch; dependent classification/emission steps are gated on the full set rather than a fixed count.",
+          "where": "Step 1.2; Step 3; Step 4; Validation Order"
+        },
+        {
+          "id": "CF-5F2BABD95F5B2F115465",
+          "resolution": "addressed",
+          "reason": "Step 3 now excludes only against the single authoritative target (origin/main, the controller's cherry-pick base per git_ops.py:2804-2806) plus promotion evidence; ancestry against local main is explicitly prohibited as an exclusion signal, and every excluded SHA is recorded with a reason rather than silently dropped.",
+          "where": "Step 3.2; Success Criteria; Assumption 2"
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-19T19:37:38Z",
+      "duration_ms": 465093,
+      "cost_usd": 0.207391064,
+      "result": "success",
+      "prompt_tokens": 3461984,
+      "completion_tokens": 120140,
+      "total_tokens": 3582124,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:ccaccd31811c1bbbff4b4dd78a3515d5e87d9b9f4026e254820e75fa38085ddd",
+      "flags_count": 6
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-19T19:40:41Z",
+      "duration_ms": 173678,
+      "cost_usd": 0.029066526,
+      "result": "success",
+      "prompt_tokens": 213392,
+      "completion_tokens": 12013,
+      "total_tokens": 225405,
+      "session_mode": "persistent",
+      "session_id": "7dd30c4c-3ad2-4fc3-aa90-937246cbb638",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:b91ab0cb3417ea7f7695b63b37f8a242092b7c71b73bb52de1eba79b86074c87",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-19T19:47:05Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "revise_v3_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /assumptions: missing required property 'assumptions'; missing_required at /changes_summary: missing required property 'changes_summary'; missing_required at /flags_addressed: missing required property 'flags_addressed'; missing_required at /north_star_actions_addressed: missing required property 'north_star_actions_addressed'; missing_required at /plan: missing required property 'plan'; missing_required at /questions: missing required property 'questions'; missing_required at /success_criteria: missing required property 'success_criteria'"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-19T19:51:50Z",
+      "duration_ms": 275748,
+      "cost_usd": 0.0199015488,
+      "result": "success",
+      "prompt_tokens": 233796,
+      "completion_tokens": 39290,
+      "total_tokens": 273086,
+      "session_mode": "persistent",
+      "session_id": "4c3888a2-eb40-4d1e-a9b8-8aa94cdc0b4c",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:1a8e225d1cfdb9a790f92713730b1fc9ef57af9bfe8c7837796d1b3039321485",
+      "flags_addressed": [
+        {
+          "id": "CF-2AE17EABBACD2D966206",
+          "resolution": "addressed",
+          "reason": "Step 3.2 is now gated on a Step 1 divergence-mode resolution: in equal mode (origin/main == source HEAD, the verified current state) the normal matrix is skipped and every candidate is typed coincident_ref ('origin/main == source HEAD; possible stale/divergent remote ref \u2014 typed UNKNOWN/INCOHERENT') unless promotion evidence covers it; the string 'already published' is prohibited in that mode. divergence_mode is a recorded verification_evidence field, and Step 4.2 documents the deterministic empty selection -> STATE_BLOCKED as the designed evidence-preserving outcome for operator resolution.",
+          "where": "Step 1.4 (divergence-mode resolution); Step 3.2a (equal-mode gate); Step 4.2 (empty-selection handling); Validation Order 2/7; Questions 1/3"
+        },
+        {
+          "id": "CF-D908E9D00E41A5F02457",
+          "resolution": "addressed",
+          "reason": "The 'mirrors the controller' claim was removed and corrected: Step 3.2b now states the matrix is a plan-authored conservative operationalization of 'not already promoted', and the controller's actual semantics are cited accurately \u2014 compute_reconcile_scope filters engine_changes only against promoted_refs (__init__.py:7043-7050), _cherry_pick_reconcile_selection validates source-lineage reachability (git_ops.py:2841-2849) and skips SHAs already on the reconcile branch (:2850-2854), never origin/main. The materially different controller-side outcome (full 108 handed to the controller -> all skipped at cherry-pick -> empty/deferred PR without typed evidence) is explicitly contrasted with the executor's fail-closed [] -> STATE_BLOCKED path in the Overview and Step 4.2.",
+          "where": "Overview (Classification-rule provenance + Degenerate-state contract); Step 3.2b; Step 5.2; Step 4.2"
+        },
+        {
+          "id": "CF-C098D606E71DEAD40381",
+          "resolution": "addressed",
+          "reason": "The prompt-vs-controller reachability inversion is now surfaced in the Overview (execute-phase prompt contract bullet warns that execute.py:175-178 says 'REACHABLE from the reconcile target branch's history (the target is main)', the inverse of the controller's source-lineage requirement at git_ops.py:2780-2784/2841-2849) and a new Step 3.6 instructs the executor to follow the plan's source-lineage rule over the prompt wording; Step 5.6 records prompts/execute.py:175-178 as a controller-side prompt-fix candidate.",
+          "where": "Overview; Step 3.6; Step 5.6; Question 4; Assumption 8"
+        },
+        {
+          "id": "CF-CE22918B94468890421E",
+          "resolution": "addressed",
+          "reason": "Same inversion addressed at the related-code level: Step 3.6 explicitly tells the executor to prefer Step 3.2's source-lineage reachability (reachable from HEAD, the fixer lineage) over the prompt's 'reachable from main' wording, and to record the override in notes; the Overview no longer cites execute.py:155-188 as authoritative without flagging the inverted criterion at :175-178.",
+          "where": "Overview; Step 3.6; Step 4.1 (notes record); Step 5.6; Question 4"
+        },
+        {
+          "id": "CF-7C8F89E73039FE936BE0",
+          "resolution": "addressed",
+          "reason": "One-line reconciliation added where the prompt is cited: the Overview and Step 3.6 flag that prompts/execute.py:175-178's reachability-from-main wording is backwards for a reconcile selector and that the executor must follow Step 3.2's source-lineage rule; a new must success criterion enforces that the plan carries this instruction, and Step 5.6 records the prompt fix as a controller-side candidate.",
+          "where": "Overview (execute-phase prompt contract); Step 3.6; Success Criteria (prompt-override criterion); Step 5.6"
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-19T20:00:35Z",
+      "duration_ms": 516872,
+      "cost_usd": 0.285772525,
+      "result": "success",
+      "prompt_tokens": 5233419,
+      "completion_tokens": 161578,
+      "total_tokens": 5394997,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:dbc885d289065de596d262fc46baf992fa1fb9bda7e6d106e70590333c7c4d00",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-19T20:04:36Z",
+      "duration_ms": 230413,
+      "cost_usd": 0.033926635999999996,
+      "result": "success",
+      "prompt_tokens": 210330,
+      "completion_tokens": 15005,
+      "total_tokens": 225335,
+      "session_mode": "persistent",
+      "session_id": "0cb1d9ac-8282-47af-ba1a-ac8cd43290a0",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:ece6cc35cba28913ab944012748eb0e49fbcb012f5b21c44f34c80636da571cf",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-19T20:11:23Z",
+      "duration_ms": 396666,
+      "cost_usd": 0.0290302656,
+      "result": "success",
+      "prompt_tokens": 1063668,
+      "completion_tokens": 61626,
+      "total_tokens": 1125294,
+      "session_mode": "persistent",
+      "session_id": "efd83f6a-9c1e-42cb-8ba4-e2af4c8432bb",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:ee08baa0dea18746a4a24850bd1521a15d593de0c9072cd1ea57372a694a8f0d",
+      "flags_addressed": [
+        {
+          "id": "CF-BC1CE343502160A24540",
+          "resolution": "addressed",
+          "reason": "The full_suite_fallback contradiction is reconciled: the plan document and the persisted test_blast_radius metadata now both record false (strategy:none runs no suite either way). The v4 plan's test_blast_radius section carries an explicit 'Reconciled in v4' note referencing this flag, and a new should success criterion ('test_blast_radius.full_suite_fallback is consistent (false) between the plan document and the persisted plan metadata') guards the consistency. This also closes the underlying minor flag CF-B1E8891FA427D3866AAF.",
+          "where": "Overview changes_summary; plan ## test_blast_radius section (full_suite_fallback: false + reconciliation note); Success Criteria (new should criterion); structured test_blast_radius.full_suite_fallback: false"
+        },
+        {
+          "id": "CF-7FE45F6BB93257428A1A",
+          "resolution": "addressed",
+          "reason": "The plan no longer claims the empty-selection STATE_BLOCKED outcome 'preserves the stale-vs-published distinction for the operator' through the controller-side signal. New Overview section 'Where the typed evidence lands (corrected in v4)' states precisely: _read_reconcile_selection skips empty selected_shas lists (__init__.py:10434-10435) and returns None (:10444); _publish_reconcile_selection returns the generic hardcoded string 'no selected_shas found in plan execution evidence; cannot publish the reconcile PR' (:10474-10478); the driver records that string as STATE_BLOCKED (:9132-9141) without consulting verification_evidence. The typed coincident_ref evidence survives only in the plan-dir batch artifact (execute_batches/batch_*/tasks_*.json per list_batch_artifacts, _core/io.py:1795), and new Step 4.3 gives the operator the exact resolution path (read the batch artifact; resolve stale-vs-published; re-run or force-proceed under human approval). Step 4.2, Question 3, and Assumptions 6/7 were rewritten to match, and the controller-side limitation is tracked as ticket 01M0ETZ6W0P7R2K9X4D6B8N3V5 so it is not lost.",
+          "where": "Overview ('Where the typed evidence lands'); Step 4.2; new Step 4.3; Question 3; Assumptions 6/7; Step 5.6; Validation Order 7; Success Criteria (empty-selection criterion updated)"
+        },
+        {
+          "id": "CF-EAA9EDDB854E42A05BDC",
+          "resolution": "addressed",
+          "reason": "The Overview's candidate-set phrasing is corrected: the 108 candidates written to reconcile_inputs.json are the FULL engine-source change set, not a promotion-filtered subset. compute_reconcile_scope returns 'engine_changes': engine_changes (__init__.py:7092); the promotion-ref filter at :7043-7050 produces a separate local unpromoted list consumed only by the pr_required/noop DECISION; _write_reconcile_inputs calls compute_reconcile_scope with manifest=None (:9678-9683) so _promoted_refs is vacuous in that path. The plan now states the 108 may legitimately include promotion-covered commits \u2014 exactly what the promotion_evidence reason handles \u2014 in the Overview, Step 1.2, and Assumption 4, with a should success criterion guarding the description.",
+          "where": "Overview ('Candidate-set provenance (corrected in v4)'); Step 1.2; Assumption 4; Success Criteria (new should criterion)"
+        },
+        {
+          "id": "CF-2D19EFC64795F62AD57E",
+          "resolution": "addressed",
+          "reason": "The controller-side prompt fix (prompts/execute.py:175-178 inverted reachability wording; injected at execute time via _reconcile_prompt_override, execute/batch.py:2554-2604) is no longer deferred in plan notes only. It is filed as a tracked ticket in the repo's native tracking store: .megaplan/tickets/01M0ETZ6W0K3H9XQ7N2D5B8RV4-reconcile-execute-prompt-reachability-criterion-is-inverted.md (ULID per tickets/core.py str(ULID()) convention), and the ticket ID is referenced from the Overview, Step 3.6, Step 5.6, Question 4, and Assumption 8, so it survives the expected equal-mode fail-closed outcome.",
+          "where": "Overview (execute-phase prompt bullet); Step 3.6; Step 5.6 (tracked follow-ups); Question 4; Assumption 8; Assumption 9; changed_surfaces (ticket file)"
+        },
+        {
+          "id": "CF-5CC89BCB93AAA8A496E5",
+          "resolution": "addressed",
+          "reason": "The caller-chain overstatement is fixed exactly as verified: on the empty-selection path _read_reconcile_selection returns None (__init__.py:10444) and the typed verification_evidence is never consulted by the driver, which records the generic hardcoded string (:10474-10478) as the STATE_BLOCKED reason (:9132-9141). Step 4.2 now states the block reason reads identically for stale/divergent origin/main, genuine publication, or a buggy executor, and Step 4.3 documents where the typed evidence actually lives (plan-dir batch artifact, execute_batches/batch_*/tasks_*.json; model_seam.py:744-759 envelope extension carries it into the artifact). The controller-side limitation is tracked as ticket 01M0ETZ6W0P7R2K9X4D6B8N3V5 (Step 5.6).",
+          "where": "Overview ('Where the typed evidence lands'); Step 4.2; Step 4.3; Step 5.1/5.6; Question 3; Assumption 6; Validation Order 7"
+        },
+        {
+          "id": "CF-9D7B0368859C70F231CD",
+          "resolution": "addressed",
+          "reason": "Step 2.5 now specifies the mixed/partial case explicitly: a promotion-evidence ref that fails to resolve is recorded as {'ref': ..., 'resolves': false}, promotion_evidence_status becomes 'partial', and that ref NEVER drives exclusion \u2014 matching the controller's _git_is_ancestor returning False on git failure ('not already promoted', __init__.py:7046-7048) and Step 2.3's do-not-exclude-on-unreadable-evidence philosophy. Step 3.1 (non-resolving refs produce no ancestor set), Step 3.2b (promotion_evidence exclusion requires the ref resolved), Step 4.1 (promotion_evidence_status includes 'partial'; refs carry resolves), Validation Order 9, and a new must success criterion encode the rule so a future run with partial promotion evidence cannot over-exclude.",
+          "where": "Step 2.5/2.6; Step 3.1; Step 3.2b; Step 4.1 (JSON shape); Validation Order 9; Success Criteria (new must criterion)"
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-19T20:17:04Z",
+      "duration_ms": 331706,
+      "cost_usd": 0.20777386400000003,
+      "result": "success",
+      "prompt_tokens": 4007088,
+      "completion_tokens": 97452,
+      "total_tokens": 4104540,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:519f0d235c6bbc7fd82ce5aae1bc9b43df68a91ba2264a23c76249b8fe0b36fc",
+      "flags_count": 6
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-19T20:19:38Z",
+      "duration_ms": 142882,
+      "cost_usd": 0.035957621999999995,
+      "result": "success",
+      "prompt_tokens": 464462,
+      "completion_tokens": 10162,
+      "total_tokens": 474624,
+      "session_mode": "persistent",
+      "session_id": "38dc26ad-a413-4553-a160-bb21e7496c7d",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:f39c0f5db4abd65182615e289ef1fb9172d7929354ecb955beba3fa6f9e1485e",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-19T20:23:49Z",
+      "duration_ms": 240967,
+      "cost_usd": 0.020873434399999998,
+      "result": "success",
+      "prompt_tokens": 522567,
+      "completion_tokens": 40060,
+      "total_tokens": 562627,
+      "session_mode": "persistent",
+      "session_id": "f96cbf61-20ce-4801-8302-aae9cc1a9c35",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v5.md",
+      "artifact_hash": "sha256:0842e82eeeac6ff5b37f2e8bf796e6c40faeb05cd1621128b20b6d8ca919fa1d",
+      "flags_addressed": [
+        {
+          "id": "CF-BC1CE343502160A24540",
+          "resolution": "addressed",
+          "reason": "The reconciliation is now real, not prose-only. The gate verified that plan_v4.meta.json:254 still recorded \"full_suite_fallback\": true while plan_v4.md:266 recorded false \u2014 v4 edited only the rationale text and falsely claimed the structured boolean was flipped. v5 emits full_suite_fallback: false in the structured test_blast_radius proposal of THIS revision, so the persisted metadata written from this output (plan_v5.meta.json) and the plan document both record false. The 'Reconciled' note in the plan's test_blast_radius section now describes the actual mechanism (structured field emitted in this revision) and the changes_summary states the v4 miss honestly. The consistency success criterion is promoted should\u2192must.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false (emitted in this revision's output \u2192 persisted as plan_v5.meta.json); plan ## test_blast_radius section ('Reconciled in v5 \u2014 actually flipped' note); Success Criteria (criterion promoted to must); changes_summary"
+        },
+        {
+          "id": "CF-86E64A5D37FB0B01FCFC",
+          "resolution": "addressed",
+          "reason": "Same root cause as the other two full_suite_fallback flags, fixed at the source: the authoritative structured boolean is emitted as false in this revision's test_blast_radius proposal, so the persisted metadata will record false and the internal self-contradiction (field true vs rationale claiming false in the same JSON object) cannot recur \u2014 the rationale text now matches the field value. The plan document already recorded false and stays false. The 'Reconciled in v4' note that was factually wrong is replaced by the 'Reconciled in v5 \u2014 actually flipped' note.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false + corrected rationale text; plan ## test_blast_radius section; Success Criteria (must criterion)"
+        },
+        {
+          "id": "CF-DB6308CD5184CC3B9D4F",
+          "resolution": "addressed",
+          "reason": "The 'addressed' disposition is now correct: the persisted boolean is actually flipped this time (emitted false in the structured proposal of this revision, persisted by the harness into plan_v5.meta.json), closing the underlying minor flag CF-B1E8891FA427D3866AAF and its roll-ups. No executor impact either way (strategy:none runs no suite), but the plan's own consistency criterion now passes against the artifacts this revision produces.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false; plan ## test_blast_radius section; Success Criteria (must criterion)"
+        },
+        {
+          "id": "CF-3063677160CFDE533D35",
+          "resolution": "addressed",
+          "reason": "Ticket durability is now wired and the claim is scoped to what is verified. (a) Both ticket files' frontmatter now link epics: [{epic_id: megaplan-maintenance, kind: associated, resolves_on_complete: false, provenance: reconcile-plan-revision-v5-20260819, linked_at: ...}] \u2014 the serialized link shape written by tickets/promotion.py:244, matching existing linked tickets (e.g., 01KYT4ZMFNK...); (b) both ULIDs now appear as [ticket:<ULID>] entries under ## Later in .megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md, making both roadmap-eligible per tickets/inventory.py:218-227 (eligible iff the frontmatter ULID appears in the roadmap); (c) codebase_id: null is the repo-wide convention across all 49 ticket files \u2014 verified, not a defect; (d) Step 5.6 and Assumption 9 now claim verified discoverability + roadmap-eligibility and explicitly state that file persistence across a STATE_BLOCKED terminal milestone additionally depends on the controller committing planning-side files (outside the executor's control) \u2014 the unverified 'guaranteed survival' overclaim is removed.",
+          "where": "Step 5.6 (wiring + scoped durability claim); Assumption 9; Overview 'Tracked-ticket wiring (v5)' bullet; Validation Order 10; .megaplan/tickets/01M0ETZ6W0K3H9XQ7N2D5B8RV4-*.md and 01M0ETZ6W0P7R2K9X4D6B8N3V5-*.md frontmatter (epics link); .megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md ## Later ([ticket:<ULID>] entries)"
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-19T20:31:09Z",
+      "duration_ms": 431512,
+      "cost_usd": 0.218512216,
+      "result": "success",
+      "prompt_tokens": 4387956,
+      "completion_tokens": 125818,
+      "total_tokens": 4513774,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v5.json",
+      "artifact_hash": "sha256:64232725cf62ceb4a41162fe22ee144c3f52adee266332ed9a89ca72a3b431f1",
+      "flags_count": 9
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-19T20:38:49Z",
+      "duration_ms": 447804,
+      "cost_usd": 0.06518402499999999,
+      "result": "tiebreaker_approved",
+      "prompt_tokens": 975849,
+      "completion_tokens": 30949,
+      "total_tokens": 1006798,
+      "session_mode": "persistent",
+      "session_id": "999aba63-bd89-49f3-a920-dda516df89b2",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:6dc05b76c26e5c15106988a1a973fff0e149795e37e7dec9865103505c1a6071",
+      "recommendation": "TIEBREAKER"
+    },
+    {
+      "step": "tiebreaker_run",
+      "timestamp": "2026-08-19T23:00:12Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "bridge",
+      "session_id": null,
+      "agent": "tiebreaker-bridge",
+      "configured_specs": [
+        "tiebreaker-bridge"
+      ],
+      "attempted_specs": [
+        "tiebreaker-bridge"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "tiebreaker_payload.json",
+      "artifact_hash": "sha256:9f91bc7dd90691dc03555490cc88dfe6d74715e72cfe8d576fd7cf7d33802962"
+    },
+    {
+      "step": "tiebreaker_decide",
+      "timestamp": "2026-08-19T23:03:10Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "bridge",
+      "session_id": null,
+      "agent": "tiebreaker-bridge",
+      "configured_specs": [
+        "tiebreaker-bridge"
+      ],
+      "attempted_specs": [
+        "tiebreaker-bridge"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "tiebreaker_decisions.json",
+      "artifact_hash": "sha256:35c07a2ca5f98ff37f6b2521b7862aa8386e820a34489d33bde2c5db86b597e2"
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-19T23:34:52Z",
+      "duration_ms": 201804,
+      "cost_usd": 0.033713138,
+      "result": "blocked",
+      "prompt_tokens": 183964,
+      "completion_tokens": 9093,
+      "total_tokens": 193057,
+      "session_mode": "persistent",
+      "session_id": "19cde228-278e-4118-b3ee-e90b40b56643",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-terra:medium"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:4c516c8c1ced2c654335e9dbc32f78aafa0b67c59649961685d4de47926d5ba9",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-19T23:57:19Z",
+      "duration_ms": 1033687,
+      "cost_usd": 0.09266717999999999,
+      "result": "success",
+      "prompt_tokens": 1773532,
+      "completion_tokens": 63220,
+      "total_tokens": 1836752,
+      "session_mode": "persistent",
+      "session_id": "c2ee5a34-c4a5-41b8-8669-52cca983ccbb",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-luna:medium"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v6.md",
+      "artifact_hash": "sha256:3a9c1f276ab27692677020b5416ca8dfdd45a752bf4b10c1b8d0aeb7268e7d8e",
+      "flags_addressed": [
+        {
+          "id": "CF-BC1CE343502160A24540",
+          "resolution": "addressed",
+          "reason": "The reconciliation is now real because the root cause was harness-owned and is fixed. The gate verified the persisted boolean was forced true by the deterministic floor (orchestration/test_selection.py:485 hardcoded True) and the OR-merge at :668, so no plan-side 'flipped' claim could ever stick. The tiebreaker FG-001 chose option (a) and shipped the harness fix 172818525: test_selection.py:485 now computes `strategy != 'none'`, so a strategy:none floor emits false. This revision emits full_suite_fallback: false in the structured test_blast_radius proposal and the plan's test_blast_radius rationale + must criterion #14 state the mechanism honestly instead of re-asserting a premature 'flipped' claim.",
+          "where": "test_blast_radius.full_suite_fallback: false (structured proposal); plan ## test_blast_radius section ('Reconciled in v6 \u2014 root cause was harness-owned' note); Success Criteria criterion #14 (must); changes_summary"
+        },
+        {
+          "id": "CF-86E64A5D37FB0B01FCFC",
+          "resolution": "addressed",
+          "reason": "Same root cause as the other full_suite_fallback flags, fixed at the source by the shipped harness fix 172818525. The internal self-contradiction (field true vs rationale claiming false in the same JSON object) can no longer recur because the floor now emits false for strategy:none and this revision emits false in the candidate proposal; the merge `false or false == false` persists correctly. The plan's rationale text now matches the field value, replacing the factually-wrong 'Reconciled in v4' note with the 'Reconciled in v6 \u2014 root cause was harness-owned' note.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false + corrected rationale; plan ## test_blast_radius section; Success Criteria criterion #14 (must)"
+        },
+        {
+          "id": "CF-DB6308CD5184CC3B9D4F",
+          "resolution": "addressed",
+          "reason": "The 'addressed' disposition is now correct because the persisted boolean is physically reachable as false: the harness floor for strategy:none emits false (test_selection.py:485, shipped 172818525) and this revision emits false in the candidate proposal, so the OR-merge at :668 yields false. The plan no longer claims it 'flipped' a boolean the harness was forcing true; it states the harness fix shipped and the plan emits false. No executor impact either way (strategy:none runs no suite), but the plan's own must criterion #14 now passes against the artifacts this revision produces.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false; plan ## test_blast_radius section; Success Criteria criterion #14 (must)"
+        },
+        {
+          "id": "CF-50DA0FA594A5EB5189FE",
+          "resolution": "addressed",
+          "reason": "The three-way contradiction (meta field true vs doc false vs rationale claiming false) is resolved by the shipped harness fix, not by another prose edit. The v5 'actually closed by emitting the structured boolean false' claim failed because the harness forced true; v6 states the actual mechanism (tiebreaker FG-001 shipped 172818525, test_selection.py:485 now `strategy != 'none'`) and emits false in the structured proposal, so the persisted plan_v6.meta.json records false and the rationale text matches the field.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false; plan ## test_blast_radius section; Success Criteria criterion #14 (must); changes_summary"
+        },
+        {
+          "id": "CF-B3F30FE384C85EEDDE87",
+          "resolution": "addressed",
+          "reason": "No longer 'addressed unverified': the harness fix is verified on disk (orchestration/test_selection.py:485 now reads `\"full_suite_fallback\": strategy != \"none\"`, and the merge at :668 is `fallback_value(floor) or fallback_value(candidate)`). With a strategy:none floor emitting false and this revision emitting false, the persisted metadata records false and the plan document records false \u2014 the contradiction cannot recur. The plan's test_blast_radius rationale and must criterion #14 state this mechanism instead of claiming the boolean was manually flipped.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false; plan ## test_blast_radius section; Success Criteria criterion #14 (must)"
+        },
+        {
+          "id": "CF-8C45B02E4F4E3BD6585B",
+          "resolution": "addressed",
+          "reason": "The underlying minor flag (CF-B1E8891FA427D3866AAF and its roll-ups) is closed by the shipped harness fix 172818525 (verified at test_selection.py:485 and :668) combined with this revision emitting false in the structured proposal. The plan's must success criterion #14 now passes against the on-disk and to-be-persisted artifacts (doc=false and meta=false). The 'addressed' disposition is now factually correct because the structured field is physically false, not merely claimed false in prose.",
+          "where": "Structured test_blast_radius.full_suite_fallback: false; plan ## test_blast_radius section; Success Criteria criterion #14 (must)"
+        },
+        {
+          "id": "CF-262877137BA6230E2B65",
+          "resolution": "addressed",
+          "reason": "The roadmap-eligibility reader/writer mismatch is fixed by the tiebreaker FG-001 decision (option (a), shipped 172818525): tickets/inventory.py::_extract_strategy_ticket_refs now resolves the strategy via layout.strategy_file_path(repo_root) (line 161) instead of the legacy `.megaplan/STRATEGY.md` hardcode. Verified on disk: only the initiatives STRATEGY.md exists (no legacy .megaplan/STRATEGY.md), so strategy_file_path returns the initiatives path; both [ticket:<ULID>] entries are present at STRATEGY.md lines 115-116; both ticket files carry the epics: frontmatter link. The reader now reads the same file the writer wrote, so both tickets are actually computed roadmap_eligible == True. The plan (Overview 'Tracked-ticket wiring (v6)', Step 5.6, Assumption 9, must criterion #16) states the claim as real-with-reader-fix rather than asserting it, and keeps the controller-commit caveat for file persistence.",
+          "where": "Overview 'Tracked-ticket wiring (v6)' bullet; Step 5.6 'Wiring (verified in v6)' block; Assumption 9; Success Criteria criterion #16 (must); Validation Order 10"
+        },
+        {
+          "id": "CF-E5CD5CA17387C19617A7",
+          "resolution": "addressed",
+          "reason": "Step 4.2's normal-mode empty gate is widened from 'every candidate is already_on_target or promotion-covered' to 'every candidate excluded under any Step 3.2b/3.4 reason' (already_on_target, promotion_evidence, non_engine_path, not_reachable_from_source, unresolved), so the 'if and only if' now covers all five exclusion reasons. A symmetric stale-source-ref warning is added for the normal-mode empty case driven by not_reachable_from_source ('possible stale/divergent source HEAD \u2014 typed UNKNOWN/INCOHERENT'), matching the equal-mode coincident_ref note, and the Step 4.3 operator-resolution path is updated to reference it. A new should success criterion (#15) locks this in.",
+          "where": "Step 4.2 'Normal modes (unexpected empty)' bullet (widened gate + stale-source-ref warning); Step 4.3 (operator path mentions the symmetric warning); Validation Order 7; Success Criteria criterion #15 (should)"
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-20T00:02:40Z",
+      "duration_ms": 318655,
+      "cost_usd": 0.177448622,
+      "result": "success",
+      "prompt_tokens": 3512858,
+      "completion_tokens": 106744,
+      "total_tokens": 3619602,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v6.json",
+      "artifact_hash": "sha256:3275496c98818b54d22013bddbf2c9f9f88c539d4fe5cb915b5318825f462e98",
+      "flags_count": 6
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-20T00:05:17Z",
+      "duration_ms": 151124,
+      "cost_usd": 0.037599312,
+      "result": "blocked",
+      "prompt_tokens": 331196,
+      "completion_tokens": 10138,
+      "total_tokens": 341334,
+      "session_mode": "persistent",
+      "session_id": "803ecbf4-3994-4af2-ae8f-a327f1738032",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-terra:medium"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:1651cc60d755f481368e21df56d755b2e5744f451c4569d8402fe315e57ed6ed",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-20T00:18:46Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "revise_v7_raw.txt",
+      "message": "Codex quota exceeded. Do not retry immediately. Restore Codex credits/capacity or wait until the provider-stated reset, then re-run the same step on Codex exactly once."
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-20T00:30:17Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "revise_v7_raw.txt",
+      "message": "Codex quota exceeded. Do not retry immediately. Restore Codex credits/capacity or wait until the provider-stated reset, then re-run the same step on Codex exactly once."
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-20T00:39:02Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "revise_v7_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /assumptions: missing required property 'assumptions'; missing_required at /changes_summary: missing required property 'changes_summary'; missing_required at /flags_addressed: missing required property 'flags_addressed'; missing_required at /north_star_actions_addressed: missing required property 'north_star_actions_addressed'; missing_required at /plan: missing required property 'plan'; missing_required at /questions: missing required property 'questions'; missing_required at /success_criteria: missing required property 'success_criteria'"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-20T00:44:05Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "revise_v7_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /assumptions: missing required property 'assumptions'; missing_required at /changes_summary: missing required property 'changes_summary'; missing_required at /flags_addressed: missing required property 'flags_addressed'; missing_required at /north_star_actions_addressed: missing required property 'north_star_actions_addressed'; missing_required at /plan: missing required property 'plan'; missing_required at /questions: missing required property 'questions'; missing_required at /success_criteria: missing required property 'success_criteria'"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-20T00:52:13Z",
+      "duration_ms": 482892,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "efd5e512-82c4-43b1-b671-1209bd9c69ce",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-flash",
+        "codex:gpt-5.6-luna:medium"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v7.md",
+      "artifact_hash": "sha256:4f5ec9924210477dc2eb714cf0ec4e23bd678a1c1c8d5d8069a3e142c4da223c",
+      "flags_addressed": [
+        {
+          "id": "CF-8601643E1B36AAEFF380",
+          "resolution": "addressed",
+          "reason": "The plan no longer hardcodes 'exactly 108 candidates' anywhere. The count-agnostic contract (settled decision SD1) makes N = len(candidate_commits) the operative number, derived at execute time; the snapshot count 110 is recorded in Overview, Step 1.2, Step 3, Step 4.1 (candidate_count: observed N), Success Criteria, and Assumption 4 as indicative-only, with Step 1.2 stopping-and-reporting only on malformed input (missing fields, unresolvable SHA, empty array) \u2014 never on a count mismatch with prose. The Overview's false 're-verified this revision: 108 sha entries' claim is replaced with the re-verified 110 count.",
+          "where": "Overview 'Count-agnostic contract (v7)' bullet; Step 1.2; Step 3 header; Step 4.1 candidate_count; Success Criteria #2/#7; Assumption 4"
+        },
+        {
+          "id": "CF-15E280F8450FA031536D",
+          "resolution": "addressed",
+          "reason": "Both staleness signals are corrected: the plan now states the snapshot candidate count is 110 (not 108) and the first_parent_log head is baed98c3 (not 9da6501f, which is the 5th log entry). Step 1.3's read-only git re-resolution is explicitly declared to supersede all prose refs, so the stale head is self-healing by design and the prose no longer asserts a wrong head. Step 1.2's gate is rewritten from 'confirm exactly 108 else stop' to a well-formedness check that never spurious-halts on a valid 110-candidate input.",
+          "where": "Overview (input staging bullet + count-agnostic bullet); Step 1.2; Step 1.3; Divergence-mode contract (v7) bullet"
+        },
+        {
+          "id": "CF-4DA39069CED0DA87A0D9",
+          "resolution": "addressed",
+          "reason": "The functional consequence is eliminated: Step 1.2 no longer treats a count differing from prose as 'incoherent input'. The precondition is now 'N = len(candidate_commits), every entry well-formed and resolvable'; the per_phase count check is len(per_phase) == N, and candidate_count records the observed N (110 at snapshot). The classification scope (Step 3) and success criteria are keyed to N, so a correct 110-entry classification is fully covered.",
+          "where": "Step 1.2; Step 3.5; Step 4.1; Success Criteria #2/#7; Validation Order 1/4"
+        },
+        {
+          "id": "CF-A35D73C9207F8C05D314",
+          "resolution": "addressed",
+          "reason": "The Overview's stale head assertion is corrected: the input is described as first_parent_log with snapshot head baed98c3 (9da6501f is the 5th entry), marked indicative-only, with Step 1.3 performing the live re-resolution the plan already specified. The new 're-verified this revision' claims now match the on-disk file (110 sha/subject/paths; head baed98c3).",
+          "where": "Overview (input staging bullet); Step 1.1/1.3; Question 3"
+        },
+        {
+          "id": "CF-E7CC38FED6602ED7191C",
+          "resolution": "addressed",
+          "reason": "The broader symptom \u2014 plan prose drifting from the regenerated authoritative input \u2014 is fixed at the root: the plan derives the count from candidate_commits length at execute time and never pins a number (14 \u2192 108 \u2192 110 drift is documented in the count-agnostic contract), and the stale head is explicitly superseded by Step 1.3's re-resolution. Step 1.2's guard is now a well-formedness check, not a hardcoded-count comparison.",
+          "where": "Overview 'Count-agnostic contract (v7)' bullet; Step 1.2; Step 3; Success Criteria #7"
+        },
+        {
+          "id": "CF-D8B4AB26F0A047FF347C",
+          "resolution": "addressed",
+          "reason": "Verified on disk and folded in: handlers/plan.py:65-72 (_criteria_require_tests: True iff any criterion's requires contains 'run_tests') and the second escalation gate in _derive_plan_test_blast_radius (plan.py:123-138: force-overrides a strategy:none floor to strategy 'full'/full_suite_fallback True when tests are required). Must criterion #14 and the test_blast_radius rationale now state BOTH preconditions for persisted false: (a) floor strategy none (test_selection.py:485, strategy != 'none', FG-001/172818525) AND (b) _criteria_require_tests returns False (this plan's criteria use only read_files/run_shell), so the escalation does not fire. A new Assumption 10 records the latent-fragility caveat (a future run_tests criterion would flip the value back to true).",
+          "where": "Success Criteria #14 (must); ## test_blast_radius rationale; Assumption 10"
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-20T00:57:49Z",
+      "duration_ms": 332392,
+      "cost_usd": 0.235706693,
+      "result": "success",
+      "prompt_tokens": 5281587,
+      "completion_tokens": 104826,
+      "total_tokens": 5386413,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v7.json",
+      "artifact_hash": "sha256:92c2b416997f3635b0bd2c45b7e9933d449fd9bb3f0251f4f32ca6a61b662a5f",
+      "flags_count": 0
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-20T00:59:24Z",
+      "duration_ms": 87236,
+      "cost_usd": 0.029628314000000003,
+      "result": "success",
+      "prompt_tokens": 288772,
+      "completion_tokens": 4925,
+      "total_tokens": 293697,
+      "session_mode": "persistent",
+      "session_id": "204f575e-fc9b-402b-a5ae-f21d80557d0a",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-terra:medium"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:5f92465793ac15d7a952efc994e168095ef9f5d40bc87a4d0c29907e19d76ef0",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-08-20T01:07:27Z",
+      "duration_ms": 479006,
+      "cost_usd": 0.06549696399999999,
+      "result": "plan_contract_revise_needed",
+      "prompt_tokens": 336406,
+      "completion_tokens": 37251,
+      "total_tokens": 373657,
+      "session_mode": "persistent",
+      "session_id": "5d7bdc68-f967-4f52-9f54-93bf274ca637",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-sol:high"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "finalize_revise_feedback.json",
+      "artifact_hash": "sha256:c3a9f041a0c10e2316ed22b7d48bbfee065f8eeca8569c03dea2a9f80c284b26"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-08-20T01:07:28Z",
+      "duration_ms": 479006,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "finalize_v7_raw.txt",
+      "message": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'none'; no baseline tests apply; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations."
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-20T01:15:01Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "revise_v8_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /assumptions: missing required property 'assumptions'; missing_required at /changes_summary: missing required property 'changes_summary'; missing_required at /flags_addressed: missing required property 'flags_addressed'; missing_required at /north_star_actions_addressed: missing required property 'north_star_actions_addressed'; missing_required at /plan: missing required property 'plan'; missing_required at /questions: missing required property 'questions'; missing_required at /success_criteria: missing required property 'success_criteria'"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-08-20T01:23:00Z",
+      "duration_ms": 473351,
+      "cost_usd": 0.024184524,
+      "result": "success",
+      "prompt_tokens": 1820667,
+      "completion_tokens": 31227,
+      "total_tokens": 1851894,
+      "session_mode": "persistent",
+      "session_id": "3fe76e8f-25ac-4df3-adf7-e0cc2bfd6f3a",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-flash",
+        "codex:gpt-5.6-luna:medium"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-flash"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v8.md",
+      "artifact_hash": "sha256:2ca7d72769525f9cdeca2cc8d64d110bf94039f9f5e89fd526d8252db4e95c59",
+      "flags_addressed": [
+        {
+          "id": "finalize-baseline-test-scope",
+          "resolution": "addressed",
+          "reason": "The plan now carries a machine-readable scoped baseline test contract that finalize can resolve: test_blast_radius strategy 'scoped' with five concrete path selectors, each verified present in the repo this revision (tests/arnold_pipelines/megaplan/chain/test_reconcile_milestone.py, test_reconcile_pr.py, test_reconcile_terminal_finalizer.py, tests/arnold_pipelines/megaplan/test_reconcile_execute_wiring.py, test_template_registry.py), so resolve_baseline_test_selection (orchestration/test_selection.py:831-1039) returns mode 'scoped' with a pytest command and finalize_baseline_test_scope passes (was: strategy 'none', no selectors, no mappable planned files -> missing_scoped_baseline_test_contract). full_suite_fallback is explicitly true (candidate opt-in; OR-merge at test_selection.py:668 true-or-false == true; scoped-preservation at test_selection.py:599-605 keeps strategy scoped under a full floor; no run_tests criterion so the plan.py:123-138 escalation does not fire). The executor contract is unchanged: the executor remains read-only, runs no tests, and emits only the selection JSON; the baseline is harness-owned at finalize and the human-reviewed PR (merge_policy: review) remains the quality backstop.",
+          "where": "Overview 'Scoped baseline test contract (v8)' bullet; ## test_blast_radius; Success Criteria #16/#17; Assumption 10/11; Execution Order item 6; Validation Order item 11; Question 5"
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-08-20T01:28:51Z",
+      "duration_ms": 347285,
+      "cost_usd": 0.204278059,
+      "result": "success",
+      "prompt_tokens": 4279025,
+      "completion_tokens": 95188,
+      "total_tokens": 4374213,
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v8.json",
+      "artifact_hash": "sha256:0069a86478eb41b1dbefd085d96d52badebc9120002a08f6756b2b1910b9bafc",
+      "flags_count": 0
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-08-20T01:31:23Z",
+      "duration_ms": 145708,
+      "cost_usd": 0.037381058,
+      "result": "success",
+      "prompt_tokens": 641718,
+      "completion_tokens": 8152,
+      "total_tokens": 649870,
+      "session_mode": "persistent",
+      "session_id": "961e51bc-ef50-4b80-b3dc-c88da14fe375",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-terra:medium"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:dc1d1393aae6edbcac945b20cba959462c1588aef2ee090a153f8e3fd61a82df",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-08-20T01:42:32Z",
+      "duration_ms": 601116,
+      "cost_usd": 0.073868452,
+      "result": "success",
+      "prompt_tokens": 526106,
+      "completion_tokens": 48937,
+      "total_tokens": 575043,
+      "session_mode": "persistent",
+      "session_id": "b3d15f4a-d3ef-4164-aa5a-73b170d0755d",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro",
+        "codex:gpt-5.6-sol:high"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 2,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:f8c22f9e798745ee2228febf3bc4e0a94948131eb53ab43ccaefb86cda1fe7df"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T04:32:31Z",
+      "duration_ms": 308674,
+      "cost_usd": 0.024096648800000002,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "7951cd21-d819-4b60-9331-2a8d86425b19",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:435a1d8ecd9de89b45455b09822e5fea3ecc153dffed8ff3eacd3b5212d1de8a",
+      "finalize_hash": "sha256:b6ffc292264361c8eee724647869b9a72d6803093630635f85455210bbc06f7f",
+      "approval_mode": "user_approved"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T04:48:31Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v8_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /criteria: missing required property 'criteria'; missing_required at /issues: missing required property 'issues'; missing_required at /review_verdict: missing required property 'review_verdict'; missing_required at /rework_items: missing required property 'rework_items'; missing_required at /sense_check_verdicts: missing required property 'sense_check_verdicts'; missing_required at /summary: missing required property 'summary'; missing_required at /task_verdicts: missing required property 'task_verdicts'"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T04:49:01Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v8_raw.txt",
+      "message": "Hermes worker returned invalid JSON for step 'review': could not extract JSON from response (0 chars)"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T04:49:32Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v8_raw.txt",
+      "message": "Hermes worker returned invalid JSON for step 'review': could not extract JSON from response (0 chars)"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T04:50:03Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v8_raw.txt",
+      "message": "Hermes worker returned invalid JSON for step 'review': could not extract JSON from response (0 chars)"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T09:49:16Z",
+      "duration_ms": 137417,
+      "cost_usd": 0.0,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "01a01e91-1099-7e71-bf39-dc7ca37c591b",
+      "agent": "codex",
+      "cost_pricing": "unavailable",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "review.json",
+      "artifact_hash": "sha256:2894a98002769b33fdf731f1c9a8bb463131261cd83c38077dfc98803d79b04e",
+      "finalize_hash": "sha256:b6ffc292264361c8eee724647869b9a72d6803093630635f85455210bbc06f7f"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T09:56:47Z",
+      "duration_ms": 278175,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "01a01e95-bfb1-7362-90b3-ca93c1fe9849",
+      "agent": "codex",
+      "configured_specs": [
+        "codex"
+      ],
+      "attempted_specs": [
+        "codex"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:9c3be03c74545a004a40b1adc6c93d7e8a8ee954e5c9d262c20b46c138225192",
+      "finalize_hash": "sha256:b6ffc292264361c8eee724647869b9a72d6803093630635f85455210bbc06f7f",
+      "approval_mode": "user_approved",
+      "batch_to_tier": [
+        {
+          "batch_number": 1,
+          "batch_index": 1,
+          "batch_complexity": 5,
+          "tier_model_spec": "codex:gpt-5.6-luna:xhigh",
+          "resolved_agent": "codex",
+          "resolved_mode": "persistent",
+          "resolved_model": "gpt-5.6-luna",
+          "actual_agent": "codex",
+          "actual_model": "gpt-5.6-luna",
+          "routing_source": "toml",
+          "projected_tier": 5,
+          "counterfactual_tag": null,
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T10:03:12Z",
+      "duration_ms": 106281,
+      "cost_usd": 0.0,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "01a01e9e-4a89-7ab1-8064-e61f4dd66088",
+      "agent": "codex",
+      "cost_pricing": "unavailable",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "review.json",
+      "artifact_hash": "sha256:d85d00343341dfb684e50579d084b3145e4c1183ce38a30a57f9534cd05c922f",
+      "finalize_hash": "sha256:b6ffc292264361c8eee724647869b9a72d6803093630635f85455210bbc06f7f"
+    },
+    {
+      "step": "escalation",
+      "timestamp": "2026-08-20T10:03:23.021725+00:00",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "review_non_convergence",
+      "category": "review_non_convergence",
+      "scope": "review_non_convergence",
+      "from_tier": 5,
+      "to_tier": 6,
+      "to_model": "codex:gpt-5.6-luna:max",
+      "failing_task_ids": [
+        "T1"
+      ]
+    },
+    {
+      "step": "escalation",
+      "timestamp": "2026-08-20T10:03:23.782902+00:00",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "review_non_convergence",
+      "category": "review_non_convergence",
+      "scope": "review_non_convergence",
+      "from_tier": 5,
+      "to_tier": 6,
+      "to_model": "codex:gpt-5.6-luna:max",
+      "failing_task_ids": [
+        "T2"
+      ]
+    },
+    {
+      "step": "escalation",
+      "timestamp": "2026-08-20T10:03:24.700320+00:00",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "review_non_convergence",
+      "category": "review_non_convergence",
+      "scope": "review_non_convergence",
+      "from_tier": 5,
+      "to_tier": 6,
+      "to_model": "codex:gpt-5.6-luna:max",
+      "failing_task_ids": [
+        "T3"
+      ]
+    },
+    {
+      "step": "escalation",
+      "timestamp": "2026-08-20T10:03:25.532970+00:00",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "review_non_convergence",
+      "category": "review_non_convergence",
+      "scope": "review_non_convergence",
+      "from_tier": 5,
+      "to_tier": 6,
+      "to_model": "codex:gpt-5.6-luna:max",
+      "failing_task_ids": [
+        "T4"
+      ]
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T10:07:14Z",
+      "duration_ms": 218601,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "01a01ea0-3cdc-7df2-8b0b-398770e4a916",
+      "agent": "codex",
+      "configured_specs": [
+        "codex"
+      ],
+      "attempted_specs": [
+        "codex"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:5cfee7c80736118088bd861664332de592f3385e5ef77177f341f126e4b09d9f",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877",
+      "approval_mode": "user_approved",
+      "batch_to_tier": [
+        {
+          "batch_number": 1,
+          "batch_index": 1,
+          "batch_complexity": 6,
+          "tier_model_spec": "codex:gpt-5.6-luna:max",
+          "resolved_agent": "codex",
+          "resolved_mode": "persistent",
+          "resolved_model": "gpt-5.6-luna",
+          "actual_agent": "codex",
+          "actual_model": "gpt-5.6-luna",
+          "routing_source": "toml",
+          "projected_tier": 6,
+          "counterfactual_tag": null,
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T10:12:26Z",
+      "duration_ms": 56204,
+      "cost_usd": 0.0,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "01a01ea7-8178-7e30-ab29-fc34c21474d0",
+      "agent": "codex",
+      "cost_pricing": "unavailable",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "review.json",
+      "artifact_hash": "sha256:dbd2e59025b3146847434efae83dff16320542c04a58ccba8ab076a73554c22e",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T10:17:22Z",
+      "duration_ms": 274937,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "01a01ea8-a452-7481-8be5-cca1c1fe830d",
+      "agent": "codex",
+      "configured_specs": [
+        "codex"
+      ],
+      "attempted_specs": [
+        "codex"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:30ef301d043f95d15c35ff137096a8c0a05e20fbf63159f266f97975ed46fa2b",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877",
+      "approval_mode": "user_approved",
+      "batch_to_tier": [
+        {
+          "batch_number": 1,
+          "batch_index": 1,
+          "batch_complexity": 6,
+          "tier_model_spec": "codex:gpt-5.6-luna:max",
+          "resolved_agent": "codex",
+          "resolved_mode": "persistent",
+          "resolved_model": "gpt-5.6-luna",
+          "actual_agent": "codex",
+          "actual_model": "gpt-5.6-luna",
+          "routing_source": "toml",
+          "projected_tier": 6,
+          "counterfactual_tag": null,
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T10:25:07Z",
+      "duration_ms": 60206,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "01a01eb3-0e8a-7123-9049-513cc1ed24cb",
+      "agent": "codex",
+      "cost_pricing": "unavailable",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "review.json",
+      "artifact_hash": "sha256:9523c1ec17600962e2b450611da208089e477760830b3e8e28bb6ce2685cbaa1",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T11:24:11Z",
+      "duration_ms": 631161,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "01a01ee0-5e95-7b00-ba66-46d06a4947ee",
+      "agent": "codex",
+      "configured_specs": [
+        "codex"
+      ],
+      "attempted_specs": [
+        "codex"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:62d25377f5eb3829dc4ff293bc3dc21e26c7fb8e730f002d5a2a87c14f4ccad0",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877",
+      "approval_mode": "user_approved",
+      "batch_to_tier": [
+        {
+          "batch_number": 1,
+          "batch_index": 1,
+          "batch_complexity": 6,
+          "tier_model_spec": "codex:gpt-5.6-luna:max",
+          "resolved_agent": "codex",
+          "resolved_mode": "persistent",
+          "resolved_model": "gpt-5.6-luna",
+          "actual_agent": "codex",
+          "actual_model": "gpt-5.6-luna",
+          "routing_source": "toml",
+          "projected_tier": 6,
+          "counterfactual_tag": null,
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T11:31:43Z",
+      "duration_ms": 97447,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "01a01eef-76b4-7ea0-8ff9-d84d08cfb6a6",
+      "agent": "codex",
+      "cost_pricing": "unavailable",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "review.json",
+      "artifact_hash": "sha256:19b11bb3833e4ee212363c884e18e21c1d4da5939245638782824bbcf576231f",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T11:43:50Z",
+      "duration_ms": 105839,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "01a01efa-6d85-7b42-8cc9-68867e212bb7",
+      "agent": "codex",
+      "cost_pricing": "unavailable",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "review.json",
+      "artifact_hash": "sha256:a80db0c54c72a4eee10a87108db5e64cbe89f40a36dde658920b53ff9c68919e",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T11:53:57Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "execute_v8_raw.txt",
+      "message": "runtime provenance or direct_url identity drifted"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T11:56:08Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "execute_v8_raw.txt",
+      "message": "Worker launch preflight mismatch: source_ref: expected=e384b70cb6f3085d7e1750327d33d6786d2d9925 actual=bfddb0c671874d3368f6476dee9d836c47650ada; runtime_revision: expected=e384b70cb6f3085d7e1750327d33d6786d2d9925 actual=bfddb0c671874d3368f6476dee9d836c47650ada"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-08-20T12:05:05Z",
+      "duration_ms": 449206,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "01a01f08-97a2-7273-912b-c756fe6457a6",
+      "agent": "codex",
+      "configured_specs": [
+        "codex"
+      ],
+      "attempted_specs": [
+        "codex"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:738aa074ef8b3fff60377518b933462d92a663b88704fd0b9d7ae802dd076ce2",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877",
+      "approval_mode": "user_approved",
+      "batch_to_tier": [
+        {
+          "batch_number": 1,
+          "batch_index": 1,
+          "batch_complexity": 6,
+          "tier_model_spec": "codex:gpt-5.6-luna:max",
+          "resolved_agent": "codex",
+          "resolved_mode": "persistent",
+          "resolved_model": "gpt-5.6-luna",
+          "actual_agent": "codex",
+          "actual_model": "gpt-5.6-luna",
+          "routing_source": "toml",
+          "projected_tier": 6,
+          "counterfactual_tag": null,
+          "low_confidence": false
+        }
+      ]
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-08-20T12:12:28Z",
+      "duration_ms": 100468,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "01a01f14-b914-7a90-9fe2-c5c121a3b62a",
+      "agent": "codex",
+      "cost_pricing": "unavailable",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:medium"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "review.json",
+      "artifact_hash": "sha256:be2c433da39ef9533a40f65387498b0ea99a6638be67cde9f1fd312b368d23b7",
+      "finalize_hash": "sha256:644f2790abdf20d5c25314d8d79ffcbe191839475bc57695cf4490d7a5d7c877"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      15,
+      5,
+      6,
+      4,
+      8,
+      6,
+      0,
+      0
+    ],
+    "weighted_scores": [
+      26.0,
+      8.5,
+      9.0,
+      4.0,
+      7.5,
+      8.5,
+      0,
+      0
+    ],
+    "plan_deltas": [
+      65.23,
+      34.47,
+      14.3,
+      5.43,
+      6.55,
+      12.38,
+      10.94
+    ],
+    "recurring_critiques": [],
+    "adjacent_text_matches": [
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      []
+    ],
+    "semantic_recurrence": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "total_cost_usd": 3.355949,
+    "overrides": [
+      {
+        "action": "set-profile",
+        "timestamp": "2026-08-19T21:40:33Z",
+        "from": null,
+        "to": "partnered-codex",
+        "reason": "operator directive: all active and future milestones must run partnered-codex",
+        "profile": "partnered-codex",
+        "same_profile_refresh": false,
+        "profile_source": "built-in",
+        "profile_content_sha256": "f990620de933892b0b9398726628f40bf2887244088b4ce771e5424149551b51",
+        "profile_source_candidates": [
+          {
+            "source": "built-in",
+            "phase_map_sha256": "6fb2a7bfe14292ad65345f2195019cf15d1910dd6a26bf52d62a5925c44fab77"
+          }
+        ],
+        "from_routing_sha256": "8104893b78663299a3ee4fe647cb66a2485e2162c915b75d2bb7f9996bffbdc4",
+        "to_routing_sha256": "50816bfb1d1697b2cb234a440fcc492fc2626d3085d60b3a769ff8f27afa92bd"
+      },
+      {
+        "action": "set-profile",
+        "timestamp": "2026-08-19T21:47:01Z",
+        "from": null,
+        "to": "partnered-codex",
+        "reason": "operator directive reapplied after pre-switch tiebreaker writer completed",
+        "profile": "partnered-codex",
+        "same_profile_refresh": false,
+        "profile_source": "built-in",
+        "profile_content_sha256": "f990620de933892b0b9398726628f40bf2887244088b4ce771e5424149551b51",
+        "profile_source_candidates": [
+          {
+            "source": "built-in",
+            "phase_map_sha256": "6fb2a7bfe14292ad65345f2195019cf15d1910dd6a26bf52d62a5925c44fab77"
+          }
+        ],
+        "from_routing_sha256": "8104893b78663299a3ee4fe647cb66a2485e2162c915b75d2bb7f9996bffbdc4",
+        "to_routing_sha256": "50816bfb1d1697b2cb234a440fcc492fc2626d3085d60b3a769ff8f27afa92bd"
+      },
+      {
+        "action": "add-note",
+        "timestamp": "2026-08-19T22:12:03Z",
+        "note": "Operator",
+        "source": "user"
+      }
+    ],
+    "notes": [
+      {
+        "timestamp": "2026-08-19T22:12:03Z",
+        "note": "Operator",
+        "source": "user"
+      }
+    ],
+    "admission_controls": {
+      "init": {
+        "schema": "arnold.megaplan.admission_evidence.v1",
+        "writer_id": "megaplan.admission.init",
+        "surface_name": "megaplan.admission.init",
+        "selector": "reconcile-outcome-select-and-20260819-1828",
+        "source_record": {
+          "schema": "arnold.megaplan.canonical_source_binding.v1",
+          "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          "project_relative_path": ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          "exists": true,
+          "semantic_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+          "file_sha256": "ca2ff6e4176759081e6374b0b9cac48b1f2ae05492303d42453db9cff9e9cb85",
+          "git_revision": "232299b3671dbcc0f4ceb869ca379c60d5370415",
+          "git_blob": "efbacbb14f178c4cc526ecf510b00980fc736d8b",
+          "git_path": ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          "errors": []
+        },
+        "fences": [
+          {
+            "identity": "plan_dir_absent",
+            "expected": false,
+            "observed": false,
+            "satisfied": true,
+            "detail": "init admission must materialize a new plan directory"
+          }
+        ],
+        "extra": {
+          "project_dir": "/workspace/megaplan-maintenance/Arnold"
+        }
+      },
+      "source_binding.capture": {
+        "schema": "arnold.megaplan.admission_evidence.v1",
+        "writer_id": "megaplan.admission.source_binding",
+        "surface_name": "megaplan.admission.source_binding",
+        "selector": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+        "source_record": {
+          "schema": "arnold.megaplan.canonical_source_binding.v1",
+          "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          "project_relative_path": ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          "exists": true,
+          "semantic_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+          "file_sha256": "ca2ff6e4176759081e6374b0b9cac48b1f2ae05492303d42453db9cff9e9cb85",
+          "git_revision": "232299b3671dbcc0f4ceb869ca379c60d5370415",
+          "git_blob": "efbacbb14f178c4cc526ecf510b00980fc736d8b",
+          "git_path": ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          "errors": []
+        },
+        "fences": [
+          {
+            "identity": "canonical_source_available",
+            "expected": true,
+            "observed": true,
+            "satisfied": true,
+            "detail": "source binding requires an exact readable source record"
+          }
+        ],
+        "extra": {
+          "project_dir": "/workspace/megaplan-maintenance/Arnold"
+        }
+      }
+    },
+    "canonical_source_binding": {
+      "schema": "arnold.megaplan.canonical_source_binding.v1",
+      "bound_at": "2026-08-19T18:28:59Z",
+      "bound": {
+        "schema": "arnold.megaplan.canonical_source_binding.v1",
+        "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+        "project_relative_path": ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+        "exists": true,
+        "semantic_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "file_sha256": "ca2ff6e4176759081e6374b0b9cac48b1f2ae05492303d42453db9cff9e9cb85",
+        "git_revision": "232299b3671dbcc0f4ceb869ca379c60d5370415",
+        "git_blob": "efbacbb14f178c4cc526ecf510b00980fc736d8b",
+        "git_path": ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+        "errors": []
+      }
+    },
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "init",
+      "last_observed_phase": "review",
+      "project_root": "/workspace/megaplan-maintenance/Arnold",
+      "target_root": "/workspace/megaplan-maintenance/Arnold",
+      "work_dir": "/workspace/megaplan-maintenance/Arnold",
+      "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+      "target_head": "bfddb0c671874d3368f6476dee9d836c47650ada",
+      "target_base": "bfddb0c671874d3368f6476dee9d836c47650ada",
+      "target_base_ref": "origin/main",
+      "target_fallback_reason": null
+    },
+    "chain_policy": {
+      "prerequisite_policy": "none",
+      "validation_policy": "none",
+      "review_policy": {
+        "clean_milestone_pr": "auto"
+      },
+      "driver_auto_approve": false,
+      "source": "chain_yaml",
+      "milestone_label": "reconcile",
+      "milestone_base_sha": "232299b3671dbcc0f4ceb869ca379c60d5370415"
+    },
+    "anchors": {
+      "schema_version": 1,
+      "by_type": {
+        "north_star": {
+          "anchor_type": "north_star",
+          "documents": [
+            {
+              "scope": "epic",
+              "source_kind": "chain",
+              "source_path": ".megaplan/initiatives/megaplan-maintenance/NORTHSTAR.md",
+              "artifact_path": "anchors/north_star/epic.md",
+              "title": "Maintenance Control Plane North Star",
+              "sha256": "1c1dbb394915e41352101ef791b625fadf7a095661fb8ee0caa8119bb6d18a1d",
+              "size_bytes": 5274,
+              "captured_at": "2026-08-19T18:29:02.043343+00:00",
+              "source_spec_path": ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+            }
+          ],
+          "combined_artifact_path": "anchors/north_star/combined.md"
+        }
+      }
+    },
+    "current_invocation_id": "e2a61c1a1be244b5",
+    "user_action_resolutions": [],
+    "quality_gate_resolutions": [],
+    "critique_no_progress_streak": 1,
+    "critique_no_progress_iteration": 6,
+    "tiebreaker_count": 1,
+    "engine_isolation_verifications": [
+      {
+        "phase": "revise",
+        "timing": "before_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "proof": {
+          "provider": "trusted_container_probe",
+          "trusted_container": true,
+          "engine_write_denied": false,
+          "target_write_allowed": true,
+          "same_user_chmod_accepted": false,
+          "diagnostic": "probe_failed",
+          "logical_dev_accepted": null,
+          "engine_target_overlap": null,
+          "worker_cwd_is_target": null
+        }
+      },
+      {
+        "phase": "revise",
+        "timing": "after_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+      },
+      {
+        "phase": "revise",
+        "timing": "before_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "proof": {
+          "provider": "trusted_container_probe",
+          "trusted_container": true,
+          "engine_write_denied": false,
+          "target_write_allowed": true,
+          "same_user_chmod_accepted": false,
+          "diagnostic": "probe_failed",
+          "logical_dev_accepted": null,
+          "engine_target_overlap": null,
+          "worker_cwd_is_target": null
+        }
+      },
+      {
+        "phase": "revise",
+        "timing": "after_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+      },
+      {
+        "phase": "execute",
+        "timing": "before_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "proof": {
+          "provider": "trusted_container_probe",
+          "trusted_container": true,
+          "engine_write_denied": false,
+          "target_write_allowed": true,
+          "same_user_chmod_accepted": false,
+          "diagnostic": "probe_failed",
+          "logical_dev_accepted": null,
+          "engine_target_overlap": null,
+          "worker_cwd_is_target": null
+        }
+      },
+      {
+        "phase": "execute",
+        "timing": "after_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+      },
+      {
+        "phase": "execute",
+        "timing": "before_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "proof": {
+          "provider": "trusted_container_probe",
+          "trusted_container": true,
+          "engine_write_denied": false,
+          "target_write_allowed": true,
+          "same_user_chmod_accepted": false,
+          "diagnostic": "probe_failed",
+          "logical_dev_accepted": null,
+          "engine_target_overlap": null,
+          "worker_cwd_is_target": null
+        }
+      },
+      {
+        "phase": "execute",
+        "timing": "after_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+      },
+      {
+        "phase": "execute",
+        "timing": "before_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "proof": {
+          "provider": "trusted_container_probe",
+          "trusted_container": true,
+          "engine_write_denied": false,
+          "target_write_allowed": true,
+          "same_user_chmod_accepted": false,
+          "diagnostic": "probe_failed",
+          "logical_dev_accepted": null,
+          "engine_target_overlap": null,
+          "worker_cwd_is_target": null
+        }
+      },
+      {
+        "phase": "execute",
+        "timing": "after_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+      },
+      {
+        "phase": "execute",
+        "timing": "before_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "proof": {
+          "provider": "trusted_container_probe",
+          "trusted_container": true,
+          "engine_write_denied": false,
+          "target_write_allowed": true,
+          "same_user_chmod_accepted": false,
+          "diagnostic": "probe_failed",
+          "logical_dev_accepted": null,
+          "engine_target_overlap": null,
+          "worker_cwd_is_target": null
+        }
+      },
+      {
+        "phase": "execute",
+        "timing": "after_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+      },
+      {
+        "phase": "execute",
+        "timing": "before_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "proof": {
+          "provider": "trusted_container_probe",
+          "trusted_container": true,
+          "engine_write_denied": false,
+          "target_write_allowed": true,
+          "same_user_chmod_accepted": false,
+          "diagnostic": "probe_failed",
+          "logical_dev_accepted": null,
+          "engine_target_overlap": null,
+          "worker_cwd_is_target": null
+        }
+      },
+      {
+        "phase": "execute",
+        "timing": "after_worker",
+        "engine_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0"
+      }
+    ],
+    "finalize_revise_feedback": [
+      {
+        "code": "missing_scoped_baseline_test_contract",
+        "message": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'none'; no baseline tests apply; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+        "test_selection": {
+          "mode": "none",
+          "reason": "test_blast_radius strategy is 'none'; no baseline tests apply; no finalize task pytest command or mappable planned files were available",
+          "command_override": null,
+          "selectors_used": [],
+          "fallback_attempted": true,
+          "fallback_reason": "Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations."
+        }
+      }
+    ],
+    "execution_baseline": {
+      "captured_at": "2026-08-20T01:42:32.342370+00:00",
+      "head": "880f86d48355f66523a3cf612579b9ab6b299308",
+      "paths": {
+        ".megaplan/incident-ledger/.events.seq": "afccd937e6ac2d1b6d6e9f318bc5e8a179c977c7413b33b3e4d902ff8cec501e",
+        ".megaplan/incident-ledger/events.jsonl": "c73bde88bcfa54b9e44e1ad570bd4c2fa96bc3c7749f9857519821d2135a3b15",
+        ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md": "aa4c6746e7ea51c174de301d289a45dc01a501ff19c77908e0c766b4be11b1f5",
+        ".megaplan/tickets/01M0ETZ6W0K3H9XQ7N2D5B8RV4-reconcile-execute-prompt-reachability-criterion-is-inverted.md": "b20e9e673b90a661fe3fb33c3adc138aaad4fdf08a2ac1b40399c9d5d7596165",
+        ".megaplan/tickets/01M0ETZ6W0P7R2K9X4D6B8N3V5-reconcile-blocked-reason-does-not-surface-typed-verification-evidence.md": "c56dd0c081bf1b391869396cfdf5883e797918444c7aa5346f07f2ccaab8e4b0",
+        "research_output.json": "d5bc74374e588c72ce5302c2d83fb19ca5ad2cfec73947de69b0466b35401533"
+      }
+    },
+    "canonical_source_checks": [
+      {
+        "checked_at": "2026-08-20T01:42:35Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T01:54:17Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T02:10:27Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T02:17:25Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T02:31:53Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T02:40:34Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T02:49:50Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T02:57:38Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T03:04:14Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T03:29:40Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T03:44:55Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T03:59:27Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T04:27:14Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T09:52:00Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T10:03:27Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T10:12:38Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T11:13:29Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T11:53:52Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T11:56:02Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      },
+      {
+        "checked_at": "2026-08-20T11:57:26Z",
+        "operation": "finalized plan execution admission",
+        "status": "match",
+        "outcome": "admitted",
+        "bound_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "current_sha256": "69edec0d67dcbc63034153dbd7391e50f09209aded6e73e84aa0d22c2fd05ab9",
+        "reason": ""
+      }
+    ],
+    "user_approved_gate": true,
+    "phase_handoff_receipts": [
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:d4d94361eadd493ffdfa49aef49aa25b227b9d872264ff949fa8539a1f7942cf",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T03:12:27Z",
+        "source_history_length": 47,
+        "execution_evidence_digest": "sha256:43ed3deb89a47b3972c64b4f06774bedb81b2b16dbbbfc252ee7d513d73c207f",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "boundary_not_crossed_current_state=blocked",
+        "claimed_at": "2026-08-20T03:17:37Z",
+        "claim_run_id": "c27facba-7a91-454d-8042-0098c9f2aa9e",
+        "claim_worker_pid": 3957827,
+        "crossed_at": "2026-08-20T03:29:35Z",
+        "crossed_to_state": "finalized"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:adc22a2f410718c790d61a67f2a70c04e9fab8d8885d90369011b5d6af9e0fd5",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T03:37:08Z",
+        "source_history_length": 49,
+        "execution_evidence_digest": "sha256:ca41fe4aae49581ca14282e569f87dba63113f9cc19715b01f05034461138c6d",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T03:37:13Z",
+        "claim_run_id": "73c3ef68-d9ab-409b-9ea7-f68874d0af84",
+        "claim_worker_pid": 3957827,
+        "crossed_at": "2026-08-20T03:44:51Z",
+        "crossed_to_state": "finalized"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:c2b8b6d5a250bac590b83937a1a2c59476a5c1a637340d56d7043ab473b1ed15",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T03:50:46Z",
+        "source_history_length": 51,
+        "execution_evidence_digest": "sha256:8b4ec085977e54d4b02c62e6fa46c466bf741f249fb89be2a3ae170347aaa0b3",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T03:50:52Z",
+        "claim_run_id": "03a1b6ad-b0f8-476c-a15f-5d52cd22b15c",
+        "claim_worker_pid": 3957827,
+        "crossed_at": "2026-08-20T03:59:20Z",
+        "crossed_to_state": "finalized"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:f1090933fc3f9774c60fae194470f09bbb19a98c6afbb9122f397c831ee664e0",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T04:03:53Z",
+        "source_history_length": 57,
+        "execution_evidence_digest": "sha256:6b703e9af3788834a5951b558b8c23fc448c066a7a2e2efe0fb2fe37f94d4ad3",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "boundary_not_crossed_current_state=blocked",
+        "claimed_at": "2026-08-20T04:04:00Z",
+        "claim_run_id": "c90c2dc9-2ef2-4edd-b6cc-02c5690a8c6d",
+        "claim_worker_pid": 3997491,
+        "crossed_at": "2026-08-20T04:24:18Z",
+        "crossed_to_state": "blocked"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:25f5caa6a26e64036c32bca9e0ac4a8a9f647e030f53be627f2aa6bb6b5af832",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T04:32:31Z",
+        "source_history_length": 39,
+        "execution_evidence_digest": "sha256:435a1d8ecd9de89b45455b09822e5fea3ecc153dffed8ff3eacd3b5212d1de8a",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T04:32:38Z",
+        "claim_run_id": "93cb0e24-84e1-4893-bc9e-42e795a98e43",
+        "claim_worker_pid": 4005403,
+        "crossed_at": "2026-08-20T04:50:04Z",
+        "crossed_to_state": "blocked"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:f188f4d8b02c3e8e722c6ab05c0fa43a92bc12da6cde3baf90913da81a673c99",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T09:56:47Z",
+        "source_history_length": 45,
+        "execution_evidence_digest": "sha256:9c3be03c74545a004a40b1adc6c93d7e8a8ee954e5c9d262c20b46c138225192",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T09:57:01Z",
+        "claim_run_id": "b1955d41-344c-4069-8e30-4c569b94ef2d",
+        "claim_worker_pid": 4087687,
+        "crossed_at": "2026-08-20T10:03:12Z",
+        "crossed_to_state": "finalized"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:6ba3d5bf4a17b81bd598295a5c3234a5384c49065ed33621216144a3a65c6135",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T10:07:14Z",
+        "source_history_length": 51,
+        "execution_evidence_digest": "sha256:5cfee7c80736118088bd861664332de592f3385e5ef77177f341f126e4b09d9f",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T10:07:28Z",
+        "claim_run_id": "dddde82b-7962-49b6-874e-8f679951b080",
+        "claim_worker_pid": 4087687,
+        "crossed_at": "2026-08-20T10:12:26Z",
+        "crossed_to_state": "finalized"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:63704b33054acb684b3870c113b5a54bfb4e3004b421c8d09ea8ab1e52d0be23",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T10:17:22Z",
+        "source_history_length": 53,
+        "execution_evidence_digest": "sha256:30ef301d043f95d15c35ff137096a8c0a05e20fbf63159f266f97975ed46fa2b",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T10:17:36Z",
+        "claim_run_id": "d31b3005-6571-4fb2-91ca-332119f5d481",
+        "claim_worker_pid": 4087687,
+        "crossed_at": "2026-08-20T10:25:07Z",
+        "crossed_to_state": "blocked"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:ae2e3ccdfa7c97019dae7567a0c926e55ef10c14e23155a4c94fed7042dfd5ff",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T11:24:11Z",
+        "source_history_length": 55,
+        "execution_evidence_digest": "sha256:62d25377f5eb3829dc4ff293bc3dc21e26c7fb8e730f002d5a2a87c14f4ccad0",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T11:25:09Z",
+        "claim_run_id": "5165ea62-45c6-47d6-90c5-f200d0161e98",
+        "claim_worker_pid": 4153980,
+        "crossed_at": "2026-08-20T11:31:43Z",
+        "crossed_to_state": "blocked"
+      },
+      {
+        "schema_version": 1,
+        "handoff_id": "sha256:0b066b317e568294e57879fad312507850b16871d1fba8132722416267332517",
+        "from_phase": "execute",
+        "from_state": "executed",
+        "to_phase": "review",
+        "status": "crossed",
+        "armed_at": "2026-08-20T12:05:05Z",
+        "source_history_length": 60,
+        "execution_evidence_digest": "sha256:738aa074ef8b3fff60377518b933462d92a663b88704fd0b9d7ae802dd076ce2",
+        "recovery_action": "resume_review",
+        "owner": "canonical_auto_runner",
+        "_non_authoritative": false,
+        "recovery_reason": "exact local worker process incarnation is alive",
+        "claimed_at": "2026-08-20T12:05:28Z",
+        "claim_run_id": "8d8aaeb3-3e8a-4dd4-8ede-17a69640aeaf",
+        "claim_worker_pid": 4182524,
+        "crossed_at": "2026-08-20T12:12:28Z",
+        "crossed_to_state": "done"
+      }
+    ],
+    "chain_completion": {
+      "completed_at": "2026-08-20T12:16:55Z",
+      "milestone_label": "reconcile",
+      "reason": "terminal plan state reconciled from ground truth"
+    }
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "v8 closes the last open significant flag (finalize-baseline-test-scope) with a real, verifiable scoped baseline test contract rather than a prose claim. I independently confirmed on disk: (1) all five scoped selector paths exist \u2014 tests/arnold_pipelines/megaplan/chain/test_reconcile_milestone.py, test_reconcile_pr.py, test_reconcile_terminal_finalizer.py, tests/arnold_pipelines/megaplan/test_reconcile_execute_wiring.py, and tests/arnold_pipelines/megaplan/test_template_registry.py; (2) the harness mechanism the plan cites is accurate \u2014 orchestration/test_selection.py:485 emits full_suite_fallback as `strategy != \"none\"`, :599-605 preserves `scoped` under a full floor when selectors+fallback-true are present, and :668 merges via `fallback_value(floor) or fallback_value(candidate)`; (3) the roadmap-eligibility reader fix is real \u2014 tickets/inventory.py:161 calls `strategy_file_path(repo_root)` (no legacy .megaplan/STRATEGY.md hardcode); (4) both follow-up ticket files exist with matching ULIDs and the [ticket:<ULID>] entries are present at STRATEGY.md lines 115-116; (5) reconcile_inputs.json holds 110 candidate_commits, matching the plan's snapshot; (6) the inverted prompt wording is confirmed at prompts/execute.py:175-178 and the plan's Step 3.6 source-lineage override plus ticket 01M0ETZ6W0K3H9XQ7N2D5B8RV4 correctly contain it. The plan does not contradict the North Star and hides no scope substitution: the executor is strictly read-only, all mutation remains controller-authoritative, the PR is merge_policy: review (human-gated publication), and the typed coincident_ref handling strengthens the typed-UNKNOWN/INCOHERENT invariant rather than weakening it. Gate posture is clean: 0 unresolved significant flags, 0 addressed-but-unverified flags, 0 recurring critiques, and a weighted score of 0 for two consecutive iterations.",
+    "signals_assessment": "Weighted score trajectory 26.0 -> 8.5 -> 9.0 -> 4.0 -> 7.5 -> 8.5 -> 0 -> 0 shows convergence (0 for iterations 7 and 8) after the early cardinality/authority corrections. All 50 raised flags are resolved; 0 are open and 0 are addressed-but-unverified, so there are no blocking or verification-obligation flags requiring flag_resolutions. Preflight posture is clean (project dir exists and is writable, success criteria present, claude/codex available) and robustness is full. The single warning is the high iteration count (8), which is a convergence artifact of a focused final revision, not evidence of churn: plan delta is 10.9% and the recurring-critique count is 0.",
+    "warnings": [
+      "Iteration 8: high iteration count.",
+      "Iteration 8: high iteration count \u2014 monitor for regression; the score has been stable at 0 for two iterations and no flags remain open, so this is convergence rather than churn.",
+      "Execution-time divergence re-resolution is load-bearing: the plan expects a STATE_BLOCKED fail-closed outcome if Step 1.4 resolves divergence_mode == equal; this is the designed evidence-preserving path (typed coincident_ref in the batch artifact, generic block reason at chain/__init__.py:10475-10478), not a defect."
+    ],
+    "settled_decisions": [
+      {
+        "id": "SD1",
+        "decision": "reconcile_inputs.json's candidate_commits array is the sole authoritative candidate set; N = len(candidate_commits) is derived at execute time and never hardcoded in prose (the file has drifted 14 -> 108 -> 110).",
+        "rationale": "Hardcoding any count was the recurring defect across the cardinality flag group; the count-agnostic contract makes the plan self-healing against file regeneration."
+      },
+      {
+        "id": "SD2",
+        "decision": "An executor-emitted empty selection is a fail-closed signal (controller STATE_BLOCKED), never a verified no-op; in equal mode the per_phase reasons are typed coincident_ref, never the string 'already published'.",
+        "rationale": "This contract was litigated across multiple iterations (empty-selection caller chain, equal-mode collapse) and reflects the controller's actual semantics: _read_reconcile_selection skips [] and returns None, _publish_reconcile_selection fails closed."
+      }
+    ],
+    "flag_resolutions": [],
+    "accepted_tradeoffs": [],
+    "tiebreaker_question": "",
+    "tiebreaker_flag_ids": [],
+    "tiebreaker_fuzzy_group_id": "",
+    "north_star_actions": [],
+    "reprompted": false,
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize."
+  },
+  "schema_version": 0,
+  "_pipeline_name": "megaplan",
+  "_pipeline_manifest_hash": "sha256:6a1da9e07e11207ed97a002fe2d39603a0c99f2165ce4c61a2c087dce1eeea86",
+  "_runtime_identity_schema_version": 2,
+  "runtime_envelope": {
+    "artifact_root": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828",
+    "created_at": "",
+    "cross_cutting": {
+      "cancellation": false,
+      "capacity_grant": 0,
+      "cost": 0.0,
+      "deadline": null,
+      "error_class": null,
+      "fencing_token": null,
+      "lease_id": null,
+      "lineage": [],
+      "retry_budget": 3,
+      "taint": "clean"
+    },
+    "manifest_hash": "sha256:6a1da9e07e11207ed97a002fe2d39603a0c99f2165ce4c61a2c087dce1eeea86",
+    "plugin_id": "megaplan",
+    "plugin_state_schema_version": 0,
+    "resume_cursor": {
+      "cursor": {
+        "evidence_cursor": {
+          "history_index": 55,
+          "review_artifact_hash": "sha256:19b11bb3833e4ee212363c884e18e21c1d4da5939245638782824bbcf576231f"
+        },
+        "phase": "review",
+        "retry_strategy": "manual_review"
+      },
+      "plugin_id": "megaplan",
+      "run_id": "reconcile-outcome-select-and-20260819-1828"
+    },
+    "run_id": "reconcile-outcome-select-and-20260819-1828",
+    "schema_version": 2,
+    "trust_state": "trusted"
+  },
+  "_state_meta": {
+    "versions": {
+      "config": 1,
+      "meta": 1
+    }
+  }
+}

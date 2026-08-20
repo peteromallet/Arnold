@@ -1,0 +1,34 @@
+{
+  "capture_status": "captured",
+  "container": "megaplan-cloud-agent-resident-only",
+  "host": "cloud",
+  "observations": [
+    {
+      "byte_length": 23474,
+      "captured_at": "2026-08-20T14:33:07Z",
+      "command": "ssh root@159.69.51.216 docker exec megaplan-cloud-agent-resident-only ps -axo pid=,ppid=,user=,lstart=,etime=,command=",
+      "container": "megaplan-cloud-agent-resident-only",
+      "content_digest": "sha256:572ae0fadb6cbc4916c3e06b87f616f772fee25bf2a956236a0aa0fa74336966",
+      "host": "cloud",
+      "source_cursor": null,
+      "source_paths": [
+        "container process table"
+      ],
+      "status": "captured"
+    },
+    {
+      "byte_length": 63902,
+      "captured_at": "2026-08-20T14:33:07Z",
+      "command": "ssh root@159.69.51.216 docker exec megaplan-cloud-agent-resident-only sh -c \"pgrep -alf arnold; pgrep -alf megaplan; pgrep -alf astrid; pgrep -alf maintenance; pgrep -alf watchdog; pgrep -alf reconcile\"",
+      "container": "megaplan-cloud-agent-resident-only",
+      "content_digest": "sha256:51be33d4a474a861e72e3dc9bb4638452904d792da0cea7da8b8ab8a3e515404",
+      "host": "cloud",
+      "source_cursor": null,
+      "source_paths": [
+        "container matching process table"
+      ],
+      "status": "captured"
+    }
+  ],
+  "schema_version": "T0.0.processes.v1"
+}

@@ -1,0 +1,24 @@
+{
+  "capture_status": "captured",
+  "host": "cloud",
+  "inventory_artifact": {
+    "byte_length": 5579,
+    "captured_at": "2026-08-20T14:33:07Z",
+    "command": "find ... incident-ledger and final reconcile ledger files",
+    "container": "megaplan-cloud-agent-resident-only",
+    "content_digest": "sha256:2b3cf9af0c74e5e5a812914a3df418bd83798fdea1bef3f9f2714f8ce6c79534",
+    "host": "cloud",
+    "source_cursor": null,
+    "source_paths": [
+      "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger",
+      "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828"
+    ],
+    "status": "captured"
+  },
+  "roots": [
+    "/workspace/megaplan-maintenance/Arnold/.megaplan/incident-ledger",
+    "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828"
+  ],
+  "schema_version": "T0.0.maintenance-ledger.v1",
+  "unknown_unreadable": []
+}

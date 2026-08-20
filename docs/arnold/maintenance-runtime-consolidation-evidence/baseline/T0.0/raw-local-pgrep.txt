@@ -1,0 +1,20 @@
+13407 /opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python -c 
+import cProfile, pstats, sys, io
+sys.argv = ['astrid', 'serve', '--host', '127.0.0.1', '--port', '53354', '--projects-root', '/tmp/lat-t1']
+import runpy
+pr = cProfile.Profile()
+pr.enable()
+try:
+    runpy.run_module('astrid', run_name='__main__')
+except SystemExit:
+    pass
+pr.disable()
+s = io.StringIO()
+ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+ps.print_stats(30)
+open('/tmp/lat-save-profile.txt','w').write(s.getvalue())
+print('PROFILE DUMPED', flush=True)
+
+38301 ssh root@159.69.51.216 docker exec megaplan-cloud-agent-resident-only sh -lc 'cd /workspace/astrid-first-ce15b5a3/astrid && env -u PYTHONHOME -u MEGAPLAN_RUNTIME_LAUNCH_SEED PYTHONSAFEPATH=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/workspace/runtime-candidates/astrid-first ARNOLD_RUNTIME_MANIFEST=/workspace/.megaplan/astrid-first.json MEGAPLAN_TRUSTED_CONTAINER=1 MEGAPLAN_BOUND_RUNTIME_REVISION=423ec212c64c0bb5450f81f19229a94494dd9a08 /workspace/runtime-venvs/1cb1b75bc249f13d30098063010363f3ca7837a8504ff452ad409cfc9ff91b55/bin/python -P -m arnold_pipelines.megaplan chain start --spec /workspace/astrid-first-ce15b5a3/astrid/.megaplan/initiatives/astrid-first/chain.yaml --project-dir /workspace/astrid-first-ce15b5a3/astrid --one --no-git-refresh --no-push'
+38486 /Users/peteromalley/.pyenv/versions/3.11.11/bin/python arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py --model=codex:gpt-5.6-luna --query-file=/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/briefs/T0.0-brief.md --project-dir=/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution --metadata-file=/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/metadata/T0.0-impl.metadata.json --toolsets=file,web,terminal --timeout=3600
+38527 ssh root@159.69.51.216 docker exec megaplan-cloud-agent-resident-only sh -lc 'cd /workspace/astrid-first-ce15b5a3/astrid && rg -l "1ea6d2b69bbbebfa06a17dd3ff872fd3b473fc3b" .megaplan/plans/m7-dogfood-and-hardening-20260820-0835 .megaplan/plans/.chains /workspace/.megaplan 2>/dev/null | head -80'

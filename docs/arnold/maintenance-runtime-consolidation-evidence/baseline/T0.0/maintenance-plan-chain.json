@@ -1,0 +1,428 @@
+{
+  "active_final_reconcile": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828",
+  "capture_status": "captured",
+  "container": "megaplan-cloud-agent-resident-only",
+  "host": "cloud",
+  "inventory_artifact": {
+    "byte_length": 8606,
+    "captured_at": "2026-08-20T14:33:07Z",
+    "command": "find /workspace/megaplan-maintenance/Arnold/.megaplan/plans ...; find .../initiatives ...",
+    "container": "megaplan-cloud-agent-resident-only",
+    "content_digest": "sha256:00bcddb04a243e42f4be1a74103bc883e1c008de9305391e2cac8bba360ce417",
+    "host": "cloud",
+    "source_cursor": null,
+    "source_paths": [
+      "/workspace/megaplan-maintenance/Arnold/.megaplan"
+    ],
+    "status": "captured"
+  },
+  "records": [
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/archived-20260813-r2/m1-containment-and-truthful-20260813-1514/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/archived-20260813-r3/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/archived-20260813/m1-containment-and-truthful-20260811-0640/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260710-1955/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260710-1955/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260710-1955/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260710-1955/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260813-1656/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260813-1656/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260813-1656/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m1-containment-and-truthful-20260813-1656/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m2-coherent-evidence-and-20260710-2325/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m2-coherent-maintenance-20260815-1634/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m2-coherent-maintenance-20260815-1634/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m2-coherent-maintenance-20260815-1634/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m2-coherent-maintenance-20260815-1634/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3-custody-bound-independent-20260816-1737/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3-custody-bound-independent-20260816-1737/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3-custody-bound-independent-20260816-1737/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3-custody-bound-independent-20260816-1737/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3b-custody-bound-repair-20260817-1428/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3b-custody-bound-repair-20260817-1428/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3b-custody-bound-repair-20260817-1428/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m3b-custody-bound-repair-20260817-1428/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m4-next-three-hour-backstop-20260818-0657/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m4-next-three-hour-backstop-20260818-0657/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m4-next-three-hour-backstop-20260818-0657/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m4-next-three-hour-backstop-20260818-0657/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m5-24-hour-efficiency-auditor-20260819-0431/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m5-24-hour-efficiency-auditor-20260819-0431/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m5-24-hour-efficiency-auditor-20260819-0431/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/m5-24-hour-efficiency-auditor-20260819-0431/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828/execution.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828/review.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828/review_evidence.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/agentbox-persistent-machine/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/aggressive-generalized-pipeline-migration/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/arnold-complete-cleanup-single-root/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/arnold-pipeline-friction/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/arnold-post-extraction-next/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/astrid-consumer/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/boundary-turn-end-to-end/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/canonical-run-state-control-plane/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/critique-ledger-post-relaunch-completion/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/discord-resident-delegation-delivery-corrective/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/epic-pipeline-unification/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/evidence-first-pipeline-semantics/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/extension-reality-chain-restart-continuation/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/extension-reality-clean-lane-recovery/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/incident-control-plane/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-maintenance/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/native-composition-followup.chain/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/native-composition-followup/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/native-platform-followup/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/native-python-pipelines/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/native-workflow-platformization/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/python-shaped-workflow-authoring/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/repository-strategy-roadmap/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/runauthority-epic/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/runauthority-sprint-1/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/sequential-model-fallbacks/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/session-knowledge-compiler/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/shannon-stream/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/standardized-completion-specifications/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/step-io-contract-condensed/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/step-io-contract/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/superfixer-alive-but-failed-recovery/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/superfixer-repair-custody/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/tiered-repair-hardening/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see source-side digest/capture record",
+      "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/initiatives/workflow-manifest-runtime/chain.yaml",
+      "status": "captured"
+    }
+  ],
+  "schema_version": "T0.0.plan-chain.v1",
+  "source_root": "/workspace/megaplan-maintenance/Arnold/.megaplan"
+}

@@ -1,0 +1,10 @@
+{
+  "captured_at": "2026-08-20T14:33:07Z",
+  "container": "megaplan-cloud-agent-resident-only",
+  "content_digest": null,
+  "host": "cloud",
+  "reason": "No introspect artifact exists in the read-only plan inventory; invoking the launcher introspect command is forbidden by T0.0 and would exceed the evidence-only capture boundary.",
+  "schema_version": "T0.0.source-capture.v1",
+  "source_path": null,
+  "status": "unknown"
+}

@@ -1,0 +1,62 @@
+{
+  "capture_status": "captured",
+  "container": "megaplan-cloud-agent-resident-only",
+  "host": "cloud",
+  "inventory_artifact": {
+    "byte_length": 829,
+    "captured_at": "2026-08-20T14:33:07Z",
+    "command": "find /workspace/astrid-first-ce15b5a3/astrid/.megaplan -type f (state.json|chain.yaml|chain.json|*.chain.json|introspect.json)",
+    "container": "megaplan-cloud-agent-resident-only",
+    "content_digest": "sha256:6d56d4aadc0222d155f51e04f29d5a64bd1bd09835fa6b7a6f1f6a5546319a33",
+    "host": "cloud",
+    "source_cursor": null,
+    "source_paths": [
+      "/workspace/astrid-first-ce15b5a3/astrid/.megaplan"
+    ],
+    "status": "captured"
+  },
+  "records": [
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/initiatives/astrid-first/chain.yaml",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m1-event-core-and-20260814-2340/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m2-executor-and-media-20260816-1054/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m3-execution-references-and-20260817-1114/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m4-bridge-sdk-and-cli-domains-20260818-0642/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m5-cli-and-sdk-completion-20260819-1119/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m6-serve-backup-doctor-and-20260819-1405/state.json",
+      "status": "captured"
+    },
+    {
+      "content_digest": "see raw file inventory and command outputs",
+      "source_path": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan/plans/m7-dogfood-and-hardening-20260820-0835/state.json",
+      "status": "captured"
+    }
+  ],
+  "schema_version": "T0.0.plan-chain.v1",
+  "source_root": "/workspace/astrid-first-ce15b5a3/astrid/.megaplan"
+}

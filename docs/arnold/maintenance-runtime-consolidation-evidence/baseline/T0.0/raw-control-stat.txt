@@ -1,0 +1,13 @@
+/workspace/.megaplan/astrid-first.json|32049|1787235895|regular file
+/workspace/.megaplan/cloud-sessions/astrid-first.json|48397|1787236122|regular file
+/workspace/.megaplan/cloud-sessions/astrid-first.chain-health.progress.json|635|1787233167|regular file
+/workspace/.megaplan/cloud-sessions/astrid-first.liveness-fence.json|98|1787236122|regular file
+/workspace/.megaplan/cloud-sessions/astrid-first.liveness-lease.json|1186|1787236123|regular file
+/workspace/.megaplan/cloud-sessions/megaplan-maintenance.json|85894|1787228150|regular file
+/workspace/.megaplan/cloud-sessions/megaplan-maintenance.chain-health.progress.json|648|1787227855|regular file
+/workspace/.megaplan/cloud-sessions/megaplan-maintenance.liveness-fence.json|107|1787228150|regular file
+/workspace/.megaplan/cloud-sessions/megaplan-maintenance.liveness-lease.json|1216|1787228217|regular file
+/workspace/.megaplan/cloud-sessions/megaplan-maintenance.repair-progress.json|3554|1783765891|regular file
+/workspace/.megaplan/cloud-sessions/.megaplan-maintenance.liveness-fence.lock|0|1786430407|regular empty file
+/workspace/.megaplan/astrid-first.json.lock|0|1786740203|regular empty file
+/workspace/.megaplan/astrid-first.json.promotion.lock|0|1787003183|regular empty file

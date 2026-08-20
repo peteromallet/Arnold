@@ -1,0 +1,14 @@
+{
+  "capture_status": "captured",
+  "container": "megaplan-cloud-agent-resident-only",
+  "host": "cloud",
+  "provenance_artifacts": [
+    "raw-candidate-astrid-first-git.txt",
+    "raw-cloud-candidate-files.txt"
+  ],
+  "read_only": true,
+  "reason": null,
+  "requested_root": "/workspace/runtime-candidates/astrid-first",
+  "schema_version": "T0.0.candidate-provenance.v1",
+  "status": "captured"
+}

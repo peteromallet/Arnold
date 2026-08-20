@@ -1,0 +1,10 @@
+===ROOT=; git -C  rev-parse --show-toplevel
+fatal: cannot change to ' rev-parse': No such file or directory
+fatal: cannot change to ' show-ref': No such file or directory
+fatal: cannot change to ' remote': No such file or directory
+fatal: cannot change to ' status': No such file or directory
+===ROOT=; git -C  rev-parse --show-toplevel
+fatal: cannot change to ' rev-parse': No such file or directory
+fatal: cannot change to ' show-ref': No such file or directory
+fatal: cannot change to ' remote': No such file or directory
+fatal: cannot change to ' status': No such file or directory

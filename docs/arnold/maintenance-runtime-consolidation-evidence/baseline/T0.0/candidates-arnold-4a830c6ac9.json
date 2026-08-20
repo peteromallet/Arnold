@@ -1,0 +1,15 @@
+{
+  "capture_status": "unknown",
+  "container": "megaplan-cloud-agent-resident-only",
+  "host": "cloud",
+  "provenance_artifacts": [
+    "raw-candidate-arnold-git.txt",
+    "raw-cloud-candidate-files.txt",
+    "raw-candidate-arnold-observed-git.txt"
+  ],
+  "read_only": true,
+  "reason": "Requested root does not exist (exit 128); observed process/file activity uses /workspace/runtime-candidates/arnold-4a830c6ac9a0, recorded separately and not substituted.",
+  "requested_root": "/workspace/runtime-candidates/arnold-4a830c6ac9",
+  "schema_version": "T0.0.candidate-provenance.v1",
+  "status": "unknown"
+}

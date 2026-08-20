@@ -1,0 +1,10 @@
+{
+  "captured_at": "2026-08-20T14:33:07Z",
+  "container": "megaplan-cloud-agent-resident-only",
+  "content_digest": null,
+  "host": "cloud",
+  "reason": "No candidate-artifact.json or candidate_artifact.json exists in the final-reconcile inventory; the attempted read returned exit status 1. reconcile_inputs.json was observed but is not relabeled as the requested candidate artifact.",
+  "schema_version": "T0.0.source-capture.v1",
+  "source_path": null,
+  "status": "unknown"
+}

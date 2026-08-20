@@ -1,0 +1,33 @@
+{
+  "capture_status": "captured",
+  "host": "local",
+  "observations": [
+    {
+      "byte_length": 102667,
+      "captured_at": "2026-08-20T14:33:07Z",
+      "command": "ps -axo pid=,ppid=,user=,lstart=,etime=,command=",
+      "container": null,
+      "content_digest": "sha256:b92265688ae2089c3b3c45da76b62bf33e2f803a372605a5658ef95df99781a3",
+      "host": "local",
+      "source_cursor": null,
+      "source_paths": [
+        "local process table"
+      ],
+      "status": "captured"
+    },
+    {
+      "byte_length": 2201,
+      "captured_at": "2026-08-20T14:33:07Z",
+      "command": "pgrep -alf 'arnold|megaplan|astrid|maintenance|watchdog|reconcile'",
+      "container": null,
+      "content_digest": "sha256:8eae03bcb82ed7f93f3ff66c6eb143ce715701be232e5de55b1f2c65041a16f2",
+      "host": "local",
+      "source_cursor": null,
+      "source_paths": [
+        "local matching process table"
+      ],
+      "status": "captured"
+    }
+  ],
+  "schema_version": "T0.0.processes.v1"
+}

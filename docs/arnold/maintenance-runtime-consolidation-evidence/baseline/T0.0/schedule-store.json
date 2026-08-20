@@ -1,0 +1,26 @@
+{
+  "capture_status": "captured",
+  "content_digests": "Inventory and source content digests remain in the command output; no source copy was written.",
+  "host": "cloud",
+  "inventory_artifact": {
+    "byte_length": 1979,
+    "captured_at": "2026-08-20T14:33:07Z",
+    "command": "find ... schedules/jobs/inputs",
+    "container": "megaplan-cloud-agent-resident-only",
+    "content_digest": "sha256:ff89eb65ba831f550c501b88af15ddcf09452a1593167b4544194f174fd7c897",
+    "host": "cloud",
+    "source_cursor": null,
+    "source_paths": [
+      "/workspace/.megaplan/ops/schedules",
+      "/workspace/.megaplan/resident/scheduled_jobs",
+      "/workspace/.megaplan/schedule-inputs"
+    ],
+    "status": "captured"
+  },
+  "roots": [
+    "/workspace/.megaplan/ops/schedules",
+    "/workspace/.megaplan/resident/scheduled_jobs",
+    "/workspace/.megaplan/schedule-inputs"
+  ],
+  "schema_version": "T0.0.schedule-store.v1"
+}

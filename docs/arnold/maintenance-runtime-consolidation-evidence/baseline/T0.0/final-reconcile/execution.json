@@ -1,0 +1,12 @@
+{
+  "byte_length": 3867,
+  "captured_at": "2026-08-20T14:33:07Z",
+  "command": "ssh ... docker exec ... cat execution.json",
+  "container": "megaplan-cloud-agent-resident-only",
+  "content_digest": "sha256:738aa074ef8b3fff60377518b933462d92a663b88704fd0b9d7ae802dd076ce2",
+  "host": "cloud",
+  "preserved_unchanged": true,
+  "schema_version": "T0.0.source-capture.v1",
+  "source_path": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828/execution.json",
+  "status": "captured"
+}

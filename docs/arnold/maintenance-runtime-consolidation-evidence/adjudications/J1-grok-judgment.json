@@ -1,0 +1,89 @@
+{
+  "id": "J1",
+  "kind": "material-judgment",
+  "label": "[XHARD-REVIEW]",
+  "question": "During G0, while the T0.1 Luna implementer was preserving milestone objects, an uncontrolled megaplan process (the implementer's off-script init attempt; no commit on any branch) inserted a new `T4.4 [XHARD]` card plus `G4.4-pre`/`G4.4-post` gates and a Batch-5 block into the WORKING-TREE copies of the authoritative execution plan and goal docs in the integration worktree. The committed integration HEAD (`a610c220da`) plan/goal — which match the user's attached goal sequence — contain no T4.4. Resolution options:\n\n(A) Treat the committed plan/goal at integration HEAD as the frozen input boundary; restore the working-tree docs to HEAD content; record the T4.4 revision as an observed-but-not-adopted variant (preserved as evidence); continue the G0 sequence exactly as the user attachment enumerates (T0.1 manifest commit, T0.2, T0.3, G0).\n\n(B) Adopt the working-tree T4.4 revision as authoritative: add T4.4 + G4.4-pre/G4.4-post to the task state machine, block Batch 5 until T4.4 passes, and update the goal record accordingly.\n\n(C) Something else the judge must specify.\n\nDecide which is correct given: the user attachment is authoritative and enumerates the sequence without T4.4; the plan says if goal and plan disagree, preserve the plan's safety constraint and model-routing rule, record the conflict, and resolve before mutation; the mutation is uncommitted, authored by an uncontrolled process, and changes scope/authority/gates; the goal also requires “retain both observations, classify the later state separately, and do not silently move the frozen input boundary”. The judge must also rule on how to handle the off-script megaplan-init deviation by the T0.1 implementer (re-brief vs. mechanical re-run of the manifest-commit step only) and the two stray worktrees (`runtime-convergence-t0-1`, `runtime-convergence-t0-1-clean`).",
+  "evidence_inputs": [
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence-input-boundary-change/plan-HEAD-COMMITTED.md",
+      "sha256": "d94bef32ccdb834a37834ab6eb66bddab4d8998a164724e5bdf9d33d8e62c20a"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence-input-boundary-change/goal-HEAD-COMMITTED.md",
+      "sha256": "54c0fac85296a5783571d22d945cfe94fbe4974692d505200f10e7928119cf73"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence-input-boundary-change/plan-WORKING-TREE.md",
+      "sha256": "5570529d65dc50f75c774a57322bbb6eced8c8fdaf214ba6f5ef4365e02ef082"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence-input-boundary-change/goal-WORKING-TREE.md",
+      "sha256": "e08f4b61cd4af4eb4c609cf66544369180b13991b15db43c6573b6d6a9d6f327"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence-input-boundary-change/plan-HEAD-to-WORKING.diff",
+      "sha256": "ce48f15d4ca459d9a28160dc4ca137f9ae8a7b57a8a2c4ce6fd90b486c100baa"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence-input-boundary-change/goal-HEAD-to-WORKING.diff",
+      "sha256": "de54b2407ebaa98d08878c70af0a84f80e6c5962a436a2b31d1575ce76630291"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md",
+      "sha256": "59b8bd9c5d12208bd199f3a81101e397f1c80c04a5fc04dce44ac27964fcf928"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/receipts/J1-grok.stdout",
+      "sha256": "54c16a523ea6d5b71896a78b4e0b828b715393e9c97330a260815d2c675dbc86"
+    },
+    {
+      "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/briefs/J1-input-boundary-judgment-brief.md",
+      "sha256": "3bc77a1ff8e5dc40f1fd50927d073e6d1c90cfd1e76c4d11ca2b4210c430cc58"
+    }
+  ],
+  "recommendation": "A — frozen committed boundary",
+  "sub_dispositions": [
+    "T0.1 RE-BRIEF",
+    "capture-then-remove stray worktrees",
+    "Batch 4 = T4.1→G4.3",
+    "Batch 5 = T5.1 after G4.3, not blocked by T4.4",
+    "T4.4/G4.4 observed-only not authoritative"
+  ],
+  "rejected_alternatives": [
+    "B — adopt working T4.4 revision",
+    "C — hybrid",
+    "MECHANICAL-MANIFEST-COMMIT-RERUN",
+    "preserve/quarantine or silent reuse or silent delete of stray worktrees"
+  ],
+  "affected_contracts": [
+    "T0.1: objects/safety refs exist; manifest commit is not done; after restore, Luna RE-BRIEF forbidding megaplan init, verifying existing refs, and authoring plus committing refs-manifest.json only; no live/remote/selector/install mutation",
+    "T0.2: unchanged; classify every patch-unique production commit against the committed task IDs, with no T4.4 mapping",
+    "T0.3: preserve the committed schema/validator/launcher contract and record this J1 material judgment; the boundary mutation must not become an unrecorded judgment or alter launcher routing",
+    "G0: unchanged Luna inventory → fresh Grok selection judgment → Luna record; implementation starts only after G0 passes",
+    "Batch 4: valid sequence T4.1 → G4.1 → T4.2 → G4.2 → T4.3 → G4.3; no G4.4-pre / T4.4 / G4.4-post",
+    "Batch 5: T5.1 follows G4.3 and is not blocked by T4.4/G4.4; executors must not infer prerequisites from dirty files",
+    "T4.4/G4.4: not adopted; frozen working and later dirty mentions are observed-only; restore committed bytes and retain the variant as immutable evidence",
+    "Goal attachment: preserve user sequence, model-routing, no-new-Megaplan-plan, live-state non-interference, and retain-both-observations / do-not-silently-move-boundary contracts"
+  ],
+  "downstream_routing": [
+    "Fresh routed Luna workspace-preparation/integration captures both stray worktrees and later dirty integration plan/goal as classified-later evidence; restores integration plan/goal byte-for-byte to committed HEAD; keeps frozen working copies and diffs; writes a restoration receipt; then removes both stray worktrees as disposable",
+    "Fresh Luna RE-BRIEF, then T0.1 implementation forbidding megaplan init, verifying six objects/safety refs, and committing refs-manifest.json only",
+    "T0.2 Luna source-selection manifest",
+    "T0.3 Luna bootstrap/wrapper setup recording this J1 judgment",
+    "G0 Luna inventory → fresh Grok 4.6 selection judgment → Luna receipt recording",
+    "Stop conditions: do not start T0.1 until the restoration receipt exists and unique stray evidence is copied; do not start T0.2 until the T0.1 manifest commit exists; do not start production implementation until G0 passes; do not dispatch any T4.4/G4.4 card; do not block Batch 5 on T4.4; do not reuse the two stray worktrees; do not treat current dirty docs as authority"
+  ],
+  "grok_invocation": {
+    "model": "grok-4.6",
+    "launcher": "<INTEGRATION_WORKTREE>/arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py",
+    "command": "python ... launch_omp_agent.py --model grok-4.6 --query-file=<J1 brief> --project-dir=<INTEGRATION_WORKTREE> --timeout=3600",
+    "stdout_sha256": "54c16a523ea6d5b71896a78b4e0b828b715393e9c97330a260815d2c675dbc86",
+    "stderr_sha256": "97ee9ea8a07fe8932b7283d69a52844bf00b3a7dc2769de8c9b1f0ec0d2b1a32",
+    "exit_code": 0,
+    "elapsed_seconds": 537.18,
+    "process_id": "unknown",
+    "process_id_note": "Captured as unknown: omp child PID was not instrumented pre-wrapper — pre-T0.3 bootstrap receipt limitation"
+  },
+  "recorded_at_utc": "2026-08-20T15:11:12Z",
+  "note": "This receipt is a pre-T0.3 bootstrap receipt; T0.3's evidence schema must ingest it."
+}

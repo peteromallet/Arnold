@@ -1,0 +1,50 @@
+ROOT=/workspace/runtime-candidates/astrid-first
+/workspace/runtime-candidates/astrid-first
+423ec212c64c0bb5450f81f19229a94494dd9a08
+423ec212c64c0bb5450f81f19229a94494dd9a08 refs/heads/fixer/astrid-first-20260814
+f990d0589187557d061cac693edd55c7aa563f5e refs/heads/fixer/astrid-first-subtest-20260819
+f82ed5c0337ef06080c347efd3f290fdfc1c72d1 refs/heads/fixer/partnered-codex-publish-20260819
+2ef40777765ccec1e5a1d82ed665d6767691f2ec refs/heads/main
+9e7cfedaabed3b415ac762675e9e37f8a7d53b9c refs/remotes/origin/HEAD
+49af598c0b46c6b0d9d77e86510f5aac23476337 refs/remotes/origin/base/editable-install
+8c4b2c9561f227d2ea4f31c489401de3c5c99998 refs/remotes/origin/editible-install
+77b76e3a487809a2d1c89ea6785aac473c8931c8 refs/remotes/origin/fix/r7-fresh-child-launch-20260805
+2ef40777765ccec1e5a1d82ed665d6767691f2ec refs/remotes/origin/fixer/astrid-first-20260814
+35c4e76a891a9f95d633e7bf2a61ca87caf3014c refs/remotes/origin/fixer/astrid-first-20260819T0013Z-0a0ce24c3510
+49af598c0b46c6b0d9d77e86510f5aac23476337 refs/remotes/origin/fixer/critique-epoch-invalidation-20260806
+bf18142fca3679f1b96d36e489812e1dbd689e51 refs/remotes/origin/fixer/fixer-unification-20260807
+f410585d56142fbded06dbd1454560754adc2aba refs/remotes/origin/fixer/megaplan-maintenance-20260811
+0576c603c7da464ff206501e92f02ef71c19ac94 refs/remotes/origin/fixer/megaplan-maintenance-20260813
+e1feb48df186015836d5efcecc6d66b570d4c6bd refs/remotes/origin/fixer/megaplan-maintenance-20260813-2b9fe3d98636
+21977b5968512f8f7bc3024f5f1c97a1651eb319 refs/remotes/origin/integrate/cleanup-ports-20260809
+9e7cfedaabed3b415ac762675e9e37f8a7d53b9c refs/remotes/origin/main
+d3c16b849bc9c1bac0992ed93c129b0a707e30f4 refs/remotes/origin/main-unification
+a3fc18f9c6832ecd4b8b6683f8ec9492ee8e6485 refs/remotes/origin/megaplan/cl3-evaluator-routing-blind-20260807-1749
+45963095ff589b59533906e8e7b36cf6c9ebd2e7 refs/remotes/origin/megaplan/cl4-semantic-reconciliation-20260808-0051
+91671ad84fdbf62c5e9a6ed0622ebf33580ad8e2 refs/remotes/origin/megaplan/cl5-coordinated-cutover-20260808-0804
+b0ee1bd54c17b0ff9664008629bdb73ca4e5c223 refs/remotes/origin/megaplan/critique-ledger-accountability-v3-r7-20260805/cl2-ledger-replay
+67e7b94a4da248b5e92ad56eb4bfa5ba261d9145 refs/remotes/origin/megaplan/m1-containment-and-truthful-20260813-1656
+15b881cb47274447b3795c9438fd2de1d9f9d33d refs/remotes/origin/megaplan/m2-coherent-maintenance-20260815-1634
+344c98ff59b6a67b9d9aca614838fc0a521cf17d refs/remotes/origin/megaplan/megaplan-maintenance/m2-authority
+297823fcb0c9b1b069453d5011399549f7cf62c7 refs/remotes/origin/omp-migration
+9c76105c81641d32f1860db84398b536e0ccb45b refs/remotes/origin/recovery/box-cleanup-20260807
+2d1a623ce4c09684370fadc4527137a15b7d85d4 refs/remotes/origin/recovery/critique-r7-splitter-f3b952be
+26fecb4d2f817896ea3d658de124e38b037c1542 refs/remotes/origin/recovery/mac-main-pre-realign-20260807
+474af603e2c72b94ded1836fdc7c94d634699bc4 refs/remotes/origin/test-push-probe
+27380d3594a0f0e4a5f8130a4d5d06f54d6477e4 refs/tags/archive/sprints-1a-3
+44e249df37f368ebcc1c71d99940a8234493dcea refs/tags/box-snapshot/4ed-live-20260807
+49af598c0b46c6b0d9d77e86510f5aac23476337 refs/tags/box-snapshot/r7-fresh-child-20260807
+3299a4f076c9d811314ef081bfb594cdf8c084a6 refs/tags/box-snapshot/workspace-arnold-20260807
+1b08c7abb074eed0b40edb6348bff90c7fab3406 refs/tags/completion-native-platform-strategy-20260730
+3003372a2d4ec47e7931f3e92ce626ef1623ca33 refs/tags/completion-native-platform-strategy-20260730-auto
+faaad5f1c31c56384a4290149ca40864dcdb762d refs/tags/completion-native-platform-strategy-20260730-final
+3102e731deaa82095afb34314d7baf54d3e3f5f1 refs/tags/post-m11-consolidation-c7bcb06af536
+f11bafde3674eb490a6579099ac8dfe59e5fad46 refs/tags/post-m11-consolidation-e93ac6ac6365
+78c5acce2069aff0250f90d7262496cd5b46ffe8 refs/tags/v0.10.0
+560c96b2397a84c4338db42826b7622ef695e963 refs/tags/v0.11.0
+36849b7c9ea5957a24af7b8efd40d9ab1904df6c refs/tags/v0.12.0
+6ca41e2238c66aa0481af10b76771db76adcc167 refs/tags/v0.19.0
+5db596fb87f4babf8eb05bed8dcc8c289e73ae39 refs/tags/v0.20.0
+b01bd03996bce09ceef0ff8b226d71d0d2fd28ee refs/tags/v0.9.0
+origin	https://github.com/peteromallet/Arnold.git (fetch)
+origin	no-push-authorized://custody-control-plane-20260714 (push)

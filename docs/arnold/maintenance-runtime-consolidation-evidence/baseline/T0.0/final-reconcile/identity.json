@@ -1,0 +1,21 @@
+{
+  "capture_status": "captured",
+  "disposition_written": false,
+  "observed_iteration": 8,
+  "observed_state": "done",
+  "plan": "reconcile-outcome-select-and-20260819-1828",
+  "preserved_unchanged": true,
+  "process_identity": {
+    "reason": "No process matching the final reconcile plan was present in captured local/cloud ps/pgrep output; plan is recorded as done in state.json.",
+    "status": "unknown"
+  },
+  "repository_sha": "unknown",
+  "schema_version": "T0.0.final-reconcile-identity.v1",
+  "source_artifacts": {
+    "execution": "final-reconcile/execution.json",
+    "review": "final-reconcile/review.json",
+    "review_evidence": "final-reconcile/review_evidence.json",
+    "state": "raw-final-reconcile-state.json"
+  },
+  "source_root": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828"
+}

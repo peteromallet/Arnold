@@ -1,0 +1,29 @@
+{
+  "capture_status": "captured",
+  "host": "cloud",
+  "records": [
+    {
+      "digest_source": "raw-active-leases-fences-digests.txt",
+      "source_inventory": "/workspace/.megaplan/cloud-sessions/astrid-first.liveness-{fence,lease}.json",
+      "status": "captured"
+    },
+    {
+      "digest_source": "raw-active-leases-fences-digests.txt",
+      "source_inventory": "/workspace/.megaplan/cloud-sessions/megaplan-maintenance.liveness-{fence,lease}.json",
+      "status": "captured"
+    },
+    {
+      "digest_source": "raw-active-leases-fences-digests.txt",
+      "source_inventory": "/workspace/.megaplan/cloud-sessions/*liveness-publisher.lock and *.runtime-cutover.lock",
+      "status": "captured"
+    },
+    {
+      "digest_source": "raw-leases-fences.txt",
+      "reason": "Initial recursive metadata command produced empty output; no second recursive scan was used. Active cloud-session lease/fence paths were captured directly.",
+      "source_inventory": "/workspace/megaplan-maintenance/Arnold/.megaplan/plans/reconcile-outcome-select-and-20260819-1828/**/*lock and custody/leases/*",
+      "status": "unknown"
+    }
+  ],
+  "schema_version": "T0.0.leases.v1",
+  "unknown_unreadable": []
+}

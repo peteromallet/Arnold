@@ -1,0 +1,21 @@
+{
+  "capture_status": "captured",
+  "host": "local",
+  "local_refs": {
+    "command_output": "raw-local-show-ref.txt",
+    "content_digest": "sha256:41e1d18bb0e7b388475486dc4d3d683876913547e33262dd0a54522ee8b80279"
+  },
+  "remote_refs": {
+    "command_output": "raw-origin-ls-remote.txt",
+    "content_digest": "sha256:837d82e21c8ac13fc957c978330f4e164f8ca80930a3061cce721b74ec9ee33a",
+    "remote": "origin"
+  },
+  "repository": {
+    "brief_sha": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "observed_sha": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+    "planned_base_sha": "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+  },
+  "schema_version": "T0.0.integration-refs.v1",
+  "write_commands_executed": false
+}
