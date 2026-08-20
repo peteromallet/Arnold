@@ -83,14 +83,18 @@ def test_close_active_allowance_preserves_manifest_content(tmp_path, capsys):
     output = json.loads(capsys.readouterr().out)
     updated = json.loads(registry_path.read_text(encoding="utf-8"))
     closed = updated["allowances"][0]
+    preclose_digest = launcher.canonical_allowance(target)[1]
+    _, closed_digest = launcher.canonical_allowance(closed)
+    assert closed["allowance_digest"] == closed_digest
+    assert closed["allowance_digest"] != preclose_digest
 
     assert output == {"allowance_id": "active", "manifest": str(registry_path.resolve()), "status": "closed"}
     assert closed["active"] is False
     assert closed["lifecycle_state"] == "closed"
     assert closed["closed_at_utc"].endswith("Z")
     assert datetime.fromisoformat(closed["closed_at_utc"].replace("Z", "+00:00")).utcoffset().total_seconds() == 0
-    assert {key: closed[key] for key in target if key not in {"active", "lifecycle_state"}} == {
-        key: target[key] for key in target if key not in {"active", "lifecycle_state"}
+    assert {key: closed[key] for key in target if key not in {"active", "lifecycle_state", "allowance_digest"}} == {
+        key: target[key] for key in target if key not in {"active", "lifecycle_state", "allowance_digest"}
     }
     assert updated["allowances"][1] == other
     assert {key: updated[key] for key in manifest if key != "allowances"} == {
@@ -111,6 +115,13 @@ def test_close_active_allowance_preserves_noncanonical_manifest_bytes(tmp_path, 
         b'[\n'
         b'\t {\r\n'
         b'\t\t"allowance_id" : "target",\r\n'
+        b'\t\t"production_files" : ["src/target.py"],\r\n'
+        b'\t\t"tests" : ["tests/test_target.py"],\r\n'
+        b'\t\t"fixtures" : [],\r\n'
+        b'\t\t"exports" : [],\r\n'
+        b'\t\t"helpers" : [],\r\n'
+        b'\t\t"generated_surfaces" : ["docs/target.json"],\r\n'
+        b'\t\t"allowance_digest" : "' + b"a" * 64 + b'",\r\n'
         b'\t\t"active" : true,\n'
         b'\t\t"lifecycle_state" : "active",\r\n'
         b'\t\t"closed_at_utc" : "old",\r\n'
@@ -135,12 +146,21 @@ def test_close_active_allowance_preserves_noncanonical_manifest_bytes(tmp_path, 
     assert datetime.fromisoformat(closed_at_utc.replace("Z", "+00:00")).utcoffset().total_seconds() == 0
 
     expected = before
+    closed = json.loads(after.decode("utf-8"))["allowances"][0]
+    _, expected_digest = launcher.canonical_allowance(closed)
+    preclose_digest = launcher.canonical_allowance(json.loads(before.decode("utf-8"))["allowances"][0])[1]
+    assert closed["allowance_digest"] == expected_digest
+    assert closed["allowance_digest"] != preclose_digest
     for old, new in (
         (b'\t\t"active" : true', b'\t\t"active" : false'),
         (b'\t\t"lifecycle_state" : "active"', b'\t\t"lifecycle_state" : "closed"'),
         (
             b'\t\t"closed_at_utc" : "old"',
             f'\t\t"closed_at_utc" : "{closed_at_utc}"'.encode("utf-8"),
+        ),
+        (
+            b'\t\t"allowance_digest" : "' + b"a" * 64 + b'"',
+            f'\t\t"allowance_digest" : "{closed["allowance_digest"]}"'.encode("utf-8"),
         ),
     ):
         assert expected.count(old) == 1

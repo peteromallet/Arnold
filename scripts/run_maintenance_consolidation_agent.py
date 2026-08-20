@@ -282,7 +282,12 @@ def _last_json_member(node: _JsonNode, key: str) -> _JsonMember | None:
     return next((member for member in reversed(node.members) if member.key == key), None)
 
 
-def _lossless_manifest_update(source: bytes, target_index: int, closed_at_utc: str) -> bytes:
+def _lossless_manifest_update(
+    source: bytes,
+    target_index: int,
+    closed_at_utc: str,
+    allowance_digest: str,
+) -> bytes:
     root = _scan_json_document(source)
     allowances_member = _last_json_member(root, "allowances")
     if allowances_member is None or allowances_member.value.kind != "array":
@@ -298,6 +303,7 @@ def _lossless_manifest_update(source: bytes, target_index: int, closed_at_utc: s
         "active": b"false",
         "lifecycle_state": b'"closed"',
         "closed_at_utc": json.dumps(closed_at_utc, separators=(",", ":")).encode("utf-8"),
+        "allowance_digest": json.dumps(allowance_digest, separators=(",", ":")).encode("utf-8"),
     }
     replacements: list[tuple[int, int, bytes]] = []
     missing: list[bytes] = []
@@ -364,7 +370,16 @@ def deactivate_allowance(args: argparse.Namespace) -> int:
         raise ValueError(f"ALLOWANCE_ALREADY_CLOSED:{args.deactivate_allowance}")
 
     closed_at_utc = now()
-    updated_source = _lossless_manifest_update(source, target_index, closed_at_utc)
+    closed_allowance = dict(allowance)
+    closed_allowance.update(
+        {
+            "active": False,
+            "lifecycle_state": "closed",
+            "closed_at_utc": closed_at_utc,
+        }
+    )
+    _, allowance_digest = canonical_allowance(closed_allowance)
+    updated_source = _lossless_manifest_update(source, target_index, closed_at_utc, allowance_digest)
     _atomic_manifest(registry_path, updated_source)
     print(json.dumps({"allowance_id": args.deactivate_allowance, "manifest": str(registry_path), "status": "closed"}, sort_keys=True))
     return 0
