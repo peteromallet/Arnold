@@ -94,13 +94,37 @@ Large but mechanically bounded tasks are not marked `[XHARD]`.
 
 ## Execution protocol
 
-- Use one Luna implementer per task card and one independent Luna reviewer per gate.
+- Use one Luna implementer per task card, one independent Luna reviewer per ordinary gate, and the stronger reviewer assignments in the review matrix for load-bearing gates.
 - Parallelize only cards with disjoint production files and no unmet dependency.
 - No two agents edit the same module concurrently.
 - Each implementer returns: commit SHA, files changed, focused commands, results, rejected alternatives, and residual risks.
 - Each reviewer reads the diff and production paths, adds a counterexample test when useful, and reports must/should findings with file and function evidence.
 - A task with an unresolved must-level authority, identity, migration, or replay finding does not advance.
 - Merge cards in the order below. Preserve user changes and never reset the integration worktree.
+
+## Review ownership and timing
+
+`[XHARD]` labels the implementation risk, not the implementer's intelligence or the mere existence of a review. Reviewer ownership is explicit:
+
+| Gate | When | Reviewer | Purpose |
+|---|---|---|---|
+| G0 | Before any production-code card | Independent Luna, then root decision | Verify custody, exact source hunks, and keep/adapt/drop completeness |
+| G1, G2, G3 | After each ordinary batch | A Luna that implemented none of that batch | Diff review, focused counterexamples, purity/authority/replay checks |
+| G4.1, G4.2, G4.3 | Before and after each T4 `[XHARD]` card | Sol contract/adversarial reviewer; root accepts or rejects | Freeze authority contract before code; attack every production transition afterward |
+| G5 | Before and after T5.1 | Sol semantic-compatibility reviewer; root accepts or rejects | Prove schema, prompt, execution, timeout, and resume all mean the same thing |
+| G6.1, G6.2 | Before and after each `[XHARD]` card | Sol fence/closure reviewer; root accepts or rejects | Attack concurrency, fence loss, replay, window closure, and hidden authority |
+| G6.3 | After the ordinary scheduler handoff | Independent Luna | Prove the handler only consumes T2.1 custody and cannot escalate observations |
+| G7 | After all shards, candidate proof, and canary | Fresh Sol final reviewer; root makes promotion recommendation | Assess the final diff and evidence manifest against must-level end-state criteria |
+
+Review mechanics:
+
+- The implementer never reviews its own card.
+- The root agent writes/freezes the task handoff, resolves reviewer findings, and decides whether a card may merge.
+- For ordinary cards, the reviewer runs only that batch's focused integration shard.
+- For `[XHARD]` cards, the pre-code review must approve the contract/consumer map before the Luna implementer starts; the post-code reviewer receives the frozen contract, diff, focused evidence, and failure-injection results.
+- A dedicated Luna validation agent runs each final integration shard once. Implementers do not rerun the broad suite.
+- Sol reviews are read-only and decision-oriented. Sol does not perform the implementation it later judges.
+- No batch advances with an unresolved must-level finding. Should-level findings are recorded with an explicit disposition by the root.
 
 ## Batch 0 — Custody and exact patch map
 
