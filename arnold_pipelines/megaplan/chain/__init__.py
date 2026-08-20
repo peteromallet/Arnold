@@ -5498,8 +5498,19 @@ def _rearm_fresh_session_execute_block(
         and resume_cursor.get("phase") == "execute"
         and resume_cursor.get("retry_strategy") == "fresh_session"
     )
-    deferred_validation_retry = False
-    if not fresh_session_retry:
+    latest_failure = state_payload.get("latest_failure")
+    typed_deferred_validation_retry = (
+        isinstance(resume_cursor, dict)
+        and resume_cursor.get("phase") == "execute"
+        and resume_cursor.get("retry_strategy") == "repair_validation_failure"
+        and isinstance(latest_failure, dict)
+        and latest_failure.get("kind") == "pre_dispatch_validation_failed"
+        and latest_failure.get("phase") in {None, "execute"}
+        and isinstance(latest_failure.get("metadata"), dict)
+        and latest_failure["metadata"].get("worker_dispatched") is False
+    )
+    deferred_validation_retry = typed_deferred_validation_retry
+    if not fresh_session_retry and not deferred_validation_retry:
         history = state_payload.get("history")
         latest_execute: Mapping[str, Any] | None = None
         if isinstance(history, list):
@@ -5530,7 +5541,6 @@ def _rearm_fresh_session_execute_block(
                 )
     if not fresh_session_retry and not deferred_validation_retry:
         return False
-    latest_failure = state_payload.get("latest_failure")
     if isinstance(latest_failure, dict):
         failure_phase = latest_failure.get("phase")
         failure_kind = latest_failure.get("kind")
@@ -5541,6 +5551,7 @@ def _rearm_fresh_session_execute_block(
             "tasks_blocked",
             "external_error",
             "quality_gate_circuit_open",
+            "pre_dispatch_validation_failed",
         }:
             return False
     from arnold_pipelines.megaplan._core.state import write_plan_state

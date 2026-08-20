@@ -1116,6 +1116,46 @@ def test_blocked_validation_failure_reopens_supported_execute_retry_frontier(
     assert any("deferred validation" in message for message in messages)
 
 
+def test_typed_pre_dispatch_validation_failure_reopens_once(
+    tmp_path: Path,
+) -> None:
+    """The persisted VJ14 failure shape is a retryable execute frontier."""
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "active_step": None,
+                "latest_failure": {
+                    "kind": "pre_dispatch_validation_failed",
+                    "phase": "execute",
+                    "metadata": {
+                        "signature": "sha256:0033c3c4",
+                        "occurrence_id": "validation-0033c3c4c287342df939",
+                        "repair_request_identity": {
+                            "outcome": "zero_authority_rejected",
+                        },
+                        "worker_dispatched": False,
+                    },
+                },
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "repair_validation_failure",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    messages: list[str] = []
+    assert _rearm_fresh_session_execute_block(plan_dir, writer=messages.append)
+    updated = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert updated["current_state"] == "finalized"
+    assert any("deferred validation" in message for message in messages)
+    assert not _rearm_fresh_session_execute_block(plan_dir, writer=messages.append)
+
+
 def test_no_push_reconciliation_never_fabricates_open_pr_as_merged(
     tmp_path: Path,
 ) -> None:
