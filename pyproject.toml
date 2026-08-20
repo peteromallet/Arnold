@@ -98,6 +98,7 @@ agent = []
 [dependency-groups]
 dev = [
     "banodoco-timeline-schema==0.0.2",
+    "build>=1.5.0",
 ]
 
 [tool.uv]
