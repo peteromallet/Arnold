@@ -56,16 +56,58 @@ rule below, record the conflict, and resolve it before mutation.
 
 ## Mandatory model routing through `/subagent-launcher`
 
-The orchestrating agent manages context, writes precise briefs, integrates
-reviewed work, and makes final merge judgments. It should not personally absorb
-the wide implementation/review workload.
+The orchestrating agent only advances the deterministic task state machine,
+launches the routed subagents, watches their receipts, and relays reviewed
+results. **All substantive work must be done in subagents.** The orchestrator
+must not personally research source history, inspect implementation details,
+write briefs, edit code/docs/tests, run tests, classify findings, implement
+revisions, review diffs, integrate commits, push branches, update candidates,
+run canaries, validate evidence, or make architectural/policy/merge judgments.
 
-### Grok 4.6 — every hard implementation and hard review
+Use Luna subagents for brief preparation, workspace preparation, ordinary
+implementation, ordinary review, mechanical integration/push, test execution,
+evidence collection, and report assembly. Use Grok 4.6 subagents for every
+material judgment, `[XHARD]` implementation, `[XHARD-REVIEW]`, and
+`[XHARD-REVISION]`. The orchestrator may reject an invalid/missing receipt
+mechanically; it may not replace a subagent judgment with its own.
+
+## Judgment-call routing — always Grok 4.6
+
+Any decision that could materially change the result must be dispatched to a
+fresh Grok 4.6 judgment subagent through the receipt-producing wrapper with
+role `judgment` and label `[XHARD-REVIEW]`. This includes:
+
+- keep/adapt/drop or supersession decisions;
+- scope changes, task splitting that changes semantics, or difficulty
+  classification when it is not mechanically obvious;
+- architecture, authority, custody, identity, migration, concurrency, replay,
+  compatibility, public-schema, or live-runtime choices;
+- whether to delete a gate, add enforcement, accept a fallback, or tolerate
+  unknown evidence;
+- whether a reviewer finding is must/should, whether evidence is sufficient,
+  or whether a residual risk is acceptable;
+- any departure from the execution plan, settled decisions, test contract, or
+  model-routing policy; and
+- the final merge/promotion recommendation.
+
+The judgment brief must demand one decisive recommendation, evidence paths,
+rejected alternatives, affected tasks/contracts, and the exact downstream
+routing. A Luna evidence subagent records the Grok judgment; the orchestrator
+follows its routed outcome. If concrete
+evidence later contradicts it, launch a fresh Grok re-adjudication; do not
+silently overrule it.
+
+Any Luna agent encountering a material judgment must stop without mutation and
+return `JUDGMENT_REQUIRED` with the evidence and precise question for Grok.
+
+### Grok 4.6 — every XHARD implementation, XHARD review, revision, and judgment
 
 Use Grok 4.6 for:
 
 - every task heading marked `[XHARD]`;
 - every gate marked `[XHARD-REVIEW]`;
+- every revision marked `[XHARD-REVISION]`;
+- every material judgment described above;
 - the pre-code contract review and post-code adversarial review around every
   `[XHARD]` card; and
 - any ordinary card that discovers a new authority transition and is formally
@@ -96,8 +138,10 @@ state mutation.
 Use GPT-5.6 Luna for:
 
 - G0 object/source inventory before Grok adjudication;
-- every unlabelled implementation card;
-- every ordinary review gate;
+- every ordinary/unlabelled implementation card, recorded as `[HARD]`;
+- every ordinary review gate, recorded as `[HARD-REVIEW]`;
+- every bounded review repair recorded as `[HARD-REVISION]`;
+- brief/worktree preparation and mechanical commit integration/push;
 - focused test-shard execution and evidence collection;
 - mechanical source mapping, call-site inventory, and contradiction searches;
   and
@@ -130,9 +174,42 @@ agent pathway. If Grok or Luna is unavailable, record the exact launcher error
 and retry once after checking launcher/model configuration. If it remains
 unavailable, stop at that card rather than changing the model policy.
 
+## Review-revision routing
+
+No orchestrator edits code in response to review. Every finding that requires a
+change becomes a new evidence-linked revision card and subagent invocation:
+
+- `[HARD-REVISION]` → fresh GPT-5.6 Luna revision implementer. Use only when
+  the governing contract is already frozen, the fix is confined to an exact
+  existing file allowance, and it changes no authority, custody, identity,
+  migration, concurrency/replay, compatibility/public schema, live-runtime
+  behavior, task scope, or policy.
+- `[XHARD-REVISION]` → fresh Grok 4.6 revision implementer. Mandatory whenever
+  the finding touches any excluded HARD dimension, crosses task/module
+  boundaries, changes acceptance semantics, or is difficult/ambiguous.
+
+Every reviewer must emit finding IDs and a proposed revision class. Mechanical
+HARD cases may route directly to Luna. Any ambiguous classification is itself a
+material judgment and goes to a fresh Grok judgment subagent before revision.
+When in doubt, route `[XHARD-REVISION]`; never downgrade to save time or cost.
+
+Each revision brief contains only the finding evidence, frozen task contract,
+exact allowed files, required counterexample test, and acceptance proof. After
+revision, a fresh independent reviewer of the original gate's required model
+must re-review the complete task diff. A revision agent cannot review its own
+work, and the original implementation receipt remains linked rather than being
+overwritten.
+
+The evidence manifest records `finding_id`, `revision_class`, classification
+receipt, revision invocation/commit, re-review invocation/verdict, and superseded
+artifact digests. A task cannot integrate while any must finding lacks this
+closed revision chain.
+
 ## Brief contract for every subagent
 
-Every brief must be a small implementation specification, not the entire epic
+Every brief is drafted by a Luna brief-preparation subagent from the authoritative
+task card and checked mechanically by the wrapper; the orchestrator does not
+author it. It must be a small implementation specification, not the entire epic
 history. Include only:
 
 1. task/gate ID and exact goal;
@@ -149,9 +226,15 @@ history. Include only:
 
 If a subagent needs files outside its allowance or discovers a new policy or
 authority transition, it must stop and return evidence. The orchestrator then
-splits or reclassifies the card; the subagent must not improvise architecture.
+routes that evidence to Grok for any material split/reclassification judgment;
+the subagent must not improvise architecture.
 
 ## Worktree and integration discipline
+
+Every action in this section is performed by a routed subagent. Luna
+workspace-preparation agents perform steps 1–4; implementation/review agents
+perform steps 5–6; a fresh Luna integration agent performs steps 7–9 after it
+receives the passing review receipt. The orchestrator only dispatches them.
 
 1. Fetch `origin/main` and `origin/fixer/runtime-convergence-r`.
 2. Start from a fresh clean worktree at the current remote integration branch.
@@ -168,12 +251,15 @@ splits or reclassifies the card; the subagent must not improvise architecture.
 5. The implementer edits and runs only focused tests in its task worktree, then
    commits one coherent task change.
 6. The independent reviewer examines that exact commit and its production call
-   paths. Must findings return to the implementer; the task does not merge.
-7. After review passes, integrate the task commit into the consolidation branch
-   in dependency order and record the resulting integration SHA.
+   paths. Findings become new HARD/XHARD revision cards handled by fresh routed
+   revision subagents; the task does not merge while a must finding is open.
+7. After review passes, a fresh Luna integration subagent integrates the task
+   commit into the consolidation branch in dependency order and records the
+   resulting integration SHA. It has no authority to resolve semantic conflicts;
+   any such conflict returns `JUDGMENT_REQUIRED` for Grok.
 8. Never use `git reset --hard`, destructive checkout, blanket stash, force
    push, or wholesale milestone merges.
-9. Push after each passed batch with the explicit refspec
+9. The Luna integration subagent pushes after each passed batch with the explicit refspec
    `HEAD:fixer/runtime-convergence-r` so work is durable.
 
 No two agents may edit the same worktree concurrently. No agent may review its
@@ -216,8 +302,8 @@ Follow the document exactly:
 1. **G0 / Batch 0:** complete T0.0 first; preserve all six cloud tips, resolve exact patch objects,
    classify every patch-unique production commit, and bind every selected hunk
    to a task. Luna also implements T0.3's JSON evidence schema and deterministic
-   validator. Luna inventories; Grok performs `[XHARD-REVIEW]`; orchestrator
-   records the disposition.
+   validator. Luna inventories; Grok performs `[XHARD-REVIEW]`; a Luna evidence
+   subagent records the Grok disposition.
 2. **Batch 1 / G1:** deterministic observation, pure operational reporting,
    efficiency read model and inert proposals. Luna implements and an independent
    Luna reviews.
@@ -230,7 +316,8 @@ Follow the document exactly:
    and missing deletions. Resolve every must finding before T4.
 6. **Batch 4:** Grok implements T4.1–T4.3 serially. For each card: fresh Grok
    pre-code contract review, fresh Grok implementation, focused failure
-   injection, fresh Grok post-code adversarial review, orchestrator judgment.
+   injection, fresh Grok post-code adversarial review, and a recorded Grok
+   judgment receipt when any finding/disposition remains non-mechanical.
 7. **Batch 5:** Grok performs the same sequence for elapsed test deadlines and
    legacy compatibility.
 8. **Batch 6:** Grok handles T6.1 and T6.2 plus their hard reviews. Luna handles
@@ -244,9 +331,9 @@ Follow the document exactly:
    different Grok implements T7.4's `[XHARD]` disposable canary/rollback; a
    third fresh Grok must pass G7.4-post. Only then does one dedicated Luna own
    T7.5's singleton broad-suite invocation and close the evidence manifest. A
-   fourth fresh Grok performs G7 only after the validator passes. The
-   orchestrator produces the promotion recommendation but does not promote live
-   runtimes.
+   fourth fresh Grok performs G7 and produces the promotion recommendation only
+   after the validator passes. A Luna report-assembly subagent formats the final
+   handoff; the orchestrator only relays it and does not promote live runtimes.
 
 ## Review and testing rules
 
@@ -311,8 +398,10 @@ python scripts/validate_maintenance_runtime_consolidation_evidence.py \
 ```
 
 The schema/validator created by T0.3 must enforce task/gate/shard uniqueness,
-model routing, reviewer independence, selected-behavior mapping, artifact
-existence/digests, candidate/canary receipts, and the broad-suite singleton.
+task/review/revision/judgment model routing, reviewer independence, complete
+finding→revision→re-review chains, Grok receipts for material judgments,
+selected-behavior mapping, artifact existence/digests, candidate/canary
+receipts, and the broad-suite singleton.
 
 ## Stop and escalation conditions
 
@@ -330,8 +419,8 @@ Stop the affected card, preserve evidence, and do not merge when:
 
 Do not stop for ordinary implementation difficulty. Re-brief, split, or return
 the card to the correct model. If the same must finding survives three verified
-repair attempts, write a root adjudication with evidence instead of forcing a
-pass.
+repair attempts, dispatch a fresh Grok adjudication with the full evidence
+instead of forcing a pass or writing an orchestrator judgment.
 
 ## Done when
 
@@ -340,6 +429,11 @@ The goal is complete only when:
 - G0 through G7 have explicit passing dispositions;
 - every G0-selected behavior maps to integrated code and passing evidence;
 - every excluded production change has a durable reason;
+- every substantive work artifact has a valid routed subagent receipt; no
+  implementation, review, revision, integration, test, judgment, canary, or
+  report artifact is attributed to the orchestrator;
+- every reviewer finding has a closed HARD/XHARD revision and independent
+  re-review chain, or a Grok judgment receipt accepting the residual risk;
 - all focused, batch, integration, provenance, canary, rollback, and final broad
   tests pass;
 - the canonical evidence validator exits zero on the final manifest and every
@@ -349,8 +443,9 @@ The goal is complete only when:
 - active Astrid and maintenance state remains unchanged;
 - the final Grok G7 review has no unresolved must finding;
 - the integration branch and execution log are pushed; and
-- the orchestrator reports the exact successor SHA, evidence manifest, residual
-  should-level risks, and a separate promotion recommendation.
+- a Luna report-assembly subagent reports the exact successor SHA, evidence
+  manifest, residual should-level risks, and Grok's separate promotion
+  recommendation; the orchestrator only relays that reviewed handoff.
 
 Do not claim completion because every agent returned, every card has a commit,
 or the broad suite is green. Completion means the coherent evidence-bound

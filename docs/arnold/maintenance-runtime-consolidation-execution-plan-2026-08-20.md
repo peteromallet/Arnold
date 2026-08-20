@@ -94,13 +94,16 @@ Large but mechanically bounded tasks are not marked `[XHARD]`.
 
 `[XHARD-REVIEW]` means the review itself requires whole-system synthesis rather than checking one task against local acceptance criteria. It is used for cross-branch selection, architectural coherence, systemic over-enforcement, and final end-state judgment. An ordinary implementation batch can therefore feed an `[XHARD-REVIEW]` gate.
 
+`[HARD]` / `[HARD-REVIEW]` are bounded Luna implementation/review work with a frozen contract and exact file allowance. Review repairs become separate `[HARD-REVISION]` (Luna) or `[XHARD-REVISION]` (Grok 4.6) cards. A revision is XHARD whenever it affects authority, custody, identity, migration, concurrency/replay, compatibility/public schema, live-runtime behavior, task scope, acceptance semantics, or policy; ambiguity is itself routed to a fresh Grok judgment.
+
 ## Execution protocol
 
-- Route every `[XHARD]` implementation and every `[XHARD-REVIEW]` gate to Grok 4.6 through `subagent-launcher`. Route every unlabelled implementation card and ordinary review gate to GPT-5.6 Luna through the same launcher.
+- Route every `[XHARD]`, `[XHARD-REVIEW]`, `[XHARD-REVISION]`, and material judgment to Grok 4.6 through `subagent-launcher`. Route every ordinary/unlabelled implementation as `[HARD]`, every ordinary review as `[HARD-REVIEW]`, and every bounded `[HARD-REVISION]` to GPT-5.6 Luna through the same launcher.
+- All research, brief preparation, file mapping, implementation, test execution, review, revision, integration/push, candidate work, canary operation, evidence validation, judgment, and final report assembly is performed by routed subagents. The orchestrator only dispatches, watches receipts, advances deterministic state, and relays the reviewed result.
 - Parallelize only cards whose complete allowed production-and-test file sets are disjoint and whose dependencies are already merged. Any shared export, fixture, helper, or test file forces serialization.
 - No two agents edit the same file or worktree concurrently.
 - Each implementer returns: commit SHA, files changed, focused commands, results, rejected alternatives, and residual risks.
-- Each reviewer reads the diff and production paths, specifies a concrete counterexample test when useful, and reports must/should findings with file and function evidence. The routed implementer adds any required test; read-only reviewers do not edit.
+- Each reviewer reads the diff and production paths, specifies a concrete counterexample test when useful, and reports must/should findings with file and function evidence. A fresh routed `[HARD-REVISION]` or `[XHARD-REVISION]` subagent adds any required test/fix; read-only reviewers do not edit.
 - A task with an unresolved must-level authority, identity, migration, or replay finding does not advance.
 - Merge cards in the order below. Preserve user changes and never reset the integration worktree.
 
@@ -110,27 +113,27 @@ Large but mechanically bounded tasks are not marked `[XHARD]`.
 
 | Gate | When | Reviewer | Purpose |
 |---|---|---|---|
-| G0 `[XHARD-REVIEW]` | Before any production-code card | Luna inventory/validator; Grok 4.6 adjudicates selection; root decides | Verify custody, exact source hunks, cross-branch contradictions, and keep/adapt/drop completeness |
-| G1, G2, G3 | After each ordinary batch | A Luna that implemented none of that batch | Diff review, focused counterexamples, purity/authority/replay checks |
-| G3.5 `[XHARD-REVIEW]` | After ordinary foundations, before authority convergence | Fresh Grok 4.6 architecture reviewer; root decides | Review the branch as a system for duplicate concepts, premature authority, aggression, and missing simplifications |
-| G4.1, G4.2, G4.3 `[XHARD-REVIEW]` | Before and after each T4 `[XHARD]` card | Grok 4.6 contract/adversarial reviewer; root accepts or rejects | Freeze authority contract before code; attack every production transition afterward |
-| G5 `[XHARD-REVIEW]` | Before and after T5.1 | Grok 4.6 semantic-compatibility reviewer; root accepts or rejects | Prove schema, prompt, execution, timeout, and resume all mean the same thing |
-| G6.1, G6.2 `[XHARD-REVIEW]` | Before and after each `[XHARD]` card | Grok 4.6 fence/closure reviewer; root accepts or rejects | Attack concurrency, fence loss, replay, window closure, and hidden authority |
-| G6.3 | After the ordinary scheduler handoff | Independent Luna | Prove the handler only consumes T2.1 custody and cannot escalate observations |
-| G6.4 `[XHARD-REVIEW]` | After all implementation, before broad validation | Fresh Grok 4.6 systemic-risk reviewer; root decides | Trace observation-to-effect paths, find over-enforcement and duplicated authority, and demand simplification |
-| G7.4-pre / G7.4-post `[XHARD-REVIEW]` | Immediately before and after T7.4 | Two fresh Grok 4.6 reviewers, distinct from the T7.4 implementer; root decides | Freeze canary mutation boundaries first, then attack canary/rollback evidence before the broad suite |
-| G7 `[XHARD-REVIEW]` | After T7.5 closes and validates the evidence manifest | Fresh Grok 4.6 final reviewer; root makes promotion recommendation | Assess the final diff and evidence manifest against must-level end-state criteria |
+| G0 `[XHARD-REVIEW]` | Before any production-code card | Luna inventory/validator; Grok 4.6 adjudicates selection; Luna records the judgment receipt | Verify custody, exact source hunks, cross-branch contradictions, and keep/adapt/drop completeness |
+| G1, G2, G3 `[HARD-REVIEW]` | After each ordinary batch | A Luna that implemented none of that batch | Diff review, focused counterexamples, purity/authority/replay checks |
+| G3.5 `[XHARD-REVIEW]` | After ordinary foundations, before authority convergence | Fresh Grok 4.6 architecture reviewer/judge | Review the branch as a system for duplicate concepts, premature authority, aggression, and missing simplifications |
+| G4.1, G4.2, G4.3 `[XHARD-REVIEW]` | Before and after each T4 `[XHARD]` card | Grok 4.6 contract/adversarial reviewer/judge | Freeze authority contract before code; attack every production transition afterward |
+| G5 `[XHARD-REVIEW]` | Before and after T5.1 | Grok 4.6 semantic-compatibility reviewer/judge | Prove schema, prompt, execution, timeout, and resume all mean the same thing |
+| G6.1, G6.2 `[XHARD-REVIEW]` | Before and after each `[XHARD]` card | Grok 4.6 fence/closure reviewer/judge | Attack concurrency, fence loss, replay, window closure, and hidden authority |
+| G6.3 `[HARD-REVIEW]` | After the ordinary scheduler handoff | Independent Luna | Prove the handler only consumes T2.1 custody and cannot escalate observations |
+| G6.4 `[XHARD-REVIEW]` | After all implementation, before broad validation | Fresh Grok 4.6 systemic-risk reviewer/judge | Trace observation-to-effect paths, find over-enforcement and duplicated authority, and demand simplification |
+| G7.4-pre / G7.4-post `[XHARD-REVIEW]` | Immediately before and after T7.4 | Two fresh Grok 4.6 reviewers, distinct from the T7.4 implementer | Freeze canary mutation boundaries first, then attack canary/rollback evidence before the broad suite |
+| G7 `[XHARD-REVIEW]` | After T7.5 closes and validates the evidence manifest | Fresh Grok 4.6 final reviewer/judge produces promotion recommendation | Assess the final diff and evidence manifest against must-level end-state criteria |
 
 Review mechanics:
 
 - The implementer never reviews its own card.
-- The root agent writes/freezes the task handoff, resolves reviewer findings, and decides whether a card may merge.
+- A Luna brief-preparation subagent writes the task handoff from the frozen card. Reviewer findings become evidence-linked revision cards; material dispositions go to fresh Grok judgment subagents. A fresh Luna integration subagent merges/pushes only after the required passing review/judgment receipts exist.
 - For ordinary cards, the reviewer runs only that batch's focused integration shard.
 - For `[XHARD]` cards, a Grok 4.6 pre-code review must approve the contract/consumer map before a separate Grok 4.6 implementer starts; a fresh Grok 4.6 post-code reviewer receives the frozen contract, diff, focused evidence, and failure-injection results.
 - A dedicated Luna validation agent runs each final integration shard once. Implementers do not rerun the broad suite.
 - Grok reviews are read-only and decision-oriented. No Grok instance reviews an implementation produced by that same instance.
 - Every launcher call records a globally unique wrapper-generated `invocation_id`, launcher/child PID identity, resolved model, start/end time, exit status, exact command digest, brief digest, and result digest. The evidence validator rejects any reused invocation ID and rejects a review whose invocation or process identity equals any implementation it judges.
-- No batch advances with an unresolved must-level finding. Should-level findings are recorded with an explicit disposition by the root.
+- No batch advances with an unresolved must-level finding. Should-level acceptance/risk dispositions are material judgments and require a Grok receipt; mechanical should fixes may route as `[HARD-REVISION]` only after their acceptance semantics are already frozen.
 
 ## Batch 0 — Custody and exact patch map
 
@@ -177,12 +180,14 @@ The schema requires:
 - integration base/current SHA and G0 selection-manifest path/digest;
 - one record per task with label, selected source hunks, input/output SHA, commit, complete file allowance, implementer model/invocation identity, and focused-test receipts;
 - an ordered `review_invocations` collection for every `[XHARD]` task, separately recording pre-review, implementation, and post-review identities/dispositions; ordinary gates use their own independent review record;
+- one record per reviewer finding with finding ID, must/should severity, proposed and adjudicated revision class, `[HARD-REVISION]` or `[XHARD-REVISION]` invocation/commit, counterexample evidence, re-review invocation/verdict, and superseded artifact digests;
+- one record per material judgment with Grok invocation identity, exact question, evidence inputs, decisive recommendation, rejected alternatives, affected contracts/tasks, and downstream route;
 - one atomic file-allowance registry record per task covering production files, tests, fixtures, exports, helpers, generated surfaces, lifecycle state, and allowance digest;
 - one record per shard with canonical command, SHA, interpreter, runtime/spec/venv digests, disposable root, status, artifact path, and digest;
 - candidate install receipts, before/after live-state snapshot digests, canary/rollback receipts, and the broad-suite singleton receipt; and
 - uniqueness/referential-integrity rules proving every selected behavior maps to a task, every task maps to a gate, every gate reviewer is independent, every hard task has the ordered pre-review → implementation → post-review lifecycle, no active allowance overlaps another, and every required artifact exists and matches its digest.
 
-`scripts/run_maintenance_consolidation_agent.py` is the only allowed launcher after its bootstrap. It generates the invocation ID internally, atomically writes a start receipt, invokes the repository `subagent-launcher`, captures child PID/process identity and resolved model from launcher output, hashes the exact command/brief/result, and closes the receipt with exit status and timestamps. The caller cannot supply or attest its own invocation ID. It rejects a dispatch whose complete file allowance overlaps any active task.
+`scripts/run_maintenance_consolidation_agent.py` is the only allowed launcher after its bootstrap. It generates the invocation ID internally, atomically writes a start receipt, invokes the repository `subagent-launcher`, captures child PID/process identity and resolved model from launcher output, hashes the exact command/brief/result, and closes the receipt with exit status and timestamps. The caller cannot supply or attest its own invocation ID. It rejects a dispatch whose complete file allowance overlaps any active task. Its routing table enforces Grok 4.6 for `[XHARD]`, `[XHARD-REVIEW]`, `[XHARD-REVISION]`, and `judgment`; Luna for `[HARD]`, `[HARD-REVIEW]`, `[HARD-REVISION]`, brief/workspace/integration/validation/report roles; and rejects unclassified revision work.
 
 Canonical validation command:
 
@@ -191,11 +196,11 @@ python scripts/validate_maintenance_runtime_consolidation_evidence.py \
   docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json
 ```
 
-Acceptance: an empty scaffold reports the exact missing required records; complete synthetic evidence passes; duplicate task/gate/shard IDs, any globally reused `invocation_id`, wrong model routing, missing/overlapping allowances, wrong hard-review ordering, implementer/reviewer process identity equality, missing files, digest mismatch, unmapped selected behavior, and a second broad-suite authoritative invocation all fail deterministically. T0.3's own Luna bootstrap launch is the only direct-launch exception and its direct command/output digest is recorded before the wrapper becomes mandatory.
+Acceptance: an empty scaffold reports the exact missing required records; complete synthetic evidence passes; duplicate task/gate/shard/finding/judgment IDs, any globally reused `invocation_id`, wrong task/review/revision/judgment model routing, unclassified review repairs, incomplete finding→revision→re-review chains, missing Grok receipts for material judgments, missing/overlapping allowances, wrong hard-review ordering, implementer/reviewer process identity equality, missing files, digest mismatch, unmapped selected behavior, and a second broad-suite authoritative invocation all fail deterministically. T0.3's own Luna bootstrap launch is the only direct-launch exception and its direct command/output digest is recorded before the wrapper becomes mandatory.
 
 ### Gate G0 `[XHARD-REVIEW]` — Custody and selection review
 
-A Luna inventory/validation agent checks object reachability and classification completeness without adjudicating the selection. A Grok 4.6 reviewer then adjudicates the selection across all milestone branches, looking for contradictions, falsely superseded behavior, and unjustified automation. The root records the final keep/adapt/drop disposition. Implementation starts only after G0 passes.
+A Luna inventory/validation agent checks object reachability and classification completeness without adjudicating the selection. A Grok 4.6 reviewer/judge then adjudicates the selection across all milestone branches, looking for contradictions, falsely superseded behavior, and unjustified automation. A Luna evidence agent records the Grok keep/adapt/drop judgment receipt without changing it. Implementation starts only after G0 passes.
 
 ## Batch 1 — Pure observation foundations
 
@@ -246,7 +251,7 @@ Acceptance:
 
 Focused tests: malformed/torn reads, censoring, undeclared aliases, cross-environment evidence, stable no-match identity, and mutation spies.
 
-### Gate G1 — Purity and conservative-evidence review
+### Gate G1 `[HARD-REVIEW]` — Purity and conservative-evidence review
 
 Run the Batch 1 contract/digest shard. The reviewer searches production imports and call graphs for hidden writers, ambient defaults, and any unknown-to-green conversion.
 
@@ -305,7 +310,7 @@ Acceptance:
 
 Focused tests: each rejected class, missing scope, stale target, mismatched cursor/hash, and one valid complete shape.
 
-### Gate G2 — Authority-entry review
+### Gate G2 `[HARD-REVIEW]` — Authority-entry review
 
 Run scheduler/claim, receipt, and repair-contract shards. The reviewer proves there is one claim point, one receipt identity, and no alternate repair-eligibility path.
 
@@ -372,7 +377,7 @@ Acceptance:
 
 Focused tests: the focused six-hour auditor/controller shard plus mutation spies.
 
-### Gate G3 — Migration/recovery review
+### Gate G3 `[HARD-REVIEW]` — Migration/recovery review
 
 Run repair-request migration, unblocker, and auditor shards. The reviewer injects interruption at persistence boundaries and verifies that observation code cannot invoke migration or recovery effects.
 
@@ -567,7 +572,7 @@ Acceptance:
 
 Focused tests: schedule ownership, concurrent claim, failure/retry, terminal replay, mutation spies, schedule-store snapshots, active-chain snapshots, and static import/call-graph evidence proving one T2.1 claim function and no ticket, repair-dispatch, schedule-definition, provider/model-routing, or authority-receipt writer is reachable.
 
-### Gate G6.3 — Negative-authority review
+### Gate G6.3 `[HARD-REVIEW]` — Negative-authority review
 
 The reviewer inspects imports and call sites, not only mocks, and proves all M5 outputs terminate at report-only events.
 
@@ -676,7 +681,7 @@ Canonical command, using the approved integration interpreter from the manifest:
 python -m pytest -q
 ```
 
-Before launch, atomically create the evidence key/lock `broad_suite_once_v1` bound to the current integration SHA, interpreter digest, command digest, Luna invocation ID, and output path. An existing key refuses another launch. The one authoritative invocation writes start/end time, exit status, output artifact/digest, and resource summary. An infrastructure failure blocks G7 and requires explicit root adjudication; it may not be silently rerun or replaced by a second authoritative receipt.
+Before launch, atomically create the evidence key/lock `broad_suite_once_v1` bound to the current integration SHA, interpreter digest, command digest, Luna invocation ID, and output path. An existing key refuses another launch. The one authoritative invocation writes start/end time, exit status, output artifact/digest, and resource summary. An infrastructure failure blocks G7 and requires an explicit fresh Grok adjudication receipt; it may not be silently rerun or replaced by a second authoritative receipt.
 
 After the suite passes, run the canonical T0.3 evidence validator. T7.5 passes only when the suite receipt and the complete manifest validate with no missing or dangling record.
 
