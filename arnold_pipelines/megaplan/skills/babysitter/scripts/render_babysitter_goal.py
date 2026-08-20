@@ -389,7 +389,7 @@ Operator contract:
         verify the current milestone has a born-but-unstarted plan and no
         worker/driver before acting;
     (e) CHAIN PARKED MID-EPIC (FALSE TERMINAL): the chain reports
-        last_state in {done, complete, completed} but the milestone set is
+        last_state in {{done, complete, completed}} but the milestone set is
         NOT durably complete — completed_count < milestone_count, or a
         current_plan_name is set while current_milestone_index <
         milestone_count (e.g. the 2026-08-20 astrid-first m7 park: plan

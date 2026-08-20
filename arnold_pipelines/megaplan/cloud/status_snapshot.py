@@ -2335,15 +2335,6 @@ def _classify_session(
     if _canonical_spec_missing(workspace, remote_spec):
         return "attention", "spec missing or unreadable"
 
-    if isinstance(chain_health, Mapping) and chain_health.get("custody_mismatch"):
-        completed = chain_health.get("completed_count")
-        total = chain_health.get("milestone_count")
-        current_index = chain_health.get("current_milestone_index")
-        return (
-            "attention",
-            "chain custody mismatch: terminal state with "
-            f"completed={completed}/{total} current_milestone_index={current_index}",
-        )
 
     plan_current_state = (
         str(plan_state.get("current_state") or "").strip().lower()
@@ -2416,6 +2407,15 @@ def _classify_session(
 
     if liveness.get("tmux") or liveness.get("process"):
         return "running", "live runner process observed"
+    if isinstance(chain_health, Mapping) and chain_health.get("custody_mismatch"):
+        completed = chain_health.get("completed_count")
+        total = chain_health.get("milestone_count")
+        current_index = chain_health.get("current_milestone_index")
+        return (
+            "attention",
+            "chain custody mismatch: terminal state with "
+            f"completed={completed}/{total} current_milestone_index={current_index}",
+        )
 
     if plan_current_state in {"done", "complete", "completed"} and not chain_complete:
         return (

@@ -111,28 +111,28 @@ def epic_status(epic: str) -> dict:
             "chain_rev": _short(cur.get("source_revision")),
             "chain_digest": _short(cur.get("content_sha256")),
         }
-        # Milestone denominator from the epic's chain.yaml (top-level
+        # Milestone denominator from THIS epic's chain.yaml (top-level
         # "- label:" entries incl. the terminal reconcile milestone).
         # Without it, `done=6` reads as 6/6 when the true total is 9
         # (2026-08-20 astrid-first m7 park misread by the babysitter).
+        # Exact per-epic path: initiatives/{epic}/chain.yaml — globbing the
+        # first initiative with a count is wrong in multi-epic projects.
         total = None
         project = _resolve_project(epic)
         if project:
-            spec_dir = Path(project) / ".megaplan" / "initiatives"
-            if spec_dir.is_dir():
-                for spec_candidate in sorted(spec_dir.glob("*/chain.yaml")):
-                    try:
-                        spec_text = spec_candidate.read_text(encoding="utf-8")
-                    except OSError:
-                        continue
-                    n = sum(
-                        1
-                        for line in spec_text.splitlines()
-                        if line.startswith("- label:")
-                    )
-                    if n:
-                        total = n
-                        break
+            spec_candidate = Path(project) / ".megaplan" / "initiatives" / epic / "chain.yaml"
+            if spec_candidate.is_file():
+                try:
+                    spec_text = spec_candidate.read_text(encoding="utf-8")
+                except OSError:
+                    spec_text = ""
+                n = sum(
+                    1
+                    for line in spec_text.splitlines()
+                    if line.lstrip() == line and line.startswith("- label:")
+                )
+                if n:
+                    total = n
         chain["total"] = total
     out["chain"] = chain
     # plan + events

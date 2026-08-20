@@ -4460,15 +4460,20 @@ def _project_auto_dispatch(
     # full workflow, not the plan's actual robustness-pruned topology (for
     # example at light robustness there is no gate step: critiqued -> revise).
     # Reconcile the control projection against the plan's own topology ONLY
-    # for a live dispatch cursor (active_step / resume_cursor / latest_failure
-    # sources) so legitimate robustness-pruned transitions are not flagged as
-    # drift. A plain status projection (observed_phase_source=None) must keep
+    # for a dispatch cursor (active_step / resume_cursor / latest_failure /
+    # last_step sources) so legitimate robustness-pruned transitions are not
+    # flagged as drift. last_step is a completed-transition source: after a
+    # critique success at light robustness the only cursor source is
+    # last_step, and excluding it makes every drive mis-fire as
+    # workflow_cursor_mismatch (2026-08-20 astrid-first m8). A plain status
+    # projection (observed_phase_source=None) must keep
     # the strict cursor-vs-projection comparison: when the status cursor's
     # dispatch phase disagrees with the forward projection, that is a real
     # workflow_cursor_mismatch and the drive must stop before dispatch.
     if (
         state.get("current_state")
-        and observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+        and observed_phase_source
+        in {"active_step", "resume_cursor", "latest_failure", "last_step"}
     ):
         try:
             from arnold_pipelines.megaplan._core.workflow import workflow_next
