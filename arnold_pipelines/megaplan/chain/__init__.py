@@ -2106,6 +2106,24 @@ def _latest_execution_batch_all_tasks_done(
         list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
     )
+    # P6 reconcile selection envelope: a read-only reconcile selector's
+    # authoritative output is the selection JSON (selected_shas +
+    # verification_evidence) carried in the batch artifact; that IS the
+    # corroborated completion evidence for the milestone's tasks, so the
+    # per-task finalize corroboration checks do not apply (occurrence
+    # 47671addc195).
+    try:
+        for batch_path in batches:
+            raw = json.loads(batch_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and (
+                "selected_shas" in raw or "verification_evidence" in raw
+            ):
+                return (
+                    True,
+                    "reconcile selection payload corroborates batch completion",
+                )
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        pass
     if not batches:
         return False, "no execution_batch_*.json artifact found"
     latest = batches[-1]

@@ -311,3 +311,72 @@ def test_reconcile_selection_payload_does_not_block_task_tracking_gate() -> None
         payload=selection_payload,
     )
     assert reasons == ["execution timed out"], reasons
+
+
+def test_reconcile_selection_payload_corroborates_completion_authority(
+    tmp_path: Path,
+) -> None:
+    """The execute completion authority and the chain milestone authority must
+    accept a reconcile selection payload as corroborated completion evidence
+    (occurrence 47671addc195 — execute succeeded but the drive blocked on
+    'execute terminal success lacks corroborated task completion' and the
+    chain-level authority rejected pending tasks without batch updates)."""
+    import json as _json
+
+    from arnold_pipelines.megaplan import auto as auto_mod
+    from arnold_pipelines.megaplan._core.io import execute_batch_artifact_path
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        _json.dumps(
+            {
+                "name": "reconcile-test",
+                "current_state": "done",
+                "config": {"project_dir": str(tmp_path), "mode": "code"},
+                "meta": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        _json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "pending",
+                        "files_changed": [],
+                        "commands_run": [],
+                    },
+                    {
+                        "id": "T2",
+                        "status": "pending",
+                        "files_changed": [],
+                        "commands_run": [],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifact_path = execute_batch_artifact_path(plan_dir, 1, ["T1", "T2"])
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        _json.dumps(
+            {
+                "selected_shas": ["abc123"],
+                "verification_evidence": {"per_phase": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ok, missing = auto_mod._execute_completion_authority(plan_dir)
+    assert ok is True, missing
+    assert missing == []
+
+    import arnold_pipelines.megaplan.chain.__init__ as chain_mod
+
+    ok, reason = chain_mod._latest_execution_batch_all_tasks_done(plan_dir)
+    assert ok is True, reason
