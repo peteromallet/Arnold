@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.execute.validation_runner import (
     _classify_job,
     _compute_code_hash,
     _compute_result_hash,
+    _split_leading_environment_assignments,
     extract_compiled_validation_jobs,
     run_single_validation_job,
     run_validation_jobs,
@@ -181,6 +182,67 @@ class TestRunSingleValidationJob:
         )
         # Should use the explicit cwd, not the project_dir token
         assert result.exit_code == 0
+
+    def test_folds_leading_environment_assignment(self) -> None:
+        result = run_single_validation_job(
+            _make_job(
+                command=[
+                    "FOO=bar",
+                    "sh",
+                    "-c",
+                    "echo \"$FOO\"",
+                ]
+            ),
+            project_dir=Path("/tmp"),
+        )
+        assert result.exit_code == 0
+        assert result.stdout.strip() == "bar"
+        assert result.environment.get("FOO") == "bar"
+        # Effective argv excludes the folded assignment token.
+        assert result.command == ["sh", "-c", "echo \"$FOO\""]
+
+    def test_preserves_parent_environment_when_overrides_exist(self) -> None:
+        result = run_single_validation_job(
+            _make_job(
+                command=[
+                    "FOO=bar",
+                    "sh",
+                    "-c",
+                    "test -n \"$PATH\" && echo \"$FOO\"",
+                ]
+            ),
+            project_dir=Path("/tmp"),
+        )
+        # PATH must survive the env merge (os.environ + overrides).
+        assert result.exit_code == 0
+        assert result.stdout.strip() == "bar"
+
+    def test_keeps_make_assignment_after_executable(self) -> None:
+        # Only LEADING KEY=value tokens are env; PY=... after `make` is argv.
+        argv, env = _split_leading_environment_assignments(
+            ["PYTHONPATH=.", "make", "cycles", "PY=/py"],
+            {},
+        )
+        assert argv == ["make", "cycles", "PY=/py"]
+        assert env == {"PYTHONPATH": "."}
+
+    def test_does_not_strip_a_single_assignment_token(self) -> None:
+        # Guard: an all-assignment command stays a launch error, never [].
+        argv, env = _split_leading_environment_assignments(["FOO=bar"], {})
+        assert argv == ["FOO=bar"]
+        assert env == {}
+
+    def test_classifies_effective_command_after_env_prefix(self) -> None:
+        # _classify_job sees the effective argv (make), not the token.
+        from arnold_pipelines.megaplan.execute.validation_runner import (
+            _classify_job,
+        )
+
+        job = _make_job(
+            command=["PYTHONPATH=.", "make", "cycles", "PY=/py"],
+            environment={},
+        )
+        assert _classify_job(job) is None
 
 
 # ============================================================================

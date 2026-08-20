@@ -3487,9 +3487,12 @@ class AIAgent:
             "model": model,
             "instructions": instructions,
             "input": normalized_input,
-            "tools": normalized_tools,
             "store": False,
         }
+        if normalized_tools:
+            # Omit when empty/falsy: the SDK's responses.stream() crashes on
+            # _make_tools(None), and the codex backend rejects "tools": [].
+            normalized["tools"] = normalized_tools
 
         # Pass through reasoning config
         reasoning = api_kwargs.get("reasoning")
@@ -3927,6 +3930,7 @@ class AIAgent:
         has_tool_calls = False
         first_delta_fired = False
         for attempt in range(max_stream_retries + 1):
+            collected_output_items: List[Any] = []
             try:
                 with active_client.responses.stream(**api_kwargs) as stream:
                     for event in stream:
@@ -3953,7 +3957,18 @@ class AIAgent:
                             reasoning_text = getattr(event, "delta", "")
                             if reasoning_text:
                                 self._fire_reasoning_delta(reasoning_text)
-                    return stream.get_final_response()
+                        # The chatgpt.com/backend-api/codex backend streams
+                        # full output items as response.output_item.done events
+                        # but returns a final response whose output list is
+                        # empty — keep the streamed items so normalization
+                        # still sees the assistant message / tool calls.
+                        elif "output_item.done" in event_type:
+                            item = getattr(event, "item", None)
+                            if item is not None:
+                                collected_output_items.append(item)
+                    return self._ensure_codex_output_items(
+                        stream.get_final_response(), collected_output_items
+                    )
             except RuntimeError as exc:
                 err_text = str(exc)
                 missing_completed = "response.completed" in err_text
@@ -3973,6 +3988,49 @@ class AIAgent:
                     return self._run_codex_create_stream_fallback(api_kwargs, client=active_client)
                 raise
 
+    @staticmethod
+    def _ensure_codex_output_items(response: Any, collected: List[Any]) -> Any:
+        """Re-attach streamed output items to a codex Responses response.
+
+        chatgpt.com/backend-api/codex streams the full output items as
+        ``response.output_item.done`` events but its final ``response.completed``
+        payload carries an empty ``output`` list, which would otherwise fail
+        normalization.  When the response has no output but items were
+        collected from the stream, attach them (mutating the SDK object, with
+        a plain-namespace fallback if that is not possible).
+        """
+        output = getattr(response, "output", None)
+        if (isinstance(output, list) and output) or not collected:
+            return response
+        try:
+            object.__setattr__(response, "output", list(collected))
+            return response
+        except Exception:
+            return SimpleNamespace(
+                id=getattr(response, "id", None),
+                object="response",
+                created_at=getattr(response, "created_at", None),
+                status=getattr(response, "status", "completed"),
+                error=getattr(response, "error", None),
+                incomplete_details=getattr(response, "incomplete_details", None),
+                instructions=getattr(response, "instructions", None),
+                model=getattr(response, "model", None),
+                output=list(collected),
+                metadata=getattr(response, "metadata", None),
+                parallel_tool_calls=getattr(response, "parallel_tool_calls", None),
+                prompt_cache_key=getattr(response, "prompt_cache_key", None),
+                store=getattr(response, "store", None),
+                temperature=getattr(response, "temperature", None),
+                tool_choice=getattr(response, "tool_choice", None),
+                tools=getattr(response, "tools", None),
+                top_logprobs=getattr(response, "top_logprobs", None),
+                top_p=getattr(response, "top_p", None),
+                truncation=getattr(response, "truncation", None),
+                usage=getattr(response, "usage", None),
+                user=getattr(response, "user", None),
+                text=getattr(response, "text", None),
+            )
+
     def _run_codex_create_stream_fallback(self, api_kwargs: dict, client: Any = None):
         """Fallback path for stream completion edge cases on Codex-style Responses backends."""
         active_client = client or self._ensure_primary_openai_client(reason="codex_create_stream_fallback")
@@ -3988,11 +4046,16 @@ class AIAgent:
             return stream_or_response
 
         terminal_response = None
+        collected_output_items: List[Any] = []
         try:
             for event in stream_or_response:
                 event_type = getattr(event, "type", None)
                 if not event_type and isinstance(event, dict):
                     event_type = event.get("type")
+                if event_type == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if item is not None:
+                        collected_output_items.append(item)
                 if event_type not in {"response.completed", "response.incomplete", "response.failed"}:
                     continue
 
@@ -4000,7 +4063,9 @@ class AIAgent:
                 if terminal_response is None and isinstance(event, dict):
                     terminal_response = event.get("response")
                 if terminal_response is not None:
-                    return terminal_response
+                    return self._ensure_codex_output_items(
+                        terminal_response, collected_output_items
+                    )
         finally:
             close_fn = getattr(stream_or_response, "close", None)
             if callable(close_fn):
@@ -4010,7 +4075,7 @@ class AIAgent:
                     pass
 
         if terminal_response is not None:
-            return terminal_response
+            return self._ensure_codex_output_items(terminal_response, collected_output_items)
         raise RuntimeError("Responses create(stream=True) fallback did not emit a terminal response.")
 
     def _try_refresh_codex_client_credentials(self, *, force: bool = True) -> bool:
@@ -5001,6 +5066,11 @@ class AIAgent:
                 or "api.githubcopilot.com" in self.base_url.lower()
             )
 
+            # chatgpt.com/backend-api/codex rejects max_output_tokens with 400
+            # ("Unsupported parameter: max_output_tokens") — the backend
+            # applies its own output cap, so the field must be omitted there.
+            is_chatgpt_codex = "chatgpt.com/backend-api/codex" in self.base_url.lower()
+
             # Resolve reasoning effort: config > default (medium)
             reasoning_effort = "medium"
             reasoning_enabled = True
@@ -5014,11 +5084,15 @@ class AIAgent:
                 "model": self.model,
                 "instructions": instructions,
                 "input": self._chat_messages_to_responses_input(payload_messages),
-                "tools": self._responses_tools(),
                 "tool_choice": "auto",
                 "parallel_tool_calls": True,
                 "store": False,
             }
+            responses_tools = self._responses_tools()
+            if responses_tools:
+                # Omit when empty: the SDK's stream() runs _make_tools(None)
+                # when the key is present with a falsy value and crashes.
+                kwargs["tools"] = responses_tools
 
             if not is_github_responses:
                 kwargs["prompt_cache_key"] = self.session_id
@@ -5037,7 +5111,7 @@ class AIAgent:
             elif not is_github_responses:
                 kwargs["include"] = []
 
-            if self.max_tokens is not None:
+            if self.max_tokens is not None and not is_chatgpt_codex:
                 kwargs["max_output_tokens"] = self.max_tokens
 
             if self.response_format and self._supports_response_format():
