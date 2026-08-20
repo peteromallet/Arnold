@@ -25,7 +25,7 @@ milestones:
   idea: .megaplan/initiatives/runtime-convergence-promotion/briefs/reconcile.md
   branch: reconcile/runtime-convergence-promotion-20260820
   target_branch: main
-  merge_policy: auto
+  merge_policy: review
   phase_model:
   - plan=codex
   - critique_evaluator=codex
