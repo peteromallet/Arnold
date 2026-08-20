@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "arnold.maintenance-runtime-consolidation-evidence.v1",
+  "title": "Arnold maintenance runtime consolidation evidence manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "schema_version",
+    "integration",
+    "source_inputs",
+    "selected_behaviors",
+    "tasks",
+    "gates",
+    "review_invocations",
+    "findings",
+    "material_judgments",
+    "allowances",
+    "shards",
+    "candidate_install_receipts",
+    "live_state_snapshots",
+    "canary_rollback_receipts",
+    "broad_suite_receipts",
+    "invocation_receipts"
+  ],
+  "properties": {
+    "schema": {"const": "maintenance-runtime-consolidation-evidence"},
+    "schema_version": {"const": "maintenance-runtime-consolidation-evidence.v1"},
+    "manifest_version": {"type": "string"},
+    "integration": {
+      "$ref": "#/$defs/integration"
+    },
+    "source_inputs": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "selected_behaviors": {"type": "array", "items": {"$ref": "#/$defs/selectedBehavior"}},
+    "tasks": {"type": "array", "items": {"$ref": "#/$defs/task"}},
+    "gates": {"type": "array", "items": {"$ref": "#/$defs/gate"}},
+    "review_invocations": {"type": "array", "items": {"$ref": "#/$defs/reviewInvocation"}},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "material_judgments": {"type": "array", "items": {"$ref": "#/$defs/judgment"}},
+    "allowances": {"type": "array", "items": {"$ref": "#/$defs/allowance"}},
+    "shards": {"type": "array", "items": {"$ref": "#/$defs/shard"}},
+    "candidate_install_receipts": {"type": "array", "items": {"$ref": "#/$defs/artifactReceipt"}},
+    "live_state_snapshots": {"type": "array", "items": {"$ref": "#/$defs/artifactReceipt"}},
+    "canary_rollback_receipts": {"type": "array", "items": {"$ref": "#/$defs/artifactReceipt"}},
+    "broad_suite_receipts": {"type": "array", "items": {"$ref": "#/$defs/artifactReceipt"}},
+    "invocation_receipts": {"type": "array", "items": {"$ref": "#/$defs/invocationReceipt"}},
+    "required_artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sha40": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "stringList": {"type": "array", "items": {"type": "string"}},
+    "artifact": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "provenance": {"type": "string"},
+        "status": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "integration": {
+      "type": "object",
+      "required": ["integration_base_sha", "integration_current_sha", "branch", "worktree", "g0_selection_manifest"],
+      "properties": {
+        "integration_base_sha": {"$ref": "#/$defs/sha40"},
+        "integration_current_sha": {"$ref": "#/$defs/sha40"},
+        "branch": {"type": "string", "minLength": 1},
+        "worktree": {"type": "string", "minLength": 1},
+        "g0_selection_manifest": {"$ref": "#/$defs/artifact"}
+      },
+      "additionalProperties": true
+    },
+    "selectedBehavior": {
+      "type": "object",
+      "required": ["behavior_id", "source_commit", "source_hunk", "task_ids"],
+      "properties": {
+        "behavior_id": {"type": "string", "minLength": 1},
+        "source_commit": {"$ref": "#/$defs/sha40"},
+        "source_hunk": {"type": "string", "minLength": 1},
+        "task_ids": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "string", "minLength": 1}}
+      },
+      "additionalProperties": true
+    },
+    "invocationRef": {
+      "type": "object",
+      "required": ["invocation_id", "model", "process_identity"],
+      "properties": {
+        "invocation_id": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "resolved_model": {"type": "string"},
+        "process_identity": {},
+        "role": {"type": "string"},
+        "commit": {"type": "string"},
+        "verdict": {"type": "string"},
+        "disposition": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "task": {
+      "type": "object",
+      "required": ["task_id", "label", "difficulty", "selected_source_commits", "selected_source_hunks", "selected_behavior_ids", "input_sha", "output_sha", "commit", "complete_allowance_id", "implementer", "focused_test_receipts", "gate_id"],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "difficulty": {"type": "string", "enum": ["HARD", "XHARD"]},
+        "selected_source_commits": {"$ref": "#/$defs/stringList"},
+        "selected_source_hunks": {"$ref": "#/$defs/stringList"},
+        "selected_behavior_ids": {"$ref": "#/$defs/stringList"},
+        "input_sha": {"$ref": "#/$defs/sha40"},
+        "output_sha": {"$ref": "#/$defs/sha40"},
+        "commit": {"$ref": "#/$defs/sha40"},
+        "complete_allowance_id": {"type": "string", "minLength": 1},
+        "implementer": {"$ref": "#/$defs/invocationRef"},
+        "focused_test_receipts": {"type": "array", "items": {"$ref": "#/$defs/artifactReceipt"}},
+        "gate_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "gate": {
+      "type": "object",
+      "required": ["gate_id", "label", "task_ids", "reviewer", "verdict", "evidence"],
+      "properties": {
+        "gate_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "task_ids": {"$ref": "#/$defs/stringList"},
+        "reviewer": {"$ref": "#/$defs/invocationRef"},
+        "verdict": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array"}
+      },
+      "additionalProperties": true
+    },
+    "reviewInvocation": {
+      "type": "object",
+      "required": ["task_id", "phase", "invocation_id", "role", "model", "process_identity", "disposition"],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "phase": {"type": "string", "enum": ["pre_review", "implementation", "post_review"]},
+        "invocation_id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "process_identity": {},
+        "disposition": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "finding": {
+      "type": "object",
+      "required": ["finding_id", "severity", "proposed_revision_class", "adjudicated_revision_class", "classification_disposition", "revision_invocation_id", "revision_commit", "counterexample_evidence", "re_review_invocation_id", "re_review_verdict", "superseded_artifact_digests"],
+      "properties": {
+        "finding_id": {"type": "string", "minLength": 1},
+        "severity": {"type": "string", "enum": ["must", "should"]},
+        "proposed_revision_class": {"type": "string"},
+        "adjudicated_revision_class": {"type": "string"},
+        "classification_disposition": {"type": "string"},
+        "revision_invocation_id": {"type": "string"},
+        "revision_commit": {"$ref": "#/$defs/sha40"},
+        "counterexample_evidence": {"type": "array"},
+        "re_review_invocation_id": {"type": "string"},
+        "re_review_verdict": {"type": "string"},
+        "superseded_artifact_digests": {"type": "array", "items": {"$ref": "#/$defs/sha256"}}
+      },
+      "additionalProperties": true
+    },
+    "judgment": {
+      "type": "object",
+      "required": ["judgment_id", "label", "model", "question", "evidence_inputs", "decisive_recommendation", "rejected_alternatives", "affected_contracts", "downstream_route", "invocation_id", "process_identity"],
+      "properties": {
+        "judgment_id": {"type": "string", "minLength": 1},
+        "process_identity": {},
+        "model": {"type": "string"},
+        "question": {"type": "string", "minLength": 1},
+        "evidence_inputs": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+        "decisive_recommendation": {"type": "string", "minLength": 1},
+        "rejected_alternatives": {"$ref": "#/$defs/stringList"},
+        "affected_contracts": {"$ref": "#/$defs/stringList"},
+        "downstream_route": {"$ref": "#/$defs/stringList"},
+        "invocation_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "allowance": {
+      "type": "object",
+      "required": ["allowance_id", "task_id", "production_files", "tests", "fixtures", "exports", "helpers", "generated_surfaces", "lifecycle_state", "active", "allowance_digest"],
+      "properties": {
+        "allowance_id": {"type": "string", "minLength": 1},
+        "task_id": {"type": "string", "minLength": 1},
+        "production_files": {"$ref": "#/$defs/stringList"},
+        "tests": {"$ref": "#/$defs/stringList"},
+        "fixtures": {"$ref": "#/$defs/stringList"},
+        "exports": {"$ref": "#/$defs/stringList"},
+        "helpers": {"$ref": "#/$defs/stringList"},
+        "generated_surfaces": {"$ref": "#/$defs/stringList"},
+        "lifecycle_state": {"type": "string"},
+        "active": {"type": "boolean"},
+        "allowance_digest": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": true
+    },
+    "shard": {
+      "type": "object",
+      "required": ["shard_id", "command", "source_sha", "interpreter", "runtime_digest", "spec_digest", "venv_digest", "disposable_root", "status", "artifact_path", "artifact_digest"],
+      "properties": {
+        "shard_id": {"type": "string", "minLength": 1},
+        "command": {"type": "string", "minLength": 1},
+        "source_sha": {"$ref": "#/$defs/sha40"},
+        "interpreter": {"type": "string", "minLength": 1},
+        "runtime_digest": {"$ref": "#/$defs/sha256"},
+        "spec_digest": {"$ref": "#/$defs/sha256"},
+        "venv_digest": {"$ref": "#/$defs/sha256"},
+        "disposable_root": {"type": "string", "minLength": 1},
+        "status": {"type": "string"},
+        "artifact_path": {"type": "string", "minLength": 1},
+        "artifact_digest": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": true
+    },
+    "artifactReceipt": {
+      "type": "object",
+      "required": ["receipt_id", "path", "sha256"],
+      "properties": {
+        "receipt_id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "artifact_path": {"type": "string"},
+        "artifact_digest": {"$ref": "#/$defs/sha256"},
+        "authoritative": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "invocationReceipt": {
+      "type": "object",
+      "required": ["invocation_id", "task_id", "role", "label", "model", "command", "command_digest", "brief_digest", "allowance_digest", "start_timestamp", "status"],
+      "properties": {
+        "invocation_id": {"type": "string", "minLength": 1},
+        "task_id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "command_digest": {"$ref": "#/$defs/sha256"},
+        "brief_digest": {"$ref": "#/$defs/sha256"},
+        "allowance_digest": {"$ref": "#/$defs/sha256"},
+        "start_timestamp": {"type": "string", "minLength": 1},
+        "status": {"type": "string"},
+        "process_identity": {},
+        "child_process_identity": {}
+      },
+      "additionalProperties": true
+    }
+  }
+}
