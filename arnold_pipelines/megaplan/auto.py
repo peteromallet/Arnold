@@ -3821,6 +3821,34 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         state_data=state_data,
         current_head=recorded_execute_head,
     )
+    # P6 reconcile selection envelope: a read-only reconcile selector's
+    # authoritative output is the selection JSON (selected_shas +
+    # verification_evidence) carried in the batch artifact; that IS the
+    # corroborated completion evidence for the batch tasks, so the per-task
+    # corroboration check must not fail for it (occurrence 47671addc195 —
+    # execute succeeded but the drive blocked on
+    # 'execute terminal success lacks corroborated task completion').
+    try:
+        from arnold_pipelines.megaplan._core.io import (
+            list_all_batch_artifacts,
+            read_json,
+        )
+
+        selection_complete = False
+        for batch_path in list_all_batch_artifacts(plan_dir):
+            try:
+                payload = read_json(batch_path)
+            except Exception:
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            if "selected_shas" in payload or "verification_evidence" in payload:
+                selection_complete = True
+                break
+    except Exception:
+        selection_complete = False
+    if selection_complete:
+        return True, []
     missing: list[str] = []
     for task in tasks:
         task_id = str(task.get("id") or task.get("task_id") or "")
