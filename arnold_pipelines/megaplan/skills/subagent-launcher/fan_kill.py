@@ -8,8 +8,8 @@ SIGTERM it waits up to 30s for the parent's pidfile to disappear (clean
 shutdown) before giving up.
 
 Usage:
-    PYENV_VERSION=3.11.11 python fan_kill.py --output-dir=/tmp/results
-    PYENV_VERSION=3.11.11 python fan_kill.py --output-dir=/tmp/results --hard
+    python fan_kill.py --output-dir=/tmp/results
+    python fan_kill.py --output-dir=/tmp/results --hard
 """
 
 from __future__ import annotations
