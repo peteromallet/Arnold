@@ -1,9 +1,4 @@
-"""Tests for the status-trigger babysitter goal renderer.
-
-The status trigger renders this goal and launches ONE Flash managed agent
-(hermes:deepseek:deepseek-v4-flash) whose prompt drives the whole
-swarm -> codex -> implement -> relaunch -> prove flow.
-"""
+"""Tests for the status-trigger babysitter goal renderer."""
 
 from __future__ import annotations
 
@@ -37,9 +32,11 @@ def test_renderer_requires_single_flash_orchestrator_contract() -> None:
     goal = renderer.render_babysitter_goal("demo-session")
     for required in (
         "You are the BABYSITTER",
-        "hermes:deepseek:deepseek-v4-flash",
-        "subagent-launcher/fan.py",
+        "codex:gpt-5.6-luna",
+        "codex exec",
         "codex:gpt-5.6-sol",
+        "Do not invoke Hermes, DeepSeek, or another provider",
+        "STEP 1 — DEPLOY CODEX INVESTIGATORS",
         "implement",
         "relaunch",
         "prove",
@@ -123,8 +120,8 @@ def test_renderer_cli_mentions_single_flash_contract(tmp_path: pathlib.Path) -> 
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "STEP 1 — DEPLOY THE SWARM" in result.stdout
-    assert "hermes:deepseek:deepseek-v4-flash" in result.stdout
+    assert "STEP 1 — DEPLOY CODEX INVESTIGATORS" in result.stdout
+    assert "codex:gpt-5.6-luna" in result.stdout
     assert "failure_fingerprint" in result.stdout
     assert "stall_detected" in result.stdout
 

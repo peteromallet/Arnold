@@ -28,6 +28,8 @@ import argparse
 import json
 from pathlib import Path
 
+from arnold_pipelines.megaplan.cloud.babysitter.routing import resolve_babysitter_routing
+
 
 def _safe_text(value: object) -> str:
     if value is None:
@@ -132,6 +134,7 @@ def render_babysitter_goal(
     continues the lineage instead of re-deriving the same diagnosis from
     scratch.
     """
+    routing = resolve_babysitter_routing()
     encoded_target = json.dumps(target, ensure_ascii=False)
     context_lines = [
         "- target: " + encoded_target,
@@ -155,14 +158,38 @@ def render_babysitter_goal(
         if recovery_dir
         else ""
     )
-    return f"""/goal
-You are the BABYSITTER for target {encoded_target}: ONE
+    if routing.mode == "codex":
+        controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
+codex:{routing.controller_model.split(':', 1)[1]} managed controller and the
+ORCHESTRATOR of the whole recovery flow.  This is an explicit temporary Codex
+route.  Use codex:{routing.investigator_model.split(':', 1)[1]} for each bounded,
+read-only evidence investigator as described below.  Do the job end to end:
+investigate, propose, implement the narrowest source-level fix, relaunch the
+chain, and prove movement.  You are not an auditor who reports back; you drive
+the chain out of the blocked/failed state."""
+        investigator_step = f"""- STEP 1 — DEPLOY CODEX INVESTIGATORS: over the failure evidence, run one
+  bounded, read-only investigator per scoping question through foreground
+  `codex exec` commands using `-m {routing.investigator_model.split(':', 1)[1]}`
+  and a read-only sandbox.  Record the actual provider/model/transport in every
+  report.  Do not invoke Hermes, DeepSeek, or another provider under this
+  explicit override."""
+    else:
+        controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
 hermes:deepseek:deepseek-v4-flash managed agent and the ORCHESTRATOR of the
 whole recovery flow.  You do the job yourself, end to end: deploy a bounded
 read-only swarm over the failure evidence, hand the packed context to codex
 for a proper solution proposal, implement the narrowest source-level fix,
 relaunch the chain, and prove movement.  You are not an auditor who reports
-back; you drive the chain out of the blocked/failed state.
+back; you drive the chain out of the blocked/failed state."""
+        investigator_step = """- STEP 1 — DEPLOY THE SWARM: over the failure evidence, fan out one bounded,
+  read-only investigator per scoping question in parallel through
+  $subagent-launcher / skills/subagent-launcher/fan.py, using
+  hermes:deepseek:deepseek-v4-flash investigators.  Record the actual
+  model/provider/transport in every report.  If Flash is unavailable, stop at
+  that exact gate — do not silently substitute another model for the
+  investigator role."""
+    return f"""/goal
+{controller_intro}
 
 Context:
 {chr(10).join(context_lines)}
@@ -173,13 +200,7 @@ Context:
 {recovery_hint}
 Mandatory flow — follow the five steps exactly:
 
-- STEP 1 — DEPLOY THE SWARM: over the failure evidence, fan out one bounded,
-  read-only investigator per scoping question in parallel through
-  $subagent-launcher / skills/subagent-launcher/fan.py, using
-  hermes:deepseek:deepseek-v4-flash investigators.  Record the actual
-  model/provider/transport in every report.  If Flash is unavailable, stop at
-  that exact gate — do not silently substitute another model for the
-  investigator role.
+{investigator_step}
 - STEP 2 — CONSULT CODEX: hand the packed context (evidence pack, swarm index,
   and every investigator report) to codex (codex:gpt-5.6-sol, high reasoning)
   and get a proper solution proposal: the shortest safe path to durable
