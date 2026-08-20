@@ -2,7 +2,7 @@
 
 - Status: execution-ready for Batch 0; production-code implementation is blocked until source-custody Gate G0 passes
 - Integration base: `fce48030a82d4d35d9b4a5184e4c789792b9c172`
-- Working branch: `fixer/runtime-convergence-local`
+- Remote integration target: `origin/fixer/runtime-convergence-r`; the executor creates a fresh local task/integration branch and always pushes explicitly to `fixer/runtime-convergence-r`
 - Target: the editable runtime successor staged for Astrid and Arnold
 - Live-chain policy: do not advance, repair, pause, or otherwise mutate either live epic while consolidating code
 
@@ -16,7 +16,7 @@ This is not a wholesale branch merge. The milestone branches diverged, their fin
 
 Confidence in the selection philosophy and keep/adapt/drop judgments is high (about 90%). The evidence is unusually strong: milestone artifacts, patch topology, current-source comparison, review results, and focused runtime tests all point in the same direction.
 
-The plan is execution-ready in the practical sense: every implementation card has a bounded goal, prerequisites, forbidden behavior, acceptance criteria, focused tests, and a review gate. A Luna implementer can take one card at a time without reconstructing the epic.
+The plan is execution-ready in the practical sense: every implementation card has a bounded goal, prerequisites, forbidden behavior, acceptance criteria, focused tests, and a review gate. A correctly routed implementer can take one card at a time without reconstructing the epic.
 
 The residual uncertainty is concentrated in the tasks marked `[XHARD]`. Those tasks cross authority, compatibility, or crash-recovery boundaries. They are not underspecified; they deliberately require a contract review before code and an adversarial review after code. Gate G0 must also fetch and preserve the cloud-only commits before implementation starts, because those objects are not all present in the local object database.
 
@@ -96,11 +96,11 @@ Large but mechanically bounded tasks are not marked `[XHARD]`.
 
 ## Execution protocol
 
-- Use one Luna implementer per task card, one independent Luna reviewer per ordinary gate, and the stronger reviewer assignments in the review matrix for load-bearing gates.
-- Parallelize only cards with disjoint production files and no unmet dependency.
-- No two agents edit the same module concurrently.
+- Route every `[XHARD]` implementation and every `[XHARD-REVIEW]` gate to Grok 4.6 through `subagent-launcher`. Route every unlabelled implementation card and ordinary review gate to GPT-5.6 Luna through the same launcher.
+- Parallelize only cards whose complete allowed production-and-test file sets are disjoint and whose dependencies are already merged. Any shared export, fixture, helper, or test file forces serialization.
+- No two agents edit the same file or worktree concurrently.
 - Each implementer returns: commit SHA, files changed, focused commands, results, rejected alternatives, and residual risks.
-- Each reviewer reads the diff and production paths, adds a counterexample test when useful, and reports must/should findings with file and function evidence.
+- Each reviewer reads the diff and production paths, specifies a concrete counterexample test when useful, and reports must/should findings with file and function evidence. The routed implementer adds any required test; read-only reviewers do not edit.
 - A task with an unresolved must-level authority, identity, migration, or replay finding does not advance.
 - Merge cards in the order below. Preserve user changes and never reset the integration worktree.
 
@@ -110,27 +110,37 @@ Large but mechanically bounded tasks are not marked `[XHARD]`.
 
 | Gate | When | Reviewer | Purpose |
 |---|---|---|---|
-| G0 `[XHARD-REVIEW]` | Before any production-code card | Luna builds the inventory; Sol adjudicates selection; root decides | Verify custody, exact source hunks, cross-branch contradictions, and keep/adapt/drop completeness |
+| G0 `[XHARD-REVIEW]` | Before any production-code card | Luna inventory/validator; Grok 4.6 adjudicates selection; root decides | Verify custody, exact source hunks, cross-branch contradictions, and keep/adapt/drop completeness |
 | G1, G2, G3 | After each ordinary batch | A Luna that implemented none of that batch | Diff review, focused counterexamples, purity/authority/replay checks |
-| G3.5 `[XHARD-REVIEW]` | After ordinary foundations, before authority convergence | Fresh Sol architecture reviewer; root decides | Review the branch as a system for duplicate concepts, premature authority, aggression, and missing simplifications |
-| G4.1, G4.2, G4.3 | Before and after each T4 `[XHARD]` card | Sol contract/adversarial reviewer; root accepts or rejects | Freeze authority contract before code; attack every production transition afterward |
-| G5 | Before and after T5.1 | Sol semantic-compatibility reviewer; root accepts or rejects | Prove schema, prompt, execution, timeout, and resume all mean the same thing |
-| G6.1, G6.2 | Before and after each `[XHARD]` card | Sol fence/closure reviewer; root accepts or rejects | Attack concurrency, fence loss, replay, window closure, and hidden authority |
+| G3.5 `[XHARD-REVIEW]` | After ordinary foundations, before authority convergence | Fresh Grok 4.6 architecture reviewer; root decides | Review the branch as a system for duplicate concepts, premature authority, aggression, and missing simplifications |
+| G4.1, G4.2, G4.3 `[XHARD-REVIEW]` | Before and after each T4 `[XHARD]` card | Grok 4.6 contract/adversarial reviewer; root accepts or rejects | Freeze authority contract before code; attack every production transition afterward |
+| G5 `[XHARD-REVIEW]` | Before and after T5.1 | Grok 4.6 semantic-compatibility reviewer; root accepts or rejects | Prove schema, prompt, execution, timeout, and resume all mean the same thing |
+| G6.1, G6.2 `[XHARD-REVIEW]` | Before and after each `[XHARD]` card | Grok 4.6 fence/closure reviewer; root accepts or rejects | Attack concurrency, fence loss, replay, window closure, and hidden authority |
 | G6.3 | After the ordinary scheduler handoff | Independent Luna | Prove the handler only consumes T2.1 custody and cannot escalate observations |
-| G6.4 `[XHARD-REVIEW]` | After all implementation, before broad validation | Fresh Sol systemic-risk reviewer; root decides | Trace observation-to-effect paths, find over-enforcement and duplicated authority, and demand simplification |
-| G7 `[XHARD-REVIEW]` | After all shards, candidate proof, and canary | Fresh Sol final reviewer; root makes promotion recommendation | Assess the final diff and evidence manifest against must-level end-state criteria |
+| G6.4 `[XHARD-REVIEW]` | After all implementation, before broad validation | Fresh Grok 4.6 systemic-risk reviewer; root decides | Trace observation-to-effect paths, find over-enforcement and duplicated authority, and demand simplification |
+| G7.4-pre / G7.4-post `[XHARD-REVIEW]` | Immediately before and after T7.4 | Two fresh Grok 4.6 reviewers, distinct from the T7.4 implementer; root decides | Freeze canary mutation boundaries first, then attack canary/rollback evidence before the broad suite |
+| G7 `[XHARD-REVIEW]` | After T7.5 closes and validates the evidence manifest | Fresh Grok 4.6 final reviewer; root makes promotion recommendation | Assess the final diff and evidence manifest against must-level end-state criteria |
 
 Review mechanics:
 
 - The implementer never reviews its own card.
 - The root agent writes/freezes the task handoff, resolves reviewer findings, and decides whether a card may merge.
 - For ordinary cards, the reviewer runs only that batch's focused integration shard.
-- For `[XHARD]` cards, the pre-code review must approve the contract/consumer map before the Luna implementer starts; the post-code reviewer receives the frozen contract, diff, focused evidence, and failure-injection results.
+- For `[XHARD]` cards, a Grok 4.6 pre-code review must approve the contract/consumer map before a separate Grok 4.6 implementer starts; a fresh Grok 4.6 post-code reviewer receives the frozen contract, diff, focused evidence, and failure-injection results.
 - A dedicated Luna validation agent runs each final integration shard once. Implementers do not rerun the broad suite.
-- Sol reviews are read-only and decision-oriented. Sol does not perform the implementation it later judges.
+- Grok reviews are read-only and decision-oriented. No Grok instance reviews an implementation produced by that same instance.
+- Every launcher call records a globally unique wrapper-generated `invocation_id`, launcher/child PID identity, resolved model, start/end time, exit status, exact command digest, brief digest, and result digest. The evidence validator rejects any reused invocation ID and rejects a review whose invocation or process identity equals any implementation it judges.
 - No batch advances with an unresolved must-level finding. Should-level findings are recorded with an explicit disposition by the root.
 
 ## Batch 0 — Custody and exact patch map
+
+### T0.0 Capture the immutable live-state baseline
+
+Goal: before any fetch-side operation, test, process intervention, or candidate write, capture a read-only content-addressed baseline for proving non-interference.
+
+Capture: process identities, runtime selectors/markers/manifests, leases/fences, active Astrid plan/chain state, active maintenance plan/chain state including the final reconcile, schedule store, maintenance ledger, both candidate roots and their provenance, and the integration source/remote refs.
+
+Acceptance: the baseline records paths, timestamps, source cursors, artifact digests, and any unknown/unreadable dimension without mutating or terminalizing any process, plan, chain, selector, candidate, or ledger. All later stateful cards cite this baseline and T7.4 compares against it.
 
 ### T0.1 Preserve the milestone objects
 
@@ -156,13 +166,40 @@ Acceptance:
 - Every selected card identifies whether it is an exact port, an adaptation, or already present at `fce` before code begins.
 - No unclassified production commit remains. Every exclusion names its replacement function/test or is explicitly classified `evidence/config-only` or `unresolved-policy`.
 
+### T0.3 Scaffold the machine-readable evidence contract
+
+Goal: create the evidence manifest schema and deterministic validator before production implementation starts.
+
+Files: `docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json`, a versioned JSON schema beside it, `scripts/validate_maintenance_runtime_consolidation_evidence.py`, `scripts/run_maintenance_consolidation_agent.py`, and focused validator/launcher-receipt tests.
+
+The schema requires:
+
+- integration base/current SHA and G0 selection-manifest path/digest;
+- one record per task with label, selected source hunks, input/output SHA, commit, complete file allowance, implementer model/invocation identity, and focused-test receipts;
+- an ordered `review_invocations` collection for every `[XHARD]` task, separately recording pre-review, implementation, and post-review identities/dispositions; ordinary gates use their own independent review record;
+- one atomic file-allowance registry record per task covering production files, tests, fixtures, exports, helpers, generated surfaces, lifecycle state, and allowance digest;
+- one record per shard with canonical command, SHA, interpreter, runtime/spec/venv digests, disposable root, status, artifact path, and digest;
+- candidate install receipts, before/after live-state snapshot digests, canary/rollback receipts, and the broad-suite singleton receipt; and
+- uniqueness/referential-integrity rules proving every selected behavior maps to a task, every task maps to a gate, every gate reviewer is independent, every hard task has the ordered pre-review → implementation → post-review lifecycle, no active allowance overlaps another, and every required artifact exists and matches its digest.
+
+`scripts/run_maintenance_consolidation_agent.py` is the only allowed launcher after its bootstrap. It generates the invocation ID internally, atomically writes a start receipt, invokes the repository `subagent-launcher`, captures child PID/process identity and resolved model from launcher output, hashes the exact command/brief/result, and closes the receipt with exit status and timestamps. The caller cannot supply or attest its own invocation ID. It rejects a dispatch whose complete file allowance overlaps any active task.
+
+Canonical validation command:
+
+```bash
+python scripts/validate_maintenance_runtime_consolidation_evidence.py \
+  docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json
+```
+
+Acceptance: an empty scaffold reports the exact missing required records; complete synthetic evidence passes; duplicate task/gate/shard IDs, any globally reused `invocation_id`, wrong model routing, missing/overlapping allowances, wrong hard-review ordering, implementer/reviewer process identity equality, missing files, digest mismatch, unmapped selected behavior, and a second broad-suite authoritative invocation all fail deterministically. T0.3's own Luna bootstrap launch is the only direct-launch exception and its direct command/output digest is recorded before the wrapper becomes mandatory.
+
 ### Gate G0 `[XHARD-REVIEW]` — Custody and selection review
 
-A Luna reviewer checks object reachability and classification completeness. A Sol reviewer then adjudicates the selection across all milestone branches, looking for contradictions, falsely superseded behavior, and unjustified automation. The root records the final keep/adapt/drop disposition. Implementation starts only after G0 passes.
+A Luna inventory/validation agent checks object reachability and classification completeness without adjudicating the selection. A Grok 4.6 reviewer then adjudicates the selection across all milestone branches, looking for contradictions, falsely superseded behavior, and unjustified automation. The root records the final keep/adapt/drop disposition. Implementation starts only after G0 passes.
 
 ## Batch 1 — Pure observation foundations
 
-These cards may run in parallel after G0.
+These cards may run in parallel after G0 only after their complete production-and-test file allowances are frozen and proven disjoint. A shared package export, fixture, helper, or test file serializes the affected cards.
 
 ### T1.1 Deterministic maintenance observation rendering
 
@@ -341,7 +378,7 @@ Run repair-request migration, unblocker, and auditor shards. The reviewer inject
 
 ### Gate G3.5 `[XHARD-REVIEW]` — Midpoint coherence and minimalism
 
-A fresh Sol reviewer reads the complete diff from `fce` through G3 rather than reviewing task cards independently.
+A fresh Grok 4.6 reviewer reads the complete diff from `fce` through G3 rather than reviewing task cards independently.
 
 Acceptance:
 
@@ -382,7 +419,7 @@ Acceptance:
 
 Focused tests: permission truth table; stale/live PID combinations; marker/manifest contradiction; stale cursor/fence; valid downstream evidence with absent capability; action/scope replay; complete authorized path; static search proving no bypassing in-scope consumer.
 
-### Gate G4.1 — Liveness authority attack
+### Gate G4.1 `[XHARD-REVIEW]` — Liveness authority attack
 
 The reviewer traces all production consumers and attempts to produce an effect using PID, heartbeat, path, lease, stale marker, or partial evidence alone.
 
@@ -404,7 +441,7 @@ Acceptance:
 
 Focused tests: mismatched occurrence/plan/runtime; stale marker with live process; stale epoch; pause/resume race; cursor and plan-payload preservation alongside allowed pause-event append; action/occurrence token replay; duplicate adoption; rebind rollback.
 
-### Gate G4.2 — Operator-authority attack
+### Gate G4.2 `[XHARD-REVIEW]` — Operator-authority attack
 
 The reviewer proves operator intent is exact and scoped and that adoption, pause, or rebind cannot smuggle a cursor or runtime identity change.
 
@@ -427,7 +464,7 @@ Acceptance:
 
 Focused tests: selector-before-marker/receipt crash, marker/receipt-before-selector crash, every other publication boundary, selector CAS race, absent root capability with otherwise-valid evidence, stale token, live-writer refusal, mismatch, duplicate, and rollback.
 
-### Gate G4.3 — Cutover/custody attack
+### Gate G4.3 `[XHARD-REVIEW]` — Cutover/custody attack
 
 The reviewer treats every persistence boundary as a crash point and checks that no half-published state can be mistaken for current authority.
 
@@ -461,7 +498,7 @@ Acceptance:
 
 Focused tests: fast-large-timeout, slow-small-timeout, exhausted-before-launch, interrupted subprocess, resume, clock abstraction, legacy schema, and splitter/feasibility messaging.
 
-### Gate G5 — Deadline semantics review
+### Gate G5 `[XHARD-REVIEW]` — Deadline semantics review
 
 The reviewer compares the schema, prompt, feasibility display, execution code, and resume artifact to prove they all describe one semantic contract. Run only the deadline/feasibility/splitter/validation shards here.
 
@@ -485,7 +522,7 @@ Acceptance:
 
 Focused tests: duplicate replay, divergent digest, concurrent writers, fence loss at each boundary, append failure, projection failure, dead-letter/retry behavior.
 
-### Gate G6.1 — Persistence/fence attack
+### Gate G6.1 `[XHARD-REVIEW]` — Persistence/fence attack
 
 The reviewer races writers, steals fences at each boundary, and verifies projections remain observation-only.
 
@@ -507,7 +544,7 @@ Acceptance:
 
 Focused tests: empty/gapped chain, malformed event, stale/reclaimed fence, late correction, nominal-window mismatch, active-chain non-interference, explicit rejection of `fence_check=None`, and rejection of a default/always-`never_seen` prior-key lookup. Add a production call-site audit proving neither unsafe fallback is reachable.
 
-### Gate G6.2 — Window-closure attack
+### Gate G6.2 `[XHARD-REVIEW]` — Window-closure attack
 
 The reviewer attempts to create a daily result from clock boundaries, incomplete windows, duplicate corrections, and stale closure receipts.
 
@@ -536,7 +573,7 @@ The reviewer inspects imports and call sites, not only mocks, and proves all M5 
 
 ### Gate G6.4 `[XHARD-REVIEW]` — Systemic aggression and simplification review
 
-A fresh Sol reviewer assesses the entire implemented branch as one operating system, not as a collection of passing cards.
+A fresh Grok 4.6 reviewer assesses the entire implemented branch as one operating system, not as a collection of passing cards.
 
 Acceptance:
 
@@ -553,16 +590,22 @@ Acceptance:
 
 Goal: compare the final branch against the G0 selection manifest and all milestone tips.
 
+Dependencies: G6.4 passes.
+
 Acceptance:
 
 - Every selected behavior has code and focused tests.
 - Every excluded production patch still has a recorded reason.
 - No older identity/manifest/parser implementation overwrote `fce`.
 - No duplicate enforcement point or contradictory default remains.
+- Freeze `docs/arnold/maintenance-runtime-consolidation-evidence/test-shards.json` with exactly nine ordered shard IDs, each shard's full `python -m pytest -q <selectors...>` command, command digest, complete selector/test-file set, changed behavior/task coverage, approved interpreter digest, and disposable-root policy.
+- The evidence validator proves every selected behavior and every changed/new test file is covered by at least one intended shard, no test selector/file is assigned to multiple shards, all commands resolve at the current SHA, and shard IDs/order match T7.2.
 
 ### T7.2 Integration test shards
 
-Run each shard once, by a validation agent rather than every implementer:
+Dependencies: T7.1 passes.
+
+Run each of these nine frozen canonical commands once and in order, by a Luna validation agent rather than every implementer. The semantic names below are identifiers; the authoritative exact selectors and command digests come from T7.1's validated `test-shards.json`:
 
 1. contracts, identities, manifests, markers, digests;
 2. repair classification, queue migration, unblocker;
@@ -572,14 +615,17 @@ Run each shard once, by a validation agent rather than every implementer:
 6. inert routing, fenced reporting, daily runner, negative authority;
 7. test-deadline, feasibility, splitter, validation-job semantics;
 8. editable-install/runtime conformance, CLI imports, profile resolution;
-9. shared-venv manifest, frozen-spec digest, package provenance, and cross-candidate path isolation;
-10. one final broad repository suite after all focused shards are green.
+9. shared-venv manifest, frozen-spec digest, package provenance, and cross-candidate path isolation.
 
 Every shard records command, commit, environment identity, result, and artifact digest. State-writing tests use an explicit disposable root.
 
 ### T7.3 Candidate runtime installation proof
 
 Goal: build or update both editable candidate installs to the same successor SHA while preserving their separate project state and environment identity.
+
+Owner: GPT-5.6 Luna through `subagent-launcher`.
+
+Dependencies: T7.2 shards 1–9 all pass and their receipts validate.
 
 Targets:
 
@@ -594,9 +640,15 @@ Acceptance:
 - Neither candidate's `PYTHONPATH` or editable install resolves to the other candidate or to a live source tree.
 - Each update writes an install receipt containing candidate path, prior SHA, installed SHA, source/package/spec/manifest/venv digests, command, and timestamp.
 
+### Gate G7.4-pre `[XHARD-REVIEW]` — Canary contract review
+
+A fresh Grok 4.6 reviewer approves the exact disposable root, allowed candidate operations, prohibited live paths, pre-existing T0.0 baseline, before/after snapshot set, stop conditions, and pointer-only rollback contract. T7.4 cannot start until this review passes.
+
 ### T7.4 `[XHARD]` Disposable canary and rollback proof
 
 Goal: prove read-only plan/CLI behavior, fenced daily observation, and immediate pointer-based rollback without touching live state.
+
+Dependencies: T7.3 passes, both candidate install receipts validate, and G7.4-pre passes.
 
 Acceptance:
 
@@ -604,18 +656,42 @@ Acceptance:
 - `config show`, profile resolution, provenance, import, plan read-only paths, event dedupe, and fence outcomes succeed.
 - Any live-state write, authority escalation, unexpected model/provider route, or identity divergence stops promotion.
 - Rollback selects the prior verified SHA; it does not rewrite data.
-- Capture content-addressed before/after snapshots of process identity, runtime selector/marker/manifest, leases, active Astrid plan/chain state, active maintenance plan/chain state, schedule store, and maintenance ledger. Post-canary and post-rollback comparisons must be exact except for explicitly disposable-root artifacts.
+- Refresh the same dimensions captured by T0.0 immediately before T7.4 without replacing the immutable T0.0 baseline, then capture post-canary and post-rollback snapshots. Comparisons against both T0.0 and the immediate pre-canary snapshot must be exact except for explicitly disposable-root artifacts and separately approved candidate-install receipts.
+
+### Gate G7.4-post `[XHARD-REVIEW]` — Canary and rollback attack
+
+A different fresh Grok 4.6 reviewer receives the frozen pre-review contract, T7.4 implementation invocation, candidate receipts, command/output evidence, and T0.0-versus-post-run comparisons. It must reject any live-state delta, scope escape, provenance mismatch, non-pointer rollback, missing crash boundary, or narrative-only claim. T7.5 remains blocked until this post-review passes.
+
+### T7.5 Final broad suite and evidence closure
+
+Owner: one dedicated GPT-5.6 Luna validator through `subagent-launcher`.
+
+Dependencies: T7.4 and G7.4-post pass with validated canary and rollback receipts.
+
+Goal: run the broad repository suite exactly once as the final test invocation, then close the machine-readable evidence manifest.
+
+Canonical command, using the approved integration interpreter from the manifest:
+
+```bash
+python -m pytest -q
+```
+
+Before launch, atomically create the evidence key/lock `broad_suite_once_v1` bound to the current integration SHA, interpreter digest, command digest, Luna invocation ID, and output path. An existing key refuses another launch. The one authoritative invocation writes start/end time, exit status, output artifact/digest, and resource summary. An infrastructure failure blocks G7 and requires explicit root adjudication; it may not be silently rerun or replaced by a second authoritative receipt.
+
+After the suite passes, run the canonical T0.3 evidence validator. T7.5 passes only when the suite receipt and the complete manifest validate with no missing or dangling record.
 
 ### Gate G7 `[XHARD-REVIEW]` — Final promotion review
+
+Dependencies: T7.5 passes and the canonical evidence validator exits zero.
 
 An independent reviewer receives only the final diff, selection manifest, shard evidence, candidate provenance, canary evidence, and rollback evidence. A machine-readable evidence manifest links every result to its command, source SHA, runtime/spec/venv digests, disposable-root path, and artifact digest; a missing artifact stops the gate. Promotion is allowed only when all must-level criteria pass. Promotion itself remains a separate explicit operation from code consolidation.
 
 ## Agent-sized handoff template
 
-Each task dispatched to a Luna agent must contain only:
+Each task dispatched to its routed Grok 4.6 or Luna agent must contain only:
 
 1. the task card above;
-2. the exact source commit/hunks from the G0 manifest;
+2. the exact source commit/hunks from the G0 manifest when the task ports milestone behavior;
 3. the current base SHA and allowed file set;
 4. the dependencies already merged;
 5. the focused test commands; and
