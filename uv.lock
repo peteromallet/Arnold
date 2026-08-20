@@ -236,7 +236,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.15.0" },
     { name = "httpx" },
     { name = "jsonschema", specifier = ">=4.0" },
-    { name = "omp-rpc", git = "https://github.com/can1357/oh-my-pi.git?subdirectory=python%2Fomp-rpc&rev=45e12e5bb758198a920c6070e7e64cb33b21beac" },
+    { name = "omp-rpc", git = "https://github.com/peteromallet/oh-my-pi.git?subdirectory=python%2Fomp-rpc&rev=ca1411b598273702c2e67cd127d44a2c52e48aac" },
     { name = "openai" },
     { name = "pillow", specifier = ">=12.2,<13" },
     { name = "prompt-toolkit" },
@@ -1436,7 +1436,7 @@ wheels = [
 [[package]]
 name = "omp-rpc"
 version = "0.1.0"
-source = { git = "https://github.com/can1357/oh-my-pi.git?subdirectory=python%2Fomp-rpc&rev=45e12e5bb758198a920c6070e7e64cb33b21beac#45e12e5bb758198a920c6070e7e64cb33b21beac" }
+source = { git = "https://github.com/peteromallet/oh-my-pi.git?subdirectory=python%2Fomp-rpc&rev=ca1411b598273702c2e67cd127d44a2c52e48aac#ca1411b598273702c2e67cd127d44a2c52e48aac" }
 
 [[package]]
 name = "onnxruntime"

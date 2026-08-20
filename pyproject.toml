@@ -50,10 +50,10 @@ dependencies = [
     # --- omp (Oh My Pi) worker runtime -------------------------------------
     # The omp RPC worker (megaplan/workers/omp.py) drives `omp --mode rpc`
     # through the pinned omp_rpc Python client. Pinned to an immutable SHA of
-    # the oh-my-pi monorepo (python/omp-rpc subdirectory) so clean machines
-    # and cloud builds resolve the same protocol version; the omp CLI itself
-    # is installed separately (bun/omp on PATH).
-    "omp-rpc @ git+https://github.com/can1357/oh-my-pi.git@45e12e5bb758198a920c6070e7e64cb33b21beac#subdirectory=python/omp-rpc",
+    # our fork (peteromallet/oh-my-pi, python/omp-rpc subdirectory) so clean
+    # machines and cloud builds resolve the same protocol version; the omp CLI
+    # itself is installed separately (bun/omp on PATH, from the same fork).
+    "omp-rpc @ git+https://github.com/peteromallet/oh-my-pi.git@ca1411b598273702c2e67cd127d44a2c52e48aac#subdirectory=python/omp-rpc",
     "firecrawl-py",
     "fal-client",
     "edge-tts",
