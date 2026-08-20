@@ -346,11 +346,21 @@ def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[
 
 def _write_receipts(ctx: dict[str, Any], payload: dict[str, Any]) -> None:
     """Write the launch receipt where the watchdog's dedup reads it
-    (repair_data_dir) plus a mirror under the run root for run-local tooling."""
+    (repair_data_dir) plus a mirror under the run root for run-local tooling.
+
+    B4-P3 (2026-08-20): also write the DISPATCH receipt
+    ({session}.babysitter-receipt.json, written by the watchdog with
+    status=launched) so a terminal run flips it to failed/completed. The
+    watchdog dedup reads BOTH receipts; a dispatch receipt left "launched"
+    forever is the dead-pid phantom owner that later fixers stand down on."""
     _atomic_write_json(ctx["run_root"] / LAUNCH_RECEIPT_NAME.format(session=ctx["session"]), payload)
     if ctx.get("repair_data_dir") is not None:
         _atomic_write_json(
             ctx["repair_data_dir"] / LAUNCH_RECEIPT_NAME.format(session=ctx["session"]),
+            payload,
+        )
+        _atomic_write_json(
+            ctx["repair_data_dir"] / DISPATCH_RECEIPT_NAME.format(session=ctx["session"]),
             payload,
         )
 
@@ -574,6 +584,36 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         # would be misread as a dead-supervisor restart) and then blocks
         # until the Flash agent finishes.
         rc = run_managed_command(spec)
+        # B4-P4 (2026-08-20): a fixer that stands down or exits with dirty
+        # candidate work strands its own patch. Snapshot the diff into the
+        # run root so the next fixer (or an operator) can recover it. Never
+        # git stash (drops the index), never commit to main, never push.
+        try:
+            engine_root = str(ctx.get("engine_root") or "")
+            if engine_root:
+                status = subprocess.run(
+                    ["git", "-C", engine_root, "status", "--porcelain"],
+                    capture_output=True, text=True, timeout=20,
+                )
+                dirty = bool(status.stdout.strip()) if status.returncode == 0 else False
+                if dirty:
+                    diff = subprocess.run(
+                        ["git", "-C", engine_root, "diff", "HEAD"],
+                        capture_output=True, text=True, timeout=20,
+                    )
+                    (ctx["run_root"] / "stranded.patch").write_text(
+                        diff.stdout, encoding="utf-8"
+                    )
+                    (ctx["run_root"] / "stranded-status.txt").write_text(
+                        status.stdout, encoding="utf-8"
+                    )
+                    _eprint(
+                        f"[babysitter] stranded candidate diff snapshot "
+                        f"run={ctx.get('run_id', '?')} engine_root={engine_root} "
+                        f"bytes={len(diff.stdout)}"
+                    )
+        except Exception as exc:  # noqa: BLE001 - snapshot is best-effort
+            _eprint(f"[babysitter] stranded-diff snapshot skipped: {exc!r}")
         managed_terminal = "unknown"
         try:
             managed_terminal = str(

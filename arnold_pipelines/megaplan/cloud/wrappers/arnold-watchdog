@@ -2010,6 +2010,33 @@ for name in (
                     os.kill(stale_pid, 15)
                 except OSError:
                     pass
+        # B4-P2 (2026-08-20): the dead/wedged dispatch receipt is the phantom
+        # owner (runs cited PIDs 114178/114189 that no longer existed as
+        # "another active fixer"). Flip it to failed so no later reader
+        # treats a dead-pid receipt as a live owner. Best-effort; the fresh
+        # launch supersedes it anyway.
+        try:
+            import json as _json
+            from datetime import datetime, timezone as _tz
+            receipt_path = pathlib.Path(repair_data) / f"{session}.babysitter-receipt.json"
+            if receipt_path.is_file():
+                receipt = _json.loads(receipt_path.read_text(encoding="utf-8"))
+                receipt["status"] = "failed"
+                receipt["reaped_reason"] = "pid_dead_or_wedged"
+                receipt["finished_at"] = datetime.now(_tz.utc).isoformat()
+                tmp = receipt_path.with_suffix(".json.tmp-reap")
+                tmp.write_text(_json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+                tmp.replace(receipt_path)
+                print(
+                    f"flipped dead/wedged babysitter receipt to failed "
+                    f"session={session}",
+                    file=sys.stderr,
+                )
+        except Exception as exc:  # noqa: BLE001 - reap is best-effort
+            print(
+                f"receipt flip failed session={session} err={exc!r}",
+                file=sys.stderr,
+            )
 raise SystemExit(1)
 PY
 }

@@ -142,6 +142,7 @@ def render_babysitter_goal(
         "- plan: " + _safe_text(plan),
         "- run_kind: " + _safe_text(run_kind),
         "- occurrence_digest: " + _safe_text(occurrence_digest),
+        "- run_id: " + _safe_text(run_id),
     ]
     evidence = _json_block("latest_failure", latest_failure) + _json_block(
         "planner_repair", planner_repair
@@ -405,11 +406,21 @@ Operator contract:
   compare events.ndjson growth, and read completed_count vs
   milestone_count from the chain state + spec. Only when all five are
   clean is "nothing to fix" the honest verdict.
-- COORDINATION GUARD: before any recovery, check whether another fixer/repair
-  is already active for the target chain (fresh managed subagent dir, held
-  repair lease, or running subagent_worker for this session).  If active,
-  report "Another fixer is already active for this chain; standing down" and
-  end — never launch a competing fixer.
+- COORDINATION GUARD: stand down ONLY for a DIFFERENT live owner. You ARE
+  the fixer for this occurrence (run_id above). Your own run_id, your own
+  occurrence_digest, your own managed dir under babysitter-runs/<run_id>/,
+  your own controller PID, and a repair lease YOU hold are NOT competing —
+  do not stand down on them (2026-08-20: run 6d6ac24d4083 stood down on
+  itself and stranded its own patch). Competing = a live supervisor PID
+  (kill(pid,0) succeeds and /proc/<pid> is not zombie) whose recorded
+  run_id OR occurrence_digest DIFFERS from yours, OR a live subagent_worker
+  whose parent is not your supervisor. A dead PID, a launched receipt whose
+  pid is gone, or a stale managed dir with no live owner is NOT competing —
+  continue. If you must stop for a real competitor: FIRST snapshot
+  uncommitted candidate work into your run_root (stranded.patch +
+  stranded-status.txt), then report "Another fixer is already active for
+  this chain; standing down" naming the OTHER run_id and live PID. Never
+  name your own run_id.
 - Use $superfixer-debug for the evidence-first recovery protocol and
   $megaplan-cloud when this is a cloud target.
 - Preserve the failed occurrence.  Never fabricate an output, clear state,
