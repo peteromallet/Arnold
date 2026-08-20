@@ -2825,21 +2825,36 @@ def build_blocking_reasons(
     total_checks: int,
     missing_task_evidence: list[str],
     timeout_reason: str | None = None,
+    payload: Mapping[str, Any] | None = None,
 ) -> list[str]:
     reasons: list[str] = []
-    if tracked_tasks < total_tasks:
-        reasons.append(
-            f"{total_tasks - tracked_tasks}/{total_tasks} tasks have no executor update"
+    # P6 reconcile selection envelope: a read-only reconcile selector emits the
+    # authoritative selection JSON (top-level selected_shas +
+    # verification_evidence) instead of the generic batch report; the
+    # selection IS the batch's completion evidence, so the per-task tracking
+    # and sense-check acknowledgment gates must not block it (occurrence
+    # 47671addc195 — without this the milestone stranded blocked with
+    # "N/M tasks have no executor update" despite a complete selection).
+    selection_complete = bool(
+        isinstance(payload, Mapping)
+        and (
+            "selected_shas" in payload or "verification_evidence" in payload
         )
-    if acknowledged_checks < total_checks:
-        reasons.append(
-            f"{total_checks - acknowledged_checks}/{total_checks} sense checks have no executor acknowledgment"
-        )
-    if missing_task_evidence:
-        reasons.append(
-            "done tasks missing both files_changed and commands_run: "
-            + ", ".join(missing_task_evidence)
-        )
+    )
+    if not selection_complete:
+        if tracked_tasks < total_tasks:
+            reasons.append(
+                f"{total_tasks - tracked_tasks}/{total_tasks} tasks have no executor update"
+            )
+        if acknowledged_checks < total_checks:
+            reasons.append(
+                f"{total_checks - acknowledged_checks}/{total_checks} sense checks have no executor acknowledgment"
+            )
+        if missing_task_evidence:
+            reasons.append(
+                "done tasks missing both files_changed and commands_run: "
+                + ", ".join(missing_task_evidence)
+            )
     if timeout_reason is not None:
         reasons.append(timeout_reason)
     return reasons
@@ -6518,6 +6533,7 @@ def handle_execute_one_batch(
         acknowledged_checks=result.acknowledged_sense_check_count,
         total_checks=result.total_sense_check_count,
         missing_task_evidence=result.missing_task_evidence,
+        payload=result.payload,
     )
 
     all_tasks = finalize_data.get("tasks", [])
@@ -9160,6 +9176,7 @@ def handle_execute_auto_loop(
             acknowledged_checks=result.acknowledged_sense_check_count,
             total_checks=result.total_sense_check_count,
             missing_task_evidence=result.missing_task_evidence,
+            payload=result.payload,
         )
         blocked_task_reason = _blocked_task_reason(newly_blocked_task_ids)
         if blocked_task_reason:
@@ -9422,6 +9439,7 @@ def handle_execute_auto_loop(
             if timeout_error is not None
             else None
         ),
+        payload=(batch_payloads[-1] if batch_payloads else None),
     )
     # Carry the abort-recovery park into the phase-final decision: the in-loop
     # blocking_reasons list is rebuilt above, so a pending-left-behind task must

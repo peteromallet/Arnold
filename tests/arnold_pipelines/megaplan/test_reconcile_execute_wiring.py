@@ -254,3 +254,60 @@ def test_reconcile_selection_payload_passes_execute_capture_audit() -> None:
         _reconcile_selection_capture_schema(gate_schema, selection_payload, step="gate")
         is gate_schema
     )
+
+
+def test_reconcile_selection_payload_does_not_block_task_tracking_gate() -> None:
+    """A reconcile selection payload must not trip the per-task tracking /
+    sense-check acknowledgment blocking reasons: the read-only selector's
+    authoritative output IS the selection, so the batch completion gates are
+    satisfied by it (occurrence 47671addc195 — the milestone stranded blocked
+    with 'N/M tasks have no executor update' despite a complete selection)."""
+    from arnold_pipelines.megaplan.execute.batch import build_blocking_reasons
+
+    selection_payload = {
+        "selected_shas": ["abc123"],
+        "verification_evidence": {
+            "per_phase": [
+                {
+                    "phase": "P1",
+                    "sha": "abc123",
+                    "subject": "feat(runtime): manifest admission",
+                    "reason": "engine-source change",
+                }
+            ]
+        },
+    }
+    reasons = build_blocking_reasons(
+        tracked_tasks=0,
+        total_tasks=4,
+        acknowledged_checks=0,
+        total_checks=4,
+        missing_task_evidence=[],
+        payload=selection_payload,
+    )
+    assert reasons == [], reasons
+
+    # Without the selection envelope the same counts still block (fail-closed).
+    reasons = build_blocking_reasons(
+        tracked_tasks=0,
+        total_tasks=4,
+        acknowledged_checks=0,
+        total_checks=4,
+        missing_task_evidence=[],
+        payload=None,
+    )
+    assert len(reasons) == 2, reasons
+    assert any("tasks have no executor update" in r for r in reasons)
+    assert any("sense checks have no executor acknowledgment" in r for r in reasons)
+
+    # Timeout reasons still surface alongside a selection payload.
+    reasons = build_blocking_reasons(
+        tracked_tasks=0,
+        total_tasks=4,
+        acknowledged_checks=0,
+        total_checks=4,
+        missing_task_evidence=[],
+        timeout_reason="execution timed out",
+        payload=selection_payload,
+    )
+    assert reasons == ["execution timed out"], reasons
