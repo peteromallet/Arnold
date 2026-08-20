@@ -108,3 +108,16 @@ Directives for consolidation:
 - User offered: route a fresh Grok review of the G0 freeze once drafted.
 - Orchestrator routing decision: after the in-flight G0 selection adjudication (G0-grok) lands, dispatch a FRESH Grok 4.6 judgment (role JUDGMENT, label [XHARD-REVIEW]) on the amended G0 freeze (Live Tree Authority contract), then a Luna evidence agent records the receipt; the amended freeze binds T4.1/T4.2/T4.3 (and any T4.4 scope) before those cards start.
 
+
+## G0 — custody and selection gate — PASS (after FAIL→J2→revision cycle)
+
+- G0 Luna inventory (mrc-17129211…): mechanical coverage PASS, adjudication_performed=false.
+- Original Grok adjudication (G0-grok, mrc-3fdeb5df…): FAIL, 5 must findings (MF-001 external T3.1 seed custody; MF-002 7272 cutover hunks selected on T4.1/T4.3; MF-003 second claim API on 759/800; MF-004 T6.2 unsafe fallbacks; MF-005 false already-at-fce on 67e/f579) + 5 should findings. Receipt: gates/G0/G0-grok-judgment.json (562a1b47…).
+- Operator verdict (user): Live Tree Authority — live tree at epic.runtime_root + generation interpreter is authority; Git SHA is observation not launch pin; compatibility = import_root + per-artifact schema; sole rebind CAS = import_root + interpreter; delete seed store / dispatch-current.json / MEGAPLAN_RUNTIME_LAUNCH_SEED / receipt byte-equality / runtime_vector_sha256 / babysitter ceremony as gates (keep as evidence); keep manifest as tree selector, mixed-module/.pth/interpreter checks, spec/asset CAS, append-only stamps, expected_head telemetry; no STATE_SCHEMA_EPOCH.
+- J2 Grok judgment (mrc-1f420539…): AMEND — freeze reconciled; T4.4 has NO surviving scope (occurrence-owner freeze fully in T2.1/G0-005/MF-003/T4.1-T4.3); G0 remains FAIL until revision. Receipt: adjudications/J2-amended-freeze-grok-judgment.json (727196ce…).
+- T0.2 revision (HARD-REVISION, mrc-cf8fd69f…): MF-001..005 + SF-002 applied; manifest digest e087a70a… (532,372 B). Commit cefd55aa69.
+- T0.1 additive seed custody (HARD, mrc-00ed35d3…): refs/heads/safety/maintenance-t3.1-external-seed → 3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e; record milestones/T0.1/seed-custody-T3.1.json ("provenance evidence, not launch authority"); six existing refs untouched. Commit a6eb0eae95 (integrated via cherry-pick).
+- Evidence integration (INT-g0rev, mrc-54c71b39…): commit f25d9be90d (G0 inventory + G0 judgment + J2 judgment + log), cherry-pick a6eb0eae95. HEAD a6eb0eae9554504d0cb98a3ab83ac9f1c0e6518a.
+- FRESH Grok 4.6 re-review (G0-rereview, mrc-9f978205…): **PASS** — all MF-001..005 + J2 launch-seed amendment verified against revised T0.2 + seed custody; must_findings=[]; should-residuals are hygiene/evidence-text lag only; J1 sequence preserved (Batch 4 = T4.1→G4.1→T4.2→G4.2→T4.3→G4.3; Batch 5 = T5.1 after G4.3; no T4.4/G4.4); Live Tree Authority freeze binding with zero authority drift.
+- G0 disposition: PASS. Batch 1 may start under the J2 freeze. Next: record receipt → commit batch-0 evidence + push → T1.1/T1.2/T1.3.
+

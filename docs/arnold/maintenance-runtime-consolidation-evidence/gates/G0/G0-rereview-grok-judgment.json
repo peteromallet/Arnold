@@ -1,0 +1,65 @@
+{
+  "id": "G0-rereview",
+  "kind": "gate-adjudication",
+  "label": "[XHARD-REVIEW]",
+  "gate": "G0",
+  "overall_verdict": "PASS",
+  "frozen_boundary": {
+    "integration_base": "fce48030a82d4d35d9b4a5184e4c789792b9c172",
+    "committed_plan_goal": "a610c220da202c6c4a45c4c990ebef4be9f53942 (J1 option A)",
+    "reviewed_head": "a6eb0eae9554504d0cb98a3ab83ac9f1c0e6518a"
+  },
+  "per_condition_rulings": {
+    "MF-001": "PASS",
+    "MF-002": "PASS (incl. launch-seed amendment: 7272 runtime_attestation hunks evidence/config-only, runtime_import_gates retained, required_seams.T4.3 source_commit=fce + frozen 8-step owner order)",
+    "MF-003": "PASS (claim methods dropped; seam = claim + claim_superfixer_occurrence + _transition_unlocked CAS)",
+    "MF-004": "PASS (required_parameters [fence_check, prior_key_lookup], no =None, unsafe_source_fallbacks_rejected, typed non-appending outcomes)",
+    "MF-005": "PASS (67e/f579 superseded, fce replacements named)",
+    "SF-002": "PASS (ticket hunks unresolved-policy)",
+    "T0.1 seed custody": "PASS (ref + full SHA + provenance-not-authority + six refs untouched)",
+    "J1/T4.4 sequence": "PASS (zero T4.4/G4.4 in manifest + committed plan)",
+    "Live Tree Authority": "PASS (rebind CAS import_root+interpreter, no SHA/vector/seed admission, no STATE_SCHEMA_EPOCH, expected_head telemetry)"
+  },
+  "must_findings": [],
+  "should_residuals": [
+    "SF-001 terminology",
+    "15b881 listed on T3.1 at commit/card level (test hunk only)",
+    "7272 reverse-index names T4.1 (index hygiene)",
+    "T4.3 card source_commits vs seams source_commit=fce (intentional)",
+    "759 consumer leftovers (implementer constraint)",
+    "stale questionnaire surfaces",
+    "SF-003/004/005 unchanged",
+    "T6.2 leftover =None on non-required params",
+    "Luna inventory stale vs HEAD T0.2 (record re-review against current artifacts)"
+  ],
+  "grok_invocation": {
+    "model": "grok-4.6",
+    "task_id": "G0-rereview",
+    "role": "JUDGMENT",
+    "invocation_id": "mrc-9f978205eb68a21f99bb289ef47c06a9fa50256bd55f531f",
+    "recorded_process_pid": 16268,
+    "exit_status": 0,
+    "elapsed": 779.9921267919708,
+    "elapsed_seconds": 779.9921267919708,
+    "allowance_digest": "08afc5bf9c7fa8571b3a41b2155e01294c24cf300279bf5f8c8b4a5f9824f86e",
+    "brief_digest": "f30b21eec23b4e32f82623b23781935d1415a9be476c9a7b0d099532c6ad6eca",
+    "command_digest": "9f39a9a13c5a0dd9ebb7476a7b68becc9711b8b402d2c5dca4e76a09bef57143",
+    "result_digest": "01695385e7216d7ef3a3144463d51efe9d0f6f816abc6cd2b50d7ee300506e50",
+    "stderr_digest": "97ee9ea8a07fe8932b7283d69a52844bf00b3a7dc2769de8c9b1f0ec0d2b1a32",
+    "stdout_digest": "b3feb2181a468d9d4079e3fdaf2683e491cb6a9b56a020980ca4dbab801d901f"
+  },
+  "artifact_digests": {
+    "T0.2": "e087a70a1429cd4e40a3b2c0769441447390864af038a455f0be4c531ae5a742",
+    "seed_custody": "c0ad7ad1b754fe30c9b8b6f10b6e28f324894517d30a5117e0a44599fefa0f0c",
+    "refs_manifest": "60a2de9cf8770c67bdf7f226f29a84dba5dc6a9b16b7bda849eaaccad2ab5c71",
+    "original_G0": "562a1b47842cdce13dde4276c9e165ad6e68edd822cca57263cfd1fffa7c31cf",
+    "J2": "727196ce91c4bfe20145aea9ed53060d9551e59ee54df2e3b006f5589f9f4bfd",
+    "J1": "8a43b98852009649474fa792fbfef063290a0f90e181c9bc22fdd1652a578734"
+  },
+  "downstream": [
+    "Luna records this receipt unchanged",
+    "Batch 1 may start under the J2 freeze",
+    "live split-box recovery out of scope"
+  ],
+  "recorded_at_utc": "2026-08-20T18:44:06Z"
+}
