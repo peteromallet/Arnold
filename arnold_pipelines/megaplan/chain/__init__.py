@@ -6456,6 +6456,31 @@ def _sync_chain_last_state_from_plan(
         authoritative, _ = _plan_terminal_completion_is_authoritative(root, plan_name)
         if not authoritative:
             return state
+    # chain.last_state == "done"/"complete" is owned by the milestone
+    # advance path (_mark_chain_after_milestone_advance), which sets it ONLY
+    # when next_index >= len(spec.milestones) and clears current_plan_name.
+    # A terminal-looking PLAN state must never be written onto the chain
+    # while the milestone is still current: that is what parked astrid-first
+    # m7 (plan done, 6/9 milestones, chain advertised "done", babysitter
+    # wrote no-action receipts for 30+ min). Sync only non-terminal states;
+    # a terminal plan state under a current milestone becomes
+    # "between_milestones" (or "unknown" if the chain already claimed a
+    # terminal label that the plan did not earn).
+    if plan_state in {"done", "complete"}:
+        if state.last_state in {"done", "complete"}:
+            _clear_impossible_terminal_last_state(
+                state,
+                writer=writer,
+                reason="plan terminal while chain milestone still current",
+            )
+        else:
+            state.last_state = "between_milestones"
+            writer(
+                f"[chain] plan {plan_name} terminal; milestone advance pending "
+                f"(last_state -> between_milestones, not done)\n"
+            )
+        chain_spec.save_chain_state(spec_path, state)
+        return state
     previous = state.last_state
     state.last_state = plan_state
     writer(
