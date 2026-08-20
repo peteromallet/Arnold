@@ -1675,17 +1675,28 @@ def validate_runtime_launch_seed(
                 else {}
             )
         )
-        if current_interpreter != expected_interpreter:
-            raise CliError(
-                RUNTIME_ATTESTATION_ERROR, "runtime interpreter identity drifted"
-            )
         # Codex fix 2026-08-17: the live interpreter must belong to the seed's
         # dependency generation (when the seed carries one). A worker running
         # under a different dependency generation fails closed.
         dep_generation = seed.get("dependency_generation")
         dep_generation = dep_generation if isinstance(dep_generation, Mapping) else {}
+        dep_interpreter = str(dep_generation.get("interpreter_path") or "").strip()
+        under_depgen = bool(dep_interpreter) and Path(dep_interpreter).expanduser().resolve(
+            strict=False
+        ) == Path(sys.executable).resolve(strict=True)
+        # 2026-08-20 (astrid-first m8): the seed's `interpreter` field is
+        # recorded from the AMBIENT sys.executable of the seed-building
+        # process (base python), which is a construction artifact, not the
+        # launch contract. When the worker correctly runs the seed's
+        # dependency-generation venv (the authoritative interpreter), the
+        # depgen check below governs; the stale seed.interpreter comparison
+        # must not reject it ("runtime interpreter identity drifted").
+        if not under_depgen:
+            if current_interpreter != expected_interpreter:
+                raise CliError(
+                    RUNTIME_ATTESTATION_ERROR, "runtime interpreter identity drifted"
+                )
         if dep_generation:
-            dep_interpreter = str(dep_generation.get("interpreter_path") or "")
             if not dep_interpreter or Path(dep_interpreter).expanduser().resolve(
                 strict=False
             ) != Path(sys.executable).resolve(strict=True):
