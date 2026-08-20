@@ -1,0 +1,53 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1
+  idea: .megaplan/initiatives/runtime-convergence-promotion/briefs/m1.md
+  branch: megaplan/runtime-convergence-promotion/m1
+  profile: partnered-5
+  vendor: codex
+  robustness: extreme
+  depth: high
+  with_prep: true
+  phase_model:
+  - prep=codex
+  - plan=codex
+  - critique_evaluator=codex
+  - critique=codex
+  - gate=codex
+  - revise=codex
+  - finalize=codex
+  - execute=codex
+  - review=codex
+- label: reconcile
+  kind: reconcile
+  idea: .megaplan/initiatives/runtime-convergence-promotion/briefs/reconcile.md
+  branch: reconcile/runtime-convergence-promotion-20260820
+  target_branch: main
+  merge_policy: auto
+  phase_model:
+  - plan=codex
+  - critique_evaluator=codex
+  - critique=codex
+  - gate=codex
+  - revise=codex
+  - finalize=codex
+  - execute=codex
+  - review=codex
+  depends_on:
+  - m1
+reconciliation:
+  enabled: true
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: extreme
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0

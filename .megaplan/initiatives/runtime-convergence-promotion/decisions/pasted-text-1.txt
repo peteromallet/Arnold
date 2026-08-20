@@ -1,0 +1,125 @@
+ The integration is simpler than it first appears: 4ef83c15d is a strict ancestor of
+  d38c3980a6, with eight linear commits and no divergent commits. So Astrid needs a
+  fast-forward-equivalent runtime promotion; maintenance is already on the candidate
+  tip.
+
+  The branch corresponding to the latest committed maintenance state is fixer/megaplan-
+  maintenance-20260813-47671addc195-g, but the SHA—not the branch name—should be
+  canonical:
+
+  d38c3980a6c06e4dea82fa87b0a7670f898c34cc
+
+  I would not cut over immediately. Two admission issues remain:
+
+  - d38 still does not register the required config CLI command, despite containing its
+    handler.
+
+  - Final maintenance review was interrupted by DeepSeek HTTP 402, so the final equal-
+    mode reconciliation fix has not received end-to-end certification.
+
+  - Astrid’s marker, expired lease, and observed live process do not currently agree.
+  - The two manifests reference the same venv path but record different venv digests.
+
+  ## Proposed plan
+
+  1. Establish the certified integration revision
+
+     Create an isolated successor from d38, repair the missing config parser
+     registration, and call the resulting immutable revision R.
+
+     Re-run the maintenance equal-mode reconciliation test. Its required output is:
+      - selected_shas: []
+      - complete typed coincident_ref evidence
+      - all 110 candidates accounted for
+
+     Use an available reviewer or deterministic test fixture; do not retry the DeepSeek
+     account currently returning 402.
+
+  2. Certify R
+
+     Run the focused tests covering all eight promoted commits:
+      - blast-radius strategy fallback
+      - tiebreaker rewind and last_gate
+      - stale auto-drive cursor handling
+      - reconciliation selection evidence
+      - execute batch and merge tracking
+      - completion authority
+      - source-lineage/equal-mode prompt contract
+
+     Then run the runtime suites for manifests, provenance, attestation, cutover,
+     leases, editable-install synchronization, chain execution binding, and current-
+     target liveness.
+
+     CLI smoke tests must include config show, --help, status, plan, imports, and
+     source-root verification.
+
+  3. Build immutable per-epic runtime roots
+
+     Do not fast-forward either live directory in place. Build two new, clean roots at
+     the exact same revision R, one owned by each epic, for example:
+      - /workspace/runtime-candidates/astrid-first-<R>
+      - /workspace/runtime-candidates/megaplan-maintenance-<R>
+
+     The architecture requires separate source roots even when both use identical code.
+
+  4. Reconcile dependency identity
+
+     Recompute the dependency specification and venv digest from both candidates.
+      - If both proofs match, they may retain the shared content-addressed venv.
+      - If the recorded digests still differ, build a new frozen venv generation and
+        bind both candidates to that verified generation.
+
+     Path equality alone is not sufficient evidence.
+
+  5. Run a disposable canary
+
+     Using isolated state, exercise:
+      - runtime imports and wrapper resolution
+      - plan creation and parsing
+      - mocked/no-provider finalize and execute capture
+      - equal-mode reconciliation
+      - tiebreaker rewind
+      - restart and persisted-cursor recovery
+
+     The canary must not touch either live chain, marker, lease, or workspace.
+
+  6. Promote maintenance first
+
+     Maintenance is the safer dormant canary because its chain is already blocked.
+      - If R == d38, this is principally manifest, venv, and provenance re-attestation.
+      - If R includes the CLI repair, use the guarded runtime-manifest and chain-runtime
+        cutover operations.
+
+      - Keep the chain blocked during observation; do not retry the 402 provider route.
+      - Verify that the blocker identity, chain state, watchdog state, marker, manifest,
+        and import root remain coherent.
+
+  7. Promote Astrid only at a safe seam
+
+     Astrid must not be switched during the active M7 phase.
+
+     Wait until a durable between-milestone checkpoint—preferably after M7 review and
+     commit, before M8—and then:
+      - reconcile the actual PID, command line, marker, launch seed, chain record, lease
+        incarnation, and import root
+
+      - snapshot chain state and events
+      - quiesce writers
+      - perform CAS-guarded manifest, chain-runtime, and marker cutovers
+      - resume only through the canonical chain machinery
+      - observe one complete phase with a fresh lease and no duplicate dispatch
+
+  8. Preserve rollback
+
+     Retain the old 4ef and d38 roots, manifests, seeds, and cutover receipts. Roll back
+     immediately on:
+      - source, venv, or runtime digest divergence
+      - stale or conflicting marker/lease/PID evidence
+      - duplicate dispatch
+      - cursor regression
+      - runtime import failure
+      - a non-empty equal-mode selection
+      - any new test failure
+
+     Do not garbage-collect either old runtime until both epics have completed and a
+     reference census finds no remaining users.
