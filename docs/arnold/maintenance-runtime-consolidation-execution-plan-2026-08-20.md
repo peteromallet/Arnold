@@ -92,6 +92,8 @@ Always exclude:
 
 Large but mechanically bounded tasks are not marked `[XHARD]`.
 
+`[XHARD-REVIEW]` means the review itself requires whole-system synthesis rather than checking one task against local acceptance criteria. It is used for cross-branch selection, architectural coherence, systemic over-enforcement, and final end-state judgment. An ordinary implementation batch can therefore feed an `[XHARD-REVIEW]` gate.
+
 ## Execution protocol
 
 - Use one Luna implementer per task card, one independent Luna reviewer per ordinary gate, and the stronger reviewer assignments in the review matrix for load-bearing gates.
@@ -108,13 +110,15 @@ Large but mechanically bounded tasks are not marked `[XHARD]`.
 
 | Gate | When | Reviewer | Purpose |
 |---|---|---|---|
-| G0 | Before any production-code card | Independent Luna, then root decision | Verify custody, exact source hunks, and keep/adapt/drop completeness |
+| G0 `[XHARD-REVIEW]` | Before any production-code card | Luna builds the inventory; Sol adjudicates selection; root decides | Verify custody, exact source hunks, cross-branch contradictions, and keep/adapt/drop completeness |
 | G1, G2, G3 | After each ordinary batch | A Luna that implemented none of that batch | Diff review, focused counterexamples, purity/authority/replay checks |
+| G3.5 `[XHARD-REVIEW]` | After ordinary foundations, before authority convergence | Fresh Sol architecture reviewer; root decides | Review the branch as a system for duplicate concepts, premature authority, aggression, and missing simplifications |
 | G4.1, G4.2, G4.3 | Before and after each T4 `[XHARD]` card | Sol contract/adversarial reviewer; root accepts or rejects | Freeze authority contract before code; attack every production transition afterward |
 | G5 | Before and after T5.1 | Sol semantic-compatibility reviewer; root accepts or rejects | Prove schema, prompt, execution, timeout, and resume all mean the same thing |
 | G6.1, G6.2 | Before and after each `[XHARD]` card | Sol fence/closure reviewer; root accepts or rejects | Attack concurrency, fence loss, replay, window closure, and hidden authority |
 | G6.3 | After the ordinary scheduler handoff | Independent Luna | Prove the handler only consumes T2.1 custody and cannot escalate observations |
-| G7 | After all shards, candidate proof, and canary | Fresh Sol final reviewer; root makes promotion recommendation | Assess the final diff and evidence manifest against must-level end-state criteria |
+| G6.4 `[XHARD-REVIEW]` | After all implementation, before broad validation | Fresh Sol systemic-risk reviewer; root decides | Trace observation-to-effect paths, find over-enforcement and duplicated authority, and demand simplification |
+| G7 `[XHARD-REVIEW]` | After all shards, candidate proof, and canary | Fresh Sol final reviewer; root makes promotion recommendation | Assess the final diff and evidence manifest against must-level end-state criteria |
 
 Review mechanics:
 
@@ -152,9 +156,9 @@ Acceptance:
 - Every selected card identifies whether it is an exact port, an adaptation, or already present at `fce` before code begins.
 - No unclassified production commit remains. Every exclusion names its replacement function/test or is explicitly classified `evidence/config-only` or `unresolved-policy`.
 
-### Gate G0 — Custody review
+### Gate G0 `[XHARD-REVIEW]` — Custody and selection review
 
-An independent reviewer checks object reachability, classifications, and the no-wholesale-merge rule. Implementation starts only after G0 passes.
+A Luna reviewer checks object reachability and classification completeness. A Sol reviewer then adjudicates the selection across all milestone branches, looking for contradictions, falsely superseded behavior, and unjustified automation. The root records the final keep/adapt/drop disposition. Implementation starts only after G0 passes.
 
 ## Batch 1 — Pure observation foundations
 
@@ -334,6 +338,19 @@ Focused tests: the focused six-hour auditor/controller shard plus mutation spies
 ### Gate G3 — Migration/recovery review
 
 Run repair-request migration, unblocker, and auditor shards. The reviewer injects interruption at persistence boundaries and verifies that observation code cannot invoke migration or recovery effects.
+
+### Gate G3.5 `[XHARD-REVIEW]` — Midpoint coherence and minimalism
+
+A fresh Sol reviewer reads the complete diff from `fce` through G3 rather than reviewing task cards independently.
+
+Acceptance:
+
+- Identity, occurrence, cursor, fence, receipt, evidence, and unknown-state terminology has one meaning across modules.
+- No ordinary batch has created a second writer, claim seam, permission gate, migration trigger, or premature action authority.
+- The pure observation layers remain useful when mutation evidence is absent.
+- Constraints are located at load-bearing boundaries rather than duplicated through callers.
+- Redundant checks and adapters are identified for deletion before T4 begins.
+- The branch still matches the G0 selection manifest and has not absorbed generated or unresolved policy material.
 
 ## Batch 4 — Authority convergence
 
@@ -517,6 +534,19 @@ Focused tests: schedule ownership, concurrent claim, failure/retry, terminal rep
 
 The reviewer inspects imports and call sites, not only mocks, and proves all M5 outputs terminate at report-only events.
 
+### Gate G6.4 `[XHARD-REVIEW]` — Systemic aggression and simplification review
+
+A fresh Sol reviewer assesses the entire implemented branch as one operating system, not as a collection of passing cards.
+
+Acceptance:
+
+- Every path from observation to mutation terminates either at a report-only artifact or at the single typed root capability and its explicitly scoped effect.
+- Unknown, stale, partial, or contradictory evidence cannot become green or actionable through composition across modules.
+- No ticket, repair, scheduling-policy, provider/model, rebind, pause, delivery, or cutover authority appears outside its settled boundary.
+- Repeated enforcement, redundant schemas, compatibility layers with no remaining caller, and accidental policy defaults are removed or explicitly justified.
+- A valid diagnostic workflow still functions without mutation authority; safety has not become operational paralysis.
+- The reviewer proposes deletions and simplifications, not only additional gates.
+
 ## Batch 7 — Convergence, runtime validation, and promotion evidence
 
 ### T7.1 Completeness and contradiction audit
@@ -576,7 +606,7 @@ Acceptance:
 - Rollback selects the prior verified SHA; it does not rewrite data.
 - Capture content-addressed before/after snapshots of process identity, runtime selector/marker/manifest, leases, active Astrid plan/chain state, active maintenance plan/chain state, schedule store, and maintenance ledger. Post-canary and post-rollback comparisons must be exact except for explicitly disposable-root artifacts.
 
-### Gate G7 — Final promotion review
+### Gate G7 `[XHARD-REVIEW]` — Final promotion review
 
 An independent reviewer receives only the final diff, selection manifest, shard evidence, candidate provenance, canary evidence, and rollback evidence. A machine-readable evidence manifest links every result to its command, source SHA, runtime/spec/venv digests, disposable-root path, and artifact digest; a missing artifact stops the gate. Promotion is allowed only when all must-level criteria pass. Promotion itself remains a separate explicit operation from code consolidation.
 
