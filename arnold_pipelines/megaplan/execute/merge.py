@@ -1385,13 +1385,22 @@ def _merge_batch_results(
     # "blocked" / "completed" specifically used to be left out of this filter,
     # which produced a false "tracking is incomplete" message when the
     # executor legitimately blocked on a user prerequisite.
+    # P6 reconcile selection envelope: a read-only reconcile selector emits the
+    # authoritative selection JSON (selected_shas + verification_evidence)
+    # instead of per-task updates; the selection IS the batch's completion
+    # evidence, so the tracking-incomplete advisories must not fire for it
+    # (occurrence 47671addc195).
+    selection_complete = bool(
+        isinstance(payload, Mapping)
+        and ("selected_shas" in payload or "verification_evidence" in payload)
+    )
     total_batch_tasks = len(batch_task_id_set)
     batch_merged = sum(
         1
         for tid in batch_task_id_set
         if plan_tasks_by_id.get(tid, {}).get("status") in TERMINAL_TASK_STATUSES
     )
-    if batch_merged < total_batch_tasks:
+    if not selection_complete and batch_merged < total_batch_tasks:
         issues.append(
             f"{total_batch_tasks - batch_merged}/{total_batch_tasks} batch tasks have no executor update — tracking is incomplete."
         )
@@ -1439,7 +1448,7 @@ def _merge_batch_results(
         for sid in batch_sense_check_id_set
         if all_sense_checks_by_id.get(sid, {}).get("executor_note")
     )
-    if batch_acknowledged < total_batch_checks:
+    if not selection_complete and batch_acknowledged < total_batch_checks:
         issues.append(
             f"{total_batch_checks - batch_acknowledged}/{total_batch_checks} batch sense checks have no executor acknowledgment — tracking is incomplete."
         )
