@@ -462,9 +462,15 @@ def _runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
 
 
 def _normalized_runtime_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
-    value = _runtime_identity_core(identity)
-    value["content_sha256"] = _runtime_identity_sha256(value)
-    return value
+    # Keep one canonical returned shape across provenance, marker cutover,
+    # launch seeds, and chain binding.  The digest is intentionally computed
+    # from the environment-independent projection, but the verified
+    # diagnostic fields remain attached to the identity as evidence.
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+        normalized_runtime_identity,
+    )
+
+    return normalized_runtime_identity(identity)
 
 
 def _persisted_runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
@@ -493,14 +499,49 @@ def _persisted_runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
     # editable diagnostics excluded — see _runtime_identity_core). Verifying
     # against a raw full-payload hash would reject every canonical identity
     # as "invalid"; recompute with the same canonical builder.
-    observed = _runtime_identity_sha256(identity)
     if not _FULL_SHA256.fullmatch(supplied):
         raise CliError(
             RUNTIME_DRIFT_ERROR,
             "runtime rebind refused: persisted runtime identity digest is invalid",
         )
-    if supplied == observed:
-        return supplied
+    # A Shannon receipt was part of the pre-canonical persisted payload and
+    # therefore must remain authenticated by that exact legacy digest.  Do
+    # not accept a canonical digest that projects the extension away: doing
+    # so would let an unauthenticated receipt be appended to valid state.
+    if "shannon_dependencies" not in identity:
+        observed = _runtime_identity_sha256(identity)
+        if supplied == observed:
+            return supplied
+    else:
+        # The legacy extension is authenticated by the persisted payload
+        # digest, but the digest alone does not make an arbitrary mapping a
+        # Shannon receipt.  Rebind is a trust boundary, so retain the exact
+        # v1 shape and fail closed before accepting the legacy digest.
+        receipt = identity["shannon_dependencies"]
+        if not isinstance(receipt, Mapping) or not {
+            "schema",
+            "ready",
+            "content_sha256",
+        }.issubset(receipt):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: persisted Shannon dependency receipt "
+                "is invalid",
+            )
+        if receipt.get("schema") != "arnold.megaplan.shannon_dependencies.v1":
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: persisted Shannon dependency receipt "
+                "is invalid",
+            )
+        if receipt.get("ready") is not True or not _FULL_SHA256.fullmatch(
+            str(receipt.get("content_sha256") or "")
+        ):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: persisted Shannon dependency receipt "
+                "is invalid",
+            )
     # Canonical-identity migration bridge (grok consult, d58701026410):
     # markers written BEFORE the env-independent digest landed carry a digest
     # computed over the legacy 7-field payload (editable diagnostics

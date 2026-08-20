@@ -992,7 +992,11 @@ def test_runtime_cutover_refuses_unbound_chain_before_any_mutation(
         tmp_path, "rev-parse", "HEAD"
     )
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-    state = _bound_state(spec_path)
+    # This is deliberately an unbound legacy chain.  Construct that state
+    # directly instead of briefly binding through the developer's current
+    # editable interpreter, whose diagnostic root is irrelevant to the
+    # fail-before-mutation contract under test.
+    state = ChainState()
     state.current_milestone_index = 0
     state.current_plan_name = "c1-plan"
     state.metadata.pop("execution_binding", None)
@@ -1191,7 +1195,11 @@ def test_runtime_cutover_rejects_normalized_alias_for_legacy_persisted_digest(
         tmp_path, monkeypatch
     )
     legacy_runtime = json.loads(json.dumps(original_runtime))
-    legacy_runtime["shannon_dependencies"] = {"ready": True}
+    legacy_runtime["shannon_dependencies"] = {
+        "schema": "arnold.megaplan.shannon_dependencies.v1",
+        "ready": True,
+        "content_sha256": "c" * 64,
+    }
     legacy_runtime["content_sha256"] = _canonical_sha256(
         {
             key: value
@@ -1243,7 +1251,7 @@ def test_runtime_cutover_rejects_unverified_persisted_runtime_extensions(
     ] = persisted
 
     message = (
-        "persisted runtime identity digest is invalid"
+        "persisted Shannon dependency receipt is invalid"
         if tamper == "digest"
         else "unsupported fields"
     )
@@ -1910,7 +1918,20 @@ def _legacy_runtime_identity(root: Path, revision: str = "a" * 40) -> dict:
             "megaplan": f"{root}/arnold_pipelines/megaplan/__init__.py",
         },
     }
-    identity["content_sha256"] = _canonical_sha256(identity)
+    # Runtime identity digests are now environment-independent: editable
+    # install diagnostics are retained as evidence but excluded from the
+    # content-addressed identity (T-0301).  Keep this legacy-runtime fixture
+    # aligned with the production normalizer used by migration.
+    identity["content_sha256"] = _canonical_sha256(
+        {
+            **identity,
+            "editable_root": None,
+            "editable_revision": None,
+            "direct_url": None,
+            "pth": None,
+            "imports": None,
+        }
+    )
     return identity
 
 
@@ -2863,6 +2884,11 @@ def test_b_cli_execution_binding_migrate_initializes_binding_via_command(
         for key, value in os.environ.items()
         if key not in {"PYTHONPATH", "PYTHONHOME"}
     }
+    # The subprocess deliberately uses ``-P`` and the worktree is not
+    # necessarily installed into the host interpreter.  Supply the checkout
+    # explicitly so this CLI smoke test exercises the command contract rather
+    # than failing during module discovery.
+    env["PYTHONPATH"] = str(REPO_ROOT)
     env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
     command = subprocess.run(
         [
@@ -2964,6 +2990,7 @@ def test_b_cli_execution_binding_migrate_refuses_forged_receipt_zero_mutation(
         for key, value in os.environ.items()
         if key not in {"PYTHONPATH", "PYTHONHOME"}
     }
+    env["PYTHONPATH"] = str(REPO_ROOT)
     env["ARNOLD_RUNTIME_MANIFEST"] = str(manifest_path)
     command = subprocess.run(
         [

@@ -14,6 +14,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 from arnold_pipelines.megaplan.cloud import shadow_attestation
+from arnold_pipelines.megaplan.cloud.install_sync import (
+    compute_venv_digest,
+    frozen_spec_sha256,
+)
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     COMPATIBILITY_ONLY_KEY,
     DEPENDENCY_GENERATION_KEYS,
@@ -167,7 +171,16 @@ def _real_git_repo(tmp_path: Path) -> tuple[Path, str]:
         ["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
         check=True,
     )
+    # ``advance_generation`` deliberately verifies the carried dependency
+    # proof against the checkout being promoted.  Keep this helper a real
+    # frozen-spec repository so the transition tests exercise that production
+    # gate instead of relying on the old proof-only fixture.
     (root / "README.md").write_text("seed\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "manifest-test"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    (root / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "seed"], check=True)
     sha = subprocess.run(
@@ -177,6 +190,31 @@ def _real_git_repo(tmp_path: Path) -> tuple[Path, str]:
         text=True,
     ).stdout.strip()
     return root, sha
+
+
+def _bind_manifest_to_repo(manifest: RuntimeManifest, root: Path) -> None:
+    """Bind a transition fixture to a real frozen-spec generation.
+
+    Production publication is fail-closed: the proof must match the new
+    checkout's frozen spec, point at a content-addressed generation, and
+    carry that generation's venv digest.  The old fixtures used placeholder
+    ``a``/``b`` digests and a non-existent venv, which no longer represents a
+    publishable manifest.
+    """
+    spec_digest = frozen_spec_sha256(root)
+    generation = root.parent / "generations" / spec_digest
+    interpreter = generation / "bin" / "python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    interpreter.chmod(0o755)
+    (generation / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+    manifest.epic["dependency_generation"] = {
+        "id": spec_digest,
+        "frozen_spec_sha256": spec_digest,
+        "interpreter_path": str(interpreter),
+        "venv_digest": compute_venv_digest(interpreter),
+        "created": "2026-08-07T00:00:00+00:00",
+    }
 
 
 def _make_attestation_tree(tmp_path: Path) -> Path:
@@ -321,6 +359,7 @@ def test_advance_generation_bumps_and_records_promotion(tmp_path: Path) -> None:
         epic={"runtime_root": str(root), "expected_head": head},
         indirection={"verified_head": head},
     )
+    _bind_manifest_to_repo(manifest, root)
     advanced = advance_generation(manifest, head, reason="promote durable fix")
     assert advanced is not manifest
     assert advanced.generation == 3
@@ -345,6 +384,7 @@ def test_advance_generation_bumps_and_records_promotion(tmp_path: Path) -> None:
 def test_advance_generation_carries_the_generation_proof(tmp_path: Path) -> None:
     root, head = _real_git_repo(tmp_path)
     manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
+    _bind_manifest_to_repo(manifest, root)
     advanced = advance_generation(manifest, head, reason="carry proof")
     assert (
         advanced.epic["dependency_generation"]
@@ -366,9 +406,9 @@ def test_advance_generation_accepts_explicit_override_proof(tmp_path: Path) -> N
     root, head = _real_git_repo(tmp_path)
     manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
     del manifest.epic["dependency_generation"]  # type: ignore[typeddict-item]
-    override = _generation_proof(
-        "/opt/elsewhere/venv/bin/python", id="f" * 64, frozen_spec_sha256="f" * 64
-    )
+    bound = _make_manifest_obj(epic={"runtime_root": str(root)})
+    _bind_manifest_to_repo(bound, root)
+    override = bound.epic["dependency_generation"]
     advanced = advance_generation(
         manifest,
         head,
@@ -391,6 +431,7 @@ def test_advance_generation_rejects_non_object_head_and_accepts_real_commit(
         epic={"runtime_root": str(root), "expected_head": head},
         indirection={"verified_head": head},
     )
+    _bind_manifest_to_repo(manifest, root)
     fake = head[:10] + "a" * 30  # 40-hex, correct shape, not a git object
     with pytest.raises(ManifestError, match="does not resolve"):
         advance_generation(manifest, fake, reason="fake head must refuse")
@@ -572,6 +613,7 @@ def test_all_transitions_preserve_deviations(tmp_path: Path) -> None:
     manifest = _make_manifest_obj(
         deviations=[record], epic={"runtime_root": str(root)}
     )
+    _bind_manifest_to_repo(manifest, root)
     closed = set_state(manifest, "closed")
     assert closed.deviations == [record]
     advanced = advance_generation(manifest, head, reason="preserve check")
@@ -1062,6 +1104,7 @@ def test_reconstruct_preserves_compatibility_only(tmp_path: Path) -> None:
     marked = _make_manifest_obj(
         compatibility_only=True, epic={"runtime_root": str(root)}
     )
+    _bind_manifest_to_repo(marked, root)
     advanced = advance_generation(marked, head, reason="preserve marker")
     assert advanced.compatibility_only is True
     closed = set_state(advanced, "closed")
@@ -1297,6 +1340,7 @@ def test_cli_advance_generation_switches_pointer_and_retains_previous(
         epic={"runtime_root": str(root), "expected_head": head},
         indirection={"verified_head": head},
     )
+    _bind_manifest_to_repo(manifest, root)
     write_manifest(manifest, path)
     # pointer already holds gen 1 (as runtime-create writes it at creation)
     write_active_pointer(manifest, pointer)
@@ -1324,7 +1368,9 @@ def test_cli_advance_generation_switches_pointer_and_retains_previous(
 def test_cli_advance_generation_creates_pointer_when_absent(tmp_path: Path) -> None:
     root, head = _real_git_repo(tmp_path)
     path = tmp_path / "m.json"
-    write_manifest(_make_manifest_obj(epic={"runtime_root": str(root)}), path)
+    manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
+    _bind_manifest_to_repo(manifest, root)
+    write_manifest(manifest, path)
     env = _cli_env(tmp_path)
     proc = _run_cli(
         env, "advance_generation", str(path), head, "--reason", "first promotion"
@@ -1458,12 +1504,18 @@ def test_compatibility_only_survives_create_promote_close_lifecycle(
     through the real CLI pointer path, and the pointer stays
     NON-AUTHORITATIVE at every step (G2 correction 1 + second re-run)."""
     _stub_git_head_guard(monkeypatch)
+    root, head = _real_git_repo(tmp_path)
     pointer = tmp_path / "runtime-manifest.json"
     monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
 
     # create: arnold-runtime-create writes the pointer as compatibility
     # telemetry (compatibility_only=True).
-    created = _make_manifest_obj(generation=1, compatibility_only=True)
+    created = _make_manifest_obj(
+        generation=1,
+        compatibility_only=True,
+        epic={"runtime_root": str(root), "expected_head": head},
+    )
+    _bind_manifest_to_repo(created, root)
     write_active_pointer(created, pointer)
     assert is_compatibility_only_pointer(pointer) is True
 
