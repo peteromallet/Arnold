@@ -1,0 +1,89 @@
+---
+
+## 1. Verdict: **Partly exists**
+
+Significant infrastructure is in place, but the component is incomplete at all three of its sub-goals. None of the sub-goals is fully done.
+
+---
+
+## 2. Existing artifacts with file:line evidence
+
+### Typed outcomes — STRONG (≈85% complete)
+
+`arnold_pipelines/megaplan/outcomes.py` defines closed `StrEnum` classes for every major workflow domain:
+
+| Class | Line |
+|---|---|
+| `PrepOutcome`, `CritiqueOutcome` | `:19-30` |
+| `GateOutcome` (10 values) | `:32-44` |
+| `TiebreakerOutcome` / `TiebreakerDecisionOutcome` | `:47-62` |
+| `TiebreakerResearcherOutcome`, `TiebreakerChallengerOutcome`, `TiebreakerSynthesisOutcome` | `:65-80` |
+| `ReviewOutcome`, `ReviewDecisionResult` | `:83-105` |
+| `OverrideOutcome`, `OverridePolicyRoute` | `:108-126` |
+| `ExecuteOutcome`, `FinalizeOutcome`, `ReviseOutcome` | `:129-155` |
+| `SuspensionOutcome`, `HaltOutcome`, `SuspensionHaltOutcome` | `:158-176` |
+| Vocabulary parity mapping `OUTCOME_CLASS_BY_VOCABULARY_KEY` | `:183-195` |
+
+Test evidence: `tests/arnold_pipelines/megaplan/test_workflows_components.py:313-340` (`test_outcome_vocabulary_parity`) verifies every enum value matches `RUNTIME_BRANCH_VOCABULARY` bidirectionally. Outcomes are imported and used in test fixtures: `tests/arnold/workflow/test_source_compiler_api.py:1956`, `tests/fixtures/workflow_authoring/m3/valid_m3_canonical_megaplan_topology.py:7`, `tests/fixtures/workflow_authoring/m3/invalid_m3_handler_owned_review_cap.py:5`.
+
+**Gap**: No retained-handler `Protocol`/interface definitions or `allowed_side_effects` declarations exist anywhere in `arnold_pipelines/megaplan` (search for `allowed_side_effects`, `handler_protocol`, `HandlerInterface` returns zero results). The M2 brief requirement for "Every retained handler boundary has a typed input/output contract and an allowed-side-effect declaration" is unmet.
+
+### Builder consumes lowered topology — PARTIAL (≈50% complete)
+
+`arnold_pipelines/megaplan/workflows/planning.py:695-721` (`build_pipeline`) calls `_lowered_workflow()` at `:702` and passes `lowered.steps` and `lowered.routes` into `_canonical_steps` and `_canonical_routes`. 
+
+**What works**: Lowered topology IS consumed — `_canonical_steps` (`:643-672`) overlays lowered `inputs`, `outputs`, `source_span`, and `metadata` onto each step. `_canonical_lowered_routes` (`:271-296`) filters routes from lowered source.
+
+**What still falls back to `components.py`**:
+- `_canonical_steps` iterates `PIPELINE_STEP_COMPONENTS` (`:650`), gets `kind`, default `inputs`, `outputs`, `policy`, and `metadata` from the component (`:656-660`), then overlays lowered data (`:663-670`). Without a component entry in `PIPELINE_STEP_COMPONENTS_BY_ID`, the step is silently dropped (`:241`, `:278`, `:306`).
+- `_route_id_for_lowered_route` (`:247-268`) consults component `route_bindings` as a fallback at `:257`.
+- `_policy_for_step` (`:556-580`) reads `component.policy` at `:558`.
+- `_metadata_for_step` (`:583-598`) reads `component.metadata.get("handler_ref")` at `:587`.
+
+Test evidence: `tests/arnold_pipelines/megaplan/test_workflows_planning.py` and `tests/arnold_pipelines/megaplan/test_workflows_planning_lowered_topology.py` pass, verifying the pipeline builds correctly. But no test proves "disabling old component route bindings does not change the deterministic trace."
+
+### Dead-delete — ADJACENT (≈30% on target)
+
+`tests/arnold/conformance/test_deleted_surfaces.py` (`:25-96`) and `arnold/conformance/deleted_surfaces.py` (`:1-173`) verify physical deletion of entire package trees (`arnold/pipelines/megaplan/`, `arnold_pipelines/megaplan._pipeline`, etc.) and import modules. `scripts/generate_native_representation_evidence.py:1194-1217` (`_build_dead_delete_mutation_checks`) checks physical file/module presence.
+
+**Critical gap**: This is M5/M6-level "big bang" deletion of entire legacy packages. There is **no test** that disables old component route bindings for a single edge (e.g., prep→plan) and proves the corrected deterministic trace is unchanged. The S1d requirement is "Disabling old component route bindings for that slice does not change the corrected deterministic trace" — this specific dead-delete at the route-binding level does not exist.
+
+### One route edge source-owned — PARTIAL
+
+The prep→plan default route is source-visible through the lowered `.pypeline` topology. Tests at `test_workflows_planning.py:137` verify `("prep", "default")` exists and `("plan", "default")` exists. But because `_canonical_steps` still depends on component metadata (`:650-660`), this edge is not *exclusively* source-owned — removing the prep/plan component from `PIPELINE_STEP_COMPONENTS_BY_ID` would drop those steps entirely rather than derive them from lowered source alone.
+
+---
+
+## 3. What can be reused or generalized
+
+- **`outcomes.py`** (`:1-252`) is production-ready and can be reused directly. The vocabulary parity test at `test_workflows_components.py:313-340` is solid.
+- **`_lowered_workflow()`** (`planning.py:200-201`) with `@lru_cache` is a correct caching layer.
+- **`_canonical_lowered_routes`** (`:271-296`) already filters routes from lowered source — the filtering logic can be reused. Only the `_route_id_for_lowered_route` fallback to component bindings (`:257`) needs removal.
+- **Test infrastructure**: `test_workflows_planning.py` and `test_workflows_planning_lowered_topology.py` provide a strong existing test harness for builder verification.
+
+---
+
+## 4. What still must be built
+
+1. **Retained-handler typed interfaces**: `Protocol` classes or `TypedDict` contracts with `allowed_side_effects` declarations per the M2 brief spec. Currently zero such declarations exist.
+
+2. **Full lowered-topology builder for at least one edge**: `_canonical_steps` (`:643-672`) must derive step `kind`, `inputs`, `outputs`, `policy`, and `metadata` from lowered source WITHOUT falling through to `PIPELINE_STEP_COMPONENTS_BY_ID`. The simplest target is prep or plan (single-input, single-output, no loop).
+
+3. **Edge-specific dead-delete test**: A test that mocks/removes the prep or plan component's `route_bindings` from `PIPELINE_STEP_COMPONENTS_BY_ID` and proves `build_pipeline()` produces an identical `Pipeline` (same steps, same routes, same topology hash).
+
+4. **Handler purity scanner with side-effect declarations**: The M2 brief requires "transitive handler-purity scanner support: retained handlers declare allowed side effects, and the scanner checks callees for report-owned routing." The existing evidence generator (`scripts/generate_native_representation_evidence.py`) has handler-purity checks but no side-effect declaration mechanism.
+
+5. **Prove canonical source can branch on typed outcomes**: Currently the `.pypeline` source branches on raw string comparisons like `gate_route_signal == "proceed"` (`workflow.pypeline`). The outcomes enums exist but are not yet the authoritative branch mechanism in source.
+
+---
+
+## 5. Recommended adjustment to the sprint plan
+
+The conformance report at `docs/arnold/megaplan-native-representation-conformance-report.md:48` claims row 23 `typed-loop-outcomes` as "implemented" with `canonical_source` evidence, but the master plan at `megaplan-native-semantic-parity-master-plan.md:167` explicitly calls this report a "false conformance report." **Do not treat any row as pre-completed.** 
+
+For S1d, I recommend:
+
+- **Keep**: Typed outcome enums — they are done and tested.
+- **Add explicit scope**: Select prep→plan as the one edge, make `_canonical_steps` derive that step entirely from lowered source (remove `PIPELINE_STEP_COMPONENTS_BY_ID` dependency for that edge), and add the dead-delete test proving component binding removal doesn't change the trace.
+- **Defer**: Full retained-handler Protocol/interface definitions and allowed-side-effect declarations — these can be done incrementally as each handler's phase is extracted in S2-S6 rather than all upfront.
+- **Add before closeout**: The edge-specific dead-delete test (disabling old component route bindings for prep→plan) — this is the key anti-false-pass guard that the current codebase completely lacks.

@@ -1,0 +1,75 @@
+Here is the audit verdict.
+
+---
+
+## Verdict: **Weakens** the plan assumption
+
+The plan assumes "baseline capture and scenario gates can run in CI" (implied by line 26–28, 35–36, 151–154), but two of the three split-outcome categories you asked about have **no programmatic control-plane API today**. They cannot be driven headlessly without an interactive CLI shim or live human input.
+
+---
+
+## Evidence
+
+### 1. Replay harness: does not exist (acknowledged gap)
+
+Zero files matching `replay`, `baseline`, or `split_outcome` exist under `tests/` or `scripts/`. The plan itself scopes this as S1a work:
+
+> `docs/arnold/megaplan-native-semantic-parity-master-plan.md:151-154`
+> *"Build the deterministic replay harness used for all split-outcome and mutation gates. It records/cans worker payloads for model-driven phases such as gate, critique, tiebreaker, execute, and review, and each fixture payload is hash-pinned in baseline evidence."*
+
+This is not a contradiction — the plan correctly identifies the harness as *to be built*. The problem is that even after the harness exists, it cannot drive certain scenarios because the control-plane API lacks the requisite actions.
+
+### 2. Resume-clarify injection: ✅ programmatic API exists
+
+`arnold_pipelines/megaplan/planning/control_binding.py:1171-1217` — `PlanningControlBinding.apply_transition` handles `action == "resume-clarify"` with state-delta mutation from `STATE_AWAITING_HUMAN`/`STATE_BLOCKED` to `STATE_PREPPED`. This can be driven headlessly via `ControlTransitionRequest`.
+
+### 3. Destructive-approval denial: ❌ no programmatic API
+
+There is **no** `destructive-approval-deny` or `destructive-approval-approve` action in the `apply_transition` switch. The concept appears only as CLI flags:
+
+> `control_binding.py:1066`: `rerun_command += " --confirm-destructive --user-approved"` (a CLI suggestion string, not a control-plane operation)
+
+> `control_binding.py:602`: `_strict_notes_guard` checks `transition.payload.get("user_approved", False)` for gate escalation, but this is embedded in the `force-proceed` action path, not a standalone denial/approval action.
+
+The `OVERRIDE_ACTION_MATRIX` (`override_matrix.py:12-26`) lists 11 actions. None are destructive-approval. Destructive approval is a **phase-level CLI flag** on the `execute` command, not a control-plane transition.
+
+### 4. Tiebreaker decisions (proceed/iterate/escalate): ❌ no programmatic API
+
+`apply_transition` at `control_binding.py:1498-1502` falls through to:
+
+```python
+return ControlTransitionResult(
+    accepted=False, mutated=False,
+    reason="planning_control_binding_transition_unimplemented",
+)
+```
+
+Tiebreaker decisions are handler-owned, dispatched through component route bindings (`components.py:106`, `:2546-2550`), `routing.py:138-148` (`tiebreaker_decision_edges`), and `handlers/tiebreaker.py`. The plan itself confirms this at line 123:
+
+> *"SA3 found tiebreaker source is still a mix of child workflow metadata and state reset."*
+
+---
+
+## Gap Summary
+
+| Scenario | Control-Plane Action in `apply_transition`? | Headless Today? |
+|---|---|---|
+| Resume-clarify injection | Yes (line 1171) | ✅ Yes |
+| Destructive-approval denial | No action exists; CLI-flag-driven | ❌ No |
+| Tiebreaker decisions | Falls to `unimplemented` (line 1498) | ❌ No |
+
+---
+
+## Smallest Concrete Plan Amendment
+
+**Amend S1a scope** (insert after line 154, the replay harness bullet) to add:
+
+> **Control-injection API gap closure.** Before the deterministic replay harness can capture split-outcome baselines for destructive-approval and tiebreaker scenarios, `PlanningControlBinding.apply_transition` must grow two new actions:
+>
+> - `"destructive-approval-deny"` — transitions execute from `awaiting-approval` to `blocked` with denial recorded in state metadata.
+> - `"destructive-approval-approve"` — transitions execute from `awaiting-approval` to the approved path (equivalent to `--confirm-destructive --user-approved` semantics).
+> - `"tiebreaker-proceed"`, `"tiebreaker-iterate"`, `"tiebreaker-escalate"` — each applies the corresponding tiebreaker decision route as a state delta, consuming the `tiebreaker_decisions.json` payload.
+>
+> Each action must be registered in `OVERRIDE_ACTION_MATRIX` with `dispatch_surface="workflow.native_policy"` and `control_routed=True`. S1a exit gate: a headless `apply_transition` call for each action must produce the same state delta and route label as the current interactive CLI path, verified against a frozen pre-extraction baseline.
+
+**Rationale:** Without this, S2–S4 cannot capture golden baselines for destructive-approval or tiebreaker split-outcome scenarios because the replay harness has no control-plane surface to drive them through. The harness would need to shell out to the interactive CLI, breaking determinism and the hash-pinned canned-payload requirement (line 35–36).

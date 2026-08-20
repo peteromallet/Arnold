@@ -1,0 +1,11 @@
+diff --git a/arnold_pipelines/megaplan/execute/batch.py b/arnold_pipelines/megaplan/execute/batch.py
+--- a/arnold_pipelines/megaplan/execute/batch.py
++++ b/arnold_pipelines/megaplan/execute/batch.py
+@@ -6,6 +6,7 @@ import json
+ import logging
+ import os
+ import subprocess
++import time
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Callable, Iterable, Mapping

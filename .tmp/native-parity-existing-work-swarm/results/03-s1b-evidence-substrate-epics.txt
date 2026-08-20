@@ -1,0 +1,63 @@
+Now I have all the evidence needed. Here is the audit:
+
+---
+
+## S1b Deterministic Evidence Substrate — Audit Verdict
+
+### 1. Verdict: **PARTLY EXISTS** (heavily weighted toward "not built")
+
+The evidence infrastructure scaffolding exists in `scripts/generate_native_representation_evidence.py`, but none of the five core S1b constructs described in the master plan (lines 435–463) have been built. No S1b sprint brief even exists in the initiatives directory.
+
+### 2. Existing or Prior Artifacts
+
+**A. Evidence generator script (adjacent, substantial)**
+- `scripts/generate_native_representation_evidence.py:1607–1712` — `generate_evidence_bundle()` function produces checker records, boundary fixtures, scenario hashes, installed-package fingerprints, handler-purity checks, compatibility quarantine checks, and dead-delete mutation checks. This is the closest existing artifact to S1b but it *validates against existing conformance data*; it does not implement replay, baselining, or control injection.
+- `scripts/generate_native_representation_evidence.py:1397–1604` — `_build_split_outcome_hashes()` validates split-outcome records against a scenarios YAML manifest.
+- `scripts/generate_native_representation_evidence.py:1156–1191` — `_build_compatibility_quarantine_checks()`.
+- `scripts/generate_native_representation_evidence.py:1194–1225` — `_build_dead_delete_mutation_checks()`.
+
+**B. Split-outcome records in evidence YAML (partial)**
+- `docs/arnold/megaplan-native-representation-evidence.yaml:4369–4751` — Contains 9 `scenario_hashes` records with `record_id`, `path_classes`, `scenario_refs`, `row_ids`, `expected_outcomes`, `deterministic_fixture_hashes`, `executable_modules`, and `refresh_rule`. These are *evidence records*, not the scenario manifest itself.
+- **Missing**: The scenarios manifest file `docs/arnold/megaplan-native-representation-scenarios.yaml` (referenced at `generate_native_representation_evidence.py:53` as `DEFAULT_SCENARIOS`) does not exist on disk — `search_files` for `megaplan-native-representation-scenarios` returns zero files.
+
+**C. Installed-package smoke test (partial)**
+- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py` — 757 lines testing the authority chain (canonical source → WorkflowManifest → NativeProgram) from installed wheel. Tests wheel shipping, resource contracts, and prohibition tokens. **Covers composition conformance, not strict checker source-loading from installed artifact.**
+- `arnold_pipelines/megaplan/workflows/package_fingerprints.py` — 148 lines providing stable canonical fingerprints (`canonical_workflow_fingerprints()`) with path normalization. **Adjacent to canonicalizer but does NOT normalize timestamps, UUIDs, invocation IDs, etc.** as required by master plan lines 440–444.
+
+**D. Evaluand replay (different scope, adjacent)**
+- `arnold_pipelines/megaplan/observability/evaluand.py:83–95` — `RecordedModelIO` dataclass for "deterministic replay" of model I/O. Used for A/B evaluand judging, not route/state transition replay for split-outcome baselines. The master plan lines 96–98 explicitly cut full model I/O replay.
+- `tests/oracles/test_evaluand_replay_oracle.py` — 322 lines of evaluand replay tests.
+
+**E. No S1b sprint brief exists**
+- `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/` contains S1 through S7 briefs plus old m1–m10 briefs. No S1b-1 or S1b-2 brief. S1 (`s1-checker-outcomes-builder-slice.md`) absorbs M1/M2/M3 but does NOT absorb S1b scope.
+
+### 3. What Can Be Reused or Generalized
+
+| Existing Artifact | Reuse Potential |
+|---|---|
+| `generate_native_representation_evidence.py` split-outcome hash builder | The `_build_split_outcome_hashes()` logic (lines 1397–1604) validates `path_classes`, `scenario_refs`, `row_ids`, and `executable_modules` — this structure can be reused as the validation layer for the replay harness output |
+| `package_fingerprints.py:_normalize_for_fingerprint()` | Path normalization for dataclass/enum/Path values (lines 66–90) can be extended into the full canonicalizer |
+| `test_installed_package_composition_smoke.py` | The `installed_megaplan_wheel` fixture (lines 84–112) builds and installs a wheel in an isolated venv — reusable for S1b installed-package source-loading smoke |
+| Evidence YAML split-outcome records | The 9 existing records with `deterministic_fixture_hashes` and `executable_modules` provide a starting inventory for the required split-outcome list |
+
+### 4. What Still Must Be Built
+
+1. **Replay harness**: Route/state/next-command/suspension assertions with hash-pinned canned worker payloads. No `validate_megaplan_replay_harness.py` script. No `tests/fixtures/megaplan/replay/` directory.
+2. **Split-outcome inventory completeness**: Author `docs/arnold/megaplan-native-representation-scenarios.yaml` (does not exist) and `docs/arnold/megaplan-native-required-split-outcomes.yaml` with the `validate_megaplan_split_outcome_scenarios.py` script.
+3. **Baseline freeze**: `capture_megaplan_split_outcome_baselines.py` and `check_megaplan_baseline_freeze.py` — staged pre-extraction golden baselines captured while legacy carriers own behavior.
+4. **Headless control injection API**: `test_control_injection_headless.py` — programmatic actions for destructive approval denial/approval, tiebreaker proceed/iterate/escalate.
+5. **Installed-package source-loading smoke**: Strict `importlib.resources.files(...)` loading through the checker path (not just composition conformance). The master plan (lines 448–452) requires feeding loaded source through the same strict checker path used in checkout mode.
+6. **Canonicalizer**: Normalize timestamps, UUIDs, absolute paths, invocation IDs, snapshot IDs, model/session IDs, and generated-at/provenance fields. Publish canonicalizer version in every baseline record.
+7. **S1b sprint briefs**: Neither S1b-1 (Runtime Substrate Proof) nor S1b-2 (Typed Outcomes, Builder Slice, Installed Package) have briefs in the initiatives directory.
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+**S1b should be split into two sprints as planned but its scope should be narrowed and re-sequenced:**
+
+- **S1b-1 should produce the replay harness and split-outcome inventory FIRST**, before any extraction sprint begins. The evidence YAML already has 9 split-outcome records with deterministic fixture hashes — the harness should replay against those fixtures and produce route/state/next-command/suspension baselines. The dynamic fanout/substrate proof (S1b-1 per master plan lines 532–576) is a separate concern from the evidence substrate and should be a prerequisite gate for S2–S5 extraction, not bundled into the harness sprint.
+
+- **S1b-2 should deliver headless control injection, installed-package source-loading smoke, and the canonicalizer** — and should gate S2 (first extraction sprint). The builder slice proof (master plan lines 578–616) is the S1 concern; S1b-2 should focus on making the evidence substrate CI-viable.
+
+- **The scenarios manifest YAML** must be authored before S1b-1 can validate completeness. This is a prerequisite dependency not tracked in the current plan.
+
+- **Unverified prior claims**: The master plan lines 195–196 claim `generate_native_representation_evidence.py` has "scenario hash builder" and "dead-delete checks". These exist in code (verified at lines 1397 and 1194) but the scenario manifest they validate against is **missing** — the split-outcome hash builder will fail at runtime with a `FileNotFoundError` for `megaplan-native-representation-scenarios.yaml`.

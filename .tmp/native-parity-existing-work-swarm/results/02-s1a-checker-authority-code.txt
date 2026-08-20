@@ -1,0 +1,69 @@
+## S1a Checker Authority — Codebase Audit
+
+### 1. Verdict: **PARTLY EXISTS**
+
+Core scaffolding and data models exist (row IDs, diagnostic codes, boundary vocabulary, checker API). However, three of the five subcomponents are missing or incomplete per the master plan's own SA5/Q3/Q9 findings, which I've verified against code.
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**Strict semantic checker (found):**
+- `arnold/workflow/source_compiler.py:642-719` — `check_workflow_source()` with `check_workflow_file()` at :623. Integrates row-evidence diagnostics (`_row_evidence_diagnostics` :722), boundary-evidence diagnostics (`_boundary_evidence_diagnostics` :1236), tiebreaker-shape diagnostics (`_tiebreaker_shape_diagnostics` :794), and review/finalize diagnostics (`_megaplan_review_finalize_diagnostics` :1142).
+- Data models: `arnold/workflow/semantic_evidence.py:125-237` (SemanticEvidence, SemanticFailure), `arnold/workflow/boundary_evidence.py:92-435` (BoundaryContract, BoundaryReceipt, AuthorityRecord, SemanticFinding), `arnold/workflow/diagnostics.py:67-145` (DiagnosticCode enum with AWF245–AWF252 row/boundary codes plus AWF200–AWF209 V2 codes).
+- Tests: `tests/arnold/workflow/test_row_evidence_checker.py` (1033 lines, 25+ tests) and `tests/arnold/workflow/test_boundary_evidence_checker.py` (1105 lines, 20+ tests). Both pass on supplied evidence and fail correctly without it.
+
+**Row registry (found, distributed):**
+- Stable row IDs in `semantic_evidence.py:54-91` (S2–S5 namespaces).
+- Boundary contract instances in `arnold_pipelines/megaplan/workflows/boundary_contracts.py:65–936` (S2–S6 contracts).
+- `_front_half_row_specs()` at `source_compiler.py:1734-1767` derives the row-to-component mapping from BOUNDARY_CONTRACTS.
+- `_implemented_s5_boundary_rows()` at `source_compiler.py:1783-1868` covers S5 review/finalize rows.
+
+**Carrier classification (found in test/docs, not production checker):**
+- `arnold/workflow/handler_semantics.py:29-54` — `REPORT_SEMANTIC_OWNERS`, `PURE_PHASE_BODIES`, `ALL_HANDLER_NAMES`.
+- `tests/arnold_pipelines/megaplan/test_semantics_carrier_table.py` (686 lines) — verifies handler inventory, carrier classification, and traceability mapping consistency against `docs/arnold/megaplan-semantics-carrier-table.md`.
+- No production carrier-scan module exists in `arnold/` (confirmed zero results for `carrier_scan`, `route_authoritative`, `prohibited_carrier`).
+
+**Current-shape negative fixture (NOT FOUND):**
+- Master plan SA5 explicitly lists "current-shape negative fixture" as missing (`master-plan.md:195`).
+- The S1 brief requires it (`s1-checker-outcomes-builder-slice.md:54`), and the master plan specifies exact source ranges to mirror (`master-plan.md:427`).
+- Nearest analogues: `test_canonical_authoring_components_emit_awf245_for_unique_front_half_rows` (`test_row_evidence_checker.py:255-286`) and S5 invalid fixtures under `tests/fixtures/workflow_authoring/m3/`. Neither is a pinned, permanent, diagnostic-code-anchored CI fixture for the current-shape component-call skeleton.
+
+**Prohibited-carrier diagnostics (MOSTLY NOT FOUND):**
+- `handler_ref` is **allowed** in `_lower_step_metadata` at `source_compiler.py:5158-5159`.
+- `route_bindings` are processed normally at `source_compiler.py:5621`.
+- AWF200–AWF209 codes are defined in `diagnostics.py:93-109` but only five are emitted by the checker (SINGLE_HANDLER_WRAPPER, MANUAL_GRAPH_NODES, NATIVE_PROGRAM_PROJECTION, MEGAPLAN_ONLY_HELPERS, DYNAMIC_DISPATCH). No code flags: `handler_ref` as prohibited carrier, `route_bindings` as prohibited, component route authority, manifest/backend route translation, auto next-step derivation, CLI dispatch, or compatibility projection evidence.
+- Q3 audit at `master-plan.md:210-212` confirms: "checker rejection is currently token/name-oriented."
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **Checker API and result carrier**: `check_workflow_source(evidence=..., boundary_contracts=..., boundary_evidence=...)` at `source_compiler.py:642-719` is a well-structured entry point; new diagnostic rules can be added as additional `_*_diagnostics()` functions appended to the pipeline at :697-713.
+- **Data models**: `SemanticEvidence`, `BoundaryContract`, `BoundaryReceipt`, `SemanticFinding`, and all Stable Row IDs are frozen, sidecar-serializable, and ready for consumption by new prohibited-carrier checks.
+- **Boundary contract registry**: `boundary_contracts.py` pattern can be extended for prohibited-carrier whitelist entries (explicit fencing of inert compatibility carriers).
+- **Handler semantics data**: `handler_semantics.py:29-54` classification can feed a production carrier scan that distinguishes route-authoritative from descriptive carriers.
+- **Carrier table test**: `test_semantics_carrier_table.py` verification logic can be promoted into a production `CarrierScanner` class.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Prohibited-carrier structural rejection rules**: A new diagnostic module that flags `handler_ref` as route authority, `route_bindings`, component-owned route decisions, manifest/backend route translation, auto next-step derivation, CLI dispatch, and compatibility projection evidence. Must be structural (AST/import-level), not token blacklists.
+
+2. **Carrier scan/classification tier**: A production `CarrierScanner` that distinguishes route-authoritative from descriptive carriers, with a falsifiable tier boundary (master plan :76-79) — random sample + corrupt + prove split-outcome unchanged.
+
+3. **Current-shape negative fixture**: A permanent, CI-pinned fixture mirroring the source ranges at `master-plan.md:427` (`workflow.pypeline:14-34, :81-280, :281-383, :390-540; planning.py:247-268, :583-716; components.py:1154-1781, :2664-2669; _compatibility.py:101-115, :173-207`), pinned to diagnostic codes.
+
+4. **Installed-package checker path**: No strict installed-package checker exists (Q10 at `master-plan.md:235-237`). Must use `importlib.resources` + smoke test against installed artifact.
+
+5. **Row registry centralization**: Row IDs and component-ref-to-row mappings are distributed across `semantic_evidence.py`, `boundary_contracts.py`, and `source_compiler.py`. A single `RowRegistry` class would eliminate drift risk.
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+- **Split S1a** into two deliverables: (a) the existing checker scaffold + row registry + boundary evidence (already done, mark as **S1a-foundation**), and (b) **S1a-prohibited** for the structural prohibited-carrier rules + carrier scan tier + current-shape negative fixture + installed-package smoke.
+- **Prioritize current-shape negative fixture first** — it's the highest-leverage anti-false-pass control and is explicitly cited as missing in SA5.
+- **Do not treat `handler_semantics.py` as the carrier scanner**. It's classification data, not the tiered scan with falsifiable boundary. Build `CarrierScanner` as a new `arnold/workflow/carrier_scan.py`.
+- **Pin the negative fixture to exact diagnostic codes** (AWF200-series for prohibited carriers) so renamed/renamed-encoded carriers trigger the right codes, not just any failure.

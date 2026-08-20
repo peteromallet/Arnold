@@ -1,0 +1,88 @@
+## S1a Checker Authority — Audit Findings
+
+### 1. Verdict
+**Adjacent only.** Foundational evidence types and the row-evidence checker infrastructure exist. Zero S1a-specific exit-gate artifacts (scripts, tests, fixtures, YAML registries, diagnostic codes, harnesses) exist.
+
+### 2. Existing or Prior Artifacts (with file:line evidence)
+
+**Exists — row-evidence foundation (pre-S1a, shared across sprints):**
+
+- `arnold/workflow/diagnostics.py:138` — `AWF245_ROW_EVIDENCE_INSUFFICIENCY` is allocated
+- `arnold/workflow/source_compiler.py:722-749` — `_row_evidence_diagnostics()` emits AWF245 for implemented front-half rows lacking evidence
+- `arnold/workflow/source_compiler.py:1682` — `_implemented_front_half_rows()` enumerates prep/plan/critique/gate/revise
+- `arnold/workflow/source_compiler.py:1783` — `_implemented_s5_boundary_rows()` exists for S5 review/finalize
+- `arnold/workflow/semantic_evidence.py:1-291` — `ConstructType`, `SemanticEvidence`, `RowEvidence` data shapes exist
+- `arnold/workflow/boundary_evidence.py:1-435` — `BoundaryContract`, `BoundaryReceipt`, `AuthorityRecord`, `SemanticFinding` exist
+- `tests/arnold/workflow/test_row_evidence_checker.py:1-1033` — 25 tests passing per master plan (line 163)
+- `scripts/generate_native_representation_evidence.py:1-1788` — evidence bundle builder exists; referenced by master plan SA5 finding (line 195) as insufficient for current-shape negative fixture and structural rejection
+
+**Exists — closure bypass (the problem S1a must fix):**
+
+- `arnold/workflow/source_compiler.py:623-638` — `check_workflow_file()` defaults `evidence=None`, skipping AWF245
+- `arnold/workflow/source_compiler.py:642-649` — `check_workflow_source()` defaults `evidence=()`, enforcing strict checking
+- Master plan lines 167-169 document this as the historical false-pass mechanism
+
+**Does NOT exist — S1a-specific exit gate artifacts (comprehensive):**
+
+| Artifact class | Expected by master plan | Status |
+|---|---|---|
+| Diagnostic code | `AWF253_PROHIBITED_SEMANTIC_CARRIER` (line 484) | **Missing** — last code is `AWF252` at `diagnostics.py:145` |
+| Row registry | `arnold/workflow/megaplan_semantic_rows.yaml` (line 475) | **Missing** |
+| Carrier scan script | `scripts/scan_megaplan_semantic_carriers.py` (line 472) | **Missing** |
+| Carrier classify script | `scripts/classify_megaplan_semantic_carriers.py` (line 473) | **Missing** |
+| Carrier tier validation | `scripts/validate_megaplan_carrier_tier_boundary.py` (line 474) | **Missing** |
+| Row reconciliation script | `scripts/reconcile_megaplan_semantic_rows.py` (line 475) | **Missing** |
+| Strict parity checker | `scripts/check_megaplan_native_semantic_parity.py` (line 467) | **Missing** |
+| Negative fixture | `tests/fixtures/.../current_false_pass_shape.py` (line 484) | **Missing** |
+| Adversarial fixtures | `tests/fixtures/.../renamed_carrier_evasion/` (line 486) | **Missing** |
+| Tests | `test_megaplan_row_registry_completeness.py` (line 476) | **Missing** |
+| Tests | `test_megaplan_checker_structural_rejection.py` (line 476) | **Missing** |
+| Tests | `test_megaplan_native_semantic_checker_authority.py` (line 477) | **Missing** |
+| Tests | `test_control_injection_headless.py` (line 481) | **Missing** |
+| Tests | `test_installed_package_strict_source_loading.py` (line 481) | **Missing** |
+| Scenarios YAML | `docs/.../megaplan-native-representation-scenarios.yaml` (line 456) | **Missing** |
+| Split-outcome validator | `scripts/validate_megaplan_split_outcome_scenarios.py` (line 478) | **Missing** |
+| Replay harness | `scripts/validate_megaplan_replay_harness.py` (line 479) | **Missing** |
+| Baseline capture/freeze scripts | `scripts/capture_megaplan_split_outcome_baselines.py`, `check_megaplan_baseline_freeze.py` (lines 482-483) | **Missing** |
+| Runtime narrowing validator | `scripts/validate_megaplan_runtime_narrowing.py` (line 488) | **Missing** |
+| Cross-package coupling ledger | (line 453) | **Missing** |
+
+### 3. What Can Be Reused or Generalized
+
+- **`semantic_evidence.py` (291 lines)** and **`boundary_evidence.py` (435 lines)** provide ready-made `ConstructType`, `SemanticEvidence`, `RowEvidence`, and `AuthorityRecord` data classes. The carrier scan can populate these directly. The `ConstructType` enum already has `HANDLER_FUNCTION`, `ROUTE_BRANCH`, `STEP_COMPONENT`, `COMPATIBILITY_ADAPTER`, etc.
+- **`_implemented_front_half_rows()`** and **`_implemented_s5_boundary_rows()`** in `source_compiler.py` already parse the workflow AST into structured row objects with `source_span` and `component_ref` — these are the extraction substrate for the carrier scan.
+- **`diagnostics.py`** already has `AWF252` as the highest code; `AWF253` can be added adjacent at line 145.
+- **`check_workflow_source(evidence=())`** at `source_compiler.py:642-649` is already the strict path. The S1a `check_megaplan_native_semantic_parity.py` script can wrap it and add carrier classification/structural rejection layers.
+- **`test_row_evidence_checker.py`** (1033 lines, 25 passing tests) demonstrates the fixture pattern (constructing `SemanticEvidence` records, asserting exact diagnostic codes) that the structural rejection and row-registry completeness tests should follow.
+
+### 4. What Still Must Be Built
+
+The entirety of the S1a scope defined at master plan lines 407-500. In dependency order:
+
+1. **`AWF253_PROHIBITED_SEMANTIC_CARRIER`** in `diagnostics.py` (prerequisite for all structural rejection work)
+2. **AST carrier scan** (`scan_megaplan_semantic_carriers.py`) — package-wide structural scan for `handler_ref`, `route_bindings`, component route authority, manifest route translation, policy-as-route-table constructs
+3. **Carrier classification** (`classify_megaplan_semantic_carriers.py`) — tier into route-authoritative vs descriptive metadata
+4. **Row registry** (`megaplan_semantic_rows.yaml`) — canonical mapping of carriers to row IDs
+5. **Row reconciliation** (`reconcile_megaplan_semantic_rows.py`) — fail on unmapped/unexempted route-authoritative carriers
+6. **Structural rejection rules** in checker — prohibit `AUTHORING_*` imports as row authority, `handler_ref`, `route_bindings`, `NativeProgram` projections, policy-as-route-table, renamed/re-encoded carriers (master plan lines 428-434)
+7. **Current-shape negative fixture** — mirroring `workflow.pypeline` imports, `handler_ref`, `route_bindings`, topology contracts, policy route surfaces, compatibility projections (lines 427-428)
+8. **Renamed-carrier adversarial suite** under `tests/fixtures/.../renamed_carrier_evasion/`
+9. **Strict parity checker script** (`check_megaplan_native_semantic_parity.py`) — checkout mode, installed-package mode, fixture mode with expected diagnostic assertions
+10. **Two test files**: `test_megaplan_row_registry_completeness.py`, `test_megaplan_checker_structural_rejection.py`
+11. **Deterministic replay harness** and **baseline canonicalizer** (lines 435-444)
+12. **Headless control-injection** for split-outcome scenarios (lines 445-447)
+13. **Installed-package strict source loading** (lines 448-452)
+14. **Split-outcome scenario YAML** and validator (lines 456-458, 478)
+15. **Cross-package coupling ledger** (lines 453-455)
+16. **Baseline capture/freeze scripts** (lines 482-483)
+17. **Runtime narrowing validator** (line 488)
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+**No scope reduction recommended.** The master plan correctly identifies S1a as the hard bar — if any of these artifacts are skipped, the historical false-pass pattern (generated reports accepted as proof) can recur. However:
+
+- **Merge items 11 (replay harness/baseline canonicalizer) into a sub-sprint S1a-2.** The master plan already notes the canonicalizer "is required only if baseline artifacts include content hashes beyond route/state assertions" (line 480). Since the plan explicitly says baselines should start as deterministic route/state assertions (line 209), the canonicalizer is not needed until artifact-hash parity proof is chosen as an escalation. Move it to a conditional gate.
+
+- **Items 12 (headless control-injection) and 13 (installed-package strict loading) can be scoped to smoke proofs in S1a.** The master plan already says S1a needs "smoke proof that the path exists" for installed-package mode (line 451-452), with full gate at S7. Similarly, headless control-injection needs only the API surface existence, not exhaustive scenario coverage. Keep these lightweight.
+
+- **The 8 items that are pure scripts/tests with no dependency on external systems can be built in parallel** by multiple subagents (carrier scan + classification + row registry + reconciliation + structural rejection + negative fixtures + adversarial suite + split-outcome YAML). The only serial dependencies are: `AWF253` must exist before structural rejection tests; the carrier scan must exist before classification; classification must exist before row reconciliation.

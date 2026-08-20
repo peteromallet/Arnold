@@ -1,0 +1,16 @@
+diff --git a/tests/workers/test_session_cache_regression.py b/tests/workers/test_session_cache_regression.py
+--- a/tests/workers/test_session_cache_regression.py
++++ b/tests/workers/test_session_cache_regression.py
+@@ -268,6 +268,11 @@ def test_shannon_revise_uses_versioned_prompt_and_fresh_session(
+             prompt_override="revise prompt",
+         )
+ 
+-    clear_command = run_command.call_args_list[0].args[0]
++    clear_command = next(
++        call.args[0]
++        for call in run_command.call_args_list
++        if "-p" in call.args[0]
++        and call.args[0][call.args[0].index("-p") + 1] == "/clear"
++    )
+     command = run_command.call_args_list[-1].args[0]
+     assert clear_command[clear_command.index("-p") + 1] == "/clear"

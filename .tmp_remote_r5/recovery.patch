@@ -1,0 +1,262 @@
+--- a/arnold_pipelines/megaplan/blocker_recovery.py
++++ b/arnold_pipelines/megaplan/blocker_recovery.py
+@@ -143,6 +143,137 @@
+     }
+ 
+ 
++def validation_failure_recoverable_shape(
++    state: Mapping[str, Any],
++    resume_cursor: Mapping[str, Any],
++) -> bool:
++    """Recognize the narrow, pre-dispatch validation-failure repair route.
++
++    This is deliberately separate from generic blocked recovery: a validation
++    job that failed before worker dispatch may be repaired, but only for the
++    exact execute occurrence recorded by the state machine.  Provider,
++    quality, admission, and human-action blockers remain independently
++    authoritative after the repair transition.
++    """
++    latest_failure = state.get("latest_failure")
++    if not isinstance(latest_failure, Mapping):
++        return False
++    metadata = latest_failure.get("metadata")
++    metadata = metadata if isinstance(metadata, Mapping) else {}
++    return bool(
++        state.get("current_state") == "blocked"
++        and latest_failure.get("kind") == "pre_dispatch_validation_failed"
++        and latest_failure.get("phase") == "execute"
++        and resume_cursor.get("phase") == "execute"
++        and resume_cursor.get("retry_strategy") == "repair_validation_failure"
++        and metadata.get("worker_dispatched") is False
++        and str(metadata.get("occurrence_id") or "").strip()
++        and str(metadata.get("signature") or "").strip()
++    )
++
++
++def validated_validation_failure_repair(
++    project_dir: Path,
++    plan_dir: Path,
++    state: Mapping[str, Any],
++    resume_cursor: Mapping[str, Any],
++    repair_commit: object,
++    failure_fingerprint: object,
++) -> dict[str, str] | None:
++    """Validate an occurrence-bound, passing repair receipt for a VJ failure.
++
++    The receipt is intentionally file-backed and content-bound.  A caller
++    cannot clear a validation block by merely repeating ``recover-blocked``:
++    the exact occurrence signature, current source revision, and a fresh
++    passing command receipt must all agree.
++    """
++    if not validation_failure_recoverable_shape(state, resume_cursor):
++        return None
++    latest_failure = state["latest_failure"]
++    metadata = latest_failure.get("metadata")
++    assert isinstance(metadata, Mapping)
++    occurrence_id = str(metadata.get("occurrence_id") or "").strip()
++    signature = str(metadata.get("signature") or "").strip()
++    expected_signature = signature.removeprefix("sha256:").lower()
++    supplied_signature = str(failure_fingerprint or "").strip().removeprefix("sha256:").lower()
++    if not supplied_signature or supplied_signature != expected_signature:
++        raise CliError(
++            "validation_repair_fingerprint_mismatch",
++            "validation repair must bind the exact current VJ occurrence signature",
++            extra={"expected": expected_signature, "supplied": supplied_signature},
++        )
++
++    commit = str(repair_commit or "").strip().lower()
++    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
++        raise CliError(
++            "missing_validation_repair_commit",
++            "validation repair requires --repair-commit bound to the target workspace HEAD",
++        )
++    try:
++        result = subprocess.run(
++            ["git", "rev-parse", "HEAD"],
++            cwd=project_dir,
++            capture_output=True,
++            text=True,
++            timeout=10,
++            check=False,
++        )
++    except (OSError, subprocess.TimeoutExpired) as error:
++        raise CliError(
++            "validation_repair_head_unavailable",
++            "validation repair could not verify the target workspace HEAD",
++            extra={"project_dir": str(project_dir), "error": str(error)},
++        ) from error
++    current_head = result.stdout.strip().lower() if result.returncode == 0 else ""
++    if current_head != commit:
++        raise CliError(
++            "validation_repair_commit_mismatch",
++            "validation repair commit does not match the target workspace HEAD",
++            extra={"repair_commit": commit, "workspace_head": current_head},
++        )
++
++    safe_occurrence = re.sub(r"[^A-Za-z0-9_.-]", "_", occurrence_id)
++    artifact_path = plan_dir / "validation_repairs" / f"VJ8-{safe_occurrence}.json"
++    try:
++        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError) as error:
++        raise CliError(
++            "missing_validation_repair_evidence",
++            "validation repair requires a readable occurrence-bound passing receipt",
++            extra={"path": str(artifact_path), "error": str(error)},
++        ) from error
++    if not isinstance(artifact, Mapping):
++        raise CliError("invalid_validation_repair_evidence", "validation repair receipt must be an object")
++    artifact_signature = str(artifact.get("failure_signature") or "").strip().removeprefix("sha256:").lower()
++    if (
++        artifact.get("schema_version") != 1
++        or artifact.get("occurrence_id") != occurrence_id
++        or artifact_signature != expected_signature
++        or artifact.get("job_id") != metadata.get("job_id")
++        or artifact.get("exit_code") != 0
++        or artifact.get("tests_passed") is not True
++        or artifact.get("source_revision") != current_head
++        or not str(artifact.get("runtime_code_hash") or "").strip()
++    ):
++        raise CliError(
++            "invalid_validation_repair_evidence",
++            "validation repair receipt is not bound to the current VJ occurrence and source",
++            extra={"path": str(artifact_path), "artifact": dict(artifact)},
++        )
++    return {
++        "failure_kind": "pre_dispatch_validation_failed",
++        "phase": "execute",
++        "job_id": str(metadata.get("job_id") or ""),
++        "occurrence_id": occurrence_id,
++        "failure_signature": expected_signature,
++        "repair_commit": commit,
++        "workspace_head": current_head,
++        "runtime_code_hash": str(artifact.get("runtime_code_hash")),
++        "artifact": str(artifact_path),
++        "authority": "occurrence_bound_validation_receipt",
++    }
++
++
+ def recoverable_contract_failure_without_phase_result(
+     state: Mapping[str, Any],
+     resume_cursor: Mapping[str, Any],
+@@ -162,6 +293,8 @@
+         latest_failure.get("phase") if isinstance(latest_failure, Mapping) else None
+     )
+     cursor_phase = resume_cursor.get("phase")
++    if validation_failure_recoverable_shape(state, resume_cursor):
++        return True
+     return bool(
+         state.get("current_state") == "blocked"
+         and isinstance(latest_failure, Mapping)
+--- a/arnold_pipelines/megaplan/handlers/override.py
++++ b/arnold_pipelines/megaplan/handlers/override.py
+@@ -70,6 +70,8 @@
+     command_blocker_details,
+     evaluate_blocker_recovery,
+     recoverable_contract_failure_without_phase_result,
++    validated_validation_failure_repair,
++    validation_failure_recoverable_shape,
+     validated_deterministic_phase_repair,
+ )
+ from arnold_pipelines.megaplan.orchestration.gate_checks import (
+@@ -1204,9 +1206,11 @@
+     latest_failure = state.get("latest_failure")
+     if (
+         isinstance(latest_failure, dict)
+-        and latest_failure.get("kind") == "external_error"
+     ):
+-        return True
++        # A current, typed failure is authoritative.  A fixed-name
++        # phase_result.json may belong to an older invocation; it must not
++        # turn a newer deterministic validation failure into a provider retry.
++        return latest_failure.get("kind") == "external_error"
+     if getattr(phase_result, "exit_kind", None) == "external_error":
+         return True
+     return resume_cursor.get("retry_strategy") in _EXTERNAL_ERROR_RETRY_STRATEGIES
+@@ -1364,10 +1368,14 @@
+             },
+         )
+     phase_repair_evidence: dict[str, str] | None = None
++    validation_repair_evidence: dict[str, str] | None = None
+     deterministic_phase_repair_required = bool(
+         isinstance(latest_failure, dict)
+         and latest_failure.get("kind") == "deterministic_phase_failure"
+         and resume_cursor.get("retry_strategy") == "repair_phase_contract"
++    )
++    validation_failure_repair_required = validation_failure_recoverable_shape(
++        state, resume_cursor
+     )
+     if deterministic_phase_repair_required:
+         # A deterministic phase failure is recorded specifically because the
+@@ -1387,6 +1395,26 @@
+             raise CliError("missing_phase_result", "deterministic repair evidence is missing")
+         blocker_details: list[dict[str, Any]] = []
+         blocker_ids: list[str] = []
++    elif validation_failure_repair_required:
++        # VJ8 failed before worker dispatch.  Recovery is allowed only after
++        # an occurrence-bound passing receipt proves the repaired source and
++        # runtime were actually tested; admission and quality blockers remain
++        # authoritative on the subsequent execute entry.
++        validation_repair_evidence = validated_validation_failure_repair(
++            root,
++            plan_dir,
++            state,
++            resume_cursor,
++            getattr(args, "repair_commit", None),
++            getattr(args, "failure_fingerprint", None),
++        )
++        if validation_repair_evidence is None:  # defensive: predicate above is exact
++            raise CliError(
++                "missing_validation_repair_evidence",
++                "validation repair evidence is missing",
++            )
++        blocker_details = []
++        blocker_ids = []
+     else:
+         contract_failure_without_result = (
+             phase_result is None
+@@ -1407,7 +1435,11 @@
+         )
+         blocker_details = command_blocker_details(evaluation)
+         blocker_ids = [blocker.blocker_id for blocker in evaluation.blockers]
+-    if not deterministic_phase_repair_required and not evaluation.can_continue:
++    if (
++        not deterministic_phase_repair_required
++        and not validation_failure_repair_required
++        and not evaluation.can_continue
++    ):
+         unresolved_blockers = [
+             blocker
+             for blocker in blocker_details
+@@ -1451,6 +1483,11 @@
+             **(
+                 {"phase_contract_repair": phase_repair_evidence}
+                 if phase_repair_evidence is not None
++                else {}
++            ),
++            **(
++                {"validation_repair": validation_repair_evidence}
++                if validation_repair_evidence is not None
+                 else {}
+             ),
+         },
+@@ -1472,6 +1509,8 @@
+     }
+     if phase_repair_evidence is not None:
+         response["phase_contract_repair"] = phase_repair_evidence
++    if validation_repair_evidence is not None:
++        response["validation_repair"] = validation_repair_evidence
+     if archived_phase_result is not None:
+         response["archived_phase_result"] = archived_phase_result
+     return response
+--- a/arnold_pipelines/megaplan/run_state/decision_contract.py
++++ b/arnold_pipelines/megaplan/run_state/decision_contract.py
+@@ -47,7 +47,9 @@
+         "deterministic_quality_blocked",
+         "execution_blocked",
+         "no_next_step_state_mapping_failure",
++        "pre_dispatch_validation_failed",
+         "quality_gate_blocked",
++        "validation_job_failed",
+         "route_metadata_mismatch",
+         "workflow_cursor_mismatch",
+     }

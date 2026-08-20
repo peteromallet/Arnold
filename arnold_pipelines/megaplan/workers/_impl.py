@@ -4263,7 +4263,7 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     """Extract plausible JSON payload objects from raw agent output."""
     # Some models (DeepSeek/Kimi) answer with write-style tool markup containing
     # the JSON payload. Recover that first so downstream extraction sees JSON.
-    from arnold_pipelines.megaplan.workers.hermes import (
+    from arnold_pipelines.megaplan.workers._payload import (
         _deescape_double_encoded_json,
         _extract_json_from_mutating_tool_markup,
     )
@@ -4279,7 +4279,7 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     # (backslash-escaped interior quotes). De-escape one layer so the strategies
     # below can see the real object.
     try:
-        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+        from arnold_pipelines.megaplan.workers._payload import _deescape_double_encoded_json
 
         deescaped = _deescape_double_encoded_json(raw)
         if deescaped is not None:
@@ -4425,7 +4425,7 @@ def _extract_plan_capture_input(raw_text: str) -> str | dict[str, Any]:
 
 def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     """Return a representative JSON decode error for malformed model output."""
-    from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+    from arnold_pipelines.megaplan.workers._payload import _deescape_double_encoded_json
 
     text = raw.strip()
     if not text:
@@ -4450,7 +4450,7 @@ def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     # GLM coding-endpoint double-encoded JSON: if the de-escaped form parses
     # cleanly, the output is not malformed, so do not report a decode error.
     try:
-        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+        from arnold_pipelines.megaplan.workers._payload import _deescape_double_encoded_json
 
         deescaped = _deescape_double_encoded_json(raw)
         if deescaped is not None:

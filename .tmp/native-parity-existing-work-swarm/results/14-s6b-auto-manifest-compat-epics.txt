@@ -1,0 +1,106 @@
+## S6b Auto/Manifest/Compatibility Collapse — Audit Findings
+
+### 1. Verdict: **Partly exists**
+
+Evidence of partial implementation exists (S6-specific tests written, override routing partially refactored), but the bulk of the scope is unfinished. Tests were written as forward-looking specifications; 12 of 25 S6 tests currently fail because source code still carries the legacy carriers they expect to be deleted/fenced.
+
+---
+
+### 2. Existing and Prior Artifacts
+
+**A. S6 test files (all present, mixed pass/fail):**
+
+- `tests/arnold_pipelines/megaplan/test_s6_override_control.py` — **13/13 passing**. Tests that `_routed_override_response` drops `next_step` authority (`:65-66`), legacy normalization strips `next_step` (`:93-94`), and gate control handlers drop `next_step`/`next_step_runtime` (`:156-157`).
+- `tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py` — **0/3 passing**. Expects `status_route_authority == "workflow_source_only"` (`:59`) and `drive()` to block on cursor mismatch (`:107-111`) or gate escalation (`:164-166`). Source does not yet satisfy any assertion.
+- `tests/arnold_pipelines/megaplan/test_s6_decision_translator_fence.py` — **1/9 passing**. Only `test_control_gate_adapters_no_longer_branch_to_handler_route_translators` (`:101-106`) passes.
+
+**B. Override routing partially refactored (real source changes):**
+
+- `handlers/override.py:319` — `_routed_override_response()` exists, returns `route_signal` and `override_action` without `next_step`.
+- `handlers/override.py:508` — `_handle_routed_override()` entry point exists.
+- `handlers/override.py:1937-1938` — `control_interface_routing_on()` gate dispatches to `_handle_routed_override`.
+- `control.py:568-618` — Gate control adapters use `_routed_override_response` and `_emit_routed_override_events`.
+
+**C. Planning/brief artifacts:**
+
+- `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/s6-override-auto-compat-collapse.md:1-55` — S6 brief, maps to legacy m8 + m9.
+- `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/m8-override-control-surface.md:1-34` — Legacy override brief.
+- `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/m9-component-collapse-compat-quarantine.md:1-29` — Legacy compat collapse brief.
+- `docs/arnold/megaplan-native-semantic-parity-master-plan.md:764-798` — S6 scope, exit gates, evidence spec.
+- `.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml:68-74` — m6 milestone still depends on m5, no completion marker.
+- **No S6 closeout artifact exists anywhere in the repo.**
+
+**D. Unverified prior claim:**
+
+- `docs/arnold/megaplan-native-representation-conformance-report.md:44` — Claims row 18 `override-action-surface` is `implemented` via `declared_policy`. The 12 failing S6 tests and intact legacy carriers contradict this.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Artifact | Reusability |
+|---|---|
+| `test_s6_override_control.py` (13 passing) | **Fully reusable.** These tests validate the already-working override response pipeline; no changes needed. |
+| `_routed_override_response()` / `_handle_routed_override()` in `handlers/override.py` | **Reusable.** Already drops `next_step` authority for routed actions. |
+| `control.py` gate control adapter bridge | **Reusable.** Already delegates to `_routed_override_response`. |
+| `_COMPATIBILITY_QUARANTINE` pattern in `components.py:116-125, 331-332` | **Reusable pattern.** The `compatibility_quarantine` metadata tagging is already applied to front-half components. Extend to override/execute/review component carriers. |
+| `test_s6_decision_translator_fence.py` (all 9 tests) | **Reusable as specification.** These 9 tests encode the exact source changes needed; they are the specification, not just tests. |
+| `test_s6_auto_event_consumption.py` (all 3 tests) | **Reusable as specification.** Encodes auto-drive behavioral fences. |
+| `override_matrix.py:54-151` (`_DECLARED_OVERRIDE_AUTHORITY`) | **Partially reusable.** The matrix's `route_signal`, `target_ref`, `family` fields will map to source-visible policy declarations; the matrix itself becomes inert metadata. |
+| `_compatibility.py` quarantine pattern from `semantic_evidence.py:106-154` (`CompatibilityQuarantineEntry`) | **Reusable.** Already has data structures for recording quarantine entries. |
+
+---
+
+### 4. What Still Must Be Built
+
+**Route dispatch fence (4 changes):**
+1. Delete `_component_route_bindings_for_step` and `_declared_route_bindings_for_step` from `route_dispatch.py:26-43`
+2. Add `allow_legacy=False` default with `LegacyRouteDispatchDisabled` guard to `resolve_route_binding_for_signal` / `resolve_route_target_for_signal`
+3. Remove `STEP_COMPONENTS_BY_ID` import and `.metadata` reads from `route_dispatch.py`
+
+**Manifest backend fence (4 changes):**
+4. Make `_branch_edge_id` (`manifest_backend.py:227-322`) output-only (preserve `route_signal` in outputs, return `None` for branch_edge_id)
+5. Make `_suspension_route_id` (`:324-332`) return `None` except when source-derived
+6. Make `_build_control_signals` (`:334-390`) return empty tuple
+7. Remove `_route_binding_for_signal` component metadata reads (`:173-189`)
+
+**Auto-drive fence (3 changes):**
+8. Add workflow cursor mismatch detection in `auto.py:drive()` — block before dispatch when cursor disagrees with forward state projection
+9. Add gate-escalation halt — `drive()` must stop with `human_required` for ESCALATE/ABORT recommendations instead of auto-dispatching
+10. Make `_phase_command` (`auto.py:1197-1245`) emit only, never derive product routes
+
+**CLI fence (3 changes):**
+11. Strip `next_step` from `cli/__init__.py:_emit_response_progress` handler output
+12. Make `cli/status_view.py:_build_status_payload` project `next_step=None` with `legacy_route_hints` wrapper
+13. Add `observed_phase`/`legacy_route_hints` to `cli/__init__.py:handle_list`
+
+**Compatibility quarantine (2 changes):**
+14. Proven that `_compatibility.py:101-115, 173-267` (`NativeProgram`, `_run_megaplan_native_phase` via `COMMAND_HANDLERS`) cannot serve as row evidence (add quarantine record, not deletion)
+15. `components.py:399-433` (`_override_action_overlays/effects/surface`) tagged as quarantined metadata
+
+**Shared handler fix (1 change):**
+16. `handlers/shared.py:_finish_step` must use `resolve_lowered_route_target_for_signal` (source-derived) not `resolve_route_target_for_signal`
+
+**Dead-delete mutation tests (required per master plan:778):**
+17. Mutate/delete override matrix route targets, auto next-step derivation, route_dispatch fallback, and manifest backend translation; prove corrected behavior remains source-derived against frozen baselines.
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**Split S6 into S6a (override) and S6b (auto/manifest/compat collapse).** The current evidence shows S6a is 50-60% done (override response pipeline + control adapters). S6b is ~10% done (tests written, no source changes).
+
+**S6a scope (finish override extraction):**
+- Complete `handlers/shared.py:_finish_step` source-route resolution (change #16)
+- Wire override actions into source-visible policy declarations in `workflow.pypeline`
+- Remove `handler_ref` from override step declaration in `workflow.pypeline:250`
+- Tag `components.py:399-433` and `override_matrix.py` as quarantined metadata
+- Keep the 13 passing tests green; add split-outcome scenarios for abort, force-proceed, replan, recover-blocked, resume-clarify
+
+**S6b scope (auto/manifest/compat collapse):**
+- Changes #1–15 above (route_dispatch, manifest_backend, auto.py, CLI fences)
+- Compatibility quarantine report with active rejection rules (not just static scan)
+- Per-sprint dead-delete mutation against frozen S1a baselines
+- Exit gate: all 25 S6 tests pass; `test_override_auto_compat_quarantine.py` created; `test_megaplan_coupling_gate.py` passes
+
+**Risk:** The current plan treats S6 as one monolithic sprint. The failing tests prove the auto/manifest/CLI fences are entangled and will require coordinated changes across 5+ files. Splitting lets override close independently and reduces the blast radius of the auto/manifest changes.

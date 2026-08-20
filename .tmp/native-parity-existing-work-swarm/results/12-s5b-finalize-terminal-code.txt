@@ -1,0 +1,86 @@
+---
+
+## Swarm Audit: S5b Finalize + Terminal Projection
+
+### 1. Verdict: **Partly exists**
+
+The behavioral machinery (handler logic, policies, boundary contracts, semantic health checks) is substantially built. However, the **checker row evidence** for S5 finalize rows passes on `Mapping` existence in `components.py:FINALIZE_POLICY` rather than source-native constructs in `workflow.pypeline` — exactly the false-pass pattern the corrective master plan identifies. The master plan's assertion at line 190 is verified: "S5 currently passes on policy-surface existence checks such as `Mapping` values."
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**Finalize baseline fallback to revise:**
+
+| Artifact | File:Line | What it proves |
+|---|---|---|
+| `FinalizeBaselineSelectionError` handler | `handlers/finalize.py:1500-1582` | Full fallback loop: writes `finalize_revise_feedback.json`, `gate.json`, `gate_carry.json`, sets state to `STATE_CRITIQUED`, returns `next_step: "revise"` |
+| `FINALIZE_POLICY.fallback_routes.plan_contract_revise_needed` | `components.py:1441-1448` | Route surface declaring `route_signal: "revise"`, `target_ref: "revise"`, `reason: "missing_scoped_baseline_test_contract"` |
+| `finalize_fallback` BoundaryContract | `boundary_contracts.py:551-573` | `row_id=S5_FINALIZE_FALLBACK_ROW_ID`, `required_artifacts=("finalize_revise_feedback.json",)` |
+| Checker diagnostic rejects hidden fallback | `source_compiler.py:1211-1231` | Emits `HANDLER_PURITY_VIOLATION` if `fallback_routes` is not a `Mapping` containing `plan_contract_revise_needed` |
+| Row evidence (the gap) | `source_compiler.py:1856-1864` | `S5_FINALIZE_FALLBACK_ROW_ID` passes on `isinstance(finalize_policy_surface.get("fallback_routes"), Mapping)` |
+| Semantic health validation | `semantic_health.py:1362-1399` | `_check_finalize_fallback` validates fallback receipt and surface visibility |
+| Row evidence checker contract validation | `source_compiler.py:1450-1457` | S5_FINALIZE_FALLBACK_ROW_ID contract checks `evidence_surface_ref` and `projection_ref` via `_megaplan_surface_ref_exists` |
+
+**No-review / deferred-human terminal:**
+
+| Artifact | File:Line | What it proves |
+|---|---|---|
+| `evaluate_no_review_terminal()` pure function | `execute/policy.py:360-408` | Returns typed `NoReviewTerminalDecision` from robustness + `has_deferred_must` |
+| Handler integration | `handlers/execute.py:555-655` | Bare/light robustness calls `evaluate_no_review_terminal()`, writes stub review artifacts, emits `execute_no_review_terminal` boundary receipt |
+| `FINALIZE_POLICY.skip_review_routes` | `components.py:1450-1467` | `no_review` → `halt`/`done`; `deferred_human` → `halt`/`awaiting_human_verify` |
+| `FINALIZE_POLICY.final_projection_routes` (terminal cases) | `components.py:1491-1503` | `no_review_done` and `no_review_deferred_human` projection cases |
+| Review handler deferred-human routing | `handlers/review.py:1059-1071` | Criteria with `pass=="deferred_human"` + `priority=="must"` → `STATE_AWAITING_HUMAN_VERIFY` |
+| Tests | `test_execute_policy.py:225-316`, `test_execute_s4_behavior_parity.py:128-142`, `test_boundary_contracts.py:42-132` | Split-outcome tests for bare/light/standard/thorough, boundary contract golden tests |
+
+**Final projection evidence:**
+
+| Artifact | File:Line | What it proves |
+|---|---|---|
+| `final_projection` BoundaryContract | `boundary_contracts.py:575-599` | `row_id=S5_FINAL_PROJECTION_ROW_ID`, `required_artifacts=("finalize.json",)`, projection cases: `execute`, `revise_fallback`, `no_review_done`, `no_review_deferred_human` |
+| Row evidence (the gap) | `source_compiler.py:1865-1873` | `S5_FINAL_PROJECTION_ROW_ID` passes on `isinstance(finalize_policy_surface.get("final_projection_routes"), Mapping)` |
+| Checker diagnostic | `source_compiler.py:1214-1231` | Rejects if `final_projection_routes` is not a `Mapping` containing `revise_fallback` |
+| Semantic health checks | `semantic_health.py:1402-1510` | `_expected_final_projection_cases()` reads projection routes from `FINALIZE_POLICY`, `_check_final_projection` validates state/projection alignment |
+| Test coverage | `test_row_evidence_checker.py:971-1008` | Validates S5 canonical fixture accepts source-visible review/finalize evidence, invalid fixtures rejected |
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+1. **`evaluate_no_review_terminal()`** (`execute/policy.py:360-408`) — already a pure function; can be lifted directly into source-native policy without refactoring. Its typed `NoReviewTerminalDecision` return is already clean.
+
+2. **The finalize fallback handler** (`handlers/finalize.py:1500-1582`) — writes correct artifacts (`finalize_revise_feedback.json`, `gate.json`, `gate_carry.json`), correctly routes to revise with `STATE_CRITIQUED`. This mechanism itself doesn't need replacement; the *evidence* that proves the fallback route exists needs to come from source-native constructs instead of `components.py:FINALIZE_POLICY`.
+
+3. **Boundary contracts** (`boundary_contracts.py:551-599`) — well-structured, test-covered, and already referenced by the checker. These remain valid as evidence targets; only the *source of truth* for the route declarations needs to shift.
+
+4. **Semantic health checks** (`semantic_health.py:1347-1510`) — substantial validation of projection/fallback boundaries already exists and can be pointed at source-native declarations once they exist.
+
+5. **Tests** — `test_execute_policy.py` tests for `evaluate_no_review_terminal`, `test_row_evidence_checker.py` has S5 fixture validation, `test_boundary_contracts.py` has contract golden tests. These can be reused as parity/regression gates.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Source-native S5 row evidence** — The current `_implemented_s5_boundary_rows` (`source_compiler.py:1783-1874`) gates all three finalize rows (`S5_FINALIZE_ARTIFACTS_ROW_ID`, `S5_FINALIZE_FALLBACK_ROW_ID`, `S5_FINAL_PROJECTION_ROW_ID`) on `isinstance(..., Mapping)` checks against `components.py:FINALIZE_POLICY`. The master plan requires these rows to pass on source constructs in `workflow.pypeline` or named native subworkflows (master plan line 741).
+
+2. **Source-native final projection constructs** — Currently `final_projection_routes` with its four cases (`execute`, `revise_fallback`, `no_review_done`, `no_review_deferred_human`) lives only in `components.py:1477-1504`. These need source-visible equivalents — either explicit projection declarations in `workflow.pypeline` or attached to named policy surfaces free of route-table behavior.
+
+3. **Source-native no-review/deferred-human terminal** — While `evaluate_no_review_terminal()` is already a pure function, the terminal routing (`handlers/execute.py:555-655`) is still handler-level dispatch, not driven by source-native constructs. The `skip_review_routes` in `components.py:1450-1467` also needs source-native equivalents.
+
+4. **Split-outcome scenario tests** as specified in master plan line 742: review pass, review rework, review cap with/without blockers, no-review terminal, deferred-human terminal, finalize fallback revise. Current tests exist for the policy function (`test_execute_policy.py`) but not as full S5 split-outcome scenarios.
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+The S5 sprint scope in the master plan (lines 729-762) correctly identifies the gap: "Strict checker must require S5 row evidence; S5 cannot pass on `Mapping` existence in `REVIEW_POLICY` or `FINALIZE_POLICY`." The adjustment should be:
+
+1. **Don't rebuild the behavioral machinery.** The finalize fallback handler, `evaluate_no_review_terminal()`, boundary contracts, and semantic health checks are already solid.
+
+2. **Focus S5 effort on source-native declarations.** The core work is adding explicit finalize/projection constructs to `workflow.pypeline` (or named native subworkflows) that declare: fallback routes (`finalize→revise` on contract failure), terminal projection cases (`execute`, `revise_fallback`, `no_review_done`, `no_review_deferred_human`), and no-review terminal routing (robustness→terminal-outcome mapping).
+
+3. **Update `_implemented_s5_boundary_rows`** (`source_compiler.py:1783-1874`) to require source-native evidence instead of `Mapping` existence on `components.py:FINALIZE_POLICY`.
+
+4. **Add the 7 split-outcome scenarios** from master plan line 742, leveraging existing `evaluate_no_review_terminal` tests as a foundation.
+
+5. **The risk is low** that this breaks anything: the handler/policy machinery is already in place; S5 is about shifting the *evidence authority* from `components.py` policy surfaces to source-native constructs.

@@ -1,0 +1,45 @@
+**Verdict: mostly sound with amendments.** The conceptual design in the doc is coherent, but the current `gate.json` / `gate_carry.json` / `revise.json` schemas contain **zero** `north_star_actions` fields, and the revise handler never reads `gate_carry.json` — both are gaps the doc doesn't call out. Below is the evidence.
+
+---
+
+### 1. Are `gate.json` / `gate_carry.json` the right carriers?
+
+**Yes, but with a nuance.** `gate_carry.json` is the natural choice because it's already the "forward-carry" artifact consumed by execute and finalize via `_gate_summary_or_skipped` (`prompts/_shared.py:21-71`). Adding `north_star_actions[]` there would make actions visible to all downstream phases without touching every consumer.
+
+However, `gate_carry.json` is currently built solely from the gate summary *after* routing (`gate.py:1101`)—meaning it carries only what the gate agent emitted. The doc envisions actions being *created* at gate time, so this alignment is fine, but the revise handler (`critique_runtime.py:1068-1211`) **never reads `gate_carry.json`**. Revise gets its context from the gate state transition and flag registry, not from the carry file. To make `north_star_actions` visible in the revise prompt, the revise prompt builder must be explicitly updated to read `gate_carry.json` (or `gate.json`). This is a missing step in the doc's "What Needs To Be Added" list (lines 306-336).
+
+### 2. Does the current schema/handler design make this easy or are there hidden constraints?
+
+**Hidden constraint: revise doesn't consume carry.** The revise handler (`critique_runtime.py:1086-1093`) invokes the `"revise"` worker with state and plan_dir—it never passes gate carry data to the prompt. The revise prompt template would need to be modified to include `north_star_actions` from `gate_carry.json`.
+
+**Hidden constraint: gate template has no north_star slot.** The gate output template (`prompts/gate.py:240-255`) has exactly these keys: `recommendation`, `rationale`, `signals_assessment`, `warnings`, `flag_resolutions`, `accepted_tradeoffs`, `settled_decisions`. The `_GATE_SCRATCH_KNOWN_KEYS` set (`gate.py:796-806`) mirrors this. Any new field (`north_star_actions`, `north_star_answers`) would need to be added to both the template and the known-keys allowlist, or the scratch promotion system will strip it.
+
+**Ease factor:** The `_gate_summary_or_skipped` helper (`prompts/_shared.py:21-71`) already normalizes both `gate_carry.json` and `gate.json` into a uniform dict for consumers. Adding `north_star_actions` here is a single-location change that automatically propagates to execute, finalize, and any other consumer of that helper. This is the right seam.
+
+### 3. Are the action fields sufficient and enforceable?
+
+**The fields are semantically sufficient** (lines 165-180): `id`, `question_id`, `north_star_ref`, `finding`, `severity`, `action_type`, `required_change`, `acceptance_evidence`, `halt_if_unmappable`. They cover identification, traceability, what's wrong, how severe, what to do, and how to verify.
+
+**Enforceability is partial.** The existing gate schema is validated by `audit_step_payload("gate", gate_payload)` (`gate.py:941`), so adding `north_star_actions` to the `gate.json` schema in `runtime.py` would enforce structural validity. But the *semantic* enforcement (e.g., "did revise actually add the requested plan step or just write prose?") requires the post-revise guard logic the doc describes (lines 322-327: "halt on `add_human_halt`", "halt on unmappable blocking actions"). None of that logic exists yet.
+
+### 4. How should bad answers become actions, and where would this logic live?
+
+**Two layers, two locations:**
+
+- **Agent layer** (`prompts/gate.py`): The gate prompt must include the North Star questions and instruct the agent to produce `north_star_actions[]` alongside the existing recommendation. The prompt currently has no North Star content at all. This is the "judgment" layer—the LLM answers questions and flags bad answers as actions.
+
+- **Orchestrator layer** (`handlers/gate.py`, `_build_gate_route_signal` at line 523): The route signal already inspects flag resolutions and blocks PROCEED when blocking flags remain unresolved (lines 598-609). `north_star_actions` with `severity: blocking` should be treated identically—unresolved blocking actions → ITERATE (route to revise). This is a natural extension of the existing `blocking_unresolved_ids` pattern.
+
+The severity-enforcement rule (lines 282-287: "Any sense-check finding involving route authority, baseline rewrites... is `blocking` by rule") should live in the **orchestrator**, not the agent. The agent proposes severity; the orchestrator overrides dangerous categories to `blocking`. This mirrors how `_is_cap_blocking_flag` (`gate.py:379-397`) already elevates correctness/security flags regardless of severity.
+
+### 5. Any missing action types or severity rules?
+
+**Missing action types:**
+
+- **`add_verification_only`**: The doc has `add_checker_row` (add a checker task) but no action for "just verify this claim, don't add a plan step." When the North Star concern is about evidence quality rather than missing work, the appropriate response is verification, not new work.
+
+- **`note_advisory`**: All 9 action types imply the revise loop must do something. But the doc says non-blocking answers produce no action (line 255: "No blocking action is created"). There's no way to record a "we checked, this is fine" answer—which is needed for audit trails. An advisory action type would carry the answer and evidence without forcing a revise loop.
+
+**Missing severity rule:** The doc defines `blocking` and implies `advisory` (lines 282-287) but doesn't define an `advisory` severity in the severity enum. If `severity` is `advisory`, what does gate do? The answer seems to be "nothing" (line 255), but the schema should make this explicit: `"severity": {"type": "string", "enum": ["blocking", "advisory"]}` with rule: *advisory actions are recorded in `gate_carry.json` for audit but never route to revise*.
+
+**Missing escalation rule:** The doc says blocking North Star actions "cannot be force-proceeded through a cosmetic/low-risk path" (line 280). The existing gate loop cap (`_critique_terminate_branch`, `gate.py:466-520`) force-proceeds cosmetic-only flags but escalates correctness/security flags. North Star blocking actions should be added to the `_CRITICAL_CATEGORIES`-equivalent list so they receive the same escalation treatment at the loop cap, rather than being silently force-proceeded. This is absent from the doc.

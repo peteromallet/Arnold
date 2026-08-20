@@ -1,0 +1,10 @@
+diff --git a/arnold_pipelines/megaplan/cli/__init__.py b/arnold_pipelines/megaplan/cli/__init__.py
+--- a/arnold_pipelines/megaplan/cli/__init__.py
++++ b/arnold_pipelines/megaplan/cli/__init__.py
+@@ -207,2 +206,0 @@
+-    for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
+-        sub = subparsers.add_parser(command)
+@@ -220,0 +219,3 @@
++    for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
++        sub = subparsers.add_parser(command)
++

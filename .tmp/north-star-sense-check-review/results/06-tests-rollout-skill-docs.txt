@@ -1,0 +1,78 @@
+**Verdict: mostly sound with amendments.**
+
+---
+
+### 1. Do tests make the feature enforceable?
+
+**Partially.** The doc lists 9 test assertions (lines 339–350) — parsing, question merging, bad-answer→action creation, revise prompt inclusion, `add_human_halt` blocking, `north_star_actions_addressed` recording, prose-only failure, unresolved-action routing to revise, force-proceed denial, and review closeout blocking. These cover the critical data-flow edges but **omit two enforcement edges** that the doc itself declares load-bearing:
+
+- **Severity-by-schema rule** (lines 282–287): the doc says route-authority/baseline/target-narrowing categories are `blocking` by rule and the answering agent cannot downgrade them. There's no test for this schema-assigned-severity logic.
+- **Canary audit path** (lines 155–158): doc prescribes seeding known North Star defects and requiring the clean-context reviewer to catch them. No corresponding test exists.
+
+Without those, the most dangerous failure mode (agents subverting severity classification, or canaries passing undetected) has no automated guard.
+
+---
+
+### 2. Is the one-sprint minimal implementation realistic?
+
+**Yes, with one caveat.** The doc's "What Needs To Be Added" (lines 309–335) lists 7 items. Items 1–4 are mechanical: parse questions from the two file locations, add `north_star_actions` to `gate.json`/`gate_carry.json`, render in the revise prompt, add `north_star_actions_addressed` to `revise.json`. These are straightforward schema extensions.
+
+But item 5 — "Add a pre-worker guard in revise" that halts on `add_human_halt`, unmappable blocking actions, baseline rewrites, route-authoritative exemptions, target narrowing, and live-plan topology decisions — is **under-scoped**. The existing `handle_revise` (`critique_runtime.py:1068`) runs the worker first, then validates output. A *pre-worker* guard that halts *before* invoking the LLM is architecturally different from the current revise flow, which always calls `_run_worker("revise", ...)` at line 1086. This requires restructuring the revise entrypoint, not just adding a schema field. Budget a day for this re-plumbing, not an hour.
+
+---
+
+### 3. What exact skill-doc sections should be updated?
+
+The design doc is precise here. For **`megaplan-epic/SKILL.md`** (lines 114–124):
+
+| Section | What to add |
+|---|---|
+| **North Star requirement** (line 89) | Add a sentence after "milestone anchors may extend the destination": "For high-stakes or North-Star-critical epics, include a `## Sprint Review / North Star Sense Check` section in `NORTHSTAR.md`." |
+| **Milestone fields** table (line 111) | Add a row noting that milestone briefs may carry sprint-specific sense-check questions, and milestone anchors extend but do not replace the top-level North Star. |
+| **Failure semantics** (line 128) | Append: "Unresolved blocking North Star actions route to revise/escalate and stop the chain by default rather than skipping a milestone." |
+
+For **`megaplan/SKILL.md`** (lines 127–138):
+
+| Section | What to add |
+|---|---|
+| `--north-star` docs (line 46) | After "snapshots the UTF-8 markdown/text file into the plan...", add: "`NORTHSTAR.md` may include explicit `## Sprint Review / North Star Sense Check` questions that gate/review consume." |
+| **Step Rules** (line 86) | Add bullet points for `plan` (answer explicit North Star questions), `critique` (flag missing/weak answers), `gate` (convert bad answers into `north_star_actions`), `revise` (address `north_star_actions` as concrete plan changes or halt), `review` (block closeout when blocking actions lack evidence). |
+| **Workflow** (line 70) | Add note: "This only applies when questions are present and robustness includes the relevant phases. For `bare`/`light`, either disallow North-Star-critical mode or automatically raise robustness to `full`." |
+
+These are all additive — no existing skill contract breaks.
+
+---
+
+### 4. Compatibility risks for ordinary plans / bare/light robustness?
+
+**Low risk if the doc's gating logic is followed; high risk if not.** The doc explicitly scopes the feature (lines 90–95):
+
+- Ordinary one-off plans: optional.
+- `bare` and `light` robustness: intentionally skipped (those modes lack gate/review structure).
+- Mechanical cleanup chains with explicit North Star opt-out: exempt.
+
+The **real risk** is at lines 137–138: "For `bare`/`light`, either disallow North-Star-critical mode or automatically raise robustness to `full`." The doc delegates this decision. If the implementation *raises robustness automatically*, a user who ran `--robustness light` could silently get `full` with gate/review/revise loops they didn't expect—a behavior change with cost and time implications. If it *disallows* North-Star-critical at `bare`/`light`, that's a clean error with no side effects. Recommend the latter: error on mismatch, don't silently upgrade.
+
+The existing code already confirms that `bare` has no gate or revise edges (`SKILL.md:81-82`), and `light` lacks gate and review (`SKILL.md:82`). Since the entire North Star action mechanism rides on gate→revise and review→closeout, `bare`/`light` are naturally immune — as long as no auto-upgrade is implemented.
+
+---
+
+### 5. What should be explicitly out of scope?
+
+The doc's "What Not To Build First" (lines 353–360) is solid. I would **add two items**:
+
+1. **Clean-context reviewer agent for explanation-style questions** (lines 148–153). The doc describes a separate reviewer agent that predicts behavior from source without reading the executor's narrative. This is a significant sub-system (separate agent invocation, prediction-vs-actual comparison) and should be explicitly deferred to v2. The v1 implementation should only handle questions answerable by the critique/gate/review agent directly.
+
+2. **Canary seeding infrastructure** (lines 155–158). The doc prescribes "At least twice per epic, seed a known North Star defect into a disposable fixture or branch." This is test-infrastructure work that belongs in a follow-up, not the minimal slice.
+
+---
+
+### Summary of amendments needed
+
+| # | Issue | Fix |
+|---|---|---|
+| 1 | Missing severity-by-schema test | Add test: answering agent cannot downgrade route-authority/exemption/target-narrowing findings from `blocking` |
+| 2 | Missing canary test | Add test (or defer to v2 explicitly) |
+| 3 | Pre-worker guard in revise is mischaracterized as "add a guard" | Acknowledge it requires restructuring the revise entrypoint — allocate accordingly |
+| 4 | Auto-raise robustness vs. error on mismatch | Choose: error on mismatch, don't silently upgrade |
+| 5 | Clean-context reviewer and canary seeding | Explicitly mark both as out-of-scope for v1 |

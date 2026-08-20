@@ -1,0 +1,85 @@
+## S5a Review + Rework — Audit Findings
+
+### 1. Verdict: **Partly exists**
+
+The boundary contracts, row IDs, checker infrastructure, runtime handler logic, and tests form a substantial foundation. However, the checker currently passes on **policy-surface existence** (Mapping checks against `REVIEW_POLICY`/`FINALIZE_POLICY` in `components.py`) rather than on source-visible route ownership in `.pypeline`. The critical pass/rework/blocked/force-proceeded decision logic remains handler-owned.
+
+---
+
+### 2. Existing or Prior Artifacts (with file:line evidence)
+
+**Row IDs defined:**
+- `arnold_pipelines/megaplan/workflows/boundary_contracts.py:43-50` — 8 S5 row IDs (`s5.review_child_outputs.1`, `s5.review_reducer_promotion.1`, `s5.review_rework_effects.1`, `s5.review_cap_authority.1`, `s5.review_human_verification.1`, `s5.finalize_artifacts.1`, `s5.finalize_fallback.1`, `s5.final_projection.1`)
+- `arnold/workflow/semantic_evidence.py:84-90` — same row IDs re-exported
+- `arnold/workflow/source_compiler.py:122-138` — frozensets `_MEGAPLAN_S5_REVIEW_ROW_IDS` and `_MEGAPLAN_S5_ROW_IDS`
+
+**Boundary contracts (evidentiary shape, not runtime routing):**
+- `boundary_contracts.py:430-509` — `review_child_outputs` (fanout→fan-in children), `review_reducer_promotion` (reducer produces `review.json`), `review_rework_effects` (rework→execute projection), `review_cap_authority` (cap exhaustion → `blocked` or `force_proceeded`)
+- `boundary_contracts.py:487-506` — `review_cap_authority` declares `authority_outcomes: ("blocked", "force_proceeded")` with `authority_scope: "review.cap_exhausted"`
+
+**Checker infrastructure:**
+- `source_compiler.py:935-953` — `_review_parallel_map_calls()` and `_visible_review_fan_in_call()` parse `.pypeline` for `parallel_map` with `review-fan-in` topology id
+- `source_compiler.py:956-974` — `_visible_review_rework_cycle_call()` detects execute+review rework cycle from source block
+- `source_compiler.py:1783-1874` — `_implemented_s5_boundary_rows()` builds S5 rows from source-parsed parallel_map calls, validating **Mapping existence** on `review_policy_surface["cap_thresholds"]`, `["force_proceed_authority"]`, etc.
+- `source_compiler.py:1142-1233` — `_megaplan_review_finalize_diagnostics()` — produces `SINGLE_HANDLER_WRAPPER` or `HANDLER_PURITY_VIOLATION` diagnostics for missing review fan-in or missing policy surfaces
+- `source_compiler.py:1417-1463` — boundary-evidence validation per row: `S5_REVIEW_CAP_AUTHORITY_ROW_ID` only checks `isinstance(..., Mapping)` on `cap_thresholds` and `force_proceed_authority` (line 1438-1441)
+
+**Runtime handler logic (the actual pass/rework/blocked decisions):**
+- `arnold_pipelines/megaplan/handlers/review.py:995-1074` — `_resolve_review_outcome()` — the full decision tree: blocked (infra/verdict gaps), rework→force_proceeded (cosmetic cap), rework→blocked (must-fail blockers at cap), deferred_human, success/pass
+- `review.py:964-985` — `_force_proceed_blockers()` — classifies blocking rework items
+- `review.py:1038-1056` — rework cap enforcement: `prior_rework_count >= max_review_rework_cycles` → either `STATE_BLOCKED` (if blockers) or `STATE_DONE` force_proceeded
+- `review.py:1360-1554` — `_finalize_review_outcome()` orchestrates the full review post-worker routing
+
+**Component policy surfaces inspected by checker:**
+- `arnold_pipelines/megaplan/workflows/components.py:1509-1602` — `REVIEW_POLICY` with `cap_thresholds`, `blocked_and_advisory_outcomes`, `force_proceed_authority`, `human_verification`, `control_transitions`
+- `components.py:2617-2673` — `SOURCE_REVIEW_PANEL_WORKFLOW` with `fan_in_contract`, `rework_cycle`, `retry_and_cap`, `reducer_routes` (containing `target_ref` route tables at 2664-2669)
+
+**Tests:**
+- `tests/arnold_pipelines/megaplan/test_boundary_contracts.py:666-714` — validates contract shapes for review_child_outputs, reducer_promotion, rework_effects, cap_authority
+- `tests/arnold_pipelines/megaplan/test_handler_behaviors.py:408-430` — tests `_resolve_review_outcome` rework and deferred_human signals
+- `tests/arnold_pipelines/megaplan/test_semantic_health.py:1174` — `test_s5_review_reducer_requires_receipt_when_child_outputs_present`
+
+**Conformance claims (unverified prior claims):**
+- `docs/arnold/megaplan-native-representation-conformance-report.md:41-42` — rows 16 (`review-parallel-fanin`) and 17 (`review-retry-cap-outcomes`) claimed `implemented`
+- The master plan explicitly flags this at `master-plan.md:909`: *"Use S5 policy surface keys to claim review/finalize parity."* as a false closure route
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Artifact | Reuse |
+|---|---|
+| 8 S5 row IDs & boundary contracts | Keep as traceability targets; contracts are evidence-shape only (no route authority) — they survive extraction |
+| `_visible_review_fan_in_call()` / `_review_parallel_map_calls()` | Already parses `.pypeline` source for `parallel_map` topology; extend to verify source-owned route outcomes, not just topology existence |
+| `_resolve_review_outcome()` | Contains the canonical decision tree (pass/rework/blocked/force_proceeded); extract into a typed pure phase body or declared policy visible from `.pypeline` |
+| Rework cap logic (`prior_rework_count >= max_review_rework_cycles`) | Lift cap threshold from handler into source-visible `LoopPolicy` or declared `REVIEW_POLICY` construct |
+| `review_cap_authority` boundary contract | Already captures `authority_outcomes: ("blocked", "force_proceeded")`; use as verification target post-extraction |
+| `components.py` `REVIEW_POLICY` / `FINALIZE_POLICY` route surfaces | Keep as compatibility metadata (fenced); the checker must stop treating Mapping existence as row authority |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Source-visible rework loop** in `.pypeline` — the `review → execute(rework) → review` cycle must be a visible loop construct, not a handler-owned `"rework"` route_signal with `next_step="execute"` side effect (`review.py:1077-1082`)
+
+2. **Source-visible rework cap** — `max_review_rework_cycles` must be declared on a source construct (e.g., `LoopPolicy`), not read from `get_effective("execution", cap_key)` in handler (`review.py:1033`)
+
+3. **Source-visible pass/rework/blocked/force_proceeded route decisions** — `_resolve_review_outcome`'s decision tree must be moved into a declared policy or pure phase body attached to named source constructs; the checker must reject handler-owned route decisions
+
+4. **Policy-as-route-table rejection for S5** — `components.py:2664-2669` `reducer_routes` are route tables with `target_ref`; the checker currently passes on Mapping existence of `REVIEW_POLICY.force_proceed_authority` without rejecting the route table (`master-plan.md:190, 856`)
+
+5. **Split-outcome scenarios** for: review cap with blockers, review cap without blockers (advisory-only → force_proceeded), rework loop, no-review terminal, deferred-human terminal, finalize fallback revise (`master-plan.md:742`)
+
+6. **Per-sprint dead-delete mutation** — mutate/delete old review/finalize route surfaces in `components.py` and prove behavior unchanged against frozen S1a baselines (`master-plan.md:743`)
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+**S5 should be split into S5a (Review + Rework) and S5b (Finalize + Final Projection)** — this mirrors how S1 was split. The current scope lumps review fanout/fanin/reducer/rework-cap/force-proceed with finalize artifact/fallback/projection, but these have different carrier sets.
+
+**S5a scope:** extract only the review fanout/fanin → reducer → rework-loop-with-cap → pass/rework/blocked/force_proceeded. The checker must reject `_resolve_review_outcome` as route authority and require source-visible constructs. Delete handler-owned route signals and `components.py:2664-2669` `reducer_routes` as route tables.
+
+**S5b scope:** finalize artifact/fallback/final-projection routes. These are simpler but have their own `FINALIZE_POLICY` surface in `components.py:1405-1508`.
+
+**Pre-extraction prerequisite:** The S5a checker must be hardened in S1a/S1b to **reject** Mapping-existence checks on `REVIEW_POLICY.cap_thresholds` and `force_proceed_authority` as row authority before S5a extraction begins. Currently `_implemented_s5_boundary_rows` at `source_compiler.py:1821-1834` passes those rows on `isinstance(..., Mapping)` checks — this gate must fail open (produce diagnostics) when only policy-surface existence is available without source-visible rework construct.

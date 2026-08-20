@@ -1,0 +1,79 @@
+Now I have enough for a complete evidence-backed analysis. Here is the output:
+
+---
+
+## S2a Prep/Plan/Critique Native Front Half — Audit
+
+### 1. Verdict: **Partly exists**
+
+All four sub-components have material artifacts (code, tests, docs) but none are complete under the master plan’s strict standard: the existing work remains handler-owned, component-backed, or runtime-imperative rather than source-authoritative in `.pypeline`/named subworkflows.
+
+---
+
+### 2. Existing or prior artifacts (with file:line evidence)
+
+**Prep suspend/resume:**
+
+- **Native subworkflow exists** at `arnold_pipelines/megaplan/workflows/front_half.pypeline:36-63` — a `@workflow(id="megaplan-front-half")` with typed `AUTHORING_PREP`, branch on `"awaiting_human"` → `AUTHORING_HALT(id="prep_suspend")`, and `"continue"` → `AUTHORING_PLAN`. This is the canonical source shape the master plan envisions.
+- **Handler code still owns the semantics** at `arnold_pipelines/megaplan/handlers/plan.py:29-60` — `_build_prep_clarify_signal()` constructs the suspend signal (blocking questions → `suspend: True`), and `_apply_prep_signal()` writes `STATE_AWAITING_HUMAN`.
+- **Current workflow.pypeline still uses the old component-call pattern** at `workflow.pypeline:390` — `prep_signal = AUTHORING_PREP(id="prep", brief=brief)` (imported from `components.py:14`). The master plan at `:153-154` lists this row (`s2.prep.1`) as failing AWF245 strict checking.
+- **Prior conformance claim** (now deemed false): `docs/arnold/megaplan-native-representation-conformance-report.md:26` marks `prep-clarification-gate` as `implemented` with `canonical_source`.
+- **Existing test evidence:** `tests/arnold_pipelines/megaplan/test_workflows_components.py:54-71` tests that `SOURCE_PREP`/`AUTHORING_PREP` compatibility exports are quarantined (route metadata removed). `tests/arnold_pipelines/megaplan/fixtures/native_goldens/manifest.json:21` references "blocking_questions_suspend, resume_clarify" golden scenarios.
+
+**Plan artifact contract:**
+
+- **Native artifact contract declared** in `front_half.pypeline:22-32` (`FRONT_HALF_HANDOFF_TOPOLOGY`) and `:50-59` (`AUTHORING_PLAN(id="plan", policy=BLAST_RADIUS_POLICY)`).
+- **Component-side contract machinery:** `components.py:1859-1861` declares `policy_id="megaplan:artifact-contract"` with `policy_type="artifact_contract"`. Referenced in `boundary_contracts.py:460,543,546`, `workflow.pypeline:212,227,238`, and `components.py:1437,1473,2204,2230,2254`.
+- **Evidence generator** handles it at `scripts/generate_native_representation_evidence.py:740`.
+- **Master plan row** `s2.plan.1` at `workflow.pypeline:391` still fails AWF245.
+- **Prior false claim:** `megaplan-native-representation-conformance-report.md:27` marks `plan-artifact-version-metadata` as `implemented` (`declared_policy`).
+- **Test coverage:** `tests/arnold_pipelines/megaplan/test_policy_view_conformance.py:471-475` tests `artifact_contract_policy_exists` and `artifact_contract_config_is_nonempty`.
+
+**Critique evaluator retry:**
+
+- **Full retry logic in critique runtime:** `arnold_pipelines/megaplan/orchestration/critique_runtime.py:392-631`. Key parameters: `_MAX_EVAL_ATTEMPTS = 2` (line 397), retry loop (`:399-594`), blocked fallback when all attempts fail (`:610-631`). Includes raw-output persistence (`:414-424`), scratch promotion recovery for Codex empty-payload bug (`:442-482`), and raw-output recovery (`:466-482`).
+- **No static-lens fallback** — explicitly designed: "Adaptive critique is the ONLY critique path: there is no static lens fallback" (`:392-396`).
+- **Prior false claim:** `megaplan-native-representation-conformance-report.md:29` marks `critique-evaluator-retry` as `implemented` (`declared_policy`).
+- **Limitation documented in test fixtures:** `tests/arnold_pipelines/megaplan/fixtures/native_goldens/manifest.json:70` notes: "Parallel lens fanout and evaluator retry require LLM inference — not covered by deterministic runners."
+
+**Selected-lens fanout/fallback:**
+
+- **Parallel critique fanout:** `arnold_pipelines/megaplan/orchestration/parallel_critique.py:354-400+` — `run_parallel_critique()` dispatches one read-only worker per selected lens via `scatter_worker_units`. Each check carries a `_resolved_agent_mode` for per-lens model routing.
+- **Fallback path:** `critique_runtime.py:720-742` — if parallel critique raises, falls back to sequential with `M3A_WARN_PARALLEL_CRITIQUE_FALLBACK` (line 726). Confirmed in live watchdog logs at `.megaplan/watchdog-run-logs/megaplan-live-watchdog-supervisor.outcome.json:40-116`.
+- **Native `.pypeline` has a `parallel_map` construct** at `workflow.pypeline:395-401` but it still imports `AUTHORING_CRITIQUE` and `CRITIQUE_PANEL_WORKFLOW` from `components.py:15,25` — not yet source-authoritative.
+- **Prior false claims:** `megaplan-native-representation-conformance-report.md:30-31` marks `critique-parallel-lenses` and `critique-gate-revise-loop` as `implemented`.
+
+---
+
+### 3. What can be reused or generalized
+
+- **`front_half.pypeline`** (63 lines) is a near-complete native source skeleton for prep/plan. It already has typed outcomes, suspend/resume branches, and policy attachment. It can serve as the extraction target with minimal reshaping — the main gap is making it the authoritative path rather than a parallel artifact.
+- **Critique evaluator retry logic** in `critique_runtime.py:392-631` is battle-tested and can be lifted into a declared policy or typed phase body. The retry-exhaustion → blocked path, scratch promotion, and raw-output recovery patterns are production-grade.
+- **`parallel_critique.py`** fanout machinery (`scatter_worker_units`, per-check `AgentMode` routing) is a reusable substrate that can back native `parallel_map` over selected lenses.
+- **`BLAST_RADIUS_POLICY`** and `megaplan:artifact-contract` policy declarations in `components.py:1859-1879` can be re-attached to named source constructs in `front_half.pypeline` rather than remaining component-owned.
+- **The component quarantine test** at `test_workflows_components.py:54-71` already proves the compatibility export pattern works — `AUTHORING_PREP`/`SOURCE_PREP` exports are quarantined with `route_metadata_removed`. This pattern generalizes.
+
+---
+
+### 4. What still must be built
+
+1. **Source authority migration:** The `workflow.pypeline:390-401` prep/plan/critique calls must route through `front_half.pypeline` constructs (or equivalent named subworkflows) so the strict checker (`AWF245`) passes for rows `s2.prep.1`, `s2.plan.1`, `s2.critique.1`.
+2. **Prep suspend/resume as visible topology:** The branch `prep_outcome == "awaiting_human"` → `AUTHORING_HALT(id="prep_suspend")` in `front_half.pypeline:45-47` must become the canonical path, not duplicated handler logic in `handlers/plan.py:29-60`.
+3. **Plan artifact contract as source-attached policy:** `BLAST_RADIUS_POLICY` must be source-visible and attached to the `AUTHORING_PLAN` call in the canonical workflow, not hidden in `components.py` metadata.
+4. **Critique evaluator retry as source-visible construct:** The retry loop currently lives in imperative handler code (`critique_runtime.py:392-631`). It must be expressed as a declared policy or typed phase body attached to the critique source construct.
+5. **Selected-lens fanout from native source:** The `parallel_map(id="critique-fanout")` at `workflow.pypeline:395-401` must resolve `items` from evaluator verdict at runtime (dynamic fanout over `items_ref`), proven by S1b-1 substrate. Currently `items="megaplan.policy.critique_lenses"` is a static reference.
+6. **Dead-delete and split-outcome scenarios** for all four sub-components (per S2 exit gates at master plan `:628-636`).
+7. **Strict checker pass** for S2 rows with source spans in `workflow.pypeline` or named subworkflows, not `components.py`.
+
+---
+
+### 5. Recommended adjustment to the sprint plan
+
+**Recommend splitting S2 into S2a (prep/plan) and S2b (critique/gate/revise)** rather than treating "Front-Half Native Loop" as one monolithic sprint. Rationale:
+
+- **Prep/plan are lower-risk and simpler:** `front_half.pypeline` already has a working native skeleton. Extracting these two rows first would prove the extraction pattern without the complexity of dynamic fanout, evaluator retry, or loop semantics.
+- **Critique fanout depends on S1b-1 substrate:** The selected-lens `parallel_map` with dynamic `items_ref` requires runtime fanout proof that S1b-1 must deliver first. Coupling S2 to S1b-1 completion risks blocking the simpler prep/plan extraction.
+- **The master plan itself** acknowledges this coupling risk at `:202-205` (Q1 audit: dynamic `parallel_map` lowering exists but `items_ref` is not resolved at runtime).
+- **Gate/revise loop is coupled** (`components.py:1154-1158,1276-1279`), so those should remain together in S2b.
+
+**Proposed adjusted S2a scope:** Extract only prep clarify/suspend/resume and plan artifact contract into canonical source. Exit gates: strict checker pass for rows `s2.prep.1` and `s2.plan.1`, dead-delete for prep/plan component carriers, split-outcome scenarios for prep suspend/resume. This de-risks the more complex critique extraction in S2b.

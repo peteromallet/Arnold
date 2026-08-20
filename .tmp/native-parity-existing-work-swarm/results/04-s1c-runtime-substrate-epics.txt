@@ -1,0 +1,82 @@
+## 1. Verdict: **Partly exists**
+
+The native pipeline substrate (`arnold/pipeline/native/`) has substantial parallel_map, suspension/reentry, and loop exit infrastructure. But the component is unproven at the Megaplan DSL/manifest layer, and the source-derived dispatch without `handler_ref` does not exist at all. The plan itself (master plan §S1b-1, lines 532–576) treats these as unproven prerequisites.
+
+---
+
+## 2. Existing or prior artifacts (with file:line evidence)
+
+### Ir, compiler, and runtime for parallel_map (native pipeline level)
+
+- **`ParallelMapInstruction` IR type** with `items_ref`, `mapper`, `reducer`, `path_template`: `arnold/pipeline/native/ir.py:309–370`
+- **Compiler lowering** of `yield parallel_map(items=..., step=...):` `arnold/pipeline/native/compiler.py:639–814`
+- **Runtime execution**: `runtime.py:1945–2282` — items resolved from state/parameters (`:421–441`), per-item bindings (`:639–651`), reducer invocation (`:2109–2145`), progress restoration for resume (`:3338–3350`)
+
+### Suspension and reentry
+
+- **`max_phases` suspension with resume cursor**: `runtime.py:786–789`
+- **Phase-level suspension** via `ContractResult.SUSPENDED` with same-PC reentry: `runtime.py:1209–1290`
+- **Loop/state/frame preservation in cursors**: `runtime.py:1240–1275`
+- **Test**: `test_parallel_map_compiled_child_suspension_returns_suspended_parent_without_merging_outputs` — `tests/arnold/pipeline/native/test_runtime.py:1181–1240`
+
+### Loop exits
+
+- **`should_halt_loop` hook mechanism**: `runtime.py:1675`, `:1891`
+- **Adopted Megaplan hook**: `MILESTONE_3_HANDOFF.md:45` — `MegaplanNativeRuntimeHooks.should_halt_loop` iteration-limit/cost-based guard, donor branch `native-python-m3-megaplan-hooks`
+
+### Existing native pipeline tests (not S1b-1-specific)
+
+- Runtime: `test_runtime.py:1058` (`test_parallel_map_uses_parameter_precedence_and_preserves_item_order`), `:1088`, `:1140`, `:1181`, `:1263`, `:1710`
+- Compiler: `test_compiler.py:1190–1293` (compilation, rejection of dynamic expressions)
+- Graph projection: `test_graph_projection.py:2673–2723` (`test_parallel_map_becomes_dynamic_fanout_stage`, `test_parallel_map_stage_run_preserves_item_order_and_paths`)
+- Decorators: `test_decorators.py:1017–1115`
+
+### Manifest backend still handler_ref/dispatch dependent
+
+- **Hard-coded node IDs**: `manifest_backend.py:72–84` — `HANDLER_NODE_IDS` frozen set
+- **Route binding resolution** via component metadata: `manifest_backend.py:173–189`
+
+---
+
+## 3. What can be reused or generalized
+
+| Substrate piece | Reuse path |
+|---|---|
+| `ParallelMapInstruction` IR + compiler lowering (`compiler.py:639–814`) | Reused directly; the lowering already works for native `@pipeline` declarations |
+| `_resolve_parallel_map_items` (`runtime.py:421–441`), `_parallel_map_item_bindings` (`:446–452`), `_parallel_map_item_coordinate` (`:466–481`) | Already resolves `items_ref` from state/parameters; usable as-is |
+| `_restore_parallel_map_progress` (`runtime.py:3338–3350`) | Resume-from-mid-fanout already implemented; needs Megaplan-integration proof only |
+| `should_halt_loop` hook (`runtime.py:1675`, `:1891`) + M3 donor hooks (`MILESTONE_3_HANDOFF.md:45`) | Loop exit mechanism exists; needs typed loop exit constructs and end-to-end Megaplan tests |
+| Suspension/reentry cursor machinery (`runtime.py:1209–1290`, `:1333–1350`) | Phase suspension and reentry_stage are already wired; need Megaplan-specific suspension scenarios |
+| Native pipeline test patterns in `test_runtime.py`, `test_compiler.py`, `test_graph_projection.py` | Test structure, fixture patterns, and assertion style directly reusable |
+
+---
+
+## 4. What still must be built
+
+1. **Source-derived manifest dispatch** (without `handler_ref` as route authority): The master plan §S1b-1 lines 540–542 requires "manifest backend phase dispatch derived from lowered source constructs or inert compatibility metadata, without `handler_ref` as route authority." This does not exist. `manifest_backend.py:72–84` still uses hard-coded `HANDLER_NODE_IDS`.
+
+2. **End-to-end Megaplan dynamic `items_ref` fanout proof**: The Q1 audit (master plan lines 202–206) confirmed the neutral router fans out from static `width` only. All existing `parallel_map` tests are at the native pipeline level, not through the Megaplan DSL→manifest path.
+
+3. **The five specific S1b-1 test files** (all missing):
+   - `tests/arnold_pipelines/megaplan/test_native_runtime_dynamic_fanout.py`
+   - `tests/arnold_pipelines/megaplan/test_native_runtime_suspension_reentry.py`
+   - `tests/arnold_pipelines/megaplan/test_manifest_backend_source_dispatch.py`
+   - `tests/arnold_pipelines/megaplan/test_native_runtime_loop_exits.py`
+   - `tests/arnold_pipelines/megaplan/test_runtime_items_ref_resolution.py`
+
+4. **Bridging from Megaplan `FanoutPolicy(mode="dynamic")`** (in `source_compiler.py:287`, `:3662–3799`) to the native runtime's `parallel_map` execution. The compiler preserves the metadata but the runtime execution path through `manifest_backend.py` doesn't consume it dynamically.
+
+5. **Typed loop exit constructs** if required by S2–S5 (master plan line 538: "if typed loop exits are required, implement and test them here").
+
+---
+
+## 5. Recommended adjustment to the sprint plan
+
+**The S1b-1 milestone does not appear in `chain.yaml`** — it still uses the pre-split `m1-checker-outcomes-builder-slice` milestone (`chain.yaml:32`). The master plan resolved the S1 split (lines 947–950) into S0, S1a, S1b-1, S1b-2, but the initiative's chain file was never updated.
+
+**Recommendation**: Add S1b-1 as a dedicated milestone between S1a (`checker authority`) and S1b-2 (`typed outcomes/builder slice`). The milestone should:
+
+1. **Reuse** the proven native `parallel_map` runtime (compiler/IR/runtime from `arnold/pipeline/native/`) rather than rebuilding substrate
+2. **Focus effort on the three real gaps**: source-derived manifest dispatch, Megaplan-integration runtime proof tests (the five missing test files), and end-to-end dynamic fanout through the manifest path
+3. **Lower ambition on suspension/reentry and loop exits**: these have working substrate (`runtime.py:1209–1290`, `:1675`, M3 donor hooks); the S1b-1 work is proving them end-to-end in the Megaplan context, not building new mechanisms
+4. **Add a dead-delete prerequisite**: the manifest backend's `HANDLER_NODE_IDS` dispatch (`manifest_backend.py:72–84`) must be replaced or proven inert for the S1b-1 edge before S2 extraction depends on dynamic fanout

@@ -1,0 +1,13 @@
+--- a/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop
++++ b/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop
+@@ -765,7 +765,9 @@ acquire_repair_lock() {
+     else
+       existing_pid=""
+     fi
+-    if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
++    if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] \
++      && kill -0 "$existing_pid" 2>/dev/null \
++      && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
+       if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
+         release_repair_lock
+       fi

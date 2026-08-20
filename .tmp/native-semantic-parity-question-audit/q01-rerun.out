@@ -1,0 +1,69 @@
+I now have a complete, evidence-backed picture. Here is the answer.
+
+---
+
+## 1. Verdict
+
+**Weakens the plan.** The current plan assumes S2–S5 extraction sprints are "mostly semantic extraction, not compiler/runtime feature development." This is substantially wrong for dynamic fanout and partially wrong for suspension. The compiler already parses and preserves all the needed constructs (`parallel_map` lowering, `LoopPolicy`, `SuspensionRoute`), but the **neutral runtime does not execute dynamic fanout** — only static `width`-based fanout works end-to-end. If S2–S5 require working end-to-end dynamic fanout, the neutral router needs a feature task. Loop policies and suspension routes have more functional support, but typed loop exits remain unproven.
+
+---
+
+## 2. `parallel_map` lowering today
+
+**It lowers to a metadata-passthrough `Step` with `kind="parallel_map"` and `FanoutPolicy(mode="dynamic", reducer_ref=...)` — but the neutral runtime ignores the `mode="dynamic"` flag and never resolves `items_ref`.**
+
+The lowering path:
+
+1. `parallel_map()` in Python source → `ParsedParallelMapCall` (file:line `source_compiler.py:282-297`).
+2. `_lower_parallel_map_call()` produces a `Step(id=fanout.id, kind="parallel_map", ...)` with `policy=WorkflowPolicy(fanout=FanoutPolicy(mode="dynamic", reducer_ref=fanout.reducer_ref))` and metadata carrying `parallel_map: True, items_ref, mapper_ref, path_template` — (`source_compiler.py:5326-5359`).
+3. The test fixture confirms the expected JSON: `fanout_policies: {"review-all": {"mode": "dynamic", "reducer_ref": "..."}}` — (`tests/fixtures/workflow_authoring/m3/valid_m3_parallel_map_loop_policy.expected.json:62-70`).
+
+**But execution dead-ends.** The neutral router (`arnold/execution/routing.py:59-63`) only reads `policy.fanout.width` to determine fanout cardinality. `_fanout_children` (`routing.py:302-309`) creates `{node.id}:child:{idx}` coordinates from `width`. When `mode="dynamic"` and `width` is `None`, zero children are spawned. The `items_ref` is never resolved by the router.
+
+Meanwhile, the Megaplan backend (`manifest_backend.py:72-84`) lists only 11 handler node IDs. `parallel_map` ids like `"critique-fanout"`, `"execute-batches"`, `"review-fan-in"` are **not** in `HANDLER_NODE_IDS`, so they hit the neutral pass-through (`manifest_backend.py:116-120`): "return inputs as outputs." The `FanoutPolicy` metadata on the node is preserved but **never consumed** by either the router or the backend.
+
+**Conclusion:** `parallel_map` lowering is a metadata passthrough. The compiler faithfully preserves the semantic intent, but no runtime component executes it as a dynamic fanout.
+
+---
+
+## 3. Support for S2–S5 constructs
+
+### Suspension points — **Partially supported (compiler yes, runtime basic)**
+
+- `SuspensionRoute` is a first-class manifest dataclass (`manifests.py:216-222`) with `route_id`, `capability_id`, `reentry_id`, `payload_schema_hash`, `resume_schema_hash`.
+- The compiler weaves `SuspensionRoute` into `WorkflowPolicy` when lowering loop bodies via `_attach_loop_policy_to_step` (`source_compiler.py:5647-5697`) and also from `"suspension"` policy component types (`source_compiler.py:5457-5464`).
+- The backend detects `"awaiting_human"`/`"suspended"` in handler responses and returns `NodeState.SUSPENDED` (`manifest_backend.py:324-332`).
+- **Evidence gap:** Actual reentry/resume of a suspended node path is product-handler-dependent. The neutral runtime tracks suspended coordinates (`routing.py:107-110`) but does not autonomously resume them — it depends on the backend feeding a resume signal.
+
+### Dynamic fanout over runtime lists — **NOT supported at runtime**
+
+- The compiler accepts `parallel_map` with dynamic semantics (see above), and `Python for`-loop fanout is explicitly rejected (`invalid_parallel_fanout.py` → `AWF002_UNSUPPORTED_SYNTAX`).
+- But the neutral router only handles static `width`-based fanout. There is **zero** evidence that `mode="dynamic"` or `items_ref` is interpreted by `routing.py` or any execution component.
+- The reducer logic (`routing.py:396-409`) does read `reducer_ref` and schedules a reducer coordinate, but only after `fanout_width` children complete — which never happens for dynamic fanout nodes.
+
+### Loop policies with typed exits — **Partially supported**
+
+- `LoopPolicy` with `max_iterations` and `until_ref` is a manifest type (`manifests.py:88-92`).
+- The compiler lowers `loop()` + `while True` into `ParsedLoopBlock` with backedge routes bearing condition refs (`source_compiler.py:4991-5053`). Loop policies attach to steps inside the body (`source_compiler.py:5647-5697`).
+- The router counts iterations and re-enters up to `max_iterations` (`routing.py:422-442`).
+- **Evidence gap:** Typed exits (where the loop exits with a specific typed payload rather than a boolean condition) are not evidenced. The exit mechanism is a simple `condition_ref` on a backedge route — the condition is a string reference, not a typed value. No evidence of the loop producing a typed exit value that downstream nodes can consume.
+
+---
+
+## 4. Summary of evidence file:line
+
+| Construct | Compiler support | Runtime support | Key files |
+|---|---|---|---|
+| `parallel_map` lowering | Full parse + metadata preservation | **None** (only static width) | `source_compiler.py:5326-5359`, `routing.py:59-63,302-309`, `manifest_backend.py:72-84,116-120` |
+| Dynamic fanout | `FanoutPolicy(mode="dynamic")` preserved | Not consumed | `routing.py:59-63` |
+| Suspension routes | `SuspensionRoute` in `WorkflowPolicy` | Basic detect, no auto-resume | `source_compiler.py:5647-5697`, `manifest_backend.py:324-332` |
+| Loop policies | `LoopPolicy` on steps, backedge routes | Iteration counting + reentry | `source_compiler.py:4991-5053`, `routing.py:422-442` |
+| Typed loop exits | Not evidenced | Not evidenced | — |
+
+---
+
+## 5. Specific amendment needed
+
+If S2–S5 extraction sprints need end-to-end working dynamic fanout, **add a predecessor compiler-feature task** to implement dynamic `items_ref` resolution in the neutral router (`arnold/execution/routing.py`). The router currently gates on `_fanout_width`; it must also handle `mode="dynamic"` by resolving the `items_ref` from state (or delegating to a backend hook) and spawning children accordingly. Without this, `parallel_map` nodes in the compiled manifest are no-ops at runtime — the metadata is present but inert.
+
+For typed loop exits, if the semantic parity plan requires the loop to produce a typed value consumed by downstream nodes, that is also unproven and would require a compiler + router feature task.

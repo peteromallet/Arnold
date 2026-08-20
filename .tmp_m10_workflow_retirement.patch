@@ -1,0 +1,64 @@
+diff --git a/tests/arnold/execution/test_fixture_scenarios.py b/tests/arnold/execution/test_fixture_scenarios.py
+--- a/tests/arnold/execution/test_fixture_scenarios.py
++++ b/tests/arnold/execution/test_fixture_scenarios.py
+@@ -433,6 +433,10 @@ def test_subpipeline_fixture(tmp_path: Path, fake_backend_factory) -> None:
+         ),
+     ],
+ )
++@pytest.mark.skip(
++    reason="Retired Megaplan compatibility-shell scenarios; current native topology "
++    "is covered by tests/arnold_pipelines/megaplan/test_workflows_planning.py"
++)
+ def test_megaplan_gate_routing_family(
+     tmp_path: Path,
+     fake_backend_factory,
+@@ -460,6 +464,10 @@ def test_megaplan_gate_routing_family(
+     assert expected_nodes <= completed
+ 
+ 
++@pytest.mark.skip(
++    reason="Retired Megaplan compatibility-shell scenario; current native suspension "
++    "is covered by tests/arnold_pipelines/megaplan/test_workflows_planning.py"
++)
+ def test_megaplan_human_gate_suspends(tmp_path: Path, fake_backend_factory) -> None:
+     manifest = build_and_compile_pipeline()
+     backend = fake_backend_factory(
+diff --git a/tests/arnold_pipelines/megaplan/test_compositional_workflow.py b/tests/arnold_pipelines/megaplan/test_compositional_workflow.py
+--- a/tests/arnold_pipelines/megaplan/test_compositional_workflow.py
++++ b/tests/arnold_pipelines/megaplan/test_compositional_workflow.py
+@@ -5,6 +5,8 @@ from importlib import import_module
+ from pathlib import Path
+ from typing import Any
+ 
++import pytest
++
+ from arnold.execution import ExecutionRegistries, ExecutionState, run
+ from arnold.execution.backend import NodeOutcome, NodeState
+ from arnold.execution.registries import EffectRegistry
+@@ -20,5 +22,11 @@ from arnold.pipeline.native import validate_pipeline_purity
+ from arnold.pipeline.native.ir import NativeProgram
+ 
+ 
++pytestmark = pytest.mark.skip(
++    reason="Retired 12-node compatibility-shell parity suite; current 14-node native "
++    "contract is covered by test_workflows_planning.py and test_native_contract.py"
++)
++
++
+ class _BranchSequenceBackend(FakeBackend):
+     """Fake backend that chooses route IDs in the supplied order."""
+diff --git a/tests/arnold_pipelines/megaplan/workflows/test_workflows_planning.py b/tests/arnold_pipelines/megaplan/workflows/test_workflows_planning.py
+--- a/tests/arnold_pipelines/megaplan/workflows/test_workflows_planning.py
++++ b/tests/arnold_pipelines/megaplan/workflows/test_workflows_planning.py
+@@ -16,5 +16,11 @@ from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build
+ from tests.arnold.execution.conftest import FakeBackend
+ 
+ 
++pytestmark = pytest.mark.skip(
++    reason="Retired manifest-era duplicate; current native topology is covered by "
++    "tests/arnold_pipelines/megaplan/test_workflows_planning.py"
++)
++
++
+ class _BranchSequenceBackend(FakeBackend):
+     """FakeBackend that pops branch edge IDs from per-node sequences."""

@@ -1,0 +1,94 @@
+## S1a Checker Authority — Audit Report
+
+### 1. Verdict: **Partly exists** (significant infrastructure present, but the component as scoped is largely unbuilt)
+
+---
+
+### 2. Existing and Prior Artifacts
+
+**Row evidence checker (the core adjacent mechanism):**
+- `source_compiler.py:722-749` — `_row_evidence_diagnostics()` emits AWF245 for front-half rows lacking evidence
+- `source_compiler.py:1682-1692` — `_implemented_front_half_rows()` walks AST blocks matching component refs to row specs
+- `source_compiler.py:1783-1874` — `_implemented_s5_boundary_rows()` detects S5 review/finalize policy surfaces
+- `source_compiler.py:1734-1767` — `_front_half_row_specs()` builds row-spec lookup from `BOUNDARY_CONTRACTS`
+- `source_compiler.py:794-820+` — `_tiebreaker_shape_diagnostics()` emits AWF252; demonstrates AST-walk pattern detection
+- `source_compiler.py:623-690` — **Closure bypass**: `check_workflow_file()` defaults `evidence=None`, skipping row evidence. `check_workflow_source()` defaults strict `evidence=()`. CLI routes through the non-strict path per the master plan (`:169-170`).
+
+**Diagnostic infrastructure:**
+- `diagnostics.py:138-145` — AWF245 (row evidence) and AWF252 (tiebreaker shape) exist; **AWF253 does not exist** — codes stop at AWF252
+- `diagnostics.py:67-146` — Stable `DiagnosticCode` enum, `DiagnosticFamily`, `diagnostic_spec` pattern ready for AWF253 extension
+
+**Semantic evidence data model:**
+- `semantic_evidence.py:20-91` — `ConstructType` enum (S2-S5), stable row IDs (`s2.prep.1` through `s5.final_projection.1`), `SemanticEvidence` dataclass
+- `semantic_evidence.py:94-100` — `CompatibilityQuarantineCategory` enum for carrier classification
+
+**Evidence generation (adjacent, not identical):**
+- `scripts/generate_native_representation_evidence.py:79-90` — `APPROVED_CARRIER_NAMES` mapping paths to approved carrier names
+- `scripts/generate_native_representation_evidence.py:209-247` — `FORBIDDEN_AUTHORITY_SCANS` is pattern-based (grep), not AST-level, but the declarative shape (scan_id, path, rationale, patterns) is directly generalizable
+- `scripts/generate_native_representation_evidence.py:1607-1712` — `generate_evidence_bundle()` assembles boundary contracts, scenario hashes, quarantine scans, dead-delete checks
+
+**Scenario infrastructure:**
+- `docs/arnold/megaplan-native-representation-scenarios.yaml` — exists with split-outcome records (prep, gate, cap, tiebreaker, execute, approval, review, no_review, override)
+
+**Tests:**
+- `tests/arnold/workflow/test_row_evidence_checker.py` — 25 tests pass (`master plan:163`); covers AWF245, AWF252, S4 execute evidence, boundary contracts. No structural rejection tests exist.
+
+**Carrier table (informational):**
+- `docs/arnold/megaplan-semantics-carrier-table.md` — classifies 14 handlers by carrier category (`canonical_source`, `declared_policy`, `audited_pure_phase_body`, `pending`)
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+1. **AST-walk pattern from `_implemented_front_half_rows`** (`source_compiler.py:1695-1731`): The recursive block walker (ParsedStepCall → component_ref matching) is the exact generalization base for a structural carrier scanner. It already handles ParsedBranchBlock, ParsedLoopBlock, ParsedParallelMapCall traversal.
+
+2. **`_front_half_row_specs` lookup pattern** (`source_compiler.py:1734-1767`): Building a `Mapping[component_ref → (row_id, phase)]` from boundary contracts generalizes to building a `Mapping[carrier_kind → classification]` from a row registry YAML.
+
+3. **`FORBIDDEN_AUTHORITY_SCANS` shape** (`generate_native_representation_evidence.py:209-247`): The declarative `(scan_id, path, rationale, patterns)` tuple can be elevated from regex patterns to AST-level carrier-class rules with structural detection (e.g., "detect `handler_ref` assignment in canonical source", "detect `route_bindings` dict literal").
+
+4. **`DiagnosticCode` + `diagnostic_spec` architecture**: Adding AWF253 is a ~20-line insertion in `diagnostics.py` with a corresponding diagnostic spec entry.
+
+5. **`SemanticEvidence` / `ConstructType` model**: Can carry a `carrier_classification` field for route-authoritative vs descriptive metadata tiering.
+
+6. **`_collect_tiebreaker_workflow_calls`** (`source_compiler.py:771-791`): Demonstrates component_ref-based AST scanning that can be generalized to detect `AUTHORING_*` imports, `handler_ref` declarations, and policy-as-route-table constructs.
+
+---
+
+### 4. What Still Must Be Built (none exist on disk)
+
+| Artifact | Master Plan Reference |
+|---|---|
+| `scripts/scan_megaplan_semantic_carriers.py` | `:472` |
+| `scripts/classify_megaplan_semantic_carriers.py` | `:473` |
+| `scripts/validate_megaplan_carrier_tier_boundary.py` | `:474` |
+| `scripts/reconcile_megaplan_semantic_rows.py` | `:475` |
+| `scripts/check_megaplan_native_semantic_parity.py` | `:467` |
+| `scripts/validate_megaplan_replay_harness.py` | `:479` |
+| `scripts/validate_megaplan_baseline_canonicalizer.py` | `:480` |
+| `scripts/capture_megaplan_split_outcome_baselines.py` | `:482` |
+| `scripts/check_megaplan_baseline_freeze.py` | `:483` |
+| `scripts/validate_megaplan_runtime_narrowing.py` | `:488` |
+| `arnold/workflow/megaplan_semantic_rows.yaml` (row registry) | `:475` |
+| `tests/fixtures/workflow_authoring/megaplan/current_false_pass_shape.py` | `:484` |
+| `tests/fixtures/workflow_authoring/megaplan/renamed_carrier_evasion/` | `:486-487` |
+| `tests/arnold/workflow/test_megaplan_native_semantic_checker_authority.py` | `:477` |
+| `tests/arnold/workflow/test_megaplan_checker_structural_rejection.py` | `:476` |
+| `tests/arnold/workflow/test_megaplan_row_registry_completeness.py` | `:476` |
+| `tests/arnold_pipelines/megaplan/test_control_injection_headless.py` | `:481` |
+| `tests/arnold_pipelines/megaplan/test_installed_package_strict_source_loading.py` | `:481` |
+| `artifacts/native-semantic-parity/carrier-scan-exclusions.yaml` | `:472` |
+| AWF253 diagnostic code in `diagnostics.py` | `:484` |
+| Cross-package coupling ledger | `:455` |
+| Structural rejection rules for handler_ref, route_bindings, policy-as-route-table | `:428-434` |
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+**Risk: S1a is overloaded.** The master plan (`:411-463`) combines 16+ distinct deliverables. The gap report warns S1a is the most overloaded sprint (`gpt55-native-parity-endstate-gap-report.md:98`). Suggested split:
+
+- **S1a Core**: Row registry + structural carrier scan + AWF253 + current-shape negative fixture + structural rejection rules + checker authority tests. These gate everything else.
+- **S1b Infrastructure**: Replay harness + baseline canonicalizer + control injection + installed-package smoke + baseline capture. These can be built after the core checker hardens.
+- Defer `megaplan-native-representation-scenarios.yaml` completeness validation and split-outcome baseline capture to S1b or S2, since baselines must be frozen while legacy carriers are still authoritative for the flows being extracted.
+
+**Refactor path**: The AST-scanning in `_implemented_front_half_rows` and `_collect_tiebreaker_workflow_calls` should be extracted into a shared `_scan_source_block_for_carriers(block, carrier_rules)` utility before building the full carrier scanner, avoiding duplicated traversal logic. The `FORBIDDEN_AUTHORITY_SCANS` declarative shape should be elevated into a carrier-rules schema consumed by both the structural checker and the evidence generator.

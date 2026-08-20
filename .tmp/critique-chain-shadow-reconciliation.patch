@@ -1,0 +1,245 @@
+diff --git a/arnold_pipelines/megaplan/chain/__init__.py b/arnold_pipelines/megaplan/chain/__init__.py
+index a230b22190..a7b13f8453 100644
+--- a/arnold_pipelines/megaplan/chain/__init__.py
++++ b/arnold_pipelines/megaplan/chain/__init__.py
+@@ -4055,6 +4055,95 @@ def _decision_shadow_sources(
+     return ", ".join(sorted(sources)) or "accepted-attempt projection unavailable"
+ 
+ 
++_CHAIN_TASK_PROJECTION_RECONCILIATION_SCHEMA = (
++    "arnold.megaplan.chain_task_projection_reconciliation.v1"
++)
++
++
++def _chain_task_projection_reconciliations(
++    plan_dir: Path,
++) -> dict[str, dict[str, Any]]:
++    """Load evidence-bound reconciliations for stale task-status projections.
++
++    Raw worker status remains immutable evidence. A reconciliation is accepted
++    only when a fixed quality resolution, a passing validation receipt, and a
++    passing final-review verdict all bind the same task.
++    """
++
++    try:
++        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
++        return {}
++    if not isinstance(state, dict):
++        return {}
++    meta = state.get("meta")
++    if not isinstance(meta, dict):
++        return {}
++    raw_receipts = meta.get("chain_task_projection_reconciliations")
++    if not isinstance(raw_receipts, list):
++        return {}
++    quality_resolutions = {
++        str(item.get("blocker_id") or ""): item
++        for item in meta.get("quality_gate_resolutions", [])
++        if isinstance(item, dict) and item.get("resolution") == "fixed"
++    }
++    try:
++        review_path = plan_dir / "review.json"
++        review = json.loads(review_path.read_text(encoding="utf-8"))
++        review_sha256 = hashlib.sha256(review_path.read_bytes()).hexdigest()
++    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
++        return {}
++    review_verdicts = {
++        str(item.get("task_id") or ""): str(item.get("reviewer_verdict") or "")
++        for item in review.get("task_verdicts", [])
++        if isinstance(item, dict)
++    } if isinstance(review, dict) else {}
++
++    accepted: dict[str, dict[str, Any]] = {}
++    plan_root = plan_dir.resolve(strict=False)
++    for receipt in raw_receipts:
++        if not isinstance(receipt, dict):
++            continue
++        core = {key: value for key, value in receipt.items() if key != "content_sha256"}
++        digest = hashlib.sha256(
++            json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
++        ).hexdigest()
++        task_id = str(receipt.get("task_id") or "")
++        validation = receipt.get("validation")
++        if (
++            receipt.get("schema") != _CHAIN_TASK_PROJECTION_RECONCILIATION_SCHEMA
++            or receipt.get("content_sha256") != digest
++            or not task_id
++            or receipt.get("reconciled_status") not in _CHAIN_SHADOW_TERMINAL_STATUSES
++            or str(receipt.get("quality_resolution_blocker_id") or "")
++            not in quality_resolutions
++            or receipt.get("review_sha256") != review_sha256
++            or not review_verdicts.get(task_id, "").strip().lower().startswith("pass")
++            or not isinstance(validation, dict)
++        ):
++            continue
++        relative = str(validation.get("path") or "")
++        validation_path = (plan_dir / relative).resolve(strict=False)
++        if not relative or not validation_path.is_relative_to(plan_root):
++            continue
++        try:
++            validation_sha256 = hashlib.sha256(validation_path.read_bytes()).hexdigest()
++            validation_payload = json.loads(
++                validation_path.read_text(encoding="utf-8")
++            )
++        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
++            continue
++        if (
++            validation.get("sha256") != validation_sha256
++            or not isinstance(validation_payload, dict)
++            or validation_payload.get("status") != "passed"
++            or validation_payload.get("exit_code") not in {0, None}
++        ):
++            continue
++        accepted[task_id] = receipt
++    return accepted
++
++
+ def _chain_completion_shadow_disagreements(
+     task_records: list[dict[str, Any]],
+     completed: set[str],
+@@ -4071,6 +4160,7 @@ def _chain_completion_shadow_disagreements(
+ 
+     projection = accepted_attempt_execution_projection(task_records, plan_dir=plan_dir)
+     projection_sources = projection.source_paths if projection is not None else ()
++    projection_reconciliations = _chain_task_projection_reconciliations(plan_dir)
+     diagnostics: list[str] = []
+     incomplete_task_sources: list[str] = []
+     for task in task_records:
+@@ -4099,6 +4189,20 @@ def _chain_completion_shadow_disagreements(
+                 f"({authority_sources}): {reason}"
+             )
+         elif status not in _CHAIN_SHADOW_TERMINAL_STATUSES and accepted:
++            reconciliation = projection_reconciliations.get(task_id)
++            authority_validation = task.get("authority_validation")
++            authority_validation = (
++                authority_validation
++                if isinstance(authority_validation, Mapping)
++                else {}
++            )
++            if (
++                reconciliation is not None
++                and reconciliation.get("stale_status") == status
++                and reconciliation.get("authority_envelope_digest")
++                == authority_validation.get("envelope_digest")
++            ):
++                continue
+             diagnostics.append(
+                 f"chain_authority_shadow[{task_id}]: {label_kind} source "
+                 f"{label_source} status={status!r} disagrees with "
+diff --git a/tests/arnold_pipelines/megaplan/test_chain_authority_shadow.py b/tests/arnold_pipelines/megaplan/test_chain_authority_shadow.py
+index b47574e61e..f9ede41a58 100644
+--- a/tests/arnold_pipelines/megaplan/test_chain_authority_shadow.py
++++ b/tests/arnold_pipelines/megaplan/test_chain_authority_shadow.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import json
++import hashlib
+ from pathlib import Path
+ 
+ from arnold_pipelines.megaplan._core import execute_batch_artifact_path
+@@ -73,7 +74,7 @@ def _records(task_id: str):
+     return evidence, fence, grant, attempt, IdempotencyKey(claim.idempotency_key, claim.payload_hash), claim
+ 
+ 
+-def _write_accepted_batch_overlay(plan_dir: Path, *, task_id: str) -> None:
++def _write_accepted_batch_overlay(plan_dir: Path, *, task_id: str) -> str:
+     evidence, fence, grant, attempt, _claim_key, claim = _records(task_id)
+     dispatch = DispatchIdentity.from_records(
+         grant,
+@@ -117,6 +118,7 @@ def _write_accepted_batch_overlay(plan_dir: Path, *, task_id: str) -> None:
+         ),
+         encoding="utf-8",
+     )
++    return envelope.digest()
+ 
+ 
+ def test_chain_completion_shadow_names_disagreeing_authority_sources(tmp_path: Path) -> None:
+@@ -155,3 +157,86 @@ def test_chain_completion_shadow_names_disagreeing_authority_sources(tmp_path: P
+     assert "chain_authority_shadow[m1]" in reason
+     assert "chain state source chain_state.completed[m1]" in reason
+     assert "incomplete sources: T2 from finalize.json" in reason
++
++
++def test_chain_completion_accepts_evidence_bound_stale_status_reconciliation(
++    tmp_path: Path,
++) -> None:
++    validation_path = tmp_path / "verification" / "validation_VJ8.json"
++    validation_path.parent.mkdir(parents=True)
++    validation_path.write_text(
++        json.dumps({"status": "passed", "exit_code": 0}),
++        encoding="utf-8",
++    )
++    review_path = tmp_path / "review.json"
++    review_path.write_text(
++        json.dumps(
++            {
++                "task_verdicts": [
++                    {"task_id": "T1", "reviewer_verdict": "Pass. Work verified."}
++                ]
++            }
++        ),
++        encoding="utf-8",
++    )
++    envelope_digest = _write_accepted_batch_overlay(tmp_path, task_id="T1")
++    (tmp_path / "finalize.json").write_text(
++        json.dumps(
++            {
++                "tasks": [
++                    {
++                        "id": "T1",
++                        "status": "blocked",
++                        "depends_on": [],
++                        "files_changed": ["src/T1.py"],
++                        "commands_run": ["pytest tests/T1.py"],
++                        "authority": {"envelope_digest": envelope_digest},
++                        "authority_validation": {
++                            "outcome": "accepted",
++                            "envelope_digest": envelope_digest,
++                        },
++                    }
++                ]
++            }
++        ),
++        encoding="utf-8",
++    )
++    receipt = {
++        "schema": "arnold.megaplan.chain_task_projection_reconciliation.v1",
++        "task_id": "T1",
++        "stale_status": "blocked",
++        "reconciled_status": "done",
++        "authority_envelope_digest": envelope_digest,
++        "quality_resolution_blocker_id": "quality:global:stale-t1",
++        "validation": {
++            "path": "verification/validation_VJ8.json",
++            "sha256": hashlib.sha256(validation_path.read_bytes()).hexdigest(),
++        },
++        "review_sha256": hashlib.sha256(review_path.read_bytes()).hexdigest(),
++    }
++    receipt["content_sha256"] = hashlib.sha256(
++        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode("utf-8")
++    ).hexdigest()
++    (tmp_path / "state.json").write_text(
++        json.dumps(
++            {
++                "current_state": "done",
++                "config": {},
++                "meta": {
++                    "quality_gate_resolutions": [
++                        {
++                            "blocker_id": "quality:global:stale-t1",
++                            "resolution": "fixed",
++                        }
++                    ],
++                    "chain_task_projection_reconciliations": [receipt],
++                },
++            }
++        ),
++        encoding="utf-8",
++    )
++
++    ok, reason = _latest_execution_batch_all_tasks_done(tmp_path)
++
++    assert ok is True
++    assert reason == "finalize.json"

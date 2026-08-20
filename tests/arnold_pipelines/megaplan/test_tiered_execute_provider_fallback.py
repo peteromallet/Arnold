@@ -14,7 +14,7 @@ from arnold_pipelines.megaplan.execute.batch import (
 )
 from arnold_pipelines.megaplan.types import CliError, parse_agent_spec
 from arnold_pipelines.megaplan.workers import WorkerResult
-from arnold_pipelines.megaplan.workers.hermes import (
+from arnold_pipelines.megaplan.workers._payload import (
     _raise_for_terminal_provider_failure,
 )
 

@@ -1,0 +1,78 @@
+Now I have all the evidence I need. Here is the audit report.
+
+---
+
+## S2a Audit: Prep/Plan/Critique Native Front Half
+
+### 1. Verdict: **Partly exists (skeleton only, not wired, not operational)**
+
+### 2. Existing or Prior Artifacts
+
+**Prep Suspend/Resume:**
+
+- **Skeleton source exists** at `front_half.pypeline:36-63`. It declares a `@workflow(id="megaplan-front-half")` with `AUTHORING_PREP` gated by `PREP_CLARIFY_POLICY`, a conditional `AUTHORING_HALT(id="prep_suspend")` for `awaiting_human`, and a `continue` branch into `AUTHORING_PLAN`. Comments claim "resume re-enters at prep with answered questions" (:42).
+- **BUT `front_half.pypeline` is imported by nothing.** A search for `from.*front_half|import.*front_half` across the entire `megaplan` package returned zero matches. This is a dead skeleton.
+- **Current authoritative source** is `workflow.pypeline:390-391` — bare `AUTHORING_PREP`/`AUTHORING_PLAN` calls importing from `components.py:14-34`.
+- **Runtime suspend/resume** is handler-owned. The prep clarification gate lives in `handlers/plan.py:21,209` per `docs/arnold/megaplan-native-representation-report.md:106`. Resume re-entry passes through `handlers/override.py:1874` and `planning/control_binding.py:1182`. The `resume_cursor` is a persisted DB field (`store/_db/common.py:33,39`), cleared on replan (`replan_state.py:13`).
+- **Policy definition** exists in `components.py:1070-1102` (`PREP_CLARIFY_POLICY`) with control transitions for `prep:clarify` (suspension) and `prep:continue`.
+
+**Plan Artifact Contract:**
+
+- **`BLAST_RADIUS_POLICY`** at `components.py:1828-1840`: declares `timeout_seconds_ref`, `default_ref`, `merge_floor_ref`, `payload_ref` — this is the plan artifact contract carrier. It references `canonical_carriers: ("plan", "revise", "finalize")`.
+- **`ARTIFACT_CONTRACT_POLICY`** at `components.py:1858-1882`: broader artifact contract with `step_contracts_ref` pointing to `step_contracts.py:STEP_CONTRACTS` and `content_types_ref` pointing to `content_types.py:CONTENT_TYPE_REGISTRY`.
+- **`StepContract` registry** exists at `step_contracts.py:87-334` with all 17 phase identities, each carrying `phase_identity`, `schema_key`, `output_kind`, `compatibility_mode`.
+- **Content type registry** exists at `content_types.py:29-37` with canonical content-type identifiers and schemas.
+- **`front_half.pypeline:22-33`** has `FRONT_HALF_HANDOFF_TOPOLOGY` dict declaring the plan handoff contract: `target_ref`, `typed_reducer_outcome`, `selection_modes`, `retry_exhausted_route`, etc. — but this dict is never consumed by any runtime code.
+- **`FRONT_HALF_ROUTING_STEP_IDS`** at `planning.py:54-61` is used by `route_dispatch.py:20-23,39-42` for front-half routing authority.
+
+**Critique Evaluator Retry:**
+
+- **Exists fully in handler code**, not in native source. The evaluator retry loop is at `critique_runtime.py` (invoked via `handlers/critique.py:22-23` → `critique_runtime.handle_critique`). Retry constants: `_MAX_EVAL_ATTEMPTS = 2` (`docs/arnold/megaplan-native-representation-report.md:135`), `_CRITIQUE_WORKER_SHAPE_RETRIES = 2` (`parallel_critique.py:39`).
+- **Component-level policy** at `components.py:947-953` (`CRITIQUE_RETRY_POLICY`): `max_attempts: 2`, `on_exhausted: "blocked"`, `recovery_artifact: "critique_output.json"`.
+- **Raw output recovery** at `critique_runtime.py:74-100` (`_recover_evaluator_payload_from_raw`).
+
+**Selected-Lens Fanout/Fallback:**
+
+- **Exists fully in handler code.** `CRITIQUE_SELECTION_POLICY` at `components.py:930-946` defines `static` mode (all 9 lenses), `creative` mode (provocations), and `adaptive` mode (evaluator-based with `fallback: "static"`).
+- `CRITIQUE_EVIDENCE_CONTRACT` at `components.py:954-976` maps `skip`, `static`, `adaptive`, and `retry_exhausted` modes.
+- `CRITIQUE_ROUTE_SURFACE` at `components.py:978-1011` ties together fanout contract, selection policy, retry policy, evidence contract, skip/retry, and external call surface.
+- The `adaptive_critique` feature flag is wired through `handlers/init.py:131-163`, including `strict_adaptive_critique` (:198-207).
+- Lens complexity scoring and deduplication is in `audits/critique_evaluator.py:342-348`.
+- The `front_half.pypeline:22-33` handoff topology declares `selection_modes: ("skip", "static", "adaptive")` and `retry_exhausted_route: "blocked"` — but as noted, this topology dict is never consumed.
+
+### 3. What Can Be Reused or Generalized
+
+| Artifact | Reuse potential | Risk |
+|---|---|---|
+| `front_half.pypeline` skeleton (lines 36-63) | Directly expandable into real native source. The `PREP_CLARIFY_POLICY` and `AUTHORING_HALT` pattern is the right shape. | Currently imports from `components.py` — must become source-owned constructs. |
+| `FRONT_HALF_HANDOFF_TOPOLOGY` (lines 22-33) | The topology contract shape is correct; it declares what must become runtime-visible. | Must be made active (consumed by lowered source), not a dead dict. |
+| `StepContract` registry (`step_contracts.py`) | Already exists as a neutral data structure. The `CompatibilityMode.NATIVE` field is the right carve-out for native-only steps. | The `compatibility_mode` toggle is currently unused by any extraction gate. |
+| `BLAST_RADIUS_POLICY` / `ARTIFACT_CONTRACT_POLICY` (`components.py`) | These policy shapes can be generalized into declared, source-attached policies. | Currently component-owned; must move to source-attached policy with the same rejection rule as route tables. |
+| `CRITIQUE_RETRY_POLICY` shape (`components.py:947-953`) | The retry policy shape (`max_attempts`, `on_exhausted`, `recovery_artifact`) is a clean abstraction. | The runtime implementation still lives in `critique_runtime.py` and `parallel_critique.py`. |
+| `CRITIQUE_SELECTION_POLICY` with `skip/static/adaptive` modes | The tri-modal pattern is production-proven. Can become a source-level `FanoutPolicy`. | Must not just move the dictionary — the fanout cardinality must be visible in source topology. |
+| `FRONT_HALF_ROUTING_STEP_IDS` (`planning.py:54-61`) | Already used by `route_dispatch.py` to identify front-half authority. Can be generalized to drive the native extraction mapping. | Currently a hardcoded frozenset; should derive from lowered source topology. |
+| Critique evaluator runtime (`audits/critique_evaluator.py`) | Lens selection logic, complexity scoring, deduplication are solid. Can remain as phase body behind typed interface. | Must not own route authority. |
+
+### 4. What Still Must Be Built
+
+1. **Wire `front_half.pypeline` into the runtime.** No code imports it. The `build_pipeline()` path (`planning.py:695-721`) still lowers `workflow.pypeline`, not `front_half.pypeline`. The native front-half skeleton must become the authoritative lowered source, with `workflow.pypeline` delegating to it (or being superseded).
+
+2. **Prep suspend/resume must move from handler-owned to source-owned.** The current suspension happens via handler state mutation (`handlers/plan.py:21,209`), not via a source-visible `AUTHORING_HALT` branch that the runtime serializes/deserializes. The `resume_cursor` in `store/_db/common.py:33` must map to a source-level suspension point identifier, not a handler-phase string.
+
+3. **Plan artifact contract must become source-attached policy, not component metadata.** `BLAST_RADIUS_POLICY` and `ARTIFACT_CONTRACT_POLICY` live in `components.py:1828-1882`. They must become declared policies on named source constructs, with structural rejection of the component-owned originals.
+
+4. **Critique evaluator retry must surface in source topology.** Currently hidden inside `critique_runtime.py` → `parallel_critique.py`. Must become a `retry`-wrapped step in native source (e.g., `retry(critique_evaluator, attempts=2)`), per the representation report's aspirational code (`docs/arnold/megaplan-native-representation-report.md:143`).
+
+5. **Selected-lens fanout/fallback must move from `CRITIQUE_ROUTE_SURFACE` to source-visible `FanoutPolicy`.** The `skip/static/adaptive` selection and `fallback: "static"` are component metadata (`components.py:930-1011`). They must become declared policy on a source-level `parallel_map` construct, with the fallback path visible in the workflow source.
+
+6. **`FRONT_HALF_HANDOFF_TOPOLOGY` dict must become active.** Currently a dead literal in `front_half.pypeline:22-33`. It must be lowered into real runtime contracts that gate handoff between the front-half and back-half workflows.
+
+### 5. Recommended Adjustment to the Sprint Plan
+
+- **Split S2 into S2a (prep/plan/critique source authority) and S2b (gate/revise loop).** The current S2 scope (`docs/arnold/megaplan-native-semantic-parity-master-plan.md:618-656`) bundles all five phases plus gate/revise. S2a should focus on making `front_half.pypeline` the authoritative lowered source for prep/plan/critique, with wired suspend/resume and fanout/fallback/retry, while S2b handles the gate/revise loop coupling.
+
+- **Make S2a's first task wiring `front_half.pypeline` into `build_pipeline()`**, replacing the component-backed `AUTHORING_PREP`/`AUTHORING_PLAN`/`AUTHORING_CRITIQUE` calls in `workflow.pypeline:390-401` with lowered delegation to the native subworkflow.
+
+- **Add an explicit gate: `front_half.pypeline` must be importable by planning.py and produce the same route/state outcomes as the component-backed path** before any extraction closes. The `FRONT_HALF_HANDOFF_TOPOLOGY` dict must become a validated, consumed contract rather than dead metadata.
+
+- **The `StepContract` registry (`step_contracts.py`) and `CompatibilityMode` field should be explicitly consulted by the strict checker** to verify that prep, plan, and critique phase identities are marked `NATIVE` before S2a closes.

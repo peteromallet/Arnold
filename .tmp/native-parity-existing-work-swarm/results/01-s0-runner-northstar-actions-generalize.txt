@@ -1,0 +1,80 @@
+Here is the verified audit.
+
+---
+
+## 1. Verdict: **Not found (design-only, zero code)**
+
+Every sub-component of S0 is absent from the codebase. Only design documents (`docs/arnold/megaplan-north-star-sense-checks-revise-design.md`, `docs/arnold/megaplan-native-semantic-parity-master-plan.md`) describe it. No prior epic closed this work.
+
+---
+
+## 2. Existing or Prior Artifacts (with evidence)
+
+### Absent — direct S0 artifacts
+- **Runner pinning scripts**: `pin_megaplan_runner.py` and `check_megaplan_runner_pin.py` do not exist in `scripts/`. Zero results across the repo.
+- **Test files**: All six S0 exit-gate test files (`test_north_star_actions_gate_revise.py`, `test_north_star_actions_review_blocking.py`, `test_north_star_clean_context_auditor.py`, `test_north_star_severity_schema.py`, `test_north_star_critical_robustness.py`, `test_north_star_revise_post_validation.py`) are absent from `tests/arnold_pipelines/megaplan/`.
+- **`north_star_critical` schema field**: `ChainSpec` (`chain/spec.py:715-741`) and `MilestoneSpec` (`chain/spec.py:565-592`) have no such field. The `driver` parser (`chain/spec.py:870-932`) does not read it.
+- **`north_star_actions` in gate/carry**: `_build_gate_carry` (`handlers/gate.py:270-304`) carries `version`, `recommendation`, `passed`, `rationale_brief`, `settled_decisions`, `warnings`, `orchestrator_guidance`, `carried_flags`, `iteration`, `produced_at` — no `north_star_actions`.
+- **`north_star_actions_addressed` in revise**: The revise handler (`orchestration/critique_runtime.py:1068-1187`) writes `revise_meta_fields` (`changes_summary`, `flags_addressed`, `questions`, `success_criteria`, `assumptions`, `delta_from_previous_percent`) — no `north_star_actions_addressed`.
+- **Pre-worker halt guard**: `handle_revise` (`critique_runtime.py:1068-1124`) has only a cost sanity guard (`revise_cost_sanity_guard` at line 1104). No `add_human_halt` or unmappable-blocking-action guard.
+- **Clean-context auditor**: Zero results for `clean_context_auditor` in any `.py` file.
+- **North Star severity normalization**: No code assigns `blocking` severity by schema for route authority, baselines, exemptions, target narrowing, generated conformance authority, or live-plan topology/resume risk.
+
+### Adjacent/generalizable mechanisms that DO exist
+
+| Adjacent mechanism | Location | Generalizability |
+|---|---|---|
+| **Gate→Revise feedback loop** | `handlers/gate.py:270-308` builds/writes `gate_carry.json`; `critique_runtime.py:1068` consumes gate artifacts in revise | This is the exact carrier path for `north_star_actions`. Adding a field to `_build_gate_carry` and reading it in revise is low-risk. |
+| **Critique flag severity normalization** | `workers/hermes.py:1752-1769` — `_SEVERITY_HINT_CANONICAL` maps free-form severity to enum; `_normalize_critique_flag_severity` applies it post-worker | Same pattern needed for North Star severity normalization (post-worker handler override for dangerous categories → blocking). |
+| **Gate cap-blocking logic** | `handlers/gate.py:372-397` — `_is_cap_blocking_flag` escalates correctness/security flags at non-cosmetic severity; category-aware escalation | Directly analogous to North Star dangerous-category blocking. The `_CRITICAL_CATEGORIES` set pattern can be extended to include `route_authority`, `baseline_rewrite`, etc. |
+| **Open question severity normalization** | `model_seam.py:565-587` — `_normalize_prep_open_question` forces `severity` to `blocking` or `assume_and_proceed` based on classification | Same normalization pattern. Shows existing code already overrides model-claimed severity with handler-enforced schema. |
+| **Anchor/North Star infrastructure** | `anchors.py:15-16` supports `north_star` anchor type; `chain/spec.py:717` has `anchors: AnchorSpec`; `cloud/cli.py:1140-1148` resolves North Star anchors per milestone | The anchor resolution path exists and can host `north_star_critical` as a field on `ChainSpec`/`MilestoneSpec` without new infrastructure. |
+| **Flag resolution tracking** | `flags.py:255` (`update_flags_after_revise`); `critique_runtime.py:1157` writes `flags_addressed` to revise meta | Pattern for `north_star_actions_addressed`: track which action IDs were resolved and verify structural markers. |
+| **Revise post-worker write path** | `critique_runtime.py:1155-1170` writes `revise_meta_fields` to `plan_vN.meta.json` | Adding `north_star_actions_addressed` here is a field addition, not new infrastructure. |
+| **Reprompt/force-proceed guard** | `handlers/gate.py:154-176` (`_resolve_revise_transition`, `_post_revise_gate_allowed`) | Pattern for blocking North Star actions from being force-proceeded as cosmetic. |
+
+---
+
+## 3. What Can Be Reused or Generalized
+
+- **`_build_gate_carry`** and **`_write_gate_carry`**: Add `north_star_actions` as a new top-level key. This is a field addition to an existing dict builder. Revise already reads `gate_carry.json` (via `_gate_summary_or_skipped` in `prompts/_shared.py:22` and `prompts/execute.py:658`), so the read path exists — only the prompt rendering of the new field is new.
+- **`_SEVERITY_HINT_CANONICAL` / `_normalize_critique_flag_severity`** pattern: A `_normalize_north_star_action_severity` function can follow the same post-worker normalization pattern, overriding dangerous categories to `blocking` before routing.
+- **`_is_cap_blocking_flag`** pattern: Extend `_CRITICAL_CATEGORIES` or add a parallel `_is_north_star_blocking` that checks action categories (route_authority, baseline_rewrite, etc.) and forces blocking severity.
+- **`_normalize_prep_open_question`** pattern: Handler-enforced severity override already proven in the codebase — North Star severity normalization is not a new concept.
+- **`MilestoneSpec` / `ChainSpec` dataclasses**: Adding `north_star_critical: bool = False` is a field addition. Robustness rejection logic during `from_dict` already validates other field combinations (e.g., `chain/spec.py:884-888` for `escalate_action`).
+
+---
+
+## 4. What Still Must Be Built
+
+1. **Runner pinning scripts** (`pin_megaplan_runner.py`, `check_megaplan_runner_pin.py`): New from scratch. Must capture commit SHA, package fingerprint, profile, robustness, auto-drive corpus version, and produce/validate a JSON pin record.
+2. **`north_star_actions` schema + gate/carry field**: New field in `_build_gate_carry`, gate prompt rendering, and gate scratch→canonical promotion.
+3. **`north_star_actions_addressed` in revise**: New field in `revise_meta_fields`, prompt rendering, and post-worker structural validation (prose-only claims must fail).
+4. **Pre-worker halt guard**: New control-flow logic in `handle_revise` before the worker is invoked — halt on `add_human_halt`, unmappable blocking actions, baseline rewrites, route-authoritative exemptions, target narrowing, live-plan topology decisions.
+5. **Post-worker revise validation**: New validation after worker returns — verify `plan_refs` are concrete, action-specific structural markers exist.
+6. **`north_star_critical` schema field**: New field on `ChainSpec` and `MilestoneSpec`, with robustness rejection (`bare`/`light` + `north_star_critical: true` → error).
+7. **Severity normalization for dangerous categories**: New handler-side normalization that overrides agent-claimed severity to `blocking` for route authority, baselines, row/carrier exemptions, target narrowing, generated conformance authority, live-plan topology/resume risk.
+8. **Clean-context auditor**: New subagent/invocation pattern for explanation-style North Star questions — launches a separate principal from a different model family, predicts behavior from source alone, verifies against run evidence.
+9. **Finalize/review enforcement**: New logic in finalize to lower North Star obligations into executable tasks/checks; new review logic to block closeout for unresolved `reject_closeout` actions.
+10. **Six test files + canary audit infrastructure**: All new.
+11. **North Star question parsing** from `NORTHSTAR.md` and sprint briefs: New parsing logic to extract `## Sprint Review / North Star Sense Check` questions.
+
+---
+
+## 5. Recommended Adjustment to the Sprint Plan
+
+**Risk: LOW (design-complete, code-absent, adjacent infrastructure is healthy).** S0 is a pure plumbing sprint with no semantic extraction — it adds structured action fields to existing feedback loops. The adjacent mechanisms are robust and well-tested.
+
+**Recommendations:**
+
+1. **No extraction risk**: S0 modifies only the Megaplan runner tooling (gate/revise/finalize/review handlers, chain spec, prompts). No `.pypeline` source changes. Rollback is safe.
+
+2. **Prioritize the gate→revise carrier path first** (items 2, 3, 5 above). The `gate_carry.json` → revise pipeline already works. Adding `north_star_actions` as a field and rendering it in the revise prompt is the smallest blast-radius change. The pre-worker halt guard (item 4) should land in the same change to avoid a window where blocking actions reach the worker without interception.
+
+3. **Severity normalization should live in the gate handler**, not only in prompts. The gate handler already has `_is_cap_blocking_flag` (`gate.py:379`) — extend this pattern with a `_normalize_north_star_severity` that runs before routing. The master plan confirms this at lines 346-348: "This override belongs in the gate/review handler, not only in prompts."
+
+4. **Defer the clean-context auditor to a follow-on sprint if necessary**. The design doc (`megaplan-north-star-sense-checks-revise-design.md:469-471`) explicitly says: "Review backstops, clean-context canaries, and skill-template polish can be follow-on work." The canary audit is an S0 exit gate but the canary *infrastructure* could be a thin wrapper around the existing Hermes subagent launcher.
+
+5. **The `north_star_critical` schema field should validate at `ChainSpec.from_dict` time**, where `driver` keys are already parsed (`chain/spec.py:870-932`). Reject `north_star_critical: true` + `robustness` ∈ {`bare`, `light`} immediately — do not silently upgrade robustness. This is a 5-line addition to `from_dict`.
+
+6. **No prior report claims S0 completion.** The design docs are explicit that this is to-be-built ("What Needs To Be Added", North Star design doc lines 369-416; S0 scope in master plan lines 344-405). There are no unverified prior claims to challenge.

@@ -1,0 +1,134 @@
+base_branch: main
+
+anchors:
+  north_star: NORTHSTAR.md
+
+launch_preconditions:
+  - name: native parity corrective epic completed with content-addressed proof
+    kind: chain_completed
+    chain: .megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml
+    require_manifest: true
+  - name: native-to-platformization handoff manifest exists
+    path: .megaplan/initiatives/megaplan-native-parity-corrective/platformization-handoff-manifest.json
+    check:
+      kind: contains_text
+      text: arnold.native_to_platformization_handoff.v1
+  - name: holistic native workflow representation report exists
+    path: docs/arnold/megaplan-native-representation-report.md
+    check:
+      kind: contains_text
+      text: Megaplan Native Python and Reusable Workflow Platform Representation Report
+  - name: platform contract exists
+    path: .megaplan/initiatives/native-workflow-platformization/PLATFORM_CONTRACT.md
+    check:
+      kind: contains_text
+      text: Native Workflow Platformization Contract
+  - name: platformization initiative source is committed and clean
+    kind: git_tracked
+    path: .megaplan/initiatives/native-workflow-platformization
+
+milestones:
+  - label: s1-component-standard-extraction-inventory
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s1-component-standard-extraction-inventory.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    with_prep: true
+    notes: >-
+      Consume the Native Parity handoff; freeze the candidate descriptor,
+      one-workflow-per-file .pype model, deterministic authoring,
+      lifecycle, composition, execution-mode, identity, evolution and proof
+      contracts plus executable negative and DX corpora. The standard remains
+      experimental.
+
+  - label: s2a-enforced-composition-resolution-package-surface
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s2a-enforced-composition-resolution-package-surface.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    depends_on:
+      - s1-component-standard-extraction-inventory
+    notes: >-
+      Implement product-neutral validation, lowering, lifecycle, admission,
+      authority, durable state and local-test semantics against S1; prove
+      real-store CAS, deterministic locks, authority/effect joins and mode
+      isolation before the public authoring toolchain.
+
+  - label: s2b-pype-authoring-format-toolchain
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s2b-pype-authoring-format-toolchain.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    with_prep: true
+    depends_on:
+      - s2a-enforced-composition-resolution-package-surface
+    notes: >-
+      Productize the adopted one-workflow-per-file .pype contract as the
+      product-neutral linker, package, converter, transactional refactoring,
+      CLI/editor and authoring SDK; prove identity, packaging, DX and legacy
+      boundaries before reusable extraction.
+
+  - label: s4-isolated-extraction-recomposition
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s4-isolated-extraction-recomposition.md
+    profile: partnered-5
+    robustness: thorough
+    depth: xhigh
+    depends_on:
+      - s2b-pype-authoring-format-toolchain
+    notes: >-
+      Extract the first-wave patterns, make Megaplan consume them, and prove
+      concurrent-instance isolation, shape-independent recomposition,
+      suspension/cancellation/replay safety, developer iteration and unchanged
+      Megaplan golden behavior.
+
+  - label: s5-adversarial-second-consumer-substitutability
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s5-adversarial-second-consumer-substitutability.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    with_prep: true
+    depends_on:
+      - s4-isolated-extraction-recomposition
+    notes: >-
+      Challenge the candidate standard with an unrelated non-Megaplan consumer,
+      novel composition shapes and independent implementation; separately prove
+      new-instance and resume compatibility, upgrade/migration/quarantine and
+      cross-consumer observability.
+
+  - label: s6-certification-evolution-adoption
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s6-certification-evolution-adoption.md
+    profile: premium
+    robustness: thorough
+    depth: xhigh
+    depends_on:
+      - s5-adversarial-second-consumer-substitutability
+    validate:
+      - kind: final_conformance_gate
+        validator: scripts/validate_native_workflow_platform_conformance.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/final-proof-map.json
+    notes: >-
+      Incorporate the adversarial-consumer changes, freeze and certify the
+      stable standard, canonical-workflow discovery/default selection/linking,
+      evolution and refactoring rules, DX baselines, registry states and the
+      content-addressed completion manifest. Unproven abstractions remain
+      experimental.
+
+on_failure:
+  retry: retry_milestone
+  escalate: bump_profile
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+
+merge_policy: auto
+prerequisite_policy: required
+validation_policy: required
+
+driver:
+  auto_approve: true
+  max_iterations: 90
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0

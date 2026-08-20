@@ -1,0 +1,101 @@
+## Verdict: **Weakens** the plan.
+
+## Evidence
+
+### 1. The plan's parity assumption is insufficient
+
+The master plan's rollout-safety claim relies on label compatibility:
+
+> `docs/arnold/megaplan-native-semantic-parity-master-plan.md:458-460`
+> *"Auto-drive characterization corpus, override/resume commands, serialized state consumers, state names, route labels, and artifact names remain compatible unless a separate gated migration changes them."*
+
+This assumes that preserving state names (`awaiting_human_verify`, `blocked`), route labels (`prep`, `gate`, `revise`), and artifact names suffices for in-flight plan survival. It ignores the **manifest-hash-based cursor identity** system.
+
+### 2. Manifest hashes change at every sprint boundary
+
+Every sprint (S2–S6) extracts handlers/components into native `.pypeline` topology. That changes the manifest topology, which changes the content-addressed `manifest_hash`. A suspended plan's `ReplayCursor` records the hash of the topology that was running when it suspended:
+
+> `arnold/kernel/replay.py:48-68`
+> ```python
+> class ReplayCursor:
+>     manifest_hash: str      # sha256 of pipeline topology
+>     reentry_id: str | None  # suspended node
+>     scope_stack: tuple[str, ...]
+>     event_sequence: int | None
+> ```
+
+### 3. Cursor resolution quarantines on hash mismatch
+
+When post-sprint code tries to resume a plan whose cursor carries the old manifest hash, `resolve_cursor` returns `QUARANTINE` with `cursor=None` — it does not bridge the gap:
+
+> `arnold/kernel/replay.py:128-152`
+> ```python
+> if requested.manifest_hash == native_manifest_hash:
+>     return CursorResolution(cursor=requested, ...)  # REUSE
+> # ...
+> if alias is None:
+>     return CursorResolution(
+>         cursor=None,
+>         resolution=ReplayResolution(
+>             decision=ReplayDecision.QUARANTINE,
+>             reason="cursor manifest_hash does not match native manifest and no legacy alias exists",
+>         ), ...
+>     )
+> ```
+
+The `migrate_legacy_resume` function in `arnold/runtime/resume.py:95-128` produces `quarantined-manifest-mismatch` as the post-trust label on mismatch — it quarantines, it does not migrate.
+
+### 4. Legacy aliases only bridge *one* transition
+
+The only alias machinery maps a single legacy sentinel (`sha256:000...000`) to the current manifest hash:
+
+> `arnold_pipelines/megaplan/runtime/resume_migration.py:23-36`
+> ```python
+> _LEGACY_SENTINEL_HASH: str = "sha256:" + "0" * 64
+> def canonical_megaplan_alias(target_manifest_hash: str) -> LegacyAliasRecord:
+>     return LegacyAliasRecord(
+>         alias="megaplan-legacy-sentinel",
+>         source_manifest_hash=_LEGACY_SENTINEL_HASH,
+>         target_manifest_hash=target_manifest_hash,
+>     )
+> ```
+
+There is **no sprint-to-sprint alias registry**. An S2 plan suspended with the post-S2 manifest hash cannot be resumed by S3 code — no alias maps the S2 hash to the S3 hash.
+
+### 5. The oracle synthesis flags this as an open risk
+
+> `docs/arnold/megaplan-native-oracle-synthesis.md:251-258`
+> *"What happens to a plan suspended under old semantics when deployed code moves that path to native source: resume, quarantine, or force replan? Are new fanout child paths and batch checkpoint cursors compatible with old resume cursors?"*
+
+The master plan never answers these questions. The word "drain" appears nowhere in the 570-line master plan. There is no per-sprint gate for in-flight plan migration, no drain-before-deploy policy, and no sprint-to-sprint alias mechanism.
+
+### 6. `state.json` is being deprecated, not migrated
+
+> `arnold_pipelines/megaplan/_core/state.py:71-74`
+> *"state.json is no longer an independent authority for manifest-backed callers. It survives only as a migration input or a read-only sunset projection."*
+
+The plan is dismantling the old persistence surface (S1–S7 delete `handler_ref`, `route_bindings`, manifest backend branch translation, etc.) without a replacement migration story for in-flight state that references the old topology.
+
+### 7. The cleanup-plan acknowledges the dogfood problem
+
+> `docs/arnold/arnold-megaplan-cleanup-plan.md:622`
+> *"From M2 onward, do not rely on the same in-flight branch's `megaplan auto` to drive the cleanup unless a parity check proves the run/resume path still works."*
+
+This acknowledges that the run/resume path breaks during extraction — but the master plan provides no mechanism to prove it still works.
+
+## Smallest concrete plan amendment
+
+Add to the execution amendments (before line 21, the existing amendments block):
+
+```
+- Per-sprint drain-or-migrate gate: before sprint N+1 extraction begins,
+  either (a) all in-flight plans referencing the sprint-N manifest hash
+  must be drained to a terminal state, or (b) a sprint-to-sprint
+  LegacyAliasRecord must be registered mapping the sprint-N manifest
+  hash to the sprint-N+1 manifest hash, with a validated reentry-id
+  compatibility check. Quarantine without drain-or-alias is not
+  acceptable: suspended plans in `awaiting_human_verify` or `blocked`
+  must be recoverable across the sprint boundary.
+```
+
+This is ~90 words and closes the gap. It doesn't require a full state-migration engine — just a policy that each sprint either drains or aliases its predecessor's manifest hash before closeout.

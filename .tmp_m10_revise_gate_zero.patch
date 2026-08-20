@@ -1,0 +1,21 @@
+diff --git a/tests/orchestration/test_revise_blast_radius.py b/tests/orchestration/test_revise_blast_radius.py
+--- a/tests/orchestration/test_revise_blast_radius.py
++++ b/tests/orchestration/test_revise_blast_radius.py
+@@ -9,0 +10 @@
++from arnold_pipelines.megaplan.handlers import gate
+@@ -89 +90 @@
+-        critique,
++        gate,
+@@ -116,2 +117,2 @@
+-    monkeypatch.setattr(critique, "_next_progress_step", lambda *args, **kwargs: "finalize")
+-    monkeypatch.setattr(critique, "_remaining_significant_flags", lambda *args, **kwargs: [])
++    monkeypatch.setattr(gate, "_next_progress_step", lambda *args, **kwargs: "finalize")
++    monkeypatch.setattr(gate, "_remaining_significant_flags", lambda *args, **kwargs: [])
+@@ -224 +225 @@
+-        critique,
++        gate,
+@@ -246,2 +247,2 @@
+-    monkeypatch.setattr(critique, "_next_progress_step", lambda *args, **kwargs: "finalize")
+-    monkeypatch.setattr(critique, "_remaining_significant_flags", lambda *args, **kwargs: [])
++    monkeypatch.setattr(gate, "_next_progress_step", lambda *args, **kwargs: "finalize")
++    monkeypatch.setattr(gate, "_remaining_significant_flags", lambda *args, **kwargs: [])

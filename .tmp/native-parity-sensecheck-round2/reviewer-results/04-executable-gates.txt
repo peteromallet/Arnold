@@ -1,0 +1,193 @@
+Now I have comprehensive evidence. Let me construct the full audit.
+
+---
+
+# Lens 4 — Executable-Gate and False-Pass Adversary Audit
+
+## 1. Verdict
+
+**The Native Parity `chain.yaml` is syntactically well-formed and validates correctly against the current loader, but the executable substrate is hollow.** Five conditions defeat the premise:
+
+1. **Custody M11 is not provably complete.** No chain state file exists for `custody-control-plane/chain.yaml` (`spec.py:1968-1977`), no `completion-manifest.json` exists (`spec.py:1735-1740`), and the custody chain defines 4 milestones (m1–m4), not 11. The `chain_completed` precondition with `require_manifest: true` **cannot pass** in the current repository state.
+
+2. **`completion_contract_mode` defaults to `"shadow"`** (`spec.py:956`). The `chain.yaml` never overrides it. Every completion-contract gate, including the final conformance gate in S7, runs non-blocking — violations warn but never prevent milestone advancement. This is the single largest false-pass surface: the chain can reach `done` while every North Star invariant is violated, as long as the driver loop exits cleanly.
+
+3. **`final-proof-map.json` is missing** (confirmed absent at `.megaplan/initiatives/megaplan-native-parity-corrective/final-proof-map.json`). S7 declares this as a required `validate.proof_map` artifact — but `validate_paths` only checks that milestone idea files exist, not that validate artifacts pre-exist.
+
+4. **Launch precondition `contains_text` checks are substring-only.** The four supporting documents (`representation-report.md`, `codebase-map.md`, `oracle-synthesis.md`, `corrective-plan.md`) need only contain a header string. Any document with the right title but empty/substantively wrong body satisfies the precondition.
+
+5. **The North Star is existence-validated, not content-validated.** `validate_anchor_paths` (`spec.py:1210-1215`) confirms the file exists and is valid markdown. No semantic check ensures milestones actually satisfy the North Star's terms.
+
+## 2. Complete Chain-Field Audit Table
+
+Each row: YAML path in `chain.yaml`, the loader's handling in `spec.py`, and false-pass risk.
+
+| # | YAML Path | Value | Loader Support | Type/Value Validation | Runtime Semantics | Test Evidence | False-Pass Risk |
+|---|-----------|-------|----------------|----------------------|-------------------|---------------|-----------------|
+| 1 | `base_branch` | `main` | `ChainSpec.from_dict:766-769` | Must be non-empty string | All branch operations target this ref | Tested implicitly in chain tests | LOW — well-validated |
+| 2 | `anchors.north_star` | `NORTHSTAR.md` | `AnchorSpec.from_yaml:307-320` | Must be non-empty string | Path resolved relative to chain.yaml; file validated at line 1212 | `test_chain_epic_briefs_lint.py` | **MEDIUM** — validates existence only, not content semantics |
+| 3 | `launch_preconditions[0].name` | `"custody control plane M11..."` | `LaunchPreconditionSpec:325` | Required non-empty string | Label in error messages only | `test_chain_launch_preconditions.py:40-53` | LOW |
+| 4 | `launch_preconditions[0].kind` | `chain_completed` | `spec.py:351-354` | Must be `artifact`, `chain_completed`, or `git_tracked` | Triggers `_validate_chain_completed_precondition` | `test_chain_launch_preconditions.py` | **HIGH** — see below |
+| 5 | `launch_preconditions[0].chain` | `.megaplan/initiatives/custody-control-plane/chain.yaml` | `spec.py:358-360` | Required non-empty string for `chain_completed` | Resolved, checked existence, state loaded, milestone completion verified | `test_chain_launch_preconditions.py` | **CRITICAL** — custody has no chain state, no manifest |
+| 6 | `launch_preconditions[0].require_manifest` | `true` | `spec.py:372-377` | Must be boolean | Triggers `_validate_completion_manifest` which checks `completion-manifest.json` existence, schema, hashes, proof artifacts | Not directly tested for `chain_completed` + manifest combo | **CRITICAL** — `completion-manifest.json` does not exist |
+| 7 | `launch_preconditions[1].name` | `"end-state report exists"` | Same as #3 | Required non-empty string | Label only | `test_chain_launch_preconditions.py:93-114` | LOW |
+| 8 | `launch_preconditions[1].path` | `docs/arnold/megaplan-native-representation-report.md` | `spec.py:412-413` | Required for `artifact` kind | File existence checked at `spec.py:2059-2063` | ✓ tested | LOW |
+| 9 | `launch_preconditions[1].check.kind` | `contains_text` | `spec.py:422-437` | Must be `exists`, `contains_text`, or `review_log_clean` | Reads file, checks substring | `test_chain_launch_preconditions.py:93-114` | **MEDIUM** — substring check, not content quality |
+| 10 | `launch_preconditions[1].check.text` | `"Native Python Representation Report"` | `spec.py:430-437` | Must be non-empty string when `kind=contains_text` | Substring match at `spec.py:2072-2077` | ✓ tested | **MEDIUM** — matches header only |
+| 11 | `launch_preconditions[2]` | codebase map, `contains_text` | Same as #8-#10 | Same | Same | ✓ | **MEDIUM** |
+| 12 | `launch_preconditions[3]` | oracle synthesis, `contains_text` | Same | Same | Same | ✓ | **MEDIUM** |
+| 13 | `launch_preconditions[4]` | corrective plan, `contains_text` | Same | Same | Same | ✓ | **MEDIUM** |
+| 14 | `launch_preconditions[5]` | corrective initiative, `git_tracked` | `spec.py:386-405` | `path` required, verifies tracked in HEAD, no uncommitted changes | `_validate_git_tracked_precondition` at `spec.py:1422-1471` | `test_chain_launch_preconditions.py:148-200+` | LOW — solid git integration |
+| 15 | `launch_preconditions[6]` | corrective plan, `git_tracked` | Same as #14 | Same | Same | ✓ | LOW |
+| 16 | `milestones[0].label` | `s1-custody-admission-semantic-preservation` | `MilestoneSpec:598-601` | Required non-empty string | Used for state tracking, dependency resolution | `test_chain_milestone_validation.py` | LOW |
+| 17 | `milestones[0].idea` | `briefs/s1-checker-outcomes-builder-slice.md` | `MilestoneSpec:599-603` | Required non-empty string; path validated in `validate_paths:2096-2105` | Loaded as plan idea file | ✓ tested | LOW |
+| 18 | `milestones[0].profile` | `partnered-5` | `MilestoneSpec:607-609` | String (no enum validation) | Passed to `_init_plan` as profile | Not enum-validated | **LOW** — freeform string |
+| 19 | `milestones[0].robustness` | `extreme` | `MilestoneSpec:610-612` | String (no enum validation) | Passed to `_init_plan` | Not enum-validated | LOW |
+| 20 | `milestones[0].depth` | `max` | `MilestoneSpec:614` via `_optional_choice` | Must be in `VALID_DEPTH_CHOICES` | Passed to `_init_plan` | `test_fallback_chains_profile_validation.py` | LOW |
+| 21 | `milestones[0].notes` | prose string | `MilestoneSpec:659-661` | String, optional | Informational only — **never enforced** | Not validated semantically | **HIGH** — prose-only gate |
+| 22 | `milestones[1].depends_on` | `[s1-custody-admission-semantic-preservation]` | `MilestoneSpec:663-674` | Must be label or list of labels; validated against prior milestones at `spec.py:790-807` | Blocks advancement until dependency completed | `test_chain_epic_briefs_lint.py` | LOW — well-enforced |
+| 23 | `milestones[1.6].depends_on` (all S2-S7) | chain dependency labels | Same as #22 | All validated | Topological sort enforced | ✓ | LOW |
+| 24 | `milestones[6].validate[0].kind` | `final_conformance_gate` | `MilestoneValidationSpec:540-547` | Must be exactly `final_conformance_gate` | Validated only at milestone completion; runs validator script | `test_chain_milestone_validation.py` | **HIGH** — `completion_contract_mode` defaults to `"shadow"` |
+| 25 | `milestones[6].validate[0].validator` | `scripts/validate_native_representation_conformance.py` | `spec.py:549-553` | Required | Script invoked at completion; exit code 0 required | `test_chain_milestone_validation.py:24-78` | **MEDIUM** — script exists but proof_map missing |
+| 26 | `milestones[6].validate[0].conformance` | `docs/arnold/megaplan-native-representation-conformance.yaml` | `spec.py:549-553` | Required | Content-addressed in validation receipt | ✓ | LOW |
+| 27 | `milestones[6].validate[0].traceability` | `docs/arnold/megaplan-native-representation-traceability.yaml` | Required | Same | Same | ✓ | LOW |
+| 28 | `milestones[6].validate[0].proof_map` | `.megaplan/initiatives/megaplan-native-parity-corrective/final-proof-map.json` | Required | **FILE DOES NOT EXIST** | Required by validation receipt at `spec.py:1638-1648` | No test covers missing proof_map | **CRITICAL** — absent |
+| 29 | `on_failure.retry` | `retry_milestone` | `FailurePolicy:249-289` | Must be in `VALID_FAILURE_ACTIONS` | Walked first, bounded by retry counter | `test_chain_launch_preconditions.py:56-67` | LOW |
+| 30 | `on_failure.escalate` | `bump_profile` | Same | Must be in `VALID_FAILURE_ACTIONS` | Walked after retries exhaust | ✓ | LOW |
+| 31 | `on_failure.abort` | `stop_chain` | Same | Must be in `VALID_FAILURE_ACTIONS` | Terminal action | ✓ | LOW |
+| 32 | `on_escalate.abort` | `stop_chain` | Same | Same | Terminal after escalation | ✓ | LOW |
+| 33 | `merge_policy` | `auto` | `spec.py:830-845` | Must be `auto`, `review`, or `manual` | Controls PR merge behavior | `test_chain_milestone_validation.py:81-100` | LOW |
+| 34 | `prerequisite_policy` | `required` | `spec.py:847-852` | Must be `none` or `required` | Non-`none` value triggers prerequisite validation | Not tested for chain_completed interaction | LOW |
+| 35 | `validation_policy` | `required` | `spec.py:853-858` | Must be `none` or `required` | Non-`none` triggers validation checks | Partially tested | LOW |
+| 36 | `driver.auto_approve` | `true` | `spec.py:892` | Boolean | Controls auto-approval of plan outcomes | ✓ | LOW |
+| 37 | `driver.max_iterations` | `90` | `spec.py:879` | Integer | Passed to driver | ✓ | LOW |
+| 38 | `driver.require_clean_base` | `true` | `spec.py:893-897` | Boolean | Requires clean git base before milestone start | ✓ | LOW |
+| 39 | `driver.robustness` | `thorough` | `spec.py:889-891` | String | Passed to driver | ✓ | LOW |
+| 40 | `driver.poll_sleep` | `8.0` | `spec.py:880` | Float | Poll interval | ✓ | LOW |
+
+**Unsupported/unknown keys**: The loader at `spec.py:747-760` has a fixed `allowed_keys` set. Any key not in that set (e.g., if someone added `custody_pin`, `shadow_enforce`, `artifact_equality`) would raise `CliError("invalid_spec", "Unknown chain spec key ...")`. The current `chain.yaml` uses only known keys. ✓
+
+## 3. Gate Table
+
+| Gate | Command / Artifact | Executable? | Semantics Checked | False-Pass Route | Status |
+|------|-------------------|-------------|-------------------|------------------|--------|
+| **Launch: Custody M11 complete** | `chain_completed` + `require_manifest: true` on `custody-control-plane/chain.yaml` | Yes — via `validate_launch_preconditions` at `run_chain:4783` → `validate_paths:2116` | Chain state exists, all milestones `done`, manifest hash-validated, proof artifacts content-addressed | Custody has NO chain state, NO manifest; if synthetic state were created without real M11 work, the manifest hash chain would pass if files matched | **FAILS** (infra) |
+| **Launch: supporting documents** | 4× `contains_text` + 2× `git_tracked` | Yes | Substring match, git tracking, no uncommitted changes | Documents could be placeholders with correct headers; text check is shallow | **PASSES** (but hollow) |
+| **S1: Custody admission** | `briefs/s1-checker-outcomes-builder-slice.md` → initialized as plan | Yes — `_init_plan` | Brief is loaded as plan idea; no semantic validation of S1 outcomes against North Star at chain level | Plan could complete without actually building the semantic checker; chain only checks plan state → `done` | **PROSE-ONLY** |
+| **S2: Control primitives** | `briefs/s2-front-half-native-loop.md` | Yes | `depends_on` ensures S1 completed first | Same as S1; no programmatic verification of "product-neutral constructs" | **PROSE-ONLY** |
+| **S3: Front-half slice** | `briefs/s3-tiebreaker-replan-native.md` | Yes | `depends_on` S2 | Same pattern | **PROSE-ONLY** |
+| **S4: Tiebreaker/finalize** | `briefs/s4-execute-dag-approval-resume.md` | Yes | `depends_on` S3 | Same | **PROSE-ONLY** |
+| **S5: Delivery cycle** | `briefs/s5-review-rework-finalize.md` | Yes | `depends_on` S4 | Same | **PROSE-ONLY** |
+| **S6: Override/auto** | `briefs/s6-override-auto-compat-collapse.md` | Yes | `depends_on` S5 | Same | **PROSE-ONLY** |
+| **S7: Conformance gate** | `final_conformance_gate` validator | Yes — runs `validate_native_representation_conformance.py` at completion | Validator exit code, receipt hashes, conformance/traceability/proof_map content-addressed | `completion_contract_mode=shadow` means validator failures only warn; `final-proof-map.json` missing; no set-equality automated test | **CRITICAL — SHADOW MODE** |
+
+## 4. Ranked Gaps
+
+### Gap 1 (CRITICAL): `completion_contract_mode` defaults to `"shadow"`
+
+**Evidence**: `spec.py:956` — `completion_contract_mode: str = "shadow"`. The `chain.yaml` never overrides it. The `normalize_contract_mode` function (`completion_contract.py:118-122`) accepts `"shadow"`, `"warn"`, or `"enforce"`, defaulting to `"shadow"`. In shadow mode, the completion guard at `__init__.py:5805` never triggers the `enforce_blocked` branch — violations are logged and discarded.
+
+**False-pass**: Every milestone can complete with semantic violations intact. The S7 `final_conformance_gate` validator can return non-zero, and the chain still marks S7 `done`.
+
+**Amendment**: Add to `chain.yaml`:
+```yaml
+driver:
+  completion_contract_mode: enforce
+  full_suite_backstop_mode: enforce
+```
+
+### Gap 2 (CRITICAL): Custody M11 has no verifiable completion evidence
+
+**Evidence**: `custody-control-plane/chain.yaml` defines m1–m4 only. No chain state file exists at `.megaplan/plans/.chains/chain-1f7ba7950763.json`. No `completion-manifest.json` exists next to the chain. The `chain_completed` launch precondition with `require_manifest: true` at `spec.py:1947-2032` cannot pass.
+
+**False-pass**: The chain cannot launch. But if a fake chain state + manifest were crafted, the manifest hash-verification (`spec.py:1724-1944`) would catch content mismatches. The primary risk is that someone runs custody-control-plane to completion through the chain runner and generates a valid manifest — but that chain only has 4 milestones, not "M11".
+
+**Amendment**: Either (a) complete custody-control-plane through all 4 milestones with a valid completion manifest, or (b) change the precondition to match the actual custody milestone count. The README says "M11 end state" but the chain has m1–m4.
+
+### Gap 3 (CRITICAL): `final-proof-map.json` missing
+
+**Evidence**: File search confirms no `final-proof-map.json` in `.megaplan/initiatives/megaplan-native-parity-corrective/`. S7's `validate[0].proof_map` references it, and the validation receipt at `spec.py:1638-1648` requires matching `proof_map` path. The conformance validator script (`validate_native_representation_conformance.py`) expects to consume a proof map.
+
+**Amendment**: The proof map should be generated by completed milestones as they produce evidence. Add an S7 prerequisite that requires proof artifacts from S1–S6 to exist before S7 can start. The chain currently has no such gate.
+
+### Gap 4 (HIGH): Prose-only gates for all S1–S7 milestones
+
+**Evidence**: Each milestone's `notes` field (chain.yaml:43,51,59,67,78,87,100) carries the semantic contract, but `MilestoneSpec.notes` at `spec.py:659-661` is stored as an optional string with **zero programmatic enforcement**. The chain advances a milestone when the plan reaches `state: done` — the plan's AI agent determines "done", and the chain validates only that the plan state says `done`, not that the notes' conditions are actually satisfied.
+
+**False-pass**: An LLM-driven plan can mark itself `done` with a prose summary that claims — but does not demonstrate — semantic preservation. The chain has no automated check that "the current 85-lowered-node to 14-component-step collapse must fail" (S1 notes), or that "WBC producers are rooted at lowered nodes/children" (S3 notes), or any of the 40+ semantic constraints across the 7 briefs.
+
+**Amendment**: For each milestone, add a blocking `validate` entry with a programmatic checker, or convert prose claims into testable assertions in the relevant brief's acceptance criteria that the plan agent must satisfy.
+
+### Gap 5 (HIGH): Launch `contains_text` checks are structurally weak
+
+**Evidence**: `spec.py:2072-2077` — the check is `expected in contents`, a bare substring match. The documents need only contain their title string. A document with `# Megaplan Native Python Representation Report` followed by 50 pages of lorem ipsum would pass.
+
+**Amendment**: Add `review_log_clean` checks or content-hash pinning for these critical documents. The `contains_text` pattern should match substantive claims, not just titles.
+
+### Gap 6 (MEDIUM): No set-equality automation
+
+**Evidence**: The North Star (`NORTHSTAR.md:96-105`) requires: "A generated, fail-closed conformance model proves source/lowering/runtime set equality and zero hidden route authority." S7's brief requires "exact set equality across authored source nodes/children, lowered topology, registered WBC producers, executed runtime node/child attempts..." (`s7-final-conformance-rollout.md:12-15`). The conformance validator script (`validate_native_representation_conformance.py`) validates a ledger, but nothing in the chain automation generates or enforces the set-equality computation itself — that's left to the plan agent.
+
+**Amendment**: Add a `validate` entry that runs a dedicated set-equality script (comparing source AST nodes to lowered graph nodes to runtime traces) with a blocking exit code.
+
+### Gap 7 (MEDIUM): `MilestoneSpec.profile` and `robustness` are unvalidated free strings
+
+**Evidence**: `spec.py:607-612` — `profile` and `robustness` accept any string. The chain uses `partnered-5` and `extreme` but these are never validated against known enum values. A typo like `partered-5` would silently pass and potentially select the wrong agent profile.
+
+**Amendment**: Add `profile` and `robustness` to `_optional_choice` with validated enum sets, like `vendor`, `depth`, and `critic`.
+
+## 5. Sound Executable Protections
+
+### 5.1 Immediate (must-fix to close false-pass routes)
+
+1. **Set `completion_contract_mode: enforce` in `driver`.** Without this, every completion gate — including S7's final conformance — is advisory. Add to `chain.yaml`:
+   ```yaml
+   driver:
+     completion_contract_mode: enforce
+     full_suite_backstop_mode: enforce
+   ```
+
+2. **Generate a valid Custody M11 completion manifest.** Run `custody-control-plane` to completion with `python -m arnold_pipelines.megaplan chain manifest --spec .megaplan/initiatives/custody-control-plane/chain.yaml --proof-map <path>`. This produces `completion-manifest.json` with content-addressed hashes. Without this, the chain cannot launch.
+
+3. **Create `final-proof-map.json` or make S7 generate it.** If S7 is meant to produce the proof map, add that to S7's brief as a required artifact. If it's meant as a prerequisite, add a `launch_preconditions` entry or an S7 `depends_on` check.
+
+### 5.2 Structural (prevent regression)
+
+4. **Replace `contains_text` precondition checks with content-hash pinning.** Instead of substring matching on titles, pin the SHA256 of each supporting document in the chain.yaml and validate at launch:
+   ```yaml
+   launch_preconditions:
+     - name: end-state report exists and is exact
+       path: docs/arnold/megaplan-native-representation-report.md
+       check:
+         kind: sha256
+         hash: <sha256>
+   ```
+   The loader already has SHA256 infrastructure (`spec.py:1577-1584`, `spec.py:213-225`).
+
+5. **Add per-sprint programmatic gates.** Each S1–S7 milestone should have at least one `validate` entry that runs a blocking check keyed to the brief's "Do not close if" criteria. For example, S1 should run a test proving the 85-to-14 collapse is detected and rejected:
+   ```yaml
+   milestones:
+     - label: s1-custody-admission-semantic-preservation
+       validate:
+         - kind: semantic_preservation_gate
+           validator: scripts/validate_s1_semantic_preservation.py
+   ```
+
+6. **Add `profile` and `robustness` enum validation.** Add to `spec.py`:
+   ```python
+   VALID_PROFILE_CHOICES = ("partnered-5", "premium", "apex", ...)
+   VALID_ROBUSTNESS_CHOICES = ("standard", "thorough", "extreme")
+   ```
+   Then validate `profile` and `robustness` through `_optional_choice`.
+
+### 5.3 Process (prevent false-authority)
+
+7. **Never mark a milestone `done` without evidence.** The chain runner at `__init__.py:5780-5851` should gate advancement not just on plan state `done` but on validation receipts exiting 0 when `completion_contract_mode=enforce`.
+
+8. **Shadow mode should require explicit opt-out.** Currently `shadow` is the default. The default should be `enforce`, and `shadow` should require an explicit `completion_contract_mode: shadow` (with a logged warning).
+
+9. **The North Star file should be content-pinned in the completion manifest.** Currently `validate_anchor_paths` only checks that the file exists and parses as markdown. The chain should verify that each completed milestone's plan produces evidence traceable to specific North Star claims.
+
+---
+
+**Position**: The `chain.yaml` loader is well-engineered — it validates types, rejects unknowns, enforces topological dependencies, and content-addresses completion evidence. But the *runtime* defaults to permissive shadow mode, the prerequisites are unsatisfied in the current repo, and no programmatic gates connect the prose contracts in the briefs to executable validation. The chain can reach `done` without ever proving that source-to-lowered semantic equality holds, that the four identities remain distinct, or that WBC evidence isn't being used as authority. The `completion_contract_mode: shadow` default alone is sufficient for a false-pass: every milestone completes cleanly while every North Star invariant is violated in shadow.

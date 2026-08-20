@@ -1,0 +1,43 @@
+Now I have all the evidence. Here is my answer:
+
+---
+
+## Q10 Audit: Does `.pypeline` Source Ship in the Built Package?
+
+### Verdict: **Weakens** the plan.
+
+The plan assumes `--mode installed-package` can inspect `.pypeline` source from a built artifact, but this capability does not yet exist. The packaging *configuration* is correct, but no installed-package checker mode, smoke test, or `importlib.resources`-based loader has been implemented.
+
+---
+
+### Evidence
+
+**Packaging config — `.pypeline` IS included in wheels:**
+
+- **`pyproject.toml:85`**: `packages = ["arnold", "arnold_pipelines", "agentbox"]` — entire `arnold_pipelines` tree ships.
+- **`pyproject.toml:92`**: `"arnold_pipelines/**/*.pypeline"` is in `[tool.hatch.build.targets.wheel].artifacts` — explicit glob for `.pypeline` files. Three `.pypeline` files exist: `arnold_pipelines/megaplan/workflows/workflow.pypeline`, `front_half.pypeline`, and a test fixture.
+
+**Runtime path resolution — works if files are present:**
+
+- **`planning.py:46`**: `AUTHORING_SOURCE_PATH = Path(__file__).with_name("workflow.pypeline")` — resolves relative to the installed module. Since `planning.py` and `workflow.pypeline` are siblings in the same directory, and both are included in the wheel, this resolves correctly at runtime.
+- **`package_fingerprints.py:18`**: `CANONICAL_SOURCE_RESOURCE_PATH = "arnold_pipelines/megaplan/workflows/workflow.pypeline"` — canonical path for fingerprinting.
+- **`package_fingerprints.py:93-148`**: `canonical_workflow_fingerprints()` reads `.pypeline` via `resolved_source_path.read_text()` — standard filesystem I/O, works in installed packages because the file is physically present.
+
+**What's MISSING — the plan's assumption is unimplemented:**
+
+- **`scripts/check_megaplan_native_semantic_parity.py`**: Does not exist. The plan's S1a exit gate (line 167) calls it with `--mode installed-package`, but the script itself is a planned artifact.
+- **`tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py`**: Does not exist. Referenced as an S1b exit gate (line 223) and evidence builder (line 921).
+- **`arnold/workflow/`**: Zero references to `importlib.resources`, `importlib_resources`, `resources.files()`, or any installed-package source-loading mechanism. The entire checker uses filesystem `Path` I/O only.
+- **No wheel/sdist artifacts on disk**: No `dist/*.whl` or `dist/*.tar.gz` found to verify actual contents.
+
+---
+
+### Smallest Concrete Plan Amendment
+
+**Add to S1a scope** (before line 163, the S1a exit gates):
+
+> **S1a prerequisite**: Implement `--mode installed-package` in `check_megaplan_native_semantic_parity.py` using `importlib.resources.files("arnold_pipelines")` to locate `.pypeline` source from an installed wheel. Before this lands, the S1a exit gate `--mode installed-package` is a vacuous gate — it cannot fail because it cannot run. The implementation must:
+> 1. Resolve `arnold_pipelines/megaplan/workflows/workflow.pypeline` via `importlib.resources`.
+> 2. Feed that source through the same `check_workflow_source(..., evidence=())` strict path used by `--mode checkout`.
+> 3. Produce identical diagnostic output to checkout mode when source matches.
+> 4. Be verified by `PYENV_VERSION=3.11.11 pip install -e . && python scripts/check_megaplan_native_semantic_parity.py --mode installed-package --strict --require-row-evidence` before S1a closeout.

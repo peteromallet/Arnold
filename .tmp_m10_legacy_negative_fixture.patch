@@ -1,0 +1,17 @@
+diff --git a/arnold/conformance/legacy_reference_allowlist.json b/arnold/conformance/legacy_reference_allowlist.json
+index 3b473168a..ecf620be3 100644
+--- a/arnold/conformance/legacy_reference_allowlist.json
++++ b/arnold/conformance/legacy_reference_allowlist.json
+@@ -529,6 +529,12 @@
+       "category": "historical-non-shipped",
+       "reason": "Golden legacy baseline inventory records pre-migration source paths."
+     },
++    {
++      "path": "tests/arnold/agent/test_import_boundaries.py",
++      "pattern": "arnold.pipelines.megaplan",
++      "category": "scanner-target",
++      "reason": "Neutral agent import-boundary test intentionally names the deleted legacy package root as a negative assertion."
++    },
+     {
+       "path": "tests/arnold_pipelines/megaplan/test_import_boundaries.py",
+       "pattern": "arnold.pipelines.megaplan",

@@ -1,0 +1,86 @@
+## Verdict: **Mostly sound with amendments**
+
+---
+
+### Q1 — Doc accuracy vs. reality
+
+The doc accurately describes the high-level flow. Revise **is** triggered by gate returning `ITERATE` (`auto.py:3602`; `inprocess_step.py:228`). Revise **does** consume gate feedback and unresolved flags — `_revise_prompt()` at `prompts/critique.py:166-167` directly reads `gate.json` and the flag registry.
+
+Three omissions from the doc:
+
+- **`gate_carry.json` as alternate carrier.** When present, it takes priority over `gate.json` for transition data (`handlers/gate.py:136-144`). The doc only mentions `gate.json` / `gate_carry.json` once (line 197) without explaining the precedence.
+
+- **Finalize can trigger a revise loop too.** The master plan (`megaplan-native-semantic-parity-master-plan.md:299-300`) notes that finalize can synthesize an iterate gate and carry feedback back to revise. The sense-check doc implies only gate→revise.
+
+- **The revise prompt already has a large structured contract.** `_revise_prompt` (`prompts/critique.py:197-244`) has ~20 requirements for the LLM output. The doc understates how much prompt engineering already exists — adding `north_star_actions` will compete for attention in an already dense prompt.
+
+---
+
+### Q2 — Is `north_star_actions_addressed` the right shape?
+
+**Yes.** The pattern exactly mirrors `flags_addressed` in the existing `revise.json` schema (`schemas/runtime.py:470-483`):
+
+```
+flags_addressed: [{id, resolution: "addressed"|"rejected", reason, where}]
+north_star_actions_addressed: [{id, resolution, plan_refs}]
+```
+
+The schema change is a single new optional array field at `schemas/runtime.py:465-509`. The handler already writes `flags_addressed` into `revise_meta_fields` (`critique_runtime.py:1157`) and plan metadata; adding `north_star_actions_addressed` at line 1157 is a one-line addition. The `plan_refs` field (instead of `flags_addressed`'s `where`) is a good adaptation — North Star actions map to plan sections, not arbitrary file paths.
+
+---
+
+### Q3 — Where should the pre-worker halt guard live?
+
+**At `orchestration/critique_runtime.py:1078`, after `_resolve_revise_transition` and before `_run_worker` (line 1086).**
+
+```python
+# Line 1078 — gate data now available
+_has_gate, revise_transition = _resolve_revise_transition(state, plan_dir)
+
+# ← INSERT PRE-WORKER GUARD HERE ←
+# Read north_star_actions from gate summary and check for:
+#   - add_human_halt → raise CliError("revise_halt_human")
+#   - unmappable blocking actions → raise CliError("revise_halt_unmappable")
+#   - route-authoritative exemptions / baseline rewrites / target narrowing /
+#     live-plan topology decisions without explicit approval → raise CliError
+
+# Line 1086 — worker invocation
+worker, agent, mode, refreshed = _pkg._run_worker("revise", ...)
+```
+
+This placement is critical: the guard must inspect `north_star_actions` from the gate summary *before* the LLM sees them. Once the LLM sees an `add_human_halt` action, it can produce prose "acknowledging" it, which is exactly what the doc warns against (line 269: "Revise should not try to solve it with prose").
+
+---
+
+### Q4 — How should actions become concrete plan changes?
+
+The doc's action-type table (lines 223-233) is the right taxonomy. The mechanism is:
+
+1. **Prompt rendering**: Extend `_revise_prompt` (`prompts/critique.py:162`) to read `north_star_actions` from `gate.json` and render them alongside the existing "Gate summary" and "Open significant flags" blocks.
+
+2. **LLM contract**: Each action type instructs the LLM to produce specific plan structure (numbered step, exit gate, scenario test, etc.) — not narrative text.
+
+3. **Schema enforcement**: The `north_star_actions_addressed` output field records traceability back to the action ID with `plan_refs` pointing to where the change landed.
+
+The gap: today there is **no programmatic cross-verification** that the `plan` text actually contains the claimed `plan_refs`. See Q5.
+
+---
+
+### Q5 — Hidden failure mode: "addressed" without change
+
+**This is the most important finding.** Revise today has exactly this vulnerability with `flags_addressed`:
+
+1. The LLM can output `flags_addressed: [{id: "FLAG-001", resolution: "addressed", reason: "Fixed.", where: "Step 3"}]`
+2. `update_flags_after_revise` (`critique_runtime.py:1191`) trusts the claim
+3. The `plan` field may not actually contain the fix
+
+The same will happen with `north_star_actions_addressed`. The only structural defense is `compute_plan_delta_percent` (line 1132) — it catches **zero-change** but not **claim-without-change**. A 3% diff from rewording prose is enough to pass the delta check while the action's required change (e.g., an exit gate) was never added.
+
+**Mitigation**: Add a post-worker validation in `handle_revise` that, for each addressed north_star_action:
+
+- Greps the `plan` text for the action's `plan_refs` (are those sections present?)
+- For `add_exit_gate`/`add_dead_delete_test`: searches for structural markers ("Exit Gate", "must-pass gate", "dead-delete")
+- For `add_checker_row`: searches for "checker" or "row-registry"
+- If any addressed action lacks textual evidence, raise `CliError("revise_north_star_claim_unverified")` or flag the action as still unresolved
+
+The loop's existing `no_progress_with_blockers → escalate` policy (`workflows/components.py:1284`) provides a backstop — if revise repeatedly claims resolution without making real change, gate re-runs and re-creates the same action, the loop cap fires, and the plan escalates. But catching it at the revise boundary saves an iteration.

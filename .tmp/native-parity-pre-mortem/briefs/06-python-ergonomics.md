@@ -1,0 +1,7 @@
+# Isolated review 6 — Python authoring ergonomics and complexity critic
+
+Working directory: `/Users/peteromalley/Documents/Arnold`.
+
+Read-only. Do not edit repo/git. Do not read `.tmp/native-parity-sensecheck-round2/final-audit.md` or reviewer output. Read all required primary sources and actual authored workflow/compiler/lowering/runtime/components/handlers/policy/proof/scenario/test code. Cite exact `path:line`. M11 substrate is locked complete and out of scope.
+
+Judge the end state as a Python API and maintenance experience. Sketch a plausible completed Python representation after S1–S7. Identify ceremony, duplicated declarations, four-domain identity plumbing, policy noise, over-granularity, or opaque helpers likely to drive bypasses. Separate justified semantic compression from dangerous hiding. Propose the smallest authoring primitives, generated bindings, linting, examples, and readability/complexity budgets needed to keep topology honest and pleasant without hiding required branches, loops, runtime fanout/fanin, suspension/reentry, retry/caps, call-site/model policy, effects, checkpoint identity, and terminal outcomes. Test six future edits (new gate outcome, review lens, retry, human decision, override, external effect). Return a concrete readability contract, an illustrative API sketch, material plan amendments only, and sprint-level details that need not enter the epic.

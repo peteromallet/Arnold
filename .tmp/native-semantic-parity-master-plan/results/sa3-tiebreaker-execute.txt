@@ -1,0 +1,95 @@
+## S3: Tiebreaker Audit
+
+### Researcher/Challenger/Decision Carriers
+
+- **`boundary_contracts.py:142-210`** — Four S3 boundary contracts declared: `researcher_to_challenger` (output: `research_findings.json`), `challenger_to_synthesis` (output: `challenge_findings.json`), `synthesis_to_decision` (output: `tiebreaker_payload.json`), `decision_to_parent` (output: `tiebreaker_decisions.json`). Each carries `phase_result_required=True`, `receipt_required=True`, and `child_trace_path` for lineage. The `decision_to_parent` contract (line 209) declares three `decision_outcomes`: `("proceed", "iterate", "escalate")` and sets `parent_rejoin_promotion: True`.
+
+- **`components.py:2783-2790`** — `TIEBREAKER_WORKFLOW` is a `_workflow` with `workflow_id="tiebreaker_child"`, inputs=`("gate_payload",)`, outputs=`("decision",)`. Its metadata replicates `SOURCE_TIEBREAKER_WORKFLOW` which defines the four-phase canonical targets. This is the source carrier for the tiebreaker subworkflow invocation.
+
+- **`components.py:2546`** — `canonical_run_completion_target_ref: "tiebreaker_decision"` anchors the four phases (researcher→challenger→synthesis→decision) under a single canonical target.
+
+### Replan Rejoin Semantics
+
+- **`replan_state.py:1-38`** — `reset_replan_loop_state()` clears stale loop/runtime state before re-entering planning. Clears `meta` keys `("tiebreaker_count", "user_approved_gate")` and state keys `("active_step", "latest_failure", "resume_cursor")`. Sets `last_gate={}` and `current_state=target_state`. This is the mechanism that resets the planning loop for a clean replan rejoin.
+
+- **`boundary_contracts.py:213-243`** — Two replan-rejoin contracts: `replan_authority` (requires `replan_decision.json`, sets `replan_triggered: True`) and `parent_rejoin_promotion` (no artifacts required, sets `parent_rejoined: True`, `receipt_required=True`). The S3 replan boundary evidence is declarative but the actual state-clear and rejoin logic lives in `replan_state.py`.
+
+- **`components.py:2548-2550`** — Decision routes map tiebreaker actions to targets: `pick`→`finalize`, `replan`→`critique-fanout`, `escalate`→`override`. "Replan" rejoins through the critique fan-out, not a special replan-only path — the ordinary planning path is preserved.
+
+### Finding: No deduplication guard on replan rejoin. `replan_state.py:32-34` clears `resume_cursor` and `active_step` but does not validate that the replan is genuinely authorized by a prior `replan_authority` boundary receipt. The `replan_authority` contract (`boundary_contracts.py:213-227`) declares `phase_result_required=True` but `receipt_required=False` — there is no durable receipt linking replan authorization to the subsequent state clear. A replan could theoretically be triggered without an auditable authority trail.
+
+---
+
+## S4: Execute Audit
+
+### Execute DAG Batching (`batch.py`)
+
+- **`batch.py:1266-1810`** — `handle_execute_one_batch()` is the single-batch dispatcher. It reads `finalize.json`, computes `global_batches` via `compute_global_batches()` + `split_oversized_batches()` (line 1292-1295), validates `batch_number` range (line 1298-1302), resolves prerequisite-blocked tasks (line 1305-1310), overlays prior batch status (lines 1317-1339), validates prior batch completion (lines 1359-1384), runs `_run_and_merge_batch()` (line 1480-1500), and determines the next transition (lines 1535-1810).
+
+- **`batch.py:2531-3587`** — `handle_execute_auto_loop()` is the multi-batch auto-loop. Key phases: blocked-task reset on cross-session retry (lines 2566-2594), stale-authority reset (lines 2605-2623), baseline-unavailable checkpoint deferral (lines 2625-2635), review-rework detection (lines 2676-2729), cross-session blocked-task reset via invocation_id mismatch (lines 2730-2773), per-batch tier routing with forced refresh (lines 3031-3090), batch execution loop (lines 2990-3166), and aggregate promotion on completion (lines 3181+).
+
+### Approval Gates
+
+- **`handlers/execute.py:322-345`** — `_enforce_approval_gate()` delegates to `policy.py:evaluate_destructive_approval()`. Two gates: `--confirm-destructive` (skipped in prose mode) and user-approval (`--user-approved` or `auto_approve` config). On denial, emits `execute_approval_denial` boundary receipt before raising `CliError`.
+
+- **`policy.py:311-357`** — `evaluate_destructive_approval()` is pure: checks `is_prose_mode` then `confirm_destructive`, then `auto_approve || user_approved_gate`. Returns typed `ApprovalDecision` with `APPROVED`, `DENIED_MISSING_CONFIRM`, or `DENIED_MISSING_APPROVAL`.
+
+- **`handlers/execute.py:402-404`** — User-approval gate is persisted (`state["meta"]["user_approved_gate"] = True`) only after the typed decision clears. This prevents partial state writes on denial.
+
+- **`boundary_contracts.py:247-287`** — Two approval boundary contracts: `execute_approval` (cleared gate, `branch_ref: "execute:approval-approved"`) and `execute_approval_denial` (denied gate, `branch_ref: "execute:approval-denied"`).
+
+### Blocked Retry
+
+- **`handlers/execute.py:90-97`** — `_is_blocked_retry()` scans history in reverse for the most recent execute entry; returns `True` if `result=="blocked"`. Stops at `review`/`finalize` boundaries.
+
+- **`handlers/execute.py:425-438`** — `force_fresh` is `True` when blocked retry or review rework is detected. Emits `execute_resume_anchor` boundary receipt with `session_freshness=True`. The session key is cleared (line 442-445) for `codex` agent.
+
+- **`batch.py:1620-1627`** — When routing degradation blocks execution, `resume_cursor` is set: `{"phase": "execute", "batch_index": batch_number, "retry_strategy": "fresh_session", "reason": "routing_degradation"}`. State transitions to `STATE_BLOCKED`.
+
+- **`policy.py:169-196`** — `BlockedRetryOutcome` has three values: `RETRY_FRESH`, `NO_RETRY`, `RETRY`. `BlockedRetryDecision.should_retry` is `True` for `RETRY` and `RETRY_FRESH`.
+
+- **`policy.py:528-600`** — `evaluate_blocker_recovery_policy()` returns `RETRY_FRESH` unconditionally for cross-session retries (line 576-580). For within-session, delegates to `blocker_recovery.evaluate_blocker_recovery()` and checks for terminal blockers.
+
+### Fresh-Session Forcing
+
+- **`handlers/execute.py:423-445`** — Fresh session is forced when `_is_rework_reexecution()` or `_is_blocked_retry()` returns `True`. For the `codex` agent, the session key is explicitly popped from `state["sessions"]`. The `execute_resume_anchor` boundary receipt (line 428-437) declares `fresh_session=True`.
+
+- **`boundary_contracts.py:354-374`** — `execute_resume_anchor` contract requires `fresh_session_request.json`, sets `retry_stage: "resume_anchor"`, `fresh_session: True`, `branch_ref: "execute:timeout-retry-fresh"`.
+
+- **`components.py:1707-1719`** — `retry_and_reentry` policy surface: `blocked_retry` has `effect: "force_fresh_execute_session"`, `blocked_route` has `resume_cursor` with `retry_strategy: "fresh_session"`, and `review_rework_reexecution` also has `effect: "force_fresh_execute_session"`.
+
+- **`batch.py:3069-3076`** — In auto-loop tier routing, batch 1 uses the caller's `refreshed` flag; every subsequent batch forces `refreshed=True` to keep codex context bounded.
+
+### Resume Cursors
+
+- **`batch.py:1622-1627`** — Resume cursor set on routing degradation: `{"phase": "execute", "batch_index": batch_number, "retry_strategy": "fresh_session", "reason": "routing_degradation"}`.
+
+- **`handlers/execute.py:108`** — `_record_execute_blocked()` sets `resume_cursor: {"phase": "execute", "batch_index": None, "retry_strategy": "fresh_session"}`. Note: `batch_index` is `None` here (no partial-progress anchoring).
+
+- **`replan_state.py:13`** — `resume_cursor` is in `REPLAN_STATE_KEYS_TO_CLEAR` — replanning explicitly clears any prior resume cursor.
+
+- **`boundary_contracts.py:525,717`** — `resume_cursor_ref` appears in `review_human_verification` (line 525, `"cursor:suspension"`) and `override_recover_blocked_authority` (line 717, `"state.resume_cursor"`). The cursor is bound as evidence for recovery, not as an autonomous routing signal.
+
+### Execute Route Decisions
+
+- **`policy.py:31-308`** — `ExecuteEntryRoute` enum: `PROCEED`, `BLOCKED`, `FAILED`, `INVALID`. `resolve_execute_entry_route()` maps `current_state` to a route. Allowed entry states default to `{"finalized", "blocked", "failed"}`.
+
+- **`policy.py:411-457`** — `resolve_single_batch_next_step()`: blocked→`BLOCKED`, final+tracked→`REVIEW`, otherwise→`EXECUTE` (more batches).
+
+- **`components.py:1740-1781`** — Branch surface in `EXECUTE_POLICY.metadata.route_surface`: `batch_continuation` (signal: `execute`, target: `execute-batches`), `timeout_retry` (signal: `retry`, target: `execute-batches`, max_attempts: 2), `aggregate_promotion` (signal: `execute_payload`, target: `review-fan-in`), `review_handoff` (signal: `review`, target: `review-fan-in`).
+
+- **`components.py:1649-1656`** — Topology overlay `execute:task-complexity-route` maps `finalize.task_complexity_route` to three targets: `execute.batch.solo`, `execute.batch.standard`, `execute.batch.premium` — the per-batch model routing decision.
+
+### Finding: Resume cursor `batch_index` inconsistency. `handlers/execute.py:108` sets `batch_index=None` in the blocked-state resume cursor, while `batch.py:1624` sets `batch_index=batch_number` (the actual batch number). When a batch is blocked mid-execution, the handler-level record loses the batch position, making recovery ambiguous — the auto-loop cannot know which batch to resume from without re-deriving from batch artifacts.
+
+---
+
+## Commands Run
+
+```
+find /Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan -type d | sort
+find /Users/peteromalley/Documents/Arnold -path "*/execute/batch*" -type f
+grep -n "_task_complexity_tier_args\|handle_execute_auto_loop\|def handle_execute" .../batch.py
+```
+
+No modifications were made to any files.

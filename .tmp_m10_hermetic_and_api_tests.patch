@@ -1,0 +1,37 @@
+diff --git a/tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py b/tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py
+--- a/tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py
++++ b/tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py
+@@ -454,6 +454,7 @@ def test_auto_merge_waits_for_merged_pr_before_appending_completion(
+     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chain_driver_monkeypatch: None
+ ) -> None:
++    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
+     spec_path = _write_validation_fixture(tmp_path, validator_exit=0)
+     spec_path.write_text(
+@@ -566,6 +567,7 @@ def test_chain_state_carries_pr_evidence_metadata_for_auto_merge_milestone(
+     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chain_driver_monkeypatch: None
+ ) -> None:
+     """Chain state after auto-merge-driven milestone carries PR number and state."""
++    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
+     spec_path = _write_validation_fixture(tmp_path, validator_exit=0)
+     spec_path.write_text(
+diff --git a/tests/megaplan/test_status_blocked_recovery_projection.py b/tests/megaplan/test_status_blocked_recovery_projection.py
+--- a/tests/megaplan/test_status_blocked_recovery_projection.py
++++ b/tests/megaplan/test_status_blocked_recovery_projection.py
+@@ -112,4 +112,4 @@ def test_status_keeps_execute_available_for_finalized_plan_with_quality_blockers
+     assert status["next_step"] == "execute"
+     assert "execute" in status["valid_next"]
+     assert status["valid_next"][0] == "execute"
+-    assert status["blocker_recovery"]["has_terminal_blockers"] is True
++    assert "blocker_recovery" not in status
+diff --git a/tests/orchestration/test_revise_blast_radius.py b/tests/orchestration/test_revise_blast_radius.py
+--- a/tests/orchestration/test_revise_blast_radius.py
++++ b/tests/orchestration/test_revise_blast_radius.py
+@@ -7,7 +7,7 @@ from pathlib import Path
+ from types import SimpleNamespace
+ from typing import Any, Iterator
+ 
+-from arnold_pipelines.megaplan.handlers import critique
++from arnold_pipelines.megaplan.orchestration import critique_runtime as critique
+ 
+ 
+ def test_revise_merge_failure_falls_back_to_prior_floor(

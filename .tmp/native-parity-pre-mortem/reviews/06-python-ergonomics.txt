@@ -1,0 +1,399 @@
+Now I have a thorough understanding of the codebase. Let me compile the review.
+
+---
+
+# Isolated Review 6 — Python Authoring Ergonomics & Complexity Critic
+
+## 1. End-State Python Representation (Plausible Completed Sketch After S1–S7)
+
+The system's authored source is `workflow.pypeline` (`arnold_pipelines/megaplan/workflows/workflow.pypeline:388-754`). It is already close to the target shape. A completed representation would be a Python function that:
+
+1. Uses **enum-driven control flow** — outcomes from step invocations (`GateOutcome.PROCEED`, `ReviewOutcome.REWORK`) drive `if/elif/else` branches.
+2. Declares **fanout/fanin via `parallel_map`** with typed items, steps, reducers, and path templates.
+3. Uses **`loop(policy=..., reentry_id=...)`** decorators for bounded cycles (critique→revise→critique).
+4. Defines **`DECLARED_STEP_INTERFACES`** with handler refs, route bindings, capability requirements, and policy refs.
+5. Defines **`DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS`** for child-workflow contracts (tiebreaker, execute_batch, review_panel).
+6. Defines **`DECLARED_OVERRIDE_OUTCOME_TARGETS`** and **`DECLARED_OVERRIDE_POLICY_ROUTES`** for override dispatch.
+
+**The lowering path**: `workflow.pypeline` → `lower_workflow_file()` → canonical step/route resolution in `workflows/planning.py:200-296` → `build_pipeline()` returns `arnold.workflow.dsl.Pipeline`.
+
+---
+
+## 2. Ceremony, Duplicated Declarations, and Identity Plumbing
+
+### 2.1 Triple Topology Representation (THE critical finding)
+
+The **same workflow topology** is encoded in three independent representations that must stay synchronized:
+
+| Representation | Location | Lines | Nature |
+|---|---|---|---|
+| Authored Python | `workflow.pypeline:388-754` | 367 | Human-readable, Python-shaped |
+| State-machine dict | `_core/workflow_data.py:45-92` | 48 | `Transition` dataclass list per state |
+| Realized graph | `_core/topology.py:234-248` | 15 | `build_topology()` → `Graph(edges=...)` |
+
+Plus:
+- `workflows/planning.py:110-139` — `_LOWERED_STEP_ID_ALIASES` (39 alias mappings) and `_ROUTE_LABEL_BY_TRANSITION_ID` (duplicate route labels)
+- `_core/workflow.py:170-185` — `_resolve_overrides` rewrites transitions per robustness+creative
+- `_core/workflow.py:273-298` — `_workflow_for_robustness` merges override layers
+
+**Each edit to the workflow graph requires touching at minimum 3 files.** The workflow_data `WORKFLOW` dict is the runtime authority for handler dispatch; `workflow.pypeline` is the authoring authority; `topology.py` mediates between them. They cannot drift because tests enforce parity (`test_pipeline_golden.py:100-155`), but they are conceptually redundant.
+
+### 2.2 Four-Domain Identity Plumbing
+
+Every step carries identity through four separate namespaces:
+
+1. **`workflow.pypeline` step ID** — e.g. `"critique-fanout"`, `"execute-batches"`, `"review-fan-in"` (lowered IDs)
+2. **Canonical step ID** — e.g. `"critique"`, `"execute"`, `"review"` (public API IDs, mapped via `_LOWERED_STEP_ID_ALIASES`)
+3. **`kind` string** — e.g. `"megaplan:critique"` (used in `Pipeline` DSL)
+4. **`stable_id`** — e.g. `"megaplan.native.critique.v1"` (in `native_interfaces.py:121-136`)
+
+The `_canonical_step_id` function (`workflows/planning.py:204-205`) and `_topology_step_id` (`workflows/planning.py:208-217`) use suffix-based heuristics (`"review" in step_id`, `endswith("-execute-batches")`) that are fragile. If a new lowered ID like `"security-audit-review"` were introduced, it would silently map to `"review"`.
+
+**`native_interfaces.py`** (413 lines) is a *pure metadata module* with zero runtime logic. Every `NativeInterface` duplicates handler refs already in `workflow.pypeline`'s `DECLARED_STEP_INTERFACES` and adds `legacy_aliases`. This is four-domain identity: (step_id, kind, stable_id, handler_ref).
+
+### 2.3 Policy Noise — Over-Granular Typed Constructs
+
+`execute/policy.py` (1085 lines) introduces typed enums (`ExecuteEntryRoute`, `ApprovalOutcome`, `NoReviewTerminalOutcome`, `TierRouteOutcome`, `BlockedRetryOutcome`, `NextExecuteTransition`) that are *immediately translated back* to legacy `CliError` raises and string-keyed response fields in the handler. The handler (`handlers/execute.py:304-345`) imports both the typed policy AND maps them to legacy constructs:
+
+```python
+# handlers/execute.py:197-215
+_LEGACY_NEXT_STEP: Mapping[NextExecuteTransition, str | None] = {
+    NextExecuteTransition.EXECUTE: "execute",
+    NextExecuteTransition.REVIEW: "review",
+    # ...
+}
+```
+
+This is a **translation layer that adds lines without removing the legacy surface**. A similar pattern exists in `handlers/gate.py` where `_build_gate_route_signal` and `_critique_terminate_branch` carry their own typed termination logic.
+
+### 2.4 Override Action Matrix — Duplicated Authority
+
+The 11 override actions are declared in **three separate locations**:
+
+1. `workflow.pypeline:36-79` — `DECLARED_OVERRIDE_OUTCOME_TARGETS` and `DECLARED_OVERRIDE_POLICY_ROUTES`
+2. `workflows/override_matrix.py:54-151` — `_DECLARED_OVERRIDE_AUTHORITY` mapping with `family`, `route_signal`, `dispatch_surface`, `control_routed`
+3. `handlers/override.py:132-316` — `_build_override_action_output` with per-action if/elif chains
+
+Adding a new override action (e.g., `"retry-with-fallback"`) requires touching all three, plus updating the `OVERRIDE_ACTION_KEYS` frozenset.
+
+---
+
+## 3. Opaque Helpers Likely to Drive Bypasses
+
+### 3.1 `_transition_matches` (8 condition predicates)
+
+`_core/workflow.py:301-331` — The 8 conditions (`gate_unset`, `gate_iterate`, `gate_escalate`, `gate_tiebreaker`, `gate_proceed_agent_availability_blocked`, `gate_proceed_blocked`, `gate_proceed`, `always`) are string-matched against `state["last_gate"]["recommendation"]`. The semantics require reading the implementation:
+
+- `gate_proceed_agent_availability_blocked` checks that recommendation is PROCEED, passed is False, AND the only failed preflights are `claude_available`/`codex_available`. This is **business logic encoded as a string predicate name**.
+- The condition names don't appear in `workflow.pypeline` — they're runtime-only constructs bridging the handler and the state machine.
+
+### 3.2 `_resolve_overrides` creative-mode rewrite
+
+`_core/workflow.py:170-185` — When `creative=True` and robustness is `light`, transitions are rewritten to skip critique entirely. This has no counterpart in `workflow.pypeline` and would surprise anyone tracing the authored source.
+
+### 3.3 `_critique_terminate_branch` hidden state mutation
+
+`handlers/gate.py:466-501` — Sets `state["current_state"] = STATE_BLOCKED` to force `workflow_next` to return `[]`, preventing the auto-loop from re-deriving "revise". The comment at line 473-476 acknowledges this is a workaround: "the auto/chain loop is STATUS-DRIVEN...termination MUST be expressed in state, not just the return tuple, or the loop re-derives revise and spins forever (P0)."
+
+### 3.4 `_LIGHT_CRITIQUE_CAP = 2`
+
+`handlers/gate.py:342` — A hardcoded cap that overrides the configured `max_critique_iterations`. Light robustness caps at 2 iterations regardless of config. The comment explains it but the constant is buried in gate.py, not in a policy module.
+
+---
+
+## 4. Separating Justified Compression from Dangerous Hiding
+
+### Justified Semantic Compression
+
+| Mechanism | Why justified |
+|---|---|
+| `parallel_map(id=..., items=..., step=..., reducer=..., path_template=...)` | Encapsulates fanout/fanin topology with reducer semantics. One call expresses what would otherwise be a loop + barrier + join. |
+| `loop(policy=..., reentry_id=...)` | Captures bounded-cycle semantics at the authoring level. Without it, authors would need to manually write `while` + counter + exit condition. |
+| `@phase` decorator with `produces`/`consumes` port declarations | Enables the native compiler to verify port connectivity statically. |
+| `StrEnum` outcome classes (`GateOutcome`, `ReviewOutcome`) | Provides IDE autocomplete, exhaustiveness checking, and import-time parity with `RUNTIME_BRANCH_VOCABULARY`. |
+| `@workflow(id=..., version=..., policy=...)` | Single decorator captures pipeline identity, versioning, and default policy. |
+
+### Dangerous Hiding
+
+| Mechanism | Risk |
+|---|---|
+| `_transition_matches` string predicates | The 8 condition names encode business logic inaccessible from the authored source. An author adding a gate outcome has no visibility into these. |
+| `_LOWERED_STEP_ID_ALIASES` suffix heuristics | `"review" in step_id` is a time-bomb. A step named `"preview_draft"` would silently match. |
+| `_critique_terminate_branch` state mutation | Mutating `current_state` to `STATE_BLOCKED` to prevent loop spin is a side-channel. The authored source has no `blocked` terminal in the critique loop. |
+| `WORKFLOW` dict + `_ROBUSTNESS_OVERRIDES` | The runtime state machine and the authored `workflow.pypeline` express the same topology differently. An author reading only `workflow.pypeline` would not discover that `light` robustness removes the review step or that `bare` removes critique entirely. |
+| `_resolve_overrides` creative flag | Creative mode silently rewrites transitions. The authored source doesn't express "if creative and light, skip critique." |
+
+---
+
+## 5. Smallest Authoring Primitives
+
+The system needs **one** canonical topology representation. The authored `workflow.pypeline` is the right one — it's Python-shaped, readable, and already the lowering source. The `WORKFLOW` dict and `build_topology()` graph should be **generated** from the lowered pipeline, not maintained independently.
+
+### Primitives that should remain
+
+```python
+# 1. Step invocation with typed outcome
+result = AUTHORING_GATE(id="gate", critique_payload=payload)
+if result == GateOutcome.PROCEED: ...
+
+# 2. Fanout with reducer
+results = parallel_map(
+    id="critique-fanout",
+    items="megaplan.policy.critique_lenses",
+    step=CRITIQUE_PANEL_WORKFLOW,
+    reducer=AUTHORING_CRITIQUE,
+    path_template="critique/{item_id}",
+)
+
+# 3. Bounded loop
+loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")
+while True: ...
+
+# 4. Terminal
+AUTHORING_HALT(id="halt", review_payload=payload)
+
+# 5. Override dispatch
+override_result = AUTHORING_OVERRIDE(id="override", gate_payload=signal)
+```
+
+### Primitives that should be generated, not hand-maintained
+
+- `WORKFLOW` dict → derive from lowered pipeline's step graph
+- `RUNTIME_BRANCH_VOCABULARY` → derive from `outcomes.py` StrEnums (remove parity assertion)
+- `_LOWERED_STEP_ID_ALIASES` → derive from the lowered pipeline's step IDs (not a hand-maintained dict)
+- `_ROBUSTNESS_OVERRIDES` → express as policy overlays in `workflow.pypeline` (e.g., `@robustness("light", skip=["review"])`)
+- `OverrideActionEntry` matrix → derive from `workflow.pypeline`'s `DECLARED_OVERRIDE_*` dicts
+- `NativeInterface` metadata → derive from `workflow.pypeline`'s `DECLARED_STEP_INTERFACES` (they duplicate handler refs)
+
+---
+
+## 6. Generated Bindings and Linting
+
+### Generated from `workflow.pypeline`
+
+| Artifact | Generation rule |
+|---|---|
+| `WORKFLOW` dict | Walk lowered pipeline steps → for each step, produce `Transition(next_step, next_state, condition)` |
+| `_ROBUSTNESS_OVERRIDES` | Read `@robustness(...)` annotations from workflow.pypeline |
+| `RUNTIME_BRANCH_VOCABULARY` | Extract from `outcomes.py` StrEnums |
+| `_LOWERED_STEP_ID_ALIASES` | Walk lowered pipeline steps → map each lowered ID to its canonical parent |
+| `OverrideActionEntry` matrix | Walk `DECLARED_OVERRIDE_OUTCOME_TARGETS` + `DECLARED_OVERRIDE_POLICY_ROUTES` |
+| Route labels by transition ID | Walk `DECLARED_STEP_INTERFACES[step].route_bindings` |
+| Handler ref index | Walk `DECLARED_STEP_INTERFACES[step].handler_ref` |
+
+### Linting rules
+
+1. **No step ID suffix heuristics** — Ban `"review" in step_id` pattern. All ID mappings must be explicit.
+2. **No hand-maintained ID alias maps** — `_LOWERED_STEP_ID_ALIASES`-style dicts must be `# generated` with a CI check that they match the lowered pipeline.
+3. **Parity assertions must be one-way** — The `assert_vocabulary_parity()` pattern (outcomes.py:198-218) should be replaced with generation: outcomes.py is the authority, `RUNTIME_BRANCH_VOCABULARY` is derived.
+4. **handler_ref must match** — CI check that `DECLARED_STEP_INTERFACES[step].handler_ref` resolves to an importable function.
+5. **All `AUTHORING_HALT` IDs must be unique** — Already enforced by the lowering pass. Keep.
+
+---
+
+## 7. Readability and Complexity Budgets
+
+### Concrete readability contract
+
+| Metric | Current | Target |
+|---|---|---|
+| `workflow.pypeline` lines | 754 | ≤500 (compress repeated execute→review→halt branches into a helper) |
+| `components.py` lines | 2977 | ≤500 (strip `_COMPATIBILITY_QUARANTINE` metadata, generate component definitions) |
+| Topology representations | 3 | 1 (generate the other 2) |
+| Hand-maintained ID alias maps | 3 dicts | 0 (all generated) |
+| Identity namespaces per step | 4 | 2 (step_id + stable_id; kind and handler_ref are derived) |
+| Override action declarations | 3 locations | 1 (`workflow.pypeline`; matrix generated) |
+| Maximum handler file size | 1944 lines (override.py) | ≤800 (extract typed decision logic to policy modules) |
+| Maximum nested branch depth in workflow | 4 levels (gate→tiebreaker→override→review→rework) | 3 (extract rework sub-function) |
+
+---
+
+## 8. Six Future Edits — Complexity Audit
+
+### Edit 1: New gate outcome (`GateOutcome.REQUIRES_EVIDENCE`)
+
+**Files to touch today**: 8+
+- `outcomes.py`: Add `REQUIRES_EVIDENCE = "requires_evidence"` to `GateOutcome`
+- `components.py`: Add to `RUNTIME_BRANCH_VOCABULARY["gate"]`
+- `workflow.pypeline`: Add `elif gate_route_signal == GateOutcome.REQUIRES_EVIDENCE:` branch
+- `workflows/planning.py`: Add route binding to `DECLARED_STEP_INTERFACES["gate"].route_bindings`
+- `_core/workflow.py`: Add transition condition if not `"always"`
+- `_core/workflow_data.py`: Add `Transition` to `WORKFLOW[STATE_CRITIQUED]`
+- `handlers/gate.py`: Update `_build_gate_route_signal` to handle new recommendation
+- `native_interfaces.py`: Possibly add new interface or update `GATE` outputs
+
+**With generated topology**: 2 files
+- `outcomes.py`: Add enum value
+- `workflow.pypeline`: Add branch
+
+### Edit 2: New review lens (security audit in critique fanout)
+
+**Files to touch today**: 3+
+- `components.py`: Add `SECURITY_AUDIT` `StepComponent` (or reuse existing pattern)
+- `workflow.pypeline`: The `parallel_map` items are `"megaplan.policy.critique_lenses"` — this is a runtime resolution. May only need config.
+- Tests: Golden updates for new step in lowered pipeline.
+
+**Risk**: If the lens needs a new prompt family, also touch prompts module.
+
+### Edit 3: Retry policy change (increase max critique iterations from 4 to 6)
+
+**Files to touch today**: 2
+- `components.py:40`: `M4_LOOP_MAX_ITERATIONS = 6`
+- `_core/workflow_data.py` / `handlers/gate.py`: If `_LIGHT_CRITIQUE_CAP` is hardcoded, may need update.
+
+**Risk**: Low. The constant is centralized in `components.py`. But `_LIGHT_CRITIQUE_CAP = 2` in `handlers/gate.py:342` is not derived from `M4_LOOP_MAX_ITERATIONS`.
+
+### Edit 4: Human decision in a new phase (add human approval before execute)
+
+**Files to touch today**: 10+
+- `outcomes.py`: New `HumanApprovalOutcome` StrEnum
+- `components.py`: New StepComponent, add to `ALL_STEP_COMPONENTS`, `RUNTIME_BRANCH_VOCABULARY`
+- `workflow.pypeline`: Insert step before execute, add branch logic
+- `workflows/planning.py`: Add to `PIPELINE_STEP_COMPONENTS`, `_LOWERED_STEP_ID_ALIASES`, `DECLARED_STEP_INTERFACES`
+- `_core/workflow_data.py`: Add new state and transitions
+- `_core/workflow.py`: New condition predicate
+- `handlers/`: New handler file
+- `native_interfaces.py`: New `NativeInterface`
+- Tests: Golden updates
+
+### Edit 5: Override action (`retry-with-fallback`)
+
+**Files to touch today**: 5+
+- `workflows/override_matrix.py`: Add to `_OVERRIDE_ACTION_KEYS` and `_DECLARED_OVERRIDE_AUTHORITY`
+- `workflow.pypeline`: Add to `DECLARED_OVERRIDE_POLICY_ROUTES`
+- `handlers/override.py`: Add `elif action == "retry-with-fallback":` branch in `_build_override_action_output`
+- `outcomes.py`: If new outcome route needed, add to `OverridePolicyRoute`
+
+### Edit 6: External effect (send Slack notification on review pass)
+
+**Files to touch today**: 3+
+- `workflow.pypeline`: Add effect declaration in `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS["review_panel"]`
+- `handlers/review.py`: Add effect emission after pass
+- `components.py`: Add `EffectRef` to review's declared effects
+
+---
+
+## 9. Illustrative API Sketch (Target State)
+
+```python
+# workflow.pypeline — the single source of truth
+from arnold.workflow.authoring import loop, workflow, parallel_map, decision, effect
+from arnold_pipelines.megaplan.outcomes import GateOutcome, ReviewOutcome, OverrideOutcome, TiebreakerOutcome
+
+# Robustness is a policy overlay, not a parallel topology
+@workflow(id="megaplan", version="m5", policy=DEFAULT_POLICY)
+@robustness("light", skip=["review"])
+@robustness("bare", skip=["critique", "review"])
+def planning_workflow(brief: str) -> None:
+    prep_signal = step.prep(id="prep", brief=brief)
+    plan_payload = step.plan(id="plan", prep_payload=prep_signal)
+
+    loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")
+    while True:
+        critique_payload = parallel_map(
+            id="critique",
+            items=policy.critique_lenses(),
+            step=CRITIQUE_PANEL,
+            reducer=step.critique,
+            path_template="critique/{item_id}",
+        )
+        match step.gate(id="gate", critique_payload=critique_payload):
+            case GateOutcome.PROCEED:
+                _execute_and_review()
+            case GateOutcome.ITERATE:
+                step.revise(id="revise", gate_payload=...)
+            case GateOutcome.TIEBREAKER:
+                _run_tiebreaker()
+            case GateOutcome.ESCALATE:
+                match step.override(id="override", gate_payload=...):
+                    case OverrideOutcome.ABORT:
+                        step.halt(id="halt")
+                    case OverrideOutcome.FORCE_PROCEED:
+                        _execute_and_review()
+                    case OverrideOutcome.REPLAN:
+                        step.revise(id="revise", gate_payload=...)
+            case GateOutcome.ABORT | GateOutcome.SUSPEND:
+                step.halt(id="halt")
+
+def _execute_and_review():
+    """Extracted helper — eliminates 200+ lines of duplicated if/elif chains."""
+    step.finalize(id="finalize")
+    execute_payload = parallel_map(
+        id="execute",
+        items=policy.execute_batches(),
+        step=EXECUTE_BATCH,
+        reducer=step.execute,
+        path_template="execute/{index}",
+    )
+    match parallel_map(
+        id="review",
+        items=execute_payload,
+        step=REVIEW_PANEL,
+        reducer=step.review,
+        path_template="review/{item_id}",
+    ):
+        case ReviewOutcome.PASS:
+            effect.notify(channel="slack", message="Review passed")
+            step.halt(id="halt")
+        case ReviewOutcome.REWORK:
+            _execute_and_review()  # recursive rework — fresh session enforced by policy
+        case ReviewOutcome.BLOCKED:
+            step.override(id="override")
+        case ReviewOutcome.DEFERRED_HUMAN:
+            step.halt(id="halt", reason="deferred_human")
+```
+
+---
+
+## 10. Material Plan Amendments
+
+| ID | Amendment | Rationale |
+|---|---|---|
+| A1 | **Generate `WORKFLOW` dict from lowered pipeline**, don't maintain it. | Eliminates the triple-topology problem. The lowered pipeline is already the canonical graph. |
+| A2 | **Express robustness overrides as `@robustness` decorators** on the workflow function. | Currently `_ROBUSTNESS_OVERRIDES` is a separate dict that can silently diverge. |
+| A3 | **Extract `_execute_and_review()` helper** from `workflow.pypeline`. | The execute→review→halt/rework pattern is repeated verbatim in 4 branches (~200 lines each) — gate:PROCEED, tiebreaker:PROCEED, override:FORCE_PROCEED, gate:FORCE_PROCEED. A shared helper reduces the file from 754 to ~400 lines. |
+| A4 | **Remove `native_interfaces.py`** or generate it from `DECLARED_STEP_INTERFACES`. | Pure metadata duplication. The stable IDs can be derived: `f"megaplan.native.{step_id}.v1"`. |
+| A5 | **Derive `RUNTIME_BRANCH_VOCABULARY` from `outcomes.py`** StrEnums at module load. | The import-time parity assertion (`assert_vocabulary_parity()`) proves they must match. Skip the middleman. |
+| A6 | **Replace `_LOWERED_STEP_ID_ALIASES` suffix heuristics** with explicit generation from the lowered pipeline. | `"review" in step_id` is a regex in disguise. |
+| A7 | **Collapse override action declarations** into one source (`workflow.pypeline`). Generate `override_matrix.py` entries from it. | Current 3-location duplication. |
+| A8 | **Move `_LIGHT_CRITIQUE_CAP`** to `components.py` alongside `M4_LOOP_MAX_ITERATIONS`. | Policy constants should be co-located. |
+
+---
+
+## 11. Sprint-Level Details (Not Epic-Level)
+
+### Sprint N: Single-Source Topology
+
+1. Write generator that walks lowered `Pipeline.steps` and produces the `WORKFLOW` dict.
+2. Delete `_core/workflow_data.py` (move `Transition` dataclass to `_core/workflow.py`).
+3. Update `build_pipeline()` to attach the generated `WORKFLOW` dict as a cached attribute.
+4. Update all 12 characterization golden tests.
+
+### Sprint N+1: Robustness as Decorators
+
+1. Add `@robustness(level, skip=[...])` decorator to `arnold.workflow.authoring`.
+2. Annotate `planning_workflow` with robustness overrides.
+3. Generate `_ROBUSTNESS_OVERRIDES` from decorator metadata.
+4. Remove hand-maintained `_ROBUSTNESS_OVERRIDES` dict.
+
+### Sprint N+2: Extract `_execute_and_review`
+
+1. Identify the 4 duplicated execute→review→halt/rework blocks in `workflow.pypeline` (lines 404-463, 489-560, 569-643, 660-731).
+2. Extract into `_execute_and_review()` helper accepting `prefix` for ID generation.
+3. Verify all 23 `EXPECTED_ROUTES` still resolve.
+
+### Sprint N+3: Vocabulary Generation
+
+1. Make `RUNTIME_BRANCH_VOCABULARY` a `@lru_cache` function that reads from `outcomes.py` StrEnums.
+2. Delete `assert_vocabulary_parity()`.
+3. Remove the import-time side effect from `components.py`.
+
+---
+
+## 12. Summary Judgment
+
+The authoring surface (`workflow.pypeline`) is **good** — Python-shaped, enum-typed, with explicit `parallel_map` and `loop` primitives. The problem is that the rest of the system **doesn't trust it**. Instead of generating the runtime machinery from the authored source, three parallel representations are hand-maintained and parity-tested against each other.
+
+The complexity budget is exceeded by ~2x: `components.py` at 2977 lines is 6x the target; `handlers/override.py` at 1944 and `handlers/review.py` at 1854 are 2.5x. The four-domain identity plumbing (step_id, kind, stable_id, handler_ref) adds friction to every edit without adding expressive power.
+
+The single most impactful change: **generate the `WORKFLOW` dict and `build_topology()` graph from the lowered pipeline**. This eliminates ~400 lines of hand-maintained topology data, removes the parity-test tax, and makes `workflow.pypeline` the undisputed source of truth.

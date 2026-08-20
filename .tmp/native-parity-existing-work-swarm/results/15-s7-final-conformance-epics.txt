@@ -1,0 +1,73 @@
+## 1. Verdict: **Adjacent only** — no S7-specific artifacts exist on disk.
+
+## 2. Existing or Prior Artifacts
+
+### Adjacent infrastructure (exists but is not S7-complete)
+
+- **`scripts/generate_native_representation_evidence.py`** (1788 lines, `:1607–1712`): Generates evidence bundles from conformance YAML + traceability. Builds source-checker records, boundary contracts, scenario hashes, installed-package fingerprints, handler-purity scans, compatibility quarantine, and dead-delete checks. This is the closest existing artifact to the S7 report generator but it operates on *hand-authored* conformance YAML as input, not strict generated evidence as the master plan requires (`master-plan.md:821`).
+
+- **`scripts/validate_native_representation_conformance.py`** (1139 lines): Validates final conformance YAML ledgers against evidence bundles. Purely a validator, not a generator. Consumes `megaplan-native-representation-conformance.yaml` and `megaplan-native-representation-evidence.yaml` — neither of which exists on the current checkout (search returned 0 matches across the repo).
+
+- **`arnold/workflow/source_compiler.py`** (6185 lines): Contains `check_workflow_file()` (`:623–639`), `check_workflow_source()` (`:642–691`), `_row_evidence_diagnostics()`, `_implemented_front_half_rows()`, and `_implemented_s5_boundary_rows()`. Has the `evidence=None` bypass (`:636`, `:666`) that the master plan explicitly flags as a false-pass vector (`master-plan.md:168`). AWF245 (`ROW_EVIDENCE_INSUFFICIENCY`) exists but AWF253 (`PROHIBITED_SEMANTIC_CARRIER`) does **not** — not allocated in `diagnostics.py`.
+
+- **`tests/arnold/workflow/test_row_evidence_checker.py`** (1033 lines): 25 tests pass for S2–S4 rows plus API contracts (`master-plan.md:163`). Covers evidence serialization but no structural carrier rejection, no tier-boundary validation, no scenario-row coverage cross-check.
+
+- **`docs/arnold/megaplan-native-representation-traceability.yaml`** (414 lines): 31 traceability rows with boundary effects, contract IDs, false-pass guards, and negative invariants. Includes `final_conformance_gate` machine-readable report contract (`:32–63`). This is reusable as the row inventory skeleton.
+
+- **`docs/arnold/megaplan-native-representation-conformance-report.md`**: Prior "false pass" report claiming all 31 rows `implemented` (`:26–56`). Explicitly marked as prohibited evidence in the master plan (`master-plan.md:901`).
+
+- **`.megaplan/initiatives/native-platform-followup/validation-m6-...json`**: Validation receipt showing the old conformance YAML passed at commit `7e407bc` with `returncode: 0` (`:15–18`). Unverified prior claim — the conformance YAML it validates no longer exists on disk.
+
+### Sprint briefs (narrative, no execution artifacts)
+
+- **`.megaplan/initiatives/megaplan-native-parity-corrective/briefs/s7-final-conformance-rollout.md`** (60 lines): Describes S7 scope — absorb legacy M10, re-prove every row, run full scenario suite, installed-package check, narrowing docs. No code artifacts.
+- **`.megaplan/initiatives/megaplan-native-parity-corrective/briefs/m10-final-conformance-rollout.md`** (35 lines): Legacy M10 brief absorbed by S7.
+- **`.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml`** (`:75–81`): S7 depends on M6 with `profile: partnered-5`, `robustness: extreme`, `depth: max`. Not started.
+
+## 3. What Can Be Reused or Generalized
+
+| Existing Artifact | Reuse Path |
+|---|---|
+| `generate_native_representation_evidence.py` | The evidence-bundle builder (`:1607–1712`) can be generalized into the S7 `generate_megaplan_native_semantic_conformance.py` — it already builds checker records, boundary bundles, scenario hashes, installed-package fingerprints, topology checks, handler purity, quarantine, and dead-delete scans. Needs to be adapted to consume *strict checker JSON* instead of hand-authored conformance YAML. |
+| `validate_native_representation_conformance.py` | The `validate_conformance_ledger()` function (`:707–1139`) and its dataclass schemas (`CarrierCheckerEvidence`, `BoundaryContractEvidence`, etc.) can become the validation layer inside the S7 generator. |
+| `source_compiler.py` | `check_workflow_source(evidence=())` is the strict path (`:647–649`). The S7 strict checker script `check_megaplan_native_semantic_parity.py` should wrap this with `evidence=()` forced, plus checkout/installed-package modes. |
+| `megaplan-native-representation-traceability.yaml` | The 31-row inventory with boundary effects and contract IDs can seed the canonical `megaplan_semantic_rows.yaml` row registry that S7's reconciler consumes. |
+| `test_row_evidence_checker.py` | The 25 existing tests plus source templates can seed `test_final_conformance_evidence.py`. |
+
+## 4. What Still Must Be Built
+
+**None of S7's 12+ required scripts exist** (0 files found for all script names searched). Specifically missing:
+
+**Scripts (zero found):**
+- `check_megaplan_native_semantic_parity.py` — strict checker with checkout/installed-package modes
+- `scan_megaplan_semantic_carriers.py` — package-wide carrier scanner
+- `classify_megaplan_semantic_carriers.py` — route-authoritative vs descriptive tiering
+- `validate_megaplan_carrier_tier_boundary.py` — seeded descriptive-carrier corruption
+- `reconcile_megaplan_semantic_rows.py` — row-registry reconciliation with fail-unmapped
+- `check_megaplan_exemption_ledger.py` — exemption closeout with fail-open-scheduled
+- `check_megaplan_baseline_freeze.py` — baseline freeze verification
+- `generate_megaplan_scenario_row_matrix.py` — scenario-row coverage matrix
+- `generate_megaplan_native_semantic_conformance.py` — final generated conformance report
+- `check_megaplan_serialized_plan_rollout.py` — serialized plan rollout validator
+- `validate_megaplan_runtime_narrowing.py` — runtime narrowing contract validator
+
+**Data/registry artifacts:**
+- `arnold/workflow/megaplan_semantic_rows.yaml` — canonical row registry (not on disk)
+- `docs/arnold/megaplan-native-representation-scenarios.yaml` — split-outcome inventory (not on disk)
+- `docs/arnold/megaplan-native-runtime-narrowing-contract.md` — narrowing contract (not on disk)
+- `artifacts/native-semantic-parity/` — entire directory tree including carrier scans, tier classifications, baseline freezes, exemptions, reconciliation records (nonexistent)
+
+**Test files:**
+- `test_final_conformance_scenarios.py`, `test_final_conformance_evidence.py`, `test_installed_package_composition_smoke.py`, `test_deleted_surfaces.py`, `test_megaplan_coupling_gate.py` — none found.
+
+**Diagnostic codes:**
+- AWF253 (`PROHIBITED_SEMANTIC_CARRIER`) must be allocated in `diagnostics.py`.
+
+**Infrastructure dependencies from S1a (also unbuilt):**
+- Current-shape negative fixture, renamed/re-encoded adversarial suite, deterministic replay harness, baseline canonicalizer, headless control-injection actions, installed-package strict source loading, cross-package coupling ledger, golden pre-extraction baselines.
+
+## 5. Recommended Adjustment to the Sprint Plan
+
+S7 cannot close until S1a–S6 have delivered their exit gates because S7 is purely a conformance aggregation and final-gate sprint. The current state shows **S0/S1a have not been executed** — no S7 scripts, no row registry, no carrier scan, no AWF253, no golden baselines, no scenarios YAML. The `chain.yaml` correctly sequences S7 after M6 (S6), but the dependency chain has no executed milestones.
+
+**Recommendation:** Do not schedule S7 independently. It should be treated as the final aggregation sprint gated on S1a completing the checker hard-bar, carrier scan, row registry, and golden baselines. Until those exist, S7 has nothing to generate from. The `generate_native_representation_evidence.py` and `validate_native_representation_conformance.py` provide a reusable skeleton, but they operate on the *old* hand-authored evidence model — adapting them for strict generated-only evidence should be scoped into S1a (as the generator contract) and finalized in S7 (as the actual run).

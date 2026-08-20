@@ -22,6 +22,13 @@ review                = "codex:gpt-5.6-sol:medium"
 tiebreaker_researcher = "codex:gpt-5.6-sol:high"
 tiebreaker_challenger = "codex:gpt-5.6-sol:high"
 
+# Prep is a three-stage pipeline. Pin every stage explicitly so its read-only
+# evidence fanout cannot inherit the canonical DeepSeek fallback.
+[profiles.partnered-codex.prep_models]
+triage = "codex:gpt-5.6-terra:medium"
+fanout = "codex:gpt-5.6-terra:medium"
+distill = "codex:gpt-5.6-terra:medium"
+
 [profiles.partnered-codex.tier_models.execute]
 1 = "codex:gpt-5.6-luna:low"
 2 = "codex:gpt-5.6-luna:medium"

@@ -1,0 +1,14 @@
+diff --git a/arnold_pipelines/megaplan/resident/profile.py b/arnold_pipelines/megaplan/resident/profile.py
+--- a/arnold_pipelines/megaplan/resident/profile.py
++++ b/arnold_pipelines/megaplan/resident/profile.py
+@@ -1449,10 +1449,7 @@ class MegaplanResidentProfile:
+         return add_localized_timestamp_fields(base, resolved.name)
+ 
+     def _load_local_epic_chain_state_context(self) -> dict[str, Any]:
+-        roots: list[Path] = [Path.cwd()]
+-        workspace = Path("/workspace")
+-        if workspace.exists() and workspace not in roots:
+-            roots.append(workspace)
++        roots: list[Path] = [Path.cwd()]
+         epic_paths = _recent_state_paths(roots, ".epic_chains", limit=8)
+         chain_paths = _recent_state_paths(roots, ".chains", limit=12)

@@ -1,0 +1,15 @@
+--- .codex-tmp-timeout/main-hermes.py.orig	2026-07-20 15:28:18
++++ .codex-tmp-timeout/main-hermes.py	2026-07-20 15:30:43
+@@ -483,6 +483,12 @@
+         query = qpath.read_text(encoding="utf-8")
+ 
+     _load_hermes_env()
++    if os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1":
++        # The launcher intentionally hydrates ~/.hermes/.env with overwrite
++        # semantics. Reassert the trusted supervisor's unbounded request
++        # policy after hydration so stale 300/1200 defaults cannot return.
++        os.environ["HERMES_API_TIMEOUT"] = "inf"
++        os.environ["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
+ 
+     # Optional cwd change so file tools resolve relative paths the caller expects.
+     if project_dir:

@@ -47,6 +47,11 @@ def test_partnered_codex_routing_contract() -> None:
     assert {phase: profile[phase] for phase in expected_phases} == expected_phases
     assert profile["adaptive_critique"] is True
     assert profile["vendor_locked"] is True
+    assert profile["prep_models"] == {
+        "triage": "codex:gpt-5.6-terra:medium",
+        "fanout": "codex:gpt-5.6-terra:medium",
+        "distill": "codex:gpt-5.6-terra:medium",
+    }
 
     execute_tiers = profile["tier_models"]["execute"]
     assert [execute_tiers[str(tier)] for tier in range(1, 7)] == [
@@ -251,86 +256,6 @@ def test_only_literal_true_is_accepted() -> None:
     ) is None
 
 
-# ---------------------------------------------------------------------------
-# Pre-tool attestation helper unit tests (hermes worker)
-# ---------------------------------------------------------------------------
-
-from arnold_pipelines.megaplan.workers.hermes import (  # noqa: E402
-    _message_has_tool_activity,
-    _pre_tool_attested,
-    _with_pre_tool_attestation,
-)
-from arnold_pipelines.megaplan.types import CliError  # noqa: E402
-
-
-def test_baseline_history_with_old_tools_still_attests_when_appended_slice_has_none() -> None:
-    baseline = [
-        {"role": "assistant", "content": "prior turn", "tool_calls": [{"id": "old"}]},
-        {"role": "tool", "tool_call_id": "old", "content": "prior result"},
-    ]
-    observed = [
-        *baseline,
-        {"role": "assistant", "content": "this turn, no tools"},
-    ]
-    assert _pre_tool_attested(baseline, observed) is True
-
-
-def test_new_assistant_tool_calls_make_attestation_false() -> None:
-    baseline = [{"role": "user", "content": "go"}]
-    observed = [
-        *baseline,
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1", "name": "bash"}]},
-    ]
-    assert _pre_tool_attested(baseline, observed) is False
-
-
-def test_new_tool_role_message_makes_attestation_false() -> None:
-    baseline = [{"role": "user", "content": "go"}]
-    observed = [
-        *baseline,
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
-        {"role": "tool", "tool_call_id": "t1", "content": "out"},
-    ]
-    assert _pre_tool_attested(baseline, observed) is False
-
-
-def test_truncated_or_reordered_history_makes_attestation_false() -> None:
-    baseline = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
-    truncated = baseline[:1]
-    assert _pre_tool_attested(baseline, truncated) is False
-    reordered = [baseline[1], baseline[0]]
-    assert _pre_tool_attested(baseline, reordered) is False
-    # non-list observed evidence cannot attest
-    assert _pre_tool_attested(baseline, None) is False
-    assert _pre_tool_attested(baseline, "not-a-list") is False
-
-
-def test_malformed_message_fails_attestation() -> None:
-    assert _message_has_tool_activity("not-a-dict") is True
-    assert _message_has_tool_activity({"role": "assistant"}) is False
-    assert _message_has_tool_activity({"role": "tool"}) is True
-    assert _message_has_tool_activity({"role": "assistant", "tool_calls": []}) is False
-    assert _message_has_tool_activity({"role": "assistant", "tool_calls": [1]}) is True
-
-
-def test_with_pre_tool_attestation_preserves_existing_extra_and_fields() -> None:
-    original = CliError(
-        "worker_error",
-        "boom",
-        valid_next=["retry"],
-        extra={"session_id": "s1", "_external_error": {"kind": "quota"}},
-        exit_code=7,
-    )
-    annotated = _with_pre_tool_attestation(original, True)
-    assert annotated.code == "worker_error"
-    assert annotated.message == "boom"
-    assert annotated.valid_next == ["retry"]
-    assert annotated.exit_code == 7
-    assert annotated.extra["session_id"] == "s1"
-    assert annotated.extra["_external_error"] == {"kind": "quota"}
-    assert annotated.extra["_pre_tool_attested"] is True
-    # original is untouched
-    assert "_pre_tool_attested" not in original.extra
 
 
 def test_unknown_codex_model_is_explicitly_unpriced() -> None:

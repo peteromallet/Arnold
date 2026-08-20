@@ -1,0 +1,122 @@
+## Cross-Cutting Audit: Schemas, Artifacts, and Data Flow
+
+### 1. Existing Schema Surfaces (by domain)
+
+**Plan/Gate/Revise/Finalize/Review — the workflow life cycle**
+
+Four layered representations, each authoritative in a different register:
+
+| Layer | Location | Role |
+|---|---|---|
+| **Stable interface IDs** | `arnold_pipelines/megaplan/native_interfaces.py:1-413` | `NativeInterface` dataclass with `stable_id` (`megaplan.native.gate.v1`), declared inputs/outputs, legacy alias maps. `ALL_INTERFACES` tuple covers all 12 workflow paths. Read-only lookup via `resolve_stable_id()`. |
+| **Runtime schemas** | `arnold_pipelines/megaplan/schemas/runtime.py:239-501` | `SCHEMAS` dict with JSON Schema validators for `plan.json`, `prep.json`, `revise.json`, `critique_evaluator.json`, `gate.json`, `finalize.json`, `execute.json`, `review.json`. These are the **step-output contracts**. |
+| **Planning typed dicts** | `arnold_pipelines/megaplan/schemas/planning.py:1-49` | `GatePayload`, `GateArtifact`, `GateSignals`, `TiebreakerDecision` — TypedDict shapes shared between gate and tiebreaker. |
+| **Policy catalogue** | `arnold_pipelines/megaplan/policy_catalogue.md:1-137` | Prose catalogue of 12 policy domains (gate transitions, overrides, auto-escalation, tiebreaker recursion, etc.), each pinned to a legacy handler reference. Not machine-readable schema but normative for parity. |
+
+**Key insight:** The planning phases are modeled *four times* — stable IDs (metadata), runtime schemas (validation), TypedDicts (intra-Python contracts), and the policy catalogue (behavioral prose). Extension should happen through the stable ID layer and runtime schemas; the policy catalogue is already marked "M4 Phase 1 baseline" and is a parity checklist, not an extensible schema.
+
+**Evidence**
+
+Four distinct surfaces:
+
+1. **Evidence-pack JSON Schemas** — `arnold_pipelines/evidence_pack/verifier.py:51-154`. Local JSON Schema (Draft 2020-12) for `EVIDENCE_PACK_SCHEMA`, `CHECKPOINT_SCHEMA`, `VERDICT_SCHEMA`, `ATTESTATION_SCHEMA`. Five validator kinds: structural audit, budget enforcement, suspension propagation, by-ref validation, human review gate. The pipeline itself (`pipeline.py`) projects a 5-stage fanout→reduce→human_review→attestation topology.
+
+2. **Warrant system** — `arnold_pipelines/megaplan/store/warrant.py:1-225`. Signs a `WarrantSourceProjection` into a `Warrant` with `WarrantSignature`. Required fields: `authority_envelope`, `verified_work_account`, `rationale_anchor`, `behavioral_or_manifest_hash`, `verified_result_ref`. Source projections built from plan-directory files (`finalize.json`, `review.json`, `state.json`, `phase_result.json`) via `warrant_sources.py:117-208`.
+
+3. **Evidence bundle YAML** — `docs/arnold/megaplan-native-representation-evidence.yaml:1-6062`. SHA256-pinned source-provenance records. Each row has `row_id`, `semantic_carrier`, `carrier_sha256`, `source_span` (path + line range), `proof_artifact_sha256`. This is a **generated artifact** from `scripts.generate_native_representation_evidence`.
+
+4. **Semantic evidence dataclasses** — `arnold/workflow/semantic_evidence.py:1-291`. `ConstructType` enum (26 values covering handler_function through finalize), S2/S3/S4/S5 row ID namespaces, `SemanticEvidenceRecord` dataclass.
+
+**Key insight:** Evidence flows in two tiers: (a) the warrant system is cryptographic and authority-oriented, (b) the evidence-pack is structural/validator-oriented. They are not yet unified. The evidence YAML is generated from the canonical `.pypeline` source and is the most complete machine-readable bridge between source code and proof.
+
+**Row Registry**
+
+The conformance YAML (`docs/arnold/megaplan-native-representation-conformance.yaml`) *is* the de facto row registry. Each row has:
+- `id` (e.g., `prep-clarification-gate`)
+- `status` (implemented/deferred)
+- `semantic_carrier` (canonical_source | declared_policy | audited_pure_phase_body)
+- `carrier_evidence` (list of file paths)
+- `proof_categories` and `proof_artifacts`
+
+The traceability YAML (`docs/arnold/megaplan-native-representation-traceability.yaml`) extends each row with `requirement`, `owners`, `milestones`, `boundary_effects_required`, `boundary_contract_ids`, `false_pass_guard`, and `negative_invariant`. The proof map JSON (`docs/arnold/proof-map.json`) maps rows to test files, golden fixtures, and scenario coverage.
+
+The design doc `megaplan-native-semantic-parity-master-plan.md` describes a **carrier-scan → row-registry reconciliation pipeline** (`scripts/reconcile_megaplan_semantic_rows.py`) that would ensure every AST-discovered carrier maps to a conformance row. This is aspirational — the reconciliation script and `megaplan_semantic_rows.yaml` are referenced but not yet present in the repo.
+
+**Conformance**
+
+- `arnold/conformance/checks.py` — scanner that detects legacy import patterns
+- `arnold/conformance/deleted_surfaces.py` — forbidden-surface inventory
+- `arnold/conformance/routing.py`, `join.py`, `suite.py`, `workflow_manifest_runtime.py`
+- `arnold/conformance/legacy_reference_allowlist.json` — 742-line allowlist of files that may reference the deleted `arnold.pipelines.megaplan` path
+- The four YAML docs form a **conformance machine**: traceability → conformance → scenarios → evidence, with `proof-map.json` as the generated bridge
+
+**Store / Data Models**
+
+The `Store` protocol (`arnold_pipelines/megaplan/store/base.py:268`) defines ~40 methods across epics, checklists, sprints, events, messages, conversations, plans, artifacts, leases, locks, and snapshots. Models are Pydantic `StorageModel` subclasses in `schemas/models.py` (imported via `schemas/__init__.py`). Two backends: `FileStore` (`store/file.py`) and `DBStore` (`store/_db/`). The `SnapshotStore` protocol (`store/snapshot.py:34`) is a read-only subset used for `EpicSnapshot` capture.
+
+**Carriers**
+
+The carrier taxonomy is stable at three types:
+- `canonical_source` → `.pypeline` workflow files (the `workflow.pypeline` at `arnold_pipelines/megaplan/workflows/workflow.pypeline`)
+- `declared_policy` → `.pypeline`, `.py`, `.yaml`, `.json`, `.md` — policy documents like `planning.py`, `boundary_contracts.py`, `native-platform.md`
+- `audited_pure_phase_body` → handler `.py` files (`handlers/plan.py`, `handlers/_tiebreaker_impl.py`)
+
+Each conformance row binds to exactly one carrier type and cites `carrier_evidence` paths. The traceability YAML defines `carrier_evidence_suffixes` (line 49-52) mapping carrier types to allowed file extensions.
+
+**Runner Pinning**
+
+No existing implementation. Referenced only in design docs (`megaplan-native-semantic-parity-master-plan.md:854`) as `runner-pin-s0.json`, planned as S0 artifact that "pins runner and lands North Star action plumbing." This is a **greenfield extension point**.
+
+---
+
+### 2. Best Extension Points
+
+**A. `NativeInterface` stable IDs** (`native_interfaces.py:37-76`)
+The `NativeInterface` dataclass is frozen, versioned, and carries declared inputs/outputs. Adding a new phase (e.g., a "debrief" or "attest" phase) follows the same pattern: define a module-level constant with `stable_id`, `path_group`, `inputs`/`outputs` type hints, `legacy_aliases`, and `handler_ref`. Register in `ALL_INTERFACES`. This is the **lowest-risk extension** because it's metadata-only and backward-compatible by construction.
+
+**B. Runtime `SCHEMAS` dict** (`schemas/runtime.py:239`)
+Adding a new schema key (e.g., `"attest.json"`) extends the step-output validation surface. Each schema is a vanilla JSON Schema dict — no framework dependency. The `strict_schema()` helper wraps them for enforcement. New schemas can be added without touching existing keys.
+
+**C. Conformance row YAML** (`megaplan-native-representation-conformance.yaml`)
+Adding a new row (e.g., `debriefer-human-signoff`) follows the existing pattern: `id`, `status`, `semantic_carrier`, `carrier_evidence`, `proof_categories`, `proof_artifacts`. The four-YAML conformance machine expects new rows to also have traceability entries. This is **well-trodden** but requires coordinated updates across conformance.yaml, traceability.yaml, scenarios.yaml, and proof-map.json.
+
+**D. Evidence-pack verifier** (`evidence_pack/verifier.py`)
+The five-validator fanout model is extensible — add a new `VALIDATOR_KIND_*` constant, a new step name in `_VALIDATOR_KINDS`, and a corresponding checkpoint. The `ParallelStage` in `pipeline.py` already supports dynamic fanout.
+
+**E. Warrant source projection** (`store/warrant_sources.py`)
+The `inventory_warrant_sources()` function reads from plan-directory files (`finalize.json`, `review.json`, `state.json`, `phase_result.json`). Adding a new source field means adding it to `REQUIRED_WARRANT_SOURCE_FIELDS` or `OPTIONAL_WARRANT_SOURCE_FIELDS`, then extending `_classify()` and the inventory logic. The warrant envelope schema (`_warrant_envelope()`) would also need updating. This is **moderate risk** because warrant verification is a cryptographic boundary.
+
+---
+
+### 3. Surfaces to Avoid Extending
+
+- **`policy_catalogue.md`** — this is a parity checklist, not a schema. Adding new policy entries here without corresponding handler/`.pypeline` changes creates drift.
+
+- **Legacy handler references** — anything under `arnold_pipelines/megaplan/handlers/` that maps to the old `arnold.pipelines.megaplan` path is under active deletion. The `legacy_reference_allowlist.json` documents exactly which files may still reference deleted paths. New code should never cite `arnold.pipelines.megaplan`.
+
+- **TypedDicts in `planning.py`** — `GatePayload`, `GateArtifact`, `GateSignals`, `TiebreakerDecision` are fragile because TypedDicts don't enforce at runtime. Prefer Pydantic models from `schemas/models.py` for new contracts.
+
+- **The `Store` protocol directly** — it's large (40+ methods) and adding methods breaks both `FileStore` and `DBStore` implementations. Extend through composition or new protocols (like `SnapshotStore`) rather than adding to the core `Store` protocol.
+
+---
+
+### 4. Risks
+
+1. **Carrier reconciliation gap.** The carrier-scan → row-registry reconciliation pipeline is designed but not built. Without it, new carriers (new `.pypeline` nodes, new handler surfaces) may exist without corresponding conformance rows. Risk: silent policy drift where source changes aren't reflected in proof.
+
+2. **Evidence fragmentation.** Warrant signing, evidence-pack verification, and semantic evidence records are three independent evidence surfaces with no shared schema or cross-reference. Risk: a change can pass one evidence gate but fail another inconsistently.
+
+3. **Four-YAML coherence.** Adding a row to `conformance.yaml` requires synchronized updates to `traceability.yaml`, `scenarios.yaml`, and `proof-map.json`. No automated validation ensures these stay in sync — the `scripts/validate_native_representation_conformance.py` validator exists but its scope is limited to conformance.yaml structural checks.
+
+4. **Runner pinning is greenfield.** `runner-pin-s0.json` doesn't exist. Building it means defining what a "runner version" even means in the Arnold context (Python version? package hash? installed-wheel identity?). The `manifest-identity-report.json` and `pipeline_ids.json` already track pipeline identities — runner pinning should compose with those, not create a parallel identity system.
+
+5. **Store model proliferation.** `schemas/models.py` exports 40+ models, many with overlapping fields (`Plan` vs `PlanArtifact`, `Epic` vs `EpicSummary` vs `EpicSnapshot`). Adding new store models risks field-name collisions and migration complexity in the DB backend.
+
+---
+
+### 5. Plan Adjustments
+
+- **Priority:** Build the carrier-scan → row-registry reconciliation before adding new conformance rows. Without it, the audit surface is incomplete.
+- **Unify evidence:** The warrant system and evidence-pack should share at minimum a `behavioral_manifest_hash` cross-reference so both surfaces are mutually verifiable.
+- **Extend via `NativeInterface`:** New workflow phases should be declared as `NativeInterface` constants first, with runtime schemas second. The policy catalogue should be regenerated from those declarations, not hand-maintained.
+- **Runner pinning:** Model `runner-pin-s0.json` as an extension of `pipeline_ids.json` — a runner pin is a pipeline identity bound to an execution environment, not a separate identity axis.

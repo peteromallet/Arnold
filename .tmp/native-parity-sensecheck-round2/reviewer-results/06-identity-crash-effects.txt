@@ -1,0 +1,150 @@
+I now have all evidence needed. Here is the audit.
+
+---
+
+# Lens 6 — Identity, Crash, Resume, and Effects Adversary Audit
+
+## 1. Verdict
+
+**FAIL with recoverable gaps.** The system has four clean identity *vocabularies* (authored semantic topology, Run Authority, WBC/boundary-contract, Custody) but **zero identity translation bridges** between them. The native runtime persists checkpoints *only at suspension points*, not after successful phase completion — meaning a crash between a completed external effect and the next suspension loses durable evidence. The RA resolver has no custody-leasing or WBC awareness, leaving stale-authority windows where a coordinator whose lease expired mid-run is still classified RUNNING. The WBC evidence vocabulary (`BoundaryContract`/`BoundaryReceipt`) is structurally sound but has no runtime integration — no effect ledger snapshot in the resume cursor, no contract-version guard at action time, and no conformance proof that receipts are idempotent across replays. The kernel `EffectLedger` provides intent-before-execution at-most-once semantics, but it is disconnected from the native runtime and the WBC receipt layer. Custody M11 is complete as a standalone lease primitive, but its fencing tokens are not validated at RA decision time or WBC action time.
+
+The four coordinates *can* be sound, but they currently operate in separate identity spaces. An adversary with access to a stale custody workspace can replay phase completions across hosts, produce duplicate effects, and the system has no integrated cross-coordinate validation that would detect it.
+
+---
+
+## 2. Scenario Matrix
+
+| Scenario | Authored Coordinate | RA Coordinate | WBC Coordinate | Custody Coordinate | Crash/Reentry Rule | Action-Time Validation | Sprint Deliverable | Executable Proof | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| **Deterministic fanout** (parallel validators) | `evidence_pack_native` → `parallel([...validators])` → `_join_validators` reducer | RUNNING (live worker) | Per-validator: `BoundaryPhase` + checkpoint artifact; reducer: join receipt | `lease_id` + `fencing_token` propagated via `RunEnvelope.join()` | No suspension — fanout completes within one run | Reducer join validates envelope merge; `lease_id` conflict raises `LeaseIdConflict` | `evidence_pack/native.py:303-314` — parallel block with reducer | `test_suspension_aware_composition` tests barrier join | **PASS** — envelope join is associative/idempotent |
+| **Dynamic fanout** (foreach over task batches) | Not yet native; hidden in `handle_execute_auto_loop()` `batch.py:2278` | RUNNING | Boundary receipts per child batch; reducer receipt | Envelope per-batch with cumulative `capacity_grant` | Phase handler manages batches internally; no per-batch cursor | None — WBC receipts are handler-internal, not contract-validated | `native-platform-followup/m5` (worker fleet) | None in current code | **GAP** — dynamic fanout has no authored topology, no per-child checkpoint |
+| **Task batches + fanin** | `execute` handler `batch.py:1201` → internal batch dispatch | RUNNING or RETRYABLE_EXECUTION_BLOCK | Per-batch receipts in handler, not in WBC vocabulary | Single envelope spanning all batches | Batch failure → retry within handler, not at runtime level | No WBC contract for batch granularity | Planned in `boundary-turn-end-to-end/m6` | None | **GAP** — batch identity not visible to WBC or RA |
+| **Human suspension → same-host resume** | `human_review_decision` → `human_gate=True` → `persist_native_cursor` (line 1526) → `resume_evidence_pack` | HUMAN_ACTION_REQUIRED → RESUMED | `BoundaryReceipt` with `outcome=AWAITING_EXTERNAL_EVIDENCE` (if implemented) | Lease held across suspension (flock is live) | `classify_resume_cursor` returns `"native"` → `run_native_pipeline(resume=True)` | `_validate_human_review_cursor` checks `suspension_kind=="human_gate"` + `artifact_stage` | `evidence_pack/resume.py:92-153` | `test_suspension.py` — kernel suspension round-trip | **PASS** — same-host resume is contractually sound |
+| **Human suspension → cross-host resume** | Same as above | Same as above | Same as above | **New host acquires lease** with higher `fencing_token` | Same cursor validation; NO custody check on new host | `_validate_human_review_cursor` only checks cursor shape, not custody authority | None — `resume_evidence_pack` has no custody parameter | No test for cross-host resume with custody validation | **GAP** — cross-host resume lacks custody lease validation |
+| **Crash before effect** | Phase callable executed, result in memory, crash before cursor persist | STALE_DERIVED_STATE or BROKEN_STATE_MACHINE | Effect never INTENDED (no intent event written) | Lease may be stolen by watchdog | No checkpoint → replay from last suspension; effect re-executes with same `idempotency_key` | `EffectLedger.prerecord()` prevents duplicate if intent was written, but intent wasn't written | `kernel/effect_ledger.py:48-61` — prerecord pattern | No integration test for crash-before-effect | **GAP** — pre-effect crash is safe only if intent-to-execute is atomic with checkpoint |
+| **Crash after external effect, before receipt/checkpoint** | Phase completed, external effect executed (e.g., git push), crash before next `persist_native_cursor` | COMPLETED or UNKNOWN (stale labels) | Effect FULFILLED externally but no `BoundaryReceipt`; on replay, effect re-executes (duplicate) | Lease stolen; new holder replays | No checkpoint → replay restarts from last suspension; effect re-executes with same `idempotency_key` | `EffectLedger` dedupes by key but FULFILLED+RUNNING pattern is ambiguous — was it fulfilled or not? | `kernel/effect_ledger.py:63-69` — mark_fulfilled | No test for crash-after-external-effect + replay | **CRITICAL GAP** — crash after effect but before cursor/receipt = duplicate effect on replay |
+| **Coordinator replacement with stale fence** | N/A — coordinators are not authored nodes | Old coordinator classified RUNNING (live worker); new coordinator sees STALE_DERIVED_STATE | No WBC evidence of coordinator transition | Old `fencing_token` < new `last_token` → `StaleLeaseError` on write (line 44-48) | New coordinator must detect stale RA classification | RA resolver does not consult `fencing_token`; it only checks liveness | `capacity_lease.py:35-48` — StaleLeaseError | No test for coordinator-replacement RA integration | **GAP** — RA resolver is custody-blind |
+| **Custody lease expiry/reassignment with stale epoch** | Same topology, different custodial epoch | Old custody holder classified RUNNING (worker still alive); new holder gets RUNNING too if both workers live | No WBC `custody_epoch` field in `BoundaryContract` | `CapacityLease` has monotonic tokens, no epoch concept; `Write` fails on stale token | New holder acquires lease → bump token → old holder's writes fail | No integration between `CapacityLease` and RA resolver | `capacity_lease.py:86-105` — acquire + write | No test for epoch-change during run | **GAP** — no custody epoch in RA or WBC vocabularies |
+| **Retry/replan/rework caps** | Bounded loops in `revise` handler (`max_critique_iterations=4`); rework caps in `review` handler | RETRYABLE_EXECUTION_BLOCK or BROKEN_STATE_MACHINE (repeated fingerprint) | No WBC contract for cap-exceeded transitions | Envelope `retry_budget` decremented on retry | `_BROKEN_REPEAT_THRESHOLD = 3` (classifiers.py:99) | `classify_broken_state_machine` checks `broken_repeat_count >= 3` | `classifiers.py:364-424` | `_northstar.py:28-31` — ordering test | **PASS** — caps are observable through RA |
+| **Cancellation racing action** | `cancellation` flag in `RunEnvelope`; `CancellationRequested` supervisor signal | Classifiers check `is_live` not `cancellation` | No WBC cancellation outcome in `BoundaryOutcome` | Lease `_released` flag; no cancellation integration | `cancellation_result_payload` returns cancelled contract result | Checked at `_hooks.should_suspend` + in `cancelled_contract_result` | `runtime.py:69-74` — supervisor.cancellation import | No race-condition test for cancellation during phase execution | **GAP** — cancellation is not a RA or WBC first-class state |
+| **Terminal publication** | `emit_attestation` phase produces `attestation` artifact | COMPLETED | `BoundaryReceipt(outcome=COMPLETE)` | Lease released on completion | Cursor carries completed stages; no further replay | `verdict_is_fail` decision routes to emit or human_review | `evidence_pack/native.py:250-251` | `_northstar.py:9-13` — COMPLETED probe | **PASS** — terminal publication has authored path + RA classification |
+| **Boundary-contract version change during run** | Topology unchanged | RA unchanged | `contract_version` in `BoundaryContract` (`boundary_evidence.py:110`) — no runtime version guard | No version in custody lease | No version check on resume or action time | `boundary_contract_missing_topology_detail_keys` only checks `details` keys | `boundary_evidence.py:406-423` | No test for version-drift during run | **CRITICAL GAP** — no contract-version fence at action time |
+| **Model/call-site policy change during suspension** | Policy routing (`model_route`) captured at compile time in `NativeProgram` | RA unchanged | No WBC model-routing evidence | No custody integration | Resume uses recompiled `NativeProgram`, not program snapshot from suspension time | No policy snapshot in resume cursor | `resume.py:136` — `run_native_pipeline(build_native_program(), ...)` — **recompiles on resume** | No test for policy-change-during-suspension | **CRITICAL GAP** — policy recompiled on resume, not snapshotted |
+
+---
+
+## 3. Ranked Gaps
+
+### Gap 1: Crash-after-external-effect, before-receipt → duplicate effect (CRITICAL)
+- **Severity:** CRITICAL
+- **Confidence:** HIGH
+- **Consequence:** External effects (git pushes, PR creation, API calls) that complete but crash before the next suspension checkpoint will re-execute on replay. The `EffectLedger` prerecord pattern only prevents duplicates when the INTENT was written, but the native runtime only checkpoints at suspension points, not after each phase.
+- **Evidence:** `runtime.py:1233` and `runtime.py:1526` — `persist_native_cursor` only called on suspension (`phase_suspended`, `human_gate`), not after successful phase completion. `effect_ledger.py:48-61` — prerecord requires intent event before execution. There is no integration between the native runtime and the effect ledger.
+- **Minimum plan amendment:** Add a `checkpoint_after_phase` configuration to the native runtime that persists a cursor after every phase that declares external effects. Wire `EffectLedger.prerecord()` into phase execution so that INTENDED is durable before execution. Test: crash simulator that kills the process between effect execution and checkpoint, then verifies replay does not duplicate the effect.
+
+### Gap 2: Identity translation between authored topology and WBC boundary (CRITICAL)
+- **Severity:** CRITICAL
+- **Confidence:** HIGH
+- **Consequence:** The authored semantic node (`native.pc` + `stages` + `run_path`) has no mapping to a WBC `boundary_id`. A `BoundaryReceipt` references `boundary_id`/`workflow_id`/`row_id`, but the native cursor carries `stage`/`stages`/`stage_reentry_points`. There is no identity bridge. Conformance proofs cannot trace from an authored decision to its WBC evidence.
+- **Evidence:** `checkpoint.py:11-37` — cursor shape has `native.pc`, `stages`, `stage_reentry_points`. `boundary_evidence.py:91-111` — `BoundaryContract` has `boundary_id`/`workflow_id`/`row_id`. No code maps between these spaces.
+- **Minimum plan amendment:** Define a `TopologyToBoundaryMapping` that registers each `@phase`/`@decision` node name to a `boundary_id` at compile time. Include this mapping in the cursor. Validate at action time that the cursor's `boundary_id` matches the contract's expected `boundary_id`. Add to the `native-platform-followup/m6` final conformance gate a proof that every authored instruction has a corresponding boundary contract.
+
+### Gap 3: RA resolver is custody-blind (HIGH)
+- **Severity:** HIGH
+- **Confidence:** HIGH
+- **Consequence:** A coordinator whose lease was stolen continues to be classified RUNNING if its worker process is alive. The new lease holder sees the same RUNNING classification. Two coordinators can simultaneously believe they own the run.
+- **Evidence:** `classifiers.py:277-351` — `ResolverContext.build()` consumes `chain_state`, `plan_state`, `tmux_process`, `needs_human`, `stale_evidence`, `repair_progress` — **no custody lease state**. `capacity_lease.py:35-48` — `StaleLeaseError` detects stale writes but the RA resolver never reads lease state.
+- **Minimum plan amendment:** Add `custody_state` as a 7th evidence source in `resolve_run_state`. Define `CUSTODY_STALE_LEASE` classifier that fires when `fencing_token < last_token` and the worker is not live. Wire `CapacityLease` into the evidence normalization pipeline. Test: dual-coordinator scenario with lease expiry.
+
+### Gap 4: No contract-version fence at WBC action time (HIGH)
+- **Severity:** HIGH
+- **Confidence:** MEDIUM
+- **Consequence:** If a `BoundaryContract` version changes during a suspended run, the resume uses the new contract version without validation that the pre-suspension work satisfies the new contract. Receipts produced before the version change may become invalid.
+- **Evidence:** `boundary_evidence.py:110` — `contract_version: str = "arnold.workflow.boundary_contract.v1"`. No version comparison logic in `BoundaryContract.__post_init__` or in any consumer. `resume.py:136` — `run_native_pipeline(build_native_program(), ...)` recompiles the program, which may embed a new contract version.
+- **Minimum plan amendment:** Add `expected_contract_version` to the resume cursor. On resume, compare against current `BoundaryContract.contract_version`. If mismatched, quarantine the resume. Add `contract_version` to `BoundaryReceipt` validation: receipts from mismatched contract versions must be marked `SUPERSEDED`.
+
+### Gap 5: Policy/model-route recompiled on resume, not snapshotted (HIGH)
+- **Severity:** HIGH
+- **Confidence:** HIGH
+- **Consequence:** `resume_evidence_pack()` calls `build_native_program()` which recompiles the pipeline from source. If the source changed during suspension (model routing, timeout configuration, call-site policy), the resumed execution uses different semantics than the original run. The cursor carries `state` and `envelope` but not the compiled `NativeProgram` or policy snapshot.
+- **Evidence:** `resume.py:136-143` — `run_native_pipeline(build_native_program(), ...)`. There is no program snapshot or hash in the cursor. The only hash check is `manifest_hash` comparison in `resume.py:migrate_legacy_resume()` for trust transitions.
+- **Minimum plan amendment:** Compute a `program_content_hash` at initial compile time and store it in the cursor. On resume, validate that `build_native_program()` produces the same hash. If not, quarantine the resume with `TrustTransition(TRUST_UNKNOWN, TRUST_QUARANTINED_MANIFEST_MISMATCH)`. This leverages the existing `TrustTransition` infrastructure.
+
+### Gap 6: Cross-host resume lacks custody validation (MEDIUM)
+- **Severity:** MEDIUM
+- **Confidence:** MEDIUM
+- **Consequence:** When a pipeline is suspended on host A and resumed on host B, there is no validation that host B holds the custody lease. Host A may still hold the flock (if it didn't crash), leading to dual execution.
+- **Evidence:** `resume.py:48-68` — `_load_resume_cursor` only checks cursor kind and validity. No `CapacityLease` acquisition or validation. `test_suspension.py:13-28` — test only validates suspension record round-trip, not custody integration.
+- **Minimum plan amendment:** Add optional `require_custody_lease: bool = True` parameter to `resume_evidence_pack()`. If enabled, acquire the `CapacityLease` for the run's tenant before loading the cursor. If the lease cannot be acquired (stale or held by another host), fail the resume.
+
+### Gap 7: Dynamic fanout has no authored topology (MEDIUM)
+- **Severity:** MEDIUM
+- **Confidence:** HIGH
+- **Consequence:** Task batches and dynamic fanout are hidden inside handler code (`batch.py:2278`). They have no authored `@foreach`/`@parallel.map` topology, no per-child checkpoint, and no per-child WBC receipts. This means fanout children cannot be independently suspended, resumed, or validated.
+- **Evidence:** `representation-report.md:194-205` — "Execution hides a substantial workflow... The large auto-execute loop is `handle_execute_auto_loop()`". `native.py:303-314` — only fixed `parallel()` is authored, not dynamic `foreach`. Planned in `native-composition-followup/m3` (general nested workflow invocation).
+- **Minimum plan amendment:** This is deferred to `native-composition-followup/m3` and is a **missing contract**, not deferred detail. The plan must specify: (a) dynamic `foreach` compilation into `ParallelInstruction` with per-iteration `run_path`, (b) per-iteration checkpoint in child artifact roots, and (c) reducer receipt aggregation into parent boundary. Without this, the current plan for `boundary-turn-end-to-end/m6` (execute child batch turns) is underspecified.
+
+### Gap 8: Cancellation is not a first-class RA or WBC state (MEDIUM)
+- **Severity:** MEDIUM
+- **Confidence:** MEDIUM
+- **Consequence:** Cancellation is handled at the supervisor/envelope level (`RunEnvelope.cancellation`, `CancellationRequested`) but the RA resolver has no CANCELLED state and WBC has no cancellation outcome. A cancelled run is classified as UNKNOWN or BROKEN_STATE_MACHINE, not as intentionally terminated.
+- **Evidence:** `model.py:18-35` — `CanonicalState` enum has 9 states, none for CANCELLED. `boundary_evidence.py:45-59` — `BoundaryOutcome` has 11 states, none for CANCELLED (closest is `VOIDED` or `SUPERSEDED`). `runtime.py:69-74` — cancellation is handled at the runtime level.
+- **Minimum plan amendment:** Add `CANCELLED` to `CanonicalState` enum with a classifier that fires when `envelope.cancellation == True` and the worker is not live. Add `CANCELLED` to `BoundaryOutcome`. This is a straightforward amendment to the existing enums.
+
+### Gap 9: No WBC receipt idempotency proof (MEDIUM)
+- **Severity:** MEDIUM
+- **Confidence:** MEDIUM
+- **Consequence:** `BoundaryReceipt` has no `idempotency_key` field. If a receipt is emitted twice (replay, duplicate phase execution), there is no way to detect the duplicate from the WBC evidence layer alone.
+- **Evidence:** `boundary_evidence.py:158-254` — `BoundaryReceipt` has `invocation_id`, `artifact_refs`, `state_observation` but no `idempotency_key`. `effect_ledger.py:30-36` — `EffectRecord` has `descriptor` with `idempotency_key`. These are disconnected.
+- **Minimum plan amendment:** Add `idempotency_key: str | None` to `BoundaryReceipt`. On receipt emission, derive the key from `(boundary_id, invocation_id, contract_version)`. Validate uniqueness before writing. This bridges the WBC receipt layer with the effect ledger deduplication.
+
+### Gap 10: No custody epoch in RA or WBC vocabularies (LOW)
+- **Severity:** LOW
+- **Confidence:** MEDIUM
+- **Consequence:** When a custody lease is reassigned (e.g., from coordinator A to coordinator B), there is no durable epoch marker in RA or WBC evidence. History queries cannot distinguish which coordinator owned which phase.
+- **Evidence:** `capacity_lease.py:86-105` — `CapacityLease` has `tenant` + `fencing_token` but no epoch counter. `RunEnvelope` has `lease_id` + `fencing_token` but no epoch. `classifiers.py` doesn't read any custody field.
+- **Minimum plan amendment:** Add `custody_epoch: int` to `RunEnvelope`, incremented on each `CapacityLease.acquire()`. Include in RA evidence so the resolver can detect epoch transitions. This is a implementation detail appropriately deferred to the custody-wiring sprint, but the data field must be declared now.
+
+---
+
+## 4. Implementation Detail Appropriately Deferred vs. Missing Contract
+
+| Item | Classification | Rationale |
+|---|---|---|
+| Dynamic `foreach` compilation | **Missing contract** | The native representation report (line 194-205) identifies this as hidden control flow. The `native-composition-followup/m3` milestone depends on it. Without a spec for per-iteration `run_path` and checkpoint, the boundary-turn/m6 milestone (execute child batch turns) is underspecified. |
+| WBC receipt idempotency key | **Missing contract** | `BoundaryReceipt` (line 158) has no `idempotency_key`. The effect ledger has one (line 31). The contract separation is correct, but the absence of a bridging key means duplicate receipts are undetectable. This is a contract gap, not deferred implementation. |
+| Custody epoch counter | **Deferred detail** | The `CapacityLease` has monotonic `fencing_token`. Adding an epoch counter is trivial and can be added in the custody-wiring sprint. The data field declaration is the only contract need. |
+| Per-phase automatic checkpoint | **Missing contract** | The native runtime checkpoints only at suspension. Adding per-phase checkpointing requires a configurable policy (`checkpoint_after_phase`), which is a runtime contract change. The current plan defers this to `native-platform-followup/m4` (durable substrate), but the brief doesn't explicitly mention per-phase checkpointing. |
+| Program-content snapshot in cursor | **Missing contract** | Policy recompilation on resume is a correctness gap. The cursor must carry either the compiled `NativeProgram` or its content hash. This is a contract between the compiler and the runtime, not an implementation detail. |
+
+---
+
+## 5. Sound Scenarios/Invariants
+
+### Invariant 1: Envelope join is associative, commutative, and idempotent
+- **Evidence:** `envelope.py:125-222` — `RunEnvelope.join()`: taint uses clean/non-clean dominance, cost sums, deadline takes min, cancellation does OR, retry_budget takes min, error_class handles None/equal/conflict. `test_envelope_flag.py` and characterization tests verify.
+- **Status:** SOUND.
+
+### Invariant 2: Human-gate suspension produces a validatable cursor
+- **Evidence:** `runtime.py:1526-1584` — `human_gate` suspension persists cursor with `suspension_kind: "human_gate"`, `artifact_stage`, `stage_reentry_points`. `resume.py:71-79` — `_validate_human_review_cursor` checks these fields. `test_suspension.py:13-28` — round-trip test.
+- **Status:** SOUND for same-host resume.
+
+### Invariant 3: Stale-lease detection prevents writes after lease theft
+- **Evidence:** `capacity_lease.py:100-128` — `write()` checks `fencing_token < last_token` and raises `StaleLeaseError`. `capacity_lease.py:35-48` — error carries tenant, holder token, last token.
+- **Status:** SOUND within the custody layer.
+
+### Invariant 4: Ordered RA classifiers produce deterministic resolution
+- **Evidence:** `classifiers.py:8-31` — fixed priority order: BROKEN → live/active → human gates → completed → stale → blocks → repair → unknown. `_northstar.py:28-41` — ordering assertions verified.
+- **Status:** SOUND within the RA layer.
+
+### Invariant 5: Effect ledger prerecord prevents duplicate execution
+- **Evidence:** `effect_ledger.py:48-61` — `prerecord()` returns `False` for duplicate keys. `derive_effect_idempotency_key` produces stable keys.
+- **Status:** SOUND, but disconnected from the native runtime (no integration).
+
+### Invariant 6: Boundary vocabulary separates contract from evidence
+- **Evidence:** `boundary_evidence.py:1-11` — docstring confirms separation: "Boundary vocabulary types are separate from SemanticEvidence and SemanticFailure to prevent conflation." `BoundaryContract` is declaration; `BoundaryReceipt` is evidence; `SemanticFinding` is mismatch.
+- **Status:** SOUND, but not wired to runtime.
+
+---
+
+**Summary position:** The four coordinates (authored topology, RA, WBC, Custody) are individually sound but operate in separate identity spaces. The critical path to integration is: (1) add identity bridging between authored nodes and WBC `boundary_id`, (2) wire `EffectLedger` into the native runtime with checkpoints after every effect-bearing phase, (3) make the RA resolver custody-aware, and (4) snapshot the compiled program hash in the resume cursor. Without these four bridges, cross-coordinate scenarios (crash-after-effect, cross-host resume with custody, dual-coordinator execution) produce silently incorrect behavior with no detectable evidence until a downstream consumer observes the duplicate or inconsistency.

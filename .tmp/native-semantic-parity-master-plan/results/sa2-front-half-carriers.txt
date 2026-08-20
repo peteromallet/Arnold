@@ -1,0 +1,109 @@
+Here are the findings, file:line-cited, organized by carrier:
+
+---
+
+## Gate Reprompt / Downgrade
+
+| File | Lines | Semantic Owned | Milestone Gate |
+|------|-------|----------------|----------------|
+| `handlers/gate.py` | 77–133 | `_record_gate_debt_entries` — full debt persistence (tradeoffs, unresolved flags, registry I/O) | **M4** (gate handler decomposition) |
+| `handlers/gate.py` | 308–349 | `_build_gate_prompt_override` — reprompt text construction in `handlers/shared.py` | **M4** (prompt authority → `prompts/gate.py`) |
+| `handlers/gate.py` | 380–397 | `_is_cap_blocking_flag` — severity + category branching for termination switch | **M4** (severity policy → canonical policy) |
+| `handlers/gate.py` | 414–463 | `_critique_no_progress_streak` — no-progress streak tracking persisted on `state['meta']` | **M4** (iteration pressure → `orchestration/iteration_pressure`) |
+| `handlers/gate.py` | 466–499+ | `_critique_terminate_branch` — severity-gated termination (STATE_BLOCKED vs STATE_GATED) | **M4** (termination policy → canonical policy) |
+| `handlers/gate.py` | 657–677 | Hard iteration cap + no-progress cap inline in `_build_gate_route_signal` | **M4** (loop caps → `REVISE_LOOP_POLICY`) |
+| `handlers/gate.py` | 993–1097 | Full reprompt flow: retry worker, scratch promotion, downgrade to ITERATE with `reprompt_downgrade` fallback kind | **M4** (reprompt → gate policy engine) |
+| `workflows/components.py` | 1151–1237 | `GATE_POLICY.metadata` duplicates reprompt_policy, severity_policy, debt_visibility, fallback_route_signals, critique_gate_diagnostics | **M5** (component metadata → canonical policy surface) |
+| `workflows/components.py` | 1276–1279 | `revise_reentries` mapping `retry_gate`/`reprompt_downgrade` to revise targets | **M5** (gate→revise coupling extraction) |
+| `outcomes.py` | 43–44 | `RETRY_GATE`, `REPROMPT_DOWNGRADE` StrEnum members in `GateOutcome` | **M5** (outcome vocabulary consolidation) |
+
+---
+
+## Critique Evaluator Retry
+
+| File | Lines | Semantic Owned | Milestone Gate |
+|------|-------|----------------|----------------|
+| `workflows/components.py` | 995–999 | `CRITIQUE_ROUTE_SURFACE.skip_and_retry.evaluator_retry` — max_attempts=2, on_exhausted="blocked" | **M5** (retry policy → canonical critique policy) |
+| `workflows/components.py` | 1051–1055 | Duplicate in `DEFAULT_POLICY.metadata.critique_surface.skip_and_retry_policy.evaluator_retry` | **M5** (remove duplicate, consolidate) |
+| `workflows/components.py` | 1208–1211 | Duplicate in `GATE_POLICY.metadata.route_surface.critique_gate_diagnostics.evaluator_retry` | **M5** (remove duplicate from gate metadata) |
+| `workflows/components.py` | 2500–2504 | Duplicate in `SOURCE_CRITIQUE_PANEL_WORKFLOW.metadata.topology_contract.skip_and_retry_policy` | **M5** (remove duplicate from workflow metadata) |
+
+---
+
+## Loop Caps
+
+| File | Lines | Semantic Owned | Milestone Gate |
+|------|-------|----------------|----------------|
+| `workflows/components.py` | 40 | `M4_LOOP_MAX_ITERATIONS = 4` — module-level constant | **M5** (single canonical constant) |
+| `workflows/components.py` | 1245 | `REVISE_LOOP_POLICY.config.max_iterations` | **M5** (already canonical; keep) |
+| `workflows/components.py` | 1259–1260 | Duplicate `max_iterations` / `max_iterations_ref` in metadata | **M5** (remove metadata duplicate) |
+| `workflows/components.py` | 1286–1293 | `termination_policy.iteration_caps` with robustness overrides | **M5** (already canonical; keep) |
+| `workflows/front_half.pypeline` | 31 | `"next_loop_cap_ref": "M4_LOOP_MAX_ITERATIONS"` — handoff topology hardcodes the cap ref | **M3** (front-half handoff → canonical handoff contract) |
+| `handlers/gate.py` | 657–671 | Hard cap inline: `prior_rounds >= max_iter` gate | **M4** (move to gate policy engine) |
+
+---
+
+## No-Progress Termination
+
+| File | Lines | Semantic Owned | Milestone Gate |
+|------|-------|----------------|----------------|
+| `handlers/gate.py` | 414–463 | `_critique_no_progress_streak` — stateful tracking on `state['meta']` | **M4** (→ `orchestration/iteration_pressure`) |
+| `handlers/gate.py` | 672–677 | No-progress cap inline check against `max_critique_no_progress` | **M4** (→ gate policy engine) |
+| `workflows/components.py` | 1294–1297 | `no_progress_cap` config reference in `REVISE_LOOP_POLICY` metadata | **M5** (already canonical; keep) |
+| `run_state/classifiers.py` | 97–99 | `_BROKEN_REPEAT_THRESHOLD = 3` — no-progress fingerprint threshold for BROKEN_STATE_MACHINE | **M5** (already in pure resolver; keep) |
+
+---
+
+## Severity Branching
+
+| File | Lines | Semantic Owned | Milestone Gate |
+|------|-------|----------------|----------------|
+| `handlers/gate.py` | 380–397 | `_is_cap_blocking_flag` — severity/category predicate for termination | **M4** (→ canonical severity policy) |
+| `workflows/components.py` | 1168–1173 | `severity_policy` dict in GATE_POLICY metadata | **M5** (→ canonical severity policy; remove duplicate) |
+| `workflows/components.py` | 1298–1303 | Duplicate `severity_policy` in REVISE_LOOP_POLICY termination_policy | **M5** (deduplicate) |
+| `run_state/classifiers.py` | 53–96 | `_IMPLEMENTATION_BLOCK_TOKENS`, `_RETRYABLE_EXECUTION_TOKENS` — severity-adjacent classification tokens | **M5** (already in pure resolver; keep) |
+| `review/mechanical.py` | 45–62 | `_pre_check_flag` builds severity strings ("minor", "significant") inline | **M5** (advisory pre-checks; keep) |
+
+---
+
+## Debt Recording
+
+| File | Lines | Semantic Owned | Milestone Gate |
+|------|-------|----------------|----------------|
+| `handlers/gate.py` | 77–133 | `_record_gate_debt_entries` — complete debt persistence (registry load/save, tradeoff extraction, subsystem tagging) | **M4** (→ `quality_resolutions` or dedicated debt module) |
+| `handlers/gate.py` | 209–213 | `_gate_debt_payload` builder | **M4** (co-migrate with `_record_gate_debt_entries`) |
+| `handlers/gate.py` | 1129–1131 | Call site: `debt_entries_added = _record_gate_debt_entries(...)` | **M4** (repoint to canonical debt recorder) |
+| `handlers/override.py` | 189–194 | `debt_entries_added` plumbed through force-proceed override response | **M4** (repoint) |
+| `handlers/override.py` | 1082 | `"debt_entries_added": len(unresolved_flags)` inline | **M4** (repoint) |
+| `workflows/components.py` | 1189–1193 | `debt_visibility` metadata in GATE_POLICY | **M5** (→ canonical debt policy surface) |
+| `workflows/components.py` | 1229–1233 | `debt_recorded` diagnostic metadata | **M5** (deduplicate) |
+| `workflows/components.py` | 1309–1313 | Duplicate `debt_visibility` in REVISE_LOOP_POLICY termination_policy | **M5** (deduplicate) |
+| `quality_resolutions.py` | 33–36 | `ACCEPTED_WITH_DEBT`, `FIXED`, `MANUAL_REQUIRED`, `REJECTED` — domain constants for quality debt resolution | **M5** (already canonical; keep) |
+
+---
+
+## Gate–Revise Coupling Constraints (must extract together)
+
+| File | Lines | Constraint |
+|------|-------|------------|
+| `workflows/components.py` | 1155–1156 | `route_groups`: `"revise": ("iterate", "retry_gate", "reprompt_downgrade")` — ties gate outcome vocabulary to revise target |
+| `workflows/components.py` | 1276–1279 | `revise_reentries`: maps `"iterate" → "revise"`, `"retry_gate" → "gate_retry_revise"`, `"reprompt_downgrade" → "gate_reprompt_revise"` |
+| `workflows/components.py` | 1239–1336 | `REVISE_LOOP_POLICY` — the entire policy couples gate route signals to revise reentry, termination, suspension, and tiebreaker; must be extracted as a single canonical contract |
+| `workflows/workflow.pypeline` | 470 | `AUTHORING_REVISE(id="gate_reprompt_revise", gate_payload=gate_route_signal)` — workflow wiring that depends on gate→revise coupling |
+| `workflows/planning.py` | 119 | `"gate_reprompt_revise": "revise"` — planning-level mapping |
+| `workflows/boundary_contracts.py` | 412 | Light-robustness termination branching references `"terminate directly or..."` — depends on severity/robustness coupling |
+| `handlers/gate.py` | 1075–1097 | Reprompt downgrade sets `route_signal = "iterate"` with `reprompt_downgrade` fallback — the handler encodes the gate→revise transition |
+| `handlers/review.py` | 1148 | `"significant is the explicit non-blocking downgrade for gate-settled concerns"` — review handler references gate severity semantics |
+
+---
+
+## Commands Run
+
+```
+search_files pattern="reprompt|downgrade|retry|loop.?cap|no.?progress|severity|debt" target=content (×2)
+read_file on: hinge_gate.py, control.py, policy_settings.py, mechanical.py, checks.py, prompts.py (loop), retry.py (watchdog), quality_resolutions.py, classifiers.py, fallback_chains.py, components.py (×2), front_half.pypeline, gate.py (×4), evidence.py, resolver.py, outcomes.py, shared.py, override.py (×2)
+search_files on: handlers and workflows for reprompt_downgrade/retry patterns
+search_files on: debt recording, evaluator_retry, no_progress
+```
+
+**Summary**: 36 carrier sites across 10 files. The heaviest concentration is in `handlers/gate.py` (12 sites) and `workflows/components.py` (16 sites). The gate–revise coupling spans 8 sites across 6 files and must be extracted together — the `REVISE_LOOP_POLICY` (components.py:1239–1336) is the central coupling artifact.

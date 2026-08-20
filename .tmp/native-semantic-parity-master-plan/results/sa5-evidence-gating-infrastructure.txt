@@ -1,0 +1,52 @@
+## SA5 Evidence & Gating Infrastructure Audit
+
+### Commands Run
+
+None — all investigation was read-only via `read_file` and `search_files`.
+
+---
+
+### I. Existing Infrastructure Inventory
+
+**Generated Ledger** — `scripts/generate_native_representation_evidence.py:1607–1712` (`generate_evidence_bundle()`). Produces `docs/arnold/megaplan-native-representation-evidence.yaml` with 31 implemented rows, 39 source-checker records, 80 boundary-contract records, 63 boundary receipts, 80 semantic-health records, 68 phase-result records, and 9 split-outcome scenario hashes. Key dependency: reads `megaplan-native-representation-conformance.yaml` as input row ledger.
+
+**Scenario Hashes** — `scripts/generate_native_representation_evidence.py:1397–1604` (`_build_split_outcome_hashes()`). Validates against `docs/arnold/megaplan-native-representation-scenarios.yaml`. Enforces 9 split-outcome categories (`prep`, `gate`, `cap`, `tiebreaker`, `execute`, `approval`, `review`, `no_review`, `override` — line 67–77). Each record carries `record_sha256`, executable module hashes, deterministic fixture hashes, and source warrant hashes. `route_authority` must be `false` (line 1565).
+
+**Installed-Package Fingerprints** — `scripts/generate_native_representation_evidence.py:916–946` (`_build_installed_package_fingerprints()`). Calls `canonical_workflow_fingerprints()` from `arnold_pipelines.megaplan.workflows.package_fingerprints:43–44`. Proof artifact: `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py`. Reports `workflow_py_mentions_pypeline=True` (conformance report line 81).
+
+**Handler-Purity Scans** — `scripts/generate_native_representation_evidence.py:1018–1104` (`_build_handler_purity_checks()`). Uses `M6_RETAINED_HANDLERS`, `check_handler_body_purity()`, `StateMutationVisitor`, `LocalRouteFunctionDetector`, `M6_FORBIDDEN_ROUTING_CALLS`, `M6_FANOUT_DISPATCH_CALLS` from `arnold/workflow/handler_semantics.py`. Scans 8 retained handlers + `shared.py`. Proof artifact: `tests/arnold_pipelines/megaplan/test_semantics_carrier.py`.
+
+**Dead-Delete Mutation Checks** — `scripts/generate_native_representation_evidence.py:1194–1225` (`_build_dead_delete_mutation_checks()`). Checks three vectors: `_present_deleted_source_paths()` (line 1107), `_present_deleted_import_modules()` (line 1115), `_deleted_product_import_violations()` (line 1125). Uses `DELETED_SOURCE_PATHS`/`DELETED_IMPORT_MODULES` from `arnold/conformance/deleted_surfaces.py:93–138`. Proof: `tests/arnold/conformance/test_deleted_surfaces.py`.
+
+**Negative Fixtures** — The M1 semantic checker baseline brief calls for one: `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/m1-semantic-checker-baseline.md:38` — "At least one negative fixture represents the current component-call skeleton." The gap report references "old implementation as negative fixture" as a final gate (`docs/arnold/gpt55-native-parity-endstate-gap-report.md:94`). But no mechanically enforced negative-fixture record exists in the current evidence bundle.
+
+**Compatibility Quarantine Checks** — `scripts/generate_native_representation_evidence.py:867–913` (`_build_quarantine_scans()`) + lines 1156–1191 (`_build_compatibility_quarantine_checks()`). Records 6 quarantined compatibility scans. Uses `check_generic_arnold_megaplan_coupling()` from `arnold/conformance/checks.py:450–512`. Proof: `tests/arnold/conformance/test_megaplan_coupling_gate.py`. Conformance report line 65: "Compatibility quarantine evidence records 6 quarantined compatibility scans and a `passed=False` result."
+
+**Evidence-Pack Verifier** — Full pipeline at `arnold_pipelines/evidence_pack/` with verifier schemas (`verifier.py:1–342`), step implementations (`steps.py:1–441`), native program compilation (`native.py:1–347`), resume support (`resume.py:1–160`), and projected shell (`pipeline.py:1–199`). Five validator kinds: `structural_audit`, `budget_enforcement`, `suspension_propagation`, `by_ref_validation`, `human_review_gate` (`verifier.py:19–31`).
+
+**Conformance Suite** — `arnold/conformance/` package: `checks.py:1–1531` (adapter protocol, contract schema round-trips, anti-coupling ratchet, security coverage matrix), `routing.py:1–613` (vocabulary coverage, edge consistency, resolve-edge behavior), `join.py:1–374` (join delegation), `deleted_surfaces.py:1–173` (M6 deletion inventory), `workflow_manifest_runtime.py:1–107` (golden regression rules, neutral-product import scanning), `suite.py:1–243` (aggregator).
+
+**Strict Checker** — `arnold/workflow/diagnostics.py:138` defines `AWF245_ROW_EVIDENCE_INSUFFICIENCY`. `tests/arnold/workflow/test_row_evidence_checker.py` tests strict checking. `check_workflow_source()` defaults to strict row evidence (`arnold/workflow/source_compiler.py:687–690`), but `check_workflow_file()` defaults `evidence=None` (line 623–650), providing a non-strict bypass path.
+
+---
+
+### II. Missing Gate List (Eight Corrections)
+
+| # | Correction | Status | Evidence |
+|---|-----------|--------|----------|
+| 1 | **Strict checker authority** | **PARTIAL** | `check_workflow_source()` exists and fails current source with 9 `AWF245_ROW_EVIDENCE_INSUFFICIENCY` diagnostics (`gpt55-native-parity-endstate-gap-report.md:75`). But `check_workflow_file()` defaults `evidence=None` — a non-strict bypass. No mechanism forces strict mode for final closeout. Missing: a gate that makes strict checking non-optional for any row marked `implemented`. |
+| 2 | **Current-shape negative fixture** | **MISSING** | Called for in `m1-semantic-checker-baseline.md:38` and final gates in `gpt55-native-parity-endstate-gap-report.md:94`. No mechanically enforced negative-fixture record exists in the current evidence bundle. The evidence generator has no `_build_negative_fixture_checks()` function. Missing: a check that the current `workflow.pypeline` component-call skeleton (importing `AUTHORING_*` constants, `handler_ref`, `route_bindings`) is recorded as a negative fixture and mechanically fails until those are extracted. |
+| 3 | **Policy-as-route-table rejection** | **MISSING** | Current `components.py` still carries target refs, route groups, fanout contracts, reducer routes, topology overlays, and override dispatch (`components.py:1153–1781`). The gap report explicitly names this as the anti-pattern (`gpt55-native-parity-endstate-gap-report.md:69`). No diagnostic exists in the semantic checker to reject policy declarations that function as route tables. Missing: an `AWF` diagnostic that detects and rejects route surfaces, target refs, fanout contracts, and reducer routes inside policy metadata. |
+| 4 | **Per-sprint dead-delete mutation** | **PARTIAL** | `_build_dead_delete_mutation_checks()` exists but is monolithic — tied to a single `SOURCE_PATH_RECONCILIATION_ROW_ID` and produces one check record. No per-sprint gating: the check runs once against the full `DELETED_SOURCE_PATHS`/`DELETED_IMPORT_MODULES` inventory regardless of which sprint extracted which surface. Missing: a sprint-scoped mutation check that fails if a surface deleted in sprint N reappears in sprint N+1. |
+| 5 | **Compat quarantine** | **PARTIAL** | `_build_compatibility_quarantine_checks()` records 6 quarantined scans and embeds the coupling gate result. But this is static evidence — nothing mechanically prevents a quarantined surface from being cited as row authority. Missing: a gate that rejects any row whose `carrier_evidence` includes a path under active quarantine. |
+| 6 | **Generated-only conformance** | **PARTIAL** | Evidence bundle is generated (1788-line Python script → YAML). But the validator checked "schema, row IDs, statuses, proof categories, path existence, and `.pypeline` suffix shape" without AST-inspecting source semantics (`gpt55-native-parity-endstate-gap-report.md:73`). Missing: a mechanical gate that only accepts evidence produced by the strict checker against both checkout source AND installed-package source, rejecting hand-authored or path-only evidence. |
+| 7 | **Runtime narrowing documentation** | **MISSING** | Conformance report line 67 mentions "narrowing records" and the evidence bundle includes quarantine/dead-delete records. But no structured document explains what runtime narrowing means, which rows are narrowed, what the narrowing contract is, or how narrowing decisions are mechanically verified. Missing: a `docs/arnold/runtime-narrowing-contract.md` or equivalent, with a conformance check that validates narrowing claims. |
+| 8 | **Split-outcome scenario coverage** | **PARTIAL** | `_build_split_outcome_hashes()` validates 9 categories and checks coverage completeness (line 1596–1603). But coverage is validated only against the scenario manifest's own records — there is no check that every implemented row has at least one corresponding scenario hash record. Missing: a mechanical cross-check that `implemented_row_ids ⊆ union of all split_outcome_records[*].row_ids`. |
+
+---
+
+### III. Summary
+
+**11 infrastructure components exist** across generated ledgers, scenario hashes, installed-package fingerprints, handler-purity scans, dead-delete mutation checks, compatibility quarantine checks, the evidence-pack verifier, the conformance suite, and the strict checker framework.
+
+**Of eight required corrections:** 0 are fully mechanically enforced. 5 are partial (strict checker has a bypass, dead-delete is monolithic, compat quarantine is evidence-only, generated-only conformance lacks AST enforcement, split-outcome coverage doesn't cross-check row coverage). 3 are missing entirely (current-shape negative fixture, policy-as-route-table rejection, runtime narrowing documentation).

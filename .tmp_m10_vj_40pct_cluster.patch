@@ -1,0 +1,73 @@
+diff --git a/tests/arnold/kernel/test_ids.py b/tests/arnold/kernel/test_ids.py
+--- a/tests/arnold/kernel/test_ids.py
++++ b/tests/arnold/kernel/test_ids.py
+@@ -82 +82 @@
+-    manifest_hash = "sha256:" + "a" * 64
++    expected_manifest_hash = "sha256:" + "a" * 64
+@@ -86 +86 @@
+-        manifest_hash = manifest_hash
++        manifest_hash = expected_manifest_hash
+@@ -94 +94 @@
+-        manifest_hash = manifest_hash
++        manifest_hash = expected_manifest_hash
+@@ -105 +105 @@
+-        derive_pipeline_identity("planning", manifest_hash)
++        derive_pipeline_identity("planning", expected_manifest_hash)
+@@ -215 +215 @@
+-    from arnold.pipeline.discovery.judge_manifest import (
++    from arnold.workflow.discovery.judge_manifest import (
+diff --git a/arnold/pipeline/native/hooks.py b/arnold/pipeline/native/hooks.py
+--- a/arnold/pipeline/native/hooks.py
++++ b/arnold/pipeline/native/hooks.py
+@@ -303,9 +302,0 @@
+-    def record_cancellation(
+-        self,
+-        cancellation: dict[str, Any],
+-        *,
+-        state: dict[str, Any] | None = None,
+-    ) -> None:
+-        del cancellation, state
+-        return None
+-
+diff --git a/arnold/pipeline/__init__.py b/arnold/pipeline/__init__.py
+--- a/arnold/pipeline/__init__.py
++++ b/arnold/pipeline/__init__.py
+@@ -67 +67,9 @@
+-from arnold.agent.costing.media_cost import UsageExtraction, normalize_usage_extraction
++from arnold.agent.costing.media_cost import (
++    MediaPricingEntry,
++    UsageExtraction,
++    compute_media_cost,
++    normalize_usage_extraction,
++)
++from arnold.agent.costing.token_cost import (
++    PricingEntry, estimate_usage_cost, normalize_usage,
++)
+@@ -275,0 +284 @@
++    "MediaPricingEntry",
+@@ -276,0 +286 @@
++    "PricingEntry",
+@@ -330,0 +341 @@
++    "compute_media_cost",
+@@ -343,0 +355 @@
++    "estimate_usage_cost",
+@@ -364,0 +377 @@
++    "normalize_usage",
+diff --git a/arnold_pipelines/megaplan/cli/__init__.py b/arnold_pipelines/megaplan/cli/__init__.py
+--- a/arnold_pipelines/megaplan/cli/__init__.py
++++ b/arnold_pipelines/megaplan/cli/__init__.py
+@@ -205,0 +206 @@
++    init_parser.add_argument("--north-star", default=None, metavar="PATH")
+@@ -207,0 +209,12 @@
++    anchors_parser = subparsers.add_parser("anchors")
++    anchors_subparsers = anchors_parser.add_subparsers(dest="anchors_action", required=True)
++    anchors_show = anchors_subparsers.add_parser("show")
++    anchors_show.add_argument("--plan", required=True)
++    anchors_show.add_argument("--json", dest="as_json", action="store_true", default=False)
++    anchors_show.add_argument(
++        "--type",
++        dest="anchor_type",
++        choices=["north_star"],
++        default="north_star",
++    )
++

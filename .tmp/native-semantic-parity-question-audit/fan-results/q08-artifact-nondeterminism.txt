@@ -1,0 +1,73 @@
+Now I have all the evidence. Here is my verdict:
+
+---
+
+## Verdict: **Weakens** the plan
+
+The plan explicitly requires hash-pinned deterministic baselines (lines 36–39, 152–154) and correctly identifies this as S1a work. But the assumption that hash-pinned comparison is *currently* meaningful is false, and the plan under-specifies the enumeration of volatile fields the replay harness must neutralize.
+
+---
+
+## Evidence
+
+### Nondeterminism embedded in artifacts
+
+| Source | File:Line | Volatile field | Impact |
+|--------|-----------|----------------|--------|
+| `GeneratedArtifactProvenance` | `arnold/kernel/artifacts.py:68,99` | `generated_at` timestamp embedded in `provenance_hash` | Every artifact write produces a different provenance hash |
+| Artifact provenance construction | `arnold_pipelines/megaplan/content_types.py:214–220` | `datetime.now(timezone.utc)` fills `generated_at` | Wall-clock time baked into versioned `.meta.json` sidecars |
+| `ArtifactRoot.path` | `arnold/kernel/artifacts.py:377` | `str(self.root.resolve())` — absolute machine-local path | Bindings differ across machines/checkouts |
+| `PhaseResult.invocation_id` | `arnold_pipelines/megaplan/orchestration/phase_result.py:282,313,416–422` | `uuid.uuid4().hex[:16]` — required field in every phase result | Every phase execution has a fresh random ID |
+| State `current_invocation_id` | `arnold_pipelines/megaplan/_core/state.py:1566–1568` | `generate_invocation_id()` stored in `state.meta.current_invocation_id` | Persisted to `state.json`, referenced by boundary contracts (e.g., `boundary_contracts.py:625`) |
+| State version snapshots | `arnold_pipelines/megaplan/_core/state.py:995` | `snapshot_id = uuid.uuid4().hex` | Non-deterministic snapshot identifiers |
+| Cloud status snapshots | `arnold_pipelines/megaplan/cloud/status_snapshot.py:163` | `"generated_at": _isoformat(now)` | Timestamp in every snapshot |
+| Worker `session_id` | `arnold_pipelines/megaplan/_core/state.py:1564,1695` | Model/API session IDs stored in `active_step` and worker tracking | Leaks into state that would be baseline-captured |
+
+### Existing canonicalization (partial only)
+
+| What exists | File:Line | Scope | What it doesn't cover |
+|-------------|-----------|-------|----------------------|
+| `_canonicalize()` | `arnold_pipelines/megaplan/_core/canonical.py:15–24` | Sorts keys, normalizes datetime → UTC Z-notation | Preserves timestamp *values*; does not strip volatiles |
+| `canonicalize_prompt()` | `arnold_pipelines/megaplan/receipts/canonical.py:11–37` | Regex-strips timestamps/UUIDs from prompt text | Prompt-scoped only; not applied to artifacts, state, or phase results |
+| `_normalize_for_fingerprint()` | `arnold_pipelines/megaplan/workflows/package_fingerprints.py:66–90` | Normalizes Paths → canonical resource paths | Fingerprint-scoped only; not a general canonicalization pass |
+| Determinism test | `tests/arnold/execution/test_determinism.py:93–94` | Proves determinism with pinned `now` | Test-only; no production harness exists |
+
+### Infrastructure gap
+
+None of the scripts referenced in S1a exit gates exist:
+- `scripts/capture_megaplan_split_outcome_baselines.py` — absent
+- `scripts/validate_megaplan_replay_harness.py` — absent
+- `artifacts/native-semantic-parity/` directory — absent
+- `tests/fixtures/megaplan/replay/` directory — absent
+
+---
+
+## Smallest Plan Amendment
+
+Add a new section after line 39 and before §1:
+
+```
+### Canonicalization Layer Required Before Any Baseline Freeze
+
+Before S1a can freeze a single golden baseline, the replay harness must
+enumerate and neutralize every volatile field source.  The following
+must be stripped or pinned to fixed values before content-hashing any
+artifact that enters a baseline:
+
+  Field                 Source                      Neutralization
+  ─────                 ──────                      ──────────────
+  generated_at          artifacts.py:68,99          Pin to epoch-zero or strip from payload
+  invocation_id         phase_result.py:282,313     Pin to deterministic seed per scenario
+  snapshot_id           state.py:995                Pin to deterministic seed
+  session_id            state.py:1564,1695          Strip or pin to canned worker id
+  absolute paths        artifacts.py:377            Replace with canonical resource paths
+  model/provider names  state.py session entries    Strip or pin to canned identifiers
+  timestamps in         status_snapshot.py:163,     Pin to epoch-zero
+    snapshots           meta_repair.py:156
+
+The canonicalization pass must run as a pipeline stage before any
+sha256 is computed for baseline comparison, and the pass itself must
+be hash-pinned as part of the harness fingerprint.
+```
+
+This is the minimal change needed to make the plan's hash-pinned baseline assumption defensible. Without it, S1a could freeze baselines that differ trivially due to wall-clock time or machine-local paths, rendering every subsequent parity comparison a false alarm.

@@ -1,0 +1,86 @@
+Now I have sufficient evidence. Here is the audit.
+
+---
+
+## 1. Verdict: **Partly exists** — substantial policy-surface scaffolding, handler logic, and checker infrastructure exist, but the component is not complete per the S5 exit-gate standard. The gap is published in the master plan itself (line 190).
+
+---
+
+## 2. Existing or prior artifacts
+
+### Authoritative source (`.pypeline`)
+- **`workflow.pypeline:413-463`** — Review fanout/fanin via `parallel_map` with `REVIEW_PANEL_WORKFLOW` step and `AUTHORING_REVIEW` reducer. Includes first-pass review, explicit rework pass, and all five route-signal outcomes (pass, rework, blocked, force_proceeded, deferred_human).
+- **`workflow.pypeline:350-384`** — `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS["review_panel"]` with `fan_in_contract`, `rework_cycle`, `retry_and_cap`, `escalation`, and `reducer_routes`.
+
+### Handler implementation
+- **`handlers/review.py:1609`** — `handle_review()` entry point.
+- **`handlers/review.py:964-985`** — `_force_proceed_blockers()` — discriminates blocking vs. cosmetic rework items by severity/priority tokens and failed must-criteria.
+- **`handlers/review.py:988-992`** — `ReviewRouteDecision` frozen dataclass (result, next_state, route_signal).
+- **`handlers/review.py:995-1074`** — `_resolve_review_outcome()` — the core review state machine: comprehensive coverage of pass, rework (with `max_review_rework_cycles` cap from `get_effective`), blocked (infrastructure failure, missing evidence), force_proceeded (cap exhausted, non-blocking), deferred_human.
+- **`handlers/review.py:730-775`** — `_merge_review_verdicts()` — reducer logic merging fanout children's task verdicts and sense-check verdicts into `finalize_data`.
+
+### Policy surface
+- **`components.py:1509-1597`** — `REVIEW_POLICY` with `cap_thresholds`, `blocked_and_advisory_outcomes`, `force_proceed_authority`, `human_verification`, `suspension_routes`, `control_transitions`, and `topology_overlays`.
+- **`components.py:443-459`** — `_review_cap_threshold_surface()` — declares `max_review_rework_cycles`, `max_robust_review_rework_cycles`, and the `on_exhausted_condition_ref`.
+- **`components.py:462-470`** — `_review_force_proceed_surface()`.
+- **`components.py:502-573`** — `_review_source_control_transitions()` — 10 transitions covering pass, rework, blocked, force_proceeded, deferred_human for both first-pass and rework-pass.
+
+### Checker/row infrastructure
+- **`source_compiler.py:1783-1874`** — `_implemented_s5_boundary_rows()` — extracts 8 S5 rows from AST parsing of `.pypeline` source + policy surface `Mapping` checks.
+- **`semantic_evidence.py:84-90`** — 8 S5 row ID constants.
+- **`boundary_contracts.py:422-499+`** — 5 boundary contracts for S5: `review_child_outputs`, `review_reducer_promotion`, `review_rework_effects`, `review_cap_authority`, `review_human_verification`.
+
+### Outcome types
+- **`outcomes.py:83-91`** — `ReviewOutcome` StrEnum: PASS, REWORK, BLOCKED, FORCE_PROCEEDED, DEFERRED_HUMAN.
+- **`outcomes.py:93-106`** — `ReviewDecisionResult` StrEnum: SUCCESS, NEEDS_REWORK, BLOCKED, FORCE_PROCEEDED, POLICY_DENIED.
+
+### Native interface placeholder
+- **`native_interfaces.py:245-260`** — `REVIEW = NativeInterface(...)` with stable ID `megaplan.native.review.v1`.
+
+---
+
+## 3. What can be reused or generalized
+
+| Artifact | Reusable as |
+|---|---|
+| `_resolve_review_outcome()` (review.py:995) | Direct extraction target — the cap, force-proceed vs. blocked, pass/rework/blocked decision logic is complete and well-structured. |
+| `_force_proceed_blockers()` (review.py:964) | Already cleanly separated from handler machinery; can be extracted into a native phase body. |
+| `ReviewOutcome` enum (outcomes.py:83) | Already source-authoritative; `workflow.pypeline` branches on it directly. |
+| `_review_cap_threshold_surface()` (components.py:443) | Encodes the cap config contract; can be lowered to a typed policy slot. |
+| `_review_source_control_transitions()` (components.py:502) | 10 transitions already map route signals to topology refs and source step IDs. |
+| `boundary_contracts.py:422+` | 5 boundary contracts can serve as CI gate artifacts for S5 scenarios. |
+| `_implemented_s5_boundary_rows()` (source_compiler.py:1783) | AST-based extraction already works; needs to switch from `Mapping` existence to named-source-construct evidence. |
+
+---
+
+## 4. What still must be built
+
+1. **S5 test file does not exist.** `tests/arnold_pipelines/megaplan/test_review_finalize_native_flow.py` is referenced in the plan (line 738) but returns zero results across the entire repo. No test file found.
+
+2. **Checker currently passes S5 on policy-surface `Mapping` existence** (master plan line 190, verified at `source_compiler.py:1812-1827` — `isinstance(review_policy_surface.get("cap_thresholds"), Mapping)` is the only evidence gate). The plan explicitly requires this to become strict source-construct evidence (line 741).
+
+3. **Split-outcome scenarios are specified but not verified.** The plan requires 7 scenarios (line 742), none found as test fixtures: review pass, review rework, review cap with blockers, review cap without blockers, no-review terminal, deferred-human terminal, finalize fallback revise.
+
+4. **No dead-delete mutation tests.** Per-sprint dead-delete gates (line 743) are not yet implemented.
+
+5. **Serialized/suspended plan migration.** Pre-S5 serialized fixture resume check (line 744) is not yet implemented.
+
+6. **Review/finalize feature flag removal.** No-review/finalize native/legacy route feature flag closeout (line 746) is not yet done.
+
+7. **Baseline freeze.** `check_megaplan_baseline_freeze.py --scope s5` with pre-extraction baselines (line 740) is not yet captured.
+
+---
+
+## 5. Recommended adjustment to the sprint plan
+
+The S5 sprint should sequence as:
+
+1. **Write `test_review_finalize_native_flow.py` first** — it does not exist. Cover all 7 split-outcome scenarios (line 742). Use the existing handler's `_resolve_review_outcome()` as the baseline oracle, with canned payloads.
+
+2. **Harden the checker** — replace `isinstance(..., Mapping)` guards in `_implemented_s5_boundary_rows()` with named AST construct evidence (parallel_map nodes, branch conditions on `ReviewOutcome` enum values, and reducer component refs from `.pypeline` source). The `_visible_review_fan_in_call` and `_visible_review_rework_cycle_call` helpers already do this for some rows.
+
+3. **The handler logic is already extraction-ready** — `_resolve_review_outcome()`, `_force_proceed_blockers()`, and the reducer merge logic are well-factored inside `handlers/review.py`. The gap is not the logic; it is that the checker treats `REVIEW_POLICY` metadata surfaces as sufficient evidence when the plan demands source-construct evidence. Fix the checker, then the existing handler logic becomes directly extractable.
+
+4. **Capture pre-extraction baselines before any handler modification.** The `--require-pre-extraction` flag on the baseline freeze script (line 740) confirms this ordering expectation.
+
+5. **No review/finalize route feature flag should exist** — verify this is already true before extraction begins, since the plan prohibits any dual-route-authority closeout (line 746).

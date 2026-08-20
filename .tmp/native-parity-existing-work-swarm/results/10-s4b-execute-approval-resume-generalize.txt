@@ -1,0 +1,81 @@
+## S4b Execute Approval + Resume: Swarm Audit
+
+---
+
+### 1. Verdict: **partly exists**
+
+The typed policy layer is substantially complete. The handler translates typed outcomes correctly. The batch layer writes resume cursors. What's missing is the exit-gate integration test, extraction of route authority from old carriers (`components.py`), and native workflow lowering that removes the `handler_ref`.
+
+---
+
+### 2. Existing Artifacts
+
+**Typed policy surface (fully built):**
+- `arnold_pipelines/megaplan/execute/policy.py:31-1085` — All S4 constructs declared in module docstring (lines 8-16): `ExecuteEntryRoute`, `ApprovalOutcome`/`evaluate_destructive_approval`, `NoReviewTerminalOutcome`/`evaluate_no_review_terminal`, `TierRouteOutcome`, `BlockedRetryOutcome`/`BlockedRetryDecision`, `NextExecuteTransition`, `ResumeOutcome`/`PartialFailureResumeDecision`/`resolve_partial_failure_resume`, `evaluate_blocker_recovery_policy`
+- `arnold_pipelines/megaplan/execute/policy.py:860-1042` — `EXECUTE_BRANCH_SURFACE`: source-visible execute routing topology covering all 7 required categories with explicit branch points including `execute:approval-approved`, `execute:approval-denied-missing-confirm`, `execute:approval-denied-missing-approval`, `execute:blocked-recovery`, `execute:no-review-terminal-done`, `execute:no-review-terminal-awaiting-human`
+- Import-time invariant assertion at lines 1080-1085
+
+**Handler integration:**
+- `arnold_pipelines/megaplan/handlers/execute.py:304-345` — `_enforce_entry_route` and `_enforce_approval_gate` translate typed policy outcomes
+- `arnold_pipelines/megaplan/handlers/execute.py:81-97` — `_is_rework_reexecution` and `_is_blocked_retry` detection
+- `arnold_pipelines/megaplan/handlers/execute.py:425-445` — Fresh-session forcing after rework/blocked retry with `execute_resume_anchor` boundary receipt
+- `arnold_pipelines/megaplan/handlers/execute.py:100-112` — `_record_execute_blocked` writes resume_cursor with `retry_strategy: "fresh_session"`
+- `arnold_pipelines/megaplan/handlers/execute.py:557-655` — No-review terminal routing with `evaluate_no_review_terminal` policy call, stub review artifact, `execute_no_review_terminal` boundary receipt
+
+**Batch-level resume cursor:**
+- `arnold_pipelines/megaplan/execute/batch.py:1620-1627` — Resume cursor written on routing-blocked: `{phase: "execute", batch_index: <n>, retry_strategy: "fresh_session", reason: "routing_degradation"}`
+- `arnold_pipelines/megaplan/execute/batch.py:1729-1730` — Blocked response_state = `STATE_BLOCKED`
+
+**Timeout recovery:**
+- `arnold_pipelines/megaplan/execute/timeout.py:232-436` — Full `_recover_execute_timeout` with checkpoint merge, task reset, authority corroboration
+
+**Resume primitives:**
+- `arnold_pipelines/megaplan/runtime/resume.py:28-80` — `load_resume_cursor_payload`, `load_composite_resume_cursor`, `save_composite_resume_cursor`
+
+**Boundary contracts:**
+- `arnold_pipelines/megaplan/workflows/boundary_contracts.py:247-357` — Five S4 execute boundary contracts: `execute_approval`, `execute_approval_denial`, `execute_partial_failure`, `execute_blocked_anchor`, `execute_resume_anchor`
+
+**Workflow topology:**
+- `arnold_pipelines/megaplan/workflows/workflow.pypeline:219-230` — Execute step with policy_refs to `megaplan:execute`, `megaplan:model-routing`, `megaplan:artifact-contract`, `megaplan:suspension`
+- `arnold_pipelines/megaplan/workflows/workflow.pypeline:301-338` — `execute_batch` child with approval gates (destructive_confirmation, operator_approval, mutating_preflight), fanout_contract, retry_and_reentry declarations
+
+**Existing tests:**
+- `tests/arnold_pipelines/megaplan/test_execute_policy.py:1-653` — Unit coverage of all policy helpers including approval split outcomes, entry routes, tier routing, next-step transitions
+- `tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py:1-224` — Split-outcome scenarios: destructive approval, partial failure resume, no-review terminal, batch resumption
+- `tests/arnold_pipelines/megaplan/test_control_resume_runner.py:1-49` — Resume runner subprocess anchoring
+
+**Boundary fixtures:**
+- `docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/` — Approval receipt, approval_record, semantic_health, state, phase_result
+- `docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval_denial/` — Denial evidence
+- `docs/arnold/megaplan-native-representation-boundary-fixtures/execute_resume_anchor/` — Resume anchor effects, fresh_session_request
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+- **`execute/policy.py`** is the single most reusable asset. Every typed outcome (approval deny/approve, blocked retry, no-review terminal, resume partition) is already a pure function — it can be directly wired into a native workflow without handler mediation.
+- **`EXECUTE_BRANCH_SURFACE`** (policy.py:860-1042) declares the complete execute routing topology. It can feed directly into the `.pypeline` route bindings.
+- **`evaluate_blocker_recovery_policy`** (policy.py:528-623) is the adjacent mechanism most directly generalizable — it wraps the existing `blocker_recovery.evaluate_blocker_recovery` into a typed `BlockedRetryDecision`, demonstrating the pattern for extracting other handler-owned decisions.
+- **The resume cursor schema** (`batch.py:1622-1627`, `handlers/execute.py:107-109`) is consistent and could be generalized into a typed `ResumeCursor` dataclass (currently ad-hoc dicts).
+- **Boundary receipt emission** (`handlers/execute.py:223-301`) is evidence-only and can be lifted to the workflow layer without changing semantics.
+
+---
+
+### 4. What Still Must Be Built
+
+1. **Exit-gate integration test** — `tests/arnold_pipelines/megaplan/test_execute_native_dag_approval_resume.py` does not exist. This is the S4 closeout gate per master plan line 702.
+2. **`blocked_retry_byte_stability` test** — referenced in the folder audit (`audit.md:426`) but file not found in current tree.
+3. **Old carrier extraction** — `components.py:1641-1654` (execute:resume route), `:1694-1709` (fanout contract, blocked retry), `:1781-1822` (model routing) still carry route authority. These must be deleted/quarantined per master plan lines 718-719.
+4. **`handler_ref` removal** — `workflow.pypeline:220` still declares `handler_ref: "arnold_pipelines.megaplan.handlers:handle_execute"`. Native lowering must replace this with a lowered subworkflow.
+5. **Resume cursor typed dataclass** — Currently ad-hoc dicts (3 sites: `batch.py:1622`, `handlers/execute.py:108`, `components.py:1465`). Should be a single `ResumeCursor` type shared across policy and runtime.
+6. **Strict checker rejection rules** for handler-owned execute route decisions (master plan line 705).
+
+---
+
+### 5. Recommended Sprint Plan Adjustment
+
+- **Keep S4b as a single sprint** but split into two sub-deliverables:
+  - **S4b-1 (policy hardening):** Add the typed `ResumeCursor` dataclass, write `test_execute_native_dag_approval_resume.py` covering all 6 split outcomes (master plan line 706), add strict-checker rejection for handler-owned execute routes. This is low-risk — all policy functions are pure, tested in isolation.
+  - **S4b-2 (carrier extraction):** Extract `components.py` execute fanout/route surfaces, remove `handler_ref` from `workflow.pypeline:220`, lower execute through the native `.pypeline` path. This is higher-risk because it changes the dispatch path.
+- **Risk:** The `handler_ref` at `workflow.pypeline:220` means execute currently routes through `handle_execute`, which does substantial work beyond pure policy translation (preflight checks, profile expansion, tier model resolution, workdir warnings). Lowering must replicate these in native workflow form.
+- **Adjacent mechanism to watch:** `evaluate_blocker_recovery_policy` (policy.py:528) already wraps `blocker_recovery.evaluate_blocker_recovery` — this is the template for extracting other handler-owned decisions. But `blocker_recovery` itself still lives outside the policy module and must be audited for handler coupling before it can be claimed as native authority.

@@ -1,0 +1,92 @@
+---
+
+## S5b Finalize + Terminal Projection — Swarm Audit
+
+### 1. Verdict: **Partly exists** (substrate + contracts + fixtures present; extraction, strict checking, and exit-gate tests missing)
+
+---
+
+### 2. Existing or Prior Artifacts
+
+**Policy surface (the "what"):**
+- `components.py:1405–1508` — `FINALIZE_POLICY` with full `route_surface`: `fallback_routes` (`:1441–1448`), `skip_review_routes` with `no_review` and `deferred_human` (`:1450–1467`), `final_projection_routes` covering `execute`, `revise_fallback`, `no_review_done`, `no_review_deferred_human` (`:1477–1503`).
+
+**Boundary contracts (the "contract"):**
+- `boundary_contracts.py:575–599` — `final_projection` `BoundaryContract` with `boundary_id="final_projection"`, `row_id=S5_FINAL_PROJECTION_ROW_ID`, all four projection cases, and `evidence_surface_ref` pointing to `FINALIZE_POLICY.metadata.route_surface.final_projection_routes`.
+
+**Checker infrastructure (the "skeleton"):**
+- `source_compiler.py:1783–1874` — `_implemented_s5_boundary_rows()` recognizes `final_projection_routes` as a `Mapping` on `FINALIZE_POLICY` (`:1865–1873`) and emits `S5_FINAL_PROJECTION_ROW_ID`. S5 rows live separately from front-half rows (`:1778`).
+- `source_compiler.py:1458–1462` — boundary contract validation for `S5_FINAL_PROJECTION_ROW_ID` checks `evidence_surface_ref` and `final_projection_routes`.
+- `semantic_evidence.py:84–91` — all nine S5 row IDs defined.
+
+**Semantic health checks (runtime validation):**
+- `semantic_health.py:1433–1517` — `_check_final_projection()` emits `SH-final_projection-native-fallback-route-missing` (when `_finalize_surface_visible()` is `False`) and `SH-final_projection-state-history-drift` (when receipt state diverges from `state.json` or valid projection cases).
+- `semantic_health.py:1402–1430` — `_expected_final_projection_cases()` derives expected `(state, next_step)` pairs from the policy surface.
+- `semantic_health.py:991–1009` — `_finalize_surface_visible()` checks `fallback_routes`, `final_projection_routes`, and their relevant keys.
+
+**Boundary fixtures (deterministic test data):**
+- `docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection/` — complete fixture directory (`manifest.json`, `state.json`, `finalize.json`, `phase_result.json`, `semantic_health.json`, `boundary_receipts/final_projection.json`).
+
+**Tests for contracts + semantic health only:**
+- `tests/arnold_pipelines/megaplan/test_boundary_contracts.py:717,757–771` — verifies `final_projection` contract shape, projection cases, `authority_required=False`.
+- `tests/arnold_pipelines/megaplan/test_semantic_health.py:1284–1303` — `test_s5_final_projection_reports_state_history_drift`.
+- `tests/arnold/workflow/test_boundary_evidence.py:170–217` — round-trip preservation of S5 effect/projection details.
+
+**no-review/deferred-human terminal already implemented in S4:**
+- `execute/policy.py:360–408` — `evaluate_no_review_terminal()` pure function with `TERMINATE_DONE`, `TERMINATE_AWAITING_HUMAN`, `NOT_APPLICABLE`.
+- `tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py:128–153` — split-outcome test covering bare/light/standard/deferred.
+
+**workflow.pypeline already has visible review/rework/DEFERRED_HUMAN branching:**
+- `workflow.pypeline:413–464,498–550` — review fanout/fanin, rework cycle, DEFERRED_HUMAN, BLOCKED, PASS outcomes visible in source control flow.
+
+---
+
+### 3. What Can Be Reused or Generalized
+
+| Artifact | Reusability |
+|---|---|
+| `FINALIZE_POLICY.final_projection_routes` | **Must be uplifted** from policy-metadata into named source constructs — it is currently a route-table-shaped `Mapping` in component metadata, not attached to a named `workflow.pypeline` construct. The checker already treats its existence as row evidence (`source_compiler.py:1865–1873`), which is the gap-report's "policy evidence too generous" concern (`gpt55-native-parity-endstate-gap-report.md:102–103`). |
+| `BoundaryContract(final_projection)` | Reusable as-is; defines the evidence shape. |
+| `_check_final_projection()` + `_expected_final_projection_cases()` | Reusable as-is for runtime validation. |
+| `evaluate_no_review_terminal()` | Already done in S4; S5b needs to wire this into the finalize→terminal projection path, not reimplement it. |
+| Boundary fixtures | Reusable as-is for deterministic replay. |
+| Contract tests + semantic health tests | Reusable; need expansion to cover split-outcome scenarios. |
+
+---
+
+### 4. What Still Must Be Built
+
+1. **S5 exit-gate test file**: `tests/arnold_pipelines/megaplan/test_review_finalize_native_flow.py` — referenced as S5 exit gate (`master-plan.md:738`) but **does not exist on disk**.
+
+2. **`test_path_resume_proofs.py`**: referenced in evidence YAML (`:4694`) and scenario YAML (`:187`) — **does not exist on disk**. The two test cases it should contain (`test_non_protected_execute_routes_declare_no_review_to_done_contract`, `test_execute_terminal_projection_helpers_follow_source_policy_routes`) are **unverified prior claims** in the evidence YAML.
+
+3. **Strict row evidence for S5 rows**: The checker (`source_compiler.py:1865–1873`) currently treats `isinstance(finalize_policy_surface.get("final_projection_routes"), Mapping)` as sufficient evidence. S5 must require `Mapping` on `FINALIZE_POLICY` *and* reject policy objects that are route tables in disguise (`master-plan.md:741`).
+
+4. **Finalize fallback to revise extraction**: The `fallback_routes.plan_contract_revise_needed` entry exists in `FINALIZE_POLICY` metadata (`components.py:1441–1448`) but the routing is still inferred from policy metadata, not visible in `workflow.pypeline` source. The handler-level routing (`handlers/finalize.py:1465–1542`, `_route_finalize_baseline_selection_failure_to_revise`) still owns the actual state mutation.
+
+5. **no-review/deferred-human terminal integration into finalize**: The `skip_review_routes` entries in `FINALIZE_POLICY` (`components.py:1450–1467`) mirror the S4 `evaluate_no_review_terminal()` policy, but the final projection from finalize through to the terminal states (`done`, `awaiting_human_verify`) is not proven by a split-outcome scenario that exercises **finalize→no-review-terminal** (as opposed to execute→no-review-terminal, which S4 covers).
+
+6. **Dead-delete mutation for review/finalize carriers**: Not verified done. Old handler state transition paths in `handlers/review.py` and `handlers/finalize.py` still exist and are route-capable (`master-plan.md:743–744`).
+
+7. **Pre-S5 serialized/suspended fixture**: Not found (`master-plan.md:744–745`).
+
+8. **Split-outcome scenarios**: Required list (`master-plan.md:742`) — review pass, review rework, review cap with blockers, review cap without blockers, no-review terminal, deferred-human terminal, finalize fallback revise — no dedicated S5 scenario test file exists.
+
+---
+
+### 5. Recommended Adjustment to Sprint Plan
+
+1. **Split S5 into S5a (review/rework) and S5b (finalize + terminal projection)** explicitly in the brief. The current `s5-review-rework-finalize.md` brief bundles them; extraction complexity differs substantially. S5b should depend on S5a + S4.
+
+2. **Create the missing `test_review_finalize_native_flow.py`** as S5b's primary exit gate, covering at minimum:
+   - `finalize → execute` projection (standard path)
+   - `finalize → revise` fallback (baseline contract failure)
+   - `finalize → done` (no-review terminal via bare/light robustness)
+   - `finalize → awaiting_human_verify` (deferred-human terminal)
+   - State/next_step assertions matching `_expected_final_projection_cases()`
+
+3. **Remove or correct the evidence YAML references** to `test_path_resume_proofs.py` and `test_execute_terminal_projection_helpers_follow_source_policy_routes` — these are unverified claims that reference non-existent files. Either create them or remove them from the evidence ledger.
+
+4. **Uplift `final_projection_routes` and `fallback_routes` from `FINALIZE_POLICY` metadata into named source constructs** in `workflow.pypeline` (or a declared policy attached to a named source construct), so the checker's `Mapping`-existence test is backed by actual source authority rather than component-metadata route tables.
+
+5. **Require the dead-delete mutation gate** before S5b closeout: mutate `handlers/finalize.py` state-transition paths and prove scenarios are unchanged against frozen S1a baselines.

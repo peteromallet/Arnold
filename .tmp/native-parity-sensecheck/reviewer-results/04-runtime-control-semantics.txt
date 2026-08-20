@@ -1,0 +1,150 @@
+Now I have a comprehensive picture of the entire system. Let me compile the audit.
+
+---
+
+# Lens 4 — Runtime/Control Semantic Trace: Carrier Trace Table & Ranked Gaps
+
+## 0. System Architecture (End-to-End Semantic Path)
+
+The runtime control plane spans six layers. I traced each from authored source through to persisted run state:
+
+| Layer | Module(s) | Role | Identity carrier |
+|---|---|---|---|
+| **Authoring** | `workflow.pypeline` + `components.py` | Canonical source with `@workflow`, `parallel_map`, `loop`, branches | Python AST → component constants with hidden metadata |
+| **Lowering** | `source_compiler.py:lower_workflow_file()` | AST-parses `.pypeline`, emits `Pipeline` (DSL steps + routes) | `_LOWERED_STEP_ID_ALIASES` (planning.py:110-139) |
+| **Bridge/Builder** | `planning.py` | Canonicalizes lowered IDs, consults route bindings, builds DSL `Pipeline` for manifest compilation | `PIPELINE_STEP_COMPONENTS_BY_ID`, declared route bindings |
+| **Compiler** | `source_compiler.py` → `compiler.py` | Produces `WorkflowManifest` with hashed identity | Manifest hash, `WorkflowManifest` |
+| **Runtime (dual)** | `pipeline/native/runtime.py` (native) + `pipeline/executor.py` (graph) | Sequential state machine or graph walker | `NativeProgram` instructions, `RoutingState` coordinates |
+| **Handlers** | `handlers/{gate,review,execute,override,...}.py` | Subprocess CLIs invoked by auto-drive; mutate `state.json` | `PlanState["current_state"]`, `workflow_next()` topology graph |
+| **CLI/Auto-drive** | `auto.py:drive()` | Status-polling loop; reads `next_step` from `workflow_next()`, dispatches subprocesses | `_status()` → `handle_status()` → `workflow_next()` |
+| **State persistence** | `state.json`, `resume_cursor.json`, artifact files | Durable plan state, checkpoint PC, phase outputs | File-based JSON, `_persistence_backend` |
+
+---
+
+## 1. Carrier Trace Table
+
+For each semantic, I identify the **actual decision-maker** (which module/code owns the final say at runtime) and the **state carrier** (where the decision's effects are persisted and read back).
+
+| # | Semantic | Declared in | Actual decision-maker | State carrier | Verdict |
+|---|---|---|---|---|---|
+| 1 | **Step routing (next step)** | `workflow.pypeline` DECLARED_STEP_INTERFACES route_bindings + `components.py` RUNTIME_BRANCH_VOCABULARY | `workflow_next()` in `_core/workflow.py:393-414` — reads `state["current_state"]`, walks topology graph `graph.successors(current)` | `PlanState["current_state"]` set by handlers in `state.json` | **BYpass**: `.pypeline` route_bindings are compiled into DSL routes but at runtime, the auto-drive ignores them — it derives `next_step` exclusively from state-machine topology |
+| 2 | **Model routing** | `workflow.pypeline` policy_refs (`megaplan:model-routing`) + `components.py` MODEL_ROUTING_POLICY | `resolve_agent_mode()` in handlers + `select_fallback_spec()` in auto.py:45 | `PlanState["config"]` + phase-model CLI args | **COMPLIANT** — model routing stays in Megaplan as declared |
+| 3 | **Retry/timeout** | `components.py` retry policies + `workflow.pypeline` DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS retry_and_reentry | `auto.py:drive()` — `phase_timeout` subprocess timeout, `DEFAULT_MAX_BLOCKED_RETRIES`, `DEFAULT_MAX_EXTERNAL_RETRIES` | `state["meta"]`, `state["history"]`, `latest_failure.json` | **BYpass**: topology contract retry data is not read by runtime; auto-drive has its own independent caps |
+| 4 | **Execute DAG batching/fanout** | `workflow.pypeline` parallel_map + `components.py` fanout_contract | `handlers/execute.py` → `megaplan/execute/batch.py` → `hermes_fanout.scatter_gather` | `execution.json` in plan_dir | **COMPLIANT** — fanout is handler-owned, not runtime primitive |
+| 5 | **Execute DAG fanin/reducer** | `workflow.pypeline` parallel_map reducer=AUTHORING_EXECUTE | Review handler `_finalize_review_outcome()` aggregates review verdicts | `review.json` | **COMPLIANT** — reducer is handler-embedded |
+| 6 | **Critique/revise loop** | `workflow.pypeline:393` `loop(policy=REVISE_LOOP_POLICY)` + `while True` | `handle_gate()` → `_build_gate_route_signal()` — emits `"iterate"` route signal; `handle_revise()` transitions state back to `STATE_PLANNED` | `PlanState["current_state"]`, `gate_carry.json` | **PARTIAL**: loop signature exists in `.pypeline` but loop exit/max-iterations enforced in `_critique_terminate_branch()` (gate.py:466-520) and `_effective_critique_cap()` (gate.py:345-355) |
+| 7 | **Critique/revise cap** | `components.py` `M4_LOOP_MAX_ITERATIONS=4` | `_effective_critique_cap()` (gate.py:345-355) + `_critique_terminate_branch()` (gate.py:466-520) sets `STATE_BLOCKED` or `STATE_GATED` | `PlanState["current_state"]` = `STATE_BLOCKED`/`STATE_GATED` | **HIDDEN**: cap enforcement is inside handler, not visible in `.pypeline` source |
+| 8 | **Gate routing** | `workflow.pypeline` gate branches (proceed/iterate/tiebreaker/escalate/abort/suspend/blocked/force_proceed) | `_build_gate_route_signal()` (gate.py:523-629) — produces route_signal string consumed by `workflow_transition()` | `PlanState["current_state"]` → `STATE_GATED`/`STATE_CRITIQUED`/`STATE_BLOCKED` | **COMPLIANT** — gate handler owns the decision; `.pypeline` branches are structural not runtime-enforced |
+| 9 | **Suspension** | `workflow.pypeline` `gate:suspend` route + `DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS` suspension policy | **NONE** — gate handler's `"suspend"` route signal maps to `"halt"` target via `_LOWERED_STEP_ID_ALIASES` (planning.py:121: `"gate_suspend": "halt"`). The neutral executor has no `SUSPENDED` handling. | `resume_cursor.json` via `max_phases` limit only | **GAP** (HIGH): Suspend is a convention — write checkpoint, accidentally halt. See ticket `01KTPVTAZ` |
+| 10 | **Resume** | `workflow.pypeline` override policy routes (`resume-clarify`, `recover-blocked`) | `auto.py:drive()` — reads `resume_cursor` from state; `run_native_pipeline(resume=True)` restores PC from cursor | `resume_cursor.json` (native or composite cursor) | **GAP**: Resume re-runs a fresh pipeline from a saved PC, not rehydrating suspended state |
+| 11 | **Override/human gates** | `workflow.pypeline` DECLARED_OVERRIDE_POLICY_ROUTES + DECLARED_OVERRIDE_OUTCOME_TARGETS | `handle_override()` in `handlers/override.py` — dispatched as subprocess CLI `megaplan override <action>` | `PlanState["current_state"]`, `state["meta"]` | **BYpass**: Declared override routes in `.pypeline` are documentation; actual routing is `workflow_next()` from topology |
+| 12 | **Tiebreaker** | `workflow.pypeline` tiebreaker researcher/challenger/synthesis/decision calls | `auto.py:drive()` — special-cases `STATE_TIEBREAKER_PENDING`/`STATE_TIEBREAKER_READY` (auto.py:3810-3827); `handle_tiebreaker_run/decide` in `_tiebreaker_impl.py` | `PlanState["current_state"]`, tiebreaker artifacts | **PARTIAL**: Tiebreaker is auto-drive state-machine logic, not a first-class subworkflow in runtime |
+| 13 | **Tiebreaker/replan** | `workflow.pypeline:489-561` tiebreaker decision branches | `handle_tiebreaker_decide()` → `_route_signal_for_tiebreaker_action()` | `PlanState["current_state"]` | **COMPLIANT** — handler-owned |
+| 14 | **Review/rework** | `workflow.pypeline:420-455` review branches + rework execute/review pass | `_resolve_review_outcome()` (review.py:995-1074) — counts `prior_rework_count`, applies cap, returns `needs_rework`/`force_proceeded`/`blocked` | `PlanState["current_state"]`, `review.json`, `state["history"]` | **PARTIAL**: `.pypeline` shows one explicit rework pass; actual rework cap (3 cycles) is in handler |
+| 15 | **Review/rework cap** | `components.py` `max_review_rework_cycles` | `_resolve_review_outcome()` (review.py:1028-1056) — `prior_rework_count >= max_review_rework_cycles` → `STATE_BLOCKED` or `STATE_DONE` with `force_proceeded` | `PlanState["current_state"]` | **HIDDEN**: Cap is in handler, not in `.pypeline` source |
+| 16 | **Path-addressed checkpoints** | `pipeline/native/checkpoint.py` cursor shape | `run_native_pipeline()` (runtime.py:744) — persists at `max_phases` limit via `persist_native_cursor()`; path-addressed via `run_path`/`step_path`/`call_site_path` | `resume_cursor.json` with `run_path`, `step_path`, `call_site_path`, `path_stack` | **COMPLIANT** — path-addressed checkpoint structure exists |
+| 17 | **Loop exit** | `workflow.pypeline:393` `loop(policy=REVISE_LOOP_POLICY)` | `handle_gate()` — emits `"proceed"` → `workflow_next()` yields `"finalize"`; `_critique_terminate_branch()` sets terminal state at cap | `PlanState["current_state"]` in AUTOMATION_TERMINAL_STATES | **BYpass**: Loop exit is state-machine based, not source-level boundary |
+| 18 | **Non-path identity** | `STABLE_ID_TO_PHASE` (auto.py:202-213) + `_LOWERED_STEP_ID_ALIASES` (planning.py:110-139) | Two independent identity layers: `STABLE_ID_TO_PHASE` resolves `"megaplan:prep"` → `"prep"`; `_LOWERED_STEP_ID_ALIASES` maps `"gate_suspend"` → `"halt"`, `"review-fan-in"` → `"review"` | String mappings, not path-addressed | **GAP**: Identity is flat-name based, not structural path |
+| 19 | **Restart vs resume** | `pipeline/native/runtime.py` `resume=True` parameter | `read_native_cursor()` restores `pc`, `state`, `stages`, `loops`, `frames`, `envelope`, `path_stack` — full state restoration from cursor | `resume_cursor.json` (`native.pc`, `frames.__state__`, `frames.__envelope__`) | **ADVERTISED**: Full restart-from-cursor exists, but cursor is only produced by `max_phases` limit, not by semantic suspension |
+| 20 | **Declared topology contracts** | `workflow.pypeline` DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS (execute_batch, review_panel, tiebreaker_child) | **IGNORED by runtime** — contracts are compiled into DSL metadata but the runtime uses `workflow_next()` topology, not these contracts | Not read at runtime | **GAP**: Rich topology declarations (approval gates, fanout contracts, retry/reentry, escalation) are compile-time artifacts with no runtime enforcement |
+
+---
+
+## 2. Ranked Gaps
+
+### GAP-1 [CRITICAL] Suspension is convention, not a runtime primitive
+- **Severity**: HIGH
+- **Confidence**: HIGH
+- **Consequence**: The advertised suspend/resume capability is actually "write a checkpoint artifact and accidentally halt." The neutral executor (`pipeline/executor.py`) has no `SUSPENDED` handling. Gate handler's `"suspend"` route signal maps to `"halt"` via `_LOWERED_STEP_ID_ALIASES` (planning.py:121). Resume re-runs a fresh pipeline from a saved PC, not rehydrating suspended state. `on_timeout`, `deadline`, and `resume_input_schema` in the Suspension envelope are inert.
+- **Evidence**: Ticket `01KTPVTAZRJZTVRDCB4SP5M9QA`; `workflow.pypeline:116` (`"gate:suspend"` → `"halt"`); `planning.py:121` (`"gate_suspend": "halt"`); `pipeline/executor.py:222-224` (swallows unresolvable label)
+- **Smallest correction**: Make `SUSPENDED` a first-class executor terminal exit distinct from `halt`. Wire `SuspensionRecord`/`SuspensionCursor` (`kernel/suspension.py`) into the neutral executor. Honor `deadline`/`on_timeout`. Provide resume entrypoint that rehydrates suspended pipeline state.
+- **Exact evidence**: `arnold/kernel/suspension.py:18-24` (SuspensionState exists), `arnold/pipeline/native/runtime.py:744-854` (no SUSPENDED in outcome kinds), `arnold_pipelines/megaplan/workflows/planning.py:121`
+
+### GAP-2 [CRITICAL] Double-route-brain: three independent routing authorities
+- **Severity**: HIGH
+- **Confidence**: HIGH
+- **Consequence**: A reviewer cannot determine what step executes next from any single source. The three competing authorities are: (a) `workflow.pypeline` DECLARED_STEP_INTERFACES route_bindings (lines 81-279), (b) `components.py` RUNTIME_BRANCH_VOCABULARY (lines 87-112), (c) `_core/workflow.py:workflow_next()` which derives from state-machine topology. The auto-drive uses (c) exclusively. The compiler uses (a) and (b). No single source of truth.
+- **Evidence**: `workflow.pypeline:81-279`, `components.py:87-112`, `_core/workflow.py:393-414`
+- **Smallest correction**: Make `workflow.pypeline` the sole routing authority. Eliminate `RUNTIME_BRANCH_VOCABULARY` and `_LOWERED_STEP_ID_ALIASES` as semantic carriers. Compile `.pypeline` branches into the topology graph directly.
+- **Exact evidence**: `arnold_pipelines/megaplan/workflows/workflow.pypeline:105-129`, `arnold_pipelines/megaplan/workflows/components.py:87-112`, `arnold_pipelines/megaplan/_core/workflow.py:393-414`
+
+### GAP-3 [HIGH] Hidden semantic completion: `AUTHORING_*` constants carry handler_ref and route_bindings
+- **Severity**: HIGH
+- **Confidence**: HIGH
+- **Consequence**: `workflow.pypeline` imports `AUTHORING_GATE`, `AUTHORING_EXECUTE`, `AUTHORING_REVIEW`, etc. from `components.py`. These are `StepComponent` dataclasses that carry `handler_ref`, `route_bindings`, `policy_refs`, `capability_requirements`. The `.pypeline` source looks native (Python branches, loops) but the actual handler dispatch and route semantics are hidden in component metadata. A reviewer cannot understand the workflow from `.pypeline` alone.
+- **Evidence**: `workflow.pypeline:14-34` (imports), `components.py:293-343` (`_step()` builder with `handler_ref` and `route_bindings`), gap report `gpt55-native-parity-endstate-gap-report.md:65-67`
+- **Smallest correction**: Move handler dispatch into the source compiler. Require `.pypeline` source to explicitly call handler functions (not string refs). Eliminate `handler_ref` and `route_bindings` from component metadata.
+- **Exact evidence**: `arnold_pipelines/megaplan/workflows/workflow.pypeline:14-34`, `arnold_pipelines/megaplan/workflows/components.py:293-343`
+
+### GAP-4 [HIGH] Silent routing failure: unresolvable label halts mid-run
+- **Severity**: HIGH
+- **Confidence**: HIGH
+- **Consequence**: When a step emits a `next` label matching no edge, the neutral executor silently halts (`pipeline/executor.py:222-224`). No error, no log, no failed status. The current test encodes this as intended behavior (`test_loop_prevention_missing_edge_terminates`).
+- **Evidence**: Ticket `01KTPVSH8X04XE0D122M0V0712`; `pipeline/executor.py:222-224`; `pipeline/routing.py:139` (RoutingError raised but swallowed)
+- **Smallest correction**: Distinguish legitimate terminal exit from unresolvable label. Fail loud with diagnostic naming the bad label and available labels. Flip the test to assert fail-loud.
+- **Exact evidence**: `arnold/pipeline/executor.py:222-224`, `arnold/pipeline/routing.py:139`
+
+### GAP-5 [MEDIUM] Typed step-IO contract seam not wired in neutral executor
+- **Severity**: MEDIUM
+- **Confidence**: HIGH
+- **Consequence**: The `step_io_handoff.py` enforcement layer is sound library code but the neutral executor never calls it. Contract enforcement between stages is opt-in, done inside handlers. The "typed seams enforce data contracts" property is true only for Megaplan's fork executor, not the neutral runtime.
+- **Evidence**: Ticket `01KTPVTANTY1HDG8PJGSAK5Z25`; `step_io_handoff.py:60`; no reference in `pipeline/executor.py`
+- **Smallest correction**: Wire `evaluate_step_io_handoff` into the neutral executor's stage-transition path. Gate behind per-stage strictness policy.
+- **Exact evidence**: `arnold/pipeline/step_io_handoff.py:60`, `arnold/pipeline/executor.py` (no import of step_io)
+
+### GAP-6 [MEDIUM] DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS ignored by runtime
+- **Severity**: MEDIUM
+- **Confidence**: MEDIUM
+- **Consequence**: `workflow.pypeline:281-385` declares rich topology contracts (approval gates, fanout contracts, retry/reentry, post-batch routes, escalation policies) for execute_batch, review_panel, and tiebreaker_child. These are compiled into DSL metadata in `planning.py` but the actual runtime (`auto.py:drive()`, `run_native_pipeline()`) never reads them. They are inert documentation.
+- **Evidence**: `workflow.pypeline:281-385`; `planning.py:398-438` (reads topology contracts for compilation only); no consumption in runtime
+- **Smallest correction**: Either make the runtime honor these contracts (e.g., approval gate checks, fanout contract enforcement) or remove them from the canonical source and document them as design specifications.
+- **Exact evidence**: `arnold_pipelines/megaplan/workflows/workflow.pypeline:281-385`
+
+### GAP-7 [MEDIUM] Critique/revise and review/rework caps hidden in handlers
+- **Severity**: MEDIUM
+- **Confidence**: MEDIUM
+- **Consequence**: Loop exit caps (`M4_LOOP_MAX_ITERATIONS=4` for critique, `max_review_rework_cycles=3` for review) are enforced inside handlers (`gate.py:345-355`, `review.py:1028-1056`), not in the `.pypeline` source. The `loop(policy=REVISE_LOOP_POLICY)` annotation in `.pypeline:393` is decorative — the actual cap is handler-internal state mutation (`STATE_BLOCKED`). A reviewer reading `.pypeline` sees `while True` with no visible exit cap.
+- **Evidence**: `workflow.pypeline:393-394` (infinite loop); `gate.py:345-355` (`_effective_critique_cap`); `review.py:1028-1056` (rework cap)
+- **Smallest correction**: Move cap policy into `REVISE_LOOP_POLICY` in `.pypeline` source. Have the source compiler lower the cap into the compiled topology. Handlers read the cap from manifest, not from local config.
+- **Exact evidence**: `arnold_pipelines/megaplan/workflows/workflow.pypeline:393-394`, `arnold_pipelines/megaplan/handlers/gate.py:345-355`
+
+### GAP-8 [MEDIUM] Override actions are CLI subprocesses, not runtime interceptors
+- **Severity**: MEDIUM
+- **Confidence**: MEDIUM
+- **Consequence**: The `workflow.pypeline` declares `DECLARED_OVERRIDE_POLICY_ROUTES` and `DECLARED_OVERRIDE_OUTCOME_TARGETS` (lines 36-79). At runtime, overrides are dispatched as `megaplan override <action>` subprocess CLI commands. The auto-drive loop (`auto.py`) special-cases `next_step` strings like `"override abort"` and dispatches them via `_run_phase()`. The override is not an interception of the running pipeline — it's a state mutation through an external command.
+- **Evidence**: `workflow.pypeline:36-79`; `auto.py:1089-1093` (`_control_action_label`); `handlers/override.py` (CLI handler)
+- **Smallest correction**: Make override a runtime interception primitive — the running pipeline should accept an override signal without subprocess boundary. The `.pypeline` override declarations should be compiled into runtime-inspectable override slots.
+- **Exact evidence**: `arnold_pipelines/megaplan/workflows/workflow.pypeline:36-79`, `arnold_pipelines/megaplan/auto.py:1089-1093`
+
+### GAP-9 [LOW] Non-path identity: flat names vs stable IDs vs step aliases
+- **Severity**: LOW
+- **Confidence**: HIGH
+- **Consequence**: Three identity layers map between names: `STABLE_ID_TO_PHASE` (auto.py:202-213) maps `"megaplan:prep"` → `"prep"`; `_LOWERED_STEP_ID_ALIASES` (planning.py:110-139) maps `"gate_suspend"` → `"halt"`, `"review-fan-in"` → `"review"`, etc.; the topology graph uses flat phase names. This creates "non-path identity" — a step cannot be uniquely identified by its structural position in the workflow, only by its flat name.
+- **Evidence**: `auto.py:202-213`; `planning.py:110-139`; `_core/workflow.py:393-414`
+- **Smallest correction**: Use path-addressed identity (`run_path/step_path`) consistently. Replace flat-name routing with structural path routing.
+- **Exact evidence**: `arnold_pipelines/megaplan/auto.py:202-213`, `arnold_pipelines/megaplan/workflows/planning.py:110-139`
+
+### GAP-10 [LOW] Restart-vs-resume: cursor only produced by max_phases limit
+- **Severity**: LOW
+- **Confidence**: HIGH
+- **Consequence**: The native runtime (`run_native_pipeline()`) persists a resume cursor only when `max_phases` is reached. There is no semantic "suspend here" signal from handlers that produces a cursor. The `resume=True` path fully restores state (PC, frames, envelope, path_stack) — it's a genuine resume, not a restart — but it cannot be triggered by a handler's suspension decision, only by a phase-count limit.
+- **Evidence**: `runtime.py:744-854` (cursor only at max_phases); `checkpoint.py:40-70` (cursor classification)
+- **Smallest correction**: Add `suspend_now()` primitive that handlers can call to trigger an immediate checkpoint + suspension without waiting for max_phases.
+- **Exact evidence**: `arnold/pipeline/native/runtime.py:744-854`, `arnold/pipeline/native/checkpoint.py:40-70`
+
+---
+
+## 3. Firm Position
+
+**The system has architectural coherence at the substrate level but semantic fragmentation at the control level.** The native runtime (`run_native_pipeline`) is a clean sequential state machine with proper checkpoint/resume. The graph executor is a proper graph walker. The handlers are feature-complete for Megaplan's product needs. The auto-drive loop is battle-tested with stall detection, tier escalation, cost caps, and recovery.
+
+**But the semantic path from `workflow.pypeline` to runtime behavior is fractured across four independent authorities:**
+
+1. **The `.pypeline` source** declares topology, route bindings, and policy — but at runtime, none of it is directly enforced.
+2. **`components.py`** carries `handler_ref`, `route_bindings`, `RUNTIME_BRANCH_VOCABULARY` — the actual dispatch metadata.
+3. **`planning.py`** bridges lowered source and component metadata through alias tables — a compatibility layer masquerading as a compiler.
+4. **`auto.py:drive()`** is the real runtime — it reads `state["current_state"]`, calls `workflow_next()`, and dispatches subprocess CLI commands.
+
+**The North Star (`NORTHSTAR.md:5-15`) is correct**: final semantic authority must be `workflow.pypeline` + imported native subworkflows + declared policies. The current implementation is approximately 40% of the way there — the `.pypeline` has the right shape (branches, loops, `parallel_map`, tiebreaker calls), but the actual semantics are still in component metadata, handler-internal state mutation, and the auto-drive loop's special-case logic.
+
+**The two CRITICAL gaps (suspension-not-primitive, double-route-brain) are architectural blockers for any caller that assumes the runtime contract matches the authored source.** The three HIGH gaps (hidden semantic completion, silent routing failure, typed seam not wired) are correctness hazards that will cause production debugging nightmares. The MEDIUM gaps are deferred-migration debt that the corrective epic (`megaplan-native-parity-corrective`) explicitly targets.
