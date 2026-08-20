@@ -1,1 +1,1 @@
-../../data/_composed/claude_skill.md
+/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-r/arnold_pipelines/megaplan/data/_composed/claude_skill.md

@@ -2508,7 +2508,7 @@ def test_cloud_preflight_reports_remote_imports_profile_warning_and_expected_spe
     assert payload["remote"]["import_check"]["status"] == "ok"
     assert payload["remote"]["host_predeploy_verdict"] == "GO"
     assert payload["remote"]["collector_launch_verdict"] == "GO"
-    assert any("Codex-only cloud workers should use profile all-codex" in warning for warning in payload["warnings"])
+    assert any("Codex-only cloud workers should use profile partnered-codex" in warning for warning in payload["warnings"])
     assert any("MEGAPLAN_IMPORT_CHECK" in command for command in commands)
 
 

@@ -327,6 +327,72 @@ def test_runtime_test_budget_admits_subshell_wrapped_timeout_prefix() -> None:
     assert issues == []
 
 
+def test_task_test_budget_accepts_absolute_selector_inside_project() -> None:
+    from arnold_pipelines.megaplan.execute.merge import _enforce_task_test_budgets
+
+    target = _task("T1")  # narrow_tests.selectors = ["tests/test_t1.py"]
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": [
+            "timeout 60s pytest /workspace/megaplan-maintenance/Arnold/tests/test_t1.py::test_one",
+        ],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets(
+        [entry],
+        targets_by_id={"T1": target},
+        issues=issues,
+        project_dir="/workspace/megaplan-maintenance/Arnold",
+    )
+    assert entry["status"] == "done"
+    assert issues == []
+
+
+def test_task_test_budget_rejects_outside_absolute_selector_with_same_basename() -> None:
+    from arnold_pipelines.megaplan.execute.merge import _enforce_task_test_budgets
+
+    target = _task("T1")
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": [
+            "timeout 60s pytest /elsewhere/tests/test_t1.py",
+        ],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets(
+        [entry],
+        targets_by_id={"T1": target},
+        issues=issues,
+        project_dir="/workspace/megaplan-maintenance/Arnold",
+    )
+    assert entry["status"] == "blocked"
+    assert "task_test_budget_exhausted" in entry["executor_notes"]
+    assert issues
+
+
+def test_task_test_budget_without_project_dir_rejects_absolute_selector() -> None:
+    from arnold_pipelines.megaplan.execute.merge import _enforce_task_test_budgets
+
+    target = _task("T1")
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": [
+            "timeout 60s pytest /workspace/megaplan-maintenance/Arnold/tests/test_t1.py",
+        ],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([entry], targets_by_id={"T1": target}, issues=issues)
+    assert entry["status"] == "blocked"
+    assert "task_test_budget_exhausted" in entry["executor_notes"]
+    assert issues
+
+
 def test_runtime_write_budget_blocks_undeclared_paths() -> None:
     from arnold_pipelines.megaplan.execute.merge import _enforce_task_write_budgets
 

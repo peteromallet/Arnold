@@ -350,18 +350,15 @@ _KIND_CLOSURE_STEPS: dict[str, str] = {
     "python.queue.enqueue_repair_request": "Step 39",
     "python.queue.enqueue_human_gate_repair_request": "Step 40",
     "python.enqueue_producer": "Step 39",
-    # ── Command authority (4) — Steps 41/68/76 ──────────────────────────
-    "command.arnold-repair-trigger": "Step 41",
-    "command.arnold-repair-loop": "Step 68",
+    # ── Command authority (2) — Steps 41/76 ────────────────────────────
     "command.trigger_once": "Step 41",
     "command.python_module_repair": "Step 76",
-    # ── Shell authority (11) — Steps 51/52/68 ───────────────────────────
+    # ── Shell authority (10) — Steps 51/52/68 ──────────────────────────
     "shell.watchdog_repair": "Step 52",
     "shell.auditor_repair": "Step 51",
     "shell.meta_repair": "Step 76",
     "shell.kimi_repair": "Step 76",
     "shell.module_repair": "Step 76",
-    "shell.repair_loop_relaunch": "Step 68",
     "shell.repair_loop_wrapper": "Step 68",
     "shell.tmux_repair": "Step 52",
     "shell.heredoc_repair": "Step 52",

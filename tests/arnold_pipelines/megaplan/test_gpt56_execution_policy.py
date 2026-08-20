@@ -19,47 +19,62 @@ from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workers import _impl
 
 
-def test_all_codex_pins_effort_on_every_phase_and_uses_same_family_fallbacks() -> None:
+def test_partnered_codex_routing_contract() -> None:
     profile_path = (
         Path(__file__).resolve().parents[3]
-        / "arnold_pipelines/megaplan/profiles/all-codex.toml"
+        / "arnold_pipelines/megaplan/profiles/partnered-codex.toml"
     )
-    profile = tomllib.loads(profile_path.read_text(encoding="utf-8"))["profiles"]["all-codex"]
+    profile = tomllib.loads(profile_path.read_text(encoding="utf-8"))["profiles"][
+        "partnered-codex"
+    ]
 
-    phase_names = {
-        "plan",
-        "prep",
-        "critique",
-        "critique_evaluator",
-        "revise",
-        "gate",
-        "finalize",
-        "execute",
-        "feedback",
-        "loop_plan",
-        "loop_execute",
-        "review",
-        "tiebreaker_researcher",
-        "tiebreaker_challenger",
+    expected_phases = {
+        "plan": "codex:gpt-5.6-sol:high",
+        "prep": "codex:gpt-5.6-terra:medium",
+        "critique": "codex:gpt-5.6-terra:medium",
+        "critique_evaluator": "codex:gpt-5.6-sol:high",
+        "revise": "codex:gpt-5.6-luna:medium",
+        "gate": "codex:gpt-5.6-terra:medium",
+        "finalize": "codex:gpt-5.6-sol:high",
+        "execute": "codex:gpt-5.6-sol:medium",
+        "feedback": "codex:gpt-5.6-sol:medium",
+        "loop_plan": "codex:gpt-5.6-sol:high",
+        "loop_execute": "codex:gpt-5.6-sol:medium",
+        "review": "codex:gpt-5.6-sol:medium",
+        "tiebreaker_researcher": "codex:gpt-5.6-sol:high",
+        "tiebreaker_challenger": "codex:gpt-5.6-sol:high",
     }
-    for phase in phase_names:
-        specs = profile[phase] if isinstance(profile[phase], list) else [profile[phase]]
-        assert all(len(spec.split(":")) == 3 for spec in specs), (phase, specs)
-        assert all(spec.startswith("codex:gpt-5.6-") for spec in specs), (phase, specs)
+    assert {phase: profile[phase] for phase in expected_phases} == expected_phases
+    assert profile["adaptive_critique"] is True
+    assert profile["vendor_locked"] is True
 
-    assert profile["critique"] == [
-        "codex:gpt-5.6-sol:high",
-        "codex:gpt-5.6-terra:high",
-    ]
-    assert profile["gate"] == [
-        "codex:gpt-5.6-terra:low",
+    execute_tiers = profile["tier_models"]["execute"]
+    assert [execute_tiers[str(tier)] for tier in range(1, 7)] == [
         "codex:gpt-5.6-luna:low",
+        "codex:gpt-5.6-luna:medium",
+        "codex:gpt-5.6-luna:high",
+        "codex:gpt-5.6-luna:high",
+        "codex:gpt-5.6-luna:xhigh",
+        "codex:gpt-5.6-luna:max",
     ]
-    assert profile["tier_models"]["critique"]["9"] == [
-        "codex:gpt-5.6-sol:xhigh",
-        "codex:gpt-5.6-terra:high",
+    assert [execute_tiers[str(tier)] for tier in (7, 8)] == [
+        "codex:gpt-5.6-terra:xhigh",
+        "codex:gpt-5.6-terra:max",
     ]
-    assert isinstance(profile["tier_models"]["execute"]["9"], str)
+    assert execute_tiers["9"] == "codex:gpt-5.6-sol:xhigh"
+    assert execute_tiers["10"] == "codex:gpt-5.6-sol:max"
+
+    critique_tiers = profile["tier_models"]["critique"]
+    assert critique_tiers == {
+        "1": "codex:gpt-5.6-luna:low",
+        "2": "codex:gpt-5.6-terra:medium",
+        "3": "codex:gpt-5.6-terra:high",
+        "4": "codex:gpt-5.6-terra:xhigh",
+        "5": "codex:gpt-5.6-sol:max",
+    }
+
+    retired_path = profile_path.with_name("all-codex.toml")
+    assert not retired_path.exists()
 
 
 @pytest.mark.parametrize("effort", ["xhigh", "max"])

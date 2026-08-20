@@ -246,18 +246,40 @@ def test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt(
 ) -> None:
     marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
     queue_dir = repair_requests.repair_queue_dir(marker_dir)
-    claim = repair_requests.claim_active_repair_request(
-        queue_dir,
-        blocker_id="blocker-claim",
-        request_id="request-claim",
-        actor="watchdog",
+    # The active-claim acquire path was removed with the layered repair
+    # stack; seed the claim lock dir + owner record directly so the
+    # surviving managed-agent bind path keeps its fence coverage.
+    from tests.cloud.repair_identity_fixtures import repair_identity
+
+    identity = repair_identity(
         session="session-claim",
-        pid=os.getpid(),
-        command="arnold-repair-loop session-claim /tmp /tmp/spec",
-        cwd=str(tmp_path),
-        is_pid_live=lambda pid: pid == os.getpid(),
+        plan="claim-plan",
+        failure_kind="execute_failed",
+        phase="execute",
+        task="T1",
     )
-    assert claim.claimed
+    identity_key = repair_requests.repair_identity_key(identity)
+    claim_lock_dir = repair_requests.active_repair_claim_lock_dir(
+        queue_dir, "blocker-claim"
+    )
+    claim_lock_dir.mkdir(parents=True, exist_ok=True)
+    (claim_lock_dir / "owner.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "active_repair_request_claim",
+                "blocker_id": "blocker-claim",
+                "request_id": "request-claim",
+                "actor": "watchdog",
+                "session": "session-claim",
+                "pid": os.getpid(),
+                "command": "arnold-babysitter session-claim /tmp /tmp/spec",
+                "cwd": str(tmp_path),
+                "repair_identity_key": identity_key,
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", str(os.getpid()))
     monkeypatch.setenv("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", "request-claim")
     item = spec(
@@ -268,6 +290,8 @@ def test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt(
             "repair_queue_dir": str(queue_dir),
             "repair_request_id": "request-claim",
             "blocker_id": "blocker-claim",
+            "repair_identity_key": identity_key,
+            "repair_identity_json": json.dumps(identity),
             "incident_id": "inc-session-claim",
             "cloud_session": "session-claim",
         },
@@ -275,7 +299,7 @@ def test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt(
 
     assert run_managed_command(item) == 0
 
-    owner = json.loads((claim.lock_dir / "owner.json").read_text())
+    owner = json.loads((claim_lock_dir / "owner.json").read_text())
     payload = json.loads(manifest_path(tmp_path, item).read_text())
     assert owner["managed_agent_run_id"] == payload["run_id"]
     assert owner["managed_manifest_path"] == str(manifest_path(tmp_path, item).resolve())
@@ -679,41 +703,26 @@ def test_child_ceiling_cannot_exceed_its_own_root_difficulty(tmp_path: Path) -> 
 def test_real_dispatch_seams_use_shared_supervisor() -> None:
     root = Path(__file__).resolve().parents[1]
     watchdog = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog").read_text()
-    repair = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop").read_text()
-    meta = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop").read_text()
-    trigger = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger").read_text()
     auditor = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor").read_text()
-    legacy = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-kimi-goal-operator").read_text()
     hermes = (
         root / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
     ).read_text()
 
-    assert "--run-kind automatic_repair" in watchdog
-    assert "--run-kind automatic_meta_repair" in watchdog
-    assert repair.count("--run-kind automatic_repair_retry") >= 2
-    assert "--run-kind automatic_meta_repair_worker" in meta
-    assert "ManagedCommandSpec(" in meta and "meta_repair_retrigger" in meta
-    assert 'proc = getattr(subprocess, "Popen")(' in trigger
-    assert "legacy_manager_args," in trigger
-    assert "subprocess.Popen(cmd" not in trigger
+    assert "--run-kind automatic_watchdog_source_repair" in watchdog
     assert "--run-kind automatic_progress_audit_agent" in auditor
-    assert "--run-kind automatic_legacy_fixer" in legacy
     assert "automatic_research_subagent" in hermes
     assert "_automatic_managed_reexec" in hermes
 
     # Actual worker commands may remain as argv passed to the manager.  Every
     # shipped automatic wrapper containing one must also contain the canonical
     # seam; this catches a future direct subprocess regression deterministically.
-    for source in (watchdog, repair, meta, auditor, legacy):
+    for source in (watchdog, auditor):
         if "codex exec" in source:
             assert "arnold_pipelines.megaplan.managed_agent run" in source
 
     for name, source in {
         "watchdog": watchdog,
-        "repair": repair,
-        "meta": meta,
         "auditor": auditor,
-        "legacy": legacy,
     }.items():
         lines = source.splitlines()
         launches = [

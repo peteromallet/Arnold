@@ -289,20 +289,20 @@ class TestNamedProfileInvariantsChainAware:
     def test_list_element_with_wrong_vendor_detected(self) -> None:
         with pytest.raises(CliError, match="expected codex"):
             _validate_named_profile_invariants(
-                "all-codex",
+                "partnered-codex",
                 {"plan": ["codex", "claude:sonnet"]},
             )
 
     def test_list_all_correct_vendor_passes(self) -> None:
         _validate_named_profile_invariants(
-            "all-codex",
+            "partnered-codex",
             {"plan": ["codex:high", "codex:medium"]},
         )
 
     def test_tier_models_list_element_checked(self) -> None:
         with pytest.raises(CliError, match="expected codex"):
             _validate_named_profile_invariants(
-                "all-codex",
+                "partnered-codex",
                 {"plan": "codex"},
                 tier_models={"execute": {1: ["codex", "claude:sonnet"]}},
             )
@@ -389,7 +389,7 @@ def test_explicit_prep_phase_model_overrides_profile_prep_models(tmp_path: Path)
 
 def test_profile_expansion_with_phase_model_and_no_state_keeps_tier_models(tmp_path: Path) -> None:
     args = Namespace(
-        profile="all-codex",
+        profile="partnered-codex",
         phase_model=["execute=codex"],
         tier_models=None,
         vendor=None,
@@ -419,10 +419,10 @@ def test_profile_expansion_without_cli_keeps_profile_execute_tier_models(tmp_pat
 
     apply_profile_expansion(args, tmp_path)
 
-    assert "execute=codex:gpt-5.4" in args.phase_model
+    assert "execute=codex:gpt-5.6-sol:high" in args.phase_model
     assert args.tier_models is not None
     assert "execute" in args.tier_models
-    assert args.tier_models["execute"][3] == "hermes:deepseek:deepseek-v4-pro"
+    assert args.tier_models["execute"][3] == "hermes:deepseek:deepseek-v4-flash"
     assert "critique" in args.tier_models
 
 
@@ -441,14 +441,14 @@ def test_profile_expansion_execute_tiers_survive_profile_fallback_pin(tmp_path: 
 
     apply_profile_expansion(args, tmp_path)
 
-    assert "execute=codex:gpt-5.4" in args.phase_model
+    assert "execute=codex:gpt-5.6-sol:high" in args.phase_model
     tier_map = _extract_execute_tier_map(args.tier_models)
     assert tier_map is not None
     assert tier_map[1] == "hermes:deepseek:deepseek-v4-flash"
-    assert tier_map[3] == "hermes:deepseek:deepseek-v4-pro"
-    assert tier_map[5] == "hermes:deepseek:deepseek-v4-pro"
-    assert tier_map[9] == "codex:gpt-5.5"
-    assert tier_map[10] == "codex:gpt-5.5"
+    assert tier_map[3] == "hermes:deepseek:deepseek-v4-flash"
+    assert tier_map[5] == "hermes:deepseek:deepseek-v4-flash"
+    assert tier_map[9] == "codex:gpt-5.6-sol:medium"
+    assert tier_map[10] == "codex:gpt-5.6-sol:high"
 
 
 def test_profile_expansion_with_persisted_execute_pin_keeps_execute_pinned_and_suppressed(
