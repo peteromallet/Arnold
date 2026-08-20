@@ -1,0 +1,87 @@
+{
+  "schema": "maintenance-runtime-consolidation-t0.1-seed-custody.v1",
+  "version": 1,
+  "task_id": "T0.1",
+  "purpose": "Additive custody receipt for the external T3.1 intent seed; not a production implementation.",
+  "observed_at_utc": "2026-08-20T18:12:12Z",
+  "worktree": {
+    "branch": "evidence/t0.1-t3.1-external-seed-custody",
+    "starting_head": "b14c727e2909317862d01c48f08c16b719ab8131",
+    "base_requested": "integration/goal-maintenance-runtime-20260820",
+    "base_commit_verified": true
+  },
+  "external_seed": {
+    "ref": "refs/heads/safety/maintenance-t3.1-external-seed",
+    "sha": "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+    "object_type": "commit",
+    "intent": "External T3.1 intent source to be adapted later; not permission to exact-port the lockless migrate_stranded_split_queue helper."
+  },
+  "object_resolution": {
+    "command": "git cat-file -e 3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e^{commit}",
+    "exit_status": 0,
+    "fetch_performed": false
+  },
+  "ref_custody": {
+    "preexisting_target_disposition": "absent",
+    "cas": {
+      "command": "git update-ref refs/heads/safety/maintenance-t3.1-external-seed 3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e 0000000000000000000000000000000000000000",
+      "expected_old_sha": "0000000000000000000000000000000000000000",
+      "exit_status": 0
+    },
+    "post_cas_verification": {
+      "command": "git show-ref --verify refs/heads/safety/maintenance-t3.1-external-seed",
+      "exit_status": 0,
+      "observed": "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e refs/heads/safety/maintenance-t3.1-external-seed"
+    }
+  },
+  "existing_t0_1_safety_refs": {
+    "verified_unchanged": true,
+    "refetched": false,
+    "refs": {
+      "refs/heads/safety/maintenance-m1": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+      "refs/heads/safety/maintenance-m2": "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+      "refs/heads/safety/maintenance-m3": "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+      "refs/heads/safety/maintenance-m3b": "7272cdc7f4303219fb399aefd2966f410d79d208",
+      "refs/heads/safety/maintenance-m4": "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+      "refs/heads/safety/maintenance-m5": "800fa27648245115d5c1412d16ec583d91bdea02"
+    }
+  },
+  "existing_manifest": {
+    "relative_path_from_evidence_root": "milestones/T0.1/refs-manifest.json",
+    "relative_path_from_this_file": "refs-manifest.json",
+    "modified": false,
+    "copied_or_rewritten": false,
+    "relationship": "The v1 manifest and its frozen component-digest surface remain the prior custody record; this sidecar is additive evidence only."
+  },
+  "authority": {
+    "provenance_statement": "provenance evidence, not launch authority",
+    "limitation": "The seed/preflight SHA does not pin launch, rebind, or admission.",
+    "g0_status": "No G0 PASS is claimed; production implementation remains blocked until the required fresh G0 re-review passes.",
+    "scope": [
+      "Additive local safety-ref custody and additive evidence record only.",
+      "No selector, marker, manifest, lease, fence, ledger, candidate, active-plan, chain, process, or runtime-seed mutation.",
+      "No live-state mutation, launch, rebind, admission, claim, cutover, or operator authority."
+    ]
+  },
+  "rejected_alternatives": [
+    "Silent admission because the seed object is locally reachable.",
+    "Dropping the seed and narrowing T3.1 to 15b881; G0-001 identifies it as the only migration intent source.",
+    "Exact-porting the lockless seed helper as the production migration API.",
+    "Refetching the six already-custodied milestone tips.",
+    "Mutating the existing v1 refs manifest under this handoff; the additive sidecar preserves its frozen fields and component digests.",
+    "Treating custody evidence as launch, rebind, or admission authority.",
+    "Force-updating a conflicting existing safety ref."
+  ],
+  "residual_risks": [
+    "Custody is provenance only; it does not authorize T3.1 execution or any runtime action.",
+    "T3.1 remains blocked pending the T0.2 correction and a fresh G0 PASS.",
+    "The target ref was absent at inspection and was created by CAS; any future conflicting target-ref value must be a stop-and-report condition, never a repair opportunity.",
+    "Local object reachability without this immutable safety ref and evidence record would not constitute custody."
+  ],
+  "authoritative_source_receipts": [
+    "evidence/artifacts/mrc-1f420539ca56fb454dc3dffa039c36c1dbb26358ac8b0c4b.stdout",
+    "evidence/artifacts/mrc-3fdeb5dff1b8f02b9edb8bd57e61bc2aa4be5e5c3b8083eb.stdout",
+    "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json",
+    "docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md"
+  ]
+}
