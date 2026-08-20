@@ -98,6 +98,60 @@ def test_close_active_allowance_preserves_manifest_content(tmp_path, capsys):
     }
 
 
+
+
+def test_close_active_allowance_preserves_noncanonical_manifest_bytes(tmp_path, capsys):
+    project = tmp_path / "project"
+    evidence = tmp_path / "evidence"
+    registry_path = evidence / "manifest.json"
+    before = (
+        b'{\r\n'
+        b'  "schema"  :  "keep\\u00e9",\n'
+        b'  "allowances"\t:\r\n'
+        b'[\n'
+        b'\t {\r\n'
+        b'\t\t"allowance_id" : "target",\r\n'
+        b'\t\t"active" : true,\n'
+        b'\t\t"lifecycle_state" : "active",\r\n'
+        b'\t\t"closed_at_utc" : "old",\r\n'
+        b'\t\t"note" : "target"\r\n'
+        b'\t },\r\n'
+        b'\t{\r\n'
+        b'\t\t"allowance_id" : "other",\r\n'
+        b'\t\t"active" : false,\r\n'
+        b'\t\t"note" : "\\u00e9",\r\n'
+        b'\t\t"note" : "duplicate"\r\n'
+        b'\t}\n'
+        b']\r\n'
+        b'}\r\n \t\r\n'
+    )
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_bytes(before)
+
+    assert launcher.main(_close_args(project, "target", evidence)) == 0
+    json.loads(capsys.readouterr().out)
+    after = registry_path.read_bytes()
+    closed_at_utc = json.loads(after.decode("utf-8"))["allowances"][0]["closed_at_utc"]
+    assert datetime.fromisoformat(closed_at_utc.replace("Z", "+00:00")).utcoffset().total_seconds() == 0
+
+    expected = before
+    for old, new in (
+        (b'\t\t"active" : true', b'\t\t"active" : false'),
+        (b'\t\t"lifecycle_state" : "active"', b'\t\t"lifecycle_state" : "closed"'),
+        (
+            b'\t\t"closed_at_utc" : "old"',
+            f'\t\t"closed_at_utc" : "{closed_at_utc}"'.encode("utf-8"),
+        ),
+    ):
+        assert expected.count(old) == 1
+        expected = expected.replace(old, new, 1)
+    assert after == expected
+    assert b'"schema"  :  "keep\\u00e9"' in after
+    assert after.count(b'\t\t"note" : "\\u00e9"') == 1
+    assert after.count(b'\t\t"note" : "duplicate"') == 1
+    assert b'  "schema"  :  "keep\\u00e9",\n' in after
+    assert b"\r\n" in after
+    assert after.endswith(b']\r\n}\r\n \t\r\n')
 def test_close_registry_uses_evidence_first_then_project_fallback(tmp_path):
     project = tmp_path / "project"
     fallback = project / "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json"

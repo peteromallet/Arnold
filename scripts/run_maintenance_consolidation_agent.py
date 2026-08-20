@@ -13,6 +13,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 INTEGRATION_WORKTREE = Path(__file__).resolve().parents[1]
@@ -173,12 +174,158 @@ def _registry_path(project_dir: Path, evidence_dir: Path | None) -> Path:
     raise ValueError(f"MISSING_ALLOWANCE_REGISTRY:{' or '.join(locations)}")
 
 
-def _atomic_manifest(path: Path, value: dict[str, Any]) -> None:
+_JSON_WHITESPACE = b" \t\r\n"
+
+
+@dataclass(frozen=True)
+class _JsonMember:
+    key: str
+    value: "_JsonNode"
+
+
+@dataclass(frozen=True)
+class _JsonNode:
+    start: int
+    end: int
+    kind: str
+    members: tuple[_JsonMember, ...] = ()
+    elements: tuple["_JsonNode", ...] = ()
+
+
+def _skip_json_whitespace(source: bytes, position: int) -> int:
+    while position < len(source) and source[position] in _JSON_WHITESPACE:
+        position += 1
+    return position
+
+
+def _scan_json_string(source: bytes, position: int) -> int:
+    if position >= len(source) or source[position] != ord('"'):
+        raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:expected JSON string")
+    position += 1
+    while position < len(source):
+        if source[position] == ord("\\"):
+            position += 2
+        elif source[position] == ord('"'):
+            return position + 1
+        else:
+            position += 1
+    raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:unterminated JSON string")
+
+
+def _scan_json_value(source: bytes, position: int) -> _JsonNode:
+    position = _skip_json_whitespace(source, position)
+    if position >= len(source):
+        raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:missing JSON value")
+    start = position
+    marker = source[position]
+    if marker == ord('"'):
+        return _JsonNode(start, _scan_json_string(source, position), "scalar")
+    if marker == ord("{"):
+        members: list[_JsonMember] = []
+        position += 1
+        while True:
+            position = _skip_json_whitespace(source, position)
+            if position >= len(source):
+                raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:unterminated JSON object")
+            if source[position] == ord("}"):
+                return _JsonNode(start, position + 1, "object", tuple(members))
+            key_start = position
+            key_end = _scan_json_string(source, key_start)
+            key = json.loads(source[key_start:key_end])
+            position = _skip_json_whitespace(source, key_end)
+            if position >= len(source) or source[position] != ord(":"):
+                raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:expected JSON object separator")
+            value = _scan_json_value(source, position + 1)
+            members.append(_JsonMember(key, value))
+            position = _skip_json_whitespace(source, value.end)
+            if position < len(source) and source[position] == ord(","):
+                position += 1
+                continue
+            if position < len(source) and source[position] == ord("}"):
+                return _JsonNode(start, position + 1, "object", tuple(members))
+            raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:expected JSON object delimiter")
+    if marker == ord("["):
+        elements: list[_JsonNode] = []
+        position += 1
+        while True:
+            position = _skip_json_whitespace(source, position)
+            if position >= len(source):
+                raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:unterminated JSON array")
+            if source[position] == ord("]"):
+                return _JsonNode(start, position + 1, "array", elements=tuple(elements))
+            value = _scan_json_value(source, position)
+            elements.append(value)
+            position = _skip_json_whitespace(source, value.end)
+            if position < len(source) and source[position] == ord(","):
+                position += 1
+                continue
+            if position < len(source) and source[position] == ord("]"):
+                return _JsonNode(start, position + 1, "array", elements=tuple(elements))
+            raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:expected JSON array delimiter")
+    position += 1
+    while position < len(source) and source[position] not in _JSON_WHITESPACE + b",]}":
+        position += 1
+    if position == start + 1 and marker in b",]}":
+        raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:missing JSON value")
+    return _JsonNode(start, position, "scalar")
+
+
+def _scan_json_document(source: bytes) -> _JsonNode:
+    position = 3 if source.startswith(b"\xef\xbb\xbf") else 0
+    node = _scan_json_value(source, position)
+    if _skip_json_whitespace(source, node.end) != len(source):
+        raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:trailing JSON content")
+    return node
+
+
+def _last_json_member(node: _JsonNode, key: str) -> _JsonMember | None:
+    return next((member for member in reversed(node.members) if member.key == key), None)
+
+
+def _lossless_manifest_update(source: bytes, target_index: int, closed_at_utc: str) -> bytes:
+    root = _scan_json_document(source)
+    allowances_member = _last_json_member(root, "allowances")
+    if allowances_member is None or allowances_member.value.kind != "array":
+        raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:allowances must be a list")
+    try:
+        target = allowances_member.value.elements[target_index]
+    except IndexError as exc:
+        raise ValueError("MALFORMED_ALLOWANCE_REGISTRY:allowance index out of range") from exc
+    if target.kind != "object":
+        raise ValueError("MALFORMED_ALLOWANCE:object required")
+
+    values = {
+        "active": b"false",
+        "lifecycle_state": b'"closed"',
+        "closed_at_utc": json.dumps(closed_at_utc, separators=(",", ":")).encode("utf-8"),
+    }
+    replacements: list[tuple[int, int, bytes]] = []
+    missing: list[bytes] = []
+    for key, value in values.items():
+        member = _last_json_member(target, key)
+        if member is None:
+            missing.append(f'"{key}":'.encode("utf-8") + value)
+        else:
+            replacements.append((member.value.start, member.value.end, value))
+    if missing:
+        insertion = b",".join(missing)
+        prefix = b"," if target.members else b""
+        replacements.append((target.end - 1, target.end - 1, prefix + insertion))
+
+    chunks: list[bytes] = []
+    cursor = 0
+    for start, end, replacement in sorted(replacements):
+        chunks.extend((source[cursor:start], replacement))
+        cursor = end
+    chunks.append(source[cursor:])
+    return b"".join(chunks)
+
+
+def _atomic_manifest(path: Path, source: bytes) -> None:
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
     try:
-        with temporary.open("w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=False, separators=(",", ":"))
-            stream.write("\n")
+        with temporary.open("wb") as stream:
+            stream.write(source)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -193,32 +340,36 @@ def deactivate_allowance(args: argparse.Namespace) -> int:
     project_dir = Path(args.project_dir).resolve()
     evidence_dir = Path(args.evidence_dir).resolve() if args.evidence_dir else None
     registry_path = _registry_path(project_dir, evidence_dir)
+    source = registry_path.read_bytes()
     try:
-        registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"MALFORMED_ALLOWANCE_REGISTRY:{registry_path}:{exc.msg}") from exc
+        registry = json.loads(source.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        message = exc.msg if isinstance(exc, json.JSONDecodeError) else str(exc)
+        raise ValueError(f"MALFORMED_ALLOWANCE_REGISTRY:{registry_path}:{message}") from exc
     if not isinstance(registry, dict) or not isinstance(registry.get("allowances"), list):
         raise ValueError(f"MALFORMED_ALLOWANCE_REGISTRY:{registry_path}:allowances must be a list")
 
-    allowance = next(
+    target_index = next(
         (
-            record
-            for record in registry["allowances"]
+            index
+            for index, record in enumerate(registry["allowances"])
             if isinstance(record, dict) and record.get("allowance_id") == args.deactivate_allowance
         ),
         None,
     )
-    if allowance is None:
+    if target_index is None:
         raise ValueError(f"ALLOWANCE_NOT_FOUND:{args.deactivate_allowance}")
+    allowance = registry["allowances"][target_index]
     if not allowance.get("active") or allowance.get("lifecycle_state") == "closed":
         raise ValueError(f"ALLOWANCE_ALREADY_CLOSED:{args.deactivate_allowance}")
 
-    allowance["active"] = False
-    allowance["lifecycle_state"] = "closed"
-    allowance["closed_at_utc"] = now()
-    _atomic_manifest(registry_path, registry)
+    closed_at_utc = now()
+    updated_source = _lossless_manifest_update(source, target_index, closed_at_utc)
+    _atomic_manifest(registry_path, updated_source)
     print(json.dumps({"allowance_id": args.deactivate_allowance, "manifest": str(registry_path), "status": "closed"}, sort_keys=True))
     return 0
+
+
 
 
 def _require_dispatch_args(args: argparse.Namespace) -> None:
