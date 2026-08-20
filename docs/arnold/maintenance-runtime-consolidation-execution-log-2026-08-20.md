@@ -93,3 +93,18 @@
 - Required fix: parse resolved model from launcher stderr as well as stdout (or the launcher's `resolved=` diagnostic); add a counterexample test (mock launcher emitting resolved= on stderr → receipt closes completed with parsed model).
 - Route: fresh Luna brief-prep → fresh Luna [HARD-REVISION] implementer → fresh independent Luna [HARD-REVIEW] re-review of complete wrapper diff → integration of revision commit (extends INT-batch0 card) → re-dispatch INT-batch0 integration with the already-authored brief.
 
+
+## OPERATOR VERDICT (user interjection, 2026-08-20, supersedes conflicting inputs) — Live Tree Authority
+
+Context: astrid-first blocked ~1h+ on runtime split-brain: seed 98 pins 423ec212c, manifest gen 99 pins e6ef9f0fb, candidate HEAD 5331e02e3 (same import_root, three SHAs). Rebind gate refused: "runtime provenance receipt is stale or forged" (execution_binding.py:766). Two superfixer runs failed to recover.
+
+Verdict (user): Live Tree Authority wins. Current authority = the live tree at epic.runtime_root (+ its generation interpreter). Git SHA is an observation on accepted work, not a launch pin; compatibility is import_root + per-artifact schema fields, not a new SHA/epoch pin. The five-component vector is "five copies of a pin that should not be a pin." Engine self-contradiction cited: runtime_attestation.py:1290 (engine change on same import_root is a NON-EVENT) vs :1145 (gates live_head == expected_revision) and execution_binding.py:758 (byte-equal receipts); advance_generation / arnold-promote never call ensure_runtime_launch_seed (designed hole, not missed atomic write).
+
+Directives for consolidation:
+1. Reject SD-011 five-component CAS-converged vector. T4.4 keeps the T2.1 occurrence-owner freeze but DROPS seed + preflight-SHA components. Sole rebind CAS = import_root (+ generation interpreter). Update the G0 freeze contract accordingly. Do NOT classify seed/preflight as "already present at fce" — they are the failure, not the authority.
+2. DELETE as gates (KEEP as evidence): seed store, dispatch-current.json, MEGAPLAN_RUNTIME_LAUNCH_SEED requirement, receipt byte-equality for same-root, runtime_vector_sha256 admission, babysitter manifest→marker→chain→seed ceremony. KEEP: manifest as tree selector, mixed-module / foreign-.pth / interpreter checks, spec/asset CAS, append-only process stamps, expected_head as telemetry.
+3. Live split box (NOT consolidation, same seam): do NOT reset candidate to e6ef9f0fb (destroys run-2 fix 5331e02e3); do NOT advance_generation to 5331e02e3 as "recovery". After wall-removal lands, recovery is ONE command: `ARNOLD_RUNTIME_MANIFEST=/workspace/.megaplan/astrid-first.json python3 -P -m arnold_pipelines.megaplan chain start --one`.
+4. Adjudicator caveats: keep dependency_generation.interpreter_path as a launch check (interpreter identity ≠ SHA); do NOT introduce a STATE_SCHEMA_EPOCH launch pin (per-artifact schema fields already fence incompatible state).
+- User offered: route a fresh Grok review of the G0 freeze once drafted.
+- Orchestrator routing decision: after the in-flight G0 selection adjudication (G0-grok) lands, dispatch a FRESH Grok 4.6 judgment (role JUDGMENT, label [XHARD-REVIEW]) on the amended G0 freeze (Live Tree Authority contract), then a Luna evidence agent records the receipt; the amended freeze binds T4.1/T4.2/T4.3 (and any T4.4 scope) before those cards start.
+

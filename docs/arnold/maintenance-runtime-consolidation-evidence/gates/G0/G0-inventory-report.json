@@ -1,0 +1,3356 @@
+{
+  "gate": "G0",
+  "role": "Luna inventory/validation",
+  "adjudication_performed": false,
+  "status": "pass",
+  "scope": {
+    "inventory_only": true,
+    "read_only": true,
+    "no_keep_adapt_drop_adjudication": true,
+    "comparison_contract": {
+      "analysis_head": "502a641f0eda76f44a9bd6151e894d1c26f4c5c6",
+      "boundary": "fce..safety-ref; unique commits assigned to first milestone introduction",
+      "excluded_prefixes": [
+        "docs/",
+        ".megaplan/",
+        "anchors/",
+        ".process_adapter_wbc/",
+        "codex.pid"
+      ],
+      "merge_commit_count": 0,
+      "no_runtime_execution": true,
+      "observed_integration_head": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+      "patch_unique_definition": "reachable commit whose production hunk is not duplicate of fce behavior or another selected-equivalent patch; ambiguous semantics stay unresolved for G0",
+      "production_prefixes": [
+        "arnold_pipelines/",
+        "resident/",
+        "cloud/",
+        "handlers/",
+        "orchestration/",
+        "execute/",
+        "scripts/"
+      ],
+      "read_only_only": true,
+      "rename_record_count": 0,
+      "worktree": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution"
+    },
+    "integration_base_sha": "fce48030a82d4d35d9b4a5184e4c789792b9c172",
+    "frozen_committed_boundary_sha": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "current_committed_head": "b14c727e2909317862d01c48f08c16b719ab8131"
+  },
+  "input_digests": {
+    "docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md": {
+      "sha256": "d94bef32ccdb834a37834ab6eb66bddab4d8998a164724e5bdf9d33d8e62c20a",
+      "size_bytes": 53496
+    },
+    "docs/arnold/maintenance-runtime-consolidation-evidence/selection/T0.2/source-selection-manifest.json": {
+      "sha256": "46c1ce890476711f3c66ba8950852a46383b318f52b84593ec940fa8b79e796d",
+      "size_bytes": 536939
+    },
+    "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json": {
+      "sha256": "60a2de9cf8770c67bdf7f226f29a84dba5dc6a9b16b7bda849eaaccad2ab5c71",
+      "size_bytes": 116353
+    },
+    "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/baseline.json": {
+      "sha256": "f5dfdf50bf3c552d24a53b0027b05123228135cc5473fdf1ddd5d842d2b4149b",
+      "size_bytes": 24317
+    },
+    "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J1-grok-judgment.json": {
+      "sha256": "8a43b98852009649474fa792fbfef063290a0f90e181c9bc22fdd1652a578734",
+      "size_bytes": 7826
+    },
+    "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md": {
+      "sha256": "b238a387006dad32e1a00cecb403a2187afc8c986bf8c45295e0c7dc68b22638",
+      "size_bytes": 12902
+    }
+  },
+  "baseline_boundary": {
+    "path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/baseline.json",
+    "mutation_boundary": {
+      "allowed_only": "creation of files under docs/arnold/maintenance-runtime-consolidation-evidence/",
+      "live_state_mutated": false,
+      "production_test_files_mutated": false
+    },
+    "planned_integration_base_sha": "fce48030a82d4d35d9b4a5184e4c789792b9c172",
+    "observed_integration_repository_sha": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "forbidden_operations_not_run": [
+      "git fetch/pull/checkout/switch/reset/stash/commit/push/ref update",
+      "tests/validators/launchers/plan or chain commands",
+      "process intervention",
+      "cloud/candidate/plan/chain/selector/marker/manifest/lease/fence/ledger writes"
+    ]
+  },
+  "boundary_check": {
+    "frozen_commit": "a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "current_head": "b14c727e2909317862d01c48f08c16b719ab8131",
+    "current_head_is_frozen_commit": false,
+    "current_head_descends_from_frozen_commit": true,
+    "searched_paths": [
+      "docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md",
+      "docs/goal-execute-maintenance-runtime-consolidation.md"
+    ],
+    "search_command": {
+      "command": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "T4\\.4|G4\\.4",
+        "a610c220da202c6c4a45c4c990ebef4be9f53942",
+        "--",
+        "docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md",
+        "docs/goal-execute-maintenance-runtime-consolidation.md"
+      ],
+      "exit_status": 1,
+      "stdout": "",
+      "stderr": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "zero_hits": true,
+    "committed_blob_checks": [
+      {
+        "path": "docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md",
+        "revisions": {
+          "a610c220da202c6c4a45c4c990ebef4be9f53942": {
+            "exit_status": 0,
+            "blob_sha1": "fd7fc7d557cd70dd882bdf831b5afdd3bb093173",
+            "stderr": ""
+          },
+          "HEAD": {
+            "exit_status": 0,
+            "blob_sha1": "fd7fc7d557cd70dd882bdf831b5afdd3bb093173",
+            "stderr": ""
+          }
+        },
+        "same_at_head": true
+      },
+      {
+        "path": "docs/goal-execute-maintenance-runtime-consolidation.md",
+        "revisions": {
+          "a610c220da202c6c4a45c4c990ebef4be9f53942": {
+            "exit_status": 0,
+            "blob_sha1": "b5879bc4b4a23a41601ce9576c052c01d3203c95",
+            "stderr": ""
+          },
+          "HEAD": {
+            "exit_status": 0,
+            "blob_sha1": "b5879bc4b4a23a41601ce9576c052c01d3203c95",
+            "stderr": ""
+          }
+        },
+        "same_at_head": true
+      }
+    ],
+    "frozen_docs_unchanged_at_current_head": true,
+    "dirty_later_variants_observed_only": true,
+    "j1_receipt_path": "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J1-grok-judgment.json"
+  },
+  "milestones": [
+    {
+      "milestone": "M1",
+      "tip_sha": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+      "safety_ref": "refs/heads/safety/maintenance-m1",
+      "reachability_check": {
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145^{commit}"
+        ],
+        "exit_status": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "safety_ref_check": {
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m1"
+        ],
+        "exit_status": 0,
+        "stdout": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145\n",
+        "stderr": "",
+        "stdout_sha256": "28d8a57587acb5cf8d22f80a54b8c77cf687119afec943f066b8b3fc3c3ccaa9",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_sha": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+      "reachability_pass": true,
+      "exact_ref_pass": true
+    },
+    {
+      "milestone": "M2",
+      "tip_sha": "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+      "safety_ref": "refs/heads/safety/maintenance-m2",
+      "reachability_check": {
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "15b881cb47274447b3795c9438fd2de1d9f9d33d^{commit}"
+        ],
+        "exit_status": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "safety_ref_check": {
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m2"
+        ],
+        "exit_status": 0,
+        "stdout": "15b881cb47274447b3795c9438fd2de1d9f9d33d\n",
+        "stderr": "",
+        "stdout_sha256": "b608d61bdc97515346a8e19c95dea6a5d34f391d6debe9f41e4cff13f4645452",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_sha": "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+      "reachability_pass": true,
+      "exact_ref_pass": true
+    },
+    {
+      "milestone": "M3",
+      "tip_sha": "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+      "safety_ref": "refs/heads/safety/maintenance-m3",
+      "reachability_check": {
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "58d4a935539597c2aa3f323e1515054ec1f95fe7^{commit}"
+        ],
+        "exit_status": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "safety_ref_check": {
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m3"
+        ],
+        "exit_status": 0,
+        "stdout": "58d4a935539597c2aa3f323e1515054ec1f95fe7\n",
+        "stderr": "",
+        "stdout_sha256": "91f1d6db5c6a4e0c229bb287c315ab832607a937a02bb5e45590e15e34208c77",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_sha": "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+      "reachability_pass": true,
+      "exact_ref_pass": true
+    },
+    {
+      "milestone": "M3b",
+      "tip_sha": "7272cdc7f4303219fb399aefd2966f410d79d208",
+      "safety_ref": "refs/heads/safety/maintenance-m3b",
+      "reachability_check": {
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "7272cdc7f4303219fb399aefd2966f410d79d208^{commit}"
+        ],
+        "exit_status": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "safety_ref_check": {
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m3b"
+        ],
+        "exit_status": 0,
+        "stdout": "7272cdc7f4303219fb399aefd2966f410d79d208\n",
+        "stderr": "",
+        "stdout_sha256": "966512588247d1795da4185c8c1a8834fc2c5eb3597b10f1468d1f2534c64632",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_sha": "7272cdc7f4303219fb399aefd2966f410d79d208",
+      "reachability_pass": true,
+      "exact_ref_pass": true
+    },
+    {
+      "milestone": "M4",
+      "tip_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+      "safety_ref": "refs/heads/safety/maintenance-m4",
+      "reachability_check": {
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438^{commit}"
+        ],
+        "exit_status": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "safety_ref_check": {
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m4"
+        ],
+        "exit_status": 0,
+        "stdout": "759e3186f773ae40e58dc9de1e716dfd2ebb8438\n",
+        "stderr": "",
+        "stdout_sha256": "40ac4aa935133238fb4494f82c87d29e904dde49b8d2e440620ab0583c57dd49",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+      "reachability_pass": true,
+      "exact_ref_pass": true
+    },
+    {
+      "milestone": "M5",
+      "tip_sha": "800fa27648245115d5c1412d16ec583d91bdea02",
+      "safety_ref": "refs/heads/safety/maintenance-m5",
+      "reachability_check": {
+        "command": [
+          "git",
+          "cat-file",
+          "-e",
+          "800fa27648245115d5c1412d16ec583d91bdea02^{commit}"
+        ],
+        "exit_status": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "safety_ref_check": {
+        "command": [
+          "git",
+          "show-ref",
+          "--verify",
+          "--hash",
+          "refs/heads/safety/maintenance-m5"
+        ],
+        "exit_status": 0,
+        "stdout": "800fa27648245115d5c1412d16ec583d91bdea02\n",
+        "stderr": "",
+        "stdout_sha256": "215e6b393deb12c1f5ff6235e2d7351dba00149708656a98dfb1a1086ad6c842",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_sha": "800fa27648245115d5c1412d16ec583d91bdea02",
+      "reachability_pass": true,
+      "exact_ref_pass": true
+    }
+  ],
+  "history_inventory": {
+    "boundary": "fce48030a82d4d35d9b4a5184e4c789792b9c172..safety-ref",
+    "first_introduction_order": [
+      "M1",
+      "M2",
+      "M3",
+      "M3b",
+      "M4",
+      "M5"
+    ],
+    "range_commit_counts": {
+      "M1": 10,
+      "M2": 18,
+      "M3": 21,
+      "M3b": 22,
+      "M4": 25,
+      "M5": 26
+    },
+    "unique_reachable_commit_count": 26,
+    "actual_production_prefixes": [
+      "arnold_pipelines/",
+      "resident/",
+      "cloud/",
+      "handlers/",
+      "orchestration/",
+      "execute/",
+      "scripts/"
+    ],
+    "excluded_prefixes": [
+      "docs/",
+      ".megaplan/",
+      "anchors/",
+      ".process_adapter_wbc/",
+      "codex.pid"
+    ],
+    "merge_commit_count": 0
+  },
+  "classification_coverage": {
+    "actual_patch_unique_production_commits": [
+      {
+        "commit_sha": "62d3cae7fb7a873a00eaf87a9db52ff1921e7605",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/execute/merge.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T5.1"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/execute/merge.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "80b4e1604ab77cbf495305063ad0a957e0e1d0c4",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/feature_flags.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+          "arnold_pipelines/megaplan/managed_agent.py",
+          "arnold_pipelines/megaplan/prompts/critique_evaluator.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "superseded",
+          "selected_disposition": "already-at-fce",
+          "selected_task_ids": [],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/feature_flags.py",
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+            "arnold_pipelines/megaplan/managed_agent.py",
+            "arnold_pipelines/megaplan/prompts/critique_evaluator.py"
+          ],
+          "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "98e547861128aefc37a010a543dec834b0690da2",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/orchestration/test_selection.py",
+          "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+          "arnold_pipelines/megaplan/schemas/runtime.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "superseded",
+          "selected_disposition": "already-at-fce",
+          "selected_task_ids": [],
+          "production_paths": [
+            "arnold_pipelines/megaplan/orchestration/test_selection.py",
+            "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+            "arnold_pipelines/megaplan/schemas/runtime.py"
+          ],
+          "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "549cb31b81722677dc50a4351be78ea0bdfbf059",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/orchestration/critique_runtime.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "superseded",
+          "selected_disposition": "already-at-fce",
+          "selected_task_ids": [],
+          "production_paths": [
+            "arnold_pipelines/megaplan/orchestration/critique_runtime.py"
+          ],
+          "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "9056775d6c4bd24823ee974fd7da198eeadedf92",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/current_target_liveness.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T4.1"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/current_target_liveness.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "2aff9151360920bfa8e72f6d740457ec27f66736",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/meta_repair.py",
+          "arnold_pipelines/megaplan/cloud/repair_contract.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T2.3",
+            "T4.1"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/meta_repair.py",
+            "arnold_pipelines/megaplan/cloud/repair_contract.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "8ed4935bb9fa40f22240ebfa114195a988d09eb8",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/current_target.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T4.1"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/current_target.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+        "introducing_milestones": [
+          "M1"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/authority/coherence.py",
+          "arnold_pipelines/megaplan/cloud/current_target.py",
+          "arnold_pipelines/megaplan/cloud/incident_bridge.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_environment.py",
+          "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
+          "arnold_pipelines/megaplan/receipts/schema.py"
+        ],
+        "manifest_record": {
+          "milestone": "M1",
+          "primary_classification": "superseded",
+          "selected_disposition": "already-at-fce",
+          "selected_task_ids": [],
+          "production_paths": [
+            "arnold_pipelines/megaplan/authority/coherence.py",
+            "arnold_pipelines/megaplan/cloud/current_target.py",
+            "arnold_pipelines/megaplan/cloud/incident_bridge.py",
+            "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+            "arnold_pipelines/megaplan/cloud/maintenance_environment.py",
+            "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
+            "arnold_pipelines/megaplan/receipts/schema.py"
+          ],
+          "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+        "introducing_milestones": [
+          "M2"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/status_snapshot.py"
+        ],
+        "manifest_record": {
+          "milestone": "M2",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T1.1"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/status_snapshot.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "f579592ebcc6307c6ede71f4b42484da172f3527",
+        "introducing_milestones": [
+          "M2"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/authority/coherence.py",
+          "arnold_pipelines/megaplan/chain/__init__.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/watchdog.py",
+          "arnold_pipelines/megaplan/incident/ledger.py",
+          "arnold_pipelines/megaplan/incident/schema.py",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/boundaries.py",
+          "arnold_pipelines/megaplan/maintenance/contracts.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.json",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/identity.py",
+          "arnold_pipelines/megaplan/maintenance/ledger.py",
+          "arnold_pipelines/megaplan/maintenance/observation.py",
+          "arnold_pipelines/megaplan/maintenance/projections.py",
+          "arnold_pipelines/megaplan/maintenance/shadow.py",
+          "arnold_pipelines/megaplan/maintenance/sources.py"
+        ],
+        "manifest_record": {
+          "milestone": "M2",
+          "primary_classification": "superseded",
+          "selected_disposition": "already-at-fce",
+          "selected_task_ids": [],
+          "production_paths": [
+            "arnold_pipelines/megaplan/authority/coherence.py",
+            "arnold_pipelines/megaplan/chain/__init__.py",
+            "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+            "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+            "arnold_pipelines/megaplan/cloud/watchdog.py",
+            "arnold_pipelines/megaplan/incident/ledger.py",
+            "arnold_pipelines/megaplan/incident/schema.py",
+            "arnold_pipelines/megaplan/maintenance/__init__.py",
+            "arnold_pipelines/megaplan/maintenance/boundaries.py",
+            "arnold_pipelines/megaplan/maintenance/contracts.py",
+            "arnold_pipelines/megaplan/maintenance/events.py",
+            "arnold_pipelines/megaplan/maintenance/handoffs.json",
+            "arnold_pipelines/megaplan/maintenance/handoffs.py",
+            "arnold_pipelines/megaplan/maintenance/identity.py",
+            "arnold_pipelines/megaplan/maintenance/ledger.py",
+            "arnold_pipelines/megaplan/maintenance/observation.py",
+            "arnold_pipelines/megaplan/maintenance/projections.py",
+            "arnold_pipelines/megaplan/maintenance/shadow.py",
+            "arnold_pipelines/megaplan/maintenance/sources.py"
+          ],
+          "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+        "introducing_milestones": [
+          "M2"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/maintenance_canary.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_recovery.py",
+          "arnold_pipelines/megaplan/cloud/repair_requests.py",
+          "arnold_pipelines/megaplan/incident/ledger.py",
+          "arnold_pipelines/megaplan/incident/schema.py",
+          "arnold_pipelines/megaplan/maintenance/RUNBOOK.md",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/checkpoints.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.json",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/ledger.py",
+          "arnold_pipelines/megaplan/maintenance/observation.py",
+          "arnold_pipelines/megaplan/maintenance/operations.py",
+          "arnold_pipelines/megaplan/maintenance/projections.py",
+          "arnold_pipelines/megaplan/maintenance/sources.py",
+          "arnold_pipelines/megaplan/maintenance/verification.py"
+        ],
+        "manifest_record": {
+          "milestone": "M2",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T3.1"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/maintenance_canary.py",
+            "arnold_pipelines/megaplan/cloud/maintenance_recovery.py",
+            "arnold_pipelines/megaplan/cloud/repair_requests.py",
+            "arnold_pipelines/megaplan/incident/ledger.py",
+            "arnold_pipelines/megaplan/incident/schema.py",
+            "arnold_pipelines/megaplan/maintenance/RUNBOOK.md",
+            "arnold_pipelines/megaplan/maintenance/__init__.py",
+            "arnold_pipelines/megaplan/maintenance/checkpoints.py",
+            "arnold_pipelines/megaplan/maintenance/events.py",
+            "arnold_pipelines/megaplan/maintenance/handoffs.json",
+            "arnold_pipelines/megaplan/maintenance/handoffs.py",
+            "arnold_pipelines/megaplan/maintenance/ledger.py",
+            "arnold_pipelines/megaplan/maintenance/observation.py",
+            "arnold_pipelines/megaplan/maintenance/operations.py",
+            "arnold_pipelines/megaplan/maintenance/projections.py",
+            "arnold_pipelines/megaplan/maintenance/sources.py",
+            "arnold_pipelines/megaplan/maintenance/verification.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "7272cdc7f4303219fb399aefd2966f410d79d208",
+        "introducing_milestones": [
+          "M3b"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/chain/execution_binding.py",
+          "arnold_pipelines/megaplan/chain/occurrence_adopt.py",
+          "arnold_pipelines/megaplan/chain/operator_pause.py",
+          "arnold_pipelines/megaplan/chain/target_rebind.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_delivery.py",
+          "arnold_pipelines/megaplan/cloud/runtime_attestation.py",
+          "arnold_pipelines/megaplan/cloud/runtime_cutover.py",
+          "arnold_pipelines/megaplan/cloud/runtime_import_gates.py",
+          "arnold_pipelines/megaplan/cloud/runtime_manifest.py",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/delivery.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/operations.py"
+        ],
+        "manifest_record": {
+          "milestone": "M3b",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T4.1",
+            "T4.2",
+            "T4.3"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/chain/execution_binding.py",
+            "arnold_pipelines/megaplan/chain/occurrence_adopt.py",
+            "arnold_pipelines/megaplan/chain/operator_pause.py",
+            "arnold_pipelines/megaplan/chain/target_rebind.py",
+            "arnold_pipelines/megaplan/cloud/maintenance_delivery.py",
+            "arnold_pipelines/megaplan/cloud/runtime_attestation.py",
+            "arnold_pipelines/megaplan/cloud/runtime_cutover.py",
+            "arnold_pipelines/megaplan/cloud/runtime_import_gates.py",
+            "arnold_pipelines/megaplan/cloud/runtime_manifest.py",
+            "arnold_pipelines/megaplan/maintenance/__init__.py",
+            "arnold_pipelines/megaplan/maintenance/delivery.py",
+            "arnold_pipelines/megaplan/maintenance/events.py",
+            "arnold_pipelines/megaplan/maintenance/handoffs.py",
+            "arnold_pipelines/megaplan/maintenance/operations.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+        "introducing_milestones": [
+          "M4"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_unblocker.py",
+          "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+          "arnold_pipelines/megaplan/cloud/repair_contract.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+          "arnold_pipelines/megaplan/handlers/review.py",
+          "arnold_pipelines/megaplan/maintenance/RUNBOOK.md",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/operational_policy.py",
+          "arnold_pipelines/megaplan/maintenance/operational_reporting.py",
+          "arnold_pipelines/megaplan/resident/scheduler.py",
+          "arnold_pipelines/megaplan/resident/schedules.py"
+        ],
+        "manifest_record": {
+          "milestone": "M4",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T1.2",
+            "T2.1",
+            "T2.2",
+            "T2.3",
+            "T3.2",
+            "T3.3",
+            "T6.3"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+            "arnold_pipelines/megaplan/cloud/maintenance_unblocker.py",
+            "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "arnold_pipelines/megaplan/cloud/repair_contract.py",
+            "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+            "arnold_pipelines/megaplan/handlers/review.py",
+            "arnold_pipelines/megaplan/maintenance/RUNBOOK.md",
+            "arnold_pipelines/megaplan/maintenance/__init__.py",
+            "arnold_pipelines/megaplan/maintenance/operational_policy.py",
+            "arnold_pipelines/megaplan/maintenance/operational_reporting.py",
+            "arnold_pipelines/megaplan/resident/scheduler.py",
+            "arnold_pipelines/megaplan/resident/schedules.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      },
+      {
+        "commit_sha": "800fa27648245115d5c1412d16ec583d91bdea02",
+        "introducing_milestones": [
+          "M5"
+        ],
+        "actual_production_paths": [
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+          "arnold_pipelines/megaplan/incident/schema.py",
+          "arnold_pipelines/megaplan/maintenance/EFFICIENCY_RUNBOOK.md",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_analysis.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_baselines.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_clustering.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_contracts.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_economics.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_reporting.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_routing.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_runner.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_sources.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/projections.py",
+          "arnold_pipelines/megaplan/maintenance/ticket_policy_decision.json",
+          "arnold_pipelines/megaplan/receipts/query.py",
+          "arnold_pipelines/megaplan/resident/scheduler.py",
+          "arnold_pipelines/megaplan/resident/schedules.py",
+          "arnold_pipelines/megaplan/store/_file/tickets.py",
+          "arnold_pipelines/megaplan/tickets/core.py"
+        ],
+        "manifest_record": {
+          "milestone": "M5",
+          "primary_classification": "adapt",
+          "selected_disposition": "selected",
+          "selected_task_ids": [
+            "T1.3",
+            "T6.1",
+            "T6.2",
+            "T6.3"
+          ],
+          "production_paths": [
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+            "arnold_pipelines/megaplan/incident/schema.py",
+            "arnold_pipelines/megaplan/maintenance/EFFICIENCY_RUNBOOK.md",
+            "arnold_pipelines/megaplan/maintenance/__init__.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_analysis.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_baselines.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_clustering.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_contracts.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_economics.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_reporting.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_routing.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_runner.py",
+            "arnold_pipelines/megaplan/maintenance/efficiency_sources.py",
+            "arnold_pipelines/megaplan/maintenance/events.py",
+            "arnold_pipelines/megaplan/maintenance/handoffs.py",
+            "arnold_pipelines/megaplan/maintenance/projections.py",
+            "arnold_pipelines/megaplan/maintenance/ticket_policy_decision.json",
+            "arnold_pipelines/megaplan/receipts/query.py",
+            "arnold_pipelines/megaplan/resident/scheduler.py",
+            "arnold_pipelines/megaplan/resident/schedules.py",
+            "arnold_pipelines/megaplan/store/_file/tickets.py",
+            "arnold_pipelines/megaplan/tickets/core.py"
+          ],
+          "exclusion_reason": "selected behavior is adapted only through named cards"
+        },
+        "manifest_record_present": true,
+        "production_path_set_equal": true
+      }
+    ],
+    "manifest_records": [
+      {
+        "commit_sha": "592901c296df73a97f0b04cf4dcb270925917b8c",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/.megaplan-event-store/epics/wrapper_acceptance_gate/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.projection.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/events.ndjson",
+          ".megaplan/initiatives/megaplan-maintenance/NORTHSTAR.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m1-containment-and-truth.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-authority.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m3-independent-verification.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-product-and-rollout.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m5-daily-efficiency-auditor.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml.bak-phase-model-20260813",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml.bak-restored-20260813"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "c067daf5988fc7ab8de6c74d9daeb5b6a5f26c5c",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "62d3cae7fb7a873a00eaf87a9db52ff1921e7605",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T5.1"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/execute/merge.py"
+        ],
+        "non_production_paths": [
+          "tests/execute/test_m8a_execute_wiring.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "80b4e1604ab77cbf495305063ad0a957e0e1d0c4",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/feature_flags.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+          "arnold_pipelines/megaplan/managed_agent.py",
+          "arnold_pipelines/megaplan/prompts/critique_evaluator.py"
+        ],
+        "non_production_paths": [
+          "tests/cloud/test_repair_trigger_wrapper.py",
+          "tests/cloud/test_watchdog_wrappers.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "98e547861128aefc37a010a543dec834b0690da2",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/orchestration/test_selection.py",
+          "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+          "arnold_pipelines/megaplan/schemas/runtime.py"
+        ],
+        "non_production_paths": [
+          "tests/orchestration/test_blast_radius_floor.py",
+          "tests/orchestration/test_plan_test_blast_radius.py",
+          "tests/orchestration/test_selector_node_existence.py",
+          "tests/orchestration/test_validation_jobs.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "549cb31b81722677dc50a4351be78ea0bdfbf059",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/orchestration/critique_runtime.py"
+        ],
+        "non_production_paths": [
+          "tests/orchestration/test_critique_evaluator_validation.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "9056775d6c4bd24823ee974fd7da198eeadedf92",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T4.1"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/current_target_liveness.py"
+        ],
+        "non_production_paths": [
+          "tests/cloud/test_progress_auditor.py",
+          "tests/cloud/test_six_hour_auditor.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "2aff9151360920bfa8e72f6d740457ec27f66736",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T2.3",
+          "T4.1"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/meta_repair.py",
+          "arnold_pipelines/megaplan/cloud/repair_contract.py"
+        ],
+        "non_production_paths": [
+          "tests/cloud/test_current_target.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "8ed4935bb9fa40f22240ebfa114195a988d09eb8",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T4.1"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/current_target.py"
+        ],
+        "non_production_paths": [
+          "tests/cloud/test_current_target.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/authority/coherence.py",
+          "arnold_pipelines/megaplan/cloud/current_target.py",
+          "arnold_pipelines/megaplan/cloud/incident_bridge.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_environment.py",
+          "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
+          "arnold_pipelines/megaplan/receipts/schema.py"
+        ],
+        "non_production_paths": [
+          ".megaplan/archived-20260813/incident-ledger-20260813/.events.init_ts",
+          ".megaplan/archived-20260813/incident-ledger-20260813/.events.seq",
+          ".megaplan/archived-20260813/incident-ledger-20260813/events.jsonl",
+          ".megaplan/archived-20260813/incident-ledger-20260813/incidents.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/problems.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-canonical-run-state-control-plane.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-custody-control-plane.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-demo-session.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-megaplan-maintenance.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-megaplan-north-star-sense-checks-revise-design.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-superfixer-alive-but-failed-recovery.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/incident-42.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/index.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-67a765759422.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-68a048c70af7.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-6e386e382223.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-6eaee57d9632.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-72f87afd3954.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-8f475cf8e677.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-9e338df241c5.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-b3c4cc0b2599.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-bd43205325d0.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-bef9405c197d.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-e20c45ae0eb0.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-fb07a266e6f8.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-fc037a661409.json",
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/.megaplan-event-store/epics/wrapper_acceptance_gate/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.projection.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/events.ndjson",
+          ".process_adapter_wbc/cloud_provider_adapter/.megaplan-event-store/epics/onboxprovider/events.jsonl",
+          ".process_adapter_wbc/cloud_provider_adapter/onboxprovider/.events.projection.seq",
+          ".process_adapter_wbc/cloud_provider_adapter/onboxprovider/.events.seq",
+          ".process_adapter_wbc/cloud_provider_adapter/onboxprovider/events.ndjson",
+          ".process_adapter_wbc/cloud_supervision_adapter/.megaplan-event-store/epics/cloud_supervise_tick/events.jsonl",
+          ".process_adapter_wbc/cloud_supervision_adapter/cloud_supervise_tick/.events.projection.seq",
+          ".process_adapter_wbc/cloud_supervision_adapter/cloud_supervise_tick/.events.seq",
+          ".process_adapter_wbc/cloud_supervision_adapter/cloud_supervise_tick/events.ndjson",
+          "anchors/north_star/epic.md",
+          "docs/fixer-recovery-evidence/babysitter-autonomous-fixer-20260814.md",
+          "docs/fixer-recovery-evidence/reinitiate-success-20260813.md",
+          "docs/fixer-recovery-evidence/windows/window-20260813T010842Z-PARKED.json",
+          "docs/ops/m1-maintenance-boundary-handoff.md",
+          "tests/arnold_pipelines/megaplan/test_journal_dead_letters.py",
+          "tests/cloud/test_current_target.py",
+          "tests/cloud/test_current_target_liveness.py",
+          "tests/cloud/test_feature_flags.py",
+          "tests/cloud/test_m1_containment_acceptance.py",
+          "tests/cloud/test_maintenance_environment.py",
+          "tests/cloud/test_progress_auditor_controller.py",
+          "tests/cloud/test_repair_contract.py",
+          "tests/cloud/test_repair_enqueue_producers.py",
+          "tests/cloud/test_repair_requests.py",
+          "tests/cloud/test_six_hour_auditor.py",
+          "tests/cloud/test_watchdog_wrappers.py",
+          "tests/test_receipts.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "cc5d8e8c5574ec9e0c9cda42339bd238347b9cc5",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "1e03232fa2621793c39cc28a3d274fc74748a3d7",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "e3610b3e5ec96e54bd9f3d38a18fad693ccfa3a7",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          "tests/test_chain_completion_guard.py"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T1.1"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/status_snapshot.py"
+        ],
+        "non_production_paths": [
+          "tests/cloud/test_maintenance_shadow_consumers.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "f579592ebcc6307c6ede71f4b42484da172f3527",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/authority/coherence.py",
+          "arnold_pipelines/megaplan/chain/__init__.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/watchdog.py",
+          "arnold_pipelines/megaplan/incident/ledger.py",
+          "arnold_pipelines/megaplan/incident/schema.py",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/boundaries.py",
+          "arnold_pipelines/megaplan/maintenance/contracts.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.json",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/identity.py",
+          "arnold_pipelines/megaplan/maintenance/ledger.py",
+          "arnold_pipelines/megaplan/maintenance/observation.py",
+          "arnold_pipelines/megaplan/maintenance/projections.py",
+          "arnold_pipelines/megaplan/maintenance/shadow.py",
+          "arnold_pipelines/megaplan/maintenance/sources.py"
+        ],
+        "non_production_paths": [
+          "tests/arnold/conformance/test_maintenance_boundaries.py",
+          "tests/arnold_pipelines/megaplan/test_incident_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_observation.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_projections.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_shadow.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_source_adapters.py",
+          "tests/cloud/test_maintenance_shadow_consumers.py",
+          "tests/fixtures/maintenance/coherent_join.json",
+          "tests/fixtures/maintenance/recurrence_replay.jsonl",
+          "tests/fixtures/maintenance/torn_join.json",
+          "tests/test_chain_completion_guard.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "95cb8cafb701aafe97c8ceadc7ad53fd9e2783e7",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-authority.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m3b-custody-bound-repair-promotion.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml",
+          ".megaplan/initiatives/megaplan-maintenance/decisions/authority-ledger-and-loop-boundaries.md"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "43142b0e3a7faed72ccc8933524a92d888154b49",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T3.1"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/maintenance_canary.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_recovery.py",
+          "arnold_pipelines/megaplan/cloud/repair_requests.py",
+          "arnold_pipelines/megaplan/incident/ledger.py",
+          "arnold_pipelines/megaplan/incident/schema.py",
+          "arnold_pipelines/megaplan/maintenance/RUNBOOK.md",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/checkpoints.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.json",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/ledger.py",
+          "arnold_pipelines/megaplan/maintenance/observation.py",
+          "arnold_pipelines/megaplan/maintenance/operations.py",
+          "arnold_pipelines/megaplan/maintenance/projections.py",
+          "arnold_pipelines/megaplan/maintenance/sources.py",
+          "arnold_pipelines/megaplan/maintenance/verification.py"
+        ],
+        "non_production_paths": [
+          "tests/arnold/conformance/test_maintenance_boundaries.py",
+          "tests/arnold_pipelines/megaplan/test_incident_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_checkpoints.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_observation.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_operations.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_projections.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_source_adapters.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_verification.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_verification_faults.py",
+          "tests/cloud/test_maintenance_canary.py",
+          "tests/cloud/test_maintenance_recovery.py",
+          "tests/cloud/test_repair_enqueue_producers.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "953d7486318130fedc586ea43b9690da8bbca9ff",
+        "milestone": "M3",
+        "reachable_milestones": [
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "786c401321e2a8c181f66af1e780cec8cd03c5b4",
+        "milestone": "M3",
+        "reachable_milestones": [
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+        "milestone": "M3",
+        "reachable_milestones": [
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "7272cdc7f4303219fb399aefd2966f410d79d208",
+        "milestone": "M3b",
+        "reachable_milestones": [
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T4.1",
+          "T4.2",
+          "T4.3"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/chain/execution_binding.py",
+          "arnold_pipelines/megaplan/chain/occurrence_adopt.py",
+          "arnold_pipelines/megaplan/chain/operator_pause.py",
+          "arnold_pipelines/megaplan/chain/target_rebind.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_delivery.py",
+          "arnold_pipelines/megaplan/cloud/runtime_attestation.py",
+          "arnold_pipelines/megaplan/cloud/runtime_cutover.py",
+          "arnold_pipelines/megaplan/cloud/runtime_import_gates.py",
+          "arnold_pipelines/megaplan/cloud/runtime_manifest.py",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/delivery.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/operations.py"
+        ],
+        "non_production_paths": [
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/.megaplan-event-store/epics/wrapper_acceptance_gate/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.projection.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/events.ndjson",
+          ".megaplan/initiatives/megaplan-maintenance/notes/engine-mutation-authority-i43.md",
+          "codex.pid",
+          "tests/arnold/conformance/test_maintenance_boundaries.py",
+          "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py",
+          "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py",
+          "tests/arnold_pipelines/megaplan/test_chain_target_rebind.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_delivery_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_operations.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_projections.py",
+          "tests/arnold_pipelines/megaplan/test_operator_pause.py",
+          "tests/cloud/test_maintenance_delivery.py",
+          "tests/cloud/test_maintenance_delivery_fault_matrix.py",
+          "tests/cloud/test_runtime_attestation.py",
+          "tests/cloud/test_runtime_cutover.py",
+          "tests/cloud/test_runtime_import_gates.py",
+          "tests/cloud/test_runtime_manifest.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "116c0e993dbdc0c199ebe7d963eb72b207f7f287",
+        "milestone": "M4",
+        "reachable_milestones": [
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "97fb5ecbed066a6937efa153dd5017ffed8eae1f",
+        "milestone": "M4",
+        "reachable_milestones": [
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+        "milestone": "M4",
+        "reachable_milestones": [
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T1.2",
+          "T2.1",
+          "T2.2",
+          "T2.3",
+          "T3.2",
+          "T3.3",
+          "T6.3"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_unblocker.py",
+          "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+          "arnold_pipelines/megaplan/cloud/repair_contract.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+          "arnold_pipelines/megaplan/handlers/review.py",
+          "arnold_pipelines/megaplan/maintenance/RUNBOOK.md",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/operational_policy.py",
+          "arnold_pipelines/megaplan/maintenance/operational_reporting.py",
+          "arnold_pipelines/megaplan/resident/scheduler.py",
+          "arnold_pipelines/megaplan/resident/schedules.py"
+        ],
+        "non_production_paths": [
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl",
+          "tests/arnold/conformance/test_maintenance_boundaries.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_operational_policy.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_operational_reporting.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_projections.py",
+          "tests/arnold_pipelines/megaplan/test_review_circuit.py",
+          "tests/cloud/test_maintenance_canary.py",
+          "tests/cloud/test_maintenance_dispatch.py",
+          "tests/cloud/test_maintenance_shadow_consumers.py",
+          "tests/cloud/test_maintenance_unblocker.py",
+          "tests/cloud/test_progress_auditor.py",
+          "tests/cloud/test_progress_auditor_controller.py",
+          "tests/cloud/test_repair_dispatch_classifier.py",
+          "tests/cloud/test_six_hour_auditor.py",
+          "tests/cloud/test_wrapper_authority_bypass_gating.py",
+          "tests/resident/test_maintenance_unblocker_handler.py",
+          "tests/resident/test_resident_schedules.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "800fa27648245115d5c1412d16ec583d91bdea02",
+        "milestone": "M5",
+        "reachable_milestones": [
+          "M5"
+        ],
+        "primary_classification": "adapt",
+        "selected_disposition": "selected",
+        "selected_task_ids": [
+          "T1.3",
+          "T6.1",
+          "T6.2",
+          "T6.3"
+        ],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+          "arnold_pipelines/megaplan/incident/schema.py",
+          "arnold_pipelines/megaplan/maintenance/EFFICIENCY_RUNBOOK.md",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_analysis.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_baselines.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_clustering.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_contracts.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_economics.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_reporting.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_routing.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_runner.py",
+          "arnold_pipelines/megaplan/maintenance/efficiency_sources.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/projections.py",
+          "arnold_pipelines/megaplan/maintenance/ticket_policy_decision.json",
+          "arnold_pipelines/megaplan/receipts/query.py",
+          "arnold_pipelines/megaplan/resident/scheduler.py",
+          "arnold_pipelines/megaplan/resident/schedules.py",
+          "arnold_pipelines/megaplan/store/_file/tickets.py",
+          "arnold_pipelines/megaplan/tickets/core.py"
+        ],
+        "non_production_paths": [
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl",
+          "None",
+          "tests/arnold/conformance/test_maintenance_boundaries.py",
+          "tests/arnold_pipelines/megaplan/test_incident_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_analysis.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_baselines.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_clustering.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_economics.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_findings_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_handoff.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_proposal_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_reporting.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_routing.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_runner.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_seam.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_efficiency_sources.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_projections.py",
+          "tests/cloud/test_progress_auditor.py",
+          "tests/fixtures/maintenance/daily_efficiency_golden.jsonl",
+          "tests/fixtures/maintenance/daily_efficiency_heavy_censoring.jsonl",
+          "tests/fixtures/maintenance/daily_efficiency_late_correction.jsonl",
+          "tests/fixtures/maintenance/daily_efficiency_non_midnight_anchor.jsonl",
+          "tests/fixtures/maintenance/wbc_finalize_dwell_hist.jsonl",
+          "tests/resident/test_daily_efficiency_handler.py",
+          "tests/resident/test_resident_schedules.py"
+        ],
+        "exclusion_reason": "selected behavior is adapted only through named cards",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      }
+    ],
+    "missing": [],
+    "unclassified": [],
+    "production_path_mismatches": [],
+    "manifest_production_claims_without_actual_production_patch": [],
+    "duplicate_or_ambiguous_manifest_records": [],
+    "actual_count": 14,
+    "manifest_production_record_count": 14,
+    "coverage_complete": true
+  },
+  "seed_resolution": {
+    "schema": "maintenance-runtime-consolidation-t0.2-source-selection.v1",
+    "known_seed_count": 4,
+    "records": [
+      {
+        "full_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+        "sha_complete_40_hex": true,
+        "expected_task_id": "T1.1",
+        "manifest_task_id": "T1.1",
+        "task_id_match": true,
+        "hunk_mapping": [
+          {
+            "commit_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+            "header": "@@ -387,6 +387,163 @@ LivenessProbe = Callable[[Mapping[str, Any]], dict[str, Any]]",
+            "hunk_sha256": "e8bbf92a14d3542d74940735126988bb44c78378bc1a6a0782ada61db5d378fc",
+            "new_line_count": 163,
+            "new_line_start": 387,
+            "old_line_count": 6,
+            "old_line_start": 387,
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "role": "source",
+            "task_id": "T1.1"
+          },
+          {
+            "commit_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+            "header": "@@ -397,6 +554,7 @@ def build_cloud_status_snapshot(",
+            "hunk_sha256": "866718c15f2e78010135f66f31c553a8de072ecc449cc8d676579f6ef335fe51",
+            "new_line_count": 7,
+            "new_line_start": 554,
+            "old_line_count": 6,
+            "old_line_start": 397,
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "role": "source",
+            "task_id": "T1.1"
+          },
+          {
+            "commit_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+            "header": "@@ -410,6 +568,15 @@ def build_cloud_status_snapshot(",
+            "hunk_sha256": "6eec856b8703052a016afc3dac6ee675e9f81e0df9ae068f7a1d42305ea4e44e",
+            "new_line_count": 15,
+            "new_line_start": 568,
+            "old_line_count": 6,
+            "old_line_start": 410,
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "role": "source",
+            "task_id": "T1.1"
+          },
+          {
+            "commit_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+            "header": "@@ -474,6 +641,14 @@ def build_cloud_status_snapshot(",
+            "hunk_sha256": "a47a8545d731b928b2075ff89b0f565310864c04a75f178faa911923a5e8f941",
+            "new_line_count": 14,
+            "new_line_start": 641,
+            "old_line_count": 6,
+            "old_line_start": 474,
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "role": "source",
+            "task_id": "T1.1"
+          },
+          {
+            "commit_sha": "fa42ff979f69c44183303d76e76f7e6b7b12465c",
+            "header": "@@ -0,0 +1,811 @@",
+            "hunk_sha256": "ce212b04d4a064aab8bb05c6909566bf6604bf733b8101bf45ce3f2b315d0c8d",
+            "new_line_count": 811,
+            "new_line_start": 1,
+            "old_line_count": 0,
+            "old_line_start": 0,
+            "path": "tests/cloud/test_maintenance_shadow_consumers.py",
+            "role": "test",
+            "task_id": "T1.1"
+          }
+        ],
+        "nonempty_source_hunk_mapping": true,
+        "manifest_commit_record_present": true,
+        "manifest_source_evidence_occurrences": [
+          {
+            "binding_index": 0,
+            "hunk_index": 0,
+            "task_id": "T1.1",
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "header": "@@ -387,6 +387,163 @@ LivenessProbe = Callable[[Mapping[str, Any]], dict[str, Any]]",
+            "hunk_sha256": "e8bbf92a14d3542d74940735126988bb44c78378bc1a6a0782ada61db5d378fc"
+          },
+          {
+            "binding_index": 0,
+            "hunk_index": 1,
+            "task_id": "T1.1",
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "header": "@@ -397,6 +554,7 @@ def build_cloud_status_snapshot(",
+            "hunk_sha256": "866718c15f2e78010135f66f31c553a8de072ecc449cc8d676579f6ef335fe51"
+          },
+          {
+            "binding_index": 0,
+            "hunk_index": 2,
+            "task_id": "T1.1",
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "header": "@@ -410,6 +568,15 @@ def build_cloud_status_snapshot(",
+            "hunk_sha256": "6eec856b8703052a016afc3dac6ee675e9f81e0df9ae068f7a1d42305ea4e44e"
+          },
+          {
+            "binding_index": 0,
+            "hunk_index": 3,
+            "task_id": "T1.1",
+            "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+            "header": "@@ -474,6 +641,14 @@ def build_cloud_status_snapshot(",
+            "hunk_sha256": "a47a8545d731b928b2075ff89b0f565310864c04a75f178faa911923a5e8f941"
+          },
+          {
+            "binding_index": 0,
+            "hunk_index": 4,
+            "task_id": "T1.1",
+            "path": "tests/cloud/test_maintenance_shadow_consumers.py",
+            "header": "@@ -0,0 +1,811 @@",
+            "hunk_sha256": "ce212b04d4a064aab8bb05c6909566bf6604bf733b8101bf45ce3f2b315d0c8d"
+          }
+        ],
+        "external_seed": false,
+        "external_seed_marked_external": false,
+        "external_reachability_checks": []
+      },
+      {
+        "full_sha": "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+        "sha_complete_40_hex": true,
+        "expected_task_id": "T3.1",
+        "manifest_task_id": "T3.1",
+        "task_id_match": true,
+        "hunk_mapping": [
+          {
+            "header": "@@ -98,6 +98,84 @@ def migrate_stranded_split_queue(",
+            "hunk_sha256": "5879955d0ed40f7b92446d598bffa9ab72d186a167ea66bd31533f4e4a9074d6",
+            "new_line_count": 84,
+            "new_line_start": 98,
+            "old_line_count": 6,
+            "old_line_start": 98,
+            "path": "arnold_pipelines/megaplan/cloud/repair_requests.py",
+            "role": "external-seed",
+            "task_id": "T3.1"
+          }
+        ],
+        "nonempty_source_hunk_mapping": true,
+        "manifest_commit_record_present": false,
+        "manifest_source_evidence_occurrences": [
+          {
+            "binding_index": 6,
+            "hunk_index": 0,
+            "task_id": "T3.1",
+            "path": "arnold_pipelines/megaplan/cloud/repair_requests.py",
+            "header": "@@ -98,6 +98,84 @@ def migrate_stranded_split_queue(",
+            "hunk_sha256": "5879955d0ed40f7b92446d598bffa9ab72d186a167ea66bd31533f4e4a9074d6"
+          }
+        ],
+        "external_seed": true,
+        "external_seed_marked_external": true,
+        "external_reachability_checks": [
+          {
+            "command": [
+              "git",
+              "cat-file",
+              "-e",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e^{commit}"
+            ],
+            "exit_status": 0,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "command": [
+              "git",
+              "merge-base",
+              "--is-ancestor",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+              "refs/heads/safety/maintenance-m1"
+            ],
+            "exit_status": 1,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "command": [
+              "git",
+              "merge-base",
+              "--is-ancestor",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+              "refs/heads/safety/maintenance-m2"
+            ],
+            "exit_status": 1,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "command": [
+              "git",
+              "merge-base",
+              "--is-ancestor",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+              "refs/heads/safety/maintenance-m3"
+            ],
+            "exit_status": 1,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "command": [
+              "git",
+              "merge-base",
+              "--is-ancestor",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+              "refs/heads/safety/maintenance-m3b"
+            ],
+            "exit_status": 1,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "command": [
+              "git",
+              "merge-base",
+              "--is-ancestor",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+              "refs/heads/safety/maintenance-m4"
+            ],
+            "exit_status": 1,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "command": [
+              "git",
+              "merge-base",
+              "--is-ancestor",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+              "refs/heads/safety/maintenance-m5"
+            ],
+            "exit_status": 1,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "command": [
+              "git",
+              "merge-base",
+              "--is-ancestor",
+              "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e",
+              "fce48030a82d4d35d9b4a5184e4c789792b9c172"
+            ],
+            "exit_status": 1,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ]
+      },
+      {
+        "full_sha": "9056775d6c4bd24823ee974fd7da198eeadedf92",
+        "sha_complete_40_hex": true,
+        "expected_task_id": "T4.1",
+        "manifest_task_id": "T4.1",
+        "task_id_match": true,
+        "hunk_mapping": [
+          {
+            "commit_sha": "9056775d6c4bd24823ee974fd7da198eeadedf92",
+            "header": "@@ -170,6 +170,9 @@ def _result(",
+            "hunk_sha256": "2fb2e4ddbdb126464b04cca8c62d08f949c5e069a4705058bac889fd180f29d3",
+            "new_line_count": 9,
+            "new_line_start": 170,
+            "old_line_count": 6,
+            "old_line_start": 170,
+            "path": "arnold_pipelines/megaplan/cloud/current_target_liveness.py",
+            "role": "source",
+            "task_id": "T4.1"
+          }
+        ],
+        "nonempty_source_hunk_mapping": true,
+        "manifest_commit_record_present": true,
+        "manifest_source_evidence_occurrences": [
+          {
+            "binding_index": 9,
+            "hunk_index": 0,
+            "task_id": "T4.1",
+            "path": "arnold_pipelines/megaplan/cloud/current_target_liveness.py",
+            "header": "@@ -170,6 +170,9 @@ def _result(",
+            "hunk_sha256": "2fb2e4ddbdb126464b04cca8c62d08f949c5e069a4705058bac889fd180f29d3"
+          }
+        ],
+        "external_seed": false,
+        "external_seed_marked_external": false,
+        "external_reachability_checks": []
+      },
+      {
+        "full_sha": "62d3cae7fb7a873a00eaf87a9db52ff1921e7605",
+        "sha_complete_40_hex": true,
+        "expected_task_id": "T5.1",
+        "manifest_task_id": "T5.1",
+        "task_id_match": true,
+        "hunk_mapping": [
+          {
+            "commit_sha": "62d3cae7fb7a873a00eaf87a9db52ff1921e7605",
+            "header": "@@ -981,12 +981,17 @@ def _enforce_task_test_budgets(",
+            "hunk_sha256": "3e75b7708efb9ebc9c0897930720547d4ae9d8430ccc5bb6bbcbc27b62245a78",
+            "new_line_count": 17,
+            "new_line_start": 981,
+            "old_line_count": 12,
+            "old_line_start": 981,
+            "path": "arnold_pipelines/megaplan/execute/merge.py",
+            "role": "source",
+            "task_id": "T5.1"
+          },
+          {
+            "commit_sha": "62d3cae7fb7a873a00eaf87a9db52ff1921e7605",
+            "header": "@@ -998,10 +1003,6 @@ def _enforce_task_test_budgets(",
+            "hunk_sha256": "a74547554744c397e07335b97ecd540ccf8e5c376ce53eb262cd5b473d6f943d",
+            "new_line_count": 6,
+            "new_line_start": 1003,
+            "old_line_count": 10,
+            "old_line_start": 998,
+            "path": "arnold_pipelines/megaplan/execute/merge.py",
+            "role": "source",
+            "task_id": "T5.1"
+          },
+          {
+            "commit_sha": "62d3cae7fb7a873a00eaf87a9db52ff1921e7605",
+            "header": "@@ -873,6 +873,67 @@ def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Pat",
+            "hunk_sha256": "5c5f536a377d400fe68c9baf73fa0b90c7dee65bacccc4429a58e6a35d0ca8ac",
+            "new_line_count": 67,
+            "new_line_start": 873,
+            "old_line_count": 6,
+            "old_line_start": 873,
+            "path": "tests/execute/test_m8a_execute_wiring.py",
+            "role": "test",
+            "task_id": "T5.1"
+          }
+        ],
+        "nonempty_source_hunk_mapping": true,
+        "manifest_commit_record_present": true,
+        "manifest_source_evidence_occurrences": [
+          {
+            "binding_index": 12,
+            "hunk_index": 0,
+            "task_id": "T5.1",
+            "path": "arnold_pipelines/megaplan/execute/merge.py",
+            "header": "@@ -981,12 +981,17 @@ def _enforce_task_test_budgets(",
+            "hunk_sha256": "3e75b7708efb9ebc9c0897930720547d4ae9d8430ccc5bb6bbcbc27b62245a78"
+          },
+          {
+            "binding_index": 12,
+            "hunk_index": 1,
+            "task_id": "T5.1",
+            "path": "arnold_pipelines/megaplan/execute/merge.py",
+            "header": "@@ -998,10 +1003,6 @@ def _enforce_task_test_budgets(",
+            "hunk_sha256": "a74547554744c397e07335b97ecd540ccf8e5c376ce53eb262cd5b473d6f943d"
+          },
+          {
+            "binding_index": 12,
+            "hunk_index": 2,
+            "task_id": "T5.1",
+            "path": "tests/execute/test_m8a_execute_wiring.py",
+            "header": "@@ -873,6 +873,67 @@ def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Pat",
+            "hunk_sha256": "5c5f536a377d400fe68c9baf73fa0b90c7dee65bacccc4429a58e6a35d0ca8ac"
+          }
+        ],
+        "external_seed": false,
+        "external_seed_marked_external": false,
+        "external_reachability_checks": []
+      }
+    ],
+    "external_seed_fact": "T3.1 seed 3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e is present locally as an object but is not an ancestor of fce or any of the six local safety refs; its manifest milestone is external-seed. This custody gap is carried to Grok and is not adjudicated here.",
+    "mechanical_check_pass": true
+  },
+  "behavior_task_mapping": {
+    "committed_plan_task_ids": [
+      "T0.0",
+      "T0.1",
+      "T0.2",
+      "T0.3",
+      "T1.1",
+      "T1.2",
+      "T1.3",
+      "T2.1",
+      "T2.2",
+      "T2.3",
+      "T3.1",
+      "T3.2",
+      "T3.3",
+      "T4.1",
+      "T4.2",
+      "T4.3",
+      "T5.1",
+      "T6.1",
+      "T6.2",
+      "T6.3",
+      "T7.1",
+      "T7.2",
+      "T7.3",
+      "T7.4",
+      "T7.5"
+    ],
+    "selected_task_ids": [
+      "T1.1",
+      "T1.2",
+      "T1.3",
+      "T2.1",
+      "T2.2",
+      "T2.3",
+      "T3.1",
+      "T3.2",
+      "T3.3",
+      "T4.1",
+      "T4.2",
+      "T4.3",
+      "T5.1",
+      "T6.1",
+      "T6.2",
+      "T6.3"
+    ],
+    "binding_count": 16,
+    "unique_binding_task_count": 16,
+    "bindings": [
+      {
+        "binding_index": 0,
+        "task_id": "T1.1",
+        "source_milestones": [
+          "M2"
+        ],
+        "source_commits": [
+          "fa42ff979f69c44183303d76e76f7e6b7b12465c"
+        ],
+        "source_hunk_count": 5,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Preserve legacy snapshot output; deterministic view_hash only; no writer/dispatcher reachability.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 1,
+        "task_id": "T1.2",
+        "source_milestones": [
+          "M4"
+        ],
+        "source_commits": [
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+        ],
+        "source_hunk_count": 4,
+        "port_mode": "exact-port",
+        "fce_reconciliation": "Pure deterministic policy/report functions; no dispatch, ticket, schedule, or threshold authority.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 2,
+        "task_id": "T1.3",
+        "source_milestones": [
+          "M5"
+        ],
+        "source_commits": [
+          "800fa27648245115d5c1412d16ec583d91bdea02"
+        ],
+        "source_hunk_count": 13,
+        "port_mode": "exact-port",
+        "fce_reconciliation": "Read-only injected providers; unknown/censored values remain unknown; proposals remain inert.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 3,
+        "task_id": "T2.1",
+        "source_milestones": [
+          "M4"
+        ],
+        "source_commits": [
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+        ],
+        "source_hunk_count": 8,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Extend ScheduleService.claim/ScheduleService.claim_superfixer_occurrence and ScheduleRepository transition CAS; no second claim API.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 4,
+        "task_id": "T2.2",
+        "source_milestones": [
+          "M4"
+        ],
+        "source_commits": [
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+        ],
+        "source_hunk_count": 14,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Use fce occurrence/effect receipt identity and canonical maintenance/incident ledger.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 5,
+        "task_id": "T2.3",
+        "source_milestones": [
+          "M4"
+        ],
+        "source_commits": [
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+        ],
+        "source_hunk_count": 5,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Use current fce repair contract; liveness and generic quality blocks cannot dispatch.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 6,
+        "task_id": "T3.1",
+        "source_milestones": [
+          "external-seed",
+          "M2"
+        ],
+        "source_commits": [
+          "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+          "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e"
+        ],
+        "source_hunk_count": 7,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Replace old helper with typed operator-only request/receipt, durable lock, exact identity, retained originals.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 7,
+        "task_id": "T3.2",
+        "source_milestones": [
+          "M4"
+        ],
+        "source_commits": [
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+        ],
+        "source_hunk_count": 9,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Only typed occurrence-bound checkpoint after independent observations; T2.1 owns lease.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 8,
+        "task_id": "T3.3",
+        "source_milestones": [
+          "M4"
+        ],
+        "source_commits": [
+          "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+        ],
+        "source_hunk_count": 19,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Diagnostic-only strict window/auditor behavior; no effect authority.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 9,
+        "task_id": "T4.1",
+        "source_milestones": [
+          "M1",
+          "M3b"
+        ],
+        "source_commits": [
+          "2aff9151360920bfa8e72f6d740457ec27f66736",
+          "7272cdc7f4303219fb399aefd2966f410d79d208",
+          "8ed4935bb9fa40f22240ebfa114195a988d09eb8",
+          "9056775d6c4bd24823ee974fd7da198eeadedf92"
+        ],
+        "source_hunk_count": 16,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Liveness diagnostic; only one fce root MutationCapability can authorize effects.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 10,
+        "task_id": "T4.2",
+        "source_milestones": [
+          "M3b"
+        ],
+        "source_commits": [
+          "7272cdc7f4303219fb399aefd2966f410d79d208"
+        ],
+        "source_hunk_count": 22,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Use operator pause/reconcile and target_rebind CAS; preserve cursor/payload bytes.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 11,
+        "task_id": "T4.3",
+        "source_milestones": [
+          "M3b"
+        ],
+        "source_commits": [
+          "7272cdc7f4303219fb399aefd2966f410d79d208"
+        ],
+        "source_hunk_count": 20,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Compose existing selector/marker/manifest/lease/fence/rollback owners; no second custody path.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 12,
+        "task_id": "T5.1",
+        "source_milestones": [
+          "M1"
+        ],
+        "source_commits": [
+          "62d3cae7fb7a873a00eaf87a9db52ff1921e7605"
+        ],
+        "source_hunk_count": 3,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Use seed per-run correction only; implement elapsed_wall_clock_v2 at one root seam with v1 compatibility.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 13,
+        "task_id": "T6.1",
+        "source_milestones": [
+          "M5"
+        ],
+        "source_commits": [
+          "800fa27648245115d5c1412d16ec583d91bdea02"
+        ],
+        "source_hunk_count": 25,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Adapt emit_daily_events through IncidentLedger.append_maintenance_event/MaintenanceLedger.append with fence/evidence binding.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 14,
+        "task_id": "T6.2",
+        "source_milestones": [
+          "M5"
+        ],
+        "source_commits": [
+          "800fa27648245115d5c1412d16ec583d91bdea02"
+        ],
+        "source_hunk_count": 2,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Use derive_daily_closure over committed reports; reject optional fence and always-never_seen production fallbacks.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      },
+      {
+        "binding_index": 15,
+        "task_id": "T6.3",
+        "source_milestones": [
+          "M5"
+        ],
+        "source_commits": [
+          "800fa27648245115d5c1412d16ec583d91bdea02"
+        ],
+        "source_hunk_count": 20,
+        "port_mode": "adaptation",
+        "fce_reconciliation": "Consume T2.1 schedule claim/terminal transitions; no ticket/repair/schedule-definition/provider/model writer.",
+        "all_hunks_bind_to_binding_task": true,
+        "task_in_committed_plan_range": true,
+        "port_mode_valid": true
+      }
+    ],
+    "missing_or_invalid_hunk_task_mappings": [],
+    "duplicate_task_bindings": [],
+    "shared_hunk_mappings": [
+      {
+        "hunk_sha256": "83dfa5ba2903778ff535e1a1c360dcbfd042a88464ddb6d82f71a7503e647e16",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "8eea2ab5cf4cf2d98135e4efe488ade743c9f5394e64ae9fc7bc7dd157a9adcf",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "35066b52226a739a4863375992df4e7d1b234f863ace33ecad0a806242b2bd4b",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "0fb83e873c574218c2e3fc875fe5cdbb2e3ed208ceb8747a3f57123dd218a1ce",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "8de6e138fa59e3c5e8169ce9e2c960f3c1916c8f0b652fbd0fbf7717fa78a03f",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "8aa28c73660aa9ff4841a8df3029922e2c577c39e313aec69838149fff2f9b2b",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "56221e3c59c8469700b11b2577c7c42f51795dbadbe1fb20b8383a580762fbcd",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/schedules.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "6417426f934b80088203a4d809bcd3f8411d0be2ecd7db9737885698e5e55c85",
+        "references": [
+          {
+            "task_id": "T2.1",
+            "path": "arnold_pipelines/megaplan/resident/scheduler.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.2",
+            "path": "arnold_pipelines/megaplan/resident/scheduler.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "5e82f6e59ea674b363edf18313189c7f29e043363ead671c365b506d54835560",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "8f77b0f4bea7941f9e506c5f64ae673c62132b2b863ffc42283c03c56f68754a",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "2249e32dd5223e6db70f274bf4ea01359a6f068d3df2fee3eb0734289d84aa30",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "dd3747ebf5a01a71164cbc83d24f40d96c9cd5b20b7963a79fd3d60d558eb14b",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "aef3f5f34f43c4e79f8b89a0a72409b36adeca98ab7642f08eff6bd457035186",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "8457c02ffd47acbd3813935d934a158d06a34bfa21e254d01700d21710023dd5",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "0939423506d4c863571f889ed90fbbe573d233bbe2516f01584dfb60577a4b79",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "d1e04321ae2ffc5f3b9bd52c0208923c7edf6a1afa22431b00909b09cc7b0d63",
+        "references": [
+          {
+            "task_id": "T2.2",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          },
+          {
+            "task_id": "T3.3",
+            "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+            "commit_sha": "759e3186f773ae40e58dc9de1e716dfd2ebb8438"
+          }
+        ]
+      },
+      {
+        "hunk_sha256": "11021a70fda11931c96472f1e72e86e02c3f54e34662b7e1166415e33c9b8d21",
+        "references": [
+          {
+            "task_id": "T6.1",
+            "path": "arnold_pipelines/megaplan/maintenance/efficiency_reporting.py",
+            "commit_sha": "800fa27648245115d5c1412d16ec583d91bdea02"
+          },
+          {
+            "task_id": "T6.2",
+            "path": "arnold_pipelines/megaplan/maintenance/efficiency_reporting.py",
+            "commit_sha": "800fa27648245115d5c1412d16ec583d91bdea02"
+          }
+        ]
+      }
+    ],
+    "conflicting_task_mappings": [],
+    "selected_T4.4_or_G4.4_task_ids": [],
+    "mechanical_check_pass": true
+  },
+  "exclusion_reason_check": {
+    "excluded_commit_count": 17,
+    "excluded_commits": [
+      {
+        "commit_sha": "592901c296df73a97f0b04cf4dcb270925917b8c",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/.megaplan-event-store/epics/wrapper_acceptance_gate/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.projection.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/events.ndjson",
+          ".megaplan/initiatives/megaplan-maintenance/NORTHSTAR.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m1-containment-and-truth.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-authority.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m3-independent-verification.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-product-and-rollout.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m5-daily-efficiency-auditor.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml.bak-phase-model-20260813",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml.bak-restored-20260813"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "c067daf5988fc7ab8de6c74d9daeb5b6a5f26c5c",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "80b4e1604ab77cbf495305063ad0a957e0e1d0c4",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/cloud/feature_flags.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+          "arnold_pipelines/megaplan/managed_agent.py",
+          "arnold_pipelines/megaplan/prompts/critique_evaluator.py"
+        ],
+        "non_production_paths": [
+          "tests/cloud/test_repair_trigger_wrapper.py",
+          "tests/cloud/test_watchdog_wrappers.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "98e547861128aefc37a010a543dec834b0690da2",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/orchestration/test_selection.py",
+          "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+          "arnold_pipelines/megaplan/schemas/runtime.py"
+        ],
+        "non_production_paths": [
+          "tests/orchestration/test_blast_radius_floor.py",
+          "tests/orchestration/test_plan_test_blast_radius.py",
+          "tests/orchestration/test_selector_node_existence.py",
+          "tests/orchestration/test_validation_jobs.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "549cb31b81722677dc50a4351be78ea0bdfbf059",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/orchestration/critique_runtime.py"
+        ],
+        "non_production_paths": [
+          "tests/orchestration/test_critique_evaluator_validation.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+        "milestone": "M1",
+        "reachable_milestones": [
+          "M1",
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/authority/coherence.py",
+          "arnold_pipelines/megaplan/cloud/current_target.py",
+          "arnold_pipelines/megaplan/cloud/incident_bridge.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_environment.py",
+          "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
+          "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
+          "arnold_pipelines/megaplan/receipts/schema.py"
+        ],
+        "non_production_paths": [
+          ".megaplan/archived-20260813/incident-ledger-20260813/.events.init_ts",
+          ".megaplan/archived-20260813/incident-ledger-20260813/.events.seq",
+          ".megaplan/archived-20260813/incident-ledger-20260813/events.jsonl",
+          ".megaplan/archived-20260813/incident-ledger-20260813/incidents.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/problems.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-canonical-run-state-control-plane.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-custody-control-plane.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-demo-session.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-megaplan-maintenance.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-megaplan-north-star-sense-checks-revise-design.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/inc-superfixer-alive-but-failed-recovery.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/incidents/incident-42.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/index.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-67a765759422.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-68a048c70af7.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-6e386e382223.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-6eaee57d9632.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-72f87afd3954.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-8f475cf8e677.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-9e338df241c5.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-b3c4cc0b2599.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-bd43205325d0.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-bef9405c197d.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-e20c45ae0eb0.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-fb07a266e6f8.json",
+          ".megaplan/archived-20260813/incident-ledger-20260813/summaries/problems/problem-fc037a661409.json",
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/.megaplan-event-store/epics/wrapper_acceptance_gate/events.jsonl",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.projection.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/.events.seq",
+          ".megaplan/initiatives/megaplan-maintenance/.process_adapter_wbc/cloud_wrapper_adapter/wrapper_acceptance_gate/events.ndjson",
+          ".process_adapter_wbc/cloud_provider_adapter/.megaplan-event-store/epics/onboxprovider/events.jsonl",
+          ".process_adapter_wbc/cloud_provider_adapter/onboxprovider/.events.projection.seq",
+          ".process_adapter_wbc/cloud_provider_adapter/onboxprovider/.events.seq",
+          ".process_adapter_wbc/cloud_provider_adapter/onboxprovider/events.ndjson",
+          ".process_adapter_wbc/cloud_supervision_adapter/.megaplan-event-store/epics/cloud_supervise_tick/events.jsonl",
+          ".process_adapter_wbc/cloud_supervision_adapter/cloud_supervise_tick/.events.projection.seq",
+          ".process_adapter_wbc/cloud_supervision_adapter/cloud_supervise_tick/.events.seq",
+          ".process_adapter_wbc/cloud_supervision_adapter/cloud_supervise_tick/events.ndjson",
+          "anchors/north_star/epic.md",
+          "docs/fixer-recovery-evidence/babysitter-autonomous-fixer-20260814.md",
+          "docs/fixer-recovery-evidence/reinitiate-success-20260813.md",
+          "docs/fixer-recovery-evidence/windows/window-20260813T010842Z-PARKED.json",
+          "docs/ops/m1-maintenance-boundary-handoff.md",
+          "tests/arnold_pipelines/megaplan/test_journal_dead_letters.py",
+          "tests/cloud/test_current_target.py",
+          "tests/cloud/test_current_target_liveness.py",
+          "tests/cloud/test_feature_flags.py",
+          "tests/cloud/test_m1_containment_acceptance.py",
+          "tests/cloud/test_maintenance_environment.py",
+          "tests/cloud/test_progress_auditor_controller.py",
+          "tests/cloud/test_repair_contract.py",
+          "tests/cloud/test_repair_enqueue_producers.py",
+          "tests/cloud/test_repair_requests.py",
+          "tests/cloud/test_six_hour_auditor.py",
+          "tests/cloud/test_watchdog_wrappers.py",
+          "tests/test_receipts.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "cc5d8e8c5574ec9e0c9cda42339bd238347b9cc5",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "1e03232fa2621793c39cc28a3d274fc74748a3d7",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "e3610b3e5ec96e54bd9f3d38a18fad693ccfa3a7",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          "tests/test_chain_completion_guard.py"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "f579592ebcc6307c6ede71f4b42484da172f3527",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "superseded",
+        "selected_disposition": "already-at-fce",
+        "selected_task_ids": [],
+        "production_paths": [
+          "arnold_pipelines/megaplan/authority/coherence.py",
+          "arnold_pipelines/megaplan/chain/__init__.py",
+          "arnold_pipelines/megaplan/cloud/maintenance_dispatch.py",
+          "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+          "arnold_pipelines/megaplan/cloud/watchdog.py",
+          "arnold_pipelines/megaplan/incident/ledger.py",
+          "arnold_pipelines/megaplan/incident/schema.py",
+          "arnold_pipelines/megaplan/maintenance/__init__.py",
+          "arnold_pipelines/megaplan/maintenance/boundaries.py",
+          "arnold_pipelines/megaplan/maintenance/contracts.py",
+          "arnold_pipelines/megaplan/maintenance/events.py",
+          "arnold_pipelines/megaplan/maintenance/handoffs.json",
+          "arnold_pipelines/megaplan/maintenance/handoffs.py",
+          "arnold_pipelines/megaplan/maintenance/identity.py",
+          "arnold_pipelines/megaplan/maintenance/ledger.py",
+          "arnold_pipelines/megaplan/maintenance/observation.py",
+          "arnold_pipelines/megaplan/maintenance/projections.py",
+          "arnold_pipelines/megaplan/maintenance/shadow.py",
+          "arnold_pipelines/megaplan/maintenance/sources.py"
+        ],
+        "non_production_paths": [
+          "tests/arnold/conformance/test_maintenance_boundaries.py",
+          "tests/arnold_pipelines/megaplan/test_incident_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_contracts.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_ledger.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_observation.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_projections.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_shadow.py",
+          "tests/arnold_pipelines/megaplan/test_maintenance_source_adapters.py",
+          "tests/cloud/test_maintenance_shadow_consumers.py",
+          "tests/fixtures/maintenance/coherent_join.json",
+          "tests/fixtures/maintenance/recurrence_replay.jsonl",
+          "tests/fixtures/maintenance/torn_join.json",
+          "tests/test_chain_completion_guard.py"
+        ],
+        "exclusion_reason": "older/parallel source is replaced by fce; exact equal files retained as already-at-fce evidence",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "95cb8cafb701aafe97c8ceadc7ad53fd9e2783e7",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-authority.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m3b-custody-bound-repair-promotion.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md",
+          ".megaplan/initiatives/megaplan-maintenance/briefs/reconcile.md",
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml",
+          ".megaplan/initiatives/megaplan-maintenance/decisions/authority-ledger-and-loop-boundaries.md"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "43142b0e3a7faed72ccc8933524a92d888154b49",
+        "milestone": "M2",
+        "reachable_milestones": [
+          "M2",
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "953d7486318130fedc586ea43b9690da8bbca9ff",
+        "milestone": "M3",
+        "reachable_milestones": [
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "786c401321e2a8c181f66af1e780cec8cd03c5b4",
+        "milestone": "M3",
+        "reachable_milestones": [
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+        "milestone": "M3",
+        "reachable_milestones": [
+          "M3",
+          "M3b",
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "116c0e993dbdc0c199ebe7d963eb72b207f7f287",
+        "milestone": "M4",
+        "reachable_milestones": [
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      },
+      {
+        "commit_sha": "97fb5ecbed066a6937efa153dd5017ffed8eae1f",
+        "milestone": "M4",
+        "reachable_milestones": [
+          "M4",
+          "M5"
+        ],
+        "primary_classification": "evidence/config-only",
+        "selected_disposition": "excluded",
+        "selected_task_ids": [],
+        "production_paths": [],
+        "non_production_paths": [
+          ".megaplan/initiatives/megaplan-maintenance/chain.yaml"
+        ],
+        "exclusion_reason": "evidence/config-only/test-only; not production behavior",
+        "has_nonempty_classification": true,
+        "has_nonempty_reason": true
+      }
+    ],
+    "manifest_exclusion_classes": [
+      {
+        "class": "generated-evidence",
+        "paths": [
+          ".megaplan/**",
+          "docs/**",
+          "anchors/**",
+          "plan bundles",
+          "review packets",
+          "auto-publication ledgers"
+        ],
+        "reason": "history/evidence only; never runtime source",
+        "replacement": "preserve under immutable safety refs/T0.1 evidence"
+      },
+      {
+        "class": "evidence/config-only",
+        "paths": [
+          "codex.pid",
+          "failed-publish metadata",
+          "old chain pins",
+          "milestone-local profile/config changes",
+          "test-only commits"
+        ],
+        "reason": "not production behavior",
+        "replacement": "none"
+      },
+      {
+        "class": "superseded",
+        "paths": [
+          "older marker/digest/manifest/runtime identity/parser implementations"
+        ],
+        "reason": "fce identity/marker/manifest/parser/custody wins",
+        "replacement": "active_manifest_path/bootstrap_manifest/runtime provenance/update_marker_runtime/write_manifest/target_rebind/pause"
+      },
+      {
+        "class": "unresolved-policy",
+        "paths": [
+          "M5 ticket_policy_decision.json and ticket store/core changes"
+        ],
+        "reason": "report-only M5 cannot mutate control plane",
+        "replacement": "inert T1.3/T6.1 proposal/report outputs"
+      }
+    ],
+    "all_excluded_commits_have_nonempty_classification_and_reason": true,
+    "all_manifest_exclusion_classes_have_reason": true,
+    "mechanical_check_pass": true
+  },
+  "forbidden_selected_material": [],
+  "forbidden_material_check": {
+    "selected_hunk_path_count": 47,
+    "selected_hunk_paths_with_generated_or_failed_publication_prefix": [],
+    "unresolved_policy_paths_in_selected_hunks": [],
+    "selected_binding_metadata_T4.4_G4.4_hits": [],
+    "mechanical_check_pass": true
+  },
+  "grok_questions": [
+    {
+      "id": "G0-001",
+      "impact": "migration authority/compatibility",
+      "question": "Admit external seed `3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e` into T3.1 despite not reachable from six safety refs or `fce`?"
+    },
+    {
+      "id": "G0-002",
+      "impact": "source provenance",
+      "question": "Confirm cloud-only provenance for M3/M3b/M4/M5: T0.1 reachability is exact, but env-record says these tips were initially missing locally."
+    },
+    {
+      "id": "G0-003",
+      "impact": "selection completeness/identity/custody",
+      "question": "Adjudicate semantic equivalence of mixed production/generated commits 67e, f579, 7272, 759, and 800 where file-level comparison is not semantic proof."
+    },
+    {
+      "id": "G0-004",
+      "impact": "authority/custody",
+      "question": "Freeze T4.3 composition/order across split CAS owners and verify no caller bypasses selector, marker, lease, operator pause, rebind, manifest, or rollback-receipt owner."
+    },
+    {
+      "id": "G0-005",
+      "impact": "concurrency/replay",
+      "question": "Confirm T2.1 `ScheduleService.claim` and `claim_superfixer_occurrence` remain the sole schedule claim/terminalization authority for T6.3."
+    },
+    {
+      "id": "G0-006",
+      "impact": "event custody/replay",
+      "question": "Confirm T6.1 production callers use `IncidentLedger.append_maintenance_event`/`MaintenanceLedger.append` only; reject direct M5 or unfenced writers."
+    },
+    {
+      "id": "G0-007",
+      "impact": "closure/replay",
+      "question": "Confirm T6.2 production caller rejects `fence_check=None` and `prior_key_lookup=None`/`always-never_seen` while retaining typed non-appending closure outcomes."
+    },
+    {
+      "id": "G0-008",
+      "impact": "policy/control-plane scope",
+      "question": "Adjudicate M5 ticket policy packet and ticket-store/core changes as excluded report-only policy, with no automatic ticket, reprioritization, initiative, repair, schedule, provider, or model mutation."
+    }
+  ],
+  "mechanical_checks": {
+    "milestone_reachability_and_exact_refs": true,
+    "classification_coverage": true,
+    "seed_resolution": true,
+    "behavior_task_mapping": true,
+    "exclusion_reason_check": true,
+    "forbidden_selected_material": true,
+    "committed_boundary": true
+  }
+}

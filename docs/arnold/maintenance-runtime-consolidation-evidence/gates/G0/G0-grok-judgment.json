@@ -1,0 +1,205 @@
+{
+  "id": "G0-grok",
+  "kind": "gate-adjudication",
+  "label": "[XHARD-REVIEW]",
+  "gate": "G0",
+  "overall_verdict": "FAIL",
+  "per_question_rulings": {
+    "G0-001": {
+      "question": "External T3.1 seed custody",
+      "ruling": "CONDITIONAL",
+      "decision": "Admit 3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e only as a separately identified intent source after minting an explicit local safety/custody artifact; then adapt, do not exact-port.",
+      "key_evidence": "The seed object exists locally (git cat-file -e status 0) but is not an ancestor of fce or any six safety refs (merge-base --is-ancestor all exit 1). It is contained in refs/remotes/origin/megaplan/megaplan-maintenance/m2-authority (3a94 = m2-authority~8), with no local safety ref. The only production function is repair_requests.migrate_stranded_split_queue(queue_root, *, max_requests=100, created_at=None) at repair_requests.py:L101; it copies stranded *.json markers with _write_once_json and has no durable lock, MigrationRequest/MigrationReceipt, requester identity, or source/target digest. M2 tip 15b881 does not contain that helper; its terminal-receipt hunks are already present at fce (repair_requests.py:L1333-L1387).",
+      "rejected_alternatives": [
+        "Silent admission because the object is local.",
+        "Drop-and-narrow to 15b881.",
+        "Exact-port of the lockless helper as production migrate_stranded_requests."
+      ],
+      "affected": "T3.1 migration authority/compatibility contract; T0.1 custody (new safety ref required); T0.2 seed role.",
+      "downstream": "Before T3.1 code: mint e.g. refs/heads/safety/maintenance-t3.1-external-seed at 3a94a1f5…; reclassify the 3a94 hunk as adapt/external-seed-intent; freeze the production API as operator-only migrate_stranded_requests(request, ...) with lock/receipt. 15b881 terminal-receipt hunks stay already-at-fce, not T3.1 source."
+    },
+    "G0-002": {
+      "question": "Cloud-only provenance for M3/M3b/M4/M5",
+      "ruling": "CONFIRM",
+      "key_evidence": "The pre-T0 env-record (mrc-run-20260820/briefs/env-record-T0.md:L37-L40) records M3/M3b/M4/M5 missing locally; M1/M2 were present. The historical T0.1 receipt records cloud cat-file -e status 0 for the four missing tips, rejected empty git bundle create, then pack-objects --revs --stdout status 0. The pack remains at /tmp/t0.1-missing-tips.pack with SHA-256 f5e2ce1c108867f65758472da9492591bfed6cf277ee3444f428b0b73007e710 and size 125147110 bytes, matching the T0.1 record. Post-unpack all six cat-file -e checks succeed; exact safety refs exist for all six tips. Merge-base of every tip vs fce is 4a830c6ac9a0700864f9ea3336e28f57eece6d5d. This is adequate immutable custody for the six tips, but not for the T3.1 seed (G0-001).",
+      "rejected_alternatives": [
+        "Treat current reachability alone as provenance.",
+        "Require a new cloud refetch.",
+        "Infer healthy live-state from T0.0 unknowns."
+      ],
+      "affected": "T0.1 custody contract — no re-custody of the six tips.",
+      "downstream": "Retain the six exact safety refs and historical pack-transfer evidence; handle the separate T3.1 seed custody gap under G0-001/MF-001."
+    },
+    "G0-003": {
+      "question": "Semantic equivalence of mixed production/generated commits",
+      "ruling": "REJECT the already-at-fce labels on 67e7b94a… and f579592e…. CONDITIONAL on the 7272/759/800 mixed-commit selections: generated/failed-publication material is excluded, but selected production hunks currently include forbidden identity/claim/fallback material (G0-004, G0-005, G0-007).",
+      "key_evidence": "67e7b94a… has zero production paths fce_post_tree_file_equal=true; selecting its tree would delete fce maintenance/identity.py (696 lines), and its unique environment helpers are not in the selected M1 commits. f579592e… has seven byte-equal files but twelve unequal production files where fce is newer; it lacks proof_source/runtime_source and the later append_maintenance_event lifecycle key, so selecting it would overwrite fce identity/event/ledger. 15b881 is not already-at-fce, but its unequal repair_requests.py terminal-receipt hunks are already at fce and are the wrong T3.1 source. 7272 selected hunks include superseded execution_binding.py/runtime_manifest.py material and delivery coordinators defaulting to those facades. 759 selected schedules.py hunks include a second claim API. 800 selected efficiency_runner.py retains fence_check=None/prior_key_lookup=None defaults and schedules.py adds claim_product_occurrence.",
+      "rejected_alternatives": [
+        "Ratify Luna already-at-fce from file-level comparison.",
+        "Select 67e/f579 trees.",
+        "Treat auto-publish commits as unsplittable keep-all."
+      ],
+      "affected": "T0.2 classification of 67e/f579; T3.1/15b881 mapping; T4.1/T4.3/7272; T2.1/T6.3/759/800.",
+      "downstream": "Apply MF-001–MF-005 to the T0.2 source-selection manifest before implementation and re-review G0."
+    },
+    "G0-004": {
+      "question": "T4.3 split-CAS composition and order",
+      "ruling": "REJECT current T4.1/T4.3 composition. Must contradiction; not safe to freeze.",
+      "key_evidence": "T0.2 required_seams.T4.3 names fce owners: runtime_manifest.write_manifest (runtime_manifest.py:L499), apply_runtime_manifest_cutover (runtime_manifest.py:L1517 to cutover_runtime_manifest:L1009), rollback receipt emit/verify (runtime_provenance.py:L786/L841), runtime_cutover.update_marker_runtime (runtime_cutover.py:L82), target_rebind.target_rebind (target_rebind.py:L606), pause_chain/reconcile_quiesced_plan_pause (operator_pause.py:L62/L123), thin fce cutover_runtime_identity (execution_binding.py:L1997), and observe_liveness_lease as observation only (L445). Commit 7272 marks the selected execution_binding.py and runtime_manifest.py hunks superseded, but T0.2 card_bindings select them. Porting them introduces prepare/commit facades absent at fce, drops fce git-head guards, adds commit_chain_runtime_cutover with a second .target-rebind.lock writer, and makes maintenance_delivery.py default to those facades.",
+      "rejected_alternatives": [
+        "Freeze T4.3 on 7272 prepare/commit facades.",
+        "Port commit_chain_runtime_cutover as a delivery-only second lock.",
+        "Treat Luna adapt of the whole 7272 tip as semantic proof."
+      ],
+      "affected": "T4.1, T4.3, T4.2 (pause/rebind must remain the fce primitives), SD-003.",
+      "downstream": "Reclassify 7272 runtime_manifest.py apply-cutover hunks and execution_binding.py cutover_runtime_identity/commit_chain_runtime_cutover hunks as drop/superseded. Adapt delivery coordinators only as consumers of fce owners. Frozen order: T4.1 MutationCapability; pause_chain + reconcile_quiesced_plan_pause; quiesced-writer proof with liveness observation only; target_rebind cutover CAS; apply_runtime_manifest_cutover/write_manifest under one flock with rollback receipt written and verified first; update_marker_runtime; existing thin cutover_runtime_identity wrapper; rollback via target_rebind rollback plus verify_runtime_manifest_cutover_rollback_receipt."
+    },
+    "G0-005": {
+      "question": "T2.1 sole schedule claim/terminalization authority",
+      "ruling": "CONDITIONAL",
+      "decision": "The fce seam is the sole authority today; selected 759/800 hunks introduce a second claim API and must be dropped/adapted before T2.1/T6.3 code.",
+      "key_evidence": "At fce/HEAD, ScheduleService.claim (schedules.py:L1036-L1062) uses repo lock, expected fence bump, and TTL reclaim; claim_superfixer_occurrence (L1081-L1138) is the one-occurrence CAS; reconcile_terminal_runs (L1452-L1502) and _finish_claim (L1434) handle terminalization. Selected sources add 759 claim_maintenance_unblocker_occurrence (schedules.py:L1327), 800 claim_product_occurrence (schedules.py:L1637), wrapper claim_maintenance_unblocker_occurrence (L1726), mark_product_occurrence_terminal (L1750), and scheduler.py callers at L1738/L2137/L2193. T0.2 binds these files to T2.1/T6.3, violating the sole-claim seam.",
+      "rejected_alternatives": [
+        "Port claim_product_occurrence as a namespaced second seam.",
+        "Handler-local terminalization in T6.3.",
+        "Observation-driven schedule authority."
+      ],
+      "affected": "T2.1, T6.3, T3.2 (unblocker must consume T2.1, not a new claim method).",
+      "downstream": "Keep claim + claim_superfixer_occurrence + ScheduleRepository._transition_unlocked as the only claim/terminal CAS. Drop/adapt 759/800 extra claim/terminal methods; T6.3 handler consumes T2.1 only."
+    },
+    "G0-006": {
+      "question": "T6.1 canonical event writer",
+      "ruling": "CONFIRM the named canonical writer; CONDITIONAL that T6.1 must not port 800 unfenced optional paths (tied to G0-007).",
+      "key_evidence": "fce IncidentLedger.append_maintenance_event (incident/ledger.py:L363-L422) is the CAS writer using _journal.append_maintenance and lookup-to-digest compare-to-append. MaintenanceLedger.append (maintenance/ledger.py:L324-L378) is the only public facade and always delegates at L350; replay _replay_one at L565 uses the same writer. 800 emit_daily_events (efficiency_reporting.py:L626-L716) writes solely through ledger.append(event) at L715, then engine.apply as projection. prior_key_lookup is required in emit_daily_events itself. Non-maintenance appenders are a different domain and are not selected M5 writers.",
+      "rejected_alternatives": [
+        "Direct M5 events.jsonl writer.",
+        "Projection-created receipts.",
+        "Second reporter beside append_maintenance_event."
+      ],
+      "affected": "T6.1 append-only fenced event contract.",
+      "downstream": "Adapt emit_daily_events through MaintenanceLedger.append/IncidentLedger.append_maintenance_event with current occurrence fence and evidence digest. No second writer."
+    },
+    "G0-007": {
+      "question": "T6.2 closure and unsafe fallback rejection",
+      "ruling": "CONDITIONAL",
+      "decision": "Closure derivation is conservative; production APIs still default to the forbidden fallbacks.",
+      "key_evidence": "800 derive_daily_closure (efficiency_reporting.py:L245-L381) and OperationalClosureReceipt (L131-L207) derive windows from committed EFFICIENCY_ANALYSIS events, not clock, with typed non-appending outcomes for empty chain, coverage gap, cross-environment, incoherent read, stale-before-synthesis, and reclaimed-during-append. But run_daily_efficiency (efficiency_runner.py:L720-L837) defaults prior_key_lookup=None (L736) and fence_check=None (L738), skips fencing at L782, uses an unguarded ledger at L801-L803, and substitutes prior_key_lookup with lambda key: False at L821. The same defaults occur in catchup/revisit; scheduler.py run_daily_efficiency_handoff supplies fence_check but omits prior_key_lookup, making never-seen reachable.",
+      "rejected_alternatives": [
+        "Confirm because the plan text already names the rejection.",
+        "Treat test _run(..., fence_check=None) as the only site.",
+        "Allow never-seen as safe default."
+      ],
+      "affected": "T6.2, T6.3 handoff, T6.1 emission barrier.",
+      "downstream": "Before T6.2 code: make fence_check and prior_key_lookup required production parameters; delete the lambda key: False fallback and unguarded-ledger branch. Keep typed non-appending closure outcomes."
+    },
+    "G0-008": {
+      "question": "M5 ticket policy and control-plane exclusion",
+      "ruling": "CONFIRM",
+      "decision": "Confirm exclusion of the ticket-policy packet and ticket-store/core changes as report-only/unresolved policy. Conditional hygiene: hunk labels say superseded while exclusion class says unresolved-policy; reclassify labels and do not invent a policy card.",
+      "key_evidence": "800 adds maintenance/ticket_policy_decision.json with unresolved G1-G5 human gates, auto_materialization=false, and locked D1 against automatic ticket materialization. store/_file/tickets.py adds read-only FileTicketMixin.snapshot_open_tickets; tickets/core.py adds read-only TicketSnapshot/snapshot_open_tickets. T0.2 selected hunks contain zero ticket* paths; forbidden_selected_material and unresolved_policy_paths_in_selected_hunks are empty. efficiency_routing.py retains auto_materialization=False and inert new_ticket_proposal; efficiency_sources.py OpenTicketLookupAdapter is read-only and injected. No selected path automatically creates/edits/addresses tickets, activates initiatives, claims repair, activates schedules, or reroutes provider/model.",
+      "rejected_alternatives": [
+        "Select ticket-store/core as T1.3 source.",
+        "Invent a ticket-policy implementation card.",
+        "Treat unresolved gates as adopted cron/cost/priority policy."
+      ],
+      "affected": "T1.3 (inject read-only ticket snapshot; do not import excluded module as authority). T0.2 exclusion class labels.",
+      "downstream": "Reclassify ticket hunk labels to unresolved-policy; retain report-only/read-only injection and do not create a policy card."
+    }
+  },
+  "must_findings": {
+    "MF-001": {
+      "severity": "must",
+      "evidence": "Seed 3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e is not an ancestor of fce or the six safety refs; no local safety ref exists; the only containing ref is origin/megaplan/megaplan-maintenance/m2-authority. repair_requests.py:L101 migrate_stranded_split_queue lacks lock/request/receipt.",
+      "violates": "SD-004 (preserve source under immutable safety ref); T3.1 typed migrate_stranded_requests(request, ...) contract; do not treat local object presence as custody.",
+      "disposition": "adapt after minting refs/heads/safety/maintenance-t3.1-external-seed (or equivalent evidence ref) at 3a94a1f5…. Do not drop the seed and do not exact-port the helper.",
+      "affected_tasks": ["T3.1", "T0.1", "T0.2"],
+      "required_before_G0_passes": "Safety-ref/object receipt plus T0.2 reclassification of the 3a94 hunk as external-seed-intent/adapt; 15b881 terminal-receipt hunks moved to already-at-fce."
+    },
+    "MF-002": {
+      "severity": "must",
+      "evidence": "T0.2 card_bindings T4.1 source_hunks select 7272 execution_binding.py cutover_runtime_identity hunks 8883d953/c1faf022/aabd8718; T4.3 source_hunks select 7272 runtime_manifest.py apply_runtime_manifest_cutover hunks 27dc70cc/4bdb5d4c/b710d33f/a2eca80c. The same hunks are disposition=superseded, task_ids=[] in the 7272 commit record. 7272 apply_runtime_manifest_cutover calls prepare_runtime_manifest_cutover/commit_runtime_manifest_cutover absent at fce; commit_chain_runtime_cutover at execution_binding.py:L1763 takes .target-rebind.lock.",
+      "violates": "SD-003 (fce identity/manifest/marker/custody win); T4.3 may not create an ad hoc second pause/quiescence/rebind/claim authority; G0 owner-split freeze.",
+      "disposition": "drop those 7272 hunks from T4.1/T4.3 source; adapt delivery coordinators onto fce write_manifest/apply_runtime_manifest_cutover/update_marker_runtime/target_rebind/pause_chain.",
+      "affected_tasks": ["T4.1", "T4.3", "T4.2"],
+      "required_before_G0_passes": "Rewrite T0.2 card_bindings so T4.1 does not select execution_binding.py 7272 cutover hunks and T4.3 does not select runtime_manifest.py apply-cutover hunks; record frozen fce owner order in the T4.3 seam."
+    },
+    "MF-003": {
+      "severity": "must",
+      "evidence": "759 schedules.py:L1327 defines ScheduleService.claim_maintenance_unblocker_occurrence; 800 schedules.py:L1637 defines claim_product_occurrence and L1750 defines mark_product_occurrence_terminal; 800 scheduler.py:L2137/L2193 calls product APIs. T2.1 and T6.3 bindings include these files.",
+      "violates": "T2.1 cannot introduce a second claim API; T6.3 handler is a consumer of T2.1; SD-005 (observation must not become claim authority).",
+      "disposition": "drop extra claim/terminal methods; adapt T6.3/T3.2 callers onto claim/claim_superfixer_occurrence/reconcile_terminal_runs.",
+      "affected_tasks": ["T2.1", "T3.2", "T6.3"],
+      "required_before_G0_passes": "T0.2 T2.1/T6.3 hunk lists exclude the extra claim methods; seam remains ScheduleService.claim + claim_superfixer_occurrence over ScheduleRepository CAS."
+    },
+    "MF-004": {
+      "severity": "must",
+      "evidence": "800 run_daily_efficiency in efficiency_runner.py:L736-L738, L782, L801-L803, L821 has prior_key_lookup/fence_check optional defaults, skips fencing, uses an unguarded ledger, and uses prior_key_lookup or (lambda key: False); the same defaults occur in catchup/revisit. 800 run_daily_efficiency_handoff supplies fence_check but omits prior_key_lookup. T6.2 binds the whole efficiency_runner.py new-file hunk.",
+      "violates": "T6.2 unsafe optional fallbacks do not exist in production APIs; SD-006 report-only/fenced observation.",
+      "disposition": "adapt the runner with required fence_check and prior_key_lookup; delete None/never-seen defaults from production. Keep typed non-appending closure outcomes.",
+      "affected_tasks": ["T6.2", "T6.3", "T6.1"],
+      "required_before_G0_passes": "T0.2 T6.2 source contract names the required-parameter production signature; selected hunk is adaptation, not exact-port of the None defaults."
+    },
+    "MF-005": {
+      "severity": "must",
+      "evidence": "67e has 0/12 production paths byte-equal to fce; selecting 67e deletes maintenance/identity.py. f579 has 12 unequal production files where fce is newer. T0.2 still labels both already-at-fce.",
+      "violates": "T0.2 file-level comparison is not semantic proof; SD-003; G0 mandate against superseded identity leaking in.",
+      "disposition": "reclassify 67e/f579 as superseded (fce wins); do not select either tree. Optional residual note: 67e environment-namespace helpers are omitted, not already present.",
+      "affected_tasks": ["T0.2 classification completeness"],
+      "required_before_G0_passes": "T0.2 commit records for 67e7b94a… and f579592e… no longer claim already-at-fce; exclusion reason names fce replacement functions capture_authority_coherence/capture_observation, append_maintenance_event, adapt_six_hour_audit_report, and maintenance/identity.py."
+    }
+  },
+  "should_findings": {
+    "SF-001": "T0.2 uses both adapt (commit primary_classification) and adapted (hunk disposition). Hygiene only; does not block once MF-002/MF-003/MF-004 hunk lists are corrected. Owner: T0.2.",
+    "SF-002": "800 ticket hunks labeled superseded while exclusion class is unresolved-policy. Reclassify labels to unresolved-policy. Owner: T0.2 / G0-008. No new card.",
+    "SF-003": "67e-only resolve_maintenance_environment / incident env-namespace is omitted. Residual observation intent, not a new implementation card. If later needed, it is a new Grok judgment, not T4.4.",
+    "SF-004": "T0.0 unknown_or_unreadable dimensions remain unknown (introspect, candidate-artifact, arnold-4a830c6ac9 path, empty recursive lease scan, missing command start timestamps). Do not turn them green. Owner: T7.4 comparison.",
+    "SF-005": "Pack-transfer evidence is historical and locally reproducible (/tmp/t0.1-missing-tips.pack digest matches). Prefer retaining that pack as evidence rather than relying on /tmp survival. Owner: T0.1 evidence archive. Not a re-fetch."
+  },
+  "rejected_alternatives": [
+    "Adopt working-tree T4.4 / G4.4-pre / G4.4-post (J1 option B/C).",
+    "Ratify Luna inventory status: pass as a selection judgment.",
+    "Wholesale milestone merge or tip cherry-pick.",
+    "Silent admission of seed 3a94 because the object is local.",
+    "Drop the seed and pretend 15b881 supplies T3.1 migration.",
+    "Exact-port lockless migrate_stranded_split_queue.",
+    "Treat current reachability of M3/M3b/M4/M5 as provenance without the pack receipt (unnecessary; the pack receipt is adequate).",
+    "Require a new cloud refetch of the six tips.",
+    "Keep already-at-fce on 67e/f579 from file-level comparison.",
+    "Select 67e/f579 trees beside fce identity.",
+    "Freeze T4.3 on 7272 prepare/commit facades or commit_chain_runtime_cutover.",
+    "Port claim_product_occurrence / claim_maintenance_unblocker_occurrence as a second claim seam.",
+    "Confirm T6.2 because the plan text already names the rejection while the selected source still defaults to None/never-seen.",
+    "Select M5 ticket-store/core or unresolved policy packet.",
+    "Invent a policy card or any T4.4 material.",
+    "Infer T0.0 unknowns as healthy/failed/complete.",
+    "Alter the J1 frozen-boundary decision."
+  ],
+  "downstream_routing": {
+    "path": "FAIL",
+    "constraint": "Minimal, no new task IDs, no T4.4, no live-state ops.",
+    "steps": [
+      "Luna evidence agent records this G0 judgment receipt unchanged.",
+      "Luna T0.2 revision (existing card, not a new ID): apply MF-001–MF-005 dispositions to source-selection-manifest.json only.",
+      "Luna T0.1 additive custody: create the seed safety ref; commit an additive refs-manifest/evidence record. No refetch of the six tips. No selector/marker/manifest/lease writes.",
+      "Fresh Grok 4.6 G0 re-review of the revised T0.2 + T0.1 seed-ref receipt.",
+      "Implementation of Batch 1 starts only after that re-review PASS.",
+      "Preserve J1: Batch 4 remains T4.1 → G4.1 → T4.2 → G4.2 → T4.3 → G4.3; Batch 5/T5.1 follows G4.3; T4.4/G4.4 remain observed-only."
+    ],
+    "blocking_note": "Do not start T1.*–T7.* production code against the current bindings."
+  },
+  "grok_invocation": {
+    "model": "grok-4.6",
+    "wrapper": "<INTEGRATION_WORKTREE>/scripts/run_maintenance_consolidation_agent.py",
+    "task_id": "G0-grok",
+    "role": "JUDGMENT",
+    "invocation_id": "mrc-3fdeb5dff1b8f02b9edb8bd57e61bc2aa4be5e5c3b8083eb",
+    "exit_status": 0,
+    "elapsed": 1290.0854845419526,
+    "resolved_model": "grok-4.6",
+    "command_digest": "bc83d7c5bd2871551662e5e97555b566d1fca0111afc0af0a326961e48909fc8",
+    "brief_digest": "7f6d7503f2ddec299441605c6f2f4099f87dbedbaac6d002a50fdd722e293101",
+    "result_digest": "9cd45956ae8a7a55b33be9c5f005b9e131f775196895a9edddafd26fd07bddbd"
+  },
+  "recorded_at_utc": "2026-08-20T17:35:44Z",
+  "note": "Operator verdict \"Live Tree Authority\" (user interjection) arrived after this judgment; it is recorded in the execution log and is being folded into the amended G0 freeze judgment J2 (separate receipt). This receipt is recorded UNCHANGED per the judgment's own routing step 1."
+}
