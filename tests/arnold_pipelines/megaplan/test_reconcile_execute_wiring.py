@@ -189,3 +189,68 @@ def test_reconcile_prompt_contract_mentions_capture_keys(tmp_path: Path) -> None
     assert '"verification_evidence"' in prompt
     assert '"excluded_shas"' in prompt
     assert '"reachability_checked"' in prompt
+
+
+def test_reconcile_selection_payload_passes_execute_capture_audit() -> None:
+    """A reconcile selection-only payload (selected_shas + verification_evidence)
+    must pass the execute capture audit: the read-only selector produces no
+    generic batch report, so the report fields must not be REQUIRED when the
+    selection envelope is present (occurrence 47671addc195 — before this fix the
+    audit rejected the selection and the tool-call reconstruction dropped it,
+    stranding the milestone with 'no executor update')."""
+    from arnold_pipelines.megaplan.model_seam import (
+        _reconcile_selection_capture_schema,
+    )
+    from arnold_pipelines.megaplan.schemas import SCHEMAS
+    from arnold.pipeline.model_seam import validate_payload_against_schema
+
+    schema = SCHEMAS["execution.json"]
+    selection_payload = {
+        "selected_shas": ["abc123", "def456"],
+        "verification_evidence": {
+            "reachability_checked": True,
+            "chain_control_commits_excluded": True,
+            "excluded_shas": ["c0ffee"],
+            "per_phase": [
+                {
+                    "phase": "P1",
+                    "sha": "abc123",
+                    "subject": "feat(runtime): manifest admission",
+                    "reason": "engine-source change",
+                }
+            ],
+        },
+    }
+    # Before the relaxation the selection payload fails the required-field audit.
+    assert validate_payload_against_schema(selection_payload, schema).ok is False
+    relaxed = _reconcile_selection_capture_schema(schema, selection_payload, step="execute")
+    assert relaxed is not schema
+    assert validate_payload_against_schema(selection_payload, relaxed).ok is True
+
+    # Ordinary execute payloads keep the strict report contract (fail-closed).
+    ordinary = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    assert _reconcile_selection_capture_schema(schema, ordinary, step="execute") is schema
+    incomplete = {"output": "done"}
+    assert (
+        validate_payload_against_schema(
+            incomplete,
+            _reconcile_selection_capture_schema(schema, incomplete, step="execute"),
+        ).ok
+        is False
+    )
+
+    # Non-execute steps are untouched.
+    from arnold_pipelines.megaplan.schemas import SCHEMAS as _S
+
+    gate_schema = _S["gate.json"]
+    assert (
+        _reconcile_selection_capture_schema(gate_schema, selection_payload, step="gate")
+        is gate_schema
+    )
