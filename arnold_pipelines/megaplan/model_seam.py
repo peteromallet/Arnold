@@ -676,7 +676,10 @@ def _audit_capture_payload(
             if already_normalized
             else _normalize_capture_payload_with_contract(invocation, payload)
         )
-        result = validate_payload_against_schema(normalized_payload, schema)
+        result = validate_payload_against_schema(
+            normalized_payload,
+            _reconcile_selection_capture_schema(schema, normalized_payload, step=step),
+        )
     else:
         result = validate_contract_result(contract, _capture_outcome_schema())
     if not result.ok:
@@ -759,6 +762,58 @@ def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, A
                 )
             return capture_schema
     return None
+
+
+# Generic execute batch-report fields. For a ``kind: reconcile`` executor the
+# authoritative output is the JSON selection (top-level ``selected_shas`` +
+# ``verification_evidence`` — the P6 envelope extension); a read-only selector
+# does not produce the batch report, so these must not be REQUIRED when the
+# selection envelope is present (occurrence 47671addc195: the selection-only
+# payload failed the required-field audit and the worker's tool-call
+# reconstruction dropped the selection entirely, stranding the milestone).
+_EXECUTE_BATCH_REPORT_REQUIRED_FIELDS = frozenset(
+    {
+        "output",
+        "files_changed",
+        "commands_run",
+        "deviations",
+        "task_updates",
+        "sense_check_acknowledgments",
+    }
+)
+
+
+def _reconcile_selection_capture_schema(
+    schema: Mapping[str, Any] | None,
+    payload: Mapping[str, Any],
+    *,
+    step: str | None,
+) -> Mapping[str, Any] | None:
+    """Relax the execute capture schema for a reconcile selection payload.
+
+    When the payload carries the selection envelope (``selected_shas`` or
+    ``verification_evidence``), the generic batch-report fields become
+    optional so the selection survives validation and reaches the batch
+    artifact the controller reads (``_read_reconcile_selection``). All other
+    schemas/payloads are returned unchanged.
+    """
+    if step != "execute" or not isinstance(schema, Mapping):
+        return schema
+    if "selected_shas" not in payload and "verification_evidence" not in payload:
+        return schema
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return schema
+    relaxed = [
+        item
+        for item in required
+        if not isinstance(item, str) or item not in _EXECUTE_BATCH_REPORT_REQUIRED_FIELDS
+    ]
+    if len(relaxed) == len(required):
+        return schema
+    relaxed_schema = dict(schema)
+    relaxed_schema["required"] = relaxed
+    return relaxed_schema
 
 
 def _schema_owned_drop_is_declared(step: str | None, pointer: str) -> bool:
