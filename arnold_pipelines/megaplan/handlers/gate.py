@@ -4,7 +4,7 @@ import argparse
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold_pipelines.megaplan import handlers as _pkg
 from arnold_pipelines.megaplan.outcomes import GateOutcome
@@ -35,6 +35,10 @@ from arnold_pipelines.megaplan.schema_projection import (
 from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, STATE_PLANNED
+from arnold_pipelines.megaplan.north_star_actions import (
+    operator_disposition_for_action,
+    resolved_by_operator_disposition,
+)
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workers.result_metadata import prefer_retry_rate_limit
 from arnold_pipelines.megaplan._core import (
@@ -335,6 +339,68 @@ def _normalize_settled_decisions(gate_summary: dict[str, Any]) -> list[dict[str,
     return normalized
 
 
+def _apply_operator_dispositions(
+    state: PlanState,
+    gate_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Annotate copied North Star actions settled by recorded operator dispositions.
+
+    For every ``add_human_halt`` action whose exact ``question_id`` has a
+    source=user operator disposition in ``state.meta.notes``, a COPY of the
+    action is annotated with ``resolved: True``, ``status: "resolved"`` and
+    the handler-owned ``operator_disposition`` audit record. The annotated
+    copies are exposed under the handler-owned ``_operator_settled_actions``
+    summary key (never written to the worker-owned gate schema) and typed
+    ``settled_decisions`` entries are appended for audit. The worker-owned
+    ``north_star_actions`` list is left schema-clean.
+    """
+    settled: list[dict[str, Any]] = []
+    actions = gate_summary.get("north_star_actions")
+    if isinstance(actions, list):
+        for action in actions:
+            if not isinstance(action, Mapping):
+                continue
+            disposition = operator_disposition_for_action(state, action)
+            if disposition is None:
+                continue
+            annotated = dict(action)
+            annotated["resolved"] = True
+            annotated["status"] = "resolved"
+            annotated["operator_disposition"] = disposition
+            settled.append(annotated)
+    if settled:
+        gate_summary["_operator_settled_actions"] = settled
+        existing = {
+            str(item.get("id"))
+            for item in gate_summary.get("settled_decisions", [])
+            if isinstance(item, Mapping)
+        }
+        for annotated_action in settled:
+            question_id = str(
+                annotated_action.get("question_id") or annotated_action.get("id") or "?"
+            )
+            decision = str(annotated_action["operator_disposition"]["decision"])
+            sid = f"OPD-{question_id}"
+            if sid in existing:
+                continue
+            existing.add(sid)
+            gate_summary.setdefault("settled_decisions", []).append(
+                {
+                    "id": sid,
+                    "decision": (
+                        f"Operator disposition {decision} recorded for question "
+                        f"{question_id}"
+                    ),
+                    "rationale": (
+                        "Recorded source=user operator disposition resolves the "
+                        "add_human_halt on the exact question_id (settlement "
+                        "handling, not force-proceed)."
+                    ),
+                }
+            )
+    return settled
+
+
 def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[str, Any]:
     require_schema_fields(
         gate_summary,
@@ -377,6 +443,11 @@ def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[s
         "warnings": list(gate_summary.get("warnings", [])) if isinstance(gate_summary.get("warnings"), list) else [],
         "orchestrator_guidance": str(gate_summary.get("orchestrator_guidance", "")),
         "carried_flags": carried_flags,
+        "settled_north_star_actions": [
+            dict(action)
+            for action in gate_summary.get("_operator_settled_actions", [])
+            if isinstance(action, Mapping)
+        ],
         "iteration": iteration,
         "produced_at": now_utc(),
     }
@@ -629,6 +700,7 @@ def _build_gate_route_signal(
 
         # Validate each explicit resolution
         addressed_ids = {f.get("id") for f in addressed if f.get("id")}
+        unresolved_ids = {f.get("id") for f in unresolved if isinstance(f, dict) and f.get("id")}
         valid_resolved_ids: set[str] = set()
         valid_resolutions: list[dict[str, Any]] = []
         for res in resolutions:
@@ -638,7 +710,15 @@ def _build_gate_route_signal(
                 evidence = res.get("evidence", "").strip()
                 if not evidence or is_rubber_stamp(evidence, strict=True):
                     continue
-                if flag_id not in addressed_ids:
+                # verify_fixed closes a flag the gate worker just proved the
+                # plan fixes. That is valid whether the flag was previously
+                # addressed (revise track) OR still open (plan-rewrite track:
+                # a `plan` phase never writes flags_addressed, so every flag
+                # stays `open` and the old addressed-only check discarded
+                # valid resolutions -> catch-22, PROCEED auto-downgraded to
+                # ITERATE forever. See grok consult, d58701026410). Accept
+                # when the flag is unresolved OR addressed; reject unknown IDs.
+                if flag_id not in addressed_ids and flag_id not in unresolved_ids:
                     continue
             elif action == "dispute":
                 evidence = res.get("evidence", "").strip()
@@ -772,6 +852,55 @@ def _build_gate_route_signal(
             "fallback_payload": None,
         }
     if gate_summary["recommendation"] == "ESCALATE":
+        # Narrow settlement route: an ESCALATE whose only basis is a non-empty
+        # set of blocking add_human_halt actions, every one settled by an exact
+        # source=user operator disposition on its question_id, with all
+        # preflights passing and no open blocking flag, is consumed as ordinary
+        # PROCEED. This is settlement handling, not force-proceed: a mixed or
+        # absent action set, a new/unmatched question_id, a failed preflight or
+        # an open blocking flag still escalates fail-closed.
+        _actions = gate_summary.get("north_star_actions")
+        _action_list = (
+            [a for a in _actions if isinstance(a, Mapping)]
+            if isinstance(_actions, list)
+            else []
+        )
+        _preflight_results = gate_summary.get("preflight_results", {})
+        _preflights_pass = (
+            isinstance(_preflight_results, dict) and all(_preflight_results.values())
+        )
+        _unresolved = gate_summary.get("unresolved_flags", [])
+        _open_blocking_flags = [
+            f
+            for f in _unresolved
+            if isinstance(f, Mapping)
+            and f.get("severity") in ("significant", "likely-significant")
+            and f.get("status") in FLAG_BLOCKING_STATUSES
+        ]
+        if (
+            _action_list
+            and _preflights_pass
+            and not _open_blocking_flags
+            and all(
+                a.get("action_type") == "add_human_halt"
+                and a.get("severity") == "blocking"
+                and resolved_by_operator_disposition(state, a)
+                for a in _action_list
+            )
+        ):
+            apply_state_projection(state, STATE_GATED, route_signal="proceed")
+            state["meta"].pop("user_approved_gate", None)
+            return {
+                "result": "success",
+                "route_signal": "proceed",
+                "summary": (
+                    "Gate recommendation ESCALATE consumed by recorded operator "
+                    "dispositions: proceed-with-recorded-dispositions. "
+                    + gate_summary["rationale"]
+                ),
+                "blocking_unresolved_ids": [],
+                "fallback_payload": None,
+            }
         return {
             "result": result,
             "route_signal": route_signal,
@@ -1024,6 +1153,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             orchestrator_guidance=guidance,
         )
         gate_summary["reprompted"] = False
+        _apply_operator_dispositions(state, gate_summary)
 
         if len(state["meta"].get("weighted_scores", [])) < iteration:
             _append_to_meta(state, "weighted_scores", gate_signals["signals"]["weighted_score"])
@@ -1153,6 +1283,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 orchestrator_guidance=guidance,
             )
             gate_summary["reprompted"] = True
+            _apply_operator_dispositions(state, gate_summary)
             route_signal = _build_gate_route_signal(
                 state,
                 gate_summary,

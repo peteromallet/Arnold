@@ -105,6 +105,7 @@ from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import decision_admission_lock
 from arnold_pipelines.megaplan.custody.contracts import (
     normalize_repair_occurrence_key,
+    owner_observably_dead,
     process_birth_identity,
 )
 from arnold_pipelines.megaplan.custody.lease_store import (
@@ -694,6 +695,16 @@ def _foreign_active_leases(
             continue
         if candidate.is_expired:
             continue
+        # An ACTIVE lease whose owner is observably DEAD is not a live foreign
+        # claim (grok consult, astrid dispatch-lease wedge): the occurrence is
+        # reclaimable rather than blocked until the 1h TTL lapses.  Foreign-
+        # host and live-owner leases are never skipped.
+        if owner_observably_dead(
+            host=str(candidate.owner_host or ""),
+            pid=str(candidate.owner_pid or ""),
+            boot_id=str(candidate.owner_boot_id or ""),
+        ):
+            continue
         if not _lease_covers_occurrence(
             lease_store,
             candidate_id,
@@ -974,9 +985,10 @@ def join_exact_occurrence(
         )
 
     # ── Queue identity (the recorded authority; read-only) ────────────────
-    queue_root = repair_requests.validate_queue_root(
-        project_dir / ".megaplan" / "repair-queue"
-    )
+    # T-0640 D1: the queue root resolves from ARNOLD_REPAIR_QUEUE_ROOT else
+    # the marker-adjacent box-central queue (never project_dir — a per-epic
+    # checkout queue is invisible to the box-central G14/watchdog paths).
+    queue_root = repair_requests.resolve_aligned_repair_queue_root()
     # ── Receipt destination guard (read-only; fail closed before ANY write).
     #    --receipt must resolve under <plan dir>/evidence/ and never alias
     #    protected plan-side state (state.json, chain.yaml, queue records).

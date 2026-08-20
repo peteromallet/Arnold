@@ -284,22 +284,32 @@ for _reg in [
         builder=None,
         note="Revise output is Markdown, not structured JSON. No template builder required.",
     ),
-    # ── subloop_exempt: tiebreaker subloop phases ─────────────────────────
+    # ── deferred: tiebreaker subloop phases ─────────────────────────────
+    # The tiebreaker researcher/challenger are structured-JSON contracts
+    # (schemas/tiebreaker_researcher.json / tiebreaker_challenger.json)
+    # with STRICT field-level validation (worker_structural_audit). Models
+    # that do not see the schema in the user prompt systematically deviate
+    # from the required field names/types (observed: deepseek-led fallback,
+    # occurrence 528540c5cfd2). Registering as ``deferred`` makes the hermes
+    # worker append the schema-derived inline JSON template to the prompt
+    # (_append_inline_json), giving every model the exact output contract.
     TemplateRegistration(
         phase_identity="tiebreaker_researcher",
-        mode="subloop_exempt",
+        mode="deferred",
         scratch_filename="",
         builder=None,
-        note="Subloop step whose output is not a single model-generated "
-        "structured contract. No template builder required.",
+        note="Structured-JSON subloop contract; deferred mode appends the "
+        "schema template to the prompt so any model (incl. deepseek-led "
+        "fallback) conforms to the strict field-level audit.",
     ),
     TemplateRegistration(
         phase_identity="tiebreaker_challenger",
-        mode="subloop_exempt",
+        mode="deferred",
         scratch_filename="",
         builder=None,
-        note="Subloop step whose output is not a single model-generated "
-        "structured contract. No template builder required.",
+        note="Structured-JSON subloop contract; deferred mode appends the "
+        "schema template to the prompt so any model (incl. deepseek-led "
+        "fallback) conforms to the strict field-level audit.",
     ),
     # ── deferred: builder exists for parity, handler integration deferred ─
     TemplateRegistration(

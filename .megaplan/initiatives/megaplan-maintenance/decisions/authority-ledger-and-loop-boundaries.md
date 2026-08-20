@@ -2,9 +2,29 @@
 
 Status: proposed for human approval before M2 enforcement; editorially locked for planning.
 
+## Stage 3 revalidation — 2026-08-10
+
+This decision survives, but its ownership language is narrowed to current
+architecture. “One ledger” means the existing Maintenance-owned incident ledger
+extended with Maintenance observations and immutable owner-record references.
+It is not an omnibus ledger and must not copy or replace the WBC M6A attempt/effect
+store, M7 Custody lease/epoch history, Run Authority records, Native C1/C2
+divergence ledger, or any owner-specific projection. The four stale duplicate
+briefs are historical and are not decision inputs.
+
+M2/M3 consume the accepted Custody M6A–M11 and Native Parity C1/C2/S1/S2R
+substrate, including exact store incarnation, restore generation, and
+raw-history high-water coordinates. M4 uses the existing event
+trigger, repair queue, resident occurrence scheduler, and `next_three_hour`
+reconciliation backstop; the six-hour name is compatibility-only. Runtime/fixer
+resolution follows the Aug 7–9 manifest-first design, and source-only handoffs do
+not prove installation. Maintenance contracts remain under
+`arnold_pipelines/megaplan` and consume neutral `arnold.*` seams one way; they do
+not fork platform stores, validators, leases, completion, or controlled writers.
+
 ## Decision
 
-Extend the existing append-only incident ledger into the maintenance control plane. Do not create a second operational or analytics ledger. Store immutable typed events and build independent projections for operational custody, verification, and efficiency analysis.
+Extend the existing append-only Maintenance incident ledger into the maintenance control plane. Do not create a second operational or analytics ledger, and do not turn the Maintenance ledger into an omnibus copy of owner-specific histories. Store immutable typed Maintenance events plus references/digests/cursors and build independent projections for operational custody, verification, and efficiency analysis.
 
 The six-hour loop is an operational unblocker. It can observe, classify, join/enqueue one deduplicated repair request, invoke only pre-approved safe policy through canonical repair custody, and schedule independent verification. It never writes plan/chain truth directly.
 

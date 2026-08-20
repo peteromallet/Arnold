@@ -1,0 +1,42 @@
+# `partnered-codex` — the Codex-only counterpart to `partnered-5`.
+#
+# This preserves partnered-5's phase and model-family boundaries while
+# translating its DeepSeek routes into the GPT-5.6 family. Flat phases use
+# balanced defaults; tiered execute and critique routes increase reasoning
+# effort with adjudicated difficulty.
+[profiles.partnered-codex]
+adaptive_critique = true
+vendor_locked = true
+plan                  = "codex:gpt-5.6-sol:high"
+prep                  = "codex:gpt-5.6-terra:medium"
+critique              = "codex:gpt-5.6-terra:medium"
+critique_evaluator    = "codex:gpt-5.6-sol:high"
+revise                = "codex:gpt-5.6-luna:medium"
+gate                  = "codex:gpt-5.6-terra:medium"
+finalize              = "codex:gpt-5.6-sol:high"
+execute               = "codex:gpt-5.6-sol:medium"
+feedback              = "codex:gpt-5.6-sol:medium"
+loop_plan             = "codex:gpt-5.6-sol:high"
+loop_execute          = "codex:gpt-5.6-sol:medium"
+review                = "codex:gpt-5.6-sol:medium"
+tiebreaker_researcher = "codex:gpt-5.6-sol:high"
+tiebreaker_challenger = "codex:gpt-5.6-sol:high"
+
+[profiles.partnered-codex.tier_models.execute]
+1 = "codex:gpt-5.6-luna:low"
+2 = "codex:gpt-5.6-luna:medium"
+3 = "codex:gpt-5.6-luna:high"
+4 = "codex:gpt-5.6-luna:high"
+5 = "codex:gpt-5.6-luna:xhigh"
+6 = "codex:gpt-5.6-luna:max"
+7 = "codex:gpt-5.6-terra:xhigh"
+8 = "codex:gpt-5.6-terra:max"
+9 = "codex:gpt-5.6-sol:xhigh"
+10 = "codex:gpt-5.6-sol:max"
+
+[profiles.partnered-codex.tier_models.critique]
+1 = "codex:gpt-5.6-luna:low"
+2 = "codex:gpt-5.6-terra:medium"
+3 = "codex:gpt-5.6-terra:high"
+4 = "codex:gpt-5.6-terra:xhigh"
+5 = "codex:gpt-5.6-sol:max"

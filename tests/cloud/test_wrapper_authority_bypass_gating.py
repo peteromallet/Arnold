@@ -18,8 +18,6 @@ from arnold_pipelines.megaplan.custody.action_validator import GateResult
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TARGETED_WRAPPERS = {
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain",
-    "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
-    "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
 }
@@ -38,6 +36,37 @@ RETIRED_AUTHORITY_RISK_IDS = {
     "T29-BYPASS-064",
     "T29-BYPASS-144",
     "T29-BYPASS-145",
+    # The layered repair stack wrappers were deleted; every bypass call
+    # site they carried is gone with them.
+    "T29-BYPASS-024",
+    "T29-BYPASS-025",
+    "T29-BYPASS-030",
+    "T29-BYPASS-031",
+    *{f"T29-BYPASS-{number:03d}" for number in range(33, 39)},
+    *{f"T29-BYPASS-{number:03d}" for number in range(40, 45)},
+    "T29-BYPASS-056",
+    "T29-BYPASS-059",
+    "T29-BYPASS-061",
+    *{f"T29-BYPASS-{number:03d}" for number in range(65, 68)},
+    "T29-BYPASS-074",
+    "T29-BYPASS-075",
+    *{f"T29-BYPASS-{number:03d}" for number in range(77, 80)},
+    *{f"T29-BYPASS-{number:03d}" for number in range(90, 93)},
+    *{f"T29-BYPASS-{number:03d}" for number in range(95, 116)},
+    # The watchdog rewire removed the layered repair-dispatch machinery
+    # (dispatch_kimi_repair / dispatch_meta_repair / repair_trigger_scan and
+    # owner-adoption); the bypass gates those sections carried are gone.
+    "T29-BYPASS-140",
+    *{f"T29-BYPASS-{number:03d}" for number in range(160, 163)},
+    "T29-BYPASS-164",
+    "T29-BYPASS-177",
+    *{f"T29-BYPASS-{number:03d}" for number in range(180, 183)},
+    "T29-BYPASS-184",
+    "T29-BYPASS-189",
+    "T29-BYPASS-190",
+    "T29-BYPASS-196",
+    "T29-BYPASS-199",
+    "T29-BYPASS-207",
 }
 EXPECTED_AUTHORITY_RISK_IDS = ({
     f"T29-BYPASS-{number:03d}"
@@ -169,7 +198,7 @@ def _chain_runtime_manifest(
             "venv_path": "/workspace/.megaplan/venv",
             "runtime_root": runtime_root,
             "expected_head": expected_head,
-            "repair_bin": "/usr/local/bin/arnold-repair-loop",
+            "repair_bin": "/usr/local/bin/arnold-babysitter",
             "deps_lockfile": "requirements.lock",
         },
         "indirection": {
@@ -604,12 +633,8 @@ def test_non_authoritative_cleanup_best_effort_remains_allowed() -> None:
 _LEGACY_REPAIR_BINS = (
     "/usr/local/bin/arnold-watchdog",
     "/usr/local/bin/arnold-heartbeat",
-    "/usr/local/bin/arnold-repair-trigger",
-    "/usr/local/bin/arnold-repair-loop",
-    "/usr/local/bin/arnold-meta-repair-loop",
     "/usr/local/bin/arnold-progress-auditor",
     "/usr/local/bin/arnold-supervise",
-    "/usr/local/bin/arnold-kimi-goal-operator",
     "/usr/local/bin/mp-refresh-megaplan",
 )
 
@@ -622,32 +647,6 @@ def _systemd_execstart_lines(unit_path: str) -> list[str]:
         for line in (REPO_ROOT / unit_path).read_text(encoding="utf-8").splitlines()
         if line.strip().startswith("ExecStart=")
     ]
-
-
-def test_repair_trigger_systemd_uses_canonical_delegation() -> None:
-    """Step 81: repair-trigger systemd units execute only canonical delegation."""
-    service_text = (
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/systemd/megaplan-repair-trigger.service"
-    ).read_text(encoding="utf-8")
-
-    # The service must use the canonical workspace wrapper path (not a legacy
-    # /usr/local/bin binary), delegated through the supervisor python.
-    assert "/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger" in service_text
-    assert "MEGAPLAN_SUPERVISOR_PYTHON" in service_text
-
-    # No legacy repair bin paths may appear in the ExecStart line.
-    exec_lines = _systemd_execstart_lines(
-        "arnold_pipelines/megaplan/cloud/systemd/megaplan-repair-trigger.service"
-    )
-    for line in exec_lines:
-        for legacy in _LEGACY_REPAIR_BINS:
-            assert legacy not in line, f"legacy bin {legacy!r} found in repair-trigger service: {line}"
-
-    # The path unit monitors the workspace repair-queue, which is correct.
-    path_text = (
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/systemd/megaplan-repair-trigger.path"
-    ).read_text(encoding="utf-8")
-    assert "DirectoryNotEmpty=/workspace/.megaplan/repair-queue/requests" in path_text
 
 
 def test_progress_audit_systemd_is_three_hour_reconciliation_only() -> None:

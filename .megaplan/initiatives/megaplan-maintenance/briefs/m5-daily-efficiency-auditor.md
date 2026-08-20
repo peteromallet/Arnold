@@ -2,11 +2,11 @@
 
 ## Outcome
 
-Deliver a read-only daily auditor that quantifies systemic waste across completed and censored histories, clusters recurring symptoms into root-cause candidates, and routes deduplicated ticket proposals or initiative recommendations without repairing, rerouting, or reshaping active chains.
+Deliver the genuinely new 24-hour efficiency-analysis product over M4's closed watermarks and the existing Maintenance incident ledger. It quantifies systemic waste across completed and censored histories, clusters recurring symptoms into root-cause candidates, and routes deduplicated ticket proposals or initiative recommendations without repairing, rerouting, or reshaping active chains. M5 adds analysis/product logic; it does not add a second ledger, scheduler, ticket authority, or execution loop.
 
 ## Scope (about one sprint; no more than two weeks)
 
-In scope: a fixed daily UTC offset after a closed six-hour watermark; catch-up and replay; cohort baselines using rolling median/MAD/p95/p99; censored duration analysis; gate/finalize/review dwell; equivalent stage failures and retry/revision loops; duplicate/no-progress calls; idle handoffs; expected-versus-resolved model/profile mismatch; recurring repair patterns; cost/token/time per accepted task/milestone and quality outcome; root-cause clustering; confidence/alternatives; avoidable-impact estimates; deduplicated ticket proposals; active-custody references; report hashes, coverage, corrections, and precision metrics.
+In scope: a fixed daily UTC offset after a closed `next_three_hour`/operational watermark; catch-up and replay; cohort baselines using rolling median/MAD/p95/p99; censored duration analysis; gate/finalize/review dwell; equivalent stage failures and retry/revision loops; duplicate/no-progress calls; idle handoffs; expected-versus-resolved model/profile mismatch; recurring repair patterns; cost/token/time per accepted task/milestone and quality outcome; root-cause clustering; confidence/alternatives; avoidable-impact estimates; deduplicated ticket proposals; active-custody references; report hashes, coverage, corrections, and precision metrics. Consume exact-version owner queries and M4's immutable references; do not rebuild WBC/Custody/Native stores or validators.
 
 Out of scope: claiming active repair; invoking retries/relaunch; editing profiles, budgets, plans, briefs, or chains; force-proceed; automatic ticket creation without policy; initiative prioritization without human authority; raw-total comparisons without an accepted-outcome denominator.
 
@@ -21,8 +21,8 @@ Out of scope: claiming active repair; invoking retries/relaunch; editing profile
 
 ## Scheduling, custody, and overlap
 
-- Consume only watermarks closed by the preceding six-hour pass; append corrections for late evidence.
-- Schedule lease key: `(daily_efficiency, environment, scope, window_end)` with monotonic fence. Replay appends only absent analysis/proposal events.
+- Consume only watermarks closed by the preceding operational pass; append corrections for late evidence.
+- Use the existing resident schedule/occurrence control plane for the daily trigger. The schedule lease key is `(daily_efficiency, environment, scope, window_end)` with the canonical resident fence; replay appends only absent analysis/proposal events to the existing Maintenance ledger.
 - Parallel analysts may process independent problem families. One fenced synthesizer serializes cluster merge and proposal emission; ticket materialization and initiative prioritization remain canonical/human authority.
 - If an occurrence has active repair custody, report its costs and recurrence context but do not claim it, change its policy, or open a competing repair. Never edit an active chain.
 
@@ -38,7 +38,7 @@ Approve cohort dimensions and SLOs, authoritative cost source, retention, schedu
 
 - Golden/property tests cover censoring, late corrections, cohort cold start, legitimate high-depth work, configured backoff, duplicated calls, no-progress deltas, recurrence, model mismatch, overlap with active custody, replay, and ticket dedupe.
 - Reports reproduce from immutable inputs, expose coverage/unknowns/denominators, and never mutate audited inputs or plan/chain truth.
-- Adversarial tests prove the daily loop cannot obtain repair custody, invoke action, change routing/profile/budget, or edit active chain assets.
+- Adversarial tests prove the daily loop cannot obtain repair custody, invoke action, change routing/profile/budget, or edit active chain assets; it can only append a typed proposal through the existing Maintenance ledger.
 - Shadow evaluation reports precision/recall samples, analyst overhead, false-positive rate, recurrence yield, accepted-ticket rate, and estimated versus realized savings.
 - Promotion from report-only proposals requires the explicit human ticket-policy gate; no launch or promotion is part of editorial preparation.
 

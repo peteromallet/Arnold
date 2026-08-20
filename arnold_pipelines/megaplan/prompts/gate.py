@@ -14,6 +14,7 @@ from arnold_pipelines.megaplan._core import (
     latest_plan_meta_path,
     latest_plan_path,
     load_flag_registry,
+    operator_decisions_block,
     read_json,
     unresolved_significant_flags,
 )
@@ -183,11 +184,18 @@ def _gate_prompt(
         try:
             carry = read_json(carry_path)
             prior_actions = carry.get("north_star_actions") if isinstance(carry, dict) else None
+            settled_actions = carry.get("settled_north_star_actions") if isinstance(carry, dict) else None
             if isinstance(prior_actions, list) and prior_actions:
                 carried_north_star = (
                     "\n        North Star actions from prior gate carry (for awareness; "
                     "do not re-emit unless still applicable):\n"
                     f"        {json_dump(prior_actions).strip()}\n"
+                )
+            if isinstance(settled_actions, list) and settled_actions:
+                carried_north_star += (
+                    "\n        Settled North Star actions (resolved by a recorded "
+                    "operator disposition; do not re-emit):\n"
+                    f"        {json_dump(settled_actions).strip()}\n"
                 )
         except Exception:
             pass
@@ -202,6 +210,8 @@ def _gate_prompt(
         {project_dir}
 
         {intent_brief_reference(state)}
+
+        {operator_decisions_block(state)}
 
         Plan:
         {latest_plan}
@@ -453,11 +463,18 @@ def compact_gate_prompt(
         try:
             carry = read_json(carry_path)
             prior_actions = carry.get("north_star_actions") if isinstance(carry, dict) else None
+            settled_actions = carry.get("settled_north_star_actions") if isinstance(carry, dict) else None
             if isinstance(prior_actions, list) and prior_actions:
                 carried_north_star = (
                     "\n        North Star actions from prior gate carry (for awareness; "
                     "do not re-emit unless still applicable):\n"
                     f"        {json_dump(prior_actions).strip()}\n"
+                )
+            if isinstance(settled_actions, list) and settled_actions:
+                carried_north_star += (
+                    "\n        Settled North Star actions (resolved by a recorded "
+                    "operator disposition; do not re-emit):\n"
+                    f"        {json_dump(settled_actions).strip()}\n"
                 )
         except Exception:
             pass
@@ -482,6 +499,8 @@ def compact_gate_prompt(
         {project_dir}
 
         {intent_brief_reference(state)}
+
+        {operator_decisions_block(state)}
 
         Plan (compact excerpt):
         {_truncate_block(latest_plan, limit=COMPACT_GATE_PLAN_MAX_CHARS, label="the plan file")}

@@ -333,21 +333,36 @@ def classify_failure_class(error: Any) -> FailureClass:
 
     # 1) review_quality_block — must precede worker_budget_exhausted
     #    because "review rework budget exhausted" contains "budget exhausted".
-    if kind in {"quality_gate_blocked", "review_quality_blocked_unknown"}:
+    if kind in {
+        "quality_gate_blocked",
+        "quality_gate_circuit_open",
+        "review_quality_blocked_unknown",
+    }:
         return "review_quality_block"
-    if error_kind in {"review_quality_block", "quality_gate_blocked"}:
+    if error_kind in {
+        "review_quality_block",
+        "quality_gate_blocked",
+        "quality_gate_circuit_open",
+    }:
         return "review_quality_block"
-    if error_code in {"review_quality_block", "quality_gate_blocked"}:
+    if error_code in {
+        "review_quality_block",
+        "quality_gate_blocked",
+        "quality_gate_circuit_open",
+    }:
         return "review_quality_block"
     if _matches_any(
         message,
         [
             "review quality",
             "quality gate blocked",
+            "quality-gate circuit open",
+            "quality gate circuit open",
             "review rework budget exhausted",
             "unresolved quality blockers",
             "review quality block",
             "quality_gate_blocked",
+            "quality_gate_circuit_open",
             "review_quality_blocked",
         ],
     ):

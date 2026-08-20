@@ -1147,6 +1147,18 @@ class AIAgent:
         # they bloat the prompt past the streaming deadline.
         self._tool_dedup_cache: dict[tuple[str, str], str] = {}
 
+        # Terminal non-progress cycle tracker (codex consult 2026-08-17): a
+        # stateless-terminal contract bug let agents loop on standalone `cd`
+        # (cwd resets every call -> cd again -> infinite wedge, 5+ recurrences
+        # today). Track normalized terminal command signatures over a rolling
+        # window and abort with a typed AgentNonProgressError on:
+        #   - N identical calls
+        #   - ABAB / ABCABC cycles
+        #   - N consecutive standalone `cd` (state-only, empty-output)
+        # The persistent shell (TERMINAL_LOCAL_PERSISTENT=1) fixes the root;
+        # this breaker makes ANY model's cd-loop fail fast instead of looping.
+        self._terminal_call_signatures: list[tuple[str, str, str]] = []
+
         # Per-agent read counts keyed by canonical file path. This deliberately
         # persists across run_conversation() calls so cross-turn read loops are
         # stopped before they keep injecting the same file into the prompt.
@@ -5750,6 +5762,66 @@ class AIAgent:
             )
         return None
 
+    def _record_terminal_call(
+        self, function_args: dict, tool_call_id: str
+    ) -> str | None:
+        """Track terminal calls for non-progress cycles; return an error string
+        to inject, or None to proceed.
+
+        Codex consult 2026-08-17: the stateless-terminal contract bug let
+        agents loop on standalone `cd` forever (cwd resets every call). The
+        persistent shell fixes the root; this breaker makes any residual
+        cycle fail fast with a typed result instead of looping unbounded.
+        """
+        if function_args.get("workdir") is None and function_args.get(
+            "project_dir"
+        ) is None:
+            # Normalize to the command text; ignore volatile fields.
+            pass
+        command = str(function_args.get("command") or "").strip()
+        workdir = str(function_args.get("workdir") or "").strip()
+        if not command:
+            return None
+        normalized = " ".join(command.split())
+        is_standalone_cd = normalized in {"cd", "cd ..", "cd -"} or normalized.startswith(
+            "cd /"
+        ) or normalized.startswith("cd ~")
+        signature = (workdir, normalized)
+        self._terminal_call_signatures.append(
+            (signature[0], signature[1], tool_call_id)
+        )
+        window = self._terminal_call_signatures[-8:]
+        # N consecutive identical calls.
+        if len(window) >= 4:
+            tail = [s[1] for s in window[-4:]]
+            if len(set(tail)) == 1:
+                return (
+                    f"terminal_nonprogress_cycle: the same command "
+                    f"({tail[-1][:80]!r}) was issued {len(tail)} consecutive "
+                    f"times with no progress. Use terminal(workdir=...) with a "
+                    f"substantive command; standalone `cd` does not count as "
+                    f"progress."
+                )
+        # ABAB cycle.
+        if len(window) >= 4:
+            a, b, c, d = (s[1] for s in window[-4:])
+            if a == c and b == d and a != b:
+                return (
+                    "terminal_nonprogress_cycle: commands alternate between "
+                    f"{a[:60]!r} and {b[:60]!r} with no progress. Issue one "
+                    f"terminal(workdir=...) command that does real work."
+                )
+        # N consecutive standalone cd.
+        if len(window) >= 3 and all(
+            s[1].startswith("cd ") for s in window[-3:]
+        ):
+            return (
+                "terminal_nonprogress_cycle: standalone `cd` does not "
+                "constitute progress; the shell cwd is persistent. Use "
+                "terminal(workdir=\"/absolute/path\", command=\"<work>\")."
+            )
+        return None
+
     def _execute_tool_calls(self, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
         """Execute tool calls from the assistant message and append results to messages.
 
@@ -6060,6 +6132,8 @@ class AIAgent:
             start = time.time()
             try:
                 result = self._maybe_short_circuit_file_read(function_name, function_args)
+                if result is None and function_name == "terminal":
+                    result = self._record_terminal_call(function_args, tool_call.id)
                 if result is None:
                     result = self._invoke_tool(
                         function_name,

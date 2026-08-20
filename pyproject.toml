@@ -47,12 +47,39 @@ dependencies = [
     "rich",
     "requests",
     "prompt_toolkit",
+    # --- omp (Oh My Pi) worker runtime -------------------------------------
+    # The omp RPC worker (megaplan/workers/omp.py) drives `omp --mode rpc`
+    # through the pinned omp_rpc Python client. Pinned to an immutable SHA of
+    # the oh-my-pi monorepo (python/omp-rpc subdirectory) so clean machines
+    # and cloud builds resolve the same protocol version; the omp CLI itself
+    # is installed separately (bun/omp on PATH).
+    "omp-rpc @ git+https://github.com/can1357/oh-my-pi.git@45e12e5bb758198a920c6070e7e64cb33b21beac#subdirectory=python/omp-rpc",
     "firecrawl-py",
     "fal-client",
     "edge-tts",
     "faster-whisper>=1.0.0",
     "PyJWT[crypto]",
     "discord.py>=2.6,<3",
+    # --- Astrid epic runtime closure (shared-generation contract) ----------
+    # The shared generation venv is built ONLY from this frozen spec and is
+    # used by every epic's validation jobs. Astrid's runtime code imports
+    # these packages (jsonschema via astrid/core/theme/_schema.py,
+    # scenedetect/google-genai/pillow/xxhash via media/reference tooling,
+    # referencing as jsonschema's transitive core). Declaring them here keeps
+    # ANY regeneration of the shared venv content-convergent with the
+    # hand-augmented runtime; omitting them caused validation job VJ2 to exit
+    # 4 (pytest_collection_error: ModuleNotFoundError: jsonschema) after a
+    # spec-faithful rebuild dropped them. Pins mirror Astrid's own pyproject.
+    # banodoco-timeline-schema is a non-PyPI generation dependency declared
+    # in the local-only dev group below. Keeping it out of published project
+    # metadata preserves plain pip/wheel installs while uv and the pip-strategy
+    # generation builder install the vendored directory from the frozen lock.
+    "jsonschema>=4.0",
+    "referencing>=0.30",
+    "scenedetect[opencv-headless]==0.6.4",
+    "google-genai>=1.15.0",
+    "pillow>=12.2,<13",
+    "xxhash>=3.4",
 ]
 
 [project.scripts]
@@ -68,11 +95,24 @@ db = [
 # commands / docs that say `pip install '.[agent]'` keep working as a no-op.
 agent = []
 
+[dependency-groups]
+dev = [
+    "banodoco-timeline-schema==0.0.2",
+]
+
 [tool.uv]
 # The hermes/agent backend's packages are now core [project].dependencies, so a
 # plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
 # longer rely on `default-extras` (some uv versions silently ignore it, which is
 # what produced the confusing mid-prep `agent_deps_missing` failures).
+
+[tool.uv.sources]
+banodoco-timeline-schema = { path = "vendor/timeline-schema/python" }
+
+[tool.hatch.metadata]
+# The omp-rpc runtime is a direct git reference (pinned SHA) so clean
+# machines and cloud builds resolve the same protocol version.
+allow-direct-references = true
 
 [tool.hatch.build]
 exclude = [

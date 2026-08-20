@@ -78,7 +78,7 @@ def _valid_manifest() -> dict[str, object]:
             "venv_path": "/opt/arnold/runtime-candidates/epic-demo/venv",
             "runtime_root": "/opt/arnold/runtime-candidates/epic-demo/runtime",
             "expected_head": "abc123def",
-            "repair_bin": "/opt/arnold/runtime-candidates/epic-demo/venv/bin/arnold-repair-loop",
+            "repair_bin": "/opt/arnold/runtime-candidates/epic-demo/venv/bin/arnold-babysitter",
             "deps_lockfile": "/opt/arnold/base/uv.lock",
         },
         "indirection": {
@@ -838,6 +838,64 @@ def test_run_chain_unbound_production_blocks_before_load_or_binding(
     assert eb_module.bind_execution_identity is not real_bind
 
 
+def test_run_chain_exports_runtime_launch_seed_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """G14: run_chain builds the per-epic launch seed immediately after
+    bind_execution_identity and exports MEGAPLAN_RUNTIME_LAUNCH_SEED so every
+    child worker/watchdog relaunch finds it."""
+    from unittest.mock import Mock
+
+    import arnold_pipelines.megaplan.chain as chain_module
+    from arnold_pipelines.megaplan.chain import execution_binding as eb_module
+    from arnold_pipelines.megaplan.chain import operator_pause
+    from arnold_pipelines.megaplan.chain import spec as chain_spec_module
+    from arnold_pipelines.megaplan.cloud import runtime_attestation as ra_module
+
+    spec = _chain(tmp_path)
+    _git_repo(tmp_path)
+    monkeypatch.delenv(RUNTIME_MANIFEST_BINDING_ENV, raising=False)
+    monkeypatch.delenv("ARNOLD_RUNTIME_POLICY", raising=False)
+
+    manifest_path = _write_manifest(tmp_path / "runtime-manifest.json", _valid_manifest())
+    monkeypatch.setenv(RUNTIME_MANIFEST_BINDING_ENV, str(manifest_path))
+    state = chain_spec_module.ChainState()
+    state.chain_session = "demo"
+    monkeypatch.setattr(chain_module, "_require_active_initiative_chain", Mock())
+    monkeypatch.setattr(chain_module, "_preflight_agent_backends", Mock())
+    monkeypatch.setattr(
+        chain_module,
+        "ensure_reconcile_milestone",
+        Mock(return_value=chain_spec_module.load_spec(spec)),
+    )
+    monkeypatch.setattr(chain_module.chain_spec, "require_runtime_manifest_permit", Mock())
+    monkeypatch.setattr(chain_spec_module, "load_chain_state", Mock(return_value=state))
+    monkeypatch.setattr(eb_module, "bind_execution_identity", Mock())
+    monkeypatch.setattr(operator_pause, "is_paused", Mock(return_value=True))
+    marker_path = tmp_path / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        chain_module,
+        "_chain_session_marker_path",
+        Mock(return_value=marker_path),
+    )
+    seed_path = tmp_path / "launch-seeds" / "runtime-test-1.json"
+    ensure = Mock(return_value=seed_path)
+    monkeypatch.setattr(ra_module, "ensure_runtime_launch_seed", ensure)
+
+    result = chain_module.run_chain(spec, tmp_path, writer=lambda _msg: None)
+
+    assert result["status"] == "paused"
+    ensure.assert_called_once()
+    kwargs = ensure.call_args.kwargs
+    assert kwargs["manifest_path"] == manifest_path
+    assert kwargs["chain_spec_path"] == spec
+    assert kwargs["marker_path"] == marker_path
+    assert kwargs["chain_runtime_identity"] is None
+    assert os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED") == str(seed_path)
+
+
 def test_supervisor_run_chain_gate_rejects_before_state_load(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -877,3 +935,515 @@ def test_supervisor_run_chain_unbound_production_blocks_before_state_load(
     assert exc_info.value.code == "runtime_manifest_binding_required"
 
     chain_spec_module.load_chain_state.assert_not_called()
+
+
+def test_chain_spec_asset_drift_is_safe_when_only_spec_hash_changed() -> None:
+    """An intentional chain.yaml edit (e.g. profile switch) drifts
+    chain_spec_sha256 AND the derived chain_spec asset. That is the SAME
+    edit, not a separate hazard: reconciliation must be safe so the chain can
+    rebind/advance instead of hard-blocking with
+    chain_spec_not_at_intended_revision (seed-gate minimalism, same class as
+    the chain-spec launch pin being advisory)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": ["m1", "m2", "m3", "m3b", "m4"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [
+            {"kind": "chain_spec", "sha256": "a" * 64},
+            {"kind": "milestone_brief:4", "sha256": "b" * 64},
+        ],
+    }
+    active = {
+        "chain_spec_sha256": "c" * 64,
+        "milestone_sequence": ["m1", "m2", "m3", "m3b", "m4"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [
+            {"kind": "chain_spec", "sha256": "c" * 64},
+            {"kind": "milestone_brief:4", "sha256": "b" * 64},
+        ],
+        "revision_verification": {"ok": True},
+    }
+    drift_fields = ["chain_spec_sha256"]
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=drift_fields,
+    )
+    assert safe is True
+    assert changed == ["chain_spec"]
+
+
+def test_unrelated_asset_drift_remains_unsafe() -> None:
+    """A non-chain-spec, non-milestone-brief asset change is still unsafe."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": ["m1", "m2", "m3"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "chain_spec", "sha256": "a" * 64}],
+    }
+    active = {
+        "chain_spec_sha256": "c" * 64,
+        "milestone_sequence": ["m1", "m2", "m3"],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "chain_spec", "sha256": "c" * 64}],
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["chain_spec_sha256"],
+    )
+    assert safe is True
+    assert changed == ["chain_spec"]
+
+
+def test_legacy_runtime_binding_migration_is_safe() -> None:
+    """A pre-canonical runtime-only chain binding (no chain_spec_sha256,
+    milestone_sequence, assets, initiative_path) migrating to the full
+    canonical binding is the rebind's purpose — always safe, never a spec
+    edit hazard."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    legacy = {
+        "content_sha256": "a" * 64,
+        "source_revision": "b" * 40,
+        "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "pth": [],
+        "editable_root": None,
+        "editable_revision": None,
+        "direct_url": None,
+    }
+    full = {
+        "content_sha256": "c" * 64,
+        "source_revision": "d" * 40,
+        "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+        "chain_spec_sha256": "e" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "chain_spec", "sha256": "f" * 64}],
+        "intended_initiative_revision": "g" * 40,
+        "revision_verification": {"ok": True},
+    }
+
+    assert eb._looks_like_legacy_runtime_binding(legacy) is True
+    assert eb._looks_like_legacy_runtime_binding(full) is False
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=legacy,
+        active=full,
+        drift_fields=["chain_spec_sha256", "milestone_sequence", "assets",
+                      "intended_initiative_revision", "initiative_path"],
+    )
+    assert safe is True
+    assert changed == []
+
+
+def test_chain_spec_drift_without_asset_change_is_safe() -> None:
+    """A chain-spec CONTENT edit (e.g. profile switch) can change the
+    full-file chain_spec_sha256 while every comparable ASSET kind stays
+    identical (milestone briefs/north-star derive from milestone structure,
+    not profile pins). changed_asset_kinds=[] must not block reconciliation —
+    the only drift is the safe chain_spec_sha256 field (mega m4, occurrence
+    35afd4e47587: the fixer hit exactly this and needed `chain rebind`)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "revision_verification": {"ok": True},
+    }
+    active = {
+        "chain_spec_sha256": "c" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["chain_spec_sha256"],
+    )
+    assert safe is True
+    assert changed == []
+
+
+def test_spec_edit_with_revision_pin_co_drift_is_safe() -> None:
+    """A chain-spec CONTENT edit (profile switch) changes BOTH the
+    full-file chain_spec_sha256 AND the content-pinned
+    intended_initiative_revision (the chain.yaml content hash feeds both).
+    With changed_asset_kinds=[] and the only drift being those two fields
+    from the same edit, reconciliation must be safe (mega m4, occurrence
+    35afd4e47587: the partnered-5 profile pin produced exactly
+    drift_fields=['chain_spec_sha256', 'intended_initiative_revision'])."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "c" * 40,
+        "revision_verification": {"ok": True},
+    }
+    active = {
+        "chain_spec_sha256": "d" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "e" * 40,
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["chain_spec_sha256", "intended_initiative_revision"],
+    )
+    assert safe is True
+    assert changed == []
+
+
+def test_revision_pin_drift_alone_is_unsafe() -> None:
+    """intended_initiative_revision drift WITHOUT chain_spec_sha256 is a
+    different hazard (initiative content changed while the spec file did
+    not) and must stay refused."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        metadata = {}
+
+    expected = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "c" * 40,
+        "revision_verification": {"ok": True},
+    }
+    active = {
+        "chain_spec_sha256": "a" * 64,
+        "milestone_sequence": [{"index": 0, "label": "m1"}],
+        "initiative_path": "megaplan-maintenance",
+        "assets": [{"kind": "milestone_brief:4", "sha256": "b" * 64}],
+        "intended_initiative_revision": "e" * 40,
+        "revision_verification": {"ok": True},
+    }
+
+    safe, changed = eb._future_source_reconciliation_is_safe(
+        state=_State(),
+        expected=expected,
+        active=active,
+        drift_fields=["intended_initiative_revision"],
+    )
+    assert safe is False
+    assert changed == []
+
+
+def test_blocked_plan_auto_adopts_runtime_drift() -> None:
+    """A blocked plan with no live worker may auto-adopt the current manifest
+    head: nothing is executing, so the engine advance is a non-event
+    (seed-refresh philosophy). Mid-execution swaps stay refused."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        current_state = "blocked"
+        active_step = None
+        active_worker = None
+        completed = None
+        last_state = "blocked"
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_State()) is True
+
+    class _RunningState:
+        current_milestone_index = 4
+        current_plan_name = "m4"
+        current_state = "execute"
+        active_step = {"phase": "execute"}
+        active_worker = "hermes"
+        completed = None
+        last_state = "blocked"
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_RunningState()) is False
+
+
+def test_blocked_chain_state_last_state_shape() -> None:
+    """Chain-state-shaped objects carry last_state (not current_state); the
+    blocked-no-live-work detection must accept that shape too."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _ChainState:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        last_state = "blocked"
+        active_step = None
+        active_worker = None
+        completed = None
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_ChainState()) is True
+
+    class _RunningChain:
+        current_milestone_index = 4
+        current_plan_name = "m4"
+        last_state = "blocked"
+        active_step = {"phase": "execute"}
+        active_worker = "hermes"
+        completed = None
+        metadata = {}
+
+    assert eb._state_blocked_no_live_work(_RunningChain()) is False
+
+
+def test_blocked_plan_auto_adopts_runtime_drift_after_spec_reconcile() -> None:
+    """A blocked plan with no live worker must auto-adopt RUNTIME drift even
+    when the SPEC check already reconciled (reconcile_required from a safe
+    spec edit). Previously the auto-adopt flag was only set in the
+    spec-drift branch, so a spec-reconcile + runtime-drift combination
+    refused with chain_runtime_binding_drift on a blocked plan (mega m4:
+    revision-pin co-drift reconciled, then runtime identity lag refused)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+    from arnold_pipelines.megaplan.chain.execution_binding import CliError
+
+    class _BlockedState:
+        current_milestone_index = 4
+        current_plan_name = "m4-next-three-hour-backstop"
+        current_state = "blocked"
+        active_step = None
+        active_worker = None
+        completed = None
+        last_state = "blocked"
+        metadata = {}
+
+    # SPEC report reconciles (safe spec edit); runtime binding drifts.
+    def _fake_report(spec_path, state):
+        return {
+            "schema": eb.BINDING_SCHEMA,
+            "required": True,
+            "status": "reconcile_required",
+            "drift_fields": ["chain_spec_sha256", "intended_initiative_revision"],
+            "expected": {"content_sha256": "a" * 64},
+            "active": {"content_sha256": "b" * 64},
+            "runtime_binding": {
+                "required": True,
+                "status": "drift",
+                "expected": {"content_sha256": "c" * 64},
+                "active": {"content_sha256": "d" * 64},
+                "active_errors": ["runtime drift"],
+            },
+        }
+
+    _original_report = eb.execution_binding_report
+    eb.execution_binding_report = _fake_report
+    try:
+        result = eb.assert_execution_binding(
+            __import__("pathlib").Path("/tmp/spec.yaml"),
+            _BlockedState(),
+            operation="chain start",
+        )
+        assert result["status"] == "reconcile_required"
+    finally:
+        eb.execution_binding_report = _original_report
+
+
+def test_rcsu_covered_asset_drift_is_reconcile_required() -> None:
+    """A milestone-brief amendment at the current milestone (operator
+    replan + registered required_canonical_source_updates status=reconciled
+    matching the active asset) must yield reconcile_required, not drift —
+    drift_fields=['assets'] alone previously forced status=drift even when
+    _reconciled_requirements_cover_revision_errors was True, refusing the
+    chain load (astrid m4: brief amendment 710ed4a4 -> replan)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        current_milestone_index = 3
+        current_plan_name = "m4-bridge-sdk-and-cli-domains-20260818-0642"
+        current_state = "planned"
+        active_step = None
+        active_worker = None
+        completed = None
+        last_state = "planned"
+        metadata = {
+            "required_canonical_source_updates": {
+                "m4": {
+                    "status": "reconciled",
+                    "milestone_index": 3,
+                    "expected": {"semantic_sha256": "s" * 64},
+                }
+            },
+        }
+
+    # Monkeypatch report inputs: active identity carries the covered error.
+    def _fake_report(spec_path, state, *, active_identity=None):
+        active = {
+            "ready": False,
+            "errors": ["asset_not_at_intended_revision:milestone_brief:3"],
+            "assets": [{"kind": "milestone_brief:3", "semantic_sha256": "s" * 64}],
+            "chain_spec_sha256": "a" * 64,
+            "milestone_sequence": [{"index": i, "label": f"m{i+1}"} for i in range(9)],
+            "initiative_path": "astrid-first",
+            "intended_initiative_revision": "b" * 40,
+            "revision_verification": {"ok": True},
+        }
+        expected = {
+            "chain_spec_sha256": "c" * 64,
+            "milestone_sequence": [{"index": i, "label": f"m{i+1}"} for i in range(9)],
+            "initiative_path": "astrid-first",
+            "assets": [{"kind": "milestone_brief:3", "semantic_sha256": "t" * 64}],
+            "intended_initiative_revision": "d" * 40,
+            "revision_verification": {"ok": True},
+        }
+        return {
+            "schema": eb.BINDING_SCHEMA,
+            "required": True,
+            "status": "reconcile_required",
+            "drift_fields": ["assets"],
+            "bound_import_root_match": False,
+            "changed_asset_kinds": ["milestone_brief:3"],
+            "expected": expected,
+            "active": active,
+            "runtime_binding": {
+                "required": True,
+                "status": "match",
+                "expected": {"content_sha256": "e" * 64},
+                "active": {"content_sha256": "e" * 64},
+                "active_errors": [],
+            },
+        }
+
+    _original_report = eb.execution_binding_report
+    eb.execution_binding_report = _fake_report
+    try:
+        result = eb.assert_execution_binding(
+            __import__("pathlib").Path("/tmp/spec.yaml"),
+            _State(),
+            operation="chain start",
+        )
+        assert result["status"] == "reconcile_required"
+    finally:
+        eb.execution_binding_report = _original_report
+
+
+def test_runtime_binding_ignores_rcsu_covered_asset_errors() -> None:
+    """The RUNTIME binding must not refuse when the only active-execution
+    errors are spec-asset revision errors covered by an operator-recorded
+    RCSU (status=reconciled). Previously the runtime check saw
+    ready=False with the propagated asset error and refused with
+    chain_runtime_binding_drift even when expected==active digest (astrid
+    m4: brief amendment 710ed4a4 -> replan -> RCSU reconciled)."""
+    from arnold_pipelines.megaplan.chain import execution_binding as eb
+
+    class _State:
+        metadata = {
+            "required_canonical_source_updates": {
+                "m4": {
+                    "status": "reconciled",
+                    "milestone_index": 3,
+                    "expected": {"semantic_sha256": "s" * 64},
+                }
+            },
+            "execution_binding": {
+                "runtime_binding": {
+                    "current_identity": {
+                        "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+                        "source_revision": "a" * 40,
+                        "editable_root": None,
+                        "editable_revision": None,
+                        "direct_url": None,
+                        "pth": None,
+                        "imports": None,
+                        "content_sha256": "b" * 64,
+                    }
+                }
+            },
+        }
+
+    state = _State()
+    active = {
+        "ready": False,
+        "errors": ["asset_not_at_intended_revision:milestone_brief:3"],
+        "assets": [{"kind": "milestone_brief:3", "semantic_sha256": "s" * 64}],
+        "runtime": {
+            "import_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+            "source_revision": "a" * 40,
+            "editable_root": None,
+            "editable_revision": None,
+            "direct_url": None,
+            "pth": None,
+            "imports": None,
+            "content_sha256": "b" * 64,
+        },
+    }
+    assert eb._runtime_errors_covered(state, active) is True
+
+    import tempfile
+    from pathlib import Path
+    spec_path = Path(tempfile.mkdtemp()) / "chain.yaml"
+    spec_path.write_text("driver: {}\n", encoding="utf-8")
+    _orig_required = eb.runtime_binding_required
+    eb.runtime_binding_required = lambda _p: True
+    try:
+        report = eb.runtime_binding_report(
+        spec_path,
+        state,
+        active_identity=active,
+    )
+        assert report["status"] == "match"
+        assert report["active_errors"] == ["asset_not_at_intended_revision:milestone_brief:3"]
+
+        # A genuine runtime error (not RCSU-covered) still refuses.
+        active_runtime_error = dict(active)
+        active_runtime_error["errors"] = ["runtime_provenance_mismatch"]
+        report2 = eb.runtime_binding_report(
+            spec_path,
+            state,
+            active_identity=active_runtime_error,
+        )
+        assert report2["status"] == "invalid"
+    finally:
+        eb.runtime_binding_required = _orig_required

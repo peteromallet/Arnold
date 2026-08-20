@@ -198,3 +198,42 @@ def test_merge_is_idempotent_when_candidate_is_already_merged() -> None:
     twice = merge_blast_radius_floor(deepcopy(floor), deepcopy(once))
 
     assert twice == once
+
+
+def test_floor_missing_test_selectors_survive_merge_with_model_proposal() -> None:
+    floor = _radius(selectors=[_selector("tests/test_floor.py")])
+    floor["missing_test_selectors"] = [
+        "tests/test_floor.py",
+        "tests/test_new.py::test_node",
+    ]
+    candidate = _radius(selectors=[_selector("tests/test_candidate.py")])
+
+    merged = merge_blast_radius_floor(floor, candidate)
+
+    assert merged is not None
+    assert merged["missing_test_selectors"] == [
+        "tests/test_floor.py",
+        "tests/test_new.py::test_node",
+    ]
+
+
+def test_missing_test_selectors_union_is_deduped_order_preserving() -> None:
+    floor = _radius(selectors=[_selector("tests/test_floor.py")])
+    floor["missing_test_selectors"] = [
+        "tests/test_a.py",
+        "tests/test_b.py::test_node",
+    ]
+    candidate = _radius(selectors=[_selector("tests/test_candidate.py")])
+    candidate["missing_test_selectors"] = [
+        "tests/test_b.py::test_node",
+        "tests/test_c.py",
+    ]
+
+    merged = merge_blast_radius_floor(floor, candidate)
+
+    assert merged is not None
+    assert merged["missing_test_selectors"] == [
+        "tests/test_a.py",
+        "tests/test_b.py::test_node",
+        "tests/test_c.py",
+    ]

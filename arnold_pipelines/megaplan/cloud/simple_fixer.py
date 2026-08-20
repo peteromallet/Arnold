@@ -19,7 +19,7 @@ This module defines:
   child process.
 * a **singleton exact-occurrence claim** acquired through the existing
   plural repair queue APIs (the queue-root-validated ``mkdir`` lock
-  primitive shared with :func:`claim_active_repair_request`), so that only
+  primitive shared with the occurrence claim lock), so that only
   one exact occurrence is actively claimed at a time.
 * a **durable two-try unchanged-fingerprint mutation budget** that caps
   no-op retries across claims, processes, and containers, and
@@ -376,11 +376,10 @@ def claim_singleton_occurrence(
     """Acquire the singleton exact-occurrence claim.
 
     The claim is enforced **one active occurrence at a time** through the
-    same queue-root-validated ``mkdir`` lock primitive that
-    :func:`claim_active_repair_request` uses (via
-    :func:`singleton_occurrence_claim_lock_dir`), but keyed by the
-    deterministic occurrence fingerprint so two distinct occurrences of the
-    same logical blocker cannot share a claim slot.
+    same queue-root-validated ``mkdir`` lock primitive used by the queue's
+    claim lock helpers (via :func:`singleton_occurrence_claim_lock_dir`),
+    but keyed by the deterministic occurrence fingerprint so two distinct
+    occurrences of the same logical blocker cannot share a claim slot.
 
     Returns a typed :class:`SimpleFixerClaimResult`.  The fixer never
     auto-seizes a stale lock — a stale claim is reported as ``busy`` and

@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shlex
+import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -428,6 +429,36 @@ def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state:
 # rejection, status="pending", verification-pattern detection, and U-prefixed
 # plan_steps_covered rules are enforced by _finalize_semantic_postcheck.
 _FINALIZE_INPUT_SCHEMA = FINALIZE_MODEL_OUTPUT_SCHEMA
+
+
+def _persist_invalid_finalize_feedback(plan_dir: Path, worker: WorkerResult, error: CliError) -> None:
+    """Persist structured feedback for an ``invalid_finalize`` rejection.
+
+    Mirrors the feasibility repair lane (``_route_finalize_task_feasibility_failure_to_revise``)
+    so a fresh finalizer invocation receives the rejection diagnostics via
+    ``_finalize_retry_feedback`` instead of the plan hard-blocking with no
+    repair path.  The feedback file is advisory scratch: it is overwritten by
+    the next successful finalize and never treated as an admitted artifact.
+    """
+    message = getattr(error, "message", None) or str(error)
+    atomic_write_json(
+        plan_dir / "finalize_revise_feedback.json",
+        {
+            "code": "finalized_payload_invalid",
+            "message": message,
+            "next_step": "finalize",
+            "diagnostic_codes": ["invalid_finalize"],
+            "diagnostics": [{"code": "invalid_finalize", "message": message}],
+            "feasibility": None,
+            "candidate_id": None,
+            "failure_fingerprint": None,
+            "occurrences": None,
+            "circuit_open": False,
+            "report_artifact": "finalize_revise_feedback.json",
+            "implementation_dispatch_allowed": False,
+            "repair_identity_persisted": False,
+        },
+    )
 
 
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
@@ -883,11 +914,132 @@ def _capture_test_baseline_for_plan(
     return baseline
 
 
+def _baseline_source_revision(project_dir: Path) -> str | None:
+    """Committed source revision the baseline suite runs against."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _filter_baseline_command_to_existing(
+    project_dir: Path,
+    command: str,
+) -> tuple[str, list[str]]:
+    """Drop selector tokens that do not exist at baseline-capture time.
+
+    The baseline selection may include planned task outputs (files the tasks
+    will create).  Those cannot be collected pre-execution — running them
+    yields a cryptic exit-4 "file or directory not found" that poisons the
+    whole baseline (``baseline_test_failures=null``).  A selector that does
+    not exist yet has no failing tests to record, so dropping it is truthful
+    evidence, not laundering: the post-execute delta sees the file as an
+    *added* test, and any failure there still counts as newly failing.
+
+    Returns ``(filtered_command, dropped_selectors)``.  The original command
+    is returned unchanged when it is not a recognizable pytest shape or when
+    nothing needs to be dropped.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command, []
+    exec_idx = None
+    for i, tok in enumerate(parts):
+        if tok == "pytest" or (
+            tok.startswith("pytest") and not tok.startswith("-")
+        ):
+            exec_idx = i
+            break
+    if exec_idx is None:
+        return command, []
+    kept: list[str] = []
+    dropped: list[str] = []
+    seen_selector = False
+    kept_selector_count = 0
+    for tok in parts[exec_idx + 1 :]:
+        if tok.startswith("-"):
+            kept.append(tok)
+        else:
+            seen_selector = True
+            path = tok.strip("'\"")
+            exists = (project_dir / path).exists()
+            # Only drop missing selectors that are concrete FILE paths
+            # (planned task outputs are files).  Bare directory selectors are
+            # kept so directory-scoped baseline runs keep their legacy
+            # behavior.
+            file_like = bool(Path(path).suffix) or "/" in path
+            if exists or not file_like:
+                kept.append(tok)
+                if exists:
+                    kept_selector_count += 1
+            else:
+                dropped.append(tok)
+    if not dropped or not seen_selector:
+        return command, []
+    if kept_selector_count == 0:
+        # Every file selector was a not-yet-existing planned output: nothing
+        # file-scoped is collectable.  Signal the caller with an empty
+        # command so it can record a truthful empty baseline instead of a
+        # poisoned null.
+        return "", dropped
+    rebuilt = " ".join(shlex.quote(t) for t in parts[: exec_idx + 1] + kept)
+    return rebuilt, dropped
+
+
 def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     if os.getenv(MOCK_ENV_VAR) == "1":
         return {
             "baseline_test_failures": [],
             "baseline_test_command": "pytest --tb=no -q --no-header -rA",
+            "baseline_cwd": str(project_dir),
+            "baseline_source_revision": _baseline_source_revision(project_dir),
+        }
+
+    # Explicit capture root: the baseline suite must resolve its relative
+    # selectors from the SAME root they were compiled against.  Record the
+    # cwd + source revision in the artifact for provenance.
+    baseline_cwd = str(project_dir)
+    baseline_source_revision = _baseline_source_revision(project_dir)
+    _dropped_note: list[str] = []
+    _baseline_command = config.get("test_command")
+    if isinstance(_baseline_command, str) and _baseline_command.strip():
+        _filtered_command, _dropped = _filter_baseline_command_to_existing(
+            project_dir, _baseline_command
+        )
+        if _dropped:
+            config = dict(config)
+            config["test_command"] = _filtered_command
+            _dropped_note = [
+                "Baseline capture skipped %d selector(s) that did not exist "
+                "yet at capture time (planned task outputs cannot be collected "
+                "pre-execution): %s"
+                % (len(_dropped), ", ".join(_dropped))
+            ]
+            LOGGER.warning(
+                "baseline capture: dropping %d selector(s) that do not exist "
+                "yet at capture time: %s",
+                len(_dropped),
+                _dropped,
+            )
+    if _dropped_note and not (config.get("test_command") or "").strip():
+        # Every selector was a not-yet-existing planned output: there is
+        # nothing collectable to record, so the baseline is a truthful empty
+        # set rather than a poisoned null.
+        return {
+            "baseline_test_failures": [],
+            "baseline_test_command": _baseline_command,
+            "baseline_test_note": " ".join(_dropped_note),
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
 
     # Two caps govern baseline capture (see suite_runner._wait_for_process):
@@ -928,6 +1080,8 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
                 f"test_baseline_timeout config value is invalid ({raw_timeout!r}); "
                 "must be a positive integer."
             ),
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
 
     raw_idle = config.get("test_baseline_idle_timeout")
@@ -1004,25 +1158,36 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
                 f"(suite still producing output but never finished) while running: "
                 f"{result.command}"
             )
+        if _dropped_note:
+            note = f"{note} {' '.join(_dropped_note)}"
         return {
             "baseline_test_failures": None,
             "baseline_test_command": result.command,
             "baseline_test_note": note,
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
     if result.status == "runner_error":
+        note = (
+            f"Baseline capture failed: runner error"
+            + (f" (exit code: {result.exit_code})" if result.exit_code is not None else "")
+        )
+        if _dropped_note:
+            note = f"{note} {' '.join(_dropped_note)}"
         return {
             "baseline_test_failures": None,
             "baseline_test_command": None,
-            "baseline_test_note": (
-                f"Baseline capture failed: runner error"
-                + (f" (exit code: {result.exit_code})" if result.exit_code is not None else "")
-            ),
+            "baseline_test_note": note,
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
     if result.status == "not_applicable":
         return {
             "baseline_test_failures": None,
             "baseline_test_command": result.command,
             "baseline_test_note": "No tests collected (pytest exit code 5).",
+            "baseline_cwd": baseline_cwd,
+            "baseline_source_revision": baseline_source_revision,
         }
 
     # ``passed`` or ``failed`` — baseline captures whatever was failing *before*
@@ -1031,6 +1196,8 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
         "baseline_test_failures": result.failures,
         "baseline_test_command": result.command,
         "baseline_test_collection_errors": list(result.collection_errors or []),
+        "baseline_cwd": baseline_cwd,
+        "baseline_source_revision": baseline_source_revision,
     }
 
 def _normalize_task_complexity(payload: dict[str, Any]) -> None:
@@ -1768,6 +1935,138 @@ def _route_finalize_baseline_selection_failure_to_revise(
     return response
 
 
+def _finalize_repair_identity_route(
+    plan_dir: Path,
+    state: PlanState,
+    repair: Mapping[str, Any],
+) -> tuple[str, str, str]:
+    """Resolve the dispatcher-owned repair route for the finalize mint.
+
+    Mirrors the auto driver's lifecycle route (``_lifecycle_repair_request_route``
+    + ``_derive_chain_path``) without importing it: the finalize handler runs
+    inside the chain worker and the driver is a consumer of this same persisted
+    envelope, so importing auto.py here would be circular.
+    """
+    workspace_path = plan_dir
+    if (
+        plan_dir.parent.name == "plans"
+        and plan_dir.parent.parent.name == ".megaplan"
+    ):
+        workspace_path = plan_dir.parent.parent.parent
+    session = os.environ.get("ARNOLD_REPAIR_SESSION") or plan_dir.name
+    chain = ""
+    meta_source = (
+        state.get("meta") if isinstance(state.get("meta"), Mapping) else {}
+    )
+    for source in (repair, meta_source):
+        for key in ("chain_path", "chain", "chain_spec"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                chain = value.strip()
+                break
+        if chain:
+            break
+    if not chain:
+        chain = os.environ.get("ARNOLD_CHAIN_SPEC") or str(plan_dir)
+    return str(workspace_path), session, chain
+
+
+def _persist_finalize_repair_identity(
+    plan_dir: Path,
+    state: PlanState,
+    repair: Mapping[str, Any],
+    *,
+    message: str,
+) -> bool:
+    """Mint and persist the v1 repair-identity envelope for the open circuit.
+
+    The finalize phase is a real lifecycle owner while it holds the plan lock:
+    ``set_active_step`` persisted the run incarnation, orphan fence, and runner
+    lease at phase entry, and this process is the live runner.  Mirror
+    ``auto._record_lifecycle_failure``: reread the exact runner lease and mint
+    authority only from the persisted active step.  The persisted envelope is
+    exactly what ``derive_repair_identity`` (watchdog dispatch) accepts, so the
+    repair loop can claim this occurrence without a mechanical relaunch.
+
+    Fail closed: any exception or missing authority returns ``False`` and the
+    caller's failure records are written regardless.
+    """
+    try:
+        import hashlib
+        import json
+
+        from arnold_pipelines.megaplan._core.phase_runtime import (
+            current_runner_lease_binding,
+        )
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            build_owned_lifecycle_repair_identity,
+            normalize_repair_identity,
+        )
+
+        active_step = state.get("active_step")
+        active = active_step if isinstance(active_step, Mapping) else {}
+        meta = state.setdefault("meta", {})
+        coordinator_attempt_id = str(meta.get("current_invocation_id") or "").strip()
+        revision = str(state.get("plan_revision") or "").strip()
+        if not revision:
+            revision = "sha256:" + hashlib.sha256(
+                json.dumps(
+                    state,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+        workspace, session, chain = _finalize_repair_identity_route(
+            plan_dir,
+            state,
+            repair,
+        )
+        latest_failure = state.get("latest_failure")
+        failure_kind = str(
+            latest_failure.get("kind") if isinstance(latest_failure, Mapping) else ""
+        ).strip() or "deterministic_phase_failure"
+        blocker_payload = {
+            "kind": failure_kind,
+            "phase": "finalize",
+            "message": message,
+            "metadata": dict(repair),
+        }
+        blocker_digest = "sha256:" + hashlib.sha256(
+            json.dumps(
+                blocker_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        identity = build_owned_lifecycle_repair_identity(
+            environment=workspace,
+            session=session,
+            chain=chain,
+            plan_revision=revision,
+            phase="finalize",
+            task="phase:finalize",
+            attempt=str(active.get("attempt") or ""),
+            normalized_failure_kind=failure_kind,
+            blocker_or_phase_result_hash=blocker_digest,
+            active_step=active,
+            live_runner_lease=current_runner_lease_binding(),
+            coordinator_attempt_id=coordinator_attempt_id,
+        )
+        if identity is None or normalize_repair_identity(identity) is None:
+            return False
+        meta["repair_identity"] = identity
+        meta["repair_identity_provenance"] = {
+            "authority_source": "finalize_planner_repair_circuit_open_owner",
+            "phase": "finalize",
+            "positive_source_reread": True,
+        }
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _route_finalize_task_feasibility_failure_to_revise(
     plan_dir: Path,
     state: PlanState,
@@ -1796,6 +2095,25 @@ def _route_finalize_task_feasibility_failure_to_revise(
 
     diagnostics = error.report.get("diagnostics", [])
     codes = [str(item.get("code")) for item in diagnostics if isinstance(item, Mapping)]
+    # ── astrid-first fixer: carry the STRUCTURED feasibility report forward so a
+    # retry can actually repair. The full report (paths, task IDs, budget numbers)
+    # already exists in ``error.report``; only codes were forwarded before, which
+    # made every retry a blind re-roll of the same prompt.
+    structured_diagnostics = [
+        item.as_dict() if hasattr(item, "as_dict") else dict(item)
+        for item in diagnostics
+        if isinstance(item, Mapping) or hasattr(item, "as_dict")
+    ]
+    feasibility_budget = {
+        key: error.report.get(key)
+        for key in (
+            "critical_path_minutes",
+            "critical_path_task_ids",
+            "estimated_dispatch_minutes",
+            "execute_phase_timeout_minutes",
+            "batches",
+        )
+    }
     message = (
         "Finalize rejected a candidate task graph before publication "
         f"({', '.join(codes)}). The last admitted graph and accepted task "
@@ -1845,6 +2163,19 @@ def _route_finalize_task_feasibility_failure_to_revise(
             STATE_BLOCKED,
             route_signal="planner_repair_circuit_open",
         )
+        # Mint the v1 repair-identity envelope from the lifecycle active step
+        # and the live runner lease while this process still owns the finalize
+        # occurrence (mirrors auto._record_lifecycle_failure).  The watchdog
+        # dispatch path derives repair identity from meta.repair_identity, so
+        # this is what lets it enqueue the repair loop for the rejected graph.
+        # Fail closed: latest_failure/resume_cursor/planner_repair stay written
+        # even when no identity can be minted (no active step / no live lease).
+        repair_identity_persisted = _persist_finalize_repair_identity(
+            plan_dir,
+            state,
+            repair,
+            message=message,
+        )
         next_step = "override recover-blocked"
         result = "planner_repair_blocked"
     else:
@@ -1852,6 +2183,19 @@ def _route_finalize_task_feasibility_failure_to_revise(
         # receives structured diagnostics without broad critique/revise.
         next_step = "finalize"
         result = "planner_repair_required"
+        # Mint the v1 repair-identity envelope on the ORDINARY feasibility
+        # rejection too (not only circuit_open).  Without it the watchdog's
+        # dispatch derives zero authority from an empty request and no fixer
+        # can claim the occurrence -- the stall becomes unrepairable while
+        # the visible symptom (provider timeout on the next retry) hides the
+        # missing identity.  Fail closed: identity stays unminted when the
+        # active step / runner lease is unavailable.
+        repair_identity_persisted = _persist_finalize_repair_identity(
+            plan_dir,
+            state,
+            repair,
+            message=message,
+        )
     atomic_write_json(
         plan_dir / "finalize_revise_feedback.json",
         {
@@ -1859,12 +2203,15 @@ def _route_finalize_task_feasibility_failure_to_revise(
             "message": message,
             "next_step": next_step,
             "diagnostic_codes": codes,
+            "diagnostics": structured_diagnostics,
+            "feasibility": feasibility_budget,
             "candidate_id": repair.get("candidate_id"),
             "failure_fingerprint": repair.get("failure_fingerprint"),
             "occurrences": repair.get("occurrences"),
             "circuit_open": circuit_open,
             "report_artifact": "planner_repair.json",
             "implementation_dispatch_allowed": False,
+            "repair_identity_persisted": repair_identity_persisted,
         },
     )
     artifacts = [
@@ -1903,6 +2250,7 @@ def _route_finalize_task_feasibility_failure_to_revise(
                 "occurrences": repair.get("occurrences"),
                 "accepted_authority_preserved": True,
                 "implementation_dispatch_allowed": False,
+                "repair_identity_persisted": repair_identity_persisted,
             },
         },
     )
@@ -2466,7 +2814,35 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         try:
             from arnold_pipelines.megaplan.prompts.finalize import _write_finalize_template
 
+            # Seed the retry scratch from the last model-authored finalize
+            # graph (finalize_vN_raw.txt) when it parses as a complete
+            # payload, so the retry repairs the graph instead of regenerating
+            # from an empty template.  The raw file is the ONLY durable copy
+            # of the full task graph; planner_repair.json carries only the
+            # reduced candidate record.
             seed_path = _write_finalize_template(plan_dir, state)
+            try:
+                import glob as _glob
+                raw_files = sorted(
+                    _glob.glob(str(plan_dir / "finalize_v*_raw.txt")),
+                    key=lambda s: s,
+                )
+                for raw_file in reversed(raw_files):
+                    import json as _json
+                    raw_text = open(raw_file, encoding="utf-8").read()
+                    graph = _json.loads(raw_text)
+                    if isinstance(graph, dict) and graph.get("tasks"):
+                        seed_path.write_text(
+                            _json.dumps(graph, indent=2), encoding="utf-8"
+                        )
+                        print(
+                            f"[finalize] seeded retry scratch from {raw_file} "
+                            f"({len(graph.get('tasks') or [])} tasks)",
+                            file=sys.stderr,
+                        )
+                        break
+            except (OSError, UnicodeDecodeError, ValueError):
+                pass
             seed_json = seed_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             seed_json = None
@@ -2529,7 +2905,16 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         # ────────────────────────────────────────────────────────────
 
-        _validate_finalize_payload(plan_dir, state, worker)
+        try:
+            _validate_finalize_payload(plan_dir, state, worker)
+        except CliError as error:
+            if error.code != "invalid_finalize":
+                raise
+            # Make the rejection repairable: persist structured diagnostics so
+            # the next finalizer invocation (resume/retry) receives feedback via
+            # _finalize_retry_feedback instead of hard-blocking with no lane.
+            _persist_invalid_finalize_feedback(plan_dir, worker, error)
+            raise
 
         # North Star closeout gate: reject finalize when carried blocking
         # North Star actions are not concretely addressed in the latest

@@ -1,3 +1,5 @@
+> **DEPRECATED — NON-CANONICAL BRIEF.** Superseded by [`m4-six-hour-operational-unblocker.md`](m4-six-hour-operational-unblocker.md). This July read-only feedback copy conflicts with the canonical bounded-action product and current `next_three_hour`/event-trigger cadence; its old audit ranks and pin are historical only.
+
 # M4 — Exact six-hour feedback product
 
 ## Outcome
@@ -30,4 +32,3 @@ Rebuild the six-hour audit as a deterministic, exact-window, read-only feedback 
 - L3 cannot mutate audited state or its inputs; routed findings preserve causal IDs.
 - The six-hour agent receipt proves the resolved model is exactly `gpt-5.6-sol`; alternate or missing model resolution fails closed.
 - Recomputed reports are content-hash identical.
-

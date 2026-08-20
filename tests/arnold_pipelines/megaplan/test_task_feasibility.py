@@ -108,6 +108,25 @@ def test_dependency_requires_semantic_evidence_and_rejects_routing_reason() -> N
     assert "dependency_reason_missing" in _codes(report)
 
 
+def test_routing_reason_diagnostic_carries_offending_reason_text() -> None:
+    """The routing_dependency_forbidden diagnostic must surface the offending
+    reason text (and matched routing word) so the finalize revise loop can
+    reword or drop the exact edge instead of re-rolling blind."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"]["reason"] = "Keep separate for model tier routing."
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    diag = next(
+        d for d in report.get("diagnostics", [])
+        if (d.get("code") if isinstance(d, dict) else getattr(d, "code", None))
+        == "routing_dependency_forbidden"
+    )
+    raw = diag if isinstance(diag, dict) else diag.as_dict()
+    assert raw["dependency_id"] == "T1"
+    assert "Keep separate for model tier routing" in raw["message"]
+    assert "matched routing word" in raw["message"]
+    assert "consumes_output" in raw["message"]
+
+
 def test_non_mapping_dependency_evidence_rejected_as_routing() -> None:
     """A dependency_reasons entry that is not a Mapping must be rejected
     with routing_dependency_forbidden — it is not semantic evidence."""
@@ -276,7 +295,55 @@ def test_runtime_test_budget_blocks_unbounded_or_widened_evidence() -> None:
     _enforce_task_test_budgets([invalid], targets_by_id={"T1": target}, issues=issues)
     assert invalid["status"] == "blocked"
     assert "task_test_budget_exhausted" in invalid["executor_notes"]
+    assert "`timeout <N> python3 -m pytest <selector> -q`" in invalid[
+        "executor_notes"
+    ]
     assert issues
+
+    # Explicit recurrence shape (occurrence 4c0190500877): two declared
+    # `timeout 120` runs sum to 240s > max_seconds=120 -> blocked, even though
+    # each individual run is within the admitted selector budget.
+    doubled = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": [
+            "timeout 120 pytest tests/test_t1.py",
+            "timeout 120 pytest tests/test_t1.py",
+        ],
+    }
+    issues.clear()
+    _enforce_task_test_budgets([doubled], targets_by_id={"T1": target}, issues=issues)
+    assert doubled["status"] == "blocked"
+    assert "declared test timeout total 240s exceeds max_seconds=120" in doubled[
+        "executor_notes"
+    ]
+    assert issues
+
+
+def test_runtime_test_budget_admits_subshell_wrapped_timeout_prefix() -> None:
+    # Occurrence 2b9fe3d98636: the executor's `time (timeout 120 ...)` subshell
+    # wrapper puts a `(` immediately before `timeout`. The old prefix boundary
+    # `(?:^|\s)` did not admit that shape, so the budget gate saw
+    # `timeout_seconds=None` and force-blocked authority-accepted tasks with
+    # `task_test_budget_exhausted: test command lacks an admitted timeout
+    # wrapper`, which the adopt seam then refuses to promote -> durable
+    # authority divergence. The fixed boundary `(?:^|[\s(])` admits it.
+    from arnold_pipelines.megaplan.execute.merge import _enforce_task_test_budgets
+
+    target = _task("T1")
+    subshell = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": [
+            "cd /workspace/project && time (timeout 120 /venv/bin/python -m pytest -q tests/test_t1.py --tb=short)",
+        ],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([subshell], targets_by_id={"T1": target}, issues=issues)
+    assert subshell["status"] == "done"
+    assert issues == []
 
 
 def test_runtime_write_budget_blocks_undeclared_paths() -> None:
@@ -343,6 +410,228 @@ def test_feasibility_failure_enters_narrow_planner_repair(tmp_path: Path) -> Non
     assert response["details"]["implementation_dispatch_allowed"] is False
     assert (plan_dir / "finalize_revise_feedback.json").exists()
     assert (plan_dir / "planner_repair.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Planner-repair circuit-open — lifecycle repair identity (producer window)
+# ---------------------------------------------------------------------------
+
+
+def _lifecycle_lease() -> dict[str, object]:
+    """One immutable runner lease binding (matches active_step + live reread)."""
+    return {
+        "schema": "arnold.megaplan.active_step_runner_lease.v1",
+        "session": "finalize-session",
+        "marker_dir": "/workspace/.megaplan/cloud-sessions",
+        "marker_binding": "sha256:marker-binding-1",
+        "lease_id": "lease-finalize-1",
+        "runner_fence": 1,
+        "runner_container_id": "container-1",
+        "pid_namespace_id": "pidns-1",
+        "target_process_start_identity": "boot:4242",
+    }
+
+
+def _lifecycle_active_step(
+    *,
+    run_id: str = "run-finalize-1",
+    invocation_id: str = "inv-finalize-1",
+) -> dict[str, object]:
+    """The lifecycle active step persisted by ``set_active_step`` at entry."""
+    return {
+        "phase": "finalize",
+        "agent": "finalizer",
+        "mode": "default",
+        "run_id": run_id,
+        "invocation_id": invocation_id,
+        "worker_pid": 4242,
+        "started_at": "2026-08-13T00:00:00Z",
+        "attempt": 2,
+        "last_activity_at": "2026-08-13T00:00:01Z",
+        "last_activity_kind": "started",
+        "orphan_fence": {"run_id": run_id, "invocation_id": invocation_id},
+        "runner_incarnation": {
+            "schema": "arnold.megaplan.runner_incarnation.v1",
+            "host_id": "host-1",
+            "pid_namespace_id": "pidns-1",
+            "worker_pid": 4242,
+            "worker_process_start_identity": "boot:4242",
+        },
+        "runner_lease": _lifecycle_lease(),
+    }
+
+
+def _circuit_open_state(
+    plan_dir: Path,
+    repo: Path,
+    *,
+    with_active_step: bool,
+    invocation_id: str = "inv-finalize-1",
+) -> dict:
+    state = {
+        "name": "p",
+        "iteration": 1,
+        "current_state": "gated",
+        "config": {"mode": "code", "project_dir": str(repo)},
+        "meta": {
+            "current_invocation_id": invocation_id,
+            "planner_repair": {
+                "schema": "megaplan.planner_repair",
+                "schema_version": 1,
+                "candidate_id": "candidate:abc",
+                "failure_fingerprint": "fp-1",
+                "occurrences": 2,
+                "circuit_open": True,
+                "accepted_authority_preserved": True,
+                "implementation_dispatch_allowed": False,
+            },
+        },
+        "history": [],
+        "sessions": {},
+    }
+    if with_active_step:
+        state["active_step"] = _lifecycle_active_step(invocation_id=invocation_id)
+    (plan_dir / "task_feasibility.json").write_text("{}", encoding="utf-8")
+    return state
+
+
+def test_finalize_circuit_open_persists_normalizable_repair_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The open-circuit finalize rejection mints a v1 repair identity from the
+    lifecycle active step + live runner lease (auto._record_lifecycle_failure
+    pattern) and persists it where the watchdog dispatch can derive it."""
+    from arnold_pipelines.megaplan._core import phase_runtime
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        derive_repair_identity,
+        normalize_repair_identity,
+    )
+    from arnold_pipelines.megaplan.handlers import finalize
+    from arnold_pipelines.megaplan.workers import WorkerResult
+
+    monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "finalize-session")
+    monkeypatch.setenv("ARNOLD_CHAIN_SPEC", "/workspace/initiative/chain.yaml")
+    monkeypatch.setattr(
+        phase_runtime,
+        "current_runner_lease_binding",
+        lambda: _lifecycle_lease(),
+    )
+
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    state = _circuit_open_state(plan_dir, repo, with_active_step=True)
+    worker = WorkerResult(
+        payload=_payload([_task("T1")]),
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+    )
+    report = compile_task_feasibility(
+        _payload(
+            [
+                _task(f"T{i}", depends_on=([f"T{i - 1}"] if i > 1 else []), minutes=1)
+                for i in range(1, 9)
+            ]
+        )
+    )
+
+    response = finalize._route_finalize_task_feasibility_failure_to_revise(
+        plan_dir,
+        state,
+        worker,
+        finalize.TaskFeasibilityError(report),
+    )
+
+    assert response["result"] == "planner_repair_blocked"
+    assert response["next_step"] == "override recover-blocked"
+    assert response["details"]["repair_identity_persisted"] is True
+    assert state["current_state"] == "blocked"
+    assert state["latest_failure"]["kind"] == "deterministic_phase_failure"
+    assert state["latest_failure"]["phase"] == "finalize"
+    assert state["resume_cursor"] == {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    assert state["meta"]["planner_repair"]["circuit_open"] is True
+
+    persisted = state["meta"].get("repair_identity")
+    assert isinstance(persisted, dict)
+    normalized = normalize_repair_identity(persisted)
+    assert normalized is not None
+    assert normalized["occurrence"]["contract_type"] == "repair_occurrence_key"
+    assert state["meta"]["repair_identity_provenance"][
+        "authority_source"
+    ] == "finalize_planner_repair_circuit_open_owner"
+    # The watchdog dispatch path derives the exact envelope from plan state.
+    derived = derive_repair_identity(plan_state=state)
+    assert derived == normalized
+    # And the failure path persists it to state.json (via _finish_step /
+    # record_step_failure), which is the durable source the watchdog reads.
+    from arnold_pipelines.megaplan._core.io import read_json
+
+    persisted_state = read_json(plan_dir / "state.json")
+    assert isinstance(persisted_state, dict)
+    disk_identity = (persisted_state.get("meta") or {}).get("repair_identity")
+    assert normalize_repair_identity(disk_identity) == normalized
+    assert persisted_state["latest_failure"]["kind"] == "deterministic_phase_failure"
+    assert persisted_state["resume_cursor"] == {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+
+
+def test_finalize_circuit_open_fail_closed_without_active_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No lifecycle active step / live lease → identity is NOT minted, but the
+    failure records (latest_failure, resume_cursor, planner_repair) are."""
+    from arnold_pipelines.megaplan._core import phase_runtime
+    from arnold_pipelines.megaplan.handlers import finalize
+    from arnold_pipelines.megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(
+        phase_runtime,
+        "current_runner_lease_binding",
+        lambda: None,
+    )
+
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    state = _circuit_open_state(plan_dir, repo, with_active_step=False)
+    worker = WorkerResult(
+        payload=_payload([_task("T1")]),
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+    )
+    report = compile_task_feasibility(
+        _payload(
+            [
+                _task(f"T{i}", depends_on=([f"T{i - 1}"] if i > 1 else []), minutes=1)
+                for i in range(1, 9)
+            ]
+        )
+    )
+
+    response = finalize._route_finalize_task_feasibility_failure_to_revise(
+        plan_dir,
+        state,
+        worker,
+        finalize.TaskFeasibilityError(report),
+    )
+
+    assert response["result"] == "planner_repair_blocked"
+    assert response["details"]["repair_identity_persisted"] is False
+    assert "repair_identity" not in state["meta"]
+    assert state["latest_failure"]["kind"] == "deterministic_phase_failure"
+    assert state["resume_cursor"] == {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    assert state["meta"]["planner_repair"]["circuit_open"] is True
+    assert (plan_dir / "finalize_revise_feedback.json").exists()
 
 
 # ---------------------------------------------------------------------------

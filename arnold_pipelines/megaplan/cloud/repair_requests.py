@@ -1014,6 +1014,37 @@ def repair_queue_dir(marker_dir: str | Path) -> Path:
     return validate_queue_root(megaplan_root / QUEUE_DIR_NAME)
 
 
+def resolve_aligned_repair_queue_root(
+    *,
+    default_marker_dir: str | Path = "/workspace/.megaplan/cloud-sessions",
+) -> Path:
+    """Resolve the ONE repair queue root all owner-adoption flows share.
+
+    T-0640 D1: ``occurrence_adopt`` / ``occurrence_join`` and the watchdog's
+    owner-adoption custody fence must read (and, for the supported write-once,
+    write) the SAME box-central queue the watchdog actually claims/launches
+    from — ``/workspace/.megaplan/repair-queue`` on the box.  Mirrors
+    auto.py's ``_lifecycle_repair_request_route`` env-first resolver:
+
+    * ``$ARNOLD_REPAIR_QUEUE_ROOT`` wins when set (the cloud launchers always
+      inject it, defaulting to the box-central queue); otherwise
+    * the queue adjacent to ``$ARNOLD_REPAIR_MARKER_DIR`` is used, falling
+      back to *default_marker_dir* (the box marker directory).
+
+    The fallback NEVER derives from ``project_dir``: a per-epic checkout
+    queue (``<epic>/.megaplan/repair-queue``) is invisible to the box-central
+    G14/watchdog paths, and any root under ``.megaplan/plans`` is rejected by
+    :func:`validate_queue_root`.
+    """
+    env_root = os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+    if env_root:
+        return validate_queue_root(env_root)
+    marker_dir = os.environ.get("ARNOLD_REPAIR_MARKER_DIR") or str(
+        default_marker_dir
+    )
+    return repair_queue_dir(marker_dir)
+
+
 def requests_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / REQUESTS_DIR_NAME
 
@@ -1299,6 +1330,60 @@ def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
     return not repair_request_contract_violations(request)
 
 
+def _normalize_terminal_receipt_expectations(
+    raw: list[str] | None,
+) -> list[str]:
+    """Normalize declared terminal receipt expectations.
+
+    Strips whitespace, drops empty values, and deduplicates while preserving
+    order.  ``None`` / empty input normalizes to ``[]`` (nothing persisted).
+    """
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        value = str(item).strip()
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _terminal_expectations_divergent(
+    existing: Mapping[str, Any] | None,
+    normalized: list[str],
+) -> bool:
+    """True when a persisted request's expectations differ from *normalized*.
+
+    An exact retry reproduces the identical expectation set and coalesces;
+    any difference (including one side empty) is a divergent reuse of the
+    declared terminal contract and must fail closed.
+    """
+    if existing is None:
+        return False
+    persisted = _normalize_terminal_receipt_expectations(
+        existing.get("terminal_receipt_expectations")
+    )
+    return persisted != normalized
+
+
+def _terminal_expectations_divergent_result(
+    existing: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Typed fail-closed result for a divergent terminal-expectation retry.
+
+    Never creates a successor request and never appends a coalesced
+    decision; the persisted request is returned read-only as evidence.
+    """
+    return {
+        "status": "divergent_reuse",
+        "outcome": "divergent_reuse",
+        "request": dict(existing),
+        "evidence": {"reason": "terminal_receipt_expectations mismatch"},
+    }
+
+
 def enqueue_repair_request(
     *,
     queue_root: str | Path,
@@ -1318,6 +1403,7 @@ def enqueue_repair_request(
     acceptance_snapshot_hash: str = "",
     lease_store_dir: str | Path | None = None,
     repair_identity: Mapping[str, Any] | None = None,
+    terminal_receipt_expectations: list[str] | None = None,
 ) -> dict[str, Any]:
     """Write a request marker once, recording any rejection/coalescing separately.
 
@@ -1501,6 +1587,12 @@ def enqueue_repair_request(
     record["repair_identity"] = normalized_identity
     record["repair_identity_key"] = repair_identity_key(normalized_identity)
 
+    normalized_expectations = _normalize_terminal_receipt_expectations(
+        terminal_receipt_expectations
+    )
+    if normalized_expectations:
+        record["terminal_receipt_expectations"] = normalized_expectations
+
     if stale_reason:
         _write_once_json(request_path, record)
         decision = write_decision(
@@ -1531,6 +1623,8 @@ def enqueue_repair_request(
         repair_identity=normalized_identity,
     )
     if existing is not None and existing["request_id"] != request_id:
+        if _terminal_expectations_divergent(existing, normalized_expectations):
+            return _terminal_expectations_divergent_result(existing)
         decision = write_decision(
             queue_root,
             request_id=request_id,
@@ -1542,6 +1636,13 @@ def enqueue_repair_request(
 
     wrote = _write_once_json(request_path, record)
     if not wrote:
+        raced_request: Mapping[str, Any] = {}
+        try:
+            raced_request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            raced_request = {}
+        if _terminal_expectations_divergent(raced_request, normalized_expectations):
+            return _terminal_expectations_divergent_result(raced_request)
         decision = write_decision(
             queue_root,
             request_id=request_id,
@@ -2049,247 +2150,6 @@ def record_unclaimed_request_failure(
         "retry": retry,
         "alert": alert,
     }
-
-
-def claim_active_repair_request(
-    queue_dir: str | Path,
-    *,
-    blocker_id: str,
-    request_id: str,
-    actor: str,
-    session: str,
-    blocker_fingerprint: Mapping[str, Any] | None = None,
-    pid: int | None = None,
-    command: str | None = None,
-    started_at: str | None = None,
-    cwd: str | None = None,
-    timeout_seconds: float | None = None,
-    hostname: str | None = None,
-    now: datetime | None = None,
-    is_pid_live: Any | None = None,
-    extra: Mapping[str, Any] | None = None,
-    lease_store_dir: str | Path | None = None,
-    repair_identity: Mapping[str, Any] | None = None,
-) -> ActiveRepairClaimResult:
-    """Atomically claim active repair ownership for one blocker.
-
-    The mkdir lock is keyed by ``blocker_id`` so only one request can actively
-    own the blocker at a time. The owner payload also records ``request_id`` so
-    same-request contenders get a typed ``already_claimed`` result, while a
-    different active request is reported as ``busy``.
-    """
-
-    normalized_blocker_id = _normalize_claim_identity(blocker_id, "blocker_id")
-    normalized_request_id = _normalize_claim_identity(request_id, "request_id")
-    normalized_actor = _normalize_claim_identity(actor, "actor")
-    normalized_session = _normalize_claim_identity(session, "session")
-    if normalize_owner_adoption_identity(repair_identity) is not None:
-        # T-0101e' scope restriction: the v2 adoption identity is claimable
-        # ONLY by the exact-occurrence join; generic active-claim dispatch
-        # must reject it (zero mutation — no lock acquired, no owner written).
-        return ActiveRepairClaimResult(
-            status="stale",
-            lock_dir=active_repair_claim_lock_dir(
-                queue_dir, normalized_blocker_id
-            ),
-            evidence={
-                "reason": (
-                    "owner_boundary_adoption identities have restricted scope "
-                    "(enqueue_exact_occurrence, occurrence_join); generic "
-                    "active-claim dispatch cannot claim them"
-                ),
-                "identity_kind": OWNER_ADOPTION_IDENTITY_KIND,
-                "request_id": normalized_request_id,
-            },
-        )
-    normalized_repair_identity = normalize_repair_identity(repair_identity)
-    normalized_repair_identity_key = repair_identity_key(
-        normalized_repair_identity
-    )
-    claim_lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
-    request_path = requests_dir(queue_dir) / f"{normalized_request_id}.json"
-    try:
-        request_record = json.loads(request_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
-        request_record = None
-    observed_identity_key = (
-        str(request_record.get("repair_identity_key") or "")
-        if isinstance(request_record, Mapping)
-        else ""
-    )
-    if (
-        normalized_repair_identity is None
-        or not isinstance(request_record, Mapping)
-        or not has_claimable_repair_request_contract(request_record)
-        or observed_identity_key != normalized_repair_identity_key
-    ):
-        return ActiveRepairClaimResult(
-            status="stale",
-            lock_dir=claim_lock_dir,
-            evidence={
-                "reason": "repair_identity_unclaimable",
-                "request_id": normalized_request_id,
-                "expected_repair_identity_key": observed_identity_key,
-                "observed_repair_identity_key": normalized_repair_identity_key,
-                "migration": (
-                    "legacy or partial records are read-only; explicitly "
-                    "reacquire and enqueue a current normalized identity"
-                ),
-            },
-        )
-    metadata = {
-        "kind": "active_repair_request_claim",
-        "schema_version": CURRENT_SCHEMA_VERSION,
-        "actor": normalized_actor,
-        "session": normalized_session,
-        "request_id": normalized_request_id,
-        "blocker_id": normalized_blocker_id,
-        "blocker_fingerprint": dict(blocker_fingerprint or {}),
-        "repair_identity": normalized_repair_identity or {},
-        "repair_identity_key": normalized_repair_identity_key,
-        "occurrence_fingerprint": normalized_repair_identity_key,
-    }
-    if extra:
-        metadata.update(dict(extra))
-
-    # ── T-0204: consult the occurrence claim namespace BEFORE acquiring ──
-    # The same repair must converge on ONE owner across the blocker-keyed
-    # active namespace and the fingerprint-keyed occurrence namespace.  A
-    # live foreign owner in the occurrence namespace refuses this claim
-    # (no double launch); only a stale claim with a strictly newer fence
-    # may be reclaimed, and that happens after acquisition below.
-    occurrence_fingerprint = normalized_repair_identity_key
-    consultation = consult_claim_namespace(
-        queue_dir,
-        own_namespace="active",
-        occurrence_fingerprint=occurrence_fingerprint,
-        repair_identity_key=normalized_repair_identity_key,
-        request_id=normalized_request_id,
-        fence=claim_fence(normalized_repair_identity),
-        blocker_id=normalized_blocker_id,
-        now=now,
-        is_pid_live=is_pid_live,
-    )
-    if not consultation.may_proceed:
-        return ActiveRepairClaimResult(
-            status="busy",
-            lock_dir=claim_lock_dir,
-            evidence={
-                "kind": "cross_namespace_claim_conflict",
-                "namespace": "active",
-                "outcome": consultation.outcome,
-                "occurrence_fingerprint": occurrence_fingerprint,
-                "blocker_id": normalized_blocker_id,
-                "request_id": normalized_request_id,
-                "other_namespace": consultation.other_namespace,
-                "other_lock_dirs": [str(p) for p in consultation.other_lock_dirs],
-                "consultation": consultation.evidence,
-            },
-        )
-
-    result = acquire_repair_lock(
-        claim_lock_dir,
-        session=normalized_session,
-        target_id=normalized_blocker_id,
-        repair_identity=normalized_repair_identity,
-        pid=pid,
-        command=command,
-        started_at=started_at,
-        cwd=cwd,
-        timeout_seconds=timeout_seconds,
-        hostname=hostname or _hostname(),
-        extra=metadata,
-        now=now,
-        is_pid_live=is_pid_live,
-    )
-    result = _settle_owner_write_race(
-        result,
-        now=now,
-        is_pid_live=is_pid_live,
-    )
-    # ── T-0204: post-acquisition cross-namespace backstop + stale reclaim ──
-    if result.acquired:
-        ok, backstop_evidence = finalize_cross_namespace_claim(
-            queue_dir,
-            own_namespace="active",
-            occurrence_fingerprint=occurrence_fingerprint,
-            repair_identity_key=normalized_repair_identity_key,
-            request_id=normalized_request_id,
-            fence=claim_fence(normalized_repair_identity),
-            blocker_id=normalized_blocker_id,
-            claim_lock_dir=claim_lock_dir,
-            claim_owner=result.owner,
-            claim_metadata=metadata,
-            now=now,
-            is_pid_live=is_pid_live,
-        )
-        if not ok:
-            release_repair_lock(claim_lock_dir, owner=result.owner)
-            return ActiveRepairClaimResult(
-                status="busy",
-                lock_dir=claim_lock_dir,
-                evidence={
-                    "kind": "cross_namespace_backstop_failed",
-                    "namespace": "active",
-                    "blocker_id": normalized_blocker_id,
-                    "request_id": normalized_request_id,
-                    "occurrence_fingerprint": occurrence_fingerprint,
-                    "reason": backstop_evidence.get("reason"),
-                    "evidence": backstop_evidence,
-                },
-            )
-    # A stale claim is evidence for the operator/repair loop, not authority to
-    # delete another worker's lock and seize it.  PID reuse and delayed writes
-    # make automatic reclamation unsafe; a subsequent explicit recovery owns
-    # any mutation after evaluating the captured evidence.
-    claim_result = _claim_result_from_lock(
-        result,
-        blocker_id=normalized_blocker_id,
-        request_id=normalized_request_id,
-    )
-    if claim_result.claimed:
-        repair_fence = claim_fence(normalized_repair_identity)
-        write_claim_alias(
-            queue_dir,
-            ClaimAliasRecord(
-                blocker_id=normalized_blocker_id,
-                occurrence_fingerprint=occurrence_fingerprint,
-                request_id=normalized_request_id,
-                repair_identity_key=normalized_repair_identity_key,
-                fence_epoch=repair_fence[0],
-                fence_token=repair_fence[1],
-                holder_namespaces=("active",),
-            ),
-        )
-    # ── M7: shadow custody lease acquisition on successful claim ──
-    if claim_result.claimed:
-        lease_store = _open_custody_lease_store(lease_store_dir)
-        if lease_store is not None:
-            custody_target = _build_custody_target_from_repair_context(
-                session=normalized_session,
-                problem_signature=blocker_fingerprint or {},
-            )
-            identity = process_birth_identity()
-            lease_result = _shadow_acquire_custody_lease(
-                lease_store=lease_store,
-                lease_id=f"repair-claim-{normalized_blocker_id}",
-                target=custody_target,
-                run_id=normalized_actor,
-                run_authority_grant_id=normalized_request_id,
-                owner_host=hostname or _hostname(),
-                owner_pid=str(pid) if pid is not None else identity.get("pid", "0"),
-                owner_boot_id=identity.get("boot_id", ""),
-                payload_extra={
-                    "actor": normalized_actor,
-                    "request_id": normalized_request_id,
-                    "blocker_id": normalized_blocker_id,
-                    "queue_dir": str(queue_dir),
-                },
-            )
-            # Store lease result alongside claim (ActiveRepairClaimResult is frozen,
-            # so we cannot attach it directly — callers should read the lease store)
-            object.__setattr__(claim_result, "_m7_custody_lease", lease_result)
-    return claim_result
 
 
 def release_active_repair_request_claim(
@@ -3105,6 +2965,7 @@ def enqueue_occurrence_bound_repair_request(
         acceptance_snapshot_hash=acceptance_snapshot_hash,
         lease_store_dir=lease_store_dir,
         repair_identity=normalized_identity,
+        terminal_receipt_expectations=terminal_receipt_expectations,
     )
 
 
@@ -3333,7 +3194,6 @@ __all__ = [
     "active_claims_dir",
     "active_repair_claim_lock_dir",
     "attempts_dir",
-    "claim_active_repair_request",
     "bind_managed_run_to_active_claim",
     "build_owned_lifecycle_repair_identity",
     "build_normalized_repair_identity",

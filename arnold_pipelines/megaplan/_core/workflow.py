@@ -113,6 +113,67 @@ def intent_and_notes_block(state: PlanState) -> str:
     return "\n\n".join(sections)
 
 
+def operator_decisions_block(state: PlanState) -> str:
+    """Render recorded source=user operator decisions for the gate prompt.
+
+    Each entry shows timestamp, source, parsed ``question_id``, parsed
+    decision, the original note text, and whether the record is mechanically
+    binding. Unparseable source=user notes are shown as informational with
+    ``mechanically_binding: false``; automated notes are not operator
+    decisions and are omitted. The closing instruction is shared with the
+    mechanical resolver so the prompt and the resolver never evolve separate
+    grammars.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import parse_operator_disposition
+
+    notes = (state.get("meta") or {}).get("notes")
+    if not isinstance(notes, list) or not notes:
+        return ""
+    lines: list[str] = []
+    for note in notes:
+        if not isinstance(note, Mapping):
+            continue
+        source = note.get("source")
+        if not isinstance(source, str) or source.strip().lower() != "user":
+            continue
+        note_text = note.get("note")
+        if not isinstance(note_text, str) or not note_text.strip():
+            continue
+        parsed = parse_operator_disposition(note_text)
+        timestamp = note.get("timestamp")
+        if not isinstance(timestamp, str):
+            timestamp = ""
+        if parsed is not None:
+            binding = "true"
+            question_id = parsed["question_id"]
+            decision = parsed["decision"]
+        else:
+            binding = "false"
+            question_id = "(none)"
+            decision = "(unparsed)"
+        lines.append(
+            "- timestamp: {ts} | source: user | question_id: {qid} | "
+            "decision: {dec} | mechanically_binding: {binding} | note: {text}".format(
+                ts=timestamp or "(unknown)",
+                qid=question_id,
+                dec=decision,
+                binding=binding,
+                text=note_text.replace("\n", " ")[:600],
+            )
+        )
+    if not lines:
+        return ""
+    return (
+        "Recorded operator decisions (source=user):\n        "
+        + "\n        ".join(lines)
+        + "\n        A recorded disposition settles that exact human question; do not "
+        "re-emit the same add_human_halt. If the selected decision creates "
+        "unfinished plan work, return ITERATE or a distinct actionable North "
+        "Star action describing that work. Never invent a second spelling of "
+        "an already-settled question merely to reopen it."
+    )
+
+
 def intent_brief_reference(state: PlanState) -> str:
     """Slim reference to the original brief for post-plan phases."""
     clarification = (state.get("clarification") or {}).get("intent_summary")
@@ -439,6 +500,73 @@ def _task_id_from_record(task: Any) -> str:
         return ""
     value = task.get("id") or task.get("task_id")
     return value if isinstance(value, str) and value else ""
+
+
+def _phase_result_file_fingerprint(plan_dir: Path) -> tuple[int, int, str] | None:
+    """Fingerprint of the on-disk phase_result.json (mtime_ns, size, sha256)."""
+    path = plan_dir / "phase_result.json"
+    try:
+        raw = path.read_bytes()
+        stat = path.stat()
+    except OSError:
+        return None
+    import hashlib
+
+    return (stat.st_mtime_ns, len(raw), hashlib.sha256(raw).hexdigest())
+
+
+def _resume_execute_phase_result_gate(
+    plan_dir: Path,
+    *,
+    cursor: dict[str, Any],
+    guard: str,
+    pre_dispatch_fingerprint: tuple[int, int, str] | None,
+) -> dict[str, Any] | None:
+    """Result-aware gate before clearing the execute resume cursor.
+
+    The execute phase may exit 0 with a non-success PhaseResult (e.g.
+    ``blocked_by_prereq``). In that case the completion authority must NOT be
+    consulted — the phase did not claim success — and the cursor must be
+    preserved with the phase's own typed outcome instead of being mislabeled
+    ``execute_authority_diverged``. Only a FRESH phase_result with
+    ``exit_kind=success`` is authority-checked; missing or stale output fails
+    closed as ``execute_phase_result_unavailable``.
+    """
+    fresh = _phase_result_file_fingerprint(plan_dir)
+    if fresh is None or fresh == pre_dispatch_fingerprint:
+        return {
+            "guard": guard,
+            "reason": "execute_phase_result_unavailable",
+            "message": (
+                "Execute phase did not produce a fresh phase result; "
+                "preserving resume cursor"
+            ),
+            "resume_cursor": dict(cursor),
+        }
+    try:
+        payload = json.loads(
+            (plan_dir / "phase_result.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        payload = None
+    exit_kind = payload.get("exit_kind") if isinstance(payload, dict) else None
+    if isinstance(exit_kind, str) and exit_kind and exit_kind != "success":
+        blocked_tasks = payload.get("blocked_tasks") or []
+        return {
+            "guard": guard,
+            "reason": "execute_phase_blocked",
+            "message": (
+                f"Execute phase did not report success (exit_kind={exit_kind}); "
+                "preserving resume cursor"
+            ),
+            "resume_cursor": dict(cursor),
+            "blocked_tasks": (
+                list(blocked_tasks) if isinstance(blocked_tasks, list) else []
+            ),
+        }
+    # Fresh successful execute phase: the completion authority still decides
+    # whether every finalized task is corroborated before the cursor clears.
+    return _resume_execute_authority_failure(plan_dir, cursor=cursor, guard=guard)
 
 
 def _resume_execute_authority_failure(
@@ -867,6 +995,12 @@ def resume_plan(
             current_manifest_hash=current_manifest_hash,
         )
     rollback_state = dict(previous_state)
+    # Capture the pre-dispatch phase_result identity so the execute resume
+    # gate can require a FRESH phase result from this dispatch (see
+    # _resume_execute_phase_result_gate).
+    pre_phase_result_fingerprint = (
+        _phase_result_file_fingerprint(plan_dir) if phase == "execute" else None
+    )
     try:
         from arnold.execution.operations import OperationKind, OperationRequest
 
@@ -939,10 +1073,11 @@ def resume_plan(
             "stderr": stderr,
         }
     execute_authority_failure = (
-        _resume_execute_authority_failure(
+        _resume_execute_phase_result_gate(
             plan_dir,
             cursor=cursor,
             guard="before_cursor_clear",
+            pre_dispatch_fingerprint=pre_phase_result_fingerprint,
         )
         if phase == "execute"
         else None

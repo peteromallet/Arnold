@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ import uuid
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -3168,6 +3170,13 @@ _CODEX_ERROR_PATTERNS: list[tuple[str, str, str]] = [
     # thread IDs or unrelated numbers do not get misclassified as 429s.
     ("failed to lookup address information", "connection_error", "Codex could not resolve the backend host"),
     ("failed to connect to websocket", "connection_error", "Codex could not connect to the realtime backend"),
+    # Durable billing exhaustion must be recognized BEFORE the generic transport
+    # row below: codex surfaces "no credits remaining" wrapped inside
+    # "stream disconnected before completion", and the first-match-wins table
+    # would otherwise swallow the billing signal as a transient connection
+    # drop (astrid-first m6 finalize, occurrence fc98376b2f10). quota_exceeded
+    # also routes to _codex_hard_quota_guidance() instead of "re-run once".
+    ("no credits remaining", "quota_exceeded", "Codex quota exceeded"),
     ("stream disconnected before completion", "connection_error", "Codex connection dropped before completion"),
     ("error sending request for url", "connection_error", "Codex could not send the backend request"),
     ("nodename nor servname provided", "connection_error", "Codex could not resolve the backend host"),
@@ -3633,6 +3642,141 @@ def _apply_worker_state_isolation(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
+# Canonical codex OAuth seeds, freshest-first. Mirrors cloud/auth.py OAUTH_SEEDS:
+# the persistent volume copy (/workspace/.creds) is written on every deploy and
+# the root copy is re-seeded by the entrypoint on boot.
+_CODEX_AUTH_SEED_PATHS = (
+    Path("/workspace/.creds/codex-auth.json"),
+    Path("/root/.codex/auth.json"),
+)
+# Fallback freshness bound when the JWT access token carries no decodable exp.
+_CODEX_AUTH_FALLBACK_MAX_AGE = 30 * 24 * 60 * 60
+# Skew so a token that expires within 5 minutes is treated as stale.
+_CODEX_AUTH_EXPIRY_SKEW = 5 * 60
+
+
+def _seed_codex_auth_into_env(env: dict[str, str]) -> None:
+    """Best-effort repair of the auth file used by the final Codex child env.
+
+    The normal dispatch path inherits ``CODEX_HOME`` unchanged (the orchestrator
+    unit exports ``CODEX_HOME=/workspace/.codex``), so a stale ``auth.json`` there
+    makes every Codex child fail with 401 on the realtime backend. This helper
+    validates the file the child will actually read and, when it is missing or its
+    credential is expired, atomically replaces it with a canonical seed that
+    independently passes the same validation.
+
+    Best-effort contract: never raises, never prints tokens, never touches
+    ``config.toml``, and leaves the child environment/files unchanged when no
+    valid seed exists (a genuinely external credential gate must still surface
+    truthfully as the original connection error).
+    """
+    now = time.time()
+
+    def warn(reason: str) -> None:
+        print(f"[megaplan] Codex auth self-heal skipped: {reason}", file=sys.stderr)
+
+    def read_valid(path: Path) -> bytes | None:
+        fd = -1
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            opened = os.fstat(fd)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or stat.S_IMODE(opened.st_mode) & 0o077
+            ):
+                return None
+            raw = os.read(fd, 1_048_577)
+            if not raw or len(raw) > 1_048_576:
+                return None
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                return None
+            if payload.get("auth_mode") == "apikey":
+                key = payload.get("OPENAI_API_KEY")
+                return raw if isinstance(key, str) and key.strip() else None
+            tokens = payload.get("tokens")
+            tokens = tokens if isinstance(tokens, dict) else {}
+            access_token = tokens.get("access_token")
+            if not isinstance(access_token, str) or not access_token.strip():
+                return None
+            exp: int | float | None = None
+            try:
+                part = access_token.split(".")[1]
+                part += "=" * (-len(part) % 4)
+                claims = json.loads(base64.urlsafe_b64decode(part))
+                candidate = claims.get("exp") if isinstance(claims, dict) else None
+                if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                    exp = candidate
+            except (IndexError, ValueError, TypeError, json.JSONDecodeError):
+                pass
+            if exp is not None:
+                return raw if float(exp) > now + _CODEX_AUTH_EXPIRY_SKEW else None
+            refreshed = payload.get("last_refresh")
+            if not isinstance(refreshed, str):
+                return None
+            stamp = datetime.fromisoformat(refreshed.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            age = now - stamp.timestamp()
+            return raw if -_CODEX_AUTH_EXPIRY_SKEW <= age <= _CODEX_AUTH_FALLBACK_MAX_AGE else None
+        except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+    try:
+        home = Path(env.get("CODEX_HOME") or Path(env.get("HOME") or Path.home()) / ".codex")
+        home_stat = os.lstat(home)
+        if (
+            not stat.S_ISDIR(home_stat.st_mode)
+            or stat.S_ISLNK(home_stat.st_mode)
+            or home_stat.st_uid not in {0, os.geteuid()}
+            or home_stat.st_mode & 0o022
+        ):
+            warn("unsafe CODEX_HOME")
+            return
+        target = home / "auth.json"
+        if read_valid(target) is not None:
+            return
+        try:
+            target_stat = os.lstat(target)
+            if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_nlink != 1:
+                warn("unsafe existing auth.json")
+                return
+        except FileNotFoundError:
+            pass
+        seed = next((data for path in _CODEX_AUTH_SEED_PATHS if (data := read_valid(path)) is not None), None)
+        if seed is None:
+            warn("no valid canonical seed")
+            return
+        temporary = home / f".auth.json.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            view = memoryview(seed)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short Codex auth write")
+                view = view[written:]
+            os.fchmod(fd, 0o600)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temporary, target)
+    except Exception as exc:
+        warn(type(exc).__name__)
+        try:
+            temporary.unlink(missing_ok=True)
+        except (NameError, OSError):
+            pass
+
+
 def _codex_child_env(
     turn_id: str | None = None,
     actor_id: str | None = None,
@@ -3648,6 +3792,9 @@ def _codex_child_env(
     if actor_id is not None:
         env["MEGAPLAN_ACTOR_ID"] = actor_id
     _apply_worker_state_isolation(env)
+    # Seed AFTER worker-state isolation so the final CODEX_HOME the child will
+    # read (possibly redirected to a per-worker temp dir) carries valid auth.
+    _seed_codex_auth_into_env(env)
     return env
 
 
@@ -6597,39 +6744,16 @@ def run_codex_prep_step(
 
 
 def _is_agent_available(agent: str) -> bool:
-    """Check if an agent is available (CLI binary or vendored for hermes)."""
+    """Check if an agent is available (CLI binary or omp_rpc/omp for hermes)."""
     if agent == "hermes":
-        # The vendored run_agent.py and hermes_state.py now live under
-        # ``arnold/agent/``. Import ``arnold.agent`` to locate the directory,
-        # place it on ``sys.path`` so the legacy absolute imports resolve, then
-        # probe the two required modules so a partial install fails closed.
+        # Post-migration: ``hermes`` agent specs route through the omp worker
+        # (omp replaced the vendored hermes dispatch surface). Report
+        # availability via the omp CLI / omp_rpc package, matching the omp
+        # branch's availability contract.
         try:
-            import importlib
-            import sys
-            from pathlib import Path
-
-            import arnold.agent as _agent_pkg
-
-            agent_dir = str(Path(_agent_pkg.__file__).resolve().parent)
-            if agent_dir not in sys.path:
-                sys.path.insert(0, agent_dir)
-
-            for module_name in ("run_agent", "hermes_state", "tools", "tools.registry"):
-                module = sys.modules.get(module_name)
-                module_file = getattr(module, "__file__", None)
-                if (
-                    module is not None
-                    and (
-                        not module_file
-                        or not str(Path(module_file).resolve()).startswith(agent_dir)
-                    )
-                ):
-                    sys.modules.pop(module_name, None)
-            importlib.invalidate_caches()
-            from run_agent import AIAgent  # noqa: F401
-            from hermes_state import SessionDB  # noqa: F401
+            import omp_rpc  # noqa: F401
         except ImportError:
-            return False
+            return bool(shutil.which("omp"))
         return True
     if agent in {"claude", "shannon"}:
         from arnold_pipelines.megaplan._core.io import (
@@ -6640,6 +6764,16 @@ def _is_agent_available(agent: str) -> bool:
         if _shannon_stream_worker_enabled():
             return is_claude_stream_available()
         return is_shannon_available()
+    if agent == "omp":
+        # The omp worker launches a ``bun ... --mode rpc`` child through the
+        # pinned omp_rpc client.  It is available when the omp executable is
+        # on PATH or the omp_rpc package can be imported (custom-command
+        # deployments); the worker fails closed at launch otherwise.
+        try:
+            import omp_rpc  # noqa: F401
+        except ImportError:
+            return bool(shutil.which("omp"))
+        return True
     return bool(shutil.which(agent))
 
 
@@ -6780,7 +6914,8 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             if agent == "hermes":
                 raise CliError(
                     "agent_deps_missing",
-                    "hermes backend requires the bundled runtime packages: pip install arnold (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
+                    "hermes agent specs route through the omp adapter; "
+                    "install the omp CLI (or omp_rpc) to run hermes-spec models.",
                 )
             if agent == "shannon":
                 from arnold_pipelines.megaplan._core.io import shannon_missing_deps
@@ -6804,14 +6939,15 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
         if agent == "hermes":
             raise CliError(
                 "agent_deps_missing",
-                "hermes backend requires the bundled runtime packages: pip install arnold (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
+                "hermes agent specs route through the omp adapter; "
+                "install the omp CLI (or omp_rpc) to run hermes-spec models.",
             )
         # Try fallback
         available = detect_available_agents()
         if not available:
             raise CliError(
                 "agent_not_found",
-                "No supported agents found. Install claude or codex, or install arnold (or pip install -e . in a source checkout) for hermes. The legacy '[agent]' extra is only a no-op compatibility alias.",
+                "No supported agents found. Install claude or codex, or install the omp CLI (omp_rpc) for omp/hermes-spec models.",
             )
         fallback = available[0]
         args._agent_fallback = {
@@ -6869,6 +7005,50 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
 # shannon branches so CliError propagates unchanged to the outer
 # auth/connection fallback loop.
 # ---------------------------------------------------------------------------
+
+
+def _omp_to_agent_result(
+    req: Any,
+    *,
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+    worker_options: dict[str, Any] | None,
+    prompt_override: str | None,
+    prompt_kwargs: dict[str, Any] | None,
+    output_path: Path | None,
+    effective_refreshed: bool,
+) -> Any:
+    """Call run_omp_step and project WorkerResult → AgentResult (flag-on path)."""
+    from arnold_pipelines.megaplan.workers.omp import run_omp_step
+
+    mode = req.mode
+    resolved_model = req.resolved_model
+    effort = req.effort
+    read_only = req.read_only
+    if os.getenv(MOCK_ENV_VAR) != "1":
+        assert resolved_model is not None and resolved_model != "", (
+            "run_step_with_worker about to invoke run_omp_step via "
+            "ArnoldDispatcher with empty resolved_model. "
+            "AgentMode.resolved_model should hold e.g. "
+            "'omp:deepseek/deepseek-v4-pro'."
+        )
+    _w = run_omp_step(
+        step,
+        state,
+        plan_dir,
+        root=root,
+        fresh=effective_refreshed,
+        model=resolved_model,
+        effort=effort,
+        prompt_override=prompt_override,
+        prompt_kwargs=prompt_kwargs,
+        read_only=read_only,
+        output_path=output_path,
+        worker_options=worker_options,
+    )
+    return _w.to_agent_result()
 
 
 def _codex_to_agent_result(
@@ -7115,6 +7295,22 @@ def _configured_spec_worker_failure_class(worker: WorkerResult) -> str | None:
     )
 
 
+def _configured_spec_pre_tool(error: CliError) -> bool:
+    """Return whether the failure carries a literal pre-tool attestation."""
+    return error.extra.get("_pre_tool_attested") is True
+
+
+def _configured_spec_worker_pre_tool(worker: WorkerResult) -> bool:
+    """Return whether a failed worker payload carries a literal pre-tool attestation."""
+    payload = worker.payload
+    if not isinstance(payload, dict) or payload.get("success") is not False:
+        return False
+    details = payload.get("details")
+    if not isinstance(details, dict):
+        return False
+    return details.get("_pre_tool_attested") is True
+
+
 def _advance_configured_spec_fallback(
     fallback_metadata: dict[str, Any],
     failure_class: str | None,
@@ -7122,11 +7318,19 @@ def _advance_configured_spec_fallback(
     mode: str,
     step: str,
     read_only: bool,
+    pre_tool: bool = False,
 ) -> tuple[AgentMode, dict[str, Any]] | None:
     # Never redispatch after a worker may have mutated the checkout. This is
     # stricter than the provider/model relationship and keeps mid-write
     # failures fail-closed for both explicit and profile-provided chains.
-    if not read_only or step in _EXECUTE_STEPS:
+    # A launch-time (pre-tool) provider failure on a non-execute phase may
+    # advance: no worker tool ran in THIS attempt, so nothing in the
+    # checkout can have been mutated by it. (quota/availability on a fresh
+    # plan worker is exactly this case; fallback_chains.py classifies quota
+    # as advance-eligible because it will not clear by waiting.)
+    if step in _EXECUTE_STEPS:
+        return None
+    if not read_only and pre_tool is not True:
         return None
     if failure_class not in _CONFIGURED_SPEC_FALLBACK_CLASSES:
         return None
@@ -7436,11 +7640,16 @@ def _run_step_with_worker_legacy(
     # a chain execution binding is available, verifies them against the bound
     # identity.  A mismatch raises CliError and blocks the worker.
     from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        refresh_runtime_launch_seed_for_worker_dispatch as _refresh_runtime_launch_seed,
         require_configured_runtime_launch as _require_runtime_launch,
         runtime_vector_sha256 as _runtime_vector_sha256,
     )
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance as _rp
 
+    # Select the currently accepted immutable generation at the actual worker
+    # dispatch boundary.  The long-lived chain parent keeps its orchestration
+    # seed; publication only changes workers started after this point.
+    _refresh_runtime_launch_seed()
     _launch_seed = _require_runtime_launch("worker", create=True)
     _runtime = _rp()
     _source_ref = str(_runtime.get("source_revision") or "")
@@ -7518,17 +7727,28 @@ def _run_step_with_worker_legacy(
         try:
             if os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") != "1":
                 if agent == "hermes":
-                    # Deferred import to avoid circular import (hermes_worker imports from workers)
-                    from arnold_pipelines.megaplan.workers.hermes import run_hermes_step
-                    worker = run_hermes_step(
+                    # Post-migration: hermes agent specs are no longer a live
+                    # dispatch surface — they route through the omp worker,
+                    # which translates legacy hermes routes to canonical omp
+                    # specs (see workers.omp.omp_route_from_legacy).
+                    if os.getenv(MOCK_ENV_VAR) != "1":
+                        assert resolved_model is not None and resolved_model != "", (
+                            "run_step_with_worker about to invoke run_omp_step "
+                            "for a hermes-routed spec with empty resolved_model."
+                        )
+                    from arnold_pipelines.megaplan.workers.omp import run_omp_step
+
+                    worker = run_omp_step(
                         step,
                         state,
                         plan_dir,
                         root=root,
                         fresh=effective_refreshed,
-                        model=model,
+                        model=resolved_model,
                         effort=effort,
                         prompt_override=prompt_override,
+                        prompt_kwargs=prompt_kwargs,
+                        read_only=read_only,
                         output_path=output_path,
                         worker_options=worker_options,
                     )
@@ -7587,6 +7807,33 @@ def _run_step_with_worker_legacy(
                             # resumed back into the same stall.
                             effective_refreshed = True
                             continue
+                elif agent == "omp":
+                    # omp is a first-class direct worker: a fresh stateless
+                    # RPC session per attempt.  The spec's ``omp:provider/model``
+                    # carries the model, so an empty resolved_model is a caller
+                    # bug — fail loud instead of reaching the codex assertion.
+                    if os.getenv(MOCK_ENV_VAR) != "1":
+                        assert resolved_model is not None and resolved_model != "", (
+                            "run_step_with_worker about to invoke run_omp_step "
+                            "with empty resolved_model. AgentMode.resolved_model "
+                            "should hold e.g. 'omp:deepseek/deepseek-v4-pro'."
+                        )
+                    from arnold_pipelines.megaplan.workers.omp import run_omp_step
+
+                    worker = run_omp_step(
+                        step,
+                        state,
+                        plan_dir,
+                        root=root,
+                        fresh=effective_refreshed,
+                        model=resolved_model,
+                        effort=effort,
+                        prompt_override=prompt_override,
+                        prompt_kwargs=prompt_kwargs,
+                        read_only=read_only,
+                        output_path=output_path,
+                        worker_options=worker_options,
+                    )
                 else:
                     # Defensive guard: codex must receive an explicit model. The
                     # diagnostic in /tmp/codex_wedge_diagnostic.md shows that when
@@ -7657,10 +7904,24 @@ def _run_step_with_worker_legacy(
                 # fallback (except CliError below) still wraps everything; the
                 # inner per-backend one-shot retry lives inside the closures.
                 from arnold.agent import ArnoldDispatcher
-                from arnold.agent.adapters.deepseek import DeepSeekAdapter as _DeepSeekAdapter
                 from arnold.agent.contracts import AgentRequest as _AgentRequest
                 _dispatcher = ArnoldDispatcher()
-                _dispatcher.register("hermes", _DeepSeekAdapter())
+                _omp_closure = lambda req: _omp_to_agent_result(
+                    req,
+                    step=step,
+                    state=state,
+                    plan_dir=plan_dir,
+                    root=root,
+                    worker_options=worker_options,
+                    prompt_override=prompt_override,
+                    prompt_kwargs=prompt_kwargs,
+                    output_path=output_path,
+                    effective_refreshed=effective_refreshed,
+                )
+                # Post-migration: hermes agent specs route through the omp
+                # adapter; the legacy deepseek adapter registration is dropped.
+                _dispatcher.register("hermes", _omp_closure)
+                _dispatcher.register("omp", _omp_closure)
                 _dispatcher.register(
                     "codex",
                     lambda req: _codex_to_agent_result(
@@ -7733,6 +7994,7 @@ def _run_step_with_worker_legacy(
                 mode=mode,
                 step=step,
                 read_only=read_only,
+                pre_tool=_configured_spec_worker_pre_tool(worker),
             )
             if fallback_attempt is not None:
                 if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
@@ -7788,6 +8050,7 @@ def _run_step_with_worker_legacy(
                 mode=mode,
                 step=step,
                 read_only=read_only,
+                pre_tool=_configured_spec_pre_tool(error),
             )
             if fallback_attempt is not None:
                 if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":

@@ -135,7 +135,9 @@ def test_plan_capture_normalizes_extra_model_metadata() -> None:
     )
 
     assert "source" not in outcome.legacy_payload
-    assert "### Step 1: Patch worker" in outcome.legacy_payload["plan"]
+    # Canonical flat renderer emits `## Step N:` (the structural auditor's
+    # accepted step-section shape); extra model metadata must be stripped.
+    assert "## Step 1: Patch worker" in outcome.legacy_payload["plan"]
 
 
 def test_plan_audit_rejects_numbered_list_without_step_headings() -> None:

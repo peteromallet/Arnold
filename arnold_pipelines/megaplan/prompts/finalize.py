@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Mapping
 from pathlib import Path
 
 from arnold_pipelines.megaplan._core import (
@@ -106,6 +107,8 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         Critique custody clearance (handler-owned, immutable input):
         {json_dump(critique_clearance).strip()}
 
+        {_finalize_retry_feedback(plan_dir)}
+
         Your output template is at: {output_path}
         Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
         Fill the JSON structure with your results and write the file back.
@@ -140,7 +143,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           - `dependency_reasons`: object keyed exactly by `depends_on`. Each value has `kind` (`consumes_output`, `write_conflict`, or `human_prerequisite`), a concrete `reason`, and the exact `required_output`. Routing, model isolation, authoring order, and batch sizing are forbidden reasons.
           - `routing_group`: `""` unless independent tasks intentionally share context or overlapping writes; routing groups influence batching but grant no dependency authority
           - `write_set`: `{{ "paths": [...], "complete": true }}`, declaring every planned output path. Mutating tasks must name 1-5 unique paths; split larger write sets.
-          - `narrow_tests`: `{{ "selectors": [...], "max_seconds": 120, "max_runs": 2 }}`. Use at most 3 changed-behavior selectors; use zero budgets for tasks that require no tests. Integration/full-suite checks belong to the harness.
+          - `narrow_tests`: `{{ "selectors": [...], "max_seconds": 120, "max_runs": 2 }}`. Use at most 3 changed-behavior selectors; use zero budgets for tasks that require no tests. Integration/full-suite checks belong to the harness. Selectors MUST be concrete repository-relative pytest path selectors — a file/module path such as `tests/core/store/test_canonical.py` or `tests/core/store/test_canonical.py::test_round_trip`. NEVER put a shell command in a selector: `pytest tests/x.py -q`, `python -m compileall -q astrid/...`, `bash -n ...`, `make ...`, flags, and directory-wide patterns are all INVALID and will be rejected.
           - `checkpoint`: for complexity 7-10, require `{{ "required": true, "max_interval_seconds": 300, "records": ["completed_subobjectives", "remaining_subobjectives", "output_hashes", "test_state"] }}`; for lower complexity use `{{ "required": false, "max_interval_seconds": 300, "records": [] }}`
           - `status`: always `"pending"` at finalize time
           - `executor_notes`: always `""` at finalize time
@@ -203,6 +206,47 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     ).strip()
 
 
+def _finalize_retry_feedback(plan_dir: Path) -> str:
+    """Render structured feasibility feedback from the prior rejected attempt.
+
+    The repair loop persists ``finalize_revise_feedback.json`` with the full
+    diagnostics (task pairs + paths) and the budget numbers. Without this the
+    retry prompt is byte-identical to the failed attempt, so the model cannot
+    repair the graph. Returns an empty string when no prior failure exists.
+    """
+    feedback_path = plan_dir / "finalize_revise_feedback.json"
+    if not feedback_path.exists():
+        return ""
+    feedback = read_json(feedback_path)
+    if not isinstance(feedback, Mapping) or not feedback.get("diagnostics"):
+        return ""
+    lines = ["PRIOR FINALIZE ATTEMPT FAILED FEASIBILITY — repair the candidate graph only:"]
+    for diagnostic in feedback.get("diagnostics", []):
+        if isinstance(diagnostic, Mapping):
+            code = diagnostic.get("code")
+            detail = diagnostic.get("message") or ""
+            lines.append(f"- {code}: {detail}")
+    feasibility = feedback.get("feasibility")
+    if isinstance(feasibility, Mapping):
+        timeout = feasibility.get("execute_phase_timeout_minutes")
+        if timeout:
+            budget = float(timeout) * 0.8
+            lines.append(
+                f"- Budget: execute phase timeout is {timeout:.0f} min; critical path "
+                f"({feasibility.get('critical_path_minutes')} min) and total sequential "
+                f"batch dispatch ({feasibility.get('estimated_dispatch_minutes')} min) "
+                f"must each stay under 80% ({budget:.0f} min)."
+            )
+    lines.append(
+        "- Repair rules: tasks writing the same path must share a `routing_group` OR be "
+        "ordered by `depends_on` with `dependency_reasons` kind `write_conflict`; keep "
+        "the whole graph within the budget above (merge or parallelize tasks if needed)."
+    )
+    return textwrap.dedent(
+        "\n".join(lines)
+    ).strip()
+
+
 def _write_finalize_template(
     plan_dir: Path,
     state: PlanState,
@@ -222,5 +266,18 @@ def _write_finalize_template(
     )
 
     output_path = plan_dir / "finalize_output.json"
+    # Never clobber a payload the model already filled.  The scratch file is
+    # the only durable copy of a valid task graph between attempts;
+    # overwriting it with the empty template before every model call throws
+    # that graph away and leaves the empty template to be re-rejected
+    # forever (observed: m6 finalize 7x loop with a valid T1-T21 raw output
+    # discarded at the retry pre-seed).
+    if output_path.exists():
+        try:
+            existing = json.loads(output_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict) and existing.get("tasks"):
+                return output_path
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
     return output_path

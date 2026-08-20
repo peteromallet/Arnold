@@ -536,3 +536,66 @@ def test_blank_concern_and_evidence_retry_locally_with_worker_attribution(
     stderr = capsys.readouterr().err
     assert "worker 'correctness' contract invalid" in stderr
     assert "flags[0].concern and evidence are blank" in stderr
+
+
+class TestCodexSeedCapturePath:
+    """C1 regression (bd778acabe4d): the parallel-critique template/capture
+    same-path collision. Codex workers require an EMPTY response path (the
+    local-response contract forbids overwriting evidence), so their schema
+    seed must live at ``critique_check_<id>.seed.json`` while the WorkerUnit
+    output path stays ``None`` (the runner mints a per-occurrence path).
+    Hermes keeps the filled-template file-fill contract unchanged."""
+
+    def test_codex_uses_seed_suffix(self) -> None:
+        assert (
+            parallel_critique.critique_seed_output_name("c1", agent="codex")
+            == "critique_check_c1.seed.json"
+        )
+
+    def test_hermes_keeps_json_output_name(self) -> None:
+        assert (
+            parallel_critique.critique_seed_output_name("c1", agent="hermes")
+            == "critique_check_c1.json"
+        )
+        assert (
+            parallel_critique.critique_seed_output_name("c1", agent=None)
+            == "critique_check_c1.json"
+        )
+
+    def test_codex_seed_template_is_nonempty(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.prompts.critique import (
+            write_single_check_template,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir(parents=True)
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 1,
+            "config": {"project_dir": str(tmp_path)},
+            "meta": {},
+        }
+        check = {"id": "c1", "question": "q", "guidance": "g"}
+        seed = write_single_check_template(
+            plan_dir, state, check, "critique_check_c1.seed.json"
+        )
+        assert seed.exists()
+        assert seed.stat().st_size > 0
+
+    def test_unit_evidence_path_falls_back_to_seed_for_codex(self, tmp_path: Path) -> None:
+        unit = _WorkerUnitLike(output_path=None, check_id="c1")
+        path = parallel_critique._unit_evidence_path(tmp_path, unit)
+        assert path == tmp_path / "critique_check_c1.seed.json"
+
+    def test_unit_evidence_path_uses_output_path_when_present(self, tmp_path: Path) -> None:
+        unit = _WorkerUnitLike(output_path=tmp_path / "critique_check_c1.json", check_id="c1")
+        path = parallel_critique._unit_evidence_path(tmp_path, unit)
+        assert path == tmp_path / "critique_check_c1.json"
+
+
+class _WorkerUnitLike:
+    """Minimal stand-in for the WorkerUnit fields the evidence-path helper reads."""
+
+    def __init__(self, output_path: Path | None, check_id: str) -> None:
+        self.output_path = output_path
+        self.extra = {"check_id": check_id}

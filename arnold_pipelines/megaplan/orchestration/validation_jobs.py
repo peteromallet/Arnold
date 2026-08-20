@@ -27,6 +27,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from arnold_pipelines.megaplan.orchestration.test_selection import (
+    _existing_pytest_selector_path,
+    _looks_like_repo_path,
+)
+
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
@@ -77,9 +82,11 @@ class SelectorLifecycle:
 def normalize_selector_path(selector: Any) -> str | None:
     """Return the repository-relative path portion of a test selector.
 
-    Pytest node selectors (``path.py::test_name``) are checked for existence
-    using only ``path.py``.  We retain no inferred path and reject traversal or
-    empty selectors rather than trying to repair them.
+    The ``::`` strip exists for write-set matching only — ownership is
+    file-level.  Existence is decided separately by the node-aware
+    ``_existing_pytest_selector_path`` on the full selector.  We retain no
+    inferred path and reject traversal or empty selectors rather than trying
+    to repair them.
     """
 
     if not isinstance(selector, str):
@@ -130,18 +137,66 @@ def declared_task_output_paths(task: Mapping[str, Any] | None) -> tuple[str, ...
     return tuple(normalized)
 
 
+def graph_declared_output_paths(
+    tasks: Sequence[Mapping[str, Any]] | None,
+) -> tuple[str, ...]:
+    """Return the normalized, deterministic union of task-declared outputs.
+
+    The union spans every admitted task's ``write_set.paths`` AND
+    ``narrow_tests.selectors``.  ``narrow_tests`` are the test files the
+    finalize contract declares each task will produce/run, so a narrow
+    validation job referencing a test file authored by ANOTHER task in the
+    same graph (e.g. a packaging task whose narrow test is written by a later
+    test-authoring task) is owned by the graph and may be produced in a later
+    batch.  Normalization and deduplication mirror
+    ``declared_task_output_paths`` exactly; the result is stable-sorted so
+    classification is deterministic across processes.
+    """
+
+    if not isinstance(tasks, Sequence) or isinstance(tasks, (str, bytes)):
+        return ()
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        for path in declared_task_output_paths(task):
+            if path in seen:
+                continue
+            seen.add(path)
+            normalized.append(path)
+        narrow = task.get("narrow_tests")
+        if not isinstance(narrow, Mapping):
+            continue
+        raw_selectors = narrow.get("selectors")
+        if not isinstance(raw_selectors, list):
+            continue
+        for raw in raw_selectors:
+            path = normalize_selector_path(raw)
+            if path is None or path in seen:
+                continue
+            seen.add(path)
+            normalized.append(path)
+    return tuple(sorted(normalized))
+
+
 def classify_selector_lifecycle(
     *,
     project_dir: Path | str,
     job: Mapping[str, Any],
     task: Mapping[str, Any] | None,
+    all_declared_outputs: tuple[str, ...] | None = None,
 ) -> SelectorLifecycle:
     """Classify selectors as runnable, deferred, or invalid.
 
-    Existing selectors are runnable immediately.  A missing selector is
-    deferred only when the exact same normalized path is present in the
-    task's declared ``write_set.paths``.  A missing selector with no declared
-    owner is invalid and must stop execution before a worker is dispatched.
+    Existing selectors (node-aware: file exists and any ``::node`` parts are
+    defined in the source AST) are runnable immediately.  A missing selector
+    is deferred only when its file-level path is present in the task's
+    declared ``write_set.paths`` OR (when ``all_declared_outputs`` is given)
+    in the union of every admitted task's declared ``write_set.paths`` — a
+    selector owned by a different task in the same graph may be produced in a
+    later batch.  A missing selector with no declared owner is invalid and
+    must stop execution before a worker is dispatched.
     """
 
     raw_selectors = job.get("selectors")
@@ -160,10 +215,25 @@ def classify_selector_lifecycle(
             selector_paths.append(path)
 
     declared_outputs = declared_task_output_paths(task)
+    admissible_outputs = set(declared_outputs)
+    if all_declared_outputs is not None:
+        admissible_outputs.update(all_declared_outputs)
     root = Path(project_dir)
-    missing = tuple(
-        path for path in selector_paths if not (root / path).exists()
-    )
+    # Existence is node-aware: a selector whose file exists but whose node is
+    # absent is missing.  missing_selectors keeps the full selector string.
+    missing_selectors: list[str] = []
+    missing_paths: list[str] = []
+    seen_missing: set[str] = set()
+    for selector in raw_selectors:
+        if _existing_pytest_selector_path(root, selector):
+            continue
+        path = normalize_selector_path(selector)
+        if path is None or path in seen_missing:
+            continue
+        seen_missing.add(path)
+        missing_selectors.append(selector.strip())
+        missing_paths.append(path)
+    missing = tuple(missing_selectors)
     if not missing:
         return SelectorLifecycle(
             status=SELECTOR_READY,
@@ -171,7 +241,7 @@ def classify_selector_lifecycle(
             declared_outputs=declared_outputs,
         )
 
-    undeclared = tuple(path for path in missing if path not in declared_outputs)
+    undeclared = tuple(path for path in missing_paths if path not in admissible_outputs)
     if undeclared:
         return SelectorLifecycle(
             status=SELECTOR_INVALID,
@@ -225,10 +295,21 @@ def _build_pytest_command(
     *,
     timeout_seconds: int,
     extra_args: str = "",
+    embed_timeout: bool = True,
 ) -> str:
-    """Build a deterministic pytest command with a timeout wrapper."""
+    """Build a deterministic pytest command.
+
+    By default the command carries a GNU ``timeout`` wrapper.  Narrow-recheck
+    jobs compile with ``embed_timeout=False``: the structured suite runner
+    owns the sole deadline (the authoritative comparison ceiling), and an
+    embedded probe-budget timeout would deterministically kill a full-file
+    differential run that legitimately exceeds the planner's cost hint.
+    """
     quoted = " ".join(shlex.quote(s) for s in selectors)
-    base = f"timeout {timeout_seconds}s pytest {quoted} --tb=short -q"
+    if embed_timeout:
+        base = f"timeout {timeout_seconds}s pytest {quoted} --tb=short -q"
+    else:
+        base = f"pytest {quoted} --tb=short -q"
     if extra_args:
         base = f"{base} {extra_args}"
     return base
@@ -297,6 +378,7 @@ def _compile_narrow_recheck(
         "command": _build_pytest_command(
             selectors,
             timeout_seconds=max_seconds,
+            embed_timeout=False,
         ),
         "environment": {},
         "expected_exit_codes": [0],
@@ -307,6 +389,7 @@ def _compile_narrow_recheck(
         "selectors": selectors,
         "max_seconds": max_seconds,
         "max_runs": max_runs,
+        "acceptance_mode": "no_new_failures_delta",
         "reason": f"Narrow recheck for task {task_id}: {', '.join(selectors)}",
         "task_id": task_id,
         "writes_files": False,
@@ -367,6 +450,193 @@ def _compile_post_execute_suite(
         "max_runs": _MAX_POST_EXECUTE_RUNS,
         "reason": reason,
         "writes_files": False,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Selector shape validation + legacy-contract recovery projection
+# ---------------------------------------------------------------------------
+#
+# The finalize model occasionally emits full shell commands as
+# ``narrow_tests.selectors`` (``python -m compileall -q astrid/core/store``,
+# ``pytest tests/x.py -q``).  Ordinary finalization must REJECT those graphs
+# (task_feasibility emits ``task_test_selector_invalid_shape`` so planner
+# repair re-emits path selectors).  The projector below exists ONLY for the
+# bounded execute-entry recovery path: a blocked pre-dispatch validation
+# failure whose resume cursor is ``{phase: execute, retry_strategy:
+# repair_validation_failure}`` may deterministically recompile an in-memory
+# contract from the preserved finalize payload.  It never rewrites plan
+# artifacts, never silently widens, and fails closed unless every effective
+# narrow job still classifies READY or DEFERRED under the unchanged
+# ``classify_selector_lifecycle`` ownership rules.
+
+
+def validate_narrow_selector_shape(selector: Any) -> tuple[bool, str]:
+    """Return ``(valid, reason)`` for one ``narrow_tests`` selector string.
+
+    Valid selectors are concrete repository-relative pytest path selectors
+    (``tests/x.py``, ``tests/x.py::test_y``, ``astrid/pkg/mod.py``) with no
+    whitespace, no shell operators, no runner prefixes (``pytest``,
+    ``python -m``, ``bash``, ``make``, ...), no flags, and no absolute or
+    traversal paths.  Command-shaped selectors are rejected so the harness
+    compiler can never copy a shell command into a deterministic job.
+    """
+    if not isinstance(selector, str):
+        return False, "selector must be a string"
+    value = selector.strip()
+    if not value:
+        return False, "empty selector"
+    if any(ch in value for ch in (" ", "\t", "\n")):
+        return False, "selector must be a single path token (no shell commands or flags)"
+    if any(op in value for op in ("&&", "||", ";", "|", ">", "<", "`", "$(")):
+        return False, "selector must not contain shell operators"
+    if value.startswith("-"):
+        return False, "selector must not start with a flag"
+    path = normalize_selector_path(value)
+    if path is None:
+        return False, "selector must be a repository-relative path"
+    if not _looks_like_repo_path(value):
+        return False, "selector must be a tests/-prefixed or .py pytest path"
+    if _is_ambiguous_selector(value):
+        return False, "selector is ambiguous (directory-wide or catch-all)"
+    return True, ""
+
+
+def _extract_pytest_paths_from_command(command: str) -> list[str]:
+    """Extract positional pytest path selectors from one pytest command.
+
+    Recognizes only ``pytest ...`` / ``python -m pytest ...`` invocations.
+    Parsing stops at the first option so option values (e.g.
+    ``--cov tests/y.py``) can never widen the selector set, and only
+    path-shaped tokens are kept.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return []
+    runner_index: int | None = None
+    for index, part in enumerate(parts):
+        if part == "pytest" or part.endswith("/pytest"):
+            runner_index = index
+            break
+        if (
+            part in ("python", "python3")
+            and index + 1 < len(parts)
+            and parts[index + 1] == "-m"
+            and index + 2 < len(parts)
+            and parts[index + 2] == "pytest"
+        ):
+            runner_index = index + 2
+            break
+    if runner_index is None:
+        return []
+    paths: list[str] = []
+    for part in parts[runner_index + 1 :]:
+        if part.startswith("-"):
+            break
+        if not part:
+            continue
+        if _looks_like_repo_path(part):
+            paths.append(part)
+    return paths
+
+
+def project_legacy_validation_contract(
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Deterministic in-memory recompilation of a malformed legacy contract.
+
+    Only the bounded execute-entry recovery path may call this.  Returns
+    ``None`` when the payload carries nothing to recover.  The returned
+    receipt binds the original and effective job sets plus every excluded
+    command-shaped selector; callers persist it and never rewrite
+    ``finalize.json``.
+    """
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return None
+
+    normalized_tasks: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task = dict(task)
+        narrow = task.get("narrow_tests")
+        if isinstance(narrow, Mapping):
+            narrow = dict(narrow)
+            raw_selectors = narrow.get("selectors")
+            kept: list[str] = []
+            if isinstance(raw_selectors, list):
+                for selector in raw_selectors:
+                    if not isinstance(selector, str):
+                        continue
+                    ok, _reason = validate_narrow_selector_shape(selector)
+                    if ok:
+                        if selector not in kept:
+                            kept.append(selector)
+                        continue
+                    extracted = _extract_pytest_paths_from_command(selector)
+                    if extracted:
+                        for path in extracted:
+                            if path not in kept:
+                                kept.append(path)
+                        excluded.append(
+                            {
+                                "task_id": task.get("id"),
+                                "selector": selector,
+                                "reason": "command_extracted",
+                                "paths": extracted,
+                            }
+                        )
+                    else:
+                        excluded.append(
+                            {
+                                "task_id": task.get("id"),
+                                "selector": selector,
+                                "reason": "non_path_selector_dropped",
+                            }
+                        )
+            narrow["selectors"] = kept
+            task["narrow_tests"] = narrow
+        normalized_tasks.append(task)
+
+    projected = dict(payload)
+    projected["tasks"] = normalized_tasks
+
+    test_selection = payload.get("test_selection")
+    if isinstance(test_selection, Mapping):
+        ts = dict(test_selection)
+        command_override = ts.get("command_override")
+        if isinstance(command_override, str) and command_override.strip():
+            override_paths = _extract_pytest_paths_from_command(command_override)
+            if not override_paths:
+                # Malformed override (e.g. quoted command list): rebuild from
+                # the union of extracted per-task paths, else full-suite.
+                all_paths: list[str] = []
+                for entry in excluded:
+                    for path in entry.get("paths") or []:
+                        if path not in all_paths:
+                            all_paths.append(path)
+                override_paths = all_paths
+            if override_paths:
+                ts["command_override"] = _build_pytest_command(
+                    override_paths,
+                    timeout_seconds=_DEFAULT_POST_EXECUTE_MAX_SECONDS,
+                    extra_args="--no-header",
+                )
+            else:
+                ts.pop("command_override", None)
+                ts["mode"] = "full"
+                ts["selectors_used"] = []
+        projected["test_selection"] = ts
+
+    effective_jobs = compile_validation_jobs(projected)
+    original_jobs = payload.get("validation_jobs")
+    return {
+        "effective_jobs": effective_jobs,
+        "original_jobs": [dict(j) for j in original_jobs] if isinstance(original_jobs, list) else [],
+        "excluded": excluded,
     }
 
 
@@ -506,6 +776,9 @@ __all__ = [
     "compile_validation_jobs",
     "declared_task_output_paths",
     "deferred_selector_evidence",
+    "graph_declared_output_paths",
     "normalize_selector_path",
+    "project_legacy_validation_contract",
     "validate_model_validation_jobs",
+    "validate_narrow_selector_shape",
 ]

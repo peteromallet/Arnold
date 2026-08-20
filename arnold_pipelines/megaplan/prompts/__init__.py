@@ -249,6 +249,7 @@ def _execute_batch_prompt(
     rework_context: dict[str, object] | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
     batch_template_path: Path | None = None,
+    current_artifact_number: int | None = None,
 ) -> str:
     mode = state.get("config", {}).get("mode", "code")
     if mode == "doc":
@@ -259,6 +260,7 @@ def _execute_batch_prompt(
             completed_task_ids,
             root=root,
             projection_capabilities=projection_capabilities,
+            current_artifact_number=current_artifact_number,
         )
         return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
     if is_creative_mode(state):
@@ -280,6 +282,7 @@ def _execute_batch_prompt(
         rework_context=rework_context,
         projection_capabilities=projection_capabilities,
         batch_template_path=batch_template_path,
+        current_artifact_number=current_artifact_number,
     )
     return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
 
@@ -352,6 +355,10 @@ _AGENT_REGISTRY: dict[str, tuple[dict[str, "_PromptBuilder"], str]] = {
     "claude": (_CLAUDE_PROMPT_BUILDERS, "Claude"),
     "codex": (_CODEX_PROMPT_BUILDERS, "Codex"),
     "hermes": (_HERMES_PROMPT_BUILDERS, "Hermes"),
+    # omp (the omp RPC worker) uses the same neutral prompt shape as codex:
+    # the harness-guard prefix, schema block, and phase builder are
+    # transport-agnostic.
+    "omp": (_CODEX_PROMPT_BUILDERS, "omp"),
 }
 
 

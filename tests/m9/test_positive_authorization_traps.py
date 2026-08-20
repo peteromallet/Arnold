@@ -272,6 +272,66 @@ def test_forged_accepted_validation_without_matching_envelope_is_rejected(
     } == {"execute_batches/batch_1/tasks_d36c7be46cc2.json", "finalize.json"}
 
 
+def test_out_of_scope_validated_row_selects_strict_projection_without_shadowing(
+    tmp_path: Path,
+) -> None:
+    # A wave whose grant scope EXCLUDES T99 (scope is [T-other]) carries a
+    # validated REJECTED row for T99 (subject_outside_dispatched_batch, no
+    # envelope).  The validated row must STILL select the strict projection
+    # (fail closed) — the scope gate must run after saw_validation_projection
+    # detection — but it must never shadow or mint authority for T99.
+    _write_batch_artifact(
+        tmp_path,
+        task_id="T-other",
+        validation={
+            "outcome": "rejected",
+            "subject_id": "T-other",
+            "reason": "worker_identity_mismatch",
+            "envelope_digest": None,
+        },
+    )
+    path = execute_batch_artifact_path(tmp_path, 1, ["T-other"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["task_updates"].append(
+        {
+            "task_id": "T99",
+            "status": "done",
+            "files_changed": ["src/T99.py"],
+            "authority_generation_error": "attempt subject is outside dispatch scope",
+            "authority_validation": {
+                "outcome": "rejected",
+                "entry_kind": "task_update",
+                "entry_index": 1,
+                "subject_id": "T99",
+                "reason": "subject_outside_dispatched_batch",
+                "idempotency_key": None,
+                "envelope_digest": None,
+                "source_path": str(path),
+            },
+        }
+    )
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+    decisions: dict[str, Any] = {}
+    completed = effective_execute_completed_task_ids(
+        [_task()],
+        plan_dir=tmp_path,
+        decisions=decisions,
+    )
+    projection = accepted_attempt_execution_projection(
+        [_task()], plan_dir=tmp_path
+    )
+
+    # Strict projection is SELECTED (validated row seen)...
+    assert projection is not None
+    # ...but no authority is minted: T99 was out of scope and T33 has no
+    # accepted envelope anywhere.
+    assert projection.view.accepted_task_ids == ()
+    assert projection.view.dependency_closed_completed_task_ids == ()
+    assert completed == set()
+    assert decisions["T33"].satisfied is False
+
+
 def test_current_joined_source_records_are_required_for_positive_control(
     tmp_path: Path,
 ) -> None:

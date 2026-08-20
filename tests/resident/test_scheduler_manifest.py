@@ -2,8 +2,9 @@
 
 Covers ``runtime_pin_ok`` (expected_head/clean-tree verification against the
 per-runtime manifest or explicit values), ``proactive_seam_dispatch`` (the
-``arnold-repair-loop --mode=proactive`` dispatch-planning hook), and the
-``superfixer_proactive`` handler registration/behavior.
+``arnold-babysitter`` dispatch-planning hook — the same seam the watchdog
+status trigger uses), and the ``superfixer_proactive`` handler
+registration/behavior.
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ def _write_manifest(path: Path, runtime_root: Path, expected_head: str) -> None:
                 "venv_path": str(runtime_root / "venv"),
                 "runtime_root": str(runtime_root),
                 "expected_head": expected_head,
-                "repair_bin": str(runtime_root / "venv/bin/arnold-repair-loop"),
+                "repair_bin": str(runtime_root / "venv/bin/arnold-babysitter"),
                 "deps_lockfile": str(runtime_root / "uv.lock"),
             },
             "indirection": {
@@ -182,7 +183,7 @@ def test_runtime_pin_ok_absent_manifest_without_env_is_no_pin_configured(
 
 def test_proactive_seam_dispatch_uses_manifest_repair_bin(tmp_path: Path) -> None:
     """When the manifest names epic.repair_bin, the dispatch command resolves
-    the wrapper from the manifest, not __file__ (design line 191)."""
+    the babysitter wrapper from the manifest, not __file__ (design line 191)."""
     repo = _init_git_repo(tmp_path)
     head = _git(repo, "rev-parse", "HEAD")
     manifest_path = tmp_path / "runtime-manifest.json"
@@ -193,9 +194,9 @@ def test_proactive_seam_dispatch_uses_manifest_repair_bin(tmp_path: Path) -> Non
         remote_spec=tmp_path / "ws" / "chain.yaml",
         manifest_path=manifest_path,
     )
-    expected_bin = str(repo / "venv/bin/arnold-repair-loop")
+    expected_bin = str(repo / "venv/bin/arnold-babysitter")
     assert record["command"][0] == expected_bin
-    assert record["repair_bin_source"] == "manifest"
+    assert record["babysitter_bin_source"] == "manifest"
     assert record["pin_ok"] is True
 
 
@@ -215,10 +216,10 @@ def test_proactive_seam_dispatch_falls_back_to_local_wrapper_without_manifest(
         Path(scheduler_module.__file__).resolve().parents[1]
         / "cloud"
         / "wrappers"
-        / "arnold-repair-loop"
+        / "arnold-babysitter"
     )
     assert record["command"][0] == str(expected_wrapper)
-    assert record["repair_bin_source"] == "absent_manifest_fallback"
+    assert record["babysitter_bin_source"] == "absent_manifest_fallback"
     assert record["pin_reason"] == "no_pin_configured"
 
 
@@ -231,8 +232,8 @@ def test_proactive_seam_dispatch_command_and_dry_run(tmp_path: Path) -> None:
     record = proactive_seam_dispatch(
         session="sess-1", workspace=ws, remote_spec=spec, dry_run=True
     )
-    assert record["seam"] == "arnold-repair-loop"
-    assert record["mode"] == "proactive"
+    assert record["seam"] == "arnold-babysitter"
+    assert record["mode"] == "superfixer"
     assert record["dry_run"] is True
     assert record["pin_ok"] is True
     assert record["pin_reason"] == "no_pin_configured"
@@ -240,14 +241,14 @@ def test_proactive_seam_dispatch_command_and_dry_run(tmp_path: Path) -> None:
         Path(scheduler_module.__file__).resolve().parents[1]
         / "cloud"
         / "wrappers"
-        / "arnold-repair-loop"
+        / "arnold-babysitter"
     )
     assert record["command"] == [
         str(expected_wrapper),
-        "--mode=proactive",
-        "sess-1",
-        str(ws),
-        str(spec),
+        "--mode", "superfixer",
+        "--session", "sess-1",
+        "--workspace", str(ws),
+        "--remote-spec", str(spec),
     ]
     assert Path(record["command"][0]).is_file()
 
@@ -261,8 +262,9 @@ def test_proactive_seam_dispatch_without_dry_run_also_returns_record(
         session="sess-2", workspace=ws, remote_spec=spec, dry_run=False
     )
     assert record["dry_run"] is False
-    assert record["command"][1] == "--mode=proactive"
-    assert record["command"][2] == "sess-2"
+    assert record["command"][1] == "--mode"
+    assert record["command"][2] == "superfixer"
+    assert record["command"][4] == "sess-2"
 
 
 # ── superfixer_proactive handler ────────────────────────────────────────────
@@ -354,11 +356,11 @@ def test_superfixer_proactive_handler_plans_dispatch_and_stays_pending(
     job_id, changes = fake.updated[0]
     assert job_id == "job-1"
     plan = changes["payload"]["seam_dispatch_plan"]
-    assert plan["seam"] == "arnold-repair-loop"
-    assert plan["mode"] == "proactive"
+    assert plan["seam"] == "arnold-babysitter"
+    assert plan["mode"] == "superfixer"
     assert plan["pin_ok"] is True
     assert plan["pin_reason"] == "no_pin_configured"
-    assert plan["command"][2] == "sess-1"
+    assert plan["command"][4] == "sess-1"
     assert changes["payload"]["superfixer_occurrence_state"] == "planned"
     # The follow-up pending occurrence carries the dispatch plan (occurrence
     # stays pending until the actual launch is recorded).
@@ -366,7 +368,7 @@ def test_superfixer_proactive_handler_plans_dispatch_and_stays_pending(
     follow_up = fake.created[0]["job"]
     assert follow_up.job_type == "superfixer_proactive"
     assert follow_up.payload["superfixer_occurrence_state"] == "planned"
-    assert follow_up.payload["seam_dispatch_plan"]["seam"] == "arnold-repair-loop"
+    assert follow_up.payload["seam_dispatch_plan"]["seam"] == "arnold-babysitter"
     assert fake.events[0]["event_type"] == "resident_superfixer_proactive"
 
 

@@ -36,8 +36,8 @@ from typing import Literal, Mapping, Sequence
 MODEL_POLICY_SHA_ALGORITHM = "sha256"
 
 # Budgets are seconds per repair rung.  Values follow the existing wrapper
-# conventions: reactive repair defaults to 7200s total in arnold-repair-loop
-# (split across investigator + mutator), L2/L3 mirror META_REPAIR_BUDGET_SECS
+# conventions: reactive repair defaults to 7200s total for the babysitter
+# flow (swarm + codex + implement + prove), L2/L3 mirror META_REPAIR_BUDGET_SECS
 # (5400s), and proactive (hourly) is deliberately the longest budget.
 _BUDGET_REACTIVE_STAGE_SECS = 3600
 _BUDGET_PROACTIVE_SECS = 10800

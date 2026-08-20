@@ -82,6 +82,14 @@ HOT_ENV_FORBIDDEN_NONSECRET_NAMES: tuple[str, ...] = (
     "ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED",
 )
 
+# Ghost configuration names that must never ride in hot env: they have NO
+# reader anywhere in this tree (verified T-0208).  ARNOLD_REPAIR_TRIGGER_
+# SESSION_ALLOWLIST was documented as nonexistent since G5; rejecting it here
+# keeps an absent control from being resurrected as a plausible-looking knob.
+HOT_ENV_GHOST_CONFIG_NAMES: tuple[str, ...] = (
+    "ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST",
+)
+
 # A hot-env name is acceptable ONLY when it looks like a credential.  The
 # fragment set mirrors the census redaction policy minus MODEL (model pins are
 # configuration, not credentials, and are rejected above as nonsecret tuning).
@@ -350,6 +358,12 @@ def upload_env_names(remote: Remote, names: list[str]) -> None:
                 f"refusing to hot-upload retired runtime selector {name!r}: "
                 "runtime identity resolves from the per-epic runtime manifest, "
                 "not .cloud-hot-env"
+            )
+        if name in HOT_ENV_GHOST_CONFIG_NAMES:
+            raise HotUploadError(
+                f"refusing to hot-upload ghost config name {name!r}: "
+                "no code in this tree reads it; an absent control must not "
+                "be resurrected as a plausible-looking knob"
             )
         if (
             name in HOT_ENV_FORBIDDEN_NONSECRET_NAMES

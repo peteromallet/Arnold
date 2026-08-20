@@ -6,6 +6,9 @@ Covers:
 - Explicit opt-out for redaction.
 - Explicit opt-in for ledger, autonomy (enforcement is default-on).
 - Flag independence (each flag gated by its own env var).
+- The single-flash babysitter is the only repair flow: the L1 repair-trigger
+  and L2 meta-repair flags were removed, and their retired path names always
+  fail closed.
 - Integration: flags are correctly wired into their consuming modules.
 """
 
@@ -27,14 +30,6 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     autonomy_on,
     escalation_ledger_enabled,
     escalation_ledger_on,
-    meta_repair_commit_enabled,
-    meta_repair_commit_on,
-    meta_repair_push_enabled,
-    meta_repair_push_on,
-    meta_repair_enabled,
-    meta_repair_on,
-    meta_repair_push_enabled,
-    meta_repair_push_on,
     MUTATION_PATH_L1,
     MUTATION_PATH_L2,
     MUTATION_PATH_L3,
@@ -45,8 +40,6 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     redaction_on,
     repair_request_queue_enabled,
     repair_request_queue_on,
-    repair_trigger_enabled,
-    repair_trigger_on,
     resolver_enforcement_enabled,
     resolver_enforcement_on,
     resolver_observe_enabled,
@@ -111,11 +104,6 @@ class TestM1Defaults:
             assert repair_request_queue_enabled() is True
             assert repair_request_queue_on() is True
 
-    def test_repair_trigger_defaults_on(self) -> None:
-        with _clear_env():
-            assert repair_trigger_enabled() is True
-            assert repair_trigger_on() is True
-
 
 # ---------------------------------------------------------------------------
 # Explicit opt-out for redaction
@@ -160,7 +148,7 @@ class TestRedactionOptOut:
 
 
 class TestExplicitOptIn:
-    """Authority ledgers require opt-in; repair dispatch defaults on."""
+    """Authority ledgers require opt-in; audit-autofix defaults on."""
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -173,10 +161,6 @@ class TestExplicitOptIn:
         with _clear_env():
             assert flag_func() is False
 
-    def test_repair_trigger_on_by_default(self) -> None:
-        with _clear_env():
-            assert repair_trigger_enabled() is True
-
     def test_autonomy_off_by_default(self) -> None:
         with _clear_env():
             assert autonomy_enabled() is False
@@ -187,7 +171,6 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
-            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_on_when_env_1(self, env_var: str, flag_func) -> None:
@@ -200,7 +183,6 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
-            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_when_env_0(self, env_var: str, flag_func) -> None:
@@ -213,7 +195,6 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
-            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_when_env_false(self, env_var: str, flag_func) -> None:
@@ -226,7 +207,6 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
-            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_on_when_env_true(self, env_var: str, flag_func) -> None:
@@ -240,13 +220,12 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
-            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_when_env_empty(self, env_var: str, flag_func) -> None:
         with _set_env(**{env_var: ""}):
             # Empty string falls through to the flag's default.
-            expected = env_var in ("ARNOLD_RESOLVER_ENFORCEMENT", "ARNOLD_REPAIR_TRIGGER_ENABLED")
+            expected = env_var == "ARNOLD_RESOLVER_ENFORCEMENT"
             assert flag_func() is expected
 
 
@@ -354,8 +333,6 @@ class TestFlagIndependence:
 
 
 _MUTATION_PATHS = (
-    (MUTATION_PATH_L1, "ARNOLD_REPAIR_TRIGGER_ENABLED"),
-    (MUTATION_PATH_L2, "ARNOLD_META_REPAIR_ENABLED"),
     (MUTATION_PATH_L3, "ARNOLD_AUDIT_AUTOFIX_ENABLED"),
 )
 _MUTATION_CLASSES = ("state", "source", "commit", "push", "subprocess")
@@ -378,7 +355,7 @@ class TestMutationAuthorization:
         master_enabled: bool,
         path_enabled: bool,
     ) -> None:
-        """All L1/L2/L3 effects authorize only for the true/true row."""
+        """L3 effects authorize only for the true/true row."""
         with _set_env(
             ARNOLD_AUTONOMY="1" if master_enabled else "0",
             **{path_env: "1" if path_enabled else "0"},
@@ -389,6 +366,18 @@ class TestMutationAuthorization:
             # Observation is intentionally not part of mutation authorization.
             assert resolver_observe_enabled() is True
             assert repair_request_queue_enabled() is True
+
+    def test_retired_l1_l2_paths_fail_closed(self) -> None:
+        """The layered L1/L2 repair stack was removed: even with the master
+        gate and the surviving L3 gate open, the retired path names never
+        authorize mutation."""
+        with _set_env(
+            ARNOLD_AUTONOMY="1",
+            ARNOLD_AUDIT_AUTOFIX_ENABLED="1",
+        ):
+            assert mutation_authorized(MUTATION_PATH_L1) is False
+            assert mutation_authorized(MUTATION_PATH_L2) is False
+            assert mutation_authorized(MUTATION_PATH_L3) is True
 
     def test_unknown_mutation_path_fails_closed(self) -> None:
         with _set_env(ARNOLD_AUTONOMY="1"):
@@ -485,32 +474,12 @@ class TestResolverObserveIntegration:
 
 
 class TestM5Defaults:
-    """All M5 meta-repair and auditor flags are on by default."""
-
-    def test_meta_repair_defaults_on(self) -> None:
-        with _clear_env():
-            assert meta_repair_enabled() is True
-            assert meta_repair_on() is True
+    """The surviving L3 auditor-autofix flags are on by default."""
 
     def test_audit_autofix_defaults_on(self) -> None:
         with _clear_env():
             assert audit_autofix_enabled() is True
             assert audit_autofix_on() is True
-
-    def test_meta_repair_commit_defaults_on(self) -> None:
-        with _clear_env():
-            assert meta_repair_commit_enabled() is True
-            assert meta_repair_commit_on() is True
-
-    def test_meta_repair_push_defaults_off(self) -> None:
-        with _clear_env():
-            assert meta_repair_push_enabled() is False
-            assert meta_repair_push_on() is False
-
-    def test_meta_repair_push_requires_explicit_opt_in(self) -> None:
-        with _set_env(ARNOLD_META_REPAIR_PUSH_ENABLED="1"):
-            assert meta_repair_push_enabled() is True
-            assert meta_repair_push_on() is True
 
     def test_audit_autofix_commit_defaults_on(self) -> None:
         with _clear_env():
@@ -519,14 +488,14 @@ class TestM5Defaults:
 
 
 class TestM5ExplicitOptIn:
-    """M5 flags default ON and support explicit disabling."""
+    """Surviving L3 audit-autofix flags default ON and support explicit
+    disabling.  The L1 repair-trigger and L2 meta-repair flags were removed
+    with the layered repair stack."""
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
         [
-            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
-            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
         ],
     )
@@ -537,9 +506,7 @@ class TestM5ExplicitOptIn:
     @pytest.mark.parametrize(
         "env_var,flag_func",
         [
-            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
-            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
         ],
     )
@@ -550,9 +517,7 @@ class TestM5ExplicitOptIn:
     @pytest.mark.parametrize(
         "env_var,flag_func",
         [
-            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
-            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
         ],
     )
@@ -563,9 +528,7 @@ class TestM5ExplicitOptIn:
     @pytest.mark.parametrize(
         "env_var,flag_func",
         [
-            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
-            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
         ],
     )
@@ -576,9 +539,7 @@ class TestM5ExplicitOptIn:
     @pytest.mark.parametrize(
         "env_var,flag_func",
         [
-            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
-            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
         ],
     )
@@ -590,9 +551,7 @@ class TestM5ExplicitOptIn:
     @pytest.mark.parametrize(
         "env_var,flag_func",
         [
-            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
-            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
             ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
         ],
     )
@@ -603,21 +562,16 @@ class TestM5ExplicitOptIn:
 
 
 class TestM5FlagIndependence:
-    """Each M5 flag is gated by its own env var — no cross-flag leakage."""
-
-    def test_meta_repair_independent_of_commits(self) -> None:
-        with _set_env(ARNOLD_META_REPAIR_COMMIT_ENABLED="1"):
-            assert meta_repair_enabled() is True
+    """Each surviving L3 flag is gated by its own env var — no cross-flag
+    leakage."""
 
     def test_audit_autofix_independent_of_commits(self) -> None:
         with _set_env(ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="1"):
             assert audit_autofix_enabled() is True
 
-    def test_m5_flags_independent_of_autonomy(self) -> None:
+    def test_audit_autofix_flags_independent_of_autonomy(self) -> None:
         with _set_env(ARNOLD_AUTONOMY="1"):
-            assert meta_repair_enabled() is True
             assert audit_autofix_enabled() is True
-            assert meta_repair_commit_enabled() is True
             assert audit_autofix_commit_enabled() is True
 
 
@@ -779,14 +733,14 @@ class TestT0208ReportFiltersNeverAuthorize:
         assert with_allowlists is True
         assert with_allowlists == without_allowlists
 
-    def test_mutation_and_push_remain_separately_default_off(self) -> None:
-        # Report filters cannot flip the default-off mutation/push posture.
+    def test_mutation_remains_default_off(self) -> None:
+        # Report filters cannot flip the default-off mutation posture.
         with _set_env(
             MEGAPLAN_AUDIT_SESSION_ALLOWLIST="any-session",
             MEGAPLAN_AUDIT_PLAN_ALLOWLIST="any-plan",
         ):
             assert autonomy_enabled() is False
-            assert meta_repair_push_enabled() is False
+            assert mutation_authorized(MUTATION_PATH_L3) is False
 
 
 class TestT0208AuditCommitFlagIsEffectBoundaryGate:

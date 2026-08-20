@@ -5,6 +5,8 @@ import hashlib
 import json
 import logging
 import os
+import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -38,6 +40,7 @@ from arnold_pipelines.megaplan._core import (
     compute_task_batches,
     get_effective,
     is_prose_mode,
+    is_transient_execute_advisory,
     list_batch_artifacts,
     load_config,
     make_history_entry,
@@ -80,6 +83,7 @@ from arnold_pipelines.megaplan.execute.policy import (
     NextExecuteTransition,
     NextStepDecision,
     evaluate_blocker_recovery_policy,
+    is_contradictory_done_budget_row,
     resolve_batch_tier,
     resolve_partial_failure_resume,
     resolve_single_batch_next_step,
@@ -139,7 +143,9 @@ from arnold_pipelines.megaplan.orchestration.validation_jobs import (
     SELECTOR_DEFERRED,
     SELECTOR_INVALID,
     classify_selector_lifecycle,
+    declared_task_output_paths,
     deferred_selector_evidence,
+    graph_declared_output_paths,
     normalize_selector_path,
 )
 from arnold_pipelines.megaplan.orchestration.plan_contracts import (
@@ -1042,7 +1048,7 @@ def _scheduler_completed_ids_for_tasks(
         else root
     )
     current_head = _best_effort_git_head(project_dir)
-    return effective_execute_completed_task_ids(
+    completed = effective_execute_completed_task_ids(
         tasks,
         plan_dir=plan_dir,
         project_dir=project_dir,
@@ -1050,6 +1056,23 @@ def _scheduler_completed_ids_for_tasks(
         current_head=current_head,
         decisions=decisions,
     )
+    # Budget-gate rows are NEVER effectively completed, even when their result
+    # envelope authority was accepted (occurrence 0513dbf3f069 / 93e301ead5
+    # contract: "authority adoption never overrides the gate"). The merge gate
+    # stamps status=blocked plus the marker; the durable field survives the
+    # --retry-blocked-tasks reset. Excluding them from the shared completed
+    # reader keeps the planner (pending frontier), the reducer (blocked, not
+    # false SUCCESS), the adopt gate, and the stale-authority demotion all
+    # consistent: a budget-blocked row must re-enter the runnable frontier.
+    budget_blocked = {
+        task["id"]
+        for task in tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+        and _is_task_test_budget_blocked(task)
+    }
+    if budget_blocked:
+        completed = {tid for tid in completed if tid not in budget_blocked}
+    return completed
 def _best_effort_git_head(root: Path | None) -> str | None:
     if root is None:
         return None
@@ -2138,6 +2161,29 @@ def _replay_proven_batch_artifacts(
             _emit_batch_scope_quarantine(plan_dir, quarantine)
             log.warning("skipping unreadable execution artifact %s", artifact_path)
             continue
+        # Stale pre-contract S4 artifacts (written before the versioned
+        # batch_scope / dispatch_identity contract landed) lack the fields the
+        # authority validator requires; replaying them only produces
+        # quarantine noise and stale evidence. Silently exclude them. Legacy
+        # flat execution_batch_*.json artifacts are NOT pruned for lacking S4
+        # fields — they predate the S4 layout by design.
+        is_s4_artifact = (
+            artifact_path.parent.parent.name == "execute_batches"
+            and re.fullmatch(r"batch_\d+", artifact_path.parent.name) is not None
+            and re.fullmatch(r"tasks_[^.]+\.json", artifact_path.name) is not None
+        )
+        if is_s4_artifact and isinstance(payload, dict):
+            scope = payload.get(BATCH_SCOPE_KEY)
+            versioned_scope = (
+                isinstance(scope, dict)
+                and isinstance(scope.get("schema_version"), int)
+                and not isinstance(scope.get("schema_version"), bool)
+            )
+            if not versioned_scope or not isinstance(
+                payload.get(DISPATCH_IDENTITY_KEY), dict
+            ):
+                log.info("ignoring stale pre-contract S4 artifact %s", artifact_path)
+                continue
         merge_result = _merge_scoped_batch_artifact_through_validator(
             plan_dir=plan_dir,
             artifact_path=artifact_path,
@@ -2147,8 +2193,22 @@ def _replay_proven_batch_artifacts(
             known_sense_check_ids=known_sense_check_ids,
             mode=mode,
             state=state,
-            preserve_accepted=False,
+            # preserve_accepted=True: an authority-adopted task (blocked or
+            # pending promoted to done by _adopt_authority_completed_blocked_
+            # tasks) must NOT be demoted back to its stale pre-adopt status
+            # when the proven artifact is replayed on resume (grok consult,
+            # astrid m1 batch-22): replay with preserve_accepted=False demoted
+            # adopted T41 to pending, re-derived its incomplete-record
+            # deviation, and reopened the quality-gate circuit every execute
+            # despite a clean 43/43-done finalize.
+            preserve_accepted=True,
             require_dispatch_wbc=False,
+            # replay_proven=True: the artifact's dispatch identity is its own
+            # accepted wave (coordinator attempt id / fence token), not the
+            # current resume run's. Bypass ONLY the temporal coordinator/fence
+            # comparison; plan revision, prerequisite, worker, echo, evidence,
+            # and CAS validation stay enforced. (occurrence 0ae19cc17afd)
+            replay_proven=True,
         )
         if merge_result.quarantine is not None:
             _emit_batch_scope_quarantine(plan_dir, merge_result.quarantine)
@@ -2536,11 +2596,18 @@ def _reconcile_prompt_override(
             return batch_prompt
         if not isinstance(target_branch, str) or not target_branch.strip():
             target_branch = "main"
+        review_data = None
+        review_path = plan_dir / "review.json"
+        if review_path.is_file():
+            loaded_review = json.loads(review_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_review, dict):
+                review_data = loaded_review
         return render_reconcile_prompt(
             rubric_docs=rubric_docs,
             first_parent_log=first_parent_log,
             candidate_commits=candidate_commits,
             target_branch=target_branch,
+            review_data=review_data,
         )
     except Exception:  # noqa: BLE001 - marker problems never break execute
         return batch_prompt
@@ -2582,6 +2649,49 @@ def _default_max_tasks_per_batch() -> int:
         get_effective("execution", "max_tasks_per_batch"),
         5,
     )
+
+
+def _weight_aware_max_tasks_per_batch(
+    base: int,
+    tasks: Iterable[Mapping[str, Any]],
+) -> int:
+    """Shrink the batch for heavy tasks so one worker can finish it.
+
+    The execute worker runs under a fixed tool-iteration budget (Hermes
+    max_turns, default 90). A batch whose tasks each need many tool calls
+    (implementation + multiple test runs) exhausts that budget mid-batch: the
+    worker dies, no authority envelopes are stamped, the pending frontier
+    never advances, and resume restarts from the top (astrid m2 reap loop,
+    2026-08-16 — 5-task batches of 9-12min tasks never completed; mega m3's
+    2-task batches of 3-4min tasks completed cleanly).
+
+    Heavy tasks (estimated_minutes >= 8 or complexity >= 6) batch at most 2;
+    light tasks keep the configured default. This preserves the fast path for
+    simple work and prevents guaranteed worker-budget exhaustion for heavy
+    work, without raising the worker cap (which would mask the underlying
+    budget mismatch).
+    """
+    base = max(1, int(base))
+    if base <= 1:
+        return base
+    try:
+        tasks_list = list(tasks)
+    except TypeError:
+        return base
+    if not tasks_list:
+        return base
+    heavy = sum(
+        1
+        for task in tasks_list
+        if isinstance(task, Mapping)
+        and (
+            (isinstance(task.get("estimated_minutes"), (int, float)) and task["estimated_minutes"] >= 8)
+            or (isinstance(task.get("complexity"), (int, float)) and task["complexity"] >= 6)
+        )
+    )
+    if heavy >= 1 and len(tasks_list) >= 2:
+        return min(base, 2)
+    return base
 
 
 def _resolve_max_tasks_per_batch(state: PlanState, args: argparse.Namespace) -> int:
@@ -2679,9 +2789,9 @@ def _count_execute_tracking(
     }
     acked_in_batches: set[str] = set()
     if plan_dir is not None:
-        from arnold_pipelines.megaplan._core import list_batch_artifacts
+        from arnold_pipelines.megaplan._core import list_all_batch_artifacts
 
-        for batch_path in list_batch_artifacts(plan_dir):
+        for batch_path in list_all_batch_artifacts(plan_dir):
             try:
                 payload = json.loads(batch_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -2722,21 +2832,36 @@ def build_blocking_reasons(
     total_checks: int,
     missing_task_evidence: list[str],
     timeout_reason: str | None = None,
+    payload: Mapping[str, Any] | None = None,
 ) -> list[str]:
     reasons: list[str] = []
-    if tracked_tasks < total_tasks:
-        reasons.append(
-            f"{total_tasks - tracked_tasks}/{total_tasks} tasks have no executor update"
+    # P6 reconcile selection envelope: a read-only reconcile selector emits the
+    # authoritative selection JSON (top-level selected_shas +
+    # verification_evidence) instead of the generic batch report; the
+    # selection IS the batch's completion evidence, so the per-task tracking
+    # and sense-check acknowledgment gates must not block it (occurrence
+    # 47671addc195 — without this the milestone stranded blocked with
+    # "N/M tasks have no executor update" despite a complete selection).
+    selection_complete = bool(
+        isinstance(payload, Mapping)
+        and (
+            "selected_shas" in payload or "verification_evidence" in payload
         )
-    if acknowledged_checks < total_checks:
-        reasons.append(
-            f"{total_checks - acknowledged_checks}/{total_checks} sense checks have no executor acknowledgment"
-        )
-    if missing_task_evidence:
-        reasons.append(
-            "done tasks missing both files_changed and commands_run: "
-            + ", ".join(missing_task_evidence)
-        )
+    )
+    if not selection_complete:
+        if tracked_tasks < total_tasks:
+            reasons.append(
+                f"{total_tasks - tracked_tasks}/{total_tasks} tasks have no executor update"
+            )
+        if acknowledged_checks < total_checks:
+            reasons.append(
+                f"{total_checks - acknowledged_checks}/{total_checks} sense checks have no executor acknowledgment"
+            )
+        if missing_task_evidence:
+            reasons.append(
+                "done tasks missing both files_changed and commands_run: "
+                + ", ".join(missing_task_evidence)
+            )
     if timeout_reason is not None:
         reasons.append(timeout_reason)
     return reasons
@@ -2750,6 +2875,17 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
         "task(s) reported status=blocked by the worker: "
         f"{', '.join(blocked_ids)}. Resolve or replan the blocked task(s) "
         "before continuing."
+    )
+
+
+def _pending_left_behind_reason(task_ids: Iterable[str]) -> str | None:
+    pending_ids = sorted({task_id for task_id in task_ids if task_id})
+    if not pending_ids:
+        return None
+    return (
+        "task(s) remained non-complete after their execute batch: "
+        f"{', '.join(pending_ids)}. Stopping before dispatching later "
+        "batches; retry execute."
     )
 
 
@@ -2810,35 +2946,6 @@ def _drop_resolved_quality_blocking_reasons(
     return kept
 
 
-def _is_transient_execute_advisory(message: object) -> bool:
-    """Return True for batch-local execute advisories that should not survive
-    into the terminal aggregate payload.
-
-    Per-batch payloads legitimately mention then-pending downstream tasks,
-    partial sense-check coverage, and provisional git-diff observations. Once
-    the aggregate execution audit recomputes final-state evidence, carrying
-    those earlier advisories forward makes the terminal execute artifact look
-    blocked for work that later completed.
-    """
-
-    if not isinstance(message, str):
-        return False
-    transient_prefixes = (
-        "Advisory observation mismatch:",
-        "Advisory audit finding:",
-        "Advisory audit skip:",
-        "Advisory carry-forward observation:",
-    )
-    if message.startswith(transient_prefixes):
-        return True
-    transient_fragments = (
-        "tasks have no executor update",
-        "sense checks have no executor acknowledgment",
-        "Tasks left pending after execute",
-    )
-    return any(fragment in message for fragment in transient_fragments)
-
-
 def _aggregate_terminal_deviations(
     aggregate_payload: dict[str, Any],
     *,
@@ -2848,7 +2955,7 @@ def _aggregate_terminal_deviations(
 ) -> list[str]:
     deviations: list[str] = []
     for deviation in aggregate_payload.get("deviations", []):
-        if _is_transient_execute_advisory(deviation):
+        if is_transient_execute_advisory(deviation):
             continue
         if deviation not in deviations:
             deviations.append(deviation)
@@ -3032,6 +3139,10 @@ def _run_and_merge_batch(
         finalize_data=finalize_data,
         batch_task_ids=batch_task_ids,
         is_final_batch=_is_final_batch_flag,
+        # Admission-only: the execute admission gate may accept pytest exit
+        # code 1 when every failed node ID is a plan-baseline-known failure.
+        # Deferred/final rechecks and sweeps never opt into subtraction.
+        admission=True,
     )
     _dispatch_start = time.monotonic()
     # M8A T16 - under opt-in canary enforcement, when repair adoption
@@ -3329,6 +3440,41 @@ def _run_and_merge_batch(
             source_path=batch_artifact_path,
         )
     )
+    # Persist the merged payload BEFORE the authority adopt so this batch's
+    # accepted result envelopes are on disk for the kernel projection (grok
+    # consult, astrid deferred-revalidation wedge): the adopt previously only
+    # saw PRIOR batches' envelopes, so a this-batch blocked task kept the
+    # deferred revalidation refusing (task_result_blocked_by_post_merge_policy)
+    # and every resume advanced exactly one batch before blocking again.  The
+    # late write below still produces the complete artifact (audit/deviation
+    # enriched); this early write is the merge-complete crash-recovery point.
+    atomic_write_json(batch_artifact_path, payload)
+    # Adopt authority-completed blocked tasks BEFORE the deferred-selector
+    # revalidation gate: a task whose accepted-attempt kernel authority is
+    # dependency-closed (done) must not keep its stale `blocked` status, or a
+    # deferred narrow recheck referencing that task refuses with
+    # task_result_blocked_by_post_merge_policy.  The kernel projection (not the
+    # live payload's pre-policy accepted flag) is the source of truth; a task
+    # only grant-accepted this turn (policy not yet closed) stays blocked and
+    # the gate keeps refusing — that is the intentional post-merge policy.
+    authority_adopted_ids = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
+    if authority_adopted_ids:
+        _publish_execute_finalize(
+            plan_dir,
+            finalize_data,
+            operation="adopt-authority-completed-blocked",
+            state=state,
+        )
+        log.info(
+            "authority-adopt: promoted %d authority-completed blocked task(s) to done: %s",
+            len(authority_adopted_ids),
+            ", ".join(authority_adopted_ids),
+        )
     # A narrow validation whose selector was a declared task output is not a
     # terminal pass.  Re-check it only after the task's *accepted* result
     # envelope proves that the task created the exact path.  This keeps the
@@ -3347,6 +3493,43 @@ def _run_and_merge_batch(
         payload.setdefault("validation_results", []).extend(
             _deferred_validation_results
         )
+    # Final-batch deferred sweep: every admitted task has now run, so any
+    # narrow job whose selector was missing at its own pre-dispatch can be
+    # re-attempted (selector exists -> run), or fails closed (still missing ->
+    # undeclared or declared-but-never-created).  Runs BEFORE execute success
+    # is projected so a broken write-set contract blocks, never silently
+    # passes.
+    if _is_final_batch_flag:
+        _final_sweep_results = _sweep_persisted_deferred_selector_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            state=state,
+        )
+        if _final_sweep_results:
+            payload.setdefault("validation_results", []).extend(
+                _final_sweep_results
+            )
+        # Evidence-gated budget-debt acceptance (occurrence 927ad612eda8):
+        # a cumulative max_seconds-only block whose FULL admitted selection
+        # passes strict against the current merged tree is reconciled to
+        # durable accepted_with_debt so TDD-style plans cannot wedge in
+        # blocked_by_quality on a parametrized selector that can never fit
+        # the cap.  Runs after the final deferred sweep (fresh strict
+        # evidence) and before deviation/audit publication.
+        _budget_debt_accepted = _accept_strictly_verified_test_budget_debt(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            payload=payload,
+            deviations=deviations,
+        )
+        if _budget_debt_accepted:
+            log.info(
+                "final sweep: test-budget debt accepted with strict evidence "
+                "for task(s): %s",
+                ", ".join(_budget_debt_accepted),
+            )
     attribution_result = AttributionResult(records=[], recursive_snapshot=None)
     if not is_prose_mode(state):
         attribution_result = _auto_attribute_unclaimed_paths(
@@ -3561,7 +3744,625 @@ def _advance_batch_circuit(error, *, task_id="", attempt_id=""):
     return new_state, decision, fclass
 
 
-def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None):
+def _legacy_validation_recovery_cursor_active(plan_dir: Path) -> bool:
+    """True only for the exact blocked pre-dispatch validation recovery cursor."""
+    try:
+        state = json.loads((Path(plan_dir) / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(state, dict) or state.get("current_state") != "blocked":
+        return False
+    failure = state.get("latest_failure")
+    if not isinstance(failure, dict) or failure.get("kind") != "pre_dispatch_validation_failed":
+        return False
+    metadata = failure.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("error_code") != "invalid_validation_job":
+        return False
+    cursor = state.get("resume_cursor")
+    return (
+        isinstance(cursor, dict)
+        and cursor.get("phase") == "execute"
+        and cursor.get("retry_strategy") == "repair_validation_failure"
+    )
+
+
+def _persisted_validation_jobs_malformed(jobs: list[dict[str, Any]]) -> bool:
+    """True when any persisted narrow job carries a command-shaped selector."""
+    from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+        validate_narrow_selector_shape,
+    )
+
+    for job in jobs:
+        if job.get("kind") != "narrow_recheck":
+            continue
+        selectors = job.get("selectors")
+        if isinstance(selectors, list):
+            for selector in selectors:
+                if isinstance(selector, str) and not validate_narrow_selector_shape(
+                    selector
+                )[0]:
+                    return True
+    return False
+
+
+def _project_legacy_validation_contract_for_recovery(
+    *,
+    plan_dir: Path,
+    finalize_data: Mapping[str, Any],
+    persisted_jobs: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Cursor-gated in-memory recovery projection for malformed legacy jobs.
+
+    Returns ``None`` unless every precondition holds AND every effective
+    narrow job still classifies READY or DEFERRED under the unchanged
+    lifecycle ownership rules (fail closed).  Never rewrites plan artifacts.
+    """
+    if len(persisted_jobs) < 2:
+        return None
+    if not _legacy_validation_recovery_cursor_active(plan_dir):
+        return None
+    if not _persisted_validation_jobs_malformed(persisted_jobs):
+        return None
+    from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+        SELECTOR_INVALID,
+        classify_selector_lifecycle,
+        project_legacy_validation_contract,
+    )
+
+    projected = project_legacy_validation_contract(finalize_data)
+    if projected is None:
+        return None
+
+    tasks = finalize_data.get("tasks")
+    task_by_id: dict[str, Mapping[str, Any]] = {}
+    if isinstance(tasks, list):
+        for task in tasks:
+            if isinstance(task, Mapping) and isinstance(task.get("id"), str):
+                task_by_id[task["id"]] = task
+
+    project_dir = finalize_data.get("_project_dir") or plan_dir
+    all_declared_outputs = graph_declared_output_paths(finalize_data.get("tasks"))
+    for job in projected["effective_jobs"]:
+        if job.get("kind") != "narrow_recheck":
+            continue
+        task_id = job.get("task_id")
+        task = task_by_id.get(task_id) if isinstance(task_id, str) else None
+        lifecycle = classify_selector_lifecycle(
+            project_dir=project_dir,
+            job=job,
+            task=task,
+            all_declared_outputs=all_declared_outputs,
+        )
+        if lifecycle.status == SELECTOR_INVALID:
+            # Fail closed: recovery must never admit a job the unchanged gate
+            # would reject.
+            return None
+
+    original = projected.get("original_jobs", [])
+    effective = projected.get("effective_jobs", [])
+    try:
+        original_sha = "sha256:" + hashlib.sha256(
+            json.dumps(original, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        effective_sha = "sha256:" + hashlib.sha256(
+            json.dumps(effective, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError):
+        original_sha = ""
+        effective_sha = ""
+    return {
+        "effective_jobs": effective,
+        "original_jobs_sha256": original_sha,
+        "effective_jobs_sha256": effective_sha,
+        "excluded": projected.get("excluded", []),
+    }
+
+
+def _persist_validation_recovery_receipt(
+    plan_dir: Path,
+    projected: Mapping[str, Any],
+) -> None:
+    """Persist the additive execute recovery receipt (never touches finalize.json)."""
+    try:
+        verification_dir = Path(plan_dir) / "verification"
+        verification_dir.mkdir(parents=True, exist_ok=True)
+        receipt = {
+            "schema": "megaplan.execute.validation_contract_recovery.v1",
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **{k: v for k, v in projected.items() if k != "effective_jobs"},
+            "effective_job_ids": [str(j.get("id") or "") for j in projected.get("effective_jobs", [])],
+        }
+        receipt_path = verification_dir / "validation_contract_recovery.json"
+        tmp = receipt_path.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        tmp.replace(receipt_path)
+    except Exception:  # pragma: no cover - receipt persistence is best-effort
+        logging.getLogger("megaplan.execute.batch").warning(
+            "validation contract recovery receipt persistence failed",
+            exc_info=True,
+        )
+
+
+def _validation_failure_ids(raw: object) -> list[str] | None:
+    """Normalize baseline/failure payloads to canonical pytest node IDs.
+
+    Accepts a list of plain node-ID strings or a list of records carrying a
+    canonical ``node_id`` key.  Returns ``None`` (fail-closed) for null,
+    empty, malformed, or partially-blank input so callers never subtract on
+    ambiguous evidence.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    ids: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            node_id = item
+        elif isinstance(item, Mapping) and isinstance(item.get("node_id"), str):
+            node_id = item["node_id"]
+        else:
+            return None
+        if not node_id.strip():
+            return None
+        ids.append(node_id)
+    return ids
+
+
+def _baseline_known_failures_only(
+    *,
+    exit_code: int | None,
+    failed_test_ids: object,
+    baseline_test_failures: object,
+    collection_errors: object,
+    timeout_reason: object,
+    status: object,
+) -> list[str] | None:
+    """Return the baseline-known failure IDs to admit, or ``None`` to block.
+
+    Pre-dispatch admission (``admission=True`` at the execute admission
+    gate) accepts pytest exit code 1 ONLY when every observed failed node ID
+    is a member of the plan's non-empty baseline.  Everything else fails
+    closed: exit codes 2-5, runner errors, timeouts, collection errors, and
+    any new failure keep the strict blocking path.  This is admission, not
+    enforcement: the real ``exit_code`` and failure list stay in the
+    evidence, and deferred/final rechecks never opt into subtraction.
+    """
+    if exit_code != 1:
+        return None
+    if status != "failed":
+        return None
+    if timeout_reason not in (None, ""):
+        return None
+    if collection_errors:
+        return None
+    baseline_ids = _validation_failure_ids(baseline_test_failures)
+    observed_ids = _validation_failure_ids(failed_test_ids)
+    if baseline_ids is None or observed_ids is None:
+        return None
+    if not baseline_ids or not observed_ids:
+        return None
+    if set(observed_ids) - set(baseline_ids):
+        return None
+    return sorted(set(observed_ids))
+
+
+# ---------------------------------------------------------------------------
+# No-new-failures delta lifecycle for narrow_recheck (occurrence a07166d38fbc)
+#
+# A pre-dispatch narrow_recheck that demands exit 0 on full-file selectors
+# under a planner probe budget is a deterministic gate for suites whose
+# selectors (a) exceed the probe budget or (b) contain environment-dependent
+# failures that are not task regressions.  The task contract is "introduce no
+# new failures vs the recorded baseline" with the authoritative verdict at
+# post-execute verification — so the pre-dispatch run becomes a COMPLETE
+# pre-execution envelope capture (fail closed on timeout/signal/collection
+# errors/malformed output), and the pass/fail verdict moves to a post-adoption
+# delta recheck that compares the merged state against that envelope.  The
+# enforcement boundary moves from "all selected tests green before dispatch"
+# to "selected files completely observed before dispatch AND no new failures
+# after adoption" — real post-merge contradictions still block, authority IDs
+# persist only on pass, and nothing is exempted.
+# ---------------------------------------------------------------------------
+
+NARROW_RECHECK_DELTA_ACCEPTANCE = "no_new_failures_delta"
+PRE_ENVELOPE_CAPTURED = "pre_envelope_captured"
+POST_DELTA_PASSED = "post_delta_passed"
+POST_DELTA_FAILED = "post_delta_failed"
+_PRE_ENVELOPE_ARTIFACT_SUFFIX = "_pre_envelope.json"
+_POST_DELTA_ARTIFACT_SUFFIX = "_post_delta.json"
+
+
+def _validation_comparison_ceiling(finalize_data: Mapping[str, Any]) -> int | None:
+    """Derive the authoritative comparison ceiling for narrow-recheck runs.
+
+    Prefers the plan's ``post_execute_suite`` budget (the authoritative
+    full-suite ceiling); falls back to the largest validation-job budget.
+    Returns ``None`` when no budget exists — callers must fail closed rather
+    than silently falling back to the planner's probe value.
+    """
+    jobs = finalize_data.get("validation_jobs")
+    if not isinstance(jobs, list):
+        return None
+    ceiling: int | None = None
+    for job in jobs:
+        if not isinstance(job, Mapping):
+            continue
+        ms = job.get("max_seconds") or job.get("timeout_seconds")
+        if not isinstance(ms, (int, float)) or ms <= 0:
+            continue
+        if job.get("kind") == "post_execute_suite":
+            return int(ms)
+        if ceiling is None or int(ms) > ceiling:
+            ceiling = int(ms)
+    return ceiling
+
+
+def _recompile_legacy_narrow_recheck_command(
+    command: object,
+    selectors: object,
+) -> str | None:
+    """Recompile a legacy compiled narrow-recheck command from validated selectors.
+
+    Legacy compiled commands embed ``timeout <N>s pytest <selectors> [opts]``.
+    The embedded GNU timeout duplicates the suite-runner deadline and is the
+    deterministic 124 killer for suites whose planner probe budget is too
+    small.  Rebuild a trusted pytest argv from the *validated structured
+    selectors* — never string-edit or execute the persisted shell command.
+    Returns ``None`` when the command is not the legacy embedded-timeout
+    pytest shape or when the command's selectors drift from the structured
+    selectors (fail closed — keep the original command).
+    """
+    if not isinstance(command, str) or not command.strip():
+        return None
+    if not isinstance(selectors, list) or not selectors:
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if len(parts) < 3 or parts[0] != "timeout" or parts[2] != "pytest":
+        return None
+    selector_tokens: list[str] = []
+    option_tokens: list[str] = []
+    seen_selector = False
+    for tok in parts[3:]:
+        if tok.startswith("-"):
+            option_tokens.append(tok)
+        else:
+            seen_selector = True
+            selector_tokens.append(tok.strip("'\""))
+    expected = {str(s).strip("'\"") for s in selectors}
+    if not seen_selector or not selector_tokens or set(selector_tokens) != expected:
+        return None
+    rebuilt = "pytest " + " ".join(shlex.quote(str(s)) for s in selectors)
+    if option_tokens:
+        rebuilt = f"{rebuilt} " + " ".join(shlex.quote(t) for t in option_tokens)
+    return rebuilt
+
+
+def _narrow_recheck_delta_policy(job: Mapping[str, Any], command: object) -> bool:
+    """True when a narrow_recheck job uses the no-new-failures delta lifecycle.
+
+    Explicitly persisted by the v2 compiler (``acceptance_mode``), or derived
+    for legacy jobs whose command carries the old embedded-timeout pytest
+    shape.  Everything else keeps the strict exit-0 gate.
+    """
+    if job.get("kind") != "narrow_recheck":
+        return False
+    if job.get("acceptance_mode") == NARROW_RECHECK_DELTA_ACCEPTANCE:
+        return True
+    return (
+        _recompile_legacy_narrow_recheck_command(command, job.get("selectors"))
+        is not None
+    )
+
+
+def _pre_envelope_artifact_path(verification_dir: Path, job_id: str) -> Path:
+    return verification_dir / f"validation_{job_id}{_PRE_ENVELOPE_ARTIFACT_SUFFIX}"
+
+
+def _quarantine_pre_envelope_artifact_required(
+    artifact: Path,
+    *,
+    job_id: str,
+    reason: str,
+) -> Path:
+    """Atomically move a stale pre-envelope under ``verification/stale/``.
+
+    This is the REQUIRED (fail-closed) recovery for the pre-dispatch drift
+    gate: a completed pre-envelope whose selectors/command/source digest no
+    longer matches the current tree must never be re-captured in place (the
+    post-adoption delta would self-compare and mask new failures), but a hard
+    raise with no in-code recovery wedges every TDD-style plan whose agent
+    WIP (or the watchdog's own ledger appends) changes the digested tree
+    between envelope capture and dispatch (occurrence 927ad612eda8: VJ27
+    drift fired on every resume until an operator manually removed the stale
+    artifact — twice).
+
+    The stale artifact is preserved under a unique name so the audit trail
+    survives; the job then re-runs normally and durably writes a fresh
+    pre-envelope against the CURRENT tree.  On any move failure the gate
+    fails closed and nothing is overwritten.
+    """
+    try:
+        stale_dir = artifact.parent / "stale"
+        stale_dir.mkdir(parents=True, exist_ok=True)
+        target = stale_dir / (
+            f"{artifact.stem}-stale-{time.time_ns()}-{os.getpid()}"
+            f"-{id(artifact):x}{artifact.suffix}"
+        )
+        artifact.replace(target)
+    except OSError as exc:
+        raise CliError(
+            "validation_job_failed",
+            f"validation job {job_id} {reason}: could not quarantine stale "
+            f"pre-envelope {artifact}",
+            valid_next=["execute", "revise"],
+            extra={
+                "job_id": job_id,
+                "reason": "pre_envelope_quarantine_failed",
+                "artifact_path": str(artifact),
+            },
+        ) from exc
+    return target
+
+
+def _post_delta_artifact_path(verification_dir: Path, job_id: str) -> Path:
+    return verification_dir / f"validation_{job_id}{_POST_DELTA_ARTIFACT_SUFFIX}"
+
+
+def _current_source_digest(project_dir: Path) -> str | None:
+    """Deterministic source-tree digest for the current tree.
+
+    Reuses suite_runner's canonical ``_compute_code_hash`` (git ``ls-tree``
+    primary, deterministic filesystem-hash fallback) so a stored envelope's
+    ``code_hash`` can be compared with the CURRENT tree on resume.  Returns
+    ``None`` only when the digest cannot be computed at all — callers must
+    treat ``None`` as a mismatch and fail closed (never reuse an envelope
+    against an unverifiable tree).
+    """
+    try:
+        from arnold_pipelines.megaplan.orchestration.suite_runner import (
+            _compute_code_hash,
+        )
+
+        return _compute_code_hash(Path(project_dir))
+    except Exception:
+        return None
+
+
+# Engine-owned volatile ledger files (watchdog appends ~every few minutes).
+# Tracked + continuously modified incident metadata — never a task
+# deliverable.  Excluded from the worktree digest by explicit enumerated
+# path so validation artifacts stay binding-valid across short windows
+# (occurrence 927ad612eda8: D1 pre-envelope drift, D2 strict-binding
+# acceptance).  See _current_worktree_digest.
+_WORKTREE_DIGEST_EXCLUDED_RELATIVE_PATHS = frozenset(
+    {
+        ".megaplan/incident-ledger/events.jsonl",
+        ".megaplan/incident-ledger/.events.seq",
+    }
+)
+
+
+def _current_worktree_digest(project_dir: Path) -> str | None:
+    """Worktree-aware source digest: HEAD tree PLUS working-tree CONTENT.
+
+    ``_compute_code_hash`` hashes ``git ls-tree HEAD`` only, so it cannot see
+    uncommitted task changes (this occurrence's task outputs land uncommitted
+    on the workspace tree).  Resume-reuse decisions must invalidate when the
+    WORKING TREE changes, so this combines the HEAD tree with the CONTENT of
+    every staged/unstaged change and every untracked file.  A path/status-only
+    view (``git status --porcelain``) is NOT enough — re-editing an
+    already-dirty file leaves the porcelain line unchanged, which would let a
+    stale envelope or POST_DELTA_PASSED be reused after the content actually
+    changed (codex 20260818T2226Z verdict).  ``git diff --binary HEAD`` carries
+    the actual content of all tracked changes (staged + unstaged); untracked
+    files are hashed directly.  Falls back to the plain source digest when git
+    is unavailable.    ``None`` only when nothing can be computed — callers
+    treat ``None`` as a mismatch and fail closed.
+
+    Engine-owned volatile ledger files (``.megaplan/incident-ledger/
+    events.jsonl``, ``.megaplan/incident-ledger/.events.seq``) are tracked
+    and appended by the watchdog every few minutes.  They are incident
+    metadata, never a task deliverable, so hashing them makes every
+    worktree digest (and every validation artifact bound to it) stale
+    within minutes for no semantic gain — wedging pre-envelope reuse (D1)
+    and evidence-gated budget-debt acceptance (D2) (occurrence
+    927ad612eda8, 2026-08-19).  They are excluded here by explicit
+    enumerated path only; a task that ever declares them as deliverables
+    must revisit this exclusion.
+    """
+    _excluded = _WORKTREE_DIGEST_EXCLUDED_RELATIVE_PATHS
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(project_dir), "ls-tree", "-r", "HEAD", "--", "."],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if head.returncode == 0 and head.stdout.strip():
+            blob = head.stdout
+            diff_argv = [
+                "git",
+                "-C",
+                str(project_dir),
+                "diff",
+                "--binary",
+                "HEAD",
+                "--",
+                ".",
+            ]
+            diff_argv.extend(
+                f":(exclude){path}" for path in sorted(_excluded)
+            )
+            diff = subprocess.run(
+                diff_argv,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if diff.returncode == 0:
+                blob += "\n" + diff.stdout
+            untracked = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(project_dir),
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if untracked.returncode == 0:
+                for path in (p for p in untracked.stdout.split("\x00") if p):
+                    if path in _excluded:
+                        # Defensive: the enumerated engine-owned ledger
+                        # files must never perturb the digest even if they
+                        # are untracked in some checkout (see constant).
+                        continue
+                    blob += f"\n? {path}"
+                    full = Path(project_dir) / path
+                    if full.exists() and full.is_file():
+                        try:
+                            digest = hashlib.sha256(
+                                full.read_bytes()
+                            ).hexdigest()
+                            blob += f" sha256:{digest}"
+                        except OSError:
+                            blob += " UNREADABLE"
+                    else:
+                        blob += " MISSING"
+            return "sha256:" + hashlib.sha256(
+                blob.encode("utf-8")
+            ).hexdigest()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return _current_source_digest(project_dir)
+
+
+def _envelope_matches_current_tree(
+    env: Mapping[str, Any], project_dir: Path
+) -> bool:
+    """True when a stored envelope/verdict was computed against the CURRENT tree.
+
+    Prefers the worktree-aware digest (records uncommitted task changes);
+    falls back to the plain code hash for legacy artifacts written before the
+    worktree digest existed.  A ``None`` current digest is a mismatch — fail
+    closed, never reuse against an unverifiable tree.
+    """
+    _wt = _current_worktree_digest(project_dir)
+    if env.get("worktree_digest") is not None:
+        return env.get("worktree_digest") == _wt
+    return env.get("code_hash") == _current_source_digest(project_dir)
+
+
+def _raise_artifact_not_durable(
+    *,
+    job_id: str,
+    reason: str,
+    artifact_path: Path,
+    error: Exception,
+) -> None:
+    """Fail closed when a delta-lifecycle artifact cannot be persisted.
+
+    Dispatch may proceed ONLY after the pre-execution envelope (or post-delta
+    verdict) is durable — a swallowed write would let T11 dispatch with no
+    verifiable baseline and would let authority persist without evidence.
+    """
+    raise CliError(
+        "validation_job_failed",
+        f"validation job {job_id} {reason}: {error}",
+        valid_next=["execute", "revise"],
+        extra={
+            "job_id": job_id,
+            "reason": reason,
+            "artifact_path": str(artifact_path),
+        },
+    ) from error
+
+
+def _validation_commands_equivalent(stored_command: object, effective_command: str) -> bool:
+    """True when a stored envelope's command is the same pytest invocation.
+
+    The stored envelope records the EXECUTED command (suite_runner rewrites
+    it to ``<interpreter> -m pytest <selectors> ...`` and appends the
+    standard reporting flags ``--tb=no --no-header -rA``), while the reuse
+    gate holds the RECOMPILED command (bare ``pytest <selectors> ...``).
+    Comparing the raw strings can therefore never match, so every second
+    pre-dispatch invocation raised ``pre_envelope_digest_drift`` and the
+    no-new-failures delta lifecycle could never resume after its first
+    envelope capture (occurrence a07166d38fbc, second wave).
+
+    Canonicalize both sides through the suite runner's ``_pytest_command``:
+    it rewrites a bare ``pytest`` to the running interpreter and appends the
+    missing standard flags, so the executed form and the recompiled form
+    reduce to the same canonical string.  Any unparseable command falls back
+    to strict equality (fail closed).
+    """
+    from arnold_pipelines.megaplan.orchestration.suite_runner import (
+        _pytest_command,
+    )
+
+    try:
+        return _pytest_command(str(stored_command or "")) == _pytest_command(
+            str(effective_command or "")
+        )
+    except Exception:
+        return str(stored_command or "") == str(effective_command or "")
+
+
+def _narrow_recheck_envelope_complete(result: Any) -> bool:
+    """A COMPLETE pre-execution envelope: exit 1, successful collection,
+    parsed failure set, no collection errors, no timeout.
+
+    Anything else (timeout, signal, exit 2-5, collection errors, malformed
+    output, missing failure data) is unknown — never ``[]`` — and stays
+    fail-closed.
+
+    Collection proof accepts EITHER the ``collected`` count (pytest prints
+    "collected N items" only at verbosity >= 1) OR the parsed
+    ``collected_ids`` list (always populated from the ``-rA`` report).
+    The harness's recompiled narrow-recheck command runs pytest with ``-q``
+    (see ``_recompile_legacy_narrow_recheck_command``), which suppresses the
+    collected-count line and leaves ``collected == 0`` while ``collected_ids``
+    is complete and ``collections_parse_ok`` is true.  Without this the
+    no-new-failures delta lifecycle can never capture its pre-dispatch
+    envelope, so a complete exit-1 run fails the admission gate instead of
+    deferring to the post-adoption delta (occurrence a07166d38fbc).
+    """
+    return bool(
+        result.exit_code == 1
+        and result.status == "failed"
+        and bool(result.collections_parse_ok)
+        and (
+            int(getattr(result, "collected", 0) or 0) > 0
+            or bool(getattr(result, "collected_ids", None) or [])
+        )
+        and not (result.collection_errors or [])
+        and bool(result.failures)
+        and result.timeout_reason in (None, "")
+    )
+
+
+class _EnvelopeSuiteRun:
+    """Minimal ``SuiteRunProtocol`` adapter over a stored pre-execution envelope.
+
+    Lets the canonical ``compute_delta`` (suite_delta) consume a persisted
+    envelope as its baseline without materializing a synthetic run result.
+    """
+
+    def __init__(self, failures: list[str], collected_ids: list[str]) -> None:
+        self.failures = list(failures or [])
+        self.collected_ids = list(collected_ids or [])
+
+
+def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None, admission: bool = False, delta_baseline_envelope: Mapping[str, Any] | None = None, comparison_ceiling_override: int | None = None, force_strict_gate: bool = False):
     """Run deterministic harness validation jobs outside model dispatch (M8A T10).
 
     Returns a list of content-addressed evidence dicts (one per applicable
@@ -3569,6 +4370,22 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
     under ``<plan_dir>/verification/`` and a real ``validation`` work-class
     event is emitted via ``work_ledger``. A runner failure emits an
     ``unavailable_reason`` event instead of aborting dispatch.
+
+    ``delta_baseline_envelope`` activates the post-adoption delta verdict for
+    no-new-failures narrow_recheck jobs: a completed post run with no novel
+    failures passes even when its raw exit remains 1; any new failing node,
+    collection failure, timeout, or malformed result blocks.  When ``None``
+    (pre-dispatch), a completed exit-1 run captures the pre-execution
+    envelope and defers the verdict.
+
+    ``force_strict_gate`` disables the no-new-failures delta acceptance for a
+    deferred-selector recheck: a deferred task-output selector has no
+    pre-task state, so a pre-execution envelope is impossible by construction
+    and capturing one against the post-merge tree would launder the delta.
+    Forced-strict runs keep the strict exit-code gate (never weaker than the
+    delta comparison — for a task-created file the baseline is empty, so
+    strict exit-0 equals no-new-failures exactly) and never create or consume
+    pre/post-delta envelopes.
     """
     import hashlib as _hashlib
     import json as _json
@@ -3581,6 +4398,24 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
     validation_jobs = finalize_data.get("validation_jobs")
     if not isinstance(validation_jobs, list) or not validation_jobs:
         return evidence_results
+    # Bounded legacy-contract recovery: a blocked pre-dispatch validation
+    # failure (cursor {phase: execute, retry_strategy: repair_validation_failure})
+    # may deterministically recompile an in-memory validation contract from the
+    # preserved finalize payload.  The projector is cursor-gated, fail-closed,
+    # and never rewrites plan artifacts.
+    _recovery_projection = _project_legacy_validation_contract_for_recovery(
+        plan_dir=plan_dir,
+        finalize_data=finalize_data,
+        persisted_jobs=validation_jobs,
+    )
+    if _recovery_projection is not None:
+        logging.getLogger("megaplan.execute.batch").info(
+            "execute validation contract recovery: %d effective jobs replacing %d persisted jobs",
+            len(_recovery_projection["effective_jobs"]),
+            len(validation_jobs),
+        )
+        validation_jobs = _recovery_projection["effective_jobs"]
+        _persist_validation_recovery_receipt(plan_dir, _recovery_projection)
     batch_id_set = set(batch_task_ids or [])
     verification_dir = Path(plan_dir) / "verification"
     try:
@@ -3679,6 +4514,9 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     project_dir=project_dir,
                     job=job,
                     task=task,
+                    all_declared_outputs=graph_declared_output_paths(
+                        finalize_data.get("tasks")
+                    ),
                 )
                 if lifecycle.status == SELECTOR_INVALID:
                     raise CliError(
@@ -3728,10 +4566,129 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         "reason": "task_contract_missing",
                     },
                 )
+        # ---- no-new-failures delta lifecycle (narrow_recheck) ----
+        # The planner probe budget is a cost hint, not the deadline for a
+        # required full-file differential comparison.  Derive the
+        # authoritative comparison ceiling from the enclosing full-suite
+        # budget; fail closed when none exists rather than silently falling
+        # back to the probe value.
+        _delta_policy = False
+        _comparison_ceiling: int | None = None
+        _recompiled_command: str | None = None
+        if kind == "narrow_recheck":
+            # Detect the delta policy and recompile any legacy command shape
+            # BEFORE suppression: forced-strict deferred rechecks still
+            # normalize legacy embedded-timeout commands (the normalization is
+            # the fix for the deterministic 124 killer, not a delta privilege).
+            _detected_delta_policy = _narrow_recheck_delta_policy(
+                job, job.get("command")
+            )
+            if _detected_delta_policy:
+                _recompiled_command = _recompile_legacy_narrow_recheck_command(
+                    job.get("command"), job.get("selectors")
+                )
+            _delta_policy = _detected_delta_policy and not force_strict_gate
+            if _delta_policy or comparison_ceiling_override is not None:
+                _comparison_ceiling = (
+                    comparison_ceiling_override
+                    if comparison_ceiling_override is not None
+                    else _validation_comparison_ceiling(finalize_data)
+                )
+                if _delta_policy and _comparison_ceiling is None:
+                    raise CliError(
+                        "validation_job_failed",
+                        f"validation job {job_id} uses the no-new-failures delta "
+                        "lifecycle but no authoritative comparison budget exists",
+                        valid_next=["finalize", "revise"],
+                        extra={
+                            "job_id": job_id,
+                            "validation_job_kind": kind,
+                            "reason": "comparison_budget_missing",
+                            "expected_exit_codes": job.get("expected_exit_codes", [0]),
+                        },
+                    )
+            _effective_command = command.strip()
+            if _recompiled_command is not None:
+                _effective_command = _recompiled_command
+            # Resume reuse: a durable pre-execution envelope is a HISTORICAL
+            # record of the pre-task state.  Reuse it without re-capturing —
+            # re-capturing against a tree that already contains the task's
+            # changes would launder the post-adoption delta.  Completed
+            # envelopes (exit-1 ``pre_envelope_captured`` AND exit-0
+            # ``passed``) are reused ONLY when selectors, effective command,
+            # and the current worktree digest all match; anything else fails
+            # closed — a completed envelope is never re-captured onto a
+            # changed tree.
+            # PRE-DISPATCH ONLY (``delta_baseline_envelope is None``): the
+            # post-adoption rerun must NEVER consume the stored envelope and
+            # skip the comparison — it always re-runs the selectors against
+            # the merged state and computes the delta.
+            if _delta_policy and delta_baseline_envelope is None:
+                _env_artifact = _pre_envelope_artifact_path(verification_dir, job_id)
+                try:
+                    if _env_artifact.exists():
+                        _stored_env = _json.loads(
+                            _env_artifact.read_text(encoding="utf-8")
+                        )
+                    else:
+                        _stored_env = None
+                except Exception:
+                    _stored_env = None
+                _completed_env_statuses = (PRE_ENVELOPE_CAPTURED, "passed")
+                _reused_envelope = False
+                if isinstance(_stored_env, dict) and _stored_env.get(
+                    "status"
+                ) in _completed_env_statuses:
+                    if (
+                        set(_stored_env.get("selectors") or [])
+                        == set(job.get("selectors") or [])
+                        and _validation_commands_equivalent(
+                            _stored_env.get("command"), _effective_command
+                        )
+                        and _envelope_matches_current_tree(_stored_env, project_dir)
+                    ):
+                        evidence_results.append(_stored_env)
+                        _reused_envelope = True
+                        log.info(
+                            "validation job %s reusing durable pre-execution envelope %s",
+                            job_id,
+                            _stored_env.get("evidence_hash"),
+                        )
+                if not _reused_envelope and _env_artifact.exists():
+                    # A COMPLETED envelope whose selectors/command/source no
+                    # longer match must never be overwritten by a re-capture
+                    # against the changed tree — the post-adoption delta would
+                    # self-compare and mask new failures.  Recovery (occurrence
+                    # 927ad612eda8): quarantine ANY non-reusable artifact
+                    # (drifted, unreadable JSON, non-object, incomplete/unknown
+                    # status) under verification/stale/ and re-run the job so a
+                    # FRESH pre-envelope is durably captured against the
+                    # CURRENT tree.  Safe because the job has not executed yet
+                    # and the post-adoption path never consumes the stored
+                    # envelope; the quarantine is required and fails closed.
+                    _quarantine_pre_envelope_artifact_required(
+                        _env_artifact,
+                        job_id=job_id,
+                        reason="pre_envelope_digest_drift",
+                    )
+                    log.info(
+                        "validation job %s stale pre-envelope quarantined "
+                        "to verification/stale/; re-running to refresh "
+                        "against the current tree",
+                        job_id,
+                    )
+                if _reused_envelope:
+                    continue
+                # Fall through to the normal suite execution; the existing
+                # atomic write below remains the only producer of the
+                # fresh pre-envelope.
+        _effective_command = command.strip()
+        if _recompiled_command is not None:
+            _effective_command = _recompiled_command
         config = {
             "project_dir": str(project_dir),
             "plan_dir": str(plan_dir),
-            "test_command": command.strip(),
+            "test_command": _effective_command,
         }
         if kind == "post_execute_suite":
             # The compiled suite timeout can be far smaller than the plan's
@@ -3750,17 +4707,50 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     timeout = max(int(timeout), min(int(pb), 14400))
             except Exception:
                 pass
+        _run_deadline_seconds = float(timeout)
+        if _comparison_ceiling is not None:
+            # The comparison ceiling (authoritative full-suite budget) is the
+            # deadline for the required differential run, NOT the planner's
+            # probe hint.  It ends promptly when the selectors complete.
+            # Forced-strict deferred rechecks honor the same ceiling: the
+            # planner probe budget is a cost hint, never a deadline for a
+            # required revalidation.
+            _run_deadline_seconds = float(_comparison_ceiling)
         try:
             result = _suite_runner.run_suite(
                 Path(project_dir),
                 config,
                 phase="m8a_validation",
-                deadline_seconds=time.monotonic() + float(timeout),
+                deadline_seconds=time.monotonic() + _run_deadline_seconds,
                 idle_seconds=None,
             )
         except Exception as exc:
             log.warning("validation job %s failed: %s", job_id, exc)
             error_detail = f"{type(exc).__name__}: {exc}"
+            if _delta_policy or force_strict_gate:
+                # A runner EXCEPTION in the no-new-failures delta lifecycle or
+                # in a forced-strict deferred recheck is unknown, not a pass:
+                # no envelope, no verdict, no dispatch.  The generic
+                # runner_error/continue path would let dispatch or authority
+                # progress without either — fail closed instead.
+                _strict_runner_error = force_strict_gate and not _delta_policy
+                raise CliError(
+                    "validation_job_failed",
+                    f"validation job {job_id} runner error in "
+                    f"{'strict deferred gate' if _strict_runner_error else 'delta lifecycle'}: "
+                    f"{error_detail}",
+                    valid_next=["execute", "revise"],
+                    extra={
+                        "job_id": job_id,
+                        "validation_job_kind": kind,
+                        "reason": (
+                            "strict_gate_runner_error"
+                            if _strict_runner_error
+                            else "delta_runner_error"
+                        ),
+                        "error": error_detail,
+                    },
+                ) from exc
             err_payload = {"job_id": job_id, "kind": kind, "error": error_detail}
             err_canonical = _json.dumps(err_payload, sort_keys=True, separators=(",", ":"))
             err_hash = "sha256:" + _hashlib.sha256(err_canonical.encode("utf-8")).hexdigest()
@@ -3795,6 +4785,13 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             "status": result.status,
             "timeout_reason": result.timeout_reason,
         }
+        if kind == "narrow_recheck":
+            evidence["collected"] = int(getattr(result, "collected", 0) or 0)
+            evidence["collected_ids"] = list(result.collected_ids or [])
+            evidence["selectors"] = list(job.get("selectors") or [])
+            # Worktree binding for semantic resolution: a strict recheck pass
+            # is only evidence against the merged tree it actually ran on.
+            evidence["worktree_digest"] = _current_worktree_digest(project_dir)
         canonical = _json.dumps(evidence, sort_keys=True, separators=(",", ":"))
         evidence_hash = "sha256:" + _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         evidence["evidence_hash"] = evidence_hash
@@ -3832,6 +4829,179 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 },
             )
         if result.exit_code not in expected_exit_codes:
+            _subtracted_test_ids: list[str] | None = None
+            if admission and kind == "narrow_recheck" and not _delta_policy:
+                _subtracted_test_ids = _baseline_known_failures_only(
+                    exit_code=result.exit_code,
+                    failed_test_ids=list(result.failures or []),
+                    baseline_test_failures=finalize_data.get(
+                        "baseline_test_failures"
+                    ),
+                    collection_errors=list(result.collection_errors or []),
+                    timeout_reason=result.timeout_reason,
+                    status=result.status,
+                )
+            if _subtracted_test_ids is not None:
+                # Admission-only pre-dispatch gate: the job failed ONLY on
+                # node IDs the plan baseline already records as failing.
+                # Keep the real exit_code + failures in the evidence and mark
+                # the admission explicitly; deferred/final rechecks stay
+                # strict and never subtract.
+                evidence["status"] = "baseline_known_failures_only"
+                evidence["admission"] = "pre_dispatch"
+                evidence["subtracted_test_ids"] = _subtracted_test_ids
+                evidence["new_failed_test_ids"] = []
+                _baseline_ids = _validation_failure_ids(
+                    finalize_data.get("baseline_test_failures")
+                )
+                evidence["baseline_test_failures_count"] = (
+                    len(_baseline_ids) if _baseline_ids is not None else 0
+                )
+                log.warning(
+                    "validation job %s admitted on baseline-known failures "
+                    "only (exit_code=%s, subtracted=%s)",
+                    job_id,
+                    result.exit_code,
+                    _subtracted_test_ids,
+                )
+                continue
+            if _delta_policy:
+                if delta_baseline_envelope is None:
+                    # Pre-dispatch envelope capture: a COMPLETE exit-1 run
+                    # records the pre-execution envelope and defers the
+                    # verdict to the post-adoption delta recheck.  Timeouts,
+                    # signals, exit 2-5, collection errors, and malformed
+                    # output stay fail-closed (never an empty envelope).
+                    if _narrow_recheck_envelope_complete(result):
+                        evidence["status"] = PRE_ENVELOPE_CAPTURED
+                        evidence["admission"] = "pre_dispatch_delta_envelope"
+                        evidence["comparison_ceiling"] = _comparison_ceiling
+                        evidence["worktree_digest"] = _current_worktree_digest(
+                            project_dir
+                        )
+                        try:
+                            atomic_write_json(
+                                _pre_envelope_artifact_path(verification_dir, job_id),
+                                evidence,
+                            )
+                        except Exception as _exc:
+                            _raise_artifact_not_durable(
+                                job_id=job_id,
+                                reason="pre_envelope_not_durable",
+                                artifact_path=_pre_envelope_artifact_path(
+                                    verification_dir, job_id
+                                ),
+                                error=_exc,
+                            )
+                        log.warning(
+                            "validation job %s captured pre-execution envelope "
+                            "(exit_code=1, %d failure(s)); verdict deferred to "
+                            "post-adoption delta recheck",
+                            job_id,
+                            len(result.failures or []),
+                        )
+                        continue
+                else:
+                    # Post-adoption delta verdict: compare the merged-state
+                    # run against the pre-execution envelope.  An unchanged
+                    # failure set passes even with raw exit 1; any novel
+                    # failure blocks and never carries authority.
+                    if _narrow_recheck_envelope_complete(result) or (
+                        result.exit_code == 0
+                    ):
+                        _newly_failing: list[str] = []
+                        _deleted_tests: list[str] = []
+                        if result.exit_code == 1:
+                            from arnold_pipelines.megaplan.orchestration.completion_contract import (
+                                compute_delta as _compute_delta,
+                            )
+
+                            _delta = _compute_delta(
+                                _EnvelopeSuiteRun(
+                                    failures=list(
+                                        delta_baseline_envelope.get("failures") or []
+                                    ),
+                                    collected_ids=list(
+                                        delta_baseline_envelope.get("collected_ids")
+                                        or []
+                                    ),
+                                ),
+                                result,
+                            )
+                            _newly_failing = list(_delta.newly_failing)
+                            _deleted_tests = list(_delta.deleted_tests)
+                        if _newly_failing:
+                            evidence["status"] = POST_DELTA_FAILED
+                            evidence["admission"] = "post_dispatch_delta"
+                            evidence["newly_failing"] = _newly_failing
+                            evidence["deleted_tests"] = _deleted_tests
+                            evidence["baseline_envelope_hash"] = (
+                                delta_baseline_envelope.get("evidence_hash")
+                            )
+                            evidence["worktree_digest"] = _current_worktree_digest(
+                                project_dir
+                            )
+                            try:
+                                atomic_write_json(
+                                    _post_delta_artifact_path(verification_dir, job_id),
+                                    evidence,
+                                )
+                            except Exception as _exc:
+                                _raise_artifact_not_durable(
+                                    job_id=job_id,
+                                    reason="post_delta_failed_artifact_not_durable",
+                                    artifact_path=_post_delta_artifact_path(
+                                        verification_dir, job_id
+                                    ),
+                                    error=_exc,
+                                )
+                            log.warning(
+                                "validation job %s post-adoption delta FAILED: "
+                                "%d new failure(s): %s",
+                                job_id,
+                                len(_newly_failing),
+                                _newly_failing,
+                            )
+                            _raise_deferred_selector_result_block(
+                                job_id=job_id,
+                                task_id=str(job.get("task_id") or ""),
+                                reason="post_delta_new_failures",
+                                extra={"newly_failing": _newly_failing},
+                            )
+                        evidence["status"] = POST_DELTA_PASSED
+                        evidence["admission"] = "post_dispatch_delta"
+                        evidence["newly_failing"] = []
+                        evidence["deleted_tests"] = _deleted_tests
+                        evidence["baseline_envelope_hash"] = (
+                            delta_baseline_envelope.get("evidence_hash")
+                        )
+                        evidence["worktree_digest"] = _current_worktree_digest(
+                            project_dir
+                        )
+                        try:
+                            atomic_write_json(
+                                _post_delta_artifact_path(verification_dir, job_id),
+                                evidence,
+                            )
+                        except Exception as _exc:
+                            _raise_artifact_not_durable(
+                                job_id=job_id,
+                                reason="post_delta_passed_artifact_not_durable",
+                                artifact_path=_post_delta_artifact_path(
+                                    verification_dir, job_id
+                                ),
+                                error=_exc,
+                            )
+                        log.warning(
+                            "validation job %s post-adoption delta clean "
+                            "(exit_code=%s, %d failure(s) unchanged vs envelope)",
+                            job_id,
+                            result.exit_code,
+                            len(result.failures or []),
+                        )
+                        continue
+                    # fall through: timeout/signal/exit 2-5/collection
+                    # errors/malformed output stay fail-closed in delta mode.
             _shadow_backstop = False
             try:
                 _ps = _json.loads(
@@ -3869,6 +5039,62 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         "evidence_hash": evidence_hash,
                         "artifact_path": str(artifact_path),
                     },
+                )
+        if _delta_policy and result.exit_code in expected_exit_codes:
+            if delta_baseline_envelope is not None:
+                # POST-ADOPTION green run: exit 0 means the merged state has
+                # NO failures — a delta pass against the pre-execution
+                # envelope, durably tied to the exact envelope hash.  Never
+                # overwrite the pre-envelope with the post-task run (that
+                # would launder the baseline into a self-comparing delta).
+                evidence["status"] = POST_DELTA_PASSED
+                evidence["admission"] = "post_dispatch_delta"
+                evidence["newly_failing"] = []
+                evidence["deleted_tests"] = []
+                evidence["baseline_envelope_hash"] = (
+                    delta_baseline_envelope.get("evidence_hash")
+                )
+                evidence["worktree_digest"] = _current_worktree_digest(project_dir)
+                try:
+                    atomic_write_json(
+                        _post_delta_artifact_path(verification_dir, job_id),
+                        evidence,
+                    )
+                except Exception as _exc:
+                    _raise_artifact_not_durable(
+                        job_id=job_id,
+                        reason="post_delta_passed_artifact_not_durable",
+                        artifact_path=_post_delta_artifact_path(
+                            verification_dir, job_id
+                        ),
+                        error=_exc,
+                    )
+                log.warning(
+                    "validation job %s post-adoption delta clean (exit_code=0, "
+                    "no failures vs envelope)",
+                    job_id,
+                )
+                continue
+            # Known-empty pre-execution envelope (PRE-DISPATCH): persist for
+            # resume reuse and as the post-adoption delta baseline.  A green
+            # pre-dispatch run still gets a post-adoption recheck — the task
+            # may introduce new failures.
+            evidence["admission"] = "pre_dispatch_delta_envelope"
+            evidence["comparison_ceiling"] = _comparison_ceiling
+            evidence["worktree_digest"] = _current_worktree_digest(project_dir)
+            try:
+                atomic_write_json(
+                    _pre_envelope_artifact_path(verification_dir, job_id),
+                    evidence,
+                )
+            except Exception as _exc:
+                _raise_artifact_not_durable(
+                    job_id=job_id,
+                    reason="pre_envelope_not_durable",
+                    artifact_path=_pre_envelope_artifact_path(
+                        verification_dir, job_id
+                    ),
+                    error=_exc,
                 )
     return evidence_results
 
@@ -3952,6 +5178,627 @@ def _raise_deferred_selector_result_block(
     )
 
 
+_POST_MERGE_POLICY_BLOCKED = "post_merge_policy_blocked"
+
+
+def _park_post_merge_policy_block(
+    *,
+    verification_dir: Path,
+    job_id: str,
+    task_id: str,
+    task_status: object,
+) -> dict[str, Any]:
+    """Persist a typed validation-blocked disposition for a policy-blocked row.
+
+    A task blocked by the merge admission gate (e.g. the test-budget gate)
+    cannot release a deferred selector.  Instead of raising a terminal
+    ``task_result_blocked_by_post_merge_policy`` that kills the execute
+    coordinator's aggregate state publication, park the refusal as a typed
+    ``validation_blocked`` disposition so the plan survives to a fresh
+    compliant attempt.  The row itself stays blocked; authority adoption never
+    overrides the gate; the next ``--retry-blocked-tasks`` dispatch resets it.
+    """
+
+    evidence = {
+        "job_id": job_id,
+        "task_id": task_id,
+        "kind": "narrow_recheck",
+        "status": _POST_MERGE_POLICY_BLOCKED,
+        "disposition": "validation_blocked",
+        "reason": "task_result_blocked_by_post_merge_policy",
+        "task_status": task_status,
+    }
+    atomic_write_json(
+        verification_dir / f"validation_{job_id}_policy_blocked.json",
+        evidence,
+    )
+    return evidence
+
+
+def _load_current_unresolved_deferred_selector_jobs(
+    *,
+    plan_dir: Path,
+    finalize_data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Load persisted deferred-selector records for CURRENT finalize jobs.
+
+    Only records whose ``job_id`` maps to an effective ``narrow_recheck``
+    job in the preserved finalize payload are considered; stale or malformed
+    artifacts are ignored (they are best-effort evidence; the finalize
+    payload is authoritative).  Records are deduplicated by ``job_id``.
+    """
+
+    jobs_by_id = {
+        str(job.get("id")): job
+        for job in finalize_data.get("validation_jobs", [])
+        if isinstance(job, Mapping)
+        and isinstance(job.get("id"), str)
+        and job.get("kind") == "narrow_recheck"
+    }
+    verification_dir = Path(plan_dir) / "verification"
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    try:
+        candidates = sorted(verification_dir.glob("validation_*_deferred.json"))
+    except OSError:
+        return []
+    for artifact in candidates:
+        try:
+            record = json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            log.warning("ignoring unreadable deferred evidence %s", artifact)
+            continue
+        if not isinstance(record, Mapping):
+            continue
+        job_id = str(record.get("job_id") or "")
+        if not job_id or job_id in seen:
+            continue
+        if job_id not in jobs_by_id:
+            continue
+        seen.add(job_id)
+        records.append(dict(record))
+    return records
+
+
+def _quarantine_validation_artifact(artifact: Path, stale_dir: Path) -> None:
+    """Move a non-resolving validation artifact under ``verification/stale/``.
+
+    Keeps the audit evidence while guaranteeing it can never suppress a
+    future strict recheck.  Idempotent and never destructive: a name clash is
+    resolved by suffixing the source mtime ns.
+    """
+    try:
+        stale_dir.mkdir(parents=True, exist_ok=True)
+        target = stale_dir / artifact.name
+        if target.exists():
+            target = stale_dir / (
+                f"{artifact.stem}-{artifact.stat().st_mtime_ns}{artifact.suffix}"
+            )
+        artifact.replace(target)
+    except OSError as _exc:
+        log.warning(
+            "could not quarantine validation artifact %s: %s", artifact, _exc
+        )
+
+
+def _semantic_deferred_resolution(
+    *,
+    verification_dir: Path,
+    job_id: str,
+    job: Mapping[str, Any],
+    project_dir: Path,
+) -> bool:
+    """True only when a CURRENT binding-valid PASS artifact resolves a job.
+
+    Filename existence is not a verdict: deferred markers, pre/post-delta
+    envelopes, policy blocks, failed/runner-error/timeout evidence, malformed
+    records, and binding-mismatched passes never resolve a deferred job.
+    Such artifacts are quarantined under ``verification/stale/`` so the next
+    sweep re-runs the job against the merged tree (occurrence ae1f50c01dbd —
+    stale ``pre_envelope_captured`` evidence must not suppress the strict
+    recheck).
+    """
+    import json as _json
+
+    expected_selectors = {
+        str(s).strip("'\"") for s in (job.get("selectors") or []) if isinstance(s, str)
+    }
+    stale_dir = verification_dir / "stale"
+    for artifact in sorted(verification_dir.glob(f"validation_{job_id}_*.json")):
+        name = artifact.name
+        if name == f"validation_{job_id}_deferred.json":
+            # The deferred marker is the reason we are here; keep it.
+            continue
+        if name.endswith(_PRE_ENVELOPE_ARTIFACT_SUFFIX) or name.endswith(
+            _POST_DELTA_ARTIFACT_SUFFIX
+        ):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        try:
+            record = _json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        if not isinstance(record, Mapping):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        status = record.get("status")
+        if status not in ("passed", POST_DELTA_PASSED):
+            _quarantine_validation_artifact(artifact, stale_dir)
+            continue
+        selectors_ok = (
+            {str(s).strip("'\"") for s in (record.get("selectors") or []) if isinstance(s, str)}
+            == expected_selectors
+        )
+        digest_ok = bool(record.get("worktree_digest")) and record.get(
+            "worktree_digest"
+        ) == _current_worktree_digest(project_dir)
+        if status == POST_DELTA_PASSED:
+            newly_failing = record.get("newly_failing") or []
+            if (
+                not newly_failing
+                and record.get("baseline_envelope_hash")
+                and selectors_ok
+                and digest_ok
+            ):
+                return True
+        elif status == "passed" and selectors_ok and digest_ok:
+            return True
+        _quarantine_validation_artifact(artifact, stale_dir)
+    return False
+
+
+def _find_binding_valid_strict_pass(
+    *,
+    verification_dir: Path,
+    job_id: str,
+    job: Mapping[str, Any],
+    project_dir: Path,
+) -> dict[str, Any] | None:
+    """Return the CURRENT binding-valid strict PASS artifact for a job.
+
+    Mirrors ``_semantic_deferred_resolution`` but returns the record and adds
+    the strict-gate fields (exit_code == 0, no failures/timeout, admitted
+    command equivalence) so an evidence-gated budget-debt acceptance can cite
+    the exact evidence hash.  Only a strict ``passed`` (never a pre/post-delta
+    envelope, never a deferred marker, never a policy block, never a stale
+    digest) qualifies; anything else is ignored (NOT quarantined here — the
+    sweep owns quarantine).
+    """
+    import json as _json
+
+    expected_selectors = {
+        str(s).strip("'\"") for s in (job.get("selectors") or []) if isinstance(s, str)
+    }
+    effective_command = str(job.get("command") or "").strip()
+    current_digest = _current_worktree_digest(project_dir)
+    for artifact in sorted(verification_dir.glob(f"validation_{job_id}_*.json")):
+        name = artifact.name
+        if name.endswith(_PRE_ENVELOPE_ARTIFACT_SUFFIX) or name.endswith(
+            _POST_DELTA_ARTIFACT_SUFFIX
+        ):
+            continue
+        try:
+            record = _json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, Mapping) or record.get("status") != "passed":
+            continue
+        if record.get("exit_code") != 0:
+            continue
+        if record.get("timeout_reason") or record.get("failures"):
+            continue
+        selectors_ok = (
+            {str(s).strip("'\"") for s in (record.get("selectors") or []) if isinstance(s, str)}
+            == expected_selectors
+        )
+        digest_ok = bool(record.get("worktree_digest")) and record.get(
+            "worktree_digest"
+        ) == current_digest
+        command_ok = _validation_commands_equivalent(
+            record.get("command"), effective_command
+        )
+        if selectors_ok and digest_ok and command_ok:
+            return dict(record)
+    return None
+
+
+def _budget_debt_acceptance_receipt_path(
+    verification_dir: Path, task_id: str, evidence_prefix: str
+) -> Path:
+    return verification_dir / (
+        f"task_budget_acceptance_{task_id}_{evidence_prefix}.json"
+    )
+
+
+def _accept_strictly_verified_test_budget_debt(
+    *,
+    plan_dir: Path,
+    project_dir: Path,
+    finalize_data: dict[str, Any],
+    payload: Mapping[str, Any],
+    deviations: list[str],
+) -> list[str]:
+    """Evidence-gated acceptance of a cumulative-time-only test-budget block.
+
+    The merge budget gate (merge.py:_enforce_task_test_budgets) stays strict:
+    a task whose recorded invocations exceed ``max_seconds`` is blocked with a
+    durable typed ``task_test_budget_violations`` list.  For TDD-style plans a
+    declared selector can be parametrized so wide that the FULL admitted
+    selection deterministically cannot finish inside ``max_seconds`` (m5 T28:
+    tests/cloud/test_progress_auditor.py ~225 cases, 217s green run vs a 120s
+    cap).  A fresh compliant attempt can therefore never converge, wedging
+    execute in ``blocked_by_quality`` forever (occurrence 927ad612eda8).
+
+    This reconciler converts ONLY the single non-correctness case AFTER merge:
+    - the durable violations are EXACTLY ``{max_seconds_exceeded}``;
+    - every recorded run used only admitted selectors and wrappers (implied by
+      the absence of every other typed kind);
+    - run count is within ``max_runs`` (also implied);
+    - the task has an ACCEPTED result envelope (kernel authority);
+    - the task has exactly one ``narrow_recheck`` job whose normalized
+      selectors equal ``task.narrow_tests.selectors``; and
+    - a binding-valid CURRENT-worktree strict artifact for that job exists
+      (status passed, exit 0, no failures/timeout, equivalent command, exact
+      selectors, current digest).
+
+    On eligibility the task is promoted to ``done`` with the block cleared and
+    the original violation retained as durable ``task_test_budget_debt``
+    (disposition ``accepted_with_debt``) plus a content-addressed acceptance
+    receipt under ``verification/``.  Any other violation kind, missing
+    authority, stale digest, widened selector, missing wrapper, run-count
+    excess, or genuine strict failure remains blocked — never laundered.
+    """
+    import json as _json
+    import time as _time
+
+    tasks = finalize_data.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+    jobs_by_id: dict[str, Mapping[str, Any]] = {}
+    for job in finalize_data.get("validation_jobs", []):
+        if isinstance(job, Mapping) and isinstance(job.get("id"), str):
+            jobs_by_id[str(job.get("id"))] = job
+    verification_dir = Path(plan_dir) / "verification"
+    current_digest = _current_worktree_digest(project_dir)
+    accepted_envelopes = _accepted_task_result_envelopes(payload)
+    accepted_ids: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or task.get("status") != "blocked":
+            continue
+        violations = task.get("task_test_budget_violations")
+        if not isinstance(violations, list) or not violations:
+            continue
+        kinds = {
+            str(v.get("kind"))
+            for v in violations
+            if isinstance(v, Mapping) and isinstance(v.get("kind"), str)
+        }
+        if kinds != {"max_seconds_exceeded"}:
+            continue
+        # Accepted kernel authority: the merged row carries the accepted
+        # outcome, the current payload has the accepted envelope, OR the
+        # merged row carries kernel-witnessed WORK EVIDENCE (non-empty
+        # files_changed AND commands_run) from a budget-killed dispatch.
+        # The merge only admits authority-validated entries
+        # (merge.py:_validate_and_merge_batch), so merged-row evidence is
+        # kernel-witnessed; a skipped task has empty evidence and can never
+        # satisfy this; and max_seconds_exceeded structurally implies the
+        # admitted commands actually ran (merge.py:_enforce_task_test_budgets
+        # derives the typed violations from recorded runs).  The envelope
+        # preconditions alone are unsatisfiable for budget-killed tasks —
+        # the worker is forced to return blocked by the cap, so no accepted
+        # envelope is ever produced (occurrence 927ad612eda8 live regression
+        # 2026-08-19T10:46Z) — making the work-evidence disjunct the only
+        # path that can fire for exactly the case this reconciler exists for.
+        row_authority = task.get("authority_validation")
+        work_evidence = bool(
+            isinstance(task.get("files_changed"), list)
+            and task.get("files_changed")
+            and isinstance(task.get("commands_run"), list)
+            and task.get("commands_run")
+        )
+        has_authority = (
+            isinstance(row_authority, Mapping)
+            and row_authority.get("outcome") == "accepted"
+        ) or task_id in accepted_envelopes or work_evidence
+        if not has_authority:
+            continue
+        narrow = task.get("narrow_tests")
+        if not isinstance(narrow, Mapping):
+            continue
+        admitted_selectors = {
+            str(s).strip("'\"")
+            for s in narrow.get("selectors", [])
+            if isinstance(s, str) and s.strip()
+        }
+        if not admitted_selectors:
+            continue
+        matching_jobs = [
+            job
+            for job in jobs_by_id.values()
+            if job.get("kind") == "narrow_recheck"
+            and str(job.get("task_id") or "") == task_id
+        ]
+        if len(matching_jobs) != 1:
+            continue
+        job = matching_jobs[0]
+        job_selectors = {
+            str(s).strip("'\"") for s in (job.get("selectors") or []) if isinstance(s, str)
+        }
+        if job_selectors != admitted_selectors:
+            continue
+        strict = _find_binding_valid_strict_pass(
+            verification_dir=verification_dir,
+            job_id=str(job.get("id") or ""),
+            job=job,
+            project_dir=project_dir,
+        )
+        if strict is None:
+            continue
+        evidence_prefix = str(strict.get("evidence_hash") or "").replace(
+            "sha256:", ""
+        )[:12]
+        receipt_path = _budget_debt_acceptance_receipt_path(
+            verification_dir, task_id, evidence_prefix
+        )
+        debt = {
+            "disposition": "accepted_with_debt",
+            "violation": violations,
+            "task_id": task_id,
+            "job_id": job.get("id"),
+            "strict_evidence_hash": strict.get("evidence_hash"),
+            "worktree_digest": current_digest,
+            "selectors": sorted(admitted_selectors),
+            "command": str(job.get("command") or ""),
+            "accepted_envelope": (
+                accepted_envelopes.get(task_id, (None, None))[1].to_dict()
+                if task_id in accepted_envelopes
+                else None
+            ),
+            "accepted_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        }
+        try:
+            atomic_write_json(receipt_path, debt)
+        except Exception as _exc:
+            raise CliError(
+                "validation_job_failed",
+                f"task {task_id} budget-debt acceptance receipt not durable",
+                valid_next=["execute", "revise"],
+                extra={
+                    "task_id": task_id,
+                    "reason": "budget_debt_acceptance_not_durable",
+                    "artifact_path": str(receipt_path),
+                },
+            ) from _exc
+        task["status"] = "done"
+        task.pop("blocked_reason", None)
+        task.pop("task_test_budget_exhausted", None)
+        task["task_test_budget_debt"] = debt
+        # Replace the merge-generated quality blocker with an advisory so
+        # aggregation keeps the debt as deferred evidence, not a blocker.
+        prefix = f"Task {task_id} blocked by admitted test budget:"
+        merged = [
+            msg
+            for msg in deviations
+            if not (isinstance(msg, str) and msg.startswith(prefix))
+        ]
+        merged.append(
+            "Advisory test-budget debt accepted after current strict "
+            f"validation: {task_id} ({str(job.get('id') or '')} strict pass "
+            f"{strict.get('evidence_hash')})."
+        )
+        deviations[:] = merged
+        accepted_ids.append(task_id)
+        log.info(
+            "test-budget debt accepted with evidence for task %s "
+            "(job %s strict pass %s); task promoted to done",
+            task_id,
+            job.get("id"),
+            strict.get("evidence_hash"),
+        )
+    return sorted(accepted_ids)
+
+
+def _sweep_persisted_deferred_selector_jobs(
+    *,
+    plan_dir: Path,
+    project_dir: Path,
+    finalize_data: Mapping[str, Any],
+    state: PlanState | None = None,
+) -> list[dict[str, Any]]:
+    """Re-attempt unresolved deferred narrow jobs once every task has run.
+
+    Called at the final batch post-merge, after the same-batch deferred
+    recheck.  Every admitted task has now produced (or failed to produce) its
+    declared outputs, so a deferred selector that is STILL missing is either
+    genuinely undeclared (invalid) or declared-but-never-created (fail
+    closed).  A selector that now exists runs its narrow recheck through the
+    same deterministic job runner; a failing recheck raises
+    ``validation_job_failed`` exactly like any other harness run.
+    """
+
+    if not isinstance(finalize_data, dict):
+        return []
+    graph_outputs = graph_declared_output_paths(finalize_data.get("tasks"))
+    tasks_by_id = {
+        str(task.get("id")): task
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, Mapping) and isinstance(task.get("id"), str)
+    }
+    jobs_by_id = {
+        str(job.get("id")): job
+        for job in finalize_data.get("validation_jobs", [])
+        if isinstance(job, Mapping)
+        and isinstance(job.get("id"), str)
+        and job.get("kind") == "narrow_recheck"
+    }
+    verification_dir = Path(plan_dir) / "verification"
+    deferred = _load_current_unresolved_deferred_selector_jobs(
+        plan_dir=plan_dir,
+        finalize_data=finalize_data,
+    )
+    sweep_results: list[dict[str, Any]] = []
+    for record in deferred:
+        job_id = str(record.get("job_id") or "")
+        task_id = str(record.get("task_id") or "")
+        job = jobs_by_id.get(job_id)
+        task = tasks_by_id.get(task_id)
+        if job is None or task is None:
+            raise CliError(
+                "deferred_validation_result_missing",
+                f"deferred validation job {job_id} cannot be revalidated: "
+                "task_or_validation_job_missing_from_finalize_contract",
+                valid_next=["execute", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": "task_or_validation_job_missing_from_finalize_contract",
+                },
+            )
+        # A CURRENT binding-valid PASS artifact proves this job already
+        # passed against the merged tree (e.g. a prior sweep's strict recheck
+        # discharged it); do not re-run a resolved job.  Filename existence is
+        # NOT a verdict: failed/stale/pre-envelope/policy-blocked evidence is
+        # quarantined so it cannot suppress the strict recheck (occurrence
+        # ae1f50c01dbd).
+        if _semantic_deferred_resolution(
+            verification_dir=verification_dir,
+            job_id=job_id,
+            job=job,
+            project_dir=project_dir,
+        ):
+            continue
+        lifecycle = classify_selector_lifecycle(
+            project_dir=project_dir,
+            job=job,
+            task=task,
+            all_declared_outputs=graph_outputs,
+        )
+        if lifecycle.status == SELECTOR_INVALID:
+            raise CliError(
+                "invalid_validation_job",
+                f"validation job {job_id} references missing selectors "
+                "that are not declared task outputs",
+                valid_next=["finalize", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "invalid_fields": ["selectors"],
+                    "missing_selectors": list(lifecycle.missing_selectors),
+                    "undeclared_missing_selectors": list(
+                        lifecycle.undeclared_missing_selectors
+                    ),
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": lifecycle.reason,
+                },
+            )
+        if lifecycle.status == SELECTOR_DEFERRED:
+            task_status = task.get("status") if isinstance(task, Mapping) else None
+            if task_status not in {"done", "completed"}:
+                # Abort-recovery park: the declaring task never completed
+                # (e.g. a worker aborted mid-batch), so the missing selector is
+                # not yet evidence of a broken write-set contract.  Keep the
+                # deferred evidence parked; the next resume re-dispatches the
+                # pending task and this sweep only fires after every admitted
+                # task of the run has been processed.
+                log.info(
+                    "validation job %s remains deferred at final sweep: "
+                    "owner task %s not complete (status=%r), parked",
+                    job_id,
+                    task_id,
+                    task_status,
+                )
+                continue
+            missing_selectors = set(lifecycle.missing_selectors)
+            incomplete_declaring_task_ids = sorted(
+                str(candidate.get("id"))
+                for candidate in finalize_data.get("tasks", [])
+                if isinstance(candidate, Mapping)
+                and isinstance(candidate.get("id"), str)
+                and candidate.get("status") not in {"done", "completed"}
+                and missing_selectors.intersection(
+                    declared_task_output_paths(candidate)
+                )
+            )
+            if incomplete_declaring_task_ids:
+                # A cross-task producer of this selector is still unfinished;
+                # parking is correct until every declaring producer completes.
+                # Only then can a still-missing selector be judged a write-set
+                # contract break.
+                log.info(
+                    "validation job %s remains deferred at final sweep: "
+                    "declaring task(s) %s not complete, parked",
+                    job_id,
+                    incomplete_declaring_task_ids,
+                )
+                continue
+            # Every admitted task has run; a still-missing graph-declared
+            # selector means the declaring task broke its write-set contract.
+            raise CliError(
+                "deferred_validation_result_missing",
+                f"deferred validation job {job_id} cannot be revalidated: "
+                "declared_selector_output_never_created",
+                valid_next=["execute", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": "declared_selector_output_never_created",
+                    "missing_selectors": sorted(set(lifecycle.missing_selectors)),
+                },
+            )
+        # A deferred selector is a task-output path that did not exist at
+        # pre-dispatch time; a no-new-failures delta job has no pre-task state
+        # by construction, so NO delta job (explicit OR legacy-derived) may be
+        # admitted through the sweep with its delta lifecycle — capturing a
+        # "pre-envelope" against the post-task tree would launder the
+        # post-adoption delta.  Instead the sweep revalidates every deferred
+        # job whose selector now exists with the STRICT exit-0 gate
+        # (``force_strict_gate``): the strict gate is never weaker than the
+        # delta comparison (occurrence 0a0ce24c3510), and for a task-created
+        # file the baseline is empty so strict exit-0 equals no-new-failures
+        # exactly (occurrence ae1f50c01dbd — explicit-delta TDD plans must
+        # not wedge at the final sweep).
+        # The sweep runs the job as a singleton; carry the authoritative
+        # comparison ceiling from the FULL plan list so the planner probe
+        # budget never becomes a recheck deadline.
+        _sweep_ceiling = _validation_comparison_ceiling(finalize_data)
+        if _sweep_ceiling is None:
+            raise CliError(
+                "deferred_validation_result_missing",
+                f"deferred validation job {job_id} cannot be revalidated: "
+                "comparison_budget_missing",
+                valid_next=["execute", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "validation_job_kind": "narrow_recheck",
+                    "reason": "comparison_budget_missing",
+                },
+            )
+        # Selector now exists: run the narrow recheck as a singleton job so
+        # only THIS job's command is admitted (never sibling jobs of the task).
+        rerun_data = dict(finalize_data)
+        rerun_data["validation_jobs"] = [dict(job)]
+        sweep_results.extend(
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=rerun_data,
+                batch_task_ids=[task_id],
+                is_final_batch=False,
+                state=state,
+                comparison_ceiling_override=_sweep_ceiling,
+                force_strict_gate=True,
+            )
+        )
+    return sweep_results
+
+
 def _rerun_deferred_selector_validation_jobs(
     *,
     plan_dir: Path,
@@ -3978,8 +5825,18 @@ def _rerun_deferred_selector_validation_jobs(
         for item in pre_dispatch_results
         if isinstance(item, Mapping) and item.get("status") == SELECTOR_DEFERRED
     ]
-    if not deferred:
+    enveloped = [
+        item
+        for item in pre_dispatch_results
+        if isinstance(item, Mapping)
+        and item.get("admission") == "pre_dispatch_delta_envelope"
+        and item.get("status") in (PRE_ENVELOPE_CAPTURED, "passed", "failed")
+    ]
+    if not deferred and not enveloped:
         return []
+    import json as _json
+
+    verification_dir = Path(plan_dir) / "verification"
 
     jobs_by_id = {
         str(job.get("id")): job
@@ -4010,7 +5867,24 @@ def _rerun_deferred_selector_validation_jobs(
                 task_id=task_id,
                 reason="task_or_validation_job_missing_from_finalize_contract",
             )
+        task_status = task.get("status") if isinstance(task, Mapping) else None
         if accepted_row_and_envelope is None:
+            if task_status not in {"done", "completed"}:
+                # Abort-recovery park: the worker aborted mid-batch (e.g. a
+                # provider/transport failure) before minting an accepted result
+                # envelope, so the declaring task is still pending.  Raising a
+                # terminal block here would wedge the whole plan on a task that
+                # was never completed.  Keep the persisted deferred evidence
+                # untouched; the next resume re-dispatches the task and this
+                # recheck re-runs once an accepted envelope appears.
+                log.info(
+                    "validation job %s remains deferred: task %s not complete "
+                    "(status=%r), no accepted result envelope",
+                    job_id,
+                    task_id,
+                    task_status,
+                )
+                continue
             _raise_deferred_selector_result_block(
                 job_id=job_id,
                 task_id=task_id,
@@ -4021,14 +5895,27 @@ def _rerun_deferred_selector_validation_jobs(
         # task-policy/write/test guardrails run.  A policy-blocked target must
         # therefore not release a deferred selector merely because that
         # earlier authority check said ``accepted``.
-        task_status = task.get("status") if isinstance(task, Mapping) else None
+        if task_status == "blocked":
+            # Post-merge policy block (e.g. test-budget admission gate): park
+            # as a typed validation_blocked disposition instead of raising a
+            # terminal refusal that kills the execute coordinator's aggregate
+            # state publication.  The row stays blocked; the next
+            # --retry-blocked-tasks dispatch resets it for a fresh compliant
+            # attempt (authority adoption never overrides the gate).
+            rerun_results.append(
+                _park_post_merge_policy_block(
+                    verification_dir=verification_dir,
+                    job_id=job_id,
+                    task_id=task_id,
+                    task_status=task_status,
+                )
+            )
+            continue
         if task_status not in {"done", "completed"}:
             _raise_deferred_selector_result_block(
                 job_id=job_id,
                 task_id=task_id,
-                reason="task_result_blocked_by_post_merge_policy"
-                if task_status == "blocked"
-                else "task_result_not_completed_after_merge",
+                reason="task_result_not_completed_after_merge",
                 extra={"task_status": task_status},
             )
         claim_payload = envelope.claim.payload
@@ -4067,17 +5954,69 @@ def _rerun_deferred_selector_validation_jobs(
             - result_paths
         )
         if missing_from_result:
-            _raise_deferred_selector_result_block(
-                job_id=job_id,
-                task_id=task_id,
-                reason="accepted_task_result_does_not_claim_selector_output",
-                extra={"missing_result_paths": missing_from_result},
+            # Cross-task ownership: a deferred selector may be declared as an
+            # output of ANOTHER admitted task (produced in this or a later
+            # batch) rather than the owning task.  The owning task's accepted
+            # result is not required to claim it; the deferred evidence stays
+            # unresolved until the final sweep re-classifies it against the
+            # graph.  Own-task outputs and no-task-declared paths remain
+            # fail-closed exactly as before.
+            own_outputs = set(declared_task_output_paths(task))
+            graph_outputs = set(
+                graph_declared_output_paths(finalize_data.get("tasks"))
             )
+            own_declared_unclaimed = sorted(
+                set(missing_from_result) & own_outputs
+            )
+            undeclared_missing = sorted(
+                set(missing_from_result) - graph_outputs
+            )
+            other_task_declared = sorted(
+                (set(missing_from_result) - own_outputs) & graph_outputs
+            )
+            if own_declared_unclaimed:
+                _raise_deferred_selector_result_block(
+                    job_id=job_id,
+                    task_id=task_id,
+                    reason="accepted_task_result_does_not_claim_selector_output",
+                    extra={"missing_result_paths": own_declared_unclaimed},
+                )
+            if undeclared_missing:
+                raise CliError(
+                    "invalid_validation_job",
+                    f"validation job {job_id} references missing selectors "
+                    "that are not declared task outputs",
+                    valid_next=["finalize", "revise"],
+                    extra={
+                        "job_id": job_id,
+                        "invalid_fields": ["selectors"],
+                        "missing_selectors": missing_from_result,
+                        "undeclared_missing_selectors": undeclared_missing,
+                        "validation_job_kind": "narrow_recheck",
+                        "reason": "undeclared_missing_selector",
+                    },
+                )
+            if other_task_declared:
+                # A different admitted task may produce these paths in this or
+                # a later batch.  Keep the persisted deferred evidence
+                # unresolved; the final-batch sweep re-attempts the job once
+                # every admitted task has run.
+                log.info(
+                    "validation job %s remains deferred: selectors %s are "
+                    "declared outputs of other tasks, not the owning task %s",
+                    job_id,
+                    sorted(other_task_declared),
+                    task_id,
+                )
+                continue
 
         lifecycle = classify_selector_lifecycle(
             project_dir=project_dir,
             job=job,
             task=task,
+            all_declared_outputs=graph_declared_output_paths(
+                finalize_data.get("tasks")
+            ),
         )
         if lifecycle.status == SELECTOR_INVALID:
             raise CliError(
@@ -4103,6 +6042,26 @@ def _rerun_deferred_selector_validation_jobs(
                 extra={"missing_selectors": list(lifecycle.missing_selectors)},
             )
 
+        # A deferred selector is a task-output path that did not exist at
+        # pre-dispatch time; a no-new-failures delta job has no pre-task
+        # state by construction, so NO delta job (explicit OR legacy-derived)
+        # may be admitted through the deferred path with its delta lifecycle
+        # (it would capture a fake "pre-envelope" against the post-task tree
+        # and launder the post-adoption delta).  The strict recheck below
+        # (``force_strict_gate``) is never weaker than the delta comparison
+        # (occurrence 0a0ce24c3510) and equals it exactly for task-created
+        # files (occurrence ae1f50c01dbd — explicit-delta TDD plans must not
+        # wedge at the deferred recheck).
+        # The rerun list is truncated to this single job; re-derive the
+        # authoritative comparison ceiling from the FULL plan list.  Never
+        # let the planner probe budget (120s) become a recheck deadline.
+        _rerun_ceiling = _validation_comparison_ceiling(finalize_data)
+        if _rerun_ceiling is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="comparison_budget_missing",
+            )
         rerun_data = dict(finalize_data)
         rerun_data["validation_jobs"] = [dict(job)]
         rerun_results.extend(
@@ -4113,6 +6072,159 @@ def _rerun_deferred_selector_validation_jobs(
                 batch_task_ids=[task_id],
                 is_final_batch=False,
                 state=state,
+                comparison_ceiling_override=_rerun_ceiling,
+                force_strict_gate=True,
+            )
+        )
+    # ---- post-adoption delta recheck for captured pre-execution envelopes ----
+    # A narrow_recheck whose pre-dispatch run captured a COMPLETE
+    # pre-execution envelope (no-new-failures delta lifecycle) is not a
+    # terminal pass.  After the task's accepted result envelope lands, re-run
+    # the identical selectors against the merged state and compare against the
+    # envelope: an unchanged failure set passes (even with raw exit 1); any
+    # novel failure blocks and never carries authority.  The rerun is strict
+    # (admission=False) — baseline subtraction is a pre-dispatch-only
+    # admission, never a recheck.
+    for envelope_record in enveloped:
+        job_id = str(envelope_record.get("job_id") or "vj")
+        job = jobs_by_id.get(job_id)
+        if job is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id="",
+                reason="task_or_validation_job_missing_from_finalize_contract",
+            )
+        task_id = str(job.get("task_id") or envelope_record.get("task_id") or "")
+        if task_id not in batch_id_set:
+            # The pre-dispatch helper only emits jobs for this batch, but
+            # retain the guard if a caller supplies a mixed evidence list.
+            continue
+        task = tasks_by_id.get(task_id)
+        accepted_row_and_envelope = accepted.get(task_id)
+        if task is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="task_or_validation_job_missing_from_finalize_contract",
+            )
+        task_status = task.get("status") if isinstance(task, Mapping) else None
+        if accepted_row_and_envelope is None:
+            if task_status not in {"done", "completed"}:
+                # Abort-recovery park (same shape as the deferred path): the
+                # task never completed, so keep the envelope untouched; the
+                # next resume re-dispatches the task and this recheck re-runs
+                # once an accepted envelope appears.
+                log.info(
+                    "validation job %s delta recheck pending: task %s not "
+                    "complete (status=%r), no accepted result envelope",
+                    job_id,
+                    task_id,
+                    task_status,
+                )
+                continue
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="accepted_task_result_envelope_missing",
+            )
+        if task_status == "blocked":
+            # Same park-vs-raise split as the deferred path: a post-merge
+            # policy block (test-budget admission gate) must not kill the
+            # execute coordinator's aggregate state publication.  Park the
+            # refusal as a typed validation_blocked disposition; the row
+            # stays blocked and a fresh compliant attempt is still required.
+            rerun_results.append(
+                _park_post_merge_policy_block(
+                    verification_dir=verification_dir,
+                    job_id=job_id,
+                    task_id=task_id,
+                    task_status=task_status,
+                )
+            )
+            continue
+        if task_status not in {"done", "completed"}:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="task_result_not_completed_after_merge",
+                extra={"task_status": task_status},
+            )
+        # A post-adoption delta check must fail closed when the task removed
+        # one of its selectors — a missing selector is not a pass.
+        missing_now = sorted(
+            p
+            for p in (job.get("selectors") or [])
+            if isinstance(p, str) and not (Path(project_dir) / p).exists()
+        )
+        if missing_now:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="post_delta_selector_missing",
+                extra={"missing_selectors": missing_now},
+            )
+        # Resume reuse: a durable POST_DELTA_PASSED artifact means this batch's
+        # delta already passed — do not redo it (resume after pass does not
+        # rerun).  A POST_DELTA_FAILED artifact is never reused: the candidate
+        # must be reworked and the check re-run (resume after real fail does
+        # not skip).
+        try:
+            _pd_artifact = _post_delta_artifact_path(verification_dir, job_id)
+            if _pd_artifact.exists():
+                _stored_pd = _json.loads(_pd_artifact.read_text(encoding="utf-8"))
+            else:
+                _stored_pd = None
+        except Exception:
+            _stored_pd = None
+        if (
+            isinstance(_stored_pd, dict)
+            and _stored_pd.get("status") == POST_DELTA_PASSED
+            and set(_stored_pd.get("selectors") or [])
+            == set(job.get("selectors") or [])
+            and _envelope_matches_current_tree(_stored_pd, project_dir)
+            and _stored_pd.get("baseline_envelope_hash")
+            == envelope_record.get("evidence_hash")
+        ):
+            rerun_results.append(_stored_pd)
+            log.info(
+                "validation job %s post-adoption delta already passed; skipping rerun",
+                job_id,
+            )
+            continue
+        # A stored PASS that does not match (selectors/command/source/envelope
+        # drift) is never reused and never skipped: fall through to the strict
+        # rerun against the current pre-envelope so the verdict is recomputed
+        # on the merged state.  POST_DELTA_FAILED is never reused either —
+        # the candidate must be reworked and the check re-run.
+        # The rerun list is truncated to this single job; re-derive the
+        # authoritative comparison ceiling from the persisted pre-envelope
+        # first (recorded at capture time against the FULL job list), then
+        # the full plan list.  Never let the planner probe budget (120s)
+        # become the post-adoption deadline — the selectors take ~254s.
+        _stored_ceiling = envelope_record.get("comparison_ceiling")
+        _rerun_ceiling = (
+            int(_stored_ceiling)
+            if isinstance(_stored_ceiling, (int, float)) and _stored_ceiling > 0
+            else _validation_comparison_ceiling(finalize_data)
+        )
+        if _rerun_ceiling is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="comparison_budget_missing",
+            )
+        rerun_data = dict(finalize_data)
+        rerun_data["validation_jobs"] = [dict(job)]
+        rerun_results.extend(
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=rerun_data,
+                batch_task_ids=[task_id],
+                is_final_batch=False,
+                state=state,
+                delta_baseline_envelope=dict(envelope_record),
+                comparison_ceiling_override=_rerun_ceiling,
             )
         )
     return rerun_results
@@ -4144,7 +6256,10 @@ def handle_execute_one_batch(
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
-    max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
+    max_tasks_per_batch = _weight_aware_max_tasks_per_batch(
+        _resolve_max_tasks_per_batch(state, args),
+        (finalize_data.get("tasks") or []),
+    )
     global_batches = _split_high_complexity(
         split_oversized_batches(
             compute_global_batches(finalize_data),
@@ -4209,6 +6324,32 @@ def handle_execute_one_batch(
                 },
             )
 
+    # Adopt authority-completed blocked tasks before dispatching this batch: a
+    # blocked row whose accepted-attempt kernel authority is dependency-closed
+    # is promoted to done so (a) the batch-prerequisites check above passes and
+    # (b) a deferred narrow recheck referencing the task revalidates instead of
+    # refusing with task_result_blocked_by_post_merge_policy.  Mirrors the
+    # auto-loop's adopt-after-merge in `_run_and_merge_batch`.
+    authority_adopted_ids = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
+    if authority_adopted_ids:
+        _publish_execute_finalize(
+            plan_dir,
+            finalize_data,
+            operation="adopt-authority-completed-blocked(batch)",
+            state=state,
+        )
+        log.info(
+            "authority-adopt(batch): promoted %d authority-completed blocked task(s) to done: %s",
+            len(authority_adopted_ids),
+            ", ".join(authority_adopted_ids),
+        )
+        tasks = finalize_data.get("tasks", [])
+
     batch_task_ids = global_batches[batch_number - 1]
     active_task_ids = set(batch_task_ids)
     batch_sense_check_ids = _active_sense_check_ids(finalize_data, active_task_ids)
@@ -4232,7 +6373,8 @@ def handle_execute_one_batch(
             state,
             plan_dir,
             batch_task_ids,
-            completed_ids,
+            current_artifact_number=batch_number,
+            completed_task_ids=completed_ids,
             root=root,
             batch_template_path=batch_template_path,
         ),
@@ -4398,6 +6540,7 @@ def handle_execute_one_batch(
         acknowledged_checks=result.acknowledged_sense_check_count,
         total_checks=result.total_sense_check_count,
         missing_task_evidence=result.missing_task_evidence,
+        payload=result.payload,
     )
 
     all_tasks = finalize_data.get("tasks", [])
@@ -4422,6 +6565,32 @@ def handle_execute_one_batch(
     blocked_task_reason = _blocked_task_reason(batch_blocked_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
+    # Abort-recovery park (single-batch path): a batch task left non-terminal
+    # after merge (worker aborted mid-batch, no accepted envelope) must surface
+    # as a blocker, never as success with unfinished tasks.
+    batch_blocked_id_set = set(batch_blocked_ids)
+    batch_pending_left_behind_ids = [
+        task.get("id")
+        for task in tracked_tasks
+        if task.get("id") in set(batch_task_ids)
+        and task.get("status") not in TERMINAL_TASK_STATUSES
+        and task.get("id") not in effective_completed_id_set
+        and task.get("id") not in batch_blocked_id_set
+    ]
+    # P6 reconcile selection envelope: a read-only selector's selection JSON is
+    # the batch's completion evidence; per-task terminal statuses are not
+    # produced, so the pending-left-behind blocker must not fire for it.
+    selection_complete = bool(
+        isinstance(result.payload, Mapping)
+        and (
+            "selected_shas" in result.payload or "verification_evidence" in result.payload
+        )
+    )
+    pending_left_behind_reason = _pending_left_behind_reason(
+        batch_pending_left_behind_ids
+    )
+    if not selection_complete and pending_left_behind_reason:
+        blocking_reasons.append(pending_left_behind_reason)
     if result.routing_degradations:
         blocking_reasons.extend(result.routing_degradations)
     all_tracked = all(task.get("id") in effective_completed_ids for task in tracked_tasks)
@@ -4489,6 +6658,16 @@ def handle_execute_one_batch(
     if drift is not None:
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
+    # Drop quality-gate blockers whose root cause is resolved (grok consult,
+    # astrid m1): the one-batch path previously missed the drop that the
+    # aggregate path applies, so an operator-resolved blocker (accepted_with_
+    # debt / fixed) re-blocked the final batch on every execute even with a
+    # clean 43/43-done finalize.  Mirrors the aggregate call after all
+    # blocking_reasons (incl. scope drift) are built.
+    blocking_reasons = _drop_resolved_quality_blocking_reasons(
+        blocking_reasons,
+        state=state,
+    )
     routing_blocked = any(
         reason in blocking_reasons for reason in result.routing_degradations
     )
@@ -4783,11 +6962,56 @@ def _reset_blocked_tasks_to_pending(
             continue
         if task_id in excluded:
             continue
-        if task.get("status") != "blocked":
+        if task.get("status") == "blocked":
+            _clear_task_attempt_fields(task)
+            reset_ids.append(task_id)
             continue
-        _clear_task_attempt_fields(task)
-        reset_ids.append(task_id)
+        # Contradictory class (occurrence 0a0ce24c3510): a DONE row that still
+        # carries the durable budget-block identity with NO admitted evidence.
+        # A valid state can never contain one: the merge budget gate stamps the
+        # field only on blocked/pending rows, the adopt helper pops it on
+        # promote, and a compliant attempt produces evidence. They arise when
+        # adopt runs before the proven-artifact replay stamps the envelope
+        # budget identity into the row, so the adopt exclusion misses it and
+        # promotes the budget-gated row to done without evidence — wedging the
+        # quality gate ("done tasks missing both files_changed and
+        # commands_run"). Return them to the runnable frontier for a fresh
+        # compliant attempt; the durable field survives the reset (2f28baee99)
+        # so the adopt gate keeps them out until that attempt passes.
+        if (
+            task.get("status") == "done"
+            and isinstance(task.get("task_test_budget_exhausted"), str)
+            and task["task_test_budget_exhausted"].strip()
+            and not (task.get("files_changed") or task.get("commands_run"))
+        ):
+            _clear_task_attempt_fields(task)
+            reset_ids.append(task_id)
     return sorted(reset_ids)
+
+
+_TASK_TEST_BUDGET_MARKER = "[harness] task_test_budget_exhausted:"
+
+
+def _is_task_test_budget_blocked(task: Mapping[str, Any]) -> bool:
+    """True for a budget-gated row, INCLUDING after the retry reset.
+
+    The merge gate stamps status="blocked" plus the marker in executor_notes.
+    ``_clear_task_attempt_fields`` (the --retry-blocked-tasks reset) flips the
+    row to pending and wipes notes, which previously erased the budget identity
+    and let _adopt_authority_completed_blocked_tasks re-promote the
+    authority-completed row to done WITHOUT evidence -> quality gate re-blocks
+    (occurrence 0513dbf3f069 infinite loop). The durable
+    ``task_test_budget_exhausted`` field (set by the merge gate, popped by the
+    adopt helper on promote) survives the reset, so a pending row that was
+    budget-gated still counts as budget-blocked and stays out of authority
+    adoption until a fresh compliant attempt passes.
+    """
+    if task.get("status") not in ("blocked", "pending"):
+        return False
+    if isinstance(task.get("task_test_budget_exhausted"), str) and task["task_test_budget_exhausted"]:
+        return True
+    notes = task.get("executor_notes")
+    return isinstance(notes, str) and (_TASK_TEST_BUDGET_MARKER in notes)
 
 
 def _clear_task_attempt_fields(task: dict[str, Any]) -> None:
@@ -4923,7 +7147,23 @@ def _reset_stale_authority_done_tasks(
     root: Path | None,
     state: PlanState,
 ) -> list[str]:
-    """Demote terminal-success rows whose authority evidence went stale."""
+    """Demote terminal-success rows whose authority evidence went stale.
+
+    A task is only durably ``done``/``completed`` when its result envelope
+    carries strict accepted authority (terminal attempt status **and** an
+    explicit grant-aware decision with outcome ``accepted`` — see
+    ``accepted_attempt_execution_projection``).  Rows marked terminal by a
+    merge that never produced such authority (e.g. hollow shadow-wave
+    envelopes) must return to ``pending`` so the truthful frontier re-dispatches
+    instead of being silently skipped by the scheduler and then rejected by the
+    ``before_cursor_clear`` authority gate (``execute_authority_diverged``).
+
+    The same reset applies to retryable aggregate-level blocks: a task blocked
+    solely by the failed execute aggregate (scope drift, iteration-cap, budget
+    exhaustion) has no durable authority either and must re-enter the frontier.
+    Genuine task-level blockers (explicit prereq/user-action blocks with a
+    recorded reason) remain blocked.
+    """
 
     tasks = finalize_data.get("tasks")
     if not isinstance(tasks, list) or not tasks:
@@ -4942,23 +7182,116 @@ def _reset_stale_authority_done_tasks(
             continue
         task_id = task.get("id")
         raw_status = task.get("status")
-        if not isinstance(task_id, str) or raw_status not in {"done", "completed"}:
+        if not isinstance(task_id, str):
             continue
-        if task_id in completed_ids:
+        if raw_status in {"done", "completed"}:
+            terminal_without_authority = task_id not in completed_ids
+        elif raw_status == "blocked":
+            if task_id in completed_ids:
+                continue
+            if _has_genuine_task_level_blocker(task):
+                continue
+            terminal_without_authority = True
+        else:
+            continue
+        if not terminal_without_authority:
             continue
         decision = decisions.get(task_id)
-        if decision is None:
-            continue
-        reasons = tuple(
-            reason
-            for reason in getattr(decision, "would_block_reasons", ())
-            if isinstance(reason, str) and reason
-        )
-        if not reasons or any(not reason.startswith("stale_evidence:") for reason in reasons):
+        if decision is not None and getattr(decision, "satisfied", False):
             continue
         _clear_task_attempt_fields(task)
         reset_ids.append(task_id)
     return sorted(reset_ids)
+
+
+def _has_genuine_task_level_blocker(task: Mapping[str, Any]) -> bool:
+    """True when a blocked task carries an explicit task-level blocker.
+
+    Aggregate-level execute blocks (scope drift, iteration-cap, budget
+    exhaustion) are recorded without a specific blocker reason/by set and are
+    retryable.  Prereq/user-action blocks carry a concrete reason or by-set and
+    must not be silently reset.
+
+    ``validation_blocked`` is the typed disposition for a task-scoped
+    worker/policy block with no accepted terminal authority (e.g. a
+    verification-budget artifact: implemented but unverified).  It is NOT a
+    genuine blocker: the row must return to the runnable frontier on a fresh
+    session so a new worker session can re-verify it.  Only
+    ``prerequisite_blocked`` (or explicit by/user-action/dependency fields)
+    keeps a row parked across sessions.
+    """
+    for key in (
+        "blocked_by",
+        "blocked_by_user_action_ids",
+        "unresolved_dependency_ids",
+    ):
+        value = task.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, (list, tuple, set)) and value:
+            return True
+    reason = task.get("blocked_reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip() != "validation_blocked"
+    return False
+
+
+def _envelope_budget_blocked_task_ids(plan_dir: Path) -> set[str]:
+    """Task IDs whose PROVEN batch envelopes carry the durable budget-block
+    identity (merge.py:_enforce_task_test_budgets stamps it on the entry and
+    the target row). The adopt gate must consult these even when the finalize
+    row has not yet been stamped: the execute auto-loop runs adopt before the
+    proven-artifact replay, so a budget-gated row whose identity lives only in
+    the envelope would otherwise be promoted to done WITHOUT evidence and the
+    quality gate would re-block forever (occurrence 0a0ce24c3510, 24 rows).
+
+    A task with a binding-valid budget-debt ACCEPTANCE receipt
+    (``verification/task_budget_acceptance_<task-id>_*.json``) is subtracted:
+    old immutable batch artifacts retain the original violation by design, but
+    the acceptance receipt proves the block was reconciled after a current
+    strict pass (occurrence 927ad612eda8), so it must not resurrect the block.
+    """
+    blocked: set[str] = set()
+    for artifact_path in _all_batch_artifact_paths(plan_dir):
+        try:
+            payload = read_json(artifact_path)
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for key in ("task_updates", "result_envelopes"):
+            entries = payload.get(key)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                task_id = entry.get("task_id") or entry.get("id")
+                value = entry.get("task_test_budget_exhausted")
+                if (
+                    isinstance(task_id, str)
+                    and isinstance(value, str)
+                    and value.strip()
+                ):
+                    blocked.add(task_id)
+    if blocked:
+        verification_dir = Path(plan_dir) / "verification"
+        accepted: set[str] = set()
+        for receipt in verification_dir.glob(
+            "task_budget_acceptance_*_*.json"
+        ):
+            try:
+                receipt_data = read_json(receipt)
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            if (
+                isinstance(receipt_data, dict)
+                and isinstance(receipt_data.get("task_id"), str)
+                and receipt_data.get("disposition") == "accepted_with_debt"
+            ):
+                accepted.add(receipt_data["task_id"])
+        blocked -= accepted
+    return blocked
 
 
 def _adopt_authority_completed_blocked_tasks(
@@ -4968,13 +7301,13 @@ def _adopt_authority_completed_blocked_tasks(
     root: Path | None,
     state: PlanState,
 ) -> list[str]:
-    """Promote blocked rows whose accepted-attempt authority is dependency-closed.
+    """Promote blocked/pending rows whose accepted-attempt authority is dependency-closed.
 
     A task can be terminal-success in the kernel authority (accepted attempt,
-    dependencies closed) while finalize.json still shows ``blocked`` from a stale
-    harness projection (e.g. ``task_test_budget_exhausted``). The authority reader
-    is the source of truth: promote those rows to ``done`` so the milestone
-    completion evidence can satisfy.
+    dependencies closed) while finalize.json still shows ``blocked`` or
+    ``pending``. Promote those stale rows, except a live test-budget rejection:
+    accepted worker authority cannot override the merge admission gate, which
+    requires a fresh compliant attempt.
     """
 
     tasks = finalize_data.get("tasks")
@@ -4989,12 +7322,31 @@ def _adopt_authority_completed_blocked_tasks(
         decisions=decisions,
     )
     adopted_ids: list[str] = []
+    # Envelope-level budget identities: adopt runs before the proven-artifact
+    # replay stamps the durable field into rows, so a budget-gated row whose
+    # identity lives only in its batch envelope must still be excluded
+    # (occurrence 0a0ce24c3510 — adopt-before-replay promoted 24 budget-gated
+    # rows to done without evidence, wedging the quality gate).
+    envelope_budget_blocked = _envelope_budget_blocked_task_ids(plan_dir)
     for task in tasks:
         if not isinstance(task, dict):
             continue
         task_id = task.get("id")
         raw_status = task.get("status")
-        if not isinstance(task_id, str) or raw_status != "blocked":
+        if not isinstance(task_id, str):
+            continue
+        # Promote rows whose accepted-attempt kernel authority is satisfied:
+        # blocked (stale harness projection) AND pending (the finalize status
+        # lags a substantively-complete batch — the worktree + accepted
+        # envelopes satisfy the contract while finalize.json still shows
+        # pending, e.g. astrid m1 batch-22 T41 dependency record).  The
+        # authority reader is the source of truth; a pending task with NO
+        # accepted envelope stays pending.
+        if raw_status not in {"blocked", "pending"}:
+            continue
+        if _is_task_test_budget_blocked(task):
+            continue
+        if task_id in envelope_budget_blocked:
             continue
         if task_id not in completed_ids:
             continue
@@ -5016,9 +7368,25 @@ def _adopt_authority_completed_blocked_tasks(
 
 _BASELINE_VERIFICATION_MARKER = "introduce no new failures vs the recorded baseline"
 _BASELINE_UNAVAILABLE_BLOCKER_KIND = "baseline-unavailable-no-new-failures-checkpoint"
+# The baseline-unavailable deferral is a VERIFICATION-only disposition: it
+# exists for tasks whose contract is "introduce no new failures vs the
+# recorded baseline". Implementation (code) tasks must never be deferred by
+# it, even when their description happens to carry the boilerplate marker —
+# deferring them launders real implementation work into a fake "skipped"
+# completion (observed: m3 T4, kind=code, was marked skipped by
+# _defer_baseline_unavailable_checkpoints with no authority/envelope
+# evidence, leaving the projection to re-work it while finalize accounting
+# mislabeled it done). "audit" is the kind used for *_proof tasks in current
+# plans; "proof"/"verification" are accepted aliases for other naming
+# conventions. The description marker must still match, so this can only
+# NARROW the set of deferrable tasks.
+_BASELINE_VERIFICATION_KINDS = frozenset({"audit", "proof", "verification"})
 
 
 def _is_baseline_dependent_verification_task(task: dict[str, Any]) -> bool:
+    kind = task.get("kind")
+    if not isinstance(kind, str) or kind not in _BASELINE_VERIFICATION_KINDS:
+        return False
     description = task.get("description")
     if not isinstance(description, str):
         return False
@@ -5367,6 +7735,35 @@ def _review_rework_context(
     }
 
 
+def _scoped_successors_for_failed_validation(
+    validation_jobs: list[Mapping[str, Any]],
+    validation_results: list[Mapping[str, Any]],
+    accepted_task_ids: set[str] | frozenset[str],
+) -> list[str]:
+    """Derive scoped successor tasks from FAILED bounded validation jobs.
+
+    A bulk/manifest/global review rework item is admitted as a validation-only
+    job: the accepted task_ids it names are suppressed, not reopened.  When
+    the deterministic check FAILS, the engine demands a "scoped successor
+    task" — the named accepted tasks ARE those successors.  This helper
+    returns the accepted task_ids covered by failed jobs (in job order,
+    deduplicated), or [] when no job fails / no job covers accepted tasks.
+    """
+    successors: list[str] = []
+    for job, result in zip(validation_jobs, validation_results):
+        if not (
+            result.get("error")
+            or result.get("timed_out")
+            or result.get("exit_code") != 0
+        ):
+            continue
+        covered = job.get("task_ids") or []
+        for task_id in covered:
+            if task_id in accepted_task_ids and task_id not in successors:
+                successors.append(task_id)
+    return successors
+
+
 def _block_no_runnable_rework(
     *,
     plan_dir: Path,
@@ -5510,6 +7907,137 @@ def _escalate_persistent_unroutable_rework(
     return response
 
 
+def _dependency_closed_blocked_task_ids(
+    tasks: Iterable[Mapping[str, Any]],
+    blocked_task_ids: Iterable[str],
+) -> set[str]:
+    """Return blocked ids plus every task that transitively depends on them.
+
+    The execute auto-loop parks task-level blocks (kept at status=blocked with
+    a typed disposition) and continues with the dependency-independent
+    runnable frontier. Tasks whose dependency closure contains a parked block
+    must stay out of that frontier because their prerequisites are
+    unsatisfied; they remain pending so a later session can retry them once
+    the block resolves.
+    """
+    blocked = {str(task_id) for task_id in blocked_task_ids if task_id}
+    dependents: dict[str, set[str]] = {}
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("id")
+        if isinstance(task_id, str) and task_id:
+            dependents.setdefault(task_id, set())
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or task_id not in dependents:
+            continue
+        deps = task.get("depends_on")
+        if not isinstance(deps, list):
+            continue
+        for dep in deps:
+            if isinstance(dep, str) and dep in dependents:
+                dependents[dep].add(task_id)
+    closed = set(blocked)
+    changed = True
+    while changed:
+        changed = False
+        for dep, dependent_ids in dependents.items():
+            if dep not in closed:
+                continue
+            for dependent_id in dependent_ids:
+                if dependent_id not in closed:
+                    closed.add(dependent_id)
+                    changed = True
+    return closed
+
+
+def _park_blocked_task_dispositions(
+    finalize_data: Mapping[str, Any],
+    newly_blocked_task_ids: Iterable[str],
+    current_invocation_id: str,
+) -> None:
+    """Stamp typed blocker dispositions onto newly blocked tasks.
+
+    Each task the worker reported status=blocked for gets a typed
+    ``blocked_reason``: ``prerequisite_blocked`` when it carries an explicit
+    prereq/user-action blocker (``_has_genuine_task_level_blocker``), otherwise
+    ``validation_blocked`` (a task-scoped worker/policy block with no accepted
+    terminal authority — e.g. a verification-budget artifact). The row also
+    keeps its ``recorded_invocation_id`` so the cross-session reset path can
+    distinguish within-session from fresh-session blocks. Dispositions are
+    never flipped back to pending within the same invocation.
+    """
+    blocked_set = {str(task_id) for task_id in newly_blocked_task_ids if task_id}
+    if not blocked_set:
+        return
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        if task.get("id") not in blocked_set:
+            continue
+        if _has_genuine_task_level_blocker(task):
+            task["blocked_reason"] = "prerequisite_blocked"
+        else:
+            task["blocked_reason"] = "validation_blocked"
+        if current_invocation_id:
+            task["recorded_invocation_id"] = current_invocation_id
+
+
+def _recompute_runnable_batches(
+    finalize_data: Mapping[str, Any],
+    *,
+    completed_task_ids: set[str],
+    state: PlanState,
+    args: argparse.Namespace,
+) -> list[list[str]]:
+    """Recompute the runnable batch frontier after task-level blocks.
+
+    Blocked tasks (parked at status=blocked with a typed disposition) and
+    their transitive dependents are excluded; the remaining pending tasks are
+    re-batched with the same pipeline used for the initial frontier
+    (topological batches, oversized split, weight-aware cap, high-complexity
+    isolation). Returns an empty list when no runnable frontier remains.
+    """
+    tasks = finalize_data.get("tasks") or []
+    if not isinstance(tasks, list):
+        return []
+    blocked_ids = {
+        task["id"]
+        for task in tasks
+        if isinstance(task, Mapping)
+        and isinstance(task.get("id"), str)
+        and task.get("status") == "blocked"
+        and task["id"] not in completed_task_ids
+    }
+    if not blocked_ids:
+        return []
+    excluded = _dependency_closed_blocked_task_ids(tasks, blocked_ids)
+    runnable = [
+        task
+        for task in tasks
+        if isinstance(task, Mapping)
+        and isinstance(task.get("id"), str)
+        and task.get("status") != "blocked"
+        and task["id"] not in completed_task_ids
+        and task["id"] not in excluded
+    ]
+    if not runnable:
+        return []
+    pending_batches = compute_task_batches(runnable, completed_ids=completed_task_ids)
+    max_tasks_per_batch = _weight_aware_max_tasks_per_batch(
+        _resolve_max_tasks_per_batch(state, args),
+        tasks,
+    )
+    return _split_high_complexity(
+        split_oversized_batches(pending_batches, max_tasks_per_batch),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
+    )
+
+
 def handle_execute_auto_loop(
     *,
     root: Path,
@@ -5563,6 +8091,16 @@ def handle_execute_auto_loop(
             plan_dir=plan_dir,
             root=root,
             state=state,
+        )
+        # Accepted worker authority cannot suppress a fresh retry of a result
+        # rejected by the merge-layer test-budget admission gate.
+        authority_completed_before_retry.difference_update(
+            task["id"] for task in tasks
+            if isinstance(task, dict) and isinstance(task.get("id"), str)
+            and (
+                _is_task_test_budget_blocked(task)
+                or is_contradictory_done_budget_row(task)
+            )
         )
         # ------------------------------------------------------------------
         # Explicit partial-failure resume partition (T12).
@@ -5730,6 +8268,38 @@ def handle_execute_auto_loop(
         for sense_check in finalize_data.get("sense_checks", [])
         if isinstance(sense_check, dict) and isinstance(sense_check.get("id"), str)
     ]
+    # Contradictory done-budget rows (astrid fix 4d39b18d33): a DONE row
+    # that still carries the durable budget-block identity with NO admitted
+    # evidence cannot be produced by any valid flow (adopt-before-replay
+    # artifact) and must return to the runnable frontier for a fresh
+    # compliant attempt.  The --retry-blocked-tasks partition reruns them,
+    # but the PLAIN resume path (no flag) must do the same, or execute
+    # stays blocked on "done tasks missing both files_changed and
+    # commands_run" forever (occurrence 927ad612eda8, live regression
+    # 2026-08-19T12:12Z).  Review-rework scopes are preserved (review.json
+    # present = scoped frontier is authoritative).
+    if not (plan_dir / "review.json").exists():
+        contradictory_ids = [
+            task["id"]
+            for task in tasks
+            if isinstance(task, dict)
+            and isinstance(task.get("id"), str)
+            and is_contradictory_done_budget_row(task)
+        ]
+        if contradictory_ids:
+            for task in tasks:
+                if (
+                    isinstance(task, dict)
+                    and isinstance(task.get("id"), str)
+                    and task["id"] in contradictory_ids
+                ):
+                    _clear_task_attempt_fields(task)
+            log.info(
+                "resume: returned %d contradictory done-budget row(s) to the "
+                "runnable frontier for a fresh compliant attempt: %s",
+                len(contradictory_ids),
+                ", ".join(sorted(contradictory_ids)),
+            )
     completed_task_ids = _scheduler_completed_ids_for_tasks(
         tasks,
         plan_dir=plan_dir,
@@ -5806,7 +8376,6 @@ def handle_execute_auto_loop(
                                 {
                                     "id": job["id"],
                                     "command": _shlex.split(str(job["command"])),
-                                    "cwd": ".",
                                     "environment": {},
                                     "timeout_seconds": 600,
                                     "expected_output_paths": [],
@@ -5828,16 +8397,42 @@ def handle_execute_auto_loop(
                         for row in validation_results
                         if row.get("error") or row.get("timed_out") or row.get("exit_code") != 0
                     ]
-                    if failed_validation:
-                        return _block_no_runnable_rework(
-                            plan_dir=plan_dir,
-                            state=state,
-                            auto_approve=auto_approve,
-                            reason=(
-                                "review bulk verification failed its bounded validation "
-                                "job; a scoped successor task is required"
-                            ),
+                    if failed_validation and not review_rework_task_ids:
+                        # A failing bulk/manifest/global validation job names
+                        # the accepted tasks it covered (review rework item's
+                        # task_ids).  The admission treats bulk+check as
+                        # validation-only and suppresses those accepted ids, so
+                        # without this reopen the plan dead-ends on "scoped
+                        # successor task is required" — the named accepted
+                        # tasks ARE the scoped successors the message demands.
+                        # Reopen exactly the accepted tasks covered by FAILED
+                        # jobs; the deterministic check failing is the proof of
+                        # regression (no laundering: tasks must re-run and pass
+                        # verification again).  Jobs whose task_ids are not in
+                        # the accepted set contribute nothing here.
+                        accepted_set = set(completed_task_ids)
+                        failed_job_successors = _scoped_successors_for_failed_validation(
+                            rework_admission.validation_jobs,
+                            validation_results,
+                            accepted_set,
                         )
+                        if failed_job_successors:
+                            review_rework_task_ids = failed_job_successors
+                            log.info(
+                                "review bulk verification failed; reopening scoped "
+                                "successors %s (covered by failed validation job)",
+                                sorted(failed_job_successors),
+                            )
+                        else:
+                            return _block_no_runnable_rework(
+                                plan_dir=plan_dir,
+                                state=state,
+                                auto_approve=auto_approve,
+                                reason=(
+                                    "review bulk verification failed its bounded validation "
+                                    "job; a scoped successor task is required"
+                                ),
+                            )
                     validation_only_satisfied = not review_rework_task_ids
                 if not review_rework_task_ids and not validation_only_satisfied:
                     if unrunnable_rework_task_ids:
@@ -5931,6 +8526,21 @@ def handle_execute_auto_loop(
                 if task.get("status") == "blocked" and isinstance(task.get("id"), str)
                 and task["id"] not in completed_task_ids
             }
+            # Recompute the runnable frontier too: reset tasks must rejoin
+            # pending_tasks, otherwise a pending dependent (T29 -> T28) keeps
+            # referencing a task absent from the batch graph and
+            # compute_task_batches raises "Unknown dependency ID" (occurrence
+            # 927ad612eda8, resume after cross-session blocked-task reset).
+            # The review-rework frontier (explicit scoped task list) is
+            # preserved when active.
+            if not rework_mode:
+                pending_tasks = [
+                    task
+                    for task in tasks
+                    if isinstance(task.get("id"), str)
+                    and task.get("status") != "blocked"
+                    and task.get("id") not in completed_task_ids
+                ]
         if blocked_task_ids:
             finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
                 finalize_data,
@@ -6111,7 +8721,10 @@ def handle_execute_auto_loop(
     pending_batches = compute_task_batches(
         pending_tasks, completed_ids=completed_task_ids
     )
-    max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
+    max_tasks_per_batch = _weight_aware_max_tasks_per_batch(
+        _resolve_max_tasks_per_batch(state, args),
+        (finalize_data.get("tasks") or []) if isinstance(finalize_data, Mapping) else pending_tasks,
+    )
     split_batches = _split_high_complexity(
         split_oversized_batches(pending_batches, max_tasks_per_batch),
         finalize_data,
@@ -6219,6 +8832,19 @@ def handle_execute_auto_loop(
                 operation="resume-loaded-batches",
                 state=state,
             )
+            # The persisted execution_audit.json may predate the replayed
+            # evidence (e.g. a quality-gate block recorded findings before the
+            # replay backfilled files_changed/commands_run from accepted
+            # waves). Invalidate it so downstream prompts and review never read
+            # stale findings; the aggregate path recomputes and rewrites it
+            # fresh after replay. (chain-gate escalation)
+            stale_audit = plan_dir / "execution_audit.json"
+            if stale_audit.exists():
+                try:
+                    stale_audit.unlink()
+                    log.info("invalidated stale execution_audit.json before replay aggregation")
+                except OSError:
+                    log.warning("could not remove stale execution_audit.json", exc_info=True)
             batch_payloads = loaded_batch_payloads
     active_task_ids = set(
         review_rework_task_ids
@@ -6252,6 +8878,7 @@ def handle_execute_auto_loop(
     latest_auth_metadata: dict[str, Any] | None = None
     latest_rendered_prompt: str | None = None
     blocking_reasons: list[str] = []
+    pending_left_behind_task_ids: set[str] = set()
     routing_degradations: list[str] = []
     timeout_recovery: StepResponse | None = None
     # Per-batch tier routing: track the previous batch's resolved (agent, model)
@@ -6266,7 +8893,16 @@ def handle_execute_auto_loop(
     # Batch-to-tier mapping for the aggregate history entry summary.
     batch_to_tier: list[dict[str, Any]] = []
 
-    for batch_index, batch_task_ids in enumerate(batches_to_run, start=1):
+    # Dependency-aware continuation: the loop is a re-derivable frontier
+    # queue. When a task-level block parks one or more tasks, the remaining
+    # runnable frontier is recomputed and the loop continues, so a single
+    # budget-blocked task cannot strand dependency-independent batches.
+    # ``batch_index`` is a monotonic dispatch ordinal (never reset), so
+    # re-derived batches always receive fresh artifact slots.
+    batch_index = 0
+    while batch_index < len(batches_to_run):
+        batch_index += 1
+        batch_task_ids = batches_to_run[batch_index - 1]
         batch_number_for_artifact = 1 if single_batch_mode else _resolve_batch_artifact_number(
             batch_task_ids,
             global_batch_lookup=global_batch_lookup,
@@ -6305,7 +8941,8 @@ def handle_execute_auto_loop(
                     state,
                     plan_dir,
                     batch_task_ids,
-                    completed_task_ids,
+                    current_artifact_number=batch_number_for_artifact,
+                    completed_task_ids=completed_task_ids,
                     root=root,
                     rework_context=(
                         _review_rework_context(
@@ -6538,36 +9175,146 @@ def handle_execute_auto_loop(
             and task["id"] in set(batch_task_ids)
             and task["id"] not in completed_task_ids
         }
-        # Stamp each newly-blocked task with the current invocation_id so the
-        # short-circuit can distinguish within-session from cross-session blocks.
+        # Stamp each newly-blocked task with the current invocation_id and a
+        # typed blocker disposition so the short-circuit can distinguish
+        # within-session from cross-session blocks and the phase result can
+        # carry the blocker kind.
         current_inv_id = (state.get("meta") or {}).get("current_invocation_id", "")
-        if newly_blocked_task_ids and current_inv_id:
-            for task in finalize_data.get("tasks", []):
-                if (
-                    isinstance(task, dict)
-                    and task.get("id") in newly_blocked_task_ids
-                ):
-                    task["recorded_invocation_id"] = current_inv_id
+        if newly_blocked_task_ids:
+            _park_blocked_task_dispositions(
+                finalize_data,
+                newly_blocked_task_ids,
+                current_inv_id,
+            )
         blocking_reasons = build_blocking_reasons(
             tracked_tasks=result.merged_task_count,
             total_tasks=result.total_task_count,
             acknowledged_checks=result.acknowledged_sense_check_count,
             total_checks=result.total_sense_check_count,
             missing_task_evidence=result.missing_task_evidence,
+            payload=result.payload,
         )
         blocked_task_reason = _blocked_task_reason(newly_blocked_task_ids)
         if blocked_task_reason:
             blocking_reasons.append(blocked_task_reason)
-        if blocking_reasons:
+        # Abort-recovery stop: a batch task that is still non-terminal after
+        # merge (worker aborted mid-batch, no accepted envelope, not
+        # authority-completed) must not silently pass.  Park it and stop the
+        # loop so dependent chunks are not dispatched against a still-pending
+        # prerequisite; the next resume recomputes the frontier and re-dispatches
+        # the pending task.
+        current_batch_noncomplete_ids = {
+            task["id"]
+            for task in finalize_data.get("tasks", [])
+            if isinstance(task, Mapping)
+            and isinstance(task.get("id"), str)
+            and task["id"] in set(batch_task_ids)
+            and task.get("status") not in TERMINAL_TASK_STATUSES
+        }
+        current_batch_pending_left_behind = (
+            current_batch_noncomplete_ids - newly_blocked_task_ids
+        )
+        pending_left_behind_task_ids.update(current_batch_pending_left_behind)
+        pending_left_behind_reason = _pending_left_behind_reason(
+            current_batch_pending_left_behind
+        )
+        if pending_left_behind_reason:
+            blocking_reasons.append(pending_left_behind_reason)
+        # Break only on aggregate quality reasons (untracked task updates,
+        # sense-check gaps, missing evidence) or when no runnable frontier
+        # remains. A sole task-level block (worker reported status=blocked for
+        # task(s) in this batch) parks the blocked tasks with a typed
+        # disposition and continues with the dependency-independent frontier
+        # instead of halting the whole phase.
+        if blocking_reasons and not (
+            blocked_task_reason is not None and len(blocking_reasons) == 1
+        ):
             agent = result.agent
             mode = result.mode
             refreshed = result.refreshed
             break
+        if newly_blocked_task_ids:
+            recomputed = _recompute_runnable_batches(
+                finalize_data,
+                completed_task_ids=completed_task_ids,
+                state=state,
+                args=args,
+            )
+            if recomputed:
+                # Preserve the monotonic dispatch cursor: keep the already
+                # consumed prefix and replace the REMAINING queue with the
+                # recomputed runnable frontier (blocked-task dependents and
+                # completed work excluded), so the cursor advances onto the
+                # fresh remainder instead of overshooting the shorter list
+                # (occurrence 4c0190500877: T16 stayed undispatched after the
+                # batch-12 budget block even though it was dependency-free).
+                batches_to_run = batches_to_run[:batch_index] + recomputed
+                log.info(
+                    "task-level block(s) %s parked; continuing with %d "
+                    "runnable batch(es) excluding their dependents",
+                    sorted(newly_blocked_task_ids),
+                    len(recomputed),
+                )
+            else:
+                agent = result.agent
+                mode = result.mode
+                refreshed = result.refreshed
+                break
+        # Success-path frontier rescan (grok consult 2026-08-16, astrid m2
+        # T19-T27 never dispatched): after a batch that COMPLETED tasks,
+        # newly-eligible dependents (their deps now done) must be dispatched
+        # in THIS invocation. Previously the loop walked a FROZEN batch list —
+        # compute_task_batches put T19/T22/... in later layers of the initial
+        # split, the auto-loop never rescanned after a successful merge, and
+        # the quality gate then flagged them as "executor never started them".
+        # The only mid-run rescan was the task-level-block path above, which
+        # replaces batches_to_run with the independent remainder while
+        # batch_index stays ahead of the shorter list -> zero of the new
+        # queue ran. Recompute the frontier with the updated completed set and
+        # APPEND the newly-eligible batches (deduped) so the loop cursor
+        # naturally continues onto them.
+        else:
+            frontier = _recompute_runnable_batches(
+                finalize_data,
+                completed_task_ids=completed_task_ids,
+                state=state,
+                args=args,
+            )
+            if frontier:
+                existing = {
+                    task_id for batch in batches_to_run for task_id in batch
+                }
+                fresh = [
+                    batch
+                    for batch in frontier
+                    if any(task_id not in existing for task_id in batch)
+                ]
+                if fresh:
+                    batches_to_run = batches_to_run + fresh
+                    log.info(
+                        "frontier rescan: %d newly-eligible dependent "
+                        "batch(es) appended after completed batch",
+                        len(fresh),
+                    )
         agent = result.agent
         mode = result.mode
         refreshed = result.refreshed
 
     plan_mode = state["config"].get("mode", "code")
+    # Replay every independently proven batch artifact (including same-index
+    # waves shadowed by a newer preferred attempt) through the scoped merge
+    # validator, so accepted rows from earlier waves backfill evidence and
+    # acknowledgments before the authoritative completion/quality checks.
+    # Idempotent and validator-gated: authority IDs persist only on pass.
+    # (occurrence 0ae19cc17afd)
+    _replay_proven_batch_artifacts(
+        plan_dir=plan_dir,
+        finalize_data=finalize_data,
+        known_task_ids=all_task_ids,
+        known_sense_check_ids=all_sense_check_ids,
+        mode=plan_mode,
+        state=state,
+    )
     # Aggregate from the durable audited batch artifacts (execution_batch_N.json)
     # rather than the in-memory raw payloads. Raw payloads can be truncated or
     # placeholders; the audited files carry the final files_changed/task_updates.
@@ -6708,11 +9455,27 @@ def handle_execute_auto_loop(
             if timeout_error is not None
             else None
         ),
+        payload=(batch_payloads[-1] if batch_payloads else None),
     )
-    blocking_reasons = _drop_resolved_quality_blocking_reasons(
-        blocking_reasons,
-        state=state,
+    # Carry the abort-recovery park into the phase-final decision: the in-loop
+    # blocking_reasons list is rebuilt above, so a pending-left-behind task must
+    # be re-appended here or the phase would report success with unfinished
+    # tasks.  ``completed_task_ids`` was recomputed from the merged finalize
+    # data, so tasks that completed during the loop are dropped from the set.
+    pending_left_behind_task_ids.difference_update(completed_task_ids)
+    pending_left_behind_reason = _pending_left_behind_reason(
+        pending_left_behind_task_ids
     )
+    # P6 reconcile selection envelope: the selection JSON carried in the batch
+    # payloads IS the completion evidence for a read-only reconcile selector;
+    # suppress the pending-left-behind blocker for it.
+    selection_complete = any(
+        isinstance(payload, Mapping)
+        and ("selected_shas" in payload or "verification_evidence" in payload)
+        for payload in batch_payloads
+    )
+    if not selection_complete and pending_left_behind_reason:
+        blocking_reasons.append(pending_left_behind_reason)
     active_blocked_task_ids = {
         task["id"]
         for task in finalize_data.get("tasks", [])
@@ -6736,6 +9499,19 @@ def handle_execute_auto_loop(
     _append_scope_drift_blocker(blocking_reasons, state, drift)
     if routing_degradations:
         blocking_reasons.extend(routing_degradations)
+
+    # Drop quality-gate blockers whose root cause the operator resolved as
+    # non-terminal debt (accepted_with_debt / fixed).  This MUST run after the
+    # blocked-task and scope-drift reasons are appended: the one-batch path
+    # drops after drift (see the grok astrid m1 consult) and the aggregate
+    # auto-loop path must mirror it, otherwise an operator resolution can never
+    # clear the two recurring auto-loop park reasons (blocked task carried in
+    # blocked_task_ids + scope_drift_severity=high) and the plan loops
+    # blocked -> recover-blocked -> execute -> same deviation forever.
+    blocking_reasons = _drop_resolved_quality_blocking_reasons(
+        blocking_reasons,
+        state=state,
+    )
 
     routing_blocked = any(reason in blocking_reasons for reason in routing_degradations)
     blocked = bool(blocking_reasons)
@@ -6889,6 +9665,7 @@ def handle_execute_auto_loop(
 
     # Collect blocked task notes for blocked_by_prereq path
     blocked_task_notes: dict[str, str] = {}
+    blocked_task_kinds: dict[str, str] = {}
     if prereq_blocked_task_ids:
         for task in finalize_data.get("tasks", []):
             tid = task.get("id")
@@ -6896,6 +9673,9 @@ def handle_execute_auto_loop(
                 notes = task.get("executor_notes") or ""
                 if notes:
                     blocked_task_notes[tid] = str(notes)
+                reason = task.get("blocked_reason")
+                if isinstance(reason, str) and reason:
+                    blocked_task_kinds[tid] = reason
 
     # ``execution.json`` is intentionally cumulative evidence.  The phase
     # result drives retry policy, so it must only carry diagnostics produced by
@@ -6938,5 +9718,7 @@ def handle_execute_auto_loop(
         response["result"] = "blocked"
     if blocked_task_notes:
         response["blocked_task_notes"] = blocked_task_notes
+    if blocked_task_kinds:
+        response["blocked_task_kinds"] = blocked_task_kinds
     _attach_next_step_runtime(response)
     return response

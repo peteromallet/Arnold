@@ -19,7 +19,10 @@ mkdir -p "$ROOT/runtimes"
 runtime_ready() {
   local python="$1"
   [[ -x "$python" ]] || return 1
-  PYTHONSAFEPATH=1 "$python" -P -c \
+  # Isolation must be total: PYTHONSAFEPATH does NOT ignore PYTHONPATH, so a
+  # hollow venv can look ready while arnold resolves from an ambient tree.
+  # Strip PYTHONPATH so readiness proves the venv itself is self-contained.
+  env -u PYTHONPATH PYTHONSAFEPATH=1 "$python" -P -c \
     'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
     >/dev/null 2>&1
 }
@@ -27,7 +30,7 @@ runtime_ready() {
 receipt_ready() {
   local python="$1"
   [[ -f "$RECEIPT" ]] || return 1
-  PYTHONSAFEPATH=1 "$python" -P - "$RECEIPT" "$SOURCE" <<'PY'
+  env -u PYTHONPATH PYTHONSAFEPATH=1 "$python" -P - "$RECEIPT" "$SOURCE" <<'PY'
 import json
 import pathlib
 import subprocess
@@ -154,7 +157,7 @@ link_tmp="$ROOT/.current.$$.tmp"
 ln -s "$runtime" "$link_tmp"
 mv -Tf "$link_tmp" "$CURRENT"
 
-"$CURRENT/bin/python3" - "$RECEIPT" "$runtime" "$SOURCE" "$BASE_PYTHON" "$fingerprint" "$source_revision" <<'PY'
+env -u PYTHONPATH PYTHONSAFEPATH=1 "$CURRENT/bin/python3" -P - "$RECEIPT" "$runtime" "$SOURCE" "$BASE_PYTHON" "$fingerprint" "$source_revision" <<'PY'
 import datetime as dt
 import json
 import os

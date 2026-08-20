@@ -225,6 +225,71 @@ def process_birth_identity() -> dict[str, str]:
     return identity
 
 
+def owner_observably_dead(
+    *,
+    host: str,
+    pid: str,
+    boot_id: str,
+    current_host: str | None = None,
+) -> bool:
+    """True when a custody-lease owner is observably gone.
+
+    A lease owner is reclaimable when it is dead even though its TTL has not
+    lapsed (grok consult, astrid dispatch-lease wedge): a resume worker that
+    dies mid-batch leaves an ACTIVE lease with a dead PID, and the acquire
+    path denied it as ``active foreign`` until the 1h ``expires_at`` — wedging
+    every subsequent resume.  The check is deliberately conservative:
+    - A DIFFERENT host is never judged dead (foreign-host leases are never
+      stolen).
+    - On the same host, the PID is probed via ``os.kill(pid, 0)``; a
+      ``ProcessLookupError`` means the process is gone.  ``PermissionError``
+      (exists, other user) counts as ALIVE.
+    - When ``boot_id`` is provided and the current process can read the host's
+      boot id, a boot-id mismatch means the host rebooted since the lease was
+      taken — the old owner cannot be alive; the lease is reclaimable.
+    - Unparseable pids and unreadable host state fail CLOSED (return False)
+      so the check never fabricates death.
+    """
+    current_host = current_host or _current_hostname()
+    if not host or host != current_host:
+        return False
+    if not pid or not pid.isdigit():
+        return False
+    try:
+        os.kill(int(pid), 0)
+        alive = True
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        alive = True
+    except OSError:
+        return False
+    if alive:
+        # PID exists; the only remaining death signal is a host reboot.
+        if boot_id and _current_boot_id():
+            return boot_id != _current_boot_id()
+        return False
+    return True
+
+
+def _current_hostname() -> str:
+    try:
+        return socket.gethostname()
+    except Exception:
+        return ""
+
+
+def _current_boot_id() -> str:
+    try:
+        return (
+            Path("/proc/sys/kernel/random/boot_id")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    except Exception:
+        return ""
+
+
 # ── Digest helpers ────────────────────────────────────────────────────────
 
 

@@ -1,0 +1,462 @@
+#!/usr/bin/env python3
+"""Render the status-trigger babysitter operator contract.
+
+The watchdog status trigger renders this goal and launches ONE detached
+hermes:deepseek:deepseek-v4-flash managed agent — the BABYSITTER — whose
+prompt drives the entire recovery flow itself:
+
+    (a) deploy a bounded read-only swarm via skills/subagent-launcher/fan.py
+        over the failure evidence (one investigator per scoping question)
+    (b) hand the packed context to codex (codex:gpt-5.6-sol, high reasoning)
+        for a proper solution proposal
+    (c) implement the narrowest source-level fix in the approved editable
+        runtime
+    (d) relaunch the chain (megaplan resume / chain start as the evidence
+        requires)
+    (e) prove movement: chain-*.json last_state leaves blocked and the same
+        failure_fingerprint does not recur
+
+The single agent IS the orchestrator: the prompt drives the swarm -> codex ->
+implement -> relaunch -> prove flow.  The renderer embeds the concrete
+session/workspace/plan context plus the failure evidence (latest_failure,
+planner_repair) so the babysitter never starts from a bare session name.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.babysitter.routing import resolve_babysitter_routing
+
+
+def _safe_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _json_block(label: str, payload: object) -> str:
+    if payload is None:
+        return ""
+    return f"{label}:\n```json\n{json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)}\n```\n"
+
+
+_PRIOR_EVIDENCE_MARKERS = (
+    "swarm-index.md",
+    "sol-stage2-proposal.md",
+    "sol-stage2-prompt.md",
+    "handoff.md",
+)
+
+
+def _render_prior_fixer_work_block(recovery_dir: str) -> str:
+    """List prior fixer occurrences' evidence dirs so the babysitter can read
+    the previous handoff instead of re-deriving the same diagnosis from zero.
+
+    The recovery root layout is ``<recovery_dir>/<occurrence_digest>/`` with a
+    per-incarnation sub-tree (``swarm-briefs/``, ``swarm-results/``,
+    ``codex/``, ``execution/``).  Absent/missing root -> a short orientation
+    block that names the convention, never a hard error.
+    """
+    root = Path(recovery_dir) if recovery_dir else None
+    if root is None or not root.is_dir():
+        return (
+            "\nPrior fixer work:\n"
+            "- Recovery evidence root not provided/unreadable. If prior fixer "
+            "occurrences exist, they live under the chain's "
+            "`.megaplan/plans/.chains/recovery/<digest>/`; locate and read "
+            "their handoff before starting a fresh swarm.\n"
+        )
+    occurrences = sorted(
+        (entry for entry in root.iterdir() if entry.is_dir()),
+        key=lambda p: p.name,
+    )
+    if not occurrences:
+        return (
+            "\nPrior fixer work:\n"
+            "- No prior fixer occurrences recorded under "
+            f"{root}.\n"
+        )
+    lines = [
+        "\nPrior fixer work (READ THIS FIRST — continue the lineage, do not "
+        "re-derive from scratch):",
+    ]
+    for occurrence in occurrences:
+        # Markers can sit at the occurrence root or one level down (codex/,
+        # swarm-results/, execution/).
+        marker_hits: list[str] = []
+        for marker in _PRIOR_EVIDENCE_MARKERS:
+            if (occurrence / marker).is_file():
+                marker_hits.append(f"{occurrence.name}/{marker}")
+            else:
+                for sub in ("codex", "swarm-results", "execution", "swarm-briefs"):
+                    if (occurrence / sub / marker).is_file():
+                        marker_hits.append(f"{occurrence.name}/{sub}/{marker}")
+        marker_line = (
+            f" (has: {', '.join(sorted(marker_hits))})" if marker_hits else " (evidence dir only)"
+        )
+        lines.append(f"- {occurrence.name}{marker_line}")
+        for hit in sorted(marker_hits):
+            lines.append(f"    - read {hit}")
+    lines.append(
+        "- If a prior incarnation already diagnosed the root cause and "
+        "implemented a fix, verify the fix landed in the runtime lineage; if "
+        "it did not, ship it (cherry-pick/apply + regression) instead of "
+        "re-authoring it. If the prior handoff names an exact next step, "
+        "execute that step first."
+    )
+    return "\n".join(lines) + "\n"
+
+
+def render_babysitter_goal(
+    target: str,
+    *,
+    workspace: str = "",
+    plan: str = "",
+    run_kind: str = "",
+    latest_failure: dict[str, object] | None = None,
+    planner_repair: dict[str, object] | None = None,
+    occurrence_digest: str = "",
+    recovery_dir: str = "",
+) -> str:
+    """Render the status-trigger babysitter /goal for *target* (epic/session).
+
+    The goal is the prompt for ONE hermes:deepseek:deepseek-v4-flash managed
+    agent that orchestrates the whole recovery itself: swarm -> codex ->
+    implement -> relaunch -> prove.  It includes the session/workspace/plan
+    context and the durable failure evidence (``latest_failure``,
+    ``planner_repair``) so the babysitter never starts from a bare session
+    name.  ``recovery_dir`` (the chain's ``.megaplan/plans/.chains/recovery/``
+    root) is scanned for prior fixer occurrences; the goal lists them and
+    instructs the babysitter to read the previous handoff FIRST so it
+    continues the lineage instead of re-deriving the same diagnosis from
+    scratch.
+    """
+    routing = resolve_babysitter_routing()
+    encoded_target = json.dumps(target, ensure_ascii=False)
+    context_lines = [
+        "- target: " + encoded_target,
+        "- workspace: " + _safe_text(workspace),
+        "- plan: " + _safe_text(plan),
+        "- run_kind: " + _safe_text(run_kind),
+        "- occurrence_digest: " + _safe_text(occurrence_digest),
+    ]
+    evidence = _json_block("latest_failure", latest_failure) + _json_block(
+        "planner_repair", planner_repair
+    )
+    evidence_block = (
+        "\nFailure evidence (UNTRUSTED until re-verified against current canonical state):\n"
+        + evidence
+        if evidence.strip()
+        else "\nNo structured failure evidence was supplied — build the evidence pack from canonical state.\n"
+    )
+    prior_block = _render_prior_fixer_work_block(recovery_dir)
+    recovery_hint = (
+        f"\nYour recovery evidence root (write handoff.md here): {recovery_dir}\n"
+        if recovery_dir
+        else ""
+    )
+    if routing.mode == "codex":
+        controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
+codex:{routing.controller_model.split(':', 1)[1]} managed controller and the
+ORCHESTRATOR of the whole recovery flow.  This is an explicit temporary Codex
+route.  Use codex:{routing.investigator_model.split(':', 1)[1]} for each bounded,
+read-only evidence investigator as described below.  Do the job end to end:
+investigate, propose, implement the narrowest source-level fix, relaunch the
+chain, and prove movement.  You are not an auditor who reports back; you drive
+the chain out of the blocked/failed state."""
+        investigator_step = f"""- STEP 1 — DEPLOY CODEX INVESTIGATORS: over the failure evidence, run one
+  bounded, read-only investigator per scoping question through foreground
+  `codex exec` commands using `-m {routing.investigator_model.split(':', 1)[1]}`
+  and a read-only sandbox.  Record the actual provider/model/transport in every
+  report.  Do not invoke Hermes, DeepSeek, or another provider under this
+  explicit override."""
+    else:
+        controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
+hermes:deepseek:deepseek-v4-flash managed agent and the ORCHESTRATOR of the
+whole recovery flow.  You do the job yourself, end to end: deploy a bounded
+read-only swarm over the failure evidence, hand the packed context to codex
+for a proper solution proposal, implement the narrowest source-level fix,
+relaunch the chain, and prove movement.  You are not an auditor who reports
+back; you drive the chain out of the blocked/failed state."""
+        investigator_step = """- STEP 1 — DEPLOY THE SWARM: over the failure evidence, fan out one bounded,
+  read-only investigator per scoping question in parallel through
+  $subagent-launcher / skills/subagent-launcher/fan.py, using
+  hermes:deepseek:deepseek-v4-flash investigators.  Record the actual
+  model/provider/transport in every report.  If Flash is unavailable, stop at
+  that exact gate — do not silently substitute another model for the
+  investigator role."""
+    return f"""/goal
+{controller_intro}
+
+Context:
+{chr(10).join(context_lines)}
+
+{evidence_block}
+
+{prior_block}
+{recovery_hint}
+Mandatory flow — follow the five steps exactly:
+
+{investigator_step}
+- STEP 2 — CONSULT CODEX: hand the packed context (evidence pack, swarm index,
+  and every investigator report) to codex (codex:gpt-5.6-sol, high reasoning)
+  and get a proper solution proposal: the shortest safe path to durable
+  movement AND the deepest complete structural fix for the failure category.
+  Persist the proposal before touching the runtime.
+  INVOKE AS ONE BOUNDED FOREGROUND COMMAND — never background ``codex exec``
+  and sleep/tail-poll a supervisor file (I51b: that poll is fake progress and
+  the consult hung 65 min at 0% CPU / 0 sockets):
+    timeout --signal=TERM --kill-after=30s 900s \\
+      codex exec --sandbox danger-full-access --ephemeral \\
+      -m gpt-5.6-sol -c model_reasoning_effort=high \\
+      -C "$PWD" -o "$EVIDENCE_DIR/codex/sol-stage2-proposal.md" \\
+      "$(cat "$EVIDENCE_DIR/codex/sol-stage2-prompt.md")" </dev/null
+  900s is the consult bound. Exit 124 = hung consult. Persist pid + elapsed
+  + exit, retry ONCE with a smaller prompt, then proceed from swarm evidence.
+  A poll loop is not progress. Do not wait unbounded on a child.
+- STEP 3 — IMPLEMENT: apply the narrowest source-level fix for the failure in
+  the approved editable runtime.  Run the focused regression, inspect the real
+  result, and keep iterating (bounded, with an evidence delta after every
+  failed attempt) until the occurrence advances.  Escalate back to codex after
+  three distinct verified fix attempts.  agent_actionable: false is reserved
+  for a genuinely external gate.
+  PERSIST AND SHIP THE FIX (do NOT hand the ship back — you finish delivery):
+  after a fix passes its regression, drive it onto main and rebind the runtime
+  so the NEXT resume runs the fixed source.  The operator has authorized
+  pushing fixer branches to main.  The exact delivery sequence:
+  (a) commit the fix in the runtime candidate, record the commit SHA + full
+      ``git show``/patch in your evidence pack;
+  (b) SHIP: ``git -C <candidate> format-patch -1 <sha> --stdout`` -> apply to
+      the Arnold repo -> commit -> ``git push origin
+      fixer/megaplan-maintenance-20260813:main`` (for megaplan-maintenance) or
+      the astrid repo's m1/m2 branch (for astrid-first) -> then
+      ``git -C <candidate> fetch origin main && git -C <candidate> reset
+      --hard origin/main``;
+      CONCURRENT-PUSH GUARD (grok post-fix verdict 2026-08-16): the shared
+      engine moves under you — another epic's fixer may push origin/main while
+      you are mid-delivery. After EVERY push/reset, RE-READ the live rev:
+      ``git -C <candidate> rev-parse origin/main`` and use THAT as the rebind
+      target, never a SHA you captured before shipping. If the rev moved
+      between your push and your reset, do not panic and do not hand back —
+      just re-run (b)+(c) against the NEW rev (your fix is still in the
+      history; it did not vanish because the tip advanced).
+  (c) REBIND: advance the manifest ``epic.expected_head`` to the CURRENT
+      origin/main SHA (re-read it fresh — see the guard in (b)), then resync
+      marker + chain record runtime_binding.current_identity
+      (recompute via runtime_provenance normalized_runtime_identity with the
+      canonical worktree-first shape: editable_root/pth/direct_url/imports
+      NULLED) and rebuild the launch seed via ensure_runtime_launch_seed
+      (the seed must be ``ready: true`` with no errors). If any CAS step
+      refuses (stale digest, moved tip, interpreter mismatch), re-read the
+      live origin/main + current marker/manifest digests and retry the whole
+      (c) sequence against the live values — iterate up to 5 times before
+      handing back, and record every refusal + the live digest at each retry
+      in your evidence pack.
+  (d) write ``handoff.md`` at the recovery evidence root naming the shipped
+      SHA, changed files, the regression that passed, and the rebind evidence.
+      A fix that is only in the candidate is NOT a completed delivery.
+- STEP 4 — RELAUNCH: restart the chain through the supported seam — megaplan
+  resume / chain start as the evidence requires — never --fresh, never a state
+  wipe.  The relaunch must carry the same occurrence identity and the fixed
+  source.
+  SEED ENV (required when driving plan/resume directly): export
+  MEGAPLAN_RUNTIME_LAUNCH_SEED=<launch-seed path> and
+  ARNOLD_RUNTIME_MANIFEST=<manifest path> in the invocation env, exactly as
+  chain/__init__.py run_chain does. A bare `megaplan plan`/`resume` worker
+  fails with "canonical runtime launch seed is required but missing" when the
+  seed env is absent (chain start exports it; direct phase commands do not).
+  If the resume fails on an identity/attestation mismatch (editable_*,
+  source_revision, binding drift, stale seed), DO NOT hand the rebind back:
+  re-run step (c) (manifest -> marker -> chain -> seed resync) and retry the
+  resume.  Iterate until the resume runs or you hit a genuinely external gate.
+  IMMUTABLE-GENERATION ENGINE FIX (2026-08-17, c0d430668e): a plan blocked
+  with ``runtime_launch_attestation_mismatch`` / ``source_revision_mismatch``
+  whose failure was RECORDED BEFORE the immutable-seed engine deployed is a
+  STALE failure — the fix already landed. The engine now binds every worker
+  to an immutable content-addressed generation seed at dispatch
+  (refresh_runtime_launch_seed_for_worker_dispatch); the manual
+  manifest->marker->chain->seed rebind ceremony is NO LONGER needed for an
+  engine advance. If you find such a stale failure, do NOT re-investigate the
+  attestation machinery: just DRIVE the chain forward (chain start / resume
+  with the canonical env) so the next worker picks up the current generation
+  automatically. Only investigate if the NEW dispatch produces a fresh
+  failure that is genuinely new (different error class, recorded after the
+  deploy).
+  BLOCKED-PLAN AUTO-ADOPT (2026-08-18, 5f34c4a202): a plan that is BLOCKED
+  with no live worker (chain last_state=blocked, no active_step/worker) and
+  whose recorded runtime binding lags the current manifest head is NOT a
+  rebind failure — assert_execution_binding now auto-adopts the manifest
+  head for that shape, so `chain start` / `resume` will succeed and rebuild
+  the seed automatically. If you see ``immutable spec binding is not
+  accepted`` / ``chain_runtime_binding_drift`` on a BLOCKED plan, do NOT run
+  the manual rebind ceremony and do NOT investigate the binding machinery:
+  just DRIVE (chain start / resume with the canonical env). The drive
+  auto-adopts. Only an ACTIVE plan (live worker/step) needs the explicit
+  rebind, and only a FRESH failure after the drive deserves investigation.
+  TERMINAL CONTRACT (codex consult 2026-08-17): each terminal call must pass
+  an explicit ``workdir`` — NEVER issue a standalone ``cd`` as a command. The
+  shell is persistent (cwd survives), but a bare cd is treated as non-progress
+  and can trip the non-progress breaker. Use absolute paths in commands when
+  you need a different directory.
+  EXECUTE-PHASE RESUME LOOP (grok strategy 2026-08-16, astrid m2): if the
+  resume repeatedly dies mid-execute and restarts from batch 1, the blocker is
+  the DEFERRED VALIDATION refusal — the resume agent hits its iteration cap,
+  the execute driver then fails the deferred revalidation
+  (``task_result_blocked_by_post_merge_policy`` /
+  ``deferred_validation_result_missing``) and writes STATE_BLOCKED, and the
+  watchdog relaunches from scratch. The canonical strategy:
+  1. DO NOT raise the agent iteration cap. DO NOT staple ``batch_index`` onto
+     resume_cursor to skip batches. Those mask the underlying defect.
+  2. PARK the deferred-validation row (VJ12) as a TYPED block: record the
+     blocked task as a typed ``validation_blocked`` disposition and STOP auto
+     from flipping that row back to pending on every epoch.
+  3. PUBLISH the merge BEFORE the recheck: the refusal fires because the
+     recheck runs against a pre-merge state — get the accepted task result
+     through the authority-adopt seam (``batch.py`` authority-adopt) and
+     publish, THEN run the deferred recheck against the merged state.
+  4. Then diagnose whether that row is an ADOPT MISS (the accepted result
+     exists but the deferred recheck mis-reads it) or a REAL policy failure.
+     If it is an adopt miss, fix the read path; if it is a real policy
+     failure, the task genuinely failed and must be reworked — do not exempt
+     the validation.
+  5. Bug A (heartbeat projection cursor mismatch storm — state.json is a
+     single JSON doc but the cursor counts newlines) is COSMETIC for this
+     loop: the reap decision never reads the heartbeat projection. Do not
+     spend this session on it; the one-liner (stop passing ``source_path`` to
+     the heartbeat append) is a later cleanup.
+  ENGINE-REPAIR AUTHORITY (grok deep-fix consult 2026-08-16): when the
+  diagnosis names an ENGINE-layer defect (shared code: execute/batch.py,
+  finalize, validation, watchdog, CAS — NOT the per-epic workspace), the
+  accepted repair IS a reviewed engine patch, and workspace-only closure is
+  FAILURE. The fixer is authorized to edit and ship engine code for the
+  occurrence it owns. Requirements for an engine patch:
+  - The diagnosis must name the layer (file + mechanism) and the patch must
+    land THERE — a workspace workaround that papers over an engine gate does
+    not complete delivery.
+  - For the VJ12 execute reap loop specifically: split ADOPT-MISS from
+    POLICY-FAIL. The deferred recheck must read the merged candidate
+    INCLUDING the current batch (the early post-merge persist at
+    batch.py:3342-3350 already writes this-batch envelopes as crash-recovery
+    evidence) and persist authority IDs ONLY on pass. Do NOT persist-before-
+    pass (launders policy failure into completed work) and do NOT recheck a
+    snapshot that omits this batch (same loop, renamed). Tests must prove:
+    envelopes visible -> recheck passes; real post-merge contradiction ->
+    still blocks and IDs stay out; resume after pass does not redo; resume
+    after real fail does not skip.
+  - Ship the engine patch through the same (b) ship path with the
+    concurrent-push guard; rebind + resume per (c)/STEP 4.
+- STEP 5 — PROVE MOVEMENT: from canonical state, the chain-*.json last_state
+  must leave blocked and the same failure_fingerprint must not recur, with
+  matching identities (runtime/request/grant/claim/WBC) and exactly one
+  terminal notification.  A PID, commit, self-report, or heartbeat is NOT
+  proof.  Then close the loop, write the handoff.md (SHA + next step), and
+  summarize the session.
+
+Operator contract:
+- NO-OP GUARD: FIRST enumerate ALL active chains via megaplan cloud status
+  / introspect — blocked, failed, AND stopped/parked (pre-execute with no
+  active step and no driver).  If none are blocked/failed/stopped, report
+  "No blocked/failed/stopped chains found; nothing to fix", write the
+  no-action receipt, and end.
+  REAL CONDITION (do not trust latest_failure alone — the auto-driver CLEARS
+  it on stall, so null latest_failure with a blocked chain is a FALSE
+  "healthy"). A chain is GENUINELY STUCK and agent-actionable when ANY of:
+    (a) plan/chain state is blocked AND the launch-seed's expected_revision
+        != manifest epic.expected_head (stale seed -> every worker fails
+        source_revision_mismatch; rebuild the seed via
+        ensure_runtime_launch_seed / the supported chain-start seam);
+    (b) phase history shows the SAME phase erroring >= 2 consecutive times
+        (e.g. repeated critique_evaluator_failed / internal_error) even when
+        latest_failure is null;
+    (c) state is blocked AND events.ndjson is not advancing AND no live
+        driver process is making progress (driver-alive is NOT health;
+        driver-alive + flat events + blocked = wedged);
+    (d) STOPPED PRE-EXECUTE STALL: the plan is in a NON-TERMINAL pre-execute
+        state (initialized, planned, finalized, critiqued, gated) with NO
+        active step AND NO live driver process AND events.ndjson has not
+        advanced (e.g. a fresh m2 plan born by chain start but never driven
+        into prep — the astrid-first m2 case).  The chain is parked, not
+        healthy: drive it forward through the supported seam (chain start /
+        resume) so the milestone actually progresses.  A plan that is simply
+        between milestones with a completed milestone is NOT a stoppage —
+        verify the current milestone has a born-but-unstarted plan and no
+        worker/driver before acting.
+  Verify (a)-(d) from CURRENT state before declaring no-action: read
+  manifest.epic.expected_head vs the seed file, tail the plan history, and
+  compare events.ndjson growth. Only when all four are clean is
+  "nothing to fix" the honest verdict.
+- COORDINATION GUARD: before any recovery, check whether another fixer/repair
+  is already active for the target chain (fresh managed subagent dir, held
+  repair lease, or running subagent_worker for this session).  If active,
+  report "Another fixer is already active for this chain; standing down" and
+  end — never launch a competing fixer.
+- Use $superfixer-debug for the evidence-first recovery protocol and
+  $megaplan-cloud when this is a cloud target.
+- Preserve the failed occurrence.  Never fabricate an output, clear state,
+  weaken a guard, use --fresh, or treat a PID/marker/heartbeat/model prose as
+  recovery.  A "blocked" disposition is evidence, not a verdict — verify its
+  preconditions against CURRENT state before accepting it as a gate.
+- Keep source/runtime/chain identity content-addressed.  Every runtime change
+  needs a rebind through the supported seam.
+- The recovery decision has a small hard contract: target/session/chain/plan
+  revision and parent cursor; one deterministic terminal failure digest; the
+  current source/fence and bound runtime/contract; then the occurrence-bound
+  request, decision, claim, WBC attempt, and accepted result/cursor proof as
+  those records are created.
+- Resolve canonical target IDs and all custody sources from raw evidence.  The
+  target text is orientation, not proof.
+- Record the exact handoff_id in every repair request, receipt, deployment,
+  and proof.  Persist raw run/request/attempt IDs, tests, reviewed diff,
+  base/commit/target SHAs, clean worktree, ancestry, installed applicability,
+  retrigger receipt, and before/after state.  Separate evidence, inference,
+  and unknowns.
+- Report to the existing synthesis owner when one exists; only a top-level
+  delivery owner may reply to the user.
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Render the status-trigger babysitter goal (single Flash orchestrator: swarm -> codex -> implement -> relaunch -> prove)."
+    )
+    parser.add_argument("--target", required=True, help="epic or session text")
+    parser.add_argument("--workspace", default="", help="workspace path")
+    parser.add_argument("--plan", default="", help="plan name")
+    parser.add_argument("--run-kind", default="", help="chain|plan|epic_chain")
+    parser.add_argument("--failure-json", default=None, help="path to latest_failure JSON")
+    parser.add_argument("--planner-repair-json", default=None, help="path to planner_repair JSON")
+    parser.add_argument("--occurrence-digest", default="", help="occurrence/failure fingerprint")
+    parser.add_argument(
+        "--recovery-dir",
+        default="",
+        help="chain recovery evidence root (.megaplan/plans/.chains/recovery) to scan for prior fixer occurrences",
+    )
+    args = parser.parse_args()
+
+    def _load_json(path: str | None) -> dict[str, object] | None:
+        if not path:
+            return None
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else None
+
+    print(
+        render_babysitter_goal(
+            args.target,
+            workspace=args.workspace,
+            plan=args.plan,
+            run_kind=args.run_kind,
+            latest_failure=_load_json(args.failure_json),
+            planner_repair=_load_json(args.planner_repair_json),
+            occurrence_digest=args.occurrence_digest,
+            recovery_dir=args.recovery_dir,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

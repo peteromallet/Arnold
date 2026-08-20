@@ -229,7 +229,7 @@ def _canonical_manifest_payload(
             "venv_path": f"{runtime_root}/venv",
             "runtime_root": runtime_root,
             "expected_head": expected_head,
-            "repair_bin": f"{runtime_root}/venv/bin/arnold-repair-loop",
+            "repair_bin": f"{runtime_root}/venv/bin/arnold-babysitter",
             "deps_lockfile": f"{runtime_root}/uv.lock",
             "dependency_generation": {
                 "id": "a" * 64,

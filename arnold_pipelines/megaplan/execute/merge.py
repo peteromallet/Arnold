@@ -557,6 +557,7 @@ def _validate_entry_against_envelope(
     expected_claim_type: str,
     expected_capability: str,
     state: PlanState | None,
+    replay_proven: bool = False,
 ) -> tuple[GrantAwareValidationOutcome, str]:
     if subject_id not in target_subject_ids:
         return "rejected", "subject_outside_dispatched_batch"
@@ -575,14 +576,20 @@ def _validate_entry_against_envelope(
     if expected_revision is not None and envelope.plan_revision != expected_revision:
         return "superseded-or-conflicting", "plan_revision_mismatch"
     expected_coordinator = _expected_coordinator_attempt_id(state)
-    if (
-        expected_coordinator is not None
-        and envelope.dispatch.coordinator_attempt_id != expected_coordinator
-    ):
-        return "superseded-or-conflicting", "coordinator_fence_mismatch"
-    expected_fence = _expected_fence_token(state)
-    if expected_fence is not None and envelope.dispatch.fence_token != expected_fence:
-        return "superseded-or-conflicting", "coordinator_fence_mismatch"
+    if not replay_proven:
+        # Proven replay of an accepted prior wave bypasses ONLY the temporal
+        # coordinator/fence comparison: the accepted wave's coordinator id and
+        # fence token belong to its own dispatch, not to the current resume
+        # run. All other validation (plan revision, prerequisite, worker,
+        # echo, evidence, CAS) stays enforced. (occurrence 0ae19cc17afd)
+        if (
+            expected_coordinator is not None
+            and envelope.dispatch.coordinator_attempt_id != expected_coordinator
+        ):
+            return "superseded-or-conflicting", "coordinator_fence_mismatch"
+        expected_fence = _expected_fence_token(state)
+        if expected_fence is not None and envelope.dispatch.fence_token != expected_fence:
+            return "superseded-or-conflicting", "coordinator_fence_mismatch"
     expected_prereq = _expected_prerequisite_digest(state)
     if expected_prereq is not None and envelope.prerequisite_digest != expected_prereq:
         return "superseded-or-conflicting", "prerequisite_digest_mismatch"
@@ -620,6 +627,7 @@ def _grant_aware_validate_entries(
     source_path: str | Path = "<merge-payload>",
     off_scope_outcome: GrantAwareValidationOutcome = "rejected",
     scope_trusted: bool = False,
+    replay_proven: bool = False,
 ) -> _GrantAwareValidationResult:
     if not isinstance(entries, list):
         return _GrantAwareValidationResult([], ())
@@ -740,6 +748,7 @@ def _grant_aware_validate_entries(
                 expected_claim_type=expected_claim_type,
                 expected_capability=expected_capability,
                 state=state,
+                replay_proven=replay_proven,
             )
             key = envelope.claim.idempotency_key
             if outcome == "accepted":
@@ -816,9 +825,34 @@ def _merge_validated_entries(
             and id_field == "task_id"
             and str(target.get("status", "")) in ACCEPTED_TASK_STATUSES
         ):
+            # The entry has already passed scoped/grant-aware validation. A
+            # terminal-status row (legacy/proven-wave compatibility) or an
+            # explicitly authority-accepted row may corroborate an accepted
+            # target. Never copy status, and never replace evidence that the
+            # target already carries. Empty executor_notes may be backfilled
+            # because they are the durable evidence for audit/research tasks
+            # (occurrence
+            # 4c0190500877: replay of the proven terminal wave backfills
+            # evidence into evidence-empty accepted rows so chain
+            # phase-coverage and the execute-end done-evidence check do not
+            # re-block a completed plan; a stale 'blocked' status projection on
+            # an authority-accepted row is the same class of adopt-miss).
+            authority_validation = entry.get("authority_validation")
+            authority_accepted = bool(
+                isinstance(authority_validation, Mapping)
+                and authority_validation.get("outcome") == "accepted"
+            )
+            if (
+                str(entry.get("status", "")) in ACCEPTED_TASK_STATUSES
+                or authority_accepted
+            ):
+                for _field in _ACCEPTED_EVIDENCE_BACKFILL_FIELDS:
+                    if not target.get(_field) and entry.get(_field):
+                        target[_field] = entry[_field]
             if entry_id not in seen:
                 issues.append(
-                    f"Preserved accepted {label} for '{entry_id}' — existing receipt not overwritten."
+                    f"Preserved accepted {label} for '{entry_id}' — "
+                    "status preserved; missing terminal evidence backfilled."
                 )
             seen.add(entry_id)
             continue
@@ -904,11 +938,36 @@ def _append_execute_reconciliation_advisories(
 
 
 _TIMEOUT_PREFIX = re.compile(
-    r"(?:^|\s)timeout\s+(?:(?:--[^\s]+)\s+)*(?P<value>\d+)(?P<unit>[sm]?)\s+"
+    r"(?:^|[\s(])timeout\s+(?:(?:--[^\s]+)\s+)*(?P<value>\d+)(?P<unit>[sm]?)\s+"
 )
 
 
-def _test_command_evidence(command: str) -> tuple[int | None, list[str]] | None:
+def _normalize_test_selector(part: str, project_dir: str | None) -> str:
+    """Project-relative form of a test selector.
+
+    Absolute in-project paths are rebased against the project root so an
+    executor that runs ``pytest /abs/project/tests/foo.py`` matches the
+    admitted relative selector ``tests/foo.py``.  Fail closed: a path
+    outside the root, a relative ``..`` escape, an unknown root, or any
+    normalization failure falls back to the legacy character-strip form
+    (which cannot match the relative allowance), so the budget guard is
+    never widened.
+    """
+
+    part = part.strip()
+    if not project_dir or not part.startswith("/"):
+        return part.lstrip("./")
+    try:
+        resolved = Path(part).resolve(strict=False)
+        root = Path(project_dir).resolve(strict=False)
+        return resolved.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        return part.lstrip("./")
+
+
+def _test_command_evidence(
+    command: str, project_dir: str | None = None
+) -> tuple[int | None, list[str]] | None:
     """Return declared timeout seconds and path selectors for one test command."""
 
     try:
@@ -932,7 +991,7 @@ def _test_command_evidence(command: str) -> tuple[int | None, list[str]] | None:
         if timeout_match.group("unit") == "m":
             timeout_seconds *= 60
     selectors = [
-        part.lstrip("./")
+        _normalize_test_selector(part, project_dir)
         for part in parts[runner_index + 1 :]
         if part
         and not part.startswith("-")
@@ -945,11 +1004,18 @@ def _test_command_evidence(command: str) -> tuple[int | None, list[str]] | None:
     return timeout_seconds, selectors
 
 
+_TASK_TEST_BUDGET_REMEDIATION = (
+    "Remediation: rerun pytest using exactly "
+    "`timeout <N> python3 -m pytest <selector> -q`; record results separately."
+)
+
+
 def _enforce_task_test_budgets(
     entries: Iterable[dict[str, Any]],
     *,
     targets_by_id: Mapping[str, dict[str, Any]],
     issues: list[str],
+    project_dir: str | None = None,
 ) -> None:
     """Fail closed when v2 task evidence exceeds its admitted narrow-test budget."""
 
@@ -968,27 +1034,41 @@ def _enforce_task_test_budgets(
             evidence
             for command in commands
             if isinstance(command, str)
-            for evidence in [_test_command_evidence(command)]
+            for evidence in [_test_command_evidence(command, project_dir)]
             if evidence is not None
         ]
         allowed_selectors = {
-            selector.strip().lstrip("./")
+            _normalize_test_selector(selector, project_dir)
             for selector in narrow.get("selectors", [])
             if isinstance(selector, str) and selector.strip()
         }
         max_runs = narrow.get("max_runs")
         max_seconds = narrow.get("max_seconds")
         violations: list[str] = []
+        typed_violations: list[dict[str, Any]] = []
         if isinstance(max_runs, int) and len(invocations) > max_runs:
             violations.append(f"{len(invocations)} test runs exceeds max_runs={max_runs}")
+            typed_violations.append(
+                {
+                    "kind": "max_runs_exceeded",
+                    "runs": len(invocations),
+                    "max_runs": max_runs,
+                }
+            )
         timeout_total = 0
         for timeout_seconds, selectors in invocations:
             if timeout_seconds is None:
                 violations.append("test command lacks an admitted timeout wrapper")
+                typed_violations.append(
+                    {"kind": "missing_timeout_wrapper"}
+                )
             else:
                 timeout_total += timeout_seconds
             if not selectors:
                 violations.append("test command has no bounded path selector")
+                typed_violations.append(
+                    {"kind": "unbounded_selector"}
+                )
                 continue
             for selector in selectors:
                 selector_base = selector.split("::", 1)[0]
@@ -998,17 +1078,48 @@ def _enforce_task_test_budgets(
                     for allowed in allowed_selectors
                 ):
                     violations.append(f"selector {selector!r} is outside narrow_tests.selectors")
+                    typed_violations.append(
+                        {
+                            "kind": "selector_outside_admission",
+                            "selector": selector,
+                        }
+                    )
         if isinstance(max_seconds, int) and timeout_total > max_seconds:
             violations.append(
                 f"declared test timeout total {timeout_total}s exceeds max_seconds={max_seconds}"
+            )
+            typed_violations.append(
+                {
+                    "kind": "max_seconds_exceeded",
+                    "declared_total_seconds": timeout_total,
+                    "max_seconds": max_seconds,
+                }
             )
         if not violations:
             continue
         reason = "task_test_budget_exhausted: " + "; ".join(dict.fromkeys(violations))
         entry["status"] = "blocked"
+        # Durable budget-block identity (occurrence 0513dbf3f069): the marker
+        # lives in executor_notes, but the retry reset (_clear_task_attempt_fields)
+        # wipes notes when flipping blocked->pending, and then
+        # _adopt_authority_completed_blocked_tasks re-promotes the
+        # authority-completed row to done WITHOUT evidence -> the quality gate
+        # re-blocks -> infinite loop.  Persist the verdict in a dedicated field
+        # (the adopt helper already pops task_test_budget_exhausted on promote)
+        # so the exclusion survives the reset and the row re-enters the frontier.
+        entry["task_test_budget_exhausted"] = reason
+        entry["task_test_budget_violations"] = typed_violations
+        if isinstance(target, dict):
+            target["task_test_budget_exhausted"] = reason
+            target["task_test_budget_violations"] = typed_violations
         notes = str(entry.get("executor_notes") or "").strip()
-        entry["executor_notes"] = f"{notes} [harness] {reason}".strip()
-        issues.append(f"Task {task_id} blocked by admitted test budget: {reason}")
+        entry["executor_notes"] = (
+            f"{notes} [harness] {reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
+        ).strip()
+        issues.append(
+            f"Task {task_id} blocked by admitted test budget: "
+            f"{reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
+        )
 
 
 def _enforce_task_write_budgets(
@@ -1056,6 +1167,24 @@ def _enforce_task_write_budgets(
 #: ``blocked`` is terminal but is NOT accepted — a blocked task may legitimately
 #: be retried, so its prior receipt must not freeze out a later attempt.
 ACCEPTED_TASK_STATUSES: frozenset[str] = frozenset({"done", "completed", "skipped"})
+
+#: Evidence fields that may be backfilled into an already-accepted target row
+#: from a terminal accepted incoming entry without demoting its status.  The
+#: accepted receipt is never demoted (status stays), and existing evidence is
+#: never overwritten. A later replay may fill omitted durable evidence,
+#: including executor_notes for audit/research tasks, that the original
+#: publish omitted — otherwise the chain overlay re-applies a stale batch
+#: shadow (chain_authority_shadow) and the execute-end done-evidence check
+#: re-blocks a completed plan (occurrence 4c0190500877, codex consult
+#: 2026-08-17T06:4xZ).
+_ACCEPTED_EVIDENCE_BACKFILL_FIELDS: tuple[str, ...] = (
+    "files_changed",
+    "commands_run",
+    "evidence_files",
+    "head_sha",
+    "code_hash",
+    "executor_notes",
+)
 
 
 def _enforce_batch_file_ownership(
@@ -1128,6 +1257,7 @@ def _merge_batch_results(
     preserve_accepted: bool = False,
     require_dispatch_wbc: bool = True,
     trust_scope: bool = False,
+    replay_proven: bool = False,
 ) -> tuple[int, int, int, int]:
     batch_task_id_set = set(batch_task_ids)
     batch_sense_check_id_set = set(batch_sense_check_ids)
@@ -1210,11 +1340,13 @@ def _merge_batch_results(
         source_path=source_path,
         off_scope_outcome="quarantined" if creative_mode else "rejected",
         scope_trusted=trust_scope or True,
+        replay_proven=replay_proven,
     )
     _enforce_task_test_budgets(
         task_authority.entries,
         targets_by_id=merge_targets_by_id,
         issues=issues,
+        project_dir=(mode_state.get("config") or {}).get("project_dir"),
     )
     _enforce_task_write_budgets(
         task_authority.entries,
@@ -1253,13 +1385,22 @@ def _merge_batch_results(
     # "blocked" / "completed" specifically used to be left out of this filter,
     # which produced a false "tracking is incomplete" message when the
     # executor legitimately blocked on a user prerequisite.
+    # P6 reconcile selection envelope: a read-only reconcile selector emits the
+    # authoritative selection JSON (selected_shas + verification_evidence)
+    # instead of per-task updates; the selection IS the batch's completion
+    # evidence, so the tracking-incomplete advisories must not fire for it
+    # (occurrence 47671addc195).
+    selection_complete = bool(
+        isinstance(payload, Mapping)
+        and ("selected_shas" in payload or "verification_evidence" in payload)
+    )
     total_batch_tasks = len(batch_task_id_set)
     batch_merged = sum(
         1
         for tid in batch_task_id_set
         if plan_tasks_by_id.get(tid, {}).get("status") in TERMINAL_TASK_STATUSES
     )
-    if batch_merged < total_batch_tasks:
+    if not selection_complete and batch_merged < total_batch_tasks:
         issues.append(
             f"{total_batch_tasks - batch_merged}/{total_batch_tasks} batch tasks have no executor update — tracking is incomplete."
         )
@@ -1287,6 +1428,7 @@ def _merge_batch_results(
         source_path=source_path,
         off_scope_outcome="quarantined" if creative_mode else "rejected",
         scope_trusted=trust_scope or True,
+        replay_proven=replay_proven,
     )
     acknowledged_count, _ = _validate_and_merge_batch(
         sense_check_authority.entries,
@@ -1306,7 +1448,7 @@ def _merge_batch_results(
         for sid in batch_sense_check_id_set
         if all_sense_checks_by_id.get(sid, {}).get("executor_note")
     )
-    if batch_acknowledged < total_batch_checks:
+    if not selection_complete and batch_acknowledged < total_batch_checks:
         issues.append(
             f"{total_batch_checks - batch_acknowledged}/{total_batch_checks} batch sense checks have no executor acknowledgment — tracking is incomplete."
         )
@@ -1331,6 +1473,7 @@ def _merge_scoped_batch_artifact_through_validator(
     preserve_accepted: bool = False,
     require_dispatch_wbc: bool = True,
     trust_scope: bool = False,
+    replay_proven: bool = False,
 ) -> _ScopedBatchArtifactMergeResult:
     """Prove compatibility scope, then let the grant-aware validator arbitrate rows."""
 
@@ -1404,6 +1547,7 @@ def _merge_scoped_batch_artifact_through_validator(
         source_path=artifact_path,
         preserve_accepted=preserve_accepted,
         require_dispatch_wbc=require_dispatch_wbc,
+        replay_proven=replay_proven,
     )
     return _ScopedBatchArtifactMergeResult(
         payload=payload,

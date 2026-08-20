@@ -207,7 +207,7 @@ def test_manual_trigger_rejects_legacy_trigger_bin(
             expected_artifact_hash=ARTIFACT_HASH,
             marker_dir=marker_dir,
             queue_root=queue_root,
-            trigger_bin=Path("/usr/local/bin/arnold-repair-trigger"),
+            trigger_bin=Path("/usr/local/bin/legacy-trigger"),
             target_resolver=lambda *_args, **_kwargs: target,
         )
 
@@ -233,7 +233,7 @@ def test_manual_trigger_rejects_legacy_trigger_bin(
     fresh_queue = fresh / ".megaplan" / "repair-queue"
     monkeypatch.setenv(
         "ARNOLD_MANUAL_REPAIR_TRIGGER_BIN",
-        "/usr/local/bin/arnold-repair-trigger",
+        "/usr/local/bin/legacy-trigger",
     )
     # Build a new target pointing into the fresh workspace.
     fresh_workspace = fresh / "workspace"

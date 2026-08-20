@@ -105,6 +105,7 @@ from arnold_pipelines.megaplan.user_actions import action_resolution_status
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_PR_MERGE,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -349,6 +350,7 @@ def _write_chain_policy_into_plan_meta(
         "prerequisite_policy": effective["prerequisite_policy"],
         "validation_policy": effective["validation_policy"],
         "review_policy": effective["review_policy"],
+        "driver_auto_approve": bool(spec.auto_approve),
         "source": effective["source"],
         "milestone_label": milestone_label,
     }
@@ -651,6 +653,47 @@ def _seed_plan_phase_timeout(root: Path, plan: str, timeout_seconds: float) -> N
     atomic_write_json(state_path, state)
 
 
+def _sync_plan_auto_approve(root: Path, plan: str, auto_approve: bool) -> None:
+    """Synchronize the chain-owned plan's ``config.auto_approve`` with the spec.
+
+    ``driver.auto_approve`` is chain-authoritative (``_init_plan`` passes it at
+    birth; there is no supported per-plan override).  A plan resumed after the
+    chain adopted a successor spec can carry a stale pre-adoption snapshot that
+    would wrongly suppress the auto-approve discharge
+    (``auto._auto_verify_deferred_must_criteria``).  Synchronize BOTH directions
+    (false -> true and true -> false) so this is policy propagation, not guard
+    weakening.  Idempotent: writes only when a value differs; preserves any
+    existing ``meta.chain_policy`` provenance.
+    """
+    try:
+        state_path = root / ".megaplan" / "plans" / plan / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    config = state.get("config")
+    if not isinstance(config, dict):
+        return
+    target = bool(auto_approve)
+    changed = config.get("auto_approve") != target
+    meta = state.get("meta")
+    if not isinstance(meta, dict):
+        meta = None
+    chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
+    if not isinstance(chain_policy, dict):
+        chain_policy = None
+    if chain_policy is not None and chain_policy.get("driver_auto_approve") != target:
+        changed = True
+    if not changed:
+        return
+    config["auto_approve"] = target
+    if isinstance(meta, dict):
+        cp = meta.setdefault("chain_policy", {})
+        if not isinstance(cp, dict):
+            meta["chain_policy"] = cp = {}
+        cp["driver_auto_approve"] = target
+    atomic_write_json(state_path, state)
+
+
 def _drive_plan(
     root: Path,
     plan: str,
@@ -674,6 +717,7 @@ def _drive_plan(
         # Align the plan's execute-phase budget with the chain-authoritative
         # driver.phase_timeout before any phase runs (idempotent seeding).
         _seed_plan_phase_timeout(root, plan, spec.phase_timeout)
+        _sync_plan_auto_approve(root, plan, bool(getattr(spec, "auto_approve", False)))
         return auto_drive(
             plan,
             cwd=root,
@@ -2062,6 +2106,24 @@ def _latest_execution_batch_all_tasks_done(
         list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
     )
+    # P6 reconcile selection envelope: a read-only reconcile selector's
+    # authoritative output is the selection JSON (selected_shas +
+    # verification_evidence) carried in the batch artifact; that IS the
+    # corroborated completion evidence for the milestone's tasks, so the
+    # per-task finalize corroboration checks do not apply (occurrence
+    # 47671addc195).
+    try:
+        for batch_path in batches:
+            raw = json.loads(batch_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and (
+                "selected_shas" in raw or "verification_evidence" in raw
+            ):
+                return (
+                    True,
+                    "reconcile selection payload corroborates batch completion",
+                )
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        pass
     if not batches:
         return False, "no execution_batch_*.json artifact found"
     latest = batches[-1]
@@ -2107,22 +2169,34 @@ def _latest_execution_batch_all_tasks_done(
                     for task in finalize_records
                     if str(task.get("id") or "") not in baseline_unavailable_task_ids
                 ]
-                if authoritative_batch_overrides:
-                    overlaid_finalize_records: list[dict[str, Any]] = []
-                    for task in authoritative_finalize_records:
+
+                def _overlay_authoritative_batch_updates(
+                    records: list[dict[str, Any]],
+                ) -> list[dict[str, Any]]:
+                    """Apply guarded authoritative batch overrides to finalize rows.
+
+                    A later execution batch may supersede stale per-task finalize
+                    rows, but durable terminal evidence already reconciled into
+                    finalize.json is never erased by a replayed/partial batch.
+                    """
+                    if not authoritative_batch_overrides:
+                        return list(records)
+                    from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                        has_durable_terminal_task_evidence,
+                    )
+
+                    overlaid: list[dict[str, Any]] = []
+                    for task in records:
                         task_id = str(task.get("id") or "")
                         override = authoritative_batch_overrides.get(task_id)
                         if override is None:
-                            overlaid_finalize_records.append(task)
+                            overlaid.append(task)
                             continue
-                        from arnold_pipelines.megaplan.orchestration.authority_readers import (
-                            has_durable_terminal_task_evidence,
-                        )
                         if has_durable_terminal_task_evidence(task):
                             # A replayed/partial batch may omit outputs already
                             # reconciled into finalize.json. Never let that erase
                             # terminal corroboration at chain completion.
-                            overlaid_finalize_records.append(task)
+                            overlaid.append(task)
                             continue
                         merged = dict(task)
                         for field in (
@@ -2138,8 +2212,19 @@ def _latest_execution_batch_all_tasks_done(
                             if key == "task_id":
                                 continue
                             merged[key] = value
-                        overlaid_finalize_records.append(merged)
-                    authoritative_finalize_records = overlaid_finalize_records
+                        overlaid.append(merged)
+                    return overlaid
+
+                # Closure must see the COMPLETE canonical finalize universe
+                # (including baseline-unavailable checkpoints, per 7416687dd)
+                # WITH authoritative batch overrides applied, so stale finalize
+                # rows never contradict the batch-authority contract.
+                complete_finalize_records = _overlay_authoritative_batch_updates(
+                    finalize_records
+                )
+                authoritative_finalize_records = _overlay_authoritative_batch_updates(
+                    authoritative_finalize_records
+                )
 
     from arnold_pipelines.megaplan.orchestration.authority_readers import (
         has_durable_terminal_task_evidence,
@@ -2206,8 +2291,15 @@ def _latest_execution_batch_all_tasks_done(
 
     if authoritative_finalize_records:
         finalize_decisions: dict[str, AuthorityDecision] = {}
+        # Dependency closure must run over the COMPLETE canonical finalize
+        # universe (including baseline-unavailable checkpoints such as
+        # T11_impl/T11_proof). A partial universe (baseline-unavailable tasks
+        # excluded) makes every dependent task fail closure with a false
+        # accepted_attempt_dependency_unresolved cascade. Baseline-unavailable
+        # tasks stay excluded from the authoritative REPORTING set below, so
+        # they are never reported as pending.
         finalize_completed = effective_execute_completed_task_ids(
-            authoritative_finalize_records,
+            complete_finalize_records,
             plan_dir=plan_dir,
             project_dir=project_dir,
             state=state_payload,
@@ -4286,6 +4378,113 @@ def _append_reconciled_completed_record_with_guard(
     return True, reason
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# M2 (T19): non-enforcing Maintenance shadow diagnostics beside the guard
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# ``_chain_completion_guard`` itself is untouched: every legacy input keeps its
+# exact (ok, reason) return value.  The wrapper below evaluates the shared
+# coherent Maintenance envelope *alongside* the guard and records read-only
+# match/would-block diagnostics.  Stale or incoherent Maintenance evidence can
+# never serialize as terminal (the diagnostic reports terminal=False), no
+# plan/chain state is written, and an attempted direct plan/chain write is
+# routed to the typed M7 bypass finding — no lifecycle writer is ever imported
+# or invoked from this path.
+
+
+def evaluate_completion_guard_with_maintenance(
+    root: Path,
+    record: Mapping[str, Any],
+    *,
+    implementation_milestone: bool,
+    chain_state: Any | None = None,
+    maintenance_envelope: Any | None = None,
+    diagnostics: list[dict[str, Any]] | None = None,
+) -> tuple[bool, str]:
+    """Run the completion guard and record Maintenance shadow diagnostics.
+
+    Delegates to :func:`_chain_completion_guard` and returns its result
+    UNCHANGED — the wrapper never alters the guard's return value.  When
+    ``maintenance_envelope`` is supplied, the guard verdict is compared to
+    the coherent envelope and one read-only diagnostic row is recorded:
+
+    * ``bucket == "match"`` — the guard verdict agrees with an eligible
+      envelope (stale/incoherent evidence can never produce a match);
+    * ``bucket == "would_block"`` — the guard would promote while the
+      envelope is non-eligible (stale, incomplete, incoherent,
+      cross-environment, or digest-mismatched evidence);
+
+    ``terminal`` in the diagnostic is True ONLY for a match on an eligible
+    envelope.  Diagnostics are appended to *diagnostics* when supplied and
+    are always returned in the result dict.  No plan/chain state is read or
+    written beyond what the guard itself already does, and no lifecycle
+    writer is imported from this path.
+    """
+    ok, reason = _chain_completion_guard(
+        root,
+        dict(record),
+        implementation_milestone=implementation_milestone,
+        chain_state=chain_state,
+    )
+    shadow_rows: list[dict[str, Any]] = []
+    if maintenance_envelope is not None:
+        from arnold_pipelines.megaplan.maintenance.shadow import compare_shadow
+
+        comparison = compare_shadow(
+            {
+                "green": bool(ok),
+                "dispatchable": bool(ok),
+                "terminal": bool(ok),
+            },
+            maintenance_envelope,
+        )
+        shadow_rows.append(
+            {
+                "schema_version": 1,
+                "bucket": comparison.bucket.value,
+                "reasons": list(comparison.reasons),
+                "comparison_digest": comparison.digest,
+                "envelope_digest": comparison.envelope_digest,
+                "guard_ok": ok,
+                "guard_reason": reason,
+                "green": comparison.green,
+                "dispatchable": comparison.dispatchable,
+                "terminal": comparison.terminal,
+                "envelope_eligible": comparison.envelope_eligible,
+                "cross_environment": comparison.cross_environment,
+            }
+        )
+    if diagnostics is not None:
+        diagnostics.extend(shadow_rows)
+    return ok, reason
+
+
+def chain_direct_write_finding(
+    kind: str,
+    request: str,
+    *,
+    finding_id: str | None = None,
+) -> Any:
+    """Typed M7 bypass finding for an attempted direct plan/chain write.
+
+    ``kind`` is ``"plan"`` or ``"chain"``.  The finding names the M7
+    controlled-writer-inventory seam and is guaranteed inert: zero
+    invocations of ``write_plan_state`` / ``save_chain_state`` /
+    ``TransitionWriter`` / raw plan/chain writers.  This module never
+    imports lifecycle writers from a Maintenance path.
+    """
+    from arnold_pipelines.megaplan.maintenance.boundaries import (
+        chain_write_finding,
+        plan_write_finding,
+    )
+
+    if kind == "plan":
+        return plan_write_finding(request, finding_id=finding_id)
+    if kind == "chain":
+        return chain_write_finding(request, finding_id=finding_id)
+    raise ValueError(f"direct write kind must be 'plan' or 'chain', got {kind!r}")
+
+
 def _handle_completion_guard_failure(
     *,
     root: Path,
@@ -4875,6 +5074,65 @@ def _handle_missing_base_ref(
     )
 
 
+def _promote_done_plan_to_executed(
+    root: Path,
+    plan: str,
+    *,
+    writer,
+) -> bool:
+    """Promote a pre-execute plan to executed when its work is provably done.
+
+    The execute-reentry loop (grok consult, astrid/mega-main): an operator
+    recover-blocked leaves the plan finalized, and the chain driver re-enters
+    execute — re-running stale batch artifacts and reopening the quality-gate
+    circuit — even when every finalize task is done and execution.json is
+    complete.  The existing `_recover_blocked_execute_if_tasks_done` only
+    fires when the history's last execute result is literally 'blocked', which
+    an adopted/recovered plan no longer shows.  This helper is history-
+    independent: it promotes finalized plans whose finalize tasks are all done
+    AND whose execution.json task updates are all done.  Returns True when the
+    plan was promoted (or was already executed/done), False when there is real
+    remaining execute work.
+    """
+    try:
+        plan_dir = resolve_plan_dir(root, plan)
+    except CliError:
+        return False
+    current_state = _plan_current_state_from_payload(root, plan)
+    if current_state in {"executed", "done", "review", "awaiting_human_verify"}:
+        return True
+    if current_state not in {"finalized", "planned"}:
+        return False
+    finalize_path = plan_dir / "finalize.json"
+    execution_path = plan_dir / "execution.json"
+    if not finalize_path.exists():
+        return False
+    try:
+        finalize = json.loads(finalize_path.read_text(encoding="utf-8"))
+        tasks = finalize.get("tasks") or []
+        if not isinstance(tasks, list) or not tasks:
+            return False
+        if not all(isinstance(t, dict) and t.get("status") == "done" for t in tasks):
+            return False
+        if execution_path.exists():
+            execution = json.loads(execution_path.read_text(encoding="utf-8"))
+            updates = execution.get("task_updates") or []
+            if isinstance(updates, list) and updates:
+                if not all(
+                    isinstance(u, dict) and u.get("status") == "done" for u in updates
+                ):
+                    return False
+    except (OSError, ValueError, TypeError):
+        return False
+    # All finalize tasks done + execution updates done: promote to executed.
+    _mark_blocked_execute_as_executed(plan_dir)
+    writer(
+        f"[chain] plan {plan} finalize+execution fully done; promoting to executed "
+        "before drive (no re-execute)\n"
+    )
+    return True
+
+
 def _recover_blocked_execute_if_tasks_done(
     root: Path,
     spec_path: Path,
@@ -5251,6 +5509,7 @@ def _rearm_fresh_session_execute_block(
             "execution_blocked",
             "tasks_blocked",
             "external_error",
+            "quality_gate_circuit_open",
         }:
             return False
     from arnold_pipelines.megaplan._core.state import write_plan_state
@@ -5439,6 +5698,16 @@ def _drive_plan_with_blocked_execute_recovery(
     writer,
 ) -> DriverOutcome:
     _recover_failed_plan_before_drive(root, plan, writer=writer)
+    # Done-first (grok consult, astrid/mega-main execute-reentry loop): when the
+    # plan was operator-recovered (blocked -> finalized) but its finalize tasks
+    # are ALL done + execution.json is complete, promote to executed BEFORE the
+    # drive so the chain advances to review instead of re-entering execute.  The
+    # previous order ran the done-check only AFTER a blocked drive, so a
+    # recover-blocked plan re-entered execute every time and re-opened the
+    # quality-gate circuit on stale artifacts — the mechanically-inevitable loop
+    # that required manual adopt-execution to break.
+    if _promote_done_plan_to_executed(root, plan, writer=writer):
+        pass  # promoted (or already executed/done); drive below advances naturally
     outcome = _drive_plan(
         root,
         plan,
@@ -5545,7 +5814,7 @@ def _awaiting_human_can_retry(root: Path, plan: str | None) -> bool:
     if not isinstance(raw, dict):
         return False
     current_state = raw.get("current_state")
-    if current_state not in {"awaiting_human", "finalized"}:
+    if current_state not in {STATE_AWAITING_HUMAN_VERIFY, STATE_FINALIZED}:
         return False
     if not isinstance(finalize, dict):
         return False
@@ -7059,6 +7328,95 @@ def ensure_reconcile_milestone(
     return chain_spec.load_spec(spec_path)
 
 
+def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
+    """Resolve the cloud-session marker for the chain's session.
+
+    Mirrors the canonical cloud resolution (execution_binding.py): env override
+    ``ARNOLD_CHAIN_SESSION_MARKER_DIR`` -> canonical workspace marker dir
+    (``/workspace/.megaplan/cloud-sessions``) -> project-relative fallback.
+    """
+    session = str(getattr(state, "chain_session", "") or "").strip()
+    if not session:
+        # Direct `chain start` (non-cloud) does not carry a launch_ctx, so
+        # chain_session is unset even though a cloud-session marker exists.
+        # Fall back to the watchdog's session env (the cloud chain launch
+        # sets ARNOLD_CHAIN_SESSION), then to the canonical marker dir scan:
+        # with no session name at all, adopt the marker whose chain_slug
+        # matches the project's initiative (the marker filename encodes the
+        # session).  A single-marker canonical dir is unambiguous.
+        session = os.environ.get("ARNOLD_CHAIN_SESSION", "").strip()
+        if not session:
+            from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+                CLOUD_SESSION_MARKER_DIR_DEFAULT,
+            )
+
+            try:
+                markers = sorted(CLOUD_SESSION_MARKER_DIR_DEFAULT.glob("*.json"))
+            except OSError:
+                markers = []
+            if len(markers) == 1:
+                session = markers[0].stem
+            elif markers:
+                # Multiple markers: prefer the one whose chain_slug matches
+                # the project dir name or whose marker references this spec.
+                for marker_file in markers:
+                    try:
+                        payload = json.loads(
+                            marker_file.read_text(encoding="utf-8")
+                        )
+                    except Exception:
+                        continue
+                    remote_spec = str(
+                        payload.get("remote_spec") or payload.get("spec") or ""
+                    )
+                    if remote_spec and str(remote_spec).startswith(
+                        str(project_root)
+                    ):
+                        session = marker_file.stem
+                        break
+    if not session:
+        raise CliError(
+            "runtime_launch_attestation_mismatch",
+            "chain launch-seed build refused: chain session is unresolved",
+        )
+    env_marker_dir = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "")
+    candidate_dirs: list[Path] = []
+    if env_marker_dir.strip():
+        candidate_dirs.append(Path(env_marker_dir.strip()).expanduser())
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        CLOUD_SESSION_MARKER_DIR_DEFAULT,
+    )
+
+    candidate_dirs.append(CLOUD_SESSION_MARKER_DIR_DEFAULT)
+    candidate_dirs.append(project_root / ".megaplan" / "cloud-sessions")
+    for candidate_dir in candidate_dirs:
+        probe = candidate_dir / (session + ".json")
+        if probe.exists():
+            return probe
+    # Last resort: scan the canonical marker dir for the marker whose
+    # chain_slug matches the project's initiative slug, so a direct
+    # (non-cloud) chain start can still bind its launch seed.
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        CLOUD_SESSION_MARKER_DIR_DEFAULT,
+    )
+
+    try:
+        for marker_file in CLOUD_SESSION_MARKER_DIR_DEFAULT.glob("*.json"):
+            try:
+                payload = json.loads(marker_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if str(payload.get("chain_slug") or "").strip() == session:
+                return marker_file
+    except OSError:
+        pass
+    raise CliError(
+        "runtime_launch_attestation_mismatch",
+        f"cloud-session marker is missing for session {session!r} "
+        f"(searched {candidate_dirs})",
+    )
+
+
 def run_chain(
     spec_path: Path,
     root: Path,
@@ -7107,6 +7465,77 @@ def run_chain(
     # Bind before the first state save or milestone initialization. Existing
     # progressed state without a launch binding is refused by the loader.
     bind_execution_identity(spec_path, state)
+    # Runtime-launch seed (G14): build/refresh the content-addressed launch
+    # seed for the per-epic runtime and export it so every child worker and
+    # watchdog relaunch finds MEGAPLAN_RUNTIME_LAUNCH_SEED.  The manifest pin
+    # is the runtime selector; local/dev runs without a bound manifest skip
+    # the seed (no per-epic runtime to attest).
+    _manifest_pin = chain_spec.session_runtime_manifest_path()
+    if _manifest_pin is not None:
+        from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+            ensure_runtime_launch_seed as _ensure_runtime_launch_seed,
+        )
+
+        _chain_binding_metadata = (getattr(state, "metadata", {}) or {}).get(
+            "execution_binding"
+        )
+        _chain_binding_metadata = (
+            _chain_binding_metadata
+            if isinstance(_chain_binding_metadata, Mapping)
+            else {}
+        )
+        _chain_runtime_binding = _chain_binding_metadata.get("runtime_binding")
+        _chain_runtime_binding = (
+            _chain_runtime_binding
+            if isinstance(_chain_runtime_binding, Mapping)
+            else {}
+        )
+        _bound_identity = _chain_runtime_binding.get("current_identity")
+        _bound_identity = (
+            dict(_bound_identity) if isinstance(_bound_identity, Mapping) else None
+        )
+        # Blocked-plan auto-adopt (5f34c4a202): when the chain's plan is
+        # blocked with no live worker, the recorded runtime binding may lag
+        # the current manifest head. Nothing is mid-flight to protect, so the
+        # seed should bind to the LIVE manifest-pinned identity instead of the
+        # stale chain binding — the engine advance is a non-event, exactly like
+        # the immutable-seed per-dispatch refresh. An ACTIVE plan keeps the
+        # strict stale-binding check (mid-execution swaps must not silently
+        # rebind).
+        from arnold_pipelines.megaplan.chain.execution_binding import (
+            _state_blocked_no_live_work,
+        )
+
+        if _state_blocked_no_live_work(state):
+            from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+                load_manifest,
+            )
+
+            try:
+                _manifest_state = load_manifest(_manifest_pin)
+                _expected_head = str(
+                    (_manifest_state.epic or {}).get("expected_head") or ""
+                )
+                if _expected_head:
+                    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+                        _live_runtime_identity,
+                    )
+
+                    _live = _live_runtime_identity(
+                        root=root,
+                        expected_revision=_expected_head,
+                    )
+                    if isinstance(_live, Mapping) and _live.get("source_revision"):
+                        _bound_identity = dict(_live)
+            except Exception:
+                pass  # fall back to the recorded binding; the strict check will surface any real mismatch
+        _launch_seed_path = _ensure_runtime_launch_seed(
+            manifest_path=_manifest_pin,
+            chain_spec_path=spec_path,
+            marker_path=_chain_session_marker_path(state, root),
+            chain_runtime_identity=_bound_identity,
+        )
+        os.environ["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = str(_launch_seed_path)
     from arnold_pipelines.megaplan.chain.operator_pause import is_paused
 
     if is_paused(state):

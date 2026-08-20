@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -261,7 +262,7 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
     assert Path(m["epic"]["venv_path"]).name == generation["id"]
     assert (
         m["epic"]["repair_bin"]
-        == f"{worktree}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+        == f"{worktree}/arnold_pipelines/megaplan/cloud/wrappers/arnold-babysitter"
     )
     assert m["epic"]["deps_lockfile"] == f"{worktree}/uv.lock"
     # policy SHAs computed from the canonical policy modules (best-effort)
@@ -3313,3 +3314,67 @@ def test_chain_state_reset_blocks_plan_dir_removal_when_plan_lease_store_corrupt
     assert out["reason"] == "reference-census-UNKNOWN"
     assert plan_dir.exists()
     assert state_path.exists()
+
+
+def test_runtime_manifest_cli_rejects_fake_sha_generation_advance(
+    sandbox: dict[str, object],
+) -> None:
+    """Git-object head guard (codex fix 2026-08-17), CLI path: invoking
+    ``advance_generation`` with a fabricated 40-hex head (real prefix +
+    invented tail — the recurring corruption pattern) exits 2, and the
+    per-slug manifest and the ACTIVE pointer are byte-unchanged (zero
+    mutation on rejection)."""
+    worktree = sandbox["create"]("epic-fake-head")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    pointer_path = str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"])
+    manifest_path_ = manifest_path(sandbox, "epic-fake-head")
+
+    fake = head[:10] + "a" * 30  # 40-hex, correct shape, not a git object
+    manifest_before = read_manifest(sandbox, "epic-fake-head")
+    pointer_before = json.loads(Path(pointer_path).read_text())
+
+    env = dict(sandbox["env"])
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "arnold_pipelines.megaplan.cloud.runtime_manifest",
+            "advance_generation",
+            str(manifest_path_),
+            fake,
+            "--reason",
+            "fake head must refuse",
+        ],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "does not resolve" in proc.stderr or "40-char" in proc.stderr
+
+    # zero mutation: per-slug manifest and active pointer byte-identical
+    assert read_manifest(sandbox, "epic-fake-head") == manifest_before
+    assert json.loads(Path(pointer_path).read_text()) == pointer_before
+
+    # the REAL commit advances through the same CLI path
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "arnold_pipelines.megaplan.cloud.runtime_manifest",
+            "advance_generation",
+            str(manifest_path_),
+            head,
+            "--reason",
+            "real head advances",
+        ],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert read_manifest(sandbox, "epic-fake-head")["epic"]["expected_head"] == head

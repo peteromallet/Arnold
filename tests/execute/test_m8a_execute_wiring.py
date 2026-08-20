@@ -804,6 +804,559 @@ def test_deferred_selector_reruns_after_accepted_result_envelope(tmp_path: Path)
     assert rerun[0]["status"] == "passed"
 
 
+def test_deferred_loop_legacy_shape_job_runs_strict_recheck(tmp_path: Path) -> None:
+    """A legacy-derived delta job (acceptance_mode None) reruns strict.
+
+    Legacy compiled commands carry the ``timeout <N>s pytest ...`` shape, so
+    ``_narrow_recheck_delta_policy`` derives the delta lifecycle for them.
+    A deferred record for such a job has no pre-envelope by construction
+    (the selector was missing at pre-dispatch); refusing would wedge
+    pre-delta plans (occurrence 0a0ce24c3510).  The job was compiled under
+    the strict exit-0 contract, so the deferred recheck must run the strict
+    gate instead of raising ``delta_policy_deferred_selector_unsupported``.
+    """
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"timeout 120s pytest {selector} --tb=short -q",
+            "selectors": [selector],
+        }
+    )
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    assert deferred[0]["status"] == "deferred_task_output"
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    payload, _entry = _accepted_task_payload(selector=selector)
+    finalize_data["tasks"][0]["status"] = "done"
+    fake_result = SuiteRunResult(
+        run_id="rerun-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=[],
+        passes=["test_gate"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:rerun",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        rerun = _rerun_deferred_selector_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            pre_dispatch_results=deferred,
+            payload=payload,
+            state=state,
+        )
+    mock_run.assert_called_once()
+    assert rerun[0]["status"] == "passed"
+
+
+def test_deferred_loop_explicit_delta_job_runs_strict_recheck_and_passes(
+    tmp_path: Path,
+) -> None:
+    """An EXPLICIT delta job (acceptance_mode set) reruns STRICT and passes.
+
+    A deferred selector is a task-output path with no pre-task state; a
+    pre-execution envelope is impossible by construction, so the deferred
+    recheck runs the strict exit-0 gate (never weaker than the delta
+    comparison; equal for task-created files).  Occurrence ae1f50c01dbd:
+    explicit-delta TDD plans must not wedge at the deferred recheck.
+    """
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"timeout 120s pytest {selector} --tb=short -q",
+            "selectors": [selector],
+            "acceptance_mode": "no_new_failures_delta",
+        }
+    )
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    assert deferred[0]["status"] == "deferred_task_output"
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    payload, _entry = _accepted_task_payload(selector=selector)
+    finalize_data["tasks"][0]["status"] = "done"
+    fake_result = SuiteRunResult(
+        run_id="rerun-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=[],
+        passes=["test_gate"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:rerun",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        rerun = _rerun_deferred_selector_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            pre_dispatch_results=deferred,
+            payload=payload,
+            state=state,
+        )
+    mock_run.assert_called_once()
+    assert rerun[0]["status"] == "passed"
+    assert not (plan_dir / "verification" / "validation_VJ1_pre_envelope.json").exists()
+    assert not (plan_dir / "verification" / "validation_VJ1_post_delta.json").exists()
+
+
+def test_deferred_loop_explicit_delta_job_exit_one_blocks_without_authority(
+    tmp_path: Path,
+) -> None:
+    """A FAILING explicit-delta strict rerun blocks; no delta artifacts."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"timeout 120s pytest {selector} --tb=short -q",
+            "selectors": [selector],
+            "acceptance_mode": "no_new_failures_delta",
+        }
+    )
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text(
+        "def test_gate(): assert False\n", encoding="utf-8"
+    )
+    payload, _entry = _accepted_task_payload(selector=selector)
+    finalize_data["tasks"][0]["status"] = "done"
+    fake_result = SuiteRunResult(
+        run_id="rerun-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=["test_gate"],
+        passes=[],
+        status="failed",
+        exit_code=1,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:rerun",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        with pytest.raises(CliError) as exc_info:
+            _rerun_deferred_selector_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                pre_dispatch_results=deferred,
+                payload=payload,
+                state=state,
+            )
+    mock_run.assert_called_once()
+    assert exc_info.value.code == "validation_job_failed"
+    assert not (plan_dir / "verification" / "validation_VJ1_pre_envelope.json").exists()
+    assert not (plan_dir / "verification" / "validation_VJ1_post_delta.json").exists()
+
+
+def test_final_sweep_legacy_shape_job_runs_strict_recheck(tmp_path: Path) -> None:
+    """Final sweep reruns a legacy-derived delta job with the strict gate."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _sweep_persisted_deferred_selector_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data, state, _deferred = _sweep_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"timeout 120s pytest {selector} --tb=short -q",
+            "selectors": [selector],
+        }
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    finalize_data["tasks"][0]["status"] = "done"
+    fake_result = SuiteRunResult(
+        run_id="sweep-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=[],
+        passes=["test_gate"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:sweep",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        swept = _sweep_persisted_deferred_selector_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            state=state,
+        )
+    mock_run.assert_called_once()
+    assert swept and swept[0]["status"] == "passed"
+
+
+def test_final_sweep_explicit_delta_job_runs_strict_recheck_and_passes(
+    tmp_path: Path,
+) -> None:
+    """Final sweep reruns an EXPLICIT delta job with the strict gate (pass)."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _sweep_persisted_deferred_selector_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data, state, _deferred = _sweep_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"timeout 120s pytest {selector} --tb=short -q",
+            "selectors": [selector],
+            "acceptance_mode": "no_new_failures_delta",
+        }
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    finalize_data["tasks"][0]["status"] = "done"
+    fake_result = SuiteRunResult(
+        run_id="sweep-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=[],
+        passes=["test_gate"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:sweep",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        swept = _sweep_persisted_deferred_selector_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            state=state,
+        )
+    mock_run.assert_called_once()
+    assert swept and swept[0]["status"] == "passed"
+    assert not (plan_dir / "verification" / "validation_VJ1_pre_envelope.json").exists()
+    assert not (plan_dir / "verification" / "validation_VJ1_post_delta.json").exists()
+
+
+def test_final_sweep_explicit_delta_job_exit_one_blocks_without_authority(
+    tmp_path: Path,
+) -> None:
+    """A FAILING explicit-delta final-sweep recheck blocks; no delta artifacts."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _sweep_persisted_deferred_selector_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data, state, _deferred = _sweep_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"timeout 120s pytest {selector} --tb=short -q",
+            "selectors": [selector],
+            "acceptance_mode": "no_new_failures_delta",
+        }
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text(
+        "def test_gate(): assert False\n", encoding="utf-8"
+    )
+    finalize_data["tasks"][0]["status"] = "done"
+    fake_result = SuiteRunResult(
+        run_id="sweep-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=["test_gate"],
+        passes=[],
+        status="failed",
+        exit_code=1,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:sweep",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        with pytest.raises(CliError) as exc_info:
+            _sweep_persisted_deferred_selector_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                state=state,
+            )
+    mock_run.assert_called_once()
+    assert exc_info.value.code == "validation_job_failed"
+    assert not (plan_dir / "verification" / "validation_VJ1_pre_envelope.json").exists()
+    assert not (plan_dir / "verification" / "validation_VJ1_post_delta.json").exists()
+
+
+def test_final_sweep_stale_pre_envelope_does_not_suppress_strict_recheck(
+    tmp_path: Path,
+) -> None:
+    """A stale pre-envelope artifact cannot suppress the merged-state recheck.
+
+    Filename existence is not a verdict (occurrence ae1f50c01dbd): a
+    ``pre_envelope_captured`` artifact from an earlier attempt is quarantined
+    under verification/stale/ and the sweep still runs the strict gate.
+    """
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _sweep_persisted_deferred_selector_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data, state, _deferred = _sweep_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"pytest {selector}",
+            "selectors": [selector],
+            "acceptance_mode": "no_new_failures_delta",
+        }
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    finalize_data["tasks"][0]["status"] = "done"
+    # Stale pre-envelope evidence from an earlier attempt.
+    verification = plan_dir / "verification"
+    verification.mkdir(parents=True, exist_ok=True)
+    (verification / "validation_VJ1_pre_envelope.json").write_text(
+        '{"job_id": "VJ1", "status": "pre_envelope_captured", '
+        '"selectors": ["tests/new_feature/test_entry_gate.py"], '
+        '"admission": "pre_dispatch_delta_envelope"}\n',
+        encoding="utf-8",
+    )
+    fake_result = SuiteRunResult(
+        run_id="sweep-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=[],
+        passes=["test_gate"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:sweep",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        swept = _sweep_persisted_deferred_selector_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            state=state,
+        )
+    mock_run.assert_called_once()
+    assert swept and swept[0]["status"] == "passed"
+    assert not (verification / "validation_VJ1_pre_envelope.json").exists()
+    assert (verification / "stale" / "validation_VJ1_pre_envelope.json").exists()
+
+
+def test_force_strict_gate_direct_unit(tmp_path: Path) -> None:
+    """``force_strict_gate`` forces the exit-code gate on an explicit-delta job."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import _run_batch_validation_jobs
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"pytest {selector}",
+            "selectors": [selector],
+            "acceptance_mode": "no_new_failures_delta",
+        }
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    state = _make_state(project_dir)
+
+    def _result(exit_code: int) -> SuiteRunResult:
+        return SuiteRunResult(
+            run_id="unit-vj1",
+            phase="narrow_recheck",
+            command=f"pytest {selector}",
+            duration=0.1,
+            collected=1,
+            collected_ids=["test_gate"],
+            failures=[] if exit_code == 0 else ["test_gate"],
+            passes=["test_gate"] if exit_code == 0 else [],
+            status="passed" if exit_code == 0 else "failed",
+            exit_code=exit_code,
+            raw_log_path=project_dir / "raw.log",
+            code_hash="sha256:unit",
+            collections_parse_ok=True,
+        )
+
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=_result(0),
+    ) as mock_run:
+        results = _run_batch_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            state=state,
+            force_strict_gate=True,
+        )
+    mock_run.assert_called_once()
+    assert results[0]["status"] == "passed"
+    assert not (plan_dir / "verification" / "validation_VJ1_pre_envelope.json").exists()
+
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=_result(1),
+    ) as mock_run:
+        with pytest.raises(CliError) as exc_info:
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                state=state,
+                force_strict_gate=True,
+            )
+    mock_run.assert_called_once()
+    assert exc_info.value.code == "validation_job_failed"
+    assert not (plan_dir / "verification" / "validation_VJ1_pre_envelope.json").exists()
+    assert not (plan_dir / "verification" / "validation_VJ1_post_delta.json").exists()
+
+
+def test_force_strict_gate_runner_exception_fails_closed(tmp_path: Path) -> None:
+    """A forced-strict runner EXCEPTION is unknown, not a pass."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import _run_batch_validation_jobs
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    finalize_data["validation_jobs"][0].update(
+        {
+            "command": f"pytest {selector}",
+            "selectors": [selector],
+            "acceptance_mode": "no_new_failures_delta",
+        }
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    state = _make_state(project_dir)
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        side_effect=RuntimeError("boom"),
+    ) as mock_run:
+        with pytest.raises(CliError) as exc_info:
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                state=state,
+                force_strict_gate=True,
+            )
+    mock_run.assert_called_once()
+    assert exc_info.value.code == "validation_job_failed"
+    assert exc_info.value.extra.get("reason") == "strict_gate_runner_error"
+
+
 def test_canonical_v2_missing_tasks_cannot_bypass_selector_classification(tmp_path: Path) -> None:
     """A malformed canonical graph must not run a selector without an owner."""
     from unittest.mock import patch
@@ -842,8 +1395,16 @@ def test_canonical_v2_missing_tasks_cannot_bypass_selector_classification(tmp_pa
 
 
 def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Path) -> None:
-    """An earlier accepted authority outcome cannot override a later policy block."""
+    """An earlier accepted authority outcome cannot override a later policy block.
+
+    The blocked row must NOT release the deferred selector; the refusal is
+    parked as a typed ``post_merge_policy_blocked`` / ``validation_blocked``
+    disposition instead of raising a terminal CliError, so the execute
+    coordinator can publish its aggregate state and a fresh compliant attempt
+    (via ``--retry-blocked-tasks``) can rerun the task.
+    """
     from arnold_pipelines.megaplan.execute.batch import (
+        _POST_MERGE_POLICY_BLOCKED,
         _rerun_deferred_selector_validation_jobs,
         _run_batch_validation_jobs,
     )
@@ -861,20 +1422,34 @@ def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Pat
     (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
     payload, _entry = _accepted_task_payload(selector=selector)
     finalize_data["tasks"][0]["status"] = "blocked"
-    with pytest.raises(CliError, match="task_result_blocked_by_post_merge_policy"):
-        _rerun_deferred_selector_validation_jobs(
-            plan_dir=plan_dir,
-            project_dir=project_dir,
-            finalize_data=finalize_data,
-            batch_task_ids=["T1"],
-            pre_dispatch_results=deferred,
-            payload=payload,
-            state=_make_state(project_dir),
-        )
+    results = _rerun_deferred_selector_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        pre_dispatch_results=deferred,
+        payload=payload,
+        state=_make_state(project_dir),
+    )
+    # The refusal is parked as a typed validation_blocked disposition.
+    assert len(results) == 1
+    parked = results[0]
+    assert parked["status"] == _POST_MERGE_POLICY_BLOCKED
+    assert parked["disposition"] == "validation_blocked"
+    assert parked["reason"] == "task_result_blocked_by_post_merge_policy"
+    assert parked["task_status"] == "blocked"
+    # No pass artifact is minted and the suite runner is not invoked.
+    assert not (plan_dir / "verification" / "validation_VJ1_passed.json").exists()
+    # The row itself stays blocked.
+    assert finalize_data["tasks"][0]["status"] == "blocked"
 
 
 def test_deferred_selector_blocks_without_accepted_result_envelope(tmp_path: Path) -> None:
-    """A worker row without durable accepted authority cannot release deferral."""
+    """A COMPLETED task without durable accepted authority cannot release deferral.
+
+    Adopt-miss backstop: once the declaring task is done/completed, a missing
+    accepted result envelope is a genuine anomaly and must still block.
+    """
     from arnold_pipelines.megaplan.execute.batch import (
         _rerun_deferred_selector_validation_jobs,
         _run_batch_validation_jobs,
@@ -892,6 +1467,10 @@ def test_deferred_selector_blocks_without_accepted_result_envelope(tmp_path: Pat
     )
     (project_dir / selector).parent.mkdir(parents=True)
     (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    # The production merge path records the post-merge task outcome before the
+    # deferred recheck is eligible to run; a done task with no envelope is the
+    # adopt-miss/anomaly case that must keep failing closed.
+    finalize_data["tasks"][0]["status"] = "done"
     with pytest.raises(CliError, match="accepted_task_result_envelope_missing"):
         _rerun_deferred_selector_validation_jobs(
             plan_dir=plan_dir,
@@ -902,6 +1481,61 @@ def test_deferred_selector_blocks_without_accepted_result_envelope(tmp_path: Pat
             payload={"task_updates": []},
             state=state,
         )
+
+
+def test_pending_task_parks_deferred_selector_without_accepted_envelope(
+    tmp_path: Path,
+) -> None:
+    """Abort-recovery park: a NOT-complete task with no accepted envelope parks.
+
+    The worker aborted mid-batch (e.g. provider/transport failure) before
+    minting an accepted result envelope; the declaring task is still pending.
+    The deferred recheck must NOT raise a terminal block (that wedged the plan
+    on a task that never completed) and must NOT run the suite; the persisted
+    deferred evidence stays unresolved for the next resume to re-dispatch.
+    """
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    deferred_artifact = plan_dir / "verification" / "validation_VJ1_deferred.json"
+    assert deferred_artifact.exists()
+    assert finalize_data["tasks"][0]["status"] == "pending"
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+    ) as mock_run:
+        rerun = _rerun_deferred_selector_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            pre_dispatch_results=deferred,
+            payload={"task_updates": []},
+            state=state,
+        )
+    mock_run.assert_not_called()
+    assert rerun == []
+    # Persisted deferred evidence survives; no resolved validation artifact
+    # is minted for a parked job.
+    assert deferred_artifact.exists()
+    assert not set(
+        plan_dir.joinpath("verification").glob("validation_VJ1_*.json")
+    ) - {deferred_artifact}
 
 
 def test_deferred_selector_blocks_empty_accepted_result_files(tmp_path: Path) -> None:
@@ -942,6 +1576,184 @@ def test_deferred_selector_blocks_empty_accepted_result_files(tmp_path: Path) ->
         )
 
 
+def _sweep_fixture(tmp_path: Path, *, tasks_override: list[dict] | None = None):
+    """Plan/project/finalize fixture for final-sweep deferred-selector tests."""
+    from arnold_pipelines.megaplan.execute.batch import (
+        _run_batch_validation_jobs,
+    )
+
+    selector = "tests/new_feature/test_entry_gate.py"
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    tasks = tasks_override if tasks_override is not None else None
+    if tasks is None:
+        finalize_data = {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "status": "pending",
+                    "write_set": {"paths": [selector], "complete": True},
+                }
+            ],
+            "validation_jobs": [
+                {
+                    "id": "VJ1",
+                    "kind": "narrow_recheck",
+                    "command": f"pytest {selector}",
+                    "selectors": [selector],
+                    "max_seconds": 60,
+                    "task_id": "T1",
+                    "writes_files": False,
+                    "mutates": False,
+                }
+            ],
+        }
+    else:
+        finalize_data = {
+            "tasks": tasks,
+            "validation_jobs": [
+                {
+                    "id": "VJ1",
+                    "kind": "narrow_recheck",
+                    "command": f"pytest {selector}",
+                    "selectors": [selector],
+                    "max_seconds": 60,
+                    "task_id": "T1",
+                    "writes_files": False,
+                    "mutates": False,
+                }
+            ],
+        }
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    return plan_dir, project_dir, finalize_data, state, deferred
+
+
+def test_final_sweep_parks_deferred_selector_while_owner_pending(
+    tmp_path: Path,
+) -> None:
+    """Final sweep parks a deferred selector whose owner is still pending."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _sweep_persisted_deferred_selector_jobs,
+    )
+
+    plan_dir, project_dir, finalize_data, state, _deferred = _sweep_fixture(tmp_path)
+    deferred_artifact = plan_dir / "verification" / "validation_VJ1_deferred.json"
+    assert deferred_artifact.exists()
+    assert finalize_data["tasks"][0]["status"] == "pending"
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+    ) as mock_run:
+        swept = _sweep_persisted_deferred_selector_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            state=state,
+        )
+    mock_run.assert_not_called()
+    assert swept == []
+    assert deferred_artifact.exists()
+    assert not set(
+        plan_dir.joinpath("verification").glob("validation_VJ1_*.json")
+    ) - {deferred_artifact}
+
+
+def test_final_sweep_fails_when_completed_owner_never_created_selector(
+    tmp_path: Path,
+) -> None:
+    """Final sweep still fails closed when a DONE owner never created its selector."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _sweep_persisted_deferred_selector_jobs,
+    )
+
+    plan_dir, project_dir, finalize_data, state, _deferred = _sweep_fixture(tmp_path)
+    finalize_data["tasks"][0]["status"] = "done"
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+    ) as mock_run:
+        with pytest.raises(
+            CliError,
+            match="declared_selector_output_never_created",
+        ):
+            _sweep_persisted_deferred_selector_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                state=state,
+            )
+    mock_run.assert_not_called()
+
+
+def test_final_sweep_parks_cross_task_selector_while_declaring_task_pending(
+    tmp_path: Path,
+) -> None:
+    """Final sweep parks when a cross-task producer of the selector is pending."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _sweep_persisted_deferred_selector_jobs,
+    )
+
+    selector = "tests/new_feature/test_entry_gate.py"
+    tasks = [
+        {
+            "id": "T1",
+            "status": "done",
+            "write_set": {"paths": [selector], "complete": True},
+        },
+        {
+            "id": "T2",
+            "status": "pending",
+            "write_set": {"paths": [selector], "complete": True},
+        },
+    ]
+    plan_dir, project_dir, finalize_data, state, _deferred = _sweep_fixture(
+        tmp_path, tasks_override=tasks
+    )
+    deferred_artifact = plan_dir / "verification" / "validation_VJ1_deferred.json"
+    assert deferred_artifact.exists()
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+    ) as mock_run:
+        swept = _sweep_persisted_deferred_selector_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            state=state,
+        )
+    mock_run.assert_not_called()
+    assert swept == []
+    assert deferred_artifact.exists()
+    # Once the cross-task producer completes too, the sweep fails closed.
+    finalize_data["tasks"][1]["status"] = "done"
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+    ) as mock_run2:
+        with pytest.raises(
+            CliError,
+            match="declared_selector_output_never_created",
+        ):
+            _sweep_persisted_deferred_selector_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                state=state,
+            )
+    mock_run2.assert_not_called()
+
+
 def test_execute_validation_deadlines_use_absolute_monotonic_time() -> None:
     """Suite runner deadlines are absolute, never raw relative timeout values."""
     import inspect
@@ -954,7 +1766,11 @@ def test_execute_validation_deadlines_use_absolute_monotonic_time() -> None:
     for function in (_run_batch_validation_jobs, _run_repair_adoption_check):
         source = inspect.getsource(function)
         assert "deadline_seconds=float(" not in source
-        assert "deadline_seconds=(\n" in source or "time.monotonic() + float(" in source
+        assert (
+            "deadline_seconds=(\n" in source
+            or "time.monotonic() + float(" in source
+            or "time.monotonic() + _run_deadline_seconds" in source
+        )
 
 
 def test_batch_validation_skips_post_execute_on_non_final_batch() -> None:

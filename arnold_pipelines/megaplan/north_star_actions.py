@@ -28,6 +28,8 @@ its provenance, supporting evidence, and optional concrete plan references.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from typing import Any, Mapping, Sequence, TypedDict
 
 __all__ = [
@@ -138,6 +140,41 @@ NORTH_STAR_ACTION_RESOLUTIONS: tuple[str, ...] = (
     "addressed",
     "halted",
     "rejected",
+)
+
+# --------------------------------------------------------------------------- #
+# Operator dispositions (source=user) bound to an add_human_halt question_id
+# --------------------------------------------------------------------------- #
+
+# Final operator decisions that settle an add_human_halt question. PENDING /
+# DEFERRED / UNKNOWN / NEEDS_HUMAN / HALT / ABORT are NOT dispositions for
+# admission: they leave the action fail-closed.
+OPERATOR_DISPOSITION_DECISIONS: frozenset[str] = frozenset(
+    {
+        "APPROVED",
+        "ACCEPTED",
+        "AUTHORIZED",
+        "GRANTED",
+        "DENIED",
+        "REJECTED",
+        "NOT_AUTHORIZED",
+    }
+)
+
+# Canonical machine-readable form:
+#   OPERATOR_DISPOSITION question_id=<exact-id> decision=<DECISION>
+_OPERATOR_DISPOSITION_CANONICAL_RE = re.compile(
+    r"\bOPERATOR_DISPOSITION\s+question_id=([A-Za-z0-9][A-Za-z0-9._-]*)\s+"
+    r"decision=([A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE,
+)
+
+# Legacy human-written form (the pre-schema operator note style):
+#   OPERATOR DECISION — <exact-id>: <DECISION> ...
+_OPERATOR_DISPOSITION_LEGACY_RE = re.compile(
+    r"\bOPERATOR\s+DECISION\s*[—-]\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*:\s*"
+    r"([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
 )
 
 
@@ -499,6 +536,104 @@ def normalize_north_star_actions_addressed(raw: Any) -> list[dict[str, Any]]:
     ]
 
 
+def parse_operator_disposition(note_text: Any) -> dict[str, str] | None:
+    """Parse a single operator-disposition record from *note_text*.
+
+    Recognizes two explicit forms (canonical machine-readable first):
+
+    * ``OPERATOR_DISPOSITION question_id=<exact-id> decision=<VALUE>``
+    * ``OPERATOR DECISION — <exact-id>: <VALUE> ...`` (legacy)
+
+    The ``question_id`` is captured as a whole identifier (regex token
+    boundary — no substring matches) and the decision must be one of
+    :data:`OPERATOR_DISPOSITION_DECISIONS` (case-insensitive). A generic
+    mention, a pending/deferred answer, or an unrecognized decision returns
+    ``None`` — a loose keyword search is deliberately NOT used ("not approved
+    yet" must not match ``APPROVED``).
+    """
+    if not isinstance(note_text, str) or not note_text.strip():
+        return None
+    match = _OPERATOR_DISPOSITION_CANONICAL_RE.search(note_text)
+    if match is not None:
+        decision = match.group(2).upper()
+        if decision in OPERATOR_DISPOSITION_DECISIONS:
+            return {"question_id": match.group(1), "decision": decision}
+        return None
+    match = _OPERATOR_DISPOSITION_LEGACY_RE.search(note_text)
+    if match is not None:
+        decision = match.group(2).upper()
+        if decision in OPERATOR_DISPOSITION_DECISIONS:
+            return {"question_id": match.group(1), "decision": decision}
+    return None
+
+
+def operator_disposition_for_action(
+    state: Mapping[str, Any],
+    action: Mapping[str, Any],
+) -> dict[str, str] | None:
+    """Return the recorded operator disposition for *action*, or ``None``.
+
+    A disposition is mechanically binding only when ALL conditions hold:
+
+    * ``action_type == "add_human_halt"`` (a human-halt question);
+    * the action has a non-empty ``question_id``;
+    * ``state.meta.notes`` contains a mapping whose normalized source is
+      exactly ``user``;
+    * the note text parses to a recognized final decision via
+      :func:`parse_operator_disposition` whose ``question_id`` equals the
+      action's ``question_id`` (whole-identifier match); and
+    * the decision is a final disposition (approved / accepted / authorized /
+      granted / denied / rejected / not_authorized).
+
+    First valid disposition wins by chronology (note order). The returned
+    audit record carries ``question_id``, ``decision``, ``source``,
+    ``timestamp``, ``note_index`` and ``note_sha256``.
+    """
+    if not isinstance(action, Mapping):
+        return None
+    if action.get("action_type") != "add_human_halt":
+        return None
+    question_id = action.get("question_id")
+    if not isinstance(question_id, str) or not question_id.strip():
+        return None
+    question_id = question_id.strip()
+    notes = (state.get("meta") or {}).get("notes")
+    if not isinstance(notes, list) or not notes:
+        return None
+    for index, note in enumerate(notes):
+        if not isinstance(note, Mapping):
+            continue
+        source = note.get("source")
+        if not isinstance(source, str) or source.strip().lower() != "user":
+            continue
+        note_text = note.get("note")
+        if not isinstance(note_text, str) or not note_text.strip():
+            continue
+        parsed = parse_operator_disposition(note_text)
+        if parsed is None or parsed["question_id"] != question_id:
+            continue
+        timestamp = note.get("timestamp")
+        if not isinstance(timestamp, str):
+            timestamp = ""
+        return {
+            "question_id": question_id,
+            "decision": parsed["decision"],
+            "source": "user",
+            "timestamp": timestamp,
+            "note_index": index,
+            "note_sha256": hashlib.sha256(note_text.encode("utf-8")).hexdigest(),
+        }
+    return None
+
+
+def resolved_by_operator_disposition(
+    state: Mapping[str, Any],
+    action: Mapping[str, Any],
+) -> bool:
+    """Return ``True`` when *action* is settled by an exact operator disposition."""
+    return operator_disposition_for_action(state, action) is not None
+
+
 # --------------------------------------------------------------------------- #
 # Shared closeout check (revise closeout, finalize gate)
 # --------------------------------------------------------------------------- #
@@ -597,6 +732,47 @@ def find_unresolved_blocking_actions(
     return unresolved
 
 
+def _reapply_carried_settlements(
+    carry: Mapping[str, Any],
+    normalized: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Reapply handler-owned settlement metadata from the carry artifact.
+
+    The worker-owned schema never carries ``resolved``/``status`` (a model
+    must never settle its own blocker); the gate handler persists settled
+    annotations under the handler-owned ``settled_north_star_actions`` field.
+    Only that field re-marks actions — a worker-provided ``resolved: true``
+    in a fallback artifact is NOT trusted.
+    """
+    settled = carry.get("settled_north_star_actions")
+    if not isinstance(settled, list) or not settled:
+        return normalized
+    settled_by_id: dict[str, dict[str, Any]] = {}
+    for item in settled:
+        if not isinstance(item, Mapping):
+            continue
+        aid = item.get("id")
+        if isinstance(aid, str) and aid.strip():
+            settled_by_id[aid.strip()] = dict(item)
+    if not settled_by_id:
+        return normalized
+    result: list[dict[str, Any]] = []
+    for action in normalized:
+        aid = action.get("id")
+        record = settled_by_id.get(aid) if isinstance(aid, str) else None
+        if record is not None and record.get("resolved") is True:
+            annotated = dict(action)
+            annotated["resolved"] = True
+            annotated["status"] = "resolved"
+            disposition = record.get("operator_disposition")
+            if isinstance(disposition, Mapping):
+                annotated["operator_disposition"] = dict(disposition)
+            result.append(annotated)
+        else:
+            result.append(action)
+    return result
+
+
 def read_carried_north_star_actions(plan_dir: Any) -> list[dict[str, Any]]:
     """Read the normalized North Star actions carried from the gate step.
 
@@ -634,7 +810,8 @@ def read_carried_north_star_actions(plan_dir: Any) -> list[dict[str, Any]]:
                 raise NorthStarActionValidationError(
                     "gate_carry.json north_star_actions must be a list"
                 )
-            return normalize_north_star_actions(carry["north_star_actions"])
+            normalized = normalize_north_star_actions(carry["north_star_actions"])
+            return _reapply_carried_settlements(carry, normalized)
         raise NorthStarActionValidationError("gate_carry.json must contain an object")
 
     gate_path = plan_dir / "gate.json"

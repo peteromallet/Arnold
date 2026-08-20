@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.install_sync import (
     apply_install_sync,
     compute_venv_digest,
     ensure_dependency_generation,
+    frozen_path_sources,
     frozen_requirements,
     frozen_spec_sha256,
     generation_dir,
@@ -86,6 +87,25 @@ def test_frozen_spec_sha256_is_content_addressed(tmp_path: Path) -> None:
     assert frozen_spec_sha256(a) != frozen_spec_sha256(b)
 
 
+def test_frozen_spec_sha256_includes_path_source_bytes(tmp_path: Path) -> None:
+    project = _frozen_spec_project(
+        tmp_path,
+        **{
+            "uv.lock": (
+                'version = 1\n[[package]]\nname = "local-dep"\nversion = "1.0.0"\n'
+                'source = { directory = "vendor/local-dep" }\n'
+            )
+        },
+    )
+    dependency = project / "vendor" / "local-dep"
+    dependency.mkdir(parents=True)
+    module = dependency / "module.py"
+    module.write_text("VALUE = 1\n", encoding="utf-8")
+    before = frozen_spec_sha256(project)
+    module.write_text("VALUE = 2\n", encoding="utf-8")
+    assert frozen_spec_sha256(project) != before
+
+
 def test_frozen_requirements_only_registry_sources() -> None:
     lock = (
         'version = 1\n'
@@ -98,9 +118,108 @@ def test_frozen_requirements_only_registry_sources() -> None:
         "[[package]]\nname = \"tool\"\nversion = \"1.0.0\"\n"
         'source = { git = "https://github.com/x/tool.git" }\n'
         "\n"
+        '[[package]]\nname = "local-a"\nversion = "1.0.0"\n'
+        'source = { directory = "vendor/local-a" }\n'
+        "\n"
+        '[[package]]\nname = "local-b"\nversion = "1.0.0"\n'
+        "source = {\npath = 'vendor/local-b'\n}\n"
+        "\n"
+        '[[package]]\nname = "remote"\nversion = "1.0.0"\n'
+        'source = { url = "https://example.invalid/remote.whl" }\n'
+        "\n"
         "[[package]]\nname = \"widget\"\nversion = \"3.0.0\"\n"
     )
     assert frozen_requirements(lock) == ["requests==2.31.0", "widget==3.0.0"]
+    assert frozen_path_sources(lock) == ["vendor/local-a", "vendor/local-b"]
+
+
+def test_path_only_generation_keeps_pip_and_passes_directory_to_install(
+    tmp_path: Path,
+) -> None:
+    project = _frozen_spec_project(
+        tmp_path,
+        **{
+            "uv.lock": (
+                'version = 1\n[[package]]\nname = "demo"\nversion = "0.1.0"\n'
+                'source = { editable = "." }\n\n'
+                '[[package]]\nname = "local-dep"\nversion = "1.0.0"\n'
+                'source = { directory = "vendor/local-dep" }\n'
+            )
+        },
+    )
+    commands: list[list[str]] = []
+    (project / "vendor" / "local-dep").mkdir(parents=True)
+
+    def runner(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[1:3] == ["-m", "venv"]:
+            generation = Path(command[-1])
+            (generation / "bin").mkdir(parents=True)
+            (generation / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+            interpreter = generation / "bin" / "python"
+            interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+            interpreter.chmod(0o755)
+        return _proc(command)
+
+    ensure_dependency_generation(
+        project,
+        tmp_path / "venvs",
+        build_strategy="pip",
+        runner=runner,
+    )
+
+    assert "--without-pip" not in commands[0]
+    assert Path(commands[1][-1]).name == "0000-local-dep"
+    assert not Path(commands[1][-1]).is_relative_to(project)
+    assert "." not in commands[1][4:]
+
+
+def test_pip_strategy_installs_directory_dependency_into_generation(
+    tmp_path: Path,
+) -> None:
+    project = _frozen_spec_project(
+        tmp_path,
+        **{
+            "uv.lock": (
+                'version = 1\n[[package]]\nname = "demo"\nversion = "0.1.0"\n'
+                'source = { editable = "." }\n\n'
+                '[[package]]\nname = "local-dep"\nversion = "1.0.0"\n'
+                'source = { directory = "vendor/local-dep" }\n'
+            )
+        },
+    )
+    dependency = project / "vendor" / "local-dep"
+    package = dependency / "local_dep"
+    package.mkdir(parents=True)
+    (dependency / "pyproject.toml").write_text(
+        "[build-system]\n"
+        'requires = ["setuptools>=68"]\n'
+        'build-backend = "setuptools.build_meta"\n\n'
+        "[project]\n"
+        'name = "local-dep"\n'
+        'version = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    (package / "__init__.py").write_text('VALUE = "installed"\n', encoding="utf-8")
+
+    proof = ensure_dependency_generation(
+        project,
+        tmp_path / "venvs",
+        python_executable=sys.executable,
+        build_strategy="pip",
+    )
+    result = subprocess.run(
+        [proof["interpreter_path"], "-c", "import local_dep; print(local_dep.VALUE)"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "installed"
+    assert not (dependency / "local_dep.egg-info").exists()
+    assert not (dependency / "build").exists()
 
 
 def test_compute_venv_digest_reflects_installed_metadata(tmp_path: Path) -> None:

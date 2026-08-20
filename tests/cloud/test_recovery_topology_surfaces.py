@@ -229,8 +229,6 @@ def call_all_python_authority_kinds(path):
 
 _COMMAND_AUTHORITY_SNIPPET = """
 # legacy manual trigger references
-bin = "/usr/local/bin/arnold-repair-trigger"
-loop = "arnold-repair-loop"
 result = trigger_once(request_id="abc")
 launch = "python -m arnold_pipelines.megaplan doctor --fix"
 """
@@ -285,8 +283,6 @@ def test_python_and_command_authority_surfaces_are_detected():
     cmd_surfaces = scan_command_authority(_COMMAND_AUTHORITY_SNIPPET, "snippet.txt")
     cmd_kinds = {s.kind for s in cmd_surfaces}
     expected_command_kinds = {
-        "command.arnold-repair-trigger",
-        "command.arnold-repair-loop",
         "command.trigger_once",
         "command.python_module_repair",
     }
@@ -323,13 +319,8 @@ python3 -m arnold_pipelines.megaplan.audits evaluate
 python -m arnold_pipelines.megaplan.meta repair-loop-status
 arnold-kimi --analyze
 
-# legacy repair-loop relaunch patterns
-nohup arnold-repair-loop --watchdog &
-exec arnold-repair-loop --forever
-
 # repair-loop wrapper loops
 while true; do trigger_once request_id="loop"; done
-for attempt in 1 2 3; do arnold-repair-trigger --retry; done
 
 # tmux-based repair sessions
 tmux new-session -d -s arnold-repair 'python -m arnold_pipelines.megaplan doctor'
@@ -361,7 +352,6 @@ def test_shell_repair_surfaces_are_detected():
         "shell.meta_repair",
         "shell.kimi_repair",
         "shell.module_repair",
-        "shell.repair_loop_relaunch",
         "shell.repair_loop_wrapper",
         "shell.tmux_repair",
         "shell.heredoc_repair",
@@ -397,13 +387,13 @@ def test_shell_repair_surfaces_are_detected():
 _SYSTEMD_AUTHORITY_SNIPPET = """\
 # systemd path unit
 [Path]
-PathChanged=/var/run/arnold-repair-trigger.path
+PathChanged=/var/run/arnold-watchdog.path
 
 # systemd service unit
 [Unit]
 Description=Arnold Repair Service
 [Service]
-ExecStart=/usr/local/bin/arnold-repair-loop --forever
+ExecStart=/usr/local/bin/arnold-watchdog --forever
 [Install]
 WantedBy=multi-user.target
 
@@ -414,7 +404,7 @@ systemctl restart arnold-repair.timer
 systemctl daemon-reload
 
 # systemd-run
-systemd-run --unit=arnold-doctor /usr/local/bin/arnold-repair-trigger
+systemd-run --unit=arnold-doctor /usr/local/bin/arnold-watchdog
 
 # unit dependency directives
 Wants=arnold-repair.service
@@ -482,7 +472,7 @@ runcmd:
   - /usr/local/bin/trigger_once request_id=cloud
 
 # shell-substitution template
-REPAIR_CMD=${ARNOLD_REPAIR_PATH:-/usr/local/bin/arnold-repair-trigger}
+REPAIR_CMD=${ARNOLD_REPAIR_PATH:-/usr/local/bin/arnold-watchdog}
 
 # ensure script
 ensure_repair_complete() { check; }
@@ -493,7 +483,7 @@ repair:
 	python -m arnold_pipelines.megaplan doctor
 
 # Dockerfile ENTRYPOINT
-ENTRYPOINT ["/usr/local/bin/arnold-repair-trigger", "--mode=docker"]
+ENTRYPOINT ["/usr/local/bin/arnold-watchdog", "--mode=docker"]
 
 # CI pipeline repair gate
 run: python -m arnold_pipelines.megaplan doctor --ci-check
@@ -562,8 +552,8 @@ _HOT_UPLOAD_AUTHORITY_SNIPPET = (
     "# hot-upload / session-exec repair authority\n"
     "scp /tmp/watchdog arnold@host:/usr/local/bin/arnold-watchdog\n"
     "REMOTE_BIN_DIR=/usr/local/bin\n"
-    "runner = SessionRunner(--session-command='arnold-repair-trigger --once')\n"
-    "docker exec cloudbox arnold-repair-trigger --once\n"
+    "runner = SessionRunner(--session-command='arnold-watchdog --once')\n"
+    "docker exec cloudbox arnold-watchdog --once\n"
     "cloud_hot_upload --upload watchdog.bin --restart-session\n"
 )
 
@@ -671,7 +661,7 @@ def test_markdown_roots_include_package_local_and_skill_data():
 
     snippet = (
         "# Recovery\n"
-        "Run `arnold-repair-trigger --once` to heal the node.\n\n"
+        "Run `arnold-watchdog --once` to heal the node.\n\n"
         "```bash\n"
         "python3 -m arnold_pipelines.megaplan doctor --fix\n"
         "```\n"
@@ -731,7 +721,7 @@ def test_baseline_records_steps_25_to_32_before_migration():
             "c.py",
         )
     )
-    surfaces.extend(scan_markdown_authority("Run `arnold-repair-trigger`\n", "d.md"))
+    surfaces.extend(scan_markdown_authority("Run `arnold-watchdog`\n", "d.md"))
     assert surfaces, "fixture surfaces should be detected before baseline build"
 
     scan_roots = {
@@ -794,8 +784,6 @@ def test_manual_repair_trigger_surface_is_closed():
     After migration to simple_fixer delegation:
     - ``trigger_once`` is still detected as a live command-authority surface
       (it remains the operator-facing entry point).
-    - ``arnold-repair-trigger`` is NOT detected as a separate surface (the
-      legacy binary path was removed).
     - ``ARNOLD_MANUAL_REPAIR_TRIGGER_BIN`` is NOT detected (the env var
       override authority was removed).
     - ``subprocess.run`` / ``subprocess`` imports are not detected as legacy
@@ -828,21 +816,9 @@ def test_manual_repair_trigger_surface_is_closed():
         f"trigger_once must remain a detected surface; got kinds={code_kinds}"
     )
 
-    # The legacy arnold-repair-trigger binary path must NOT be detected
-    # as a command-authority surface in the code body.
-    assert "command.arnold-repair-trigger" not in code_kinds, (
-        f"arnold-repair-trigger binary surface must be closed in code; "
-        f"got kinds={code_kinds}"
-    )
-
     # ARNOLD_MANUAL_REPAIR_TRIGGER_BIN env var must not appear in code.
     assert "ARNOLD_MANUAL_REPAIR_TRIGGER_BIN" not in code_body, (
         "ARNOLD_MANUAL_REPAIR_TRIGGER_BIN must not appear in code body"
-    )
-
-    # /usr/local/bin/arnold-repair-trigger literal must not appear in code.
-    assert "/usr/local/bin/arnold-repair-trigger" not in code_body, (
-        "/usr/local/bin/arnold-repair-trigger must not appear in code body"
     )
 
     # subprocess import must not appear.
@@ -902,65 +878,6 @@ def test_progress_auditor_controller_dispatch_surface_is_closed():
     )
 
 
-# ── T29: arnold-repair-trigger wrapper dispatch surface closure ──────────────
-
-
-def test_repair_trigger_wrapper_surface_is_closed():
-    """T29 / Step 42 second split: retire queue-scan dispatch bypass families.
-
-    After migration to simple_fixer delegation inside ``_dispatch``:
-    - ``subprocess.Popen`` repair-launch authority is absent from the wrapper.
-    - ``manager_argv`` managed-agent construction is absent.
-    - ``child_argv`` repair-child argv construction is absent.
-    - The canonical ``_delegate_repair_to_simple_fixer`` delegation path and
-      ``build_custody_target_key`` occurrence resolution are present (positive
-      migration signals).
-
-    No authority is manufactured from a label, liveness signal, WBC receipt, or
-    rebuildable projection: the CustodyTargetKey is built from exact occurrence
-    data and delegated through the typed shim.
-    """
-    wrapper_path = Path(
-        "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger"
-    )
-    text = wrapper_path.read_text(encoding="utf-8")
-
-    # subprocess.Popen repair-launch authority must be retired.
-    assert "subprocess.Popen" not in text, (
-        "arnold-repair-trigger must not use subprocess.Popen for repair "
-        "dispatch after migration to simple_fixer delegation"
-    )
-
-    # manager_argv managed-agent construction must be retired.
-    assert "manager_argv" not in text, (
-        "arnold-repair-trigger must not construct manager_argv managed-agent "
-        "argv after migration to simple_fixer delegation"
-    )
-
-    # child_argv repair-child argv construction must be retired.
-    assert "child_argv" not in text, (
-        "arnold-repair-trigger must not construct child_argv repair-child "
-        "argv after migration to simple_fixer delegation"
-    )
-
-    # The canonical delegation function must be present and called.
-    assert "_delegate_repair_to_simple_fixer(" in text, (
-        "arnold-repair-trigger must call _delegate_repair_to_simple_fixer "
-        "for canonical repair delegation"
-    )
-
-    # build_custody_target_key must be imported (exact occurrence resolution).
-    assert "build_custody_target_key" in text, (
-        "arnold-repair-trigger must resolve occurrences through "
-        "build_custody_target_key for canonical simple_fixer delegation"
-    )
-
-    # The RepairDelegation / delegate_to_simple_fixer imports must be present.
-    assert "delegate_to_simple_fixer" in text, (
-        "arnold-repair-trigger must import delegate_to_simple_fixer"
-    )
-
-
 # ── T36 / Step 51: arnold-progress-auditor wrapper repair-trigger handoff ────
 
 
@@ -970,8 +887,8 @@ def test_progress_auditor_wrapper_repair_handoff_surface_is_closed():
 
     After rerouting the L3 escalation controller's repair handoff:
     - The legacy ``REPAIR_TRIGGER_BIN`` argv is no longer plumbed to the
-      controller (the ``arnold-repair-trigger`` binary is no longer invoked
-      by this wrapper for repair authority).
+      controller (no legacy trigger binary is invoked by this wrapper for
+      repair authority).
     - The dead ``MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN`` override is gone.
     - The shared ``repair_delegation`` shim is imported and the
       ``emit_zero_authority_rejection`` typed handoff is used exactly once,
@@ -1092,57 +1009,6 @@ def test_watchdog_has_zero_planned_pending_surfaces() -> None:
     assert planned_pending == [], (
         f"arnold-watchdog must carry zero planned-pending surfaces after the "
         f"Step 59-65 repair-state migration; found {len(planned_pending)}: "
-        f"{[s.kind for s in planned_pending]}"
-    )
-
-
-def test_repair_loop_has_zero_planned_pending_surfaces() -> None:
-    """Steps 68-75: scanning arnold-repair-loop must yield zero planned-pending
-    surfaces after the Step 68-75 repair-state migration.
-
-    A planned-pending surface is one scheduled for migration but not yet
-    closed; leaving one would mean a repair-loop repair-state mutation can still
-    become accepted repair outside canonical simple_fixer delegation.  The test
-    also asserts the migration gate and canonical delegation path are present
-    so the absence of planned-pending surfaces reflects a *completed*
-    migration, not an unscanned wrapper.  Authority is never manufactured from
-    a label, liveness signal, WBC receipt, or rebuildable projection (SC41).
-    """
-    wrapper_path = WRAPPERS_DIR / "arnold-repair-loop"
-    text = wrapper_path.read_text(encoding="utf-8")
-
-    # Positive migration signal: the repair-state and repair-launch authority
-    # gates are defined and route every repair-loop mutation through the
-    # simple_fixer singleton claim (exact F01 occurrence tuple), binding to
-    # current fence and custody epoch rather than to a label/liveness/WBC/
-    # projection.
-    assert "repair_loop_repair_state_authority_or_reject() {" in text, (
-        "arnold-repair-loop must define the repair-state authority gate"
-    )
-    assert "repair_loop_repair_launch_authority_or_reject() {" in text, (
-        "arnold-repair-loop must define the repair-launch authority gate"
-    )
-    assert "simple_fixer.singleton_claim.exact_f01_tuple" in text, (
-        "arnold-repair-loop repair-state/launch mutations must delegate through "
-        "the simple_fixer singleton claim (exact occurrence identity)"
-    )
-
-    # All step markers T68-T75 must be present.
-    for marker in (
-        "T68-RETRIGGER-01", "T69-META-01",
-        "T70-STALE-STATE-01", "T71-STALE-CLAIM-01",
-        "T72-REAP-01", "T73-RETRY-01",
-        "T74-FINGERPRINT-01", "T75-BUDGET-01",
-    ):
-        assert marker in text, (
-            f"arnold-repair-loop must carry {marker} evidence marker"
-        )
-
-    surfaces = scan_shell_authority(text, str(wrapper_path))
-    planned_pending = [s for s in surfaces if s.state is SurfaceState.PLANNED_PENDING]
-    assert planned_pending == [], (
-        f"arnold-repair-loop must carry zero planned-pending surfaces after the "
-        f"Steps 68-75 repair-state migration; found {len(planned_pending)}: "
         f"{[s.kind for s in planned_pending]}"
     )
 

@@ -1423,6 +1423,42 @@ def _template_has_content(payload: dict, step: str) -> bool:
     )
 
 
+_FINALIZE_PLACEHOLDER_TOKENS = frozenset(
+    {"string", "integer", "number", "boolean", "array", "object", "null"}
+)
+
+
+def _is_finalize_placeholder_payload(payload: dict) -> bool:
+    """Detect a finalize payload that is an unfilled schema template.
+
+    The finalize schema template — and models that echo it back — carries
+    placeholder values such as ``id: "string"``, ``complexity: 0``,
+    ``objective: "string"`` and ``task_contract_version: 0``.  Such a payload
+    is syntactically valid JSON but semantically empty: passing it to the
+    finalize validator produces an opaque ``invalid_finalize`` rejection with
+    no repair lane.  Detect it at the parse boundary so the worker's normal
+    repair/summary paths force a real fill instead.
+    """
+    if not isinstance(payload, dict):
+        return False
+    tasks = payload.get("tasks")
+    if isinstance(tasks, list) and tasks:
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            if task.get("id") in _FINALIZE_PLACEHOLDER_TOKENS:
+                return True
+            if task.get("complexity") == 0:
+                return True
+            if task.get("objective") in _FINALIZE_PLACEHOLDER_TOKENS | {""}:
+                return True
+            if task.get("description") in _FINALIZE_PLACEHOLDER_TOKENS:
+                return True
+        return False
+    # No tasks at all: the template was not filled (finalize always emits tasks).
+    return True
+
+
 def _preferred_schema_type(prop: dict) -> str:
     ptype = prop.get("type", "string")
     if isinstance(ptype, list):
@@ -1533,7 +1569,10 @@ def parse_agent_output(
             candidate_payload = json.loads(output_text)
             if isinstance(candidate_payload, dict):
                 # Check if the model actually filled in findings (not just the empty template)
-                has_content = _template_has_content(candidate_payload, step)
+                has_content = _template_has_content(candidate_payload, step) and not (
+                    step == "finalize"
+                    and _is_finalize_placeholder_payload(candidate_payload)
+                )
                 if has_content:
                     payload = candidate_payload
                     print(f"[hermes-worker] Read JSON from template file: {output_path}", file=sys.stderr)
@@ -1555,14 +1594,28 @@ def parse_agent_output(
     # Try parsing the final text response
     if payload is None:
         payload = _parse_json_response(raw_output)
-        if payload is None and parse_error is None:
+        if payload is not None and step == "finalize" and _is_finalize_placeholder_payload(payload):
+            print(
+                "[hermes-worker] Finalize output is an unfilled schema template — discarding; requesting a real fill",
+                file=sys.stderr,
+            )
+            payload = None
+            template_unfilled = True
+        elif payload is None and parse_error is None:
             parse_error = _json_decode_error_for_raw(raw_output)
 
     # Fallback: some models (GLM-5) put JSON in reasoning/think tags
     # instead of content. Just grab it from there.
     if payload is None and messages:
         payload = _extract_json_from_reasoning(messages)
-        if payload is not None:
+        if payload is not None and step == "finalize" and _is_finalize_placeholder_payload(payload):
+            print(
+                "[hermes-worker] Reasoning-tags JSON is an unfilled finalize schema template — discarding",
+                file=sys.stderr,
+            )
+            payload = None
+            template_unfilled = True
+        elif payload is not None:
             print(f"[hermes-worker] Extracted JSON from reasoning tags", file=sys.stderr)
 
     # Fallback: check all assistant message content fields (not just final_response)
@@ -1574,6 +1627,14 @@ def parse_agent_output(
             content = msg.get("content", "")
             if isinstance(content, str) and content.strip():
                 payload = _parse_json_response(content)
+                if payload is not None and step == "finalize" and _is_finalize_placeholder_payload(payload):
+                    print(
+                        "[hermes-worker] Assistant-message JSON is an unfilled finalize schema template — discarding",
+                        file=sys.stderr,
+                    )
+                    payload = None
+                    template_unfilled = True
+                    continue
                 if payload is not None:
                     print(f"[hermes-worker] Extracted JSON from assistant message content", file=sys.stderr)
                     break
@@ -1618,7 +1679,17 @@ def parse_agent_output(
             summary_output = summary_result.get("final_response", "") or ""
             if summary_output.strip():
                 payload = _parse_json_response(summary_output)
-                if payload is not None:
+                if (
+                    payload is not None
+                    and step == "finalize"
+                    and _is_finalize_placeholder_payload(payload)
+                ):
+                    print(
+                        "[hermes-worker] Summary prompt still returned the unfilled finalize schema template",
+                        file=sys.stderr,
+                    )
+                    payload = None
+                elif payload is not None:
                     print(f"[hermes-worker] Got JSON from summary prompt ({len(summary_output)} chars)", file=sys.stderr)
         except ModelBudgetError:
             raise
@@ -1794,6 +1865,17 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     if step == "critique":
         _normalize_critique_flag_severity(payload)
 
+    # Review rework_items arrive with the same drift the review handler
+    # backfills later (handlers/review.py _normalize_review_payload): a
+    # top-level task_id without target.task_id/task_ids, and a missing
+    # deterministic_check.  The worker audit runs BEFORE the handler, so a
+    # semantically complete review would be rejected on a shape the canonical
+    # payload explicitly tolerates.  Mirror the handler backfill here so the
+    # audit sees the canonical shape (fallback-provider reviews, occurrence
+    # 1f1f5d10145b).
+    if step == "review":
+        _normalize_review_rework_items(payload)
+
 
 def _normalize_flattened_plan_success_criterion(payload: dict) -> None:
     has_flattened_criterion = any(
@@ -1818,6 +1900,53 @@ def _normalize_flattened_plan_success_criterion(payload: dict) -> None:
         existing.insert(0, entry)
     else:
         payload["success_criteria"] = [entry]
+
+
+def _normalize_review_rework_items(payload: dict) -> None:
+    """Backfill review rework_items to the canonical shape the handler expects.
+
+    Mirrors handlers/review.py's rework-items normalization so the worker's
+    structural audit (which runs before the handler) sees the same canonical
+    shape: ``target.task_id`` / ``target.task_ids`` derived from the item's
+    top-level ``task_id``, ``target.kind`` defaulted, and ``deterministic_check``
+    defaulted to None (schema type ``["object", "null"]``) with
+    ``evidence_file`` defaulted inside a present check.
+    """
+    rework_items = payload.get("rework_items")
+    if not isinstance(rework_items, list):
+        return
+    for item in rework_items:
+        if not isinstance(item, dict):
+            continue
+        task_id = item.get("task_id")
+        task_id_str = task_id if isinstance(task_id, str) and task_id else None
+        target = item.get("target")
+        if isinstance(target, dict):
+            kind = target.get("kind")
+            if not isinstance(kind, str) or not kind:
+                target["kind"] = "task" if task_id_str else "global"
+            if "task_id" not in target:
+                target["task_id"] = task_id_str
+            if "task_ids" not in target:
+                target["task_ids"] = [task_id_str] if task_id_str else []
+            if "id" not in target:
+                target["id"] = None
+        elif "target" not in item:
+            item["target"] = (
+                {
+                    "kind": "task",
+                    "task_id": task_id_str,
+                    "task_ids": [task_id_str] if task_id_str else [],
+                    "id": None,
+                }
+                if task_id_str
+                else None
+            )
+        if "deterministic_check" not in item:
+            item["deterministic_check"] = None
+        deterministic_check = item.get("deterministic_check")
+        if isinstance(deterministic_check, dict):
+            deterministic_check.setdefault("evidence_file", None)
 
 
 def _strip_execute_bookkeeping_fields(payload: dict) -> None:
@@ -1887,6 +2016,56 @@ def _resolve_hermes_cost(result: dict) -> tuple[float, int, int, int]:
                 cached_prompt_tokens=cached_prompt_tokens,
             )
     return cost_usd, prompt_tokens, completion_tokens, total_tokens
+
+
+def _message_has_tool_activity(message: object) -> bool:
+    """Return True when a session message records any tool invocation.
+
+    Malformed messages cannot support a pre-tool attestation, so they
+    conservatively count as tool activity (fail-closed).
+    """
+    if not isinstance(message, dict):
+        return True
+    if message.get("role") == "tool":
+        return True
+    tool_calls = message.get("tool_calls")
+    return bool(tool_calls)
+
+
+def _pre_tool_attested(
+    baseline: list[dict],
+    observed: object,
+) -> bool:
+    """True only when THIS invocation ran zero tools since ``baseline``.
+
+    Conservative by construction: unverifiable, truncated, or reordered
+    history (i.e. anything that does not preserve the baseline as a strict
+    prefix) fails the attestation.  This gates configured-spec fallback for
+    non-read-only phases: no tool ran in this attempt, so nothing in the
+    checkout can have been mutated by it, so redispatch to the next spec is
+    safe.
+    """
+    if not isinstance(observed, list):
+        return False
+    if len(observed) < len(baseline):
+        return False
+    if observed[: len(baseline)] != baseline:
+        return False
+    return not any(
+        _message_has_tool_activity(message)
+        for message in observed[len(baseline):]
+    )
+
+
+def _with_pre_tool_attestation(error: CliError, attested: bool) -> CliError:
+    """Return a copy of ``error`` carrying the pre-tool attestation in extra."""
+    return CliError(
+        error.code,
+        error.message,
+        valid_next=error.valid_next,
+        extra={**error.extra, "_pre_tool_attested": attested},
+        exit_code=error.exit_code,
+    )
 
 
 def run_hermes_step(
@@ -1960,6 +2139,12 @@ def run_hermes_step(
             conversation_history = db.get_messages_as_conversation(session_id)
         except Exception:
             conversation_history = None
+
+    # Pre-tool attestation baseline: the session messages already present
+    # BEFORE this invocation runs.  Every tool the model requested in THIS
+    # attempt appends after this prefix; a strict-prefix check with zero
+    # appended tool activity proves no checkout mutation by this worker.
+    _attempt_baseline = list(conversation_history or [])
 
     # Generate new session ID if needed
     if not session_id:
@@ -2221,6 +2406,18 @@ def run_hermes_step(
             session_id=session_id,
             session_db=SessionDB(db_path=_hermes_db_path),
             max_tokens=agent_max_tokens,
+            # Completion-driven, NOT turn-capped (2026-08-16): the fixed
+            # 90-turn default killed execute workers mid-batch — a real
+            # implementation batch (edits + 3-4 test runs per task) needs
+            # more than 90 tool-call turns, the worker died at the cap, no
+            # authority envelopes were stamped, and the frontier never
+            # advanced (astrid m2 reap loop). The batch/authority machinery
+            # is the real runaway guard (budget, timeout, authority
+            # validation, fail-closed gates); a turn count is redundant and
+            # strangles legitimate work. None = completion-driven (shared
+            # with subagents; the caller may still pass an explicit cap via
+            # extra_kwargs, which AIAgent honors as authoritative).
+            max_iterations=None,
             reasoning_config=_reasoning_off,
             output_stream=activity_stderr,
             **extra_kwargs,
@@ -2498,10 +2695,17 @@ def run_hermes_step(
                 )
                 current_payload = dict(capture_outcome.legacy_payload)
             except (CliError, ModelStructuralAuditError) as error:
-                # For execute, try reconstructed payload if validation fails
+                # For execute/plan, try reconstructed payload if validation fails
                 reconstructed: dict | None = None
                 if step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
+                elif step == "plan":
+                    # The model often writes plan.md via a file tool and then
+                    # emits only fenced metadata blocks (Success Criteria,
+                    # Changed Surfaces, Test Blast Radius) as its final
+                    # message.  Rebuild the capture payload from the
+                    # model-authored plan.md artifact (auditor-clean markdown).
+                    reconstructed = _reconstruct_plan_payload(plan_dir)
                 if reconstructed is not None:
                     try:
                         capture_outcome = capture_step_output(
@@ -2571,7 +2775,22 @@ def run_hermes_step(
         from arnold_pipelines.megaplan.runtime.sandbox import install_sandbox
         _sandbox_stack.enter_context(install_sandbox(project_dir))
 
-    # Run — with fallback to OpenRouter for MiniMax if primary API fails
+    # Run — with fallback to OpenRouter for MiniMax if primary API fails.
+    # On escape, every error is annotated with the pre-tool attestation:
+    # did THIS invocation run any tool before failing?  A launch-time
+    # (pre-tool) failure on a non-read-only, non-execute phase may advance
+    # the configured fallback chain — no worker tool ran, so nothing in the
+    # checkout can have been mutated by this attempt.
+    result: dict | None = None
+
+    def _observed_session_messages() -> object:
+        if isinstance(result, dict) and isinstance(result.get("messages"), list):
+            return result["messages"]
+        try:
+            return SessionDB(db_path=_hermes_db_path).get_messages_as_conversation(session_id)
+        except Exception:
+            return None
+
     started = time.monotonic()
     try:
         try:
@@ -2680,6 +2899,32 @@ def run_hermes_step(
                 ) from exc
     finally:
         _sandbox_stack.close()
+        exc_type, exc_value, _ = sys.exc_info()
+        if exc_value is not None:
+            attested = _pre_tool_attested(
+                _attempt_baseline,
+                _observed_session_messages(),
+            )
+            if isinstance(exc_value, CliError):
+                annotated = _with_pre_tool_attestation(exc_value, attested)
+                raise annotated from exc_value
+            from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
+            wrapped = CliError(
+                "worker_error",
+                f"Hermes worker failed for step '{step}': {exc_value}",
+                extra={
+                    "session_id": session_id,
+                    "_external_error": (
+                        ExternalError.from_exception(
+                            exc_value,
+                            provider=(model or "").split(":", 1)[0] or "unknown",
+                        ).to_dict()
+                        if exc_value is not None
+                        else None
+                    ),
+                },
+            )
+            raise _with_pre_tool_attestation(wrapped, attested) from exc_value
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     cost_usd, prompt_tokens, completion_tokens, total_tokens = _resolve_hermes_cost(result)
@@ -2829,6 +3074,31 @@ def _attribution_task_updates_from_files(
             "auto_attributed_files": True,
         })
     return updates
+
+
+def _reconstruct_plan_payload(plan_dir: Path) -> dict | None:
+    """Rebuild a plan capture payload from the model-authored ``plan.md``
+    artifact when the final message's extracted payload lacks step content
+    (e.g. the model wrote ``plan.md`` via a file tool and its final message
+    carried only fenced metadata blocks such as Success Criteria).
+
+    ``plan.md`` is the canonical artifact the planning template directs the
+    model to write (``prompts/planning.py``: complex plans use ``## Phase N:``
+    sections each containing ``### Step N:`` steps, global numbering).  Its
+    markdown satisfies the structural auditor (exactly one H1, ``## Overview``,
+    ``## Step N:`` / ``### Step N:`` sections, numbered substeps, backticked
+    file refs, Execution/Validation order), so a payload of ``{"plan": <md>}``
+    passes capture; ``_normalize_plan_capture_payload`` then derives the
+    optional metadata (questions/assumptions/success_criteria) from the
+    markdown via ``_extract_plan_markdown_metadata``.
+    """
+    try:
+        text = Path(plan_dir).joinpath("plan.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not text or not text.strip():
+        return None
+    return {"plan": text}
 
 
 def _reconstruct_execute_payload(

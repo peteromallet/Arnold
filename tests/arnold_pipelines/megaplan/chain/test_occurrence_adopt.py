@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -51,6 +53,27 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SESSION = "adopt-test-session"
 PLAN = "adopt-plan"
 FAILURE_RECORDED_AT = "2026-08-11T07:35:34Z"
+
+
+@pytest.fixture(autouse=True)
+def _align_repair_queue_root(tmp_path: Path) -> Iterator[None]:
+    """T-0640 D1: occurrence-adopt resolves the queue root from
+    ARNOLD_REPAIR_QUEUE_ROOT (else the marker-adjacent box-central queue —
+    never project_dir).  Pin it to the box-central-style tmp queue the CLI
+    tests below assert against (the tree is the epic checkout and must NOT
+    hijack the queue root).  Set directly on os.environ (restored in
+    teardown) so monkeypatch.undo() cannot silently reset it."""
+    prior = os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+    os.environ["ARNOLD_REPAIR_QUEUE_ROOT"] = str(
+        tmp_path / ".megaplan" / "repair-queue"
+    )
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop("ARNOLD_REPAIR_QUEUE_ROOT", None)
+        else:
+            os.environ["ARNOLD_REPAIR_QUEUE_ROOT"] = prior
 
 
 def _canonical_sha256(value: dict) -> str:
@@ -220,7 +243,7 @@ def _build_tree(root: Path) -> dict:
                     / "megaplan"
                     / "cloud"
                     / "wrappers"
-                    / "arnold-repair-loop"
+                    / "arnold-babysitter"
                 ),
                 "deps_lockfile": str(REPO_ROOT / "pyproject.toml"),
             },
@@ -735,17 +758,6 @@ def test_generic_repair_machinery_rejects_adoption_scope(tmp_path: Path) -> None
     )
     assert bound["status"] == "zero_authority_rejected", bound
 
-    claim = repair_requests.claim_active_repair_request(
-        queue_root,
-        blocker_id="phase:gate",
-        request_id="x",
-        actor="operator",
-        session=args["session"],
-        repair_identity=identity,
-    )
-    assert claim.status == "stale"
-    assert str(claim.evidence.get("reason") or "").startswith("owner_boundary_adoption")
-
     with pytest.raises(ValueError):
         repair_requests.write_dispatch_attempt(
             queue_root,
@@ -805,7 +817,10 @@ def test_cli_adopt_happy_path_and_idempotent_retry(
     assert record["repair_identity_key"] == payload["repair_identity_key"]
     assert record["claim_id"] == payload["claim_id"]
     assert record["mutable"]["reason"] == "T-0101e' unit adoption"
-    queue = tree["root"] / ".megaplan" / "repair-queue"
+    # T-0640 D1: the request lands in the ALIGNED queue root (env-selected
+    # box-central), never under the epic checkout tree.
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    assert not (tree["root"] / ".megaplan" / "repair-queue").exists()
     assert len(repair_requests.iter_repair_requests(queue)) == 1
     accepted = [
         record
@@ -980,7 +995,7 @@ def test_cli_adopt_crash_after_record_and_after_request_converge(
     assert len(adoptions) == 1
     rc, payload = _chain_cli(tree["root"], argv, capsys)
     assert rc == 0 and payload is not None and payload["status"] == "adopted", payload
-    queue = tree["root"] / ".megaplan" / "repair-queue"
+    queue = tmp_path / ".megaplan" / "repair-queue"
     assert len(repair_requests.iter_repair_requests(queue)) == 1
     assert len(
         [
@@ -991,9 +1006,11 @@ def test_cli_adopt_crash_after_record_and_after_request_converge(
     ) == 1
 
     # Second scenario: crash after the request write, before the accepted
-    # decision (fresh tree).
+    # decision (fresh tree under its OWN aligned root).
     tree = _fresh_tree(tmp_path / "second", adopt_tree)
     argv = _adopt_argv(tree)
+    second_queue = tmp_path / "second" / ".megaplan" / "repair-queue"
+    monkeypatch.setenv("ARNOLD_REPAIR_QUEUE_ROOT", str(second_queue))
     real_write_decision = repair_requests.write_decision
 
     def boom_decision(*a, **kwargs):
@@ -1005,7 +1022,7 @@ def test_cli_adopt_crash_after_record_and_after_request_converge(
     with pytest.raises(OSError):
         _chain_cli(tree["root"], argv, capsys)
     monkeypatch.setattr(repair_requests, "write_decision", real_write_decision)
-    queue = tree["root"] / ".megaplan" / "repair-queue"
+    queue = second_queue
     assert len(repair_requests.iter_repair_requests(queue)) == 1
     assert repair_requests.iter_repair_decisions(queue) == []
     rc, payload = _chain_cli(tree["root"], argv, capsys)
@@ -1050,7 +1067,7 @@ def test_cli_adopt_two_concurrent_adopters_one_record(
     adoptions = list((tree["plan_dir"] / "evidence" / "occurrence-adoptions").glob("*.json"))
     assert len(adoptions) == 1
     record = json.loads(adoptions[0].read_text(encoding="utf-8"))
-    queue = tree["root"] / ".megaplan" / "repair-queue"
+    queue = tmp_path / ".megaplan" / "repair-queue"
     requests = repair_requests.iter_repair_requests(queue)
     assert len(requests) == 1
     assert requests[0]["repair_identity_key"] == record["repair_identity_key"]
@@ -1066,3 +1083,47 @@ def test_cli_adopt_two_concurrent_adopters_one_record(
     assert record["claim_id"] == (
         "t0101-owner-adoption:" + record["repair_identity_key"][7:]
     )
+
+
+# ── T-0640 D1: aligned repair-queue root resolution ───────────────────────
+
+
+def test_resolve_aligned_repair_queue_root_env_override_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ARNOLD_REPAIR_QUEUE_ROOT is authoritative for adopt/join."""
+    target = tmp_path / "box" / ".megaplan" / "repair-queue"
+    monkeypatch.setenv("ARNOLD_REPAIR_QUEUE_ROOT", str(target))
+    monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(tmp_path / "elsewhere"))
+    assert repair_requests.resolve_aligned_repair_queue_root() == target.resolve()
+
+
+def test_resolve_aligned_repair_queue_root_defaults_to_box_central(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No env at all: the marker-adjacent box-central queue is the default."""
+    monkeypatch.delenv("ARNOLD_REPAIR_QUEUE_ROOT", raising=False)
+    monkeypatch.delenv("ARNOLD_REPAIR_MARKER_DIR", raising=False)
+    resolved = repair_requests.resolve_aligned_repair_queue_root()
+    assert resolved == Path("/workspace/.megaplan/repair-queue")
+    # The default satisfies the structural central-queue contract.
+    assert resolved.name == "repair-queue"
+    assert resolved.parent.name == ".megaplan"
+
+
+def test_resolve_aligned_repair_queue_root_never_epic_checkout_or_plans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An epic-checkout project_dir path never hijacks the default root."""
+    epic = tmp_path / "megaplan-maintenance" / "Arnold"
+    (epic / ".megaplan" / "plans").mkdir(parents=True)
+    monkeypatch.delenv("ARNOLD_REPAIR_QUEUE_ROOT", raising=False)
+    monkeypatch.delenv("ARNOLD_REPAIR_MARKER_DIR", raising=False)
+    resolved = repair_requests.resolve_aligned_repair_queue_root()
+    assert resolved != (epic / ".megaplan" / "repair-queue")
+    assert resolved != (epic / ".megaplan" / "plans" / "repair-queue")
+    assert resolved == Path("/workspace/.megaplan/repair-queue")
+    # Anything under .megaplan/plans is structurally rejected regardless of
+    # how it was derived.
+    with pytest.raises(ValueError):
+        repair_requests.validate_queue_root(epic / ".megaplan" / "plans" / "repair-queue")

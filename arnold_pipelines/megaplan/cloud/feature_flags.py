@@ -1,10 +1,18 @@
 """Centralized env-backed feature-flag defaults for the cloud-safe repair substrate.
 
-Repair automation is **enabled by default**. Operators can still explicitly
-disable individual paths with ``"0"``, ``"false"``, ``"no"``, or ``"off"``.
-Mutation is nevertheless disabled by default: every mutation-capable action
-must pass the default-off ``ARNOLD_AUTONOMY`` master gate *and* its path gate.
-Observation, evidence capture, and reporting retain their independent flags.
+The single-flash babysitter is the ONLY repair flow, and it is **enabled by
+default**.  Operators can still explicitly disable individual paths with
+``"0"``, ``"false"``, ``"no"``, or ``"off"``.  Mutation is nevertheless
+disabled by default: every mutation-capable action must pass the default-off
+``ARNOLD_AUTONOMY`` master gate *and* its path gate.  Observation, evidence
+capture, and reporting retain their independent flags.
+
+The layered L1/L2 repair stack was removed: the L1 repair-trigger and L2
+meta-repair env gates (``ARNOLD_REPAIR_TRIGGER_ENABLED``,
+``ARNOLD_META_REPAIR_ENABLED``, ``ARNOLD_META_REPAIR_COMMIT_ENABLED``,
+``ARNOLD_META_REPAIR_PUSH_ENABLED``) no longer exist.  ``MUTATION_PATH_L1`` /
+``MUTATION_PATH_L2`` remain only as retired names that always fail closed for
+surviving L1/L2 machinery until its deletion lands.
 
 Flags
 -----
@@ -25,24 +33,12 @@ escalation-ledger     ARNOLD_ESCALATION_LEDGER      0 (off)    Enable append-onl
 repair-request-queue  ARNOLD_REPAIR_REQUEST_QUEUE   1 (on)     Persist observe-only
                                                                 repair request
                                                                 markers.
-repair-trigger        ARNOLD_REPAIR_TRIGGER_ENABLED 1 (on)     L1 path gate;
-                                                                mutation still
-                                                                requires autonomy.
 autonomy              ARNOLD_AUTONOMY               0 (off)    Enable autonomous
-                                                                trigger / meta /
-                                                                auditor actions.
-meta-repair           ARNOLD_META_REPAIR_ENABLED    1 (on)     L2 path gate;
-                                                                mutation still
-                                                                requires autonomy.
+                                                                repair / auditor
+                                                                actions.
 audit-autofix         ARNOLD_AUDIT_AUTOFIX_ENABLED  1 (on)     L3 path gate;
                                                                 mutation still
                                                                 requires autonomy.
-meta-repair-commit    ARNOLD_META_REPAIR_COMMIT_
-                      ENABLED                       1 (on)     Allow meta-repair
-                                                                to commit changes.
-meta-repair-push      ARNOLD_META_REPAIR_PUSH_
-                      ENABLED                       0 (off)    Allow meta-repair
-                                                                to push commits.
 audit-autofix-commit  ARNOLD_AUDIT_AUTOFIX_COMMIT_
                       ENABLED                       1 (on)     Allow auditor
                                                                 autofix commits.
@@ -58,9 +54,8 @@ Report filters (never authority)
 are REPORT-ONLY row filters consumed by the progress-auditor report
 assembler.  They narrow which sessions/plans appear in an audit report and
 can NEVER authorize mutation, dispatch, repair, commit, or push.  Audit
-reporting may filter by session or plan; the mutation and push gates remain
-separate and default-off (``ARNOLD_AUTONOMY``, ``ARNOLD_META_REPAIR_PUSH_
-ENABLED``).
+reporting may filter by session or plan; the mutation gate remains separate
+and default-off (``ARNOLD_AUTONOMY``).
 
 The ghost name ``ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST`` has no reader
 anywhere in this tree.  It is a removed non-control: the hot-env validator
@@ -77,9 +72,15 @@ import os
 
 _DISABLE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
-# Stable names for the three mutation-capable repair paths.  Callers must use
+# Stable names for the mutation-capable repair paths.  Callers must use
 # ``mutation_authorized`` at the effect boundary rather than combining the
 # master and path flags themselves.
+#
+# L1 (repair-trigger) and L2 (meta-repair) were removed with the layered
+# repair stack.  Their path names are retained ONLY as retired identifiers so
+# surviving L1/L2 machinery can keep calling ``mutation_authorized`` and fail
+# closed (the path gate below has no entry for them); they must never gain a
+# gate again.
 MUTATION_PATH_L1 = "l1"
 MUTATION_PATH_L2 = "l2"
 MUTATION_PATH_L3 = "l3"
@@ -186,39 +187,14 @@ def escalation_ledger_enabled() -> bool:
 
 
 def autonomy_enabled() -> bool:
-    """Return ``True`` when autonomous trigger / meta / auditor actions are permitted.
+    """Return ``True`` when autonomous repair / auditor actions are permitted.
 
     Controlled by ``ARNOLD_AUTONOMY`` — defaults to OFF (``"0"``).
 
-    When disabled, trigger dispatch, meta-launch decisions, and auditor
-    autonomous intervention are all suppressed.  Only observe-only evidence
-    capture is allowed.
+    When disabled, repair dispatch and auditor autonomous intervention are
+    all suppressed.  Only observe-only evidence capture is allowed.
     """
     return _is_enabled("ARNOLD_AUTONOMY", False)
-
-
-def repair_trigger_enabled() -> bool:
-    """Return ``True`` when the L1 repair-trigger path is enabled.
-
-    Controlled by ``ARNOLD_REPAIR_TRIGGER_ENABLED`` — defaults to ON (``"1"``).
-
-    This is not mutation authority by itself; use :func:`mutation_authorized`
-    at a mutation boundary.
-    """
-    return _is_enabled("ARNOLD_REPAIR_TRIGGER_ENABLED", True)
-
-
-def meta_repair_enabled() -> bool:
-    """Return ``True`` when the L2 meta-repair path is enabled.
-
-    Controlled by ``ARNOLD_META_REPAIR_ENABLED`` — defaults to ON (``"1"``).
-
-    This is not mutation authority by itself; use :func:`mutation_authorized`
-    at a mutation boundary.  Meta-repair must still satisfy SUCCESS_OUTCOMES
-    verification through the ordinary repair loop — it cannot claim success
-    from process liveness alone.
-    """
-    return _is_enabled("ARNOLD_META_REPAIR_ENABLED", True)
 
 
 def audit_autofix_enabled() -> bool:
@@ -231,28 +207,6 @@ def audit_autofix_enabled() -> bool:
     this mutation authorization contract.
     """
     return _is_enabled("ARNOLD_AUDIT_AUTOFIX_ENABLED", True)
-
-
-def meta_repair_commit_enabled() -> bool:
-    """Return ``True`` when meta-repair is allowed to commit changes.
-
-    Controlled by ``ARNOLD_META_REPAIR_COMMIT_ENABLED`` — defaults to ON (``"1"``).
-
-    This remains a separate opt-out gate from ``ARNOLD_META_REPAIR_ENABLED`` so
-    operators can disable commits while leaving meta-repair diagnostics running.
-    """
-    return _is_enabled("ARNOLD_META_REPAIR_COMMIT_ENABLED", True)
-
-
-def meta_repair_push_enabled() -> bool:
-    """Return ``True`` when meta-repair is explicitly allowed to push changes.
-
-    Controlled by ``ARNOLD_META_REPAIR_PUSH_ENABLED`` and defaults OFF.  Push
-    is an externally consequential superset of a local commit, so autonomy and
-    commit authority must not imply it. A local commit grant must never silently
-    authorize a remote effect.
-    """
-    return _is_enabled("ARNOLD_META_REPAIR_PUSH_ENABLED", False)
 
 
 def audit_autofix_commit_enabled() -> bool:
@@ -281,18 +235,16 @@ def mutation_authorized(path: str) -> bool:
     """Return whether mutation is authorized for the named repair *path*.
 
     The default-off ``ARNOLD_AUTONOMY`` gate is the master authority for
-    L1/L2/L3 state, source, commit, and mutation-capable subprocess effects. A
-    path's own gate is necessary but insufficient: authorization requires both
-    gates. Push has an additional explicit gate because it is externally
-    consequential. Unknown paths fail closed.
+    state, source, commit, and mutation-capable subprocess effects.  A path's
+    own gate is necessary but insufficient: authorization requires both gates.
+    The L3 auditor-autofix path is the only surviving gate — the retired L1/L2
+    path names resolve to no gate and fail closed.  Unknown paths fail closed.
 
     This predicate deliberately does not gate observation, redaction, evidence
     capture, queue inspection, or reporting.  Those operations retain their
     independent feature flags and remain available while mutation is blocked.
     """
     path_gate = {
-        MUTATION_PATH_L1: repair_trigger_enabled,
-        MUTATION_PATH_L2: meta_repair_enabled,
         MUTATION_PATH_L3: audit_autofix_enabled,
     }.get(path)
     return autonomy_enabled() and path_gate is not None and path_gate()
@@ -301,11 +253,6 @@ def mutation_authorized(path: str) -> bool:
 def audit_autofix_mutation_authorized() -> bool:
     """Shell-friendly L3 authorization adapter for wrapper dispatch seams."""
     return mutation_authorized(MUTATION_PATH_L3)
-
-
-def meta_repair_mutation_authorized() -> bool:
-    """Shell-friendly L2 authorization adapter for wrapper dispatch seams."""
-    return mutation_authorized(MUTATION_PATH_L2)
 
 
 # ---------------------------------------------------------------------------
@@ -348,29 +295,9 @@ def repair_request_queue_on() -> bool:
     return repair_request_queue_enabled()
 
 
-def repair_trigger_on() -> bool:
-    """Alias for :func:`repair_trigger_enabled`."""
-    return repair_trigger_enabled()
-
-
-def meta_repair_on() -> bool:
-    """Alias for :func:`meta_repair_enabled`."""
-    return meta_repair_enabled()
-
-
 def audit_autofix_on() -> bool:
     """Alias for :func:`audit_autofix_enabled`."""
     return audit_autofix_enabled()
-
-
-def meta_repair_commit_on() -> bool:
-    """Alias for :func:`meta_repair_commit_enabled`."""
-    return meta_repair_commit_enabled()
-
-
-def meta_repair_push_on() -> bool:
-    """Alias for :func:`meta_repair_push_enabled`."""
-    return meta_repair_push_enabled()
 
 
 def audit_autofix_commit_on() -> bool:
@@ -388,13 +315,6 @@ __all__ = [
     "autonomy_on",
     "escalation_ledger_enabled",
     "escalation_ledger_on",
-    "meta_repair_commit_enabled",
-    "meta_repair_commit_on",
-    "meta_repair_push_enabled",
-    "meta_repair_push_on",
-    "meta_repair_enabled",
-    "meta_repair_mutation_authorized",
-    "meta_repair_on",
     "MUTATION_PATH_L1",
     "MUTATION_PATH_L2",
     "MUTATION_PATH_L3",
@@ -405,8 +325,6 @@ __all__ = [
     "redaction_on",
     "repair_request_queue_enabled",
     "repair_request_queue_on",
-    "repair_trigger_enabled",
-    "repair_trigger_on",
     "resolver_enforcement_enabled",
     "resolver_enforcement_on",
     "resolver_observe_enabled",

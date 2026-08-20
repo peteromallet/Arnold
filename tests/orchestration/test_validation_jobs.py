@@ -333,6 +333,78 @@ class TestSelectorLifecycleOwnership:
             )
             assert lifecycle.status == SELECTOR_INVALID
 
+    def test_missing_node_with_declared_file_is_deferred(self, tmp_path: Path) -> None:
+        """Planned-created node in a file the task edits -> deferred."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            SELECTOR_DEFERRED,
+            classify_selector_lifecycle,
+        )
+
+        repo = tmp_path / "repo"
+        (repo / "tests").mkdir(parents=True)
+        (repo / "tests" / "test_a.py").write_text(
+            "def test_foo():\n    pass\n", encoding="utf-8"
+        )
+        task = {"write_set": {"paths": ["tests/test_a.py"]}}
+
+        lifecycle = classify_selector_lifecycle(
+            project_dir=repo,
+            job={"selectors": ["tests/test_a.py::test_new"]},
+            task=task,
+        )
+
+        assert lifecycle.status == SELECTOR_DEFERRED
+        assert lifecycle.missing_selectors == ("tests/test_a.py::test_new",)
+
+    def test_missing_node_with_undeclared_file_is_invalid(
+        self, tmp_path: Path
+    ) -> None:
+        """Missing node whose file is not declared -> invalid (fail closed)."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            SELECTOR_INVALID,
+            classify_selector_lifecycle,
+        )
+
+        repo = tmp_path / "repo"
+        (repo / "tests").mkdir(parents=True)
+        (repo / "tests" / "test_a.py").write_text(
+            "def test_foo():\n    pass\n", encoding="utf-8"
+        )
+        task = {"write_set": {"paths": ["src/owned.py"]}}
+
+        lifecycle = classify_selector_lifecycle(
+            project_dir=repo,
+            job={"selectors": ["tests/test_a.py::test_new"]},
+            task=task,
+        )
+
+        assert lifecycle.status == SELECTOR_INVALID
+        assert lifecycle.missing_selectors == ("tests/test_a.py::test_new",)
+        assert lifecycle.undeclared_missing_selectors == ("tests/test_a.py",)
+
+    def test_existing_node_is_ready(self, tmp_path: Path) -> None:
+        """Node defined in source -> ready, even with a declared write set."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            SELECTOR_READY,
+            classify_selector_lifecycle,
+        )
+
+        repo = tmp_path / "repo"
+        (repo / "tests").mkdir(parents=True)
+        (repo / "tests" / "test_a.py").write_text(
+            "def test_foo():\n    pass\n", encoding="utf-8"
+        )
+        task = {"write_set": {"paths": ["tests/test_a.py"]}}
+
+        lifecycle = classify_selector_lifecycle(
+            project_dir=repo,
+            job={"selectors": ["tests/test_a.py::test_foo"]},
+            task=task,
+        )
+
+        assert lifecycle.status == SELECTOR_READY
+        assert lifecycle.missing_selectors == ()
+
 
 # ---------------------------------------------------------------------------
 # Content-addressed evidence — deterministic and durable

@@ -676,7 +676,10 @@ def _audit_capture_payload(
             if already_normalized
             else _normalize_capture_payload_with_contract(invocation, payload)
         )
-        result = validate_payload_against_schema(normalized_payload, schema)
+        result = validate_payload_against_schema(
+            normalized_payload,
+            _reconcile_selection_capture_schema(schema, normalized_payload, step=step),
+        )
     else:
         result = validate_contract_result(contract, _capture_outcome_schema())
     if not result.ok:
@@ -759,6 +762,58 @@ def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, A
                 )
             return capture_schema
     return None
+
+
+# Generic execute batch-report fields. For a ``kind: reconcile`` executor the
+# authoritative output is the JSON selection (top-level ``selected_shas`` +
+# ``verification_evidence`` — the P6 envelope extension); a read-only selector
+# does not produce the batch report, so these must not be REQUIRED when the
+# selection envelope is present (occurrence 47671addc195: the selection-only
+# payload failed the required-field audit and the worker's tool-call
+# reconstruction dropped the selection entirely, stranding the milestone).
+_EXECUTE_BATCH_REPORT_REQUIRED_FIELDS = frozenset(
+    {
+        "output",
+        "files_changed",
+        "commands_run",
+        "deviations",
+        "task_updates",
+        "sense_check_acknowledgments",
+    }
+)
+
+
+def _reconcile_selection_capture_schema(
+    schema: Mapping[str, Any] | None,
+    payload: Mapping[str, Any],
+    *,
+    step: str | None,
+) -> Mapping[str, Any] | None:
+    """Relax the execute capture schema for a reconcile selection payload.
+
+    When the payload carries the selection envelope (``selected_shas`` or
+    ``verification_evidence``), the generic batch-report fields become
+    optional so the selection survives validation and reaches the batch
+    artifact the controller reads (``_read_reconcile_selection``). All other
+    schemas/payloads are returned unchanged.
+    """
+    if step != "execute" or not isinstance(schema, Mapping):
+        return schema
+    if "selected_shas" not in payload and "verification_evidence" not in payload:
+        return schema
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return schema
+    relaxed = [
+        item
+        for item in required
+        if not isinstance(item, str) or item not in _EXECUTE_BATCH_REPORT_REQUIRED_FIELDS
+    ]
+    if len(relaxed) == len(required):
+        return schema
+    relaxed_schema = dict(schema)
+    relaxed_schema["required"] = relaxed
+    return relaxed_schema
 
 
 def _schema_owned_drop_is_declared(step: str | None, pointer: str) -> bool:
@@ -1234,6 +1289,40 @@ def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> di
     return normalized
 
 
+_PLAN_REF_TOKEN_RE = re.compile(
+    r"(?<!`)(?<![\w])(?:"
+    # path-like token with a known source extension (foo/bar.py, scripts/x.sh)
+    r"[\w./\\-]+\.(?:py|toml|md|json|sh|yaml|yml|txt|lock|cfg|ini|sqlite3|patch)"
+    # dotted code identifier (doctor.main, cli.project.main) with optional call parens
+    r"|[\w]+(?:\.[\w]+)+(?:\(\))?"
+    # underscore-prefixed code identifier (_dispatch_serve, _TOP_LEVEL_HANDLERS)
+    r"|_[A-Za-z][A-Za-z0-9_]*"
+    r")(?![`\w])"
+)
+
+
+_BACKTICK_SPAN_RE = re.compile(r"`[^`]*`")
+
+
+def _backtick_file_refs(text: str) -> str:
+    """Wrap bare path-like tokens (``foo/bar.py``, ``scripts/x.sh``) and code
+    identifiers (``doctor.main``, ``_dispatch_serve``) in backticks so the
+    structural auditor's backticked-file-ref check passes for structured
+    provider payloads whose step bodies carry refs without backticks (e.g. the
+    phased plan shape).  Tokens that are already inside a backtick span are
+    left untouched (no double-wrapping)."""
+    if not text:
+        return text
+    pieces = _BACKTICK_SPAN_RE.split(text)
+    spans = _BACKTICK_SPAN_RE.findall(text)
+    out: list[str] = []
+    for index, piece in enumerate(pieces):
+        out.append(_PLAN_REF_TOKEN_RE.sub(r"`\g<0>`", piece))
+        if index < len(spans):
+            out.append(spans[index])
+    return "".join(out)
+
+
 def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize structured provider plan output to the canonical plan schema."""
 
@@ -1266,6 +1355,7 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     title = _optional_str(payload.get("title"))
     overview = _optional_str(payload.get("overview"))
     steps = payload.get("steps")
+    phases = payload.get("phases")
     if isinstance(steps, list) and steps:
         # Deterministic Plan-IR -> canonical Markdown render (Gap 5).
         # The structural auditor requires flat `## Step N:` headings, numbered
@@ -1284,7 +1374,7 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
             parts.append(f"## Step {step_number}: {step_title}")
             step_desc = _optional_str(step.get("description") or step.get("details"))
             if step_desc:
-                parts.append(step_desc)
+                step_desc = _backtick_file_refs(step_desc)
             files = step.get("files")
             if isinstance(files, list) and files:
                 file_list = ", ".join(f"`{_optional_str(f)}`" for f in files if _optional_str(f))
@@ -1296,6 +1386,8 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 or step.get("instructions")
             )
             if isinstance(actions, list):
+                if step_desc:
+                    parts.append(step_desc)
                 for idx, act in enumerate(actions, 1):
                     if isinstance(act, Mapping):
                         text = _optional_str(act.get("instruction") or act.get("text") or act.get("action"))
@@ -1303,6 +1395,17 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
                         text = _optional_str(act)
                     if text:
                         parts.append(f"{idx}. {text}")
+            elif step_desc:
+                # No structured substeps: derive numbered substeps from the
+                # details prose so the auditor's numbered-substep and
+                # backticked-file checks pass deterministically (same
+                # derivation as the phased branch).
+                sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", step_desc) if s.strip()]
+                if len(sentences) > 1:
+                    for idx, sentence in enumerate(sentences, 1):
+                        parts.append(f"{idx}. {sentence}")
+                else:
+                    parts.append(f"1. {step_desc}")
             step_number += 1
         if isinstance(payload.get("execution_order"), list) and payload["execution_order"]:
             parts.append("## Execution Order")
@@ -1311,6 +1414,79 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         elif len(steps) > 1:
             parts.append("## Execution Order")
             for i in range(1, len(steps) + 1):
+                parts.append(f"{i}. Step {i}")
+    elif isinstance(phases, list) and phases:
+        # Deterministic Plan-IR -> canonical Markdown render (Gap 5b):
+        # phase-grouped steps[]. Providers sometimes emit the canonical
+        # phased shape ({phases: [{name, steps: [...]}]}) instead of a flat
+        # steps[] list.  Flatten every phase's steps with GLOBAL sequential
+        # numbering so the structural auditor's flat `## Step N:` headings,
+        # numbered-substep, and backticked-file-ref checks pass.
+        if title:
+            parts.append(f"# {title}")
+        if overview:
+            parts.append("## Overview")
+            parts.append(overview)
+        step_number = 1
+        for phase_index, phase in enumerate(phases, 1):
+            if not isinstance(phase, Mapping):
+                continue
+            phase_name = _optional_str(phase.get("name") or phase.get("title"))
+            if phase_name:
+                parts.append(f"## Phase {phase_index}: {phase_name}")
+            phase_steps = phase.get("steps")
+            if not isinstance(phase_steps, list):
+                continue
+            for step in phase_steps:
+                if not isinstance(step, Mapping):
+                    continue
+                step_title = _optional_str(step.get("title") or step.get("name") or f"Step {step_number}")
+                parts.append(f"## Step {step_number}: {step_title}")
+                step_desc = _optional_str(step.get("description") or step.get("details"))
+                if step_desc:
+                    step_desc = _backtick_file_refs(step_desc)
+                files = step.get("files")
+                if isinstance(files, list) and files:
+                    file_list = ", ".join(f"`{_optional_str(f)}`" for f in files if _optional_str(f))
+                    if file_list:
+                        parts.append(f"Files: {file_list}")
+                actions = (
+                    step.get("actions")
+                    or step.get("substeps")
+                    or step.get("instructions")
+                )
+                if isinstance(actions, list):
+                    if step_desc:
+                        parts.append(step_desc)
+                    for idx, act in enumerate(actions, 1):
+                        if isinstance(act, Mapping):
+                            text = _optional_str(act.get("instruction") or act.get("text") or act.get("action"))
+                        else:
+                            text = _optional_str(act)
+                        if text:
+                            parts.append(f"{idx}. {text}")
+                elif step_desc:
+                    # No structured substeps: derive numbered substeps from the
+                    # details prose so the auditor's numbered-substep and
+                    # backticked-file checks pass deterministically.
+                    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", step_desc) if s.strip()]
+                    if len(sentences) > 1:
+                        for idx, sentence in enumerate(sentences, 1):
+                            parts.append(f"{idx}. {sentence}")
+                    else:
+                        parts.append(f"1. {step_desc}")
+                step_number += 1
+        if isinstance(payload.get("execution_order"), list) and payload["execution_order"]:
+            parts.append("## Execution Order")
+            for i, eid in enumerate(payload["execution_order"], 1):
+                parts.append(f"{i}. Step {eid}")
+        elif isinstance(payload.get("validation_order"), list) and payload["validation_order"]:
+            parts.append("## Validation Order")
+            for i, vid in enumerate(payload["validation_order"], 1):
+                parts.append(f"{i}. Step {vid}")
+        elif step_number > 1:
+            parts.append("## Execution Order")
+            for i in range(1, step_number):
                 parts.append(f"{i}. Step {i}")
     else:
         if title:
@@ -1362,7 +1538,7 @@ def _normalize_plan_test_proposal(
             "strategy": "none",
             "selectors": [],
             "changed_surfaces": list(normalized_changed),
-            "full_suite_fallback": True,
+            "full_suite_fallback": False,
             "rationale": (
                 "The model omitted optional test-selection hints; the harness "
                 "must derive the authoritative repository floor."

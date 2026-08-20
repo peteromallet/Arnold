@@ -908,9 +908,10 @@ def adopt_occurrence(
     record_path = adoption_record_path(plan_dir, adoption_record_id)
 
     # ── Receipt destination guard (read-only; fail closed before ANY write) ─
-    queue_root = repair_requests.validate_queue_root(
-        project_dir / ".megaplan" / "repair-queue"
-    )
+    # T-0640 D1: the queue root resolves from ARNOLD_REPAIR_QUEUE_ROOT else
+    # the marker-adjacent box-central queue (never project_dir — a per-epic
+    # checkout queue is invisible to the box-central G14/watchdog paths).
+    queue_root = repair_requests.resolve_aligned_repair_queue_root()
     receipt_final = _validate_receipt_destination(
         Path(receipt_path).expanduser() if receipt_path else None,
         plan_dir=plan_dir,

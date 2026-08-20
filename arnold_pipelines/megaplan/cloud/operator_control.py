@@ -64,7 +64,7 @@ def _stop_owned_pidfile(path: Path, *, session: str) -> bool:
     except (OSError, ValueError):
         return False
     if session not in cmdline or not any(
-        token in cmdline for token in ("arnold-repair-loop", "arnold-meta-repair-loop")
+        token in cmdline for token in ("arnold-babysitter",)
     ):
         return False
     try:

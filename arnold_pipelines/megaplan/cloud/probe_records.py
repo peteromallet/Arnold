@@ -86,8 +86,6 @@ VERIFICATION_PROBES: tuple[ProbeRecord, ...] = (
         "zero hits in the resident / subagent / worker paths.",
         evidence=[
             "arnold_pipelines/megaplan/cloud/meta_repair.py:42-45 uses fixer_prompt_policy",
-            "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop:7329,7339,7349 "
-            "render policy",
             "zero fixer_prompt_policy references in resident / subagent / worker paths",
         ],
         verified_at="2026-08-07",

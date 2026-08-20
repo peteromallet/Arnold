@@ -61,6 +61,12 @@ from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
     TaskSatisfactionResult,
     is_task_satisfied,
 )
+
+# Terminal worker-reported receipt statuses that constitute a durable accepted
+# attempt (mirrors execute/batch.py ACCEPTED_RECEIPT_STATUSES).
+ACCEPTED_RECEIPT_STATUSES: frozenset[str] = frozenset(
+    {"done", "completed", "skipped"}
+)
 from arnold_pipelines.run_authority import (
     CASExpectation,
     ContractError,
@@ -678,7 +684,11 @@ def _collect_accepted_attempt_authority(
     run_identity: tuple[str, str] | None = None
     saw_validation_projection = False
 
-    collected_subject_ids: set[str] = set()
+    # Newest-wave-first shadow set: every subject row seen so far (newest
+    # waves first).  A newer dispatch row shadows older rows for the same
+    # subject even when the newer row is hollow/nonterminal, so an older
+    # accepted attempt can never outrank newer authority.
+    seen_subject_ids: set[str] = set()
     for artifact_path in _all_batch_artifact_waves_sorted(plan_dir):
         try:
             payload = json.loads(artifact_path.read_text(encoding="utf-8"))
@@ -696,31 +706,84 @@ def _collect_accepted_attempt_authority(
             continue
         identity = resolution.metadata.dispatch_identity
         run_identity = run_identity or (identity.run_id, identity.run_revision)
+        wave_scope = set(identity.subject_ids)
+        batch_scope = payload.get("batch_scope")
+        if isinstance(batch_scope, Mapping):
+            wave_scope.update(_string_values(batch_scope.get("task_ids")))
         envelopes = resolution.metadata.result_envelopes
         by_digest = {envelope.digest(): envelope for envelope in envelopes}
         by_subject: dict[str, list[ResultEnvelope]] = {}
         for envelope in envelopes:
             by_subject.setdefault(envelope.subject_id, []).append(envelope)
         for entry in _task_entries(payload):
-            validation = entry.get("authority_validation")
-            if not isinstance(validation, Mapping):
+            # Newest-wave-first ordering: a newer dispatch row for a subject
+            # shadows ANY older row for the same subject, even when the newer
+            # row is pending/hollow/nonterminal — an older accepted attempt
+            # must never outrank newer authority.  Shadowing happens before
+            # the acceptance filter so a hollow newer row suppresses fallback
+            # to an older accepted terminal row.
+            raw_validation = entry.get("authority_validation")
+            if isinstance(raw_validation, Mapping):
+                entry_subject = _optional_str(
+                    raw_validation.get("subject_id")
+                    or entry.get("task_id")
+                    or entry.get("id")
+                )
+            else:
+                entry_subject = _optional_str(entry.get("task_id") or entry.get("id"))
+            if entry_subject is None:
                 continue
-            outcome = _optional_str(validation.get("outcome"))
-            if outcome:
+            # Any durable validation selects the strict projection, including
+            # rejected off-scope rows; off-scope rows must not shadow subjects
+            # (they hold no dispatch authority over that subject).
+            if (
+                isinstance(raw_validation, Mapping)
+                and _optional_str(raw_validation.get("outcome"))
+            ):
                 saw_validation_projection = True
+            if entry_subject not in wave_scope:
+                continue
+            if entry_subject in seen_subject_ids:
+                continue
+            seen_subject_ids.add(entry_subject)
+            if not isinstance(raw_validation, Mapping):
+                continue
+            outcome = _optional_str(raw_validation.get("outcome"))
             if outcome != "accepted":
                 continue
-            envelope = _entry_envelope(entry, validation, by_digest, by_subject)
+            envelope = _entry_envelope(entry, raw_validation, by_digest, by_subject)
             if envelope is None or not isinstance(envelope.claim, TaskClaim):
-                continue
-            if envelope.subject_id in collected_subject_ids:
                 continue
             if (envelope.run_id, envelope.run_revision) != run_identity:
                 continue
             try:
-                decision = _accepted_projection_decision(envelope, validation, source)
+                decision = _accepted_projection_decision(envelope, raw_validation, source)
             except ContractError:
                 continue
+            if decision is None:
+                # Validation-only (hollow) row: no explicit grant-aware
+                # accepted decision — must not suppress dispatch or clear
+                # authority gates.  EXCEPTION (occurrence 927ad612eda8,
+                # live regression 2026-08-19T12:12Z): a budget-killed wave
+                # (the worker is forced to return blocked by the
+                # max_seconds cap, so its envelope attempt is non-terminal)
+                # is hollow here and shadows older accepted waves, dropping
+                # the task from the accepted-attempt projection and keeping
+                # execute completion blocked forever even after D2
+                # reconciled the block.  A durable budget-debt ACCEPTANCE
+                # receipt (verification/task_budget_acceptance_<task-id>_*
+                # .json, disposition=accepted_with_debt) is kernel evidence
+                # that a current binding-valid strict pass discharged the
+                # cumulative-time block, so the receipt-holding subject's
+                # accepted attempt is minted.
+                if _budget_debt_acceptance_receipt_exists(
+                    plan_dir, entry_subject
+                ):
+                    decision = _mint_accepted_projection_decision(
+                        envelope, raw_validation, source
+                    )
+                else:
+                    continue
             # CAS expectations are dispatch-time preconditions, not durable
             # run-authority ledger facts. Feeding one to reduce_run_authority
             # makes the accepted-attempt projection fail closed even though
@@ -731,7 +794,6 @@ def _collect_accepted_attempt_authority(
                 if not isinstance(record, CASExpectation)
             )
             authority_records.extend((decision.idempotency, decision))
-            collected_subject_ids.add(envelope.subject_id)
             evidence_decisions[envelope.subject_id] = AuthorityDecision(
                 task_id=envelope.subject_id,
                 status=EvidenceStatus.satisfied,
@@ -740,7 +802,7 @@ def _collect_accepted_attempt_authority(
                     "execute_completion": "accepted_attempt_projection",
                     "source_path": source,
                     "envelope_digest": envelope.digest(),
-                    "authority_validation": dict(validation),
+                    "authority_validation": dict(raw_validation),
                 },
             )
 
@@ -806,13 +868,47 @@ def _accepted_projection_decision(
     envelope: ResultEnvelope,
     validation: Mapping[str, Any],
     source: str,
-) -> TaskValidationDecision:
+) -> TaskValidationDecision | None:
+    """Return the explicit grant-aware decision for an envelope, or ``None``.
+
+    Acceptance is never synthesized from validation alone: a durable accepted
+    attempt requires a canonical terminal attempt status (done/completed/
+    skipped) carried by the envelope's own evidence/claim payload **and** an
+    explicit grant-aware decision whose outcome is ``accepted``.  The
+    grant-aware decision is the merge-time ``authority_validation`` mapping
+    recorded on the task row (``GrantAwareValidationDecision``); the
+    envelope-level ``decision`` field is used when present but is *not*
+    required (the runtime does not stamp envelope-level decisions).  A
+    validation-only row whose envelope lacks a canonical terminal status is a
+    hollow shadow-wave artifact and is rejected so it cannot suppress dispatch
+    or clear authority gates.
+    """
+    if _envelope_terminal_attempt_status(envelope) is None:
+        return None
     if envelope.decision is not None:
-        return (
+        decision = (
             envelope.decision
             if isinstance(envelope.decision, TaskValidationDecision)
             else TaskValidationDecision.from_dict(envelope.decision.to_dict())
         )
+        if decision.outcome != "accepted":
+            return None
+        return decision
+    return _mint_accepted_projection_decision(envelope, validation, source)
+
+
+def _mint_accepted_projection_decision(
+    envelope: ResultEnvelope,
+    validation: Mapping[str, Any],
+    source: str,
+) -> TaskValidationDecision:
+    """Mint the grant-aware accepted decision for a validated envelope.
+
+    Used by :func:`_accepted_projection_decision` for envelopes without an
+    explicit envelope-level decision, and by the authority collector for
+    budget-debt-reconciled (receipt-holding) budget-killed waves whose
+    envelope attempt is non-terminal (occurrence 927ad612eda8).
+    """
     payload = {
         "reason": _optional_str(validation.get("reason")) or "accepted_attempt_projection",
         "source_path": source,
@@ -828,13 +924,79 @@ def _accepted_projection_decision(
         attempt_id=envelope.attempt.attempt_id,
         grant_id=envelope.dispatch_id,
         coordinator_attempt_id=envelope.dispatch.coordinator_attempt_id,
-        fence_token=envelope.dispatch.fence_token,
+        fence_token=envelope.dispatch.fence.token,
         claim_id=envelope.claim.claim_id,
         outcome="accepted",
         evidence_ids=envelope.evidence_ids,
         idempotency_key=decision_id,
         payload=payload,
     )
+
+
+def _budget_debt_acceptance_receipt_exists(
+    plan_dir: Path, task_id: str
+) -> bool:
+    """True when a durable budget-debt acceptance receipt exists for a task.
+
+    ``verification/task_budget_acceptance_<task-id>_*.json`` receipts are
+    written by the execute reconciler ONLY after a binding-valid current
+    strict pass discharged a cumulative-time-only budget block (occurrence
+    927ad612eda8).  Their existence is kernel evidence that a budget-killed
+    (non-terminal) accepted wave was reconciled; the accepted-attempt
+    projection honors it so the task counts as dependency-closed completed.
+    """
+    try:
+        verification_dir = Path(plan_dir) / "verification"
+        for receipt in verification_dir.glob(
+            f"task_budget_acceptance_{task_id}_*.json"
+        ):
+            try:
+                data = json.loads(receipt.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                continue
+            if (
+                isinstance(data, dict)
+                and data.get("task_id") == task_id
+                and data.get("disposition") == "accepted_with_debt"
+            ):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _envelope_terminal_attempt_status(
+    envelope: ResultEnvelope,
+) -> str | None:
+    """Canonical worker attempt status from the envelope's claim/evidence.
+
+    Mirrors ``batch._persisted_envelope_dict_status``: the durable status is the
+    worker-reported result status carried in the evidence payload (with the
+    claim payload status as a fallback).  Only terminal statuses
+    (done/completed/skipped) satisfy the accepted-attempt projection.
+    """
+    for candidate in (
+        _evidence_result_status(envelope),
+        _optional_str(envelope.claim.payload.get("status")),
+    ):
+        if candidate in ACCEPTED_RECEIPT_STATUSES:
+            return candidate
+    return None
+
+
+def _evidence_result_status(envelope: ResultEnvelope) -> str | None:
+    for evidence in envelope.evidence:
+        payload = evidence.payload
+        if not isinstance(payload, Mapping):
+            continue
+        result = payload.get("result")
+        if not isinstance(result, Mapping):
+            continue
+        status = _optional_str(result.get("status"))
+        if status is not None:
+            return status
+    return None
+
 
 
 def _json_safe_mapping(value: Mapping[str, Any]) -> dict[str, Any]:

@@ -8,12 +8,47 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from arnold_pipelines.megaplan.orchestration.external_gates import (
+    is_external_human_rework_item,
+)
+
 
 PASS_STATUSES = frozenset({"pass", "passed", "success", "succeeded", "green", "0"})
 FAIL_STATUSES = frozenset({"fail", "failed", "failure", "red", "1", "nonzero"})
 ACCEPTED_DEBT_SOURCES = frozenset(
     {"accepted_debt", "accepted_tradeoff", "accepted_non_action"}
 )
+
+
+def _normalized_check_status(value: object) -> str:
+    """Normalize a check-status string for set/prefix matching.
+
+    Mirrors ``handlers/review.py:_failed_check_status`` so that a status
+    carrying an evidence parenthetical (e.g. ``failed (AssertionError: ...)``)
+    is recognized as the same outcome as the bare token ``failed`` instead of
+    being mislabeled ``accepted_task_reopen_unproven``.
+    """
+    return (
+        str(value or "")
+        .strip()
+        .casefold()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+
+
+def _is_failed_check_status(value: object) -> bool:
+    normalized = _normalized_check_status(value)
+    return normalized in FAIL_STATUSES or any(
+        normalized.startswith(f"{status}_") for status in FAIL_STATUSES
+    )
+
+
+def _is_passed_check_status(value: object) -> bool:
+    normalized = _normalized_check_status(value)
+    return normalized in PASS_STATUSES or any(
+        normalized.startswith(f"{status}_") for status in PASS_STATUSES
+    )
 
 
 def _digest(value: object) -> str:
@@ -50,8 +85,9 @@ class ReworkAdmission:
     runnable_task_ids: tuple[str, ...]
     suppressed_task_ids: tuple[str, ...]
     validation_jobs: tuple[Mapping[str, Any], ...]
-    blockers: tuple[Mapping[str, Any], ...]
-    dispositions: tuple[Mapping[str, Any], ...]
+    external_gates: tuple[Mapping[str, Any], ...] = ()
+    blockers: tuple[Mapping[str, Any], ...] = ()
+    dispositions: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def admitted(self) -> bool:
@@ -66,6 +102,7 @@ class ReworkAdmission:
             "runnable_task_ids": list(self.runnable_task_ids),
             "suppressed_task_ids": list(self.suppressed_task_ids),
             "validation_jobs": [dict(row) for row in self.validation_jobs],
+            "external_gates": [dict(row) for row in self.external_gates],
             "blockers": [dict(row) for row in self.blockers],
             "dispositions": [dict(row) for row in self.dispositions],
             "admitted": self.admitted,
@@ -97,6 +134,7 @@ def reconcile_review_rework(
     runnable: list[str] = []
     suppressed: list[str] = []
     jobs: list[Mapping[str, Any]] = []
+    external_gates: list[Mapping[str, Any]] = []
     blockers: list[Mapping[str, Any]] = []
     dispositions: list[Mapping[str, Any]] = []
 
@@ -120,7 +158,15 @@ def reconcile_review_rework(
         task_ids, kind = target_task_ids(raw)
         requested.extend(task_ids)
         missing = [task_id for task_id in task_ids if task_id not in known_task_ids]
-        if not task_ids or missing:
+        check = raw.get("deterministic_check")
+        check = check if isinstance(check, Mapping) else None
+        command = str(check.get("command") or "").strip() if check else ""
+        post_status = str(check.get("post_status") or "").strip().lower() if check else ""
+        # Taskless manifest/bulk/global items carrying a deterministic check are
+        # verifiable as validation jobs (e.g. a dangling artifact anchor whose
+        # file now exists). Only items with NO derivable target AND no check are
+        # structurally unroutable -> rework_target_unknown.
+        if (not task_ids or missing) and not (kind in {"bulk", "manifest", "global"} and command):
             blockers.append(
                 {
                     "code": "rework_target_unknown",
@@ -130,11 +176,6 @@ def reconcile_review_rework(
                 }
             )
             continue
-
-        check = raw.get("deterministic_check")
-        check = check if isinstance(check, Mapping) else None
-        command = str(check.get("command") or "").strip() if check else ""
-        post_status = str(check.get("post_status") or "").strip().lower() if check else ""
         accepted_ids = [task_id for task_id in task_ids if task_id in accepted_task_ids]
         open_ids = [task_id for task_id in task_ids if task_id not in accepted_task_ids]
 
@@ -144,6 +185,33 @@ def reconcile_review_rework(
                 if isinstance(raw.get("target"), Mapping)
                 else ""
             ) or f"review-validation-{index + 1}"
+            # Human-gate items (NSA-1 / add_human_halt / north-star-human-halt) are
+            # EXTERNAL gates, not bounded validation jobs: their deterministic check
+            # fails by design until a human records an acceptance decision, and they
+            # must not pre-empt runnable actionable rework or open the quality circuit.
+            human_gate = is_external_human_rework_item(raw)
+            if human_gate:
+                external_gates.append(
+                    {
+                        "id": job_id,
+                        "command": command,
+                        "task_ids": task_ids,
+                        "source_item_index": index,
+                        "authority_digest": authority_digest,
+                        "agent_actionable": False,
+                        "reason": "requires an explicit human acceptance decision",
+                    }
+                )
+                suppressed.extend(accepted_ids)
+                dispositions.append(
+                    {
+                        "item_index": index,
+                        "disposition": "external_gate_deferred",
+                        "task_ids": task_ids,
+                        "external_gate_id": job_id,
+                    }
+                )
+                continue
             jobs.append(
                 {
                     "id": job_id,
@@ -186,7 +254,7 @@ def reconcile_review_rework(
                     "task_ids": accepted_ids,
                 }
             )
-        elif post_status in FAIL_STATUSES:
+        elif _is_failed_check_status(post_status):
             runnable.extend(accepted_ids)
             dispositions.append(
                 {
@@ -196,7 +264,7 @@ def reconcile_review_rework(
                     "deterministic_check": command,
                 }
             )
-        elif post_status in PASS_STATUSES:
+        elif _is_passed_check_status(post_status):
             suppressed.extend(accepted_ids)
             dispositions.append(
                 {
@@ -222,6 +290,7 @@ def reconcile_review_rework(
         runnable_task_ids=tuple(dict.fromkeys(runnable)),
         suppressed_task_ids=tuple(dict.fromkeys(suppressed)),
         validation_jobs=tuple(jobs),
+        external_gates=tuple(external_gates),
         blockers=tuple(blockers),
         dispositions=tuple(dispositions),
     )

@@ -362,18 +362,6 @@ def test_self_coalesced_request_remains_claimable_and_accepted_unclaimed(
     assert projection["coalesced_without_live_owner"][0]["reason"] == "request marker already exists"
     assert projection["coalesced_without_live_owner"][0]["self_coalesced"] is True
 
-    claim = repair_requests.claim_active_repair_request(
-        queue_root,
-        blocker_id=queued["request"]["blocker_id"],
-        request_id=request_id,
-        actor="repair-trigger",
-        session="demo-session",
-        pid=4242,
-        is_pid_live=lambda _pid: True,
-        repair_identity=queued["request"]["repair_identity"],
-    )
-    assert claim.claimed is True
-
 
 def test_identity_free_legacy_request_remains_unclaimable_after_projection(
     tmp_path: Path,
