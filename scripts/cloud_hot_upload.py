@@ -38,12 +38,8 @@ KNOWN_SESSION_COMMANDS = {
 FORBIDDEN_LEGACY_BIN_PATHS: tuple[str, ...] = (
     "/usr/local/bin/arnold-watchdog",
     "/usr/local/bin/arnold-heartbeat",
-    "/usr/local/bin/arnold-repair-trigger",
-    "/usr/local/bin/arnold-repair-loop",
-    "/usr/local/bin/arnold-meta-repair-loop",
     "/usr/local/bin/arnold-progress-auditor",
     "/usr/local/bin/arnold-supervise",
-    "/usr/local/bin/arnold-kimi-goal-operator",
 )
 
 FORBIDDEN_LEGACY_BIN_PREFIXES: tuple[str, ...] = (

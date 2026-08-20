@@ -1,1 +1,1 @@
-../../data/tickets_skill.md
+/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-r/arnold_pipelines/megaplan/data/tickets_skill.md

@@ -125,7 +125,7 @@ _SOFT_SLOTS: frozenset[str] = frozenset({"feedback"})
 _VENDOR_FALLBACK_PROFILES: tuple[tuple[str, str, str], ...] = (
     # (env var present → recommend this profile → one-line why)
     ("ANTHROPIC_API_KEY", "all-claude", "Claude-only, every phase on Anthropic"),
-    ("OPENAI_API_KEY", "all-codex", "Codex-only, every phase on OpenAI"),
+    ("OPENAI_API_KEY", "partnered-codex", "Codex-only, every phase on OpenAI"),
 )
 
 
@@ -173,7 +173,7 @@ def _credential_guidance(profile_name: str) -> list[str]:
         # profiles to fix this" loop.
         lines.append("No model credentials found. Set at least one of:")
         lines.append("  • ANTHROPIC_API_KEY — Claude (profile all-claude)")
-        lines.append("  • OPENAI_API_KEY — Codex (profile all-codex)")
+        lines.append("  • OPENAI_API_KEY — Codex (profile partnered-codex)")
         lines.append(
             "  • DEEPSEEK_API_KEY (https://platform.deepseek.com) or "
             "FIREWORKS_API_KEY — DeepSeek; the cheapest option and what the "

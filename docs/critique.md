@@ -57,13 +57,14 @@ The shipped profiles set the field as follows (each profile's `.toml`):
 | Profile | `adaptive_critique` | Source |
 |---|---|---|
 | `partnered` | **on** | `profiles/partnered.toml:42` |
+| `partnered-codex` | **on** | `profiles/partnered-codex.toml:9` |
 | `premium` | **on** | `profiles/premium.toml:32` |
 | `apex` | **on** | `profiles/apex.toml:36` |
 | `solo` | **off** (field omitted → global default `False`) | `profiles/solo.toml` |
 | `directed` | **off** (field omitted → global default `False`) | `profiles/directed.toml` |
-| `all-claude`, `all-codex`, `all-deepseek-*`, `all-open`, `all-fireworks-deepseek`, `arnold-openrouter`, `variable*` | **off** (field omitted) | respective `.toml` |
+| `all-claude`, `all-deepseek-*`, `all-open`, `all-fireworks-deepseek`, `arnold-openrouter`, `variable*` | **off** (field omitted) | respective `.toml` |
 
-So the docs' historical claim — "on for partnered/premium/apex, off for
+So the docs' historical claim — "on for partnered-family/premium/apex, off for
 solo/directed" — is still accurate, and the single-vendor / open-only profiles
 are likewise off. Open-only profiles omit the field deliberately: there is no
 premium model in those tiers to direct with, and defaulting it on would force a

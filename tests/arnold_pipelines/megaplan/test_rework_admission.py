@@ -81,6 +81,71 @@ def test_fresh_regressions_reopen_as_new_generations() -> None:
     )
 
 
+def test_failed_with_parenthetical_reopens_as_new_generation() -> None:
+    # Reviewer wrote a status with an evidence parenthetical; the matcher must
+    # recognize it as failed (mirroring handlers/review.py) instead of
+    # mislabeling it accepted_task_reopen_unproven.
+    review = {
+        "rework_items": [
+            _item(
+                "T15",
+                post_status="failed (AssertionError: extra public has_event, stream_row, tail_event)",
+            )
+        ]
+    }
+
+    result = reconcile_review_rework(
+        review,
+        known_task_ids={"T15"},
+        accepted_task_ids={"T15"},
+        authority_revision="current",
+        review_revision="current",
+    )
+
+    assert result.admitted is True
+    assert result.runnable_task_ids == ("T15",)
+    assert result.blockers == ()
+    assert result.dispositions[0]["disposition"] == "new_regression_generation"
+
+
+def test_passed_with_parenthetical_is_satisfied() -> None:
+    review = {
+        "rework_items": [
+            _item("T15", post_status="passed (all green)")
+        ]
+    }
+
+    result = reconcile_review_rework(
+        review,
+        known_task_ids={"T15"},
+        accepted_task_ids={"T15"},
+        authority_revision="current",
+        review_revision="current",
+    )
+
+    assert result.admitted is True
+    assert result.runnable_task_ids == ()
+    assert result.dispositions[0]["disposition"] == "current_authority_satisfies_obligation"
+
+
+def test_failover_is_not_a_failed_status() -> None:
+    # Prefix matching must not misclassify words like "failover".
+    review = {
+        "rework_items": [_item("T15", post_status="failover")]
+    }
+
+    result = reconcile_review_rework(
+        review,
+        known_task_ids={"T15"},
+        accepted_task_ids={"T15"},
+        authority_revision="current",
+        review_revision="current",
+    )
+
+    assert result.admitted is False
+    assert result.blockers[0]["code"] == "accepted_task_reopen_unproven"
+
+
 def test_bulk_green_suite_becomes_one_validation_job_not_implementation_wave() -> None:
     task_ids = [f"T{index}" for index in range(1, 47)]
     review = {

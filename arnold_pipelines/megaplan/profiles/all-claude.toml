@@ -7,7 +7,7 @@
 # Every *reasoning* phase runs on flagship Opus (the `claude` slots below) —
 # pair with --robustness thorough for kernel-invariant changes, contract
 # definition, anything where regression = production incident. Pick over
-# `all-codex` based on user preference, credits, or which model has done
+# `partnered-codex` based on user preference, credits, or which model has done
 # better on similar work.
 #
 # Execute is complexity-routed WITHIN the Claude family (see the

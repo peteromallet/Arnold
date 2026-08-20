@@ -843,11 +843,13 @@ def _is_remote_session() -> bool:
 
 
 # =============================================================================
-# OpenAI Codex auth — tokens stored in ~/.hermes/auth.json (not ~/.codex/)
+# OpenAI Codex auth — live CLI session first, Hermes store as fallback.
 #
-# Hermes maintains its own Codex OAuth session separate from the Codex CLI
-# and VS Code extension. This prevents refresh token rotation conflicts
-# where one app's refresh invalidates the other's session.
+# resolve_codex_runtime_credentials() prefers the Codex CLI's own OAuth bundle
+# (~/.codex/auth.json) and refreshes it in place, so omp/hermes and the CLI
+# share one live session.  The Hermes-owned store (~/.hermes/auth.json) still
+# exists for legacy independent sessions and is used only when no CLI login
+# is present.
 # =============================================================================
 
 def _read_codex_tokens(*, _lock: bool = True) -> Dict[str, Any]:
@@ -913,15 +915,12 @@ def _save_codex_tokens(tokens: Dict[str, str], last_refresh: str = None) -> None
         _save_auth_store(auth_store)
 
 
-def _refresh_codex_auth_tokens(
-    tokens: Dict[str, str],
-    timeout_seconds: float,
-) -> Dict[str, str]:
-    """Refresh Codex access token using the refresh token.
-    
-    Saves the new tokens to Hermes auth store automatically.
+def _codex_oauth_refresh(refresh_token: str, timeout_seconds: float) -> Dict[str, str]:
+    """POST the Codex OAuth refresh grant and return the raw token payload.
+
+    Raises AuthError on failure; ``relogin_required`` is set for
+    invalid_grant-style responses (revoked/rotated refresh tokens).
     """
-    refresh_token = tokens.get("refresh_token")
     if not isinstance(refresh_token, str) or not refresh_token.strip():
         raise AuthError(
             "Codex auth is missing refresh_token. Run `hermes login` to re-authenticate.",
@@ -984,9 +983,21 @@ def _refresh_codex_auth_tokens(
             code="codex_refresh_missing_access_token",
             relogin_required=True,
         )
+    return refresh_payload
+
+
+def _refresh_codex_auth_tokens(
+    tokens: Dict[str, str],
+    timeout_seconds: float,
+) -> Dict[str, str]:
+    """Refresh Codex access token using the refresh token.
+
+    Saves the new tokens to Hermes auth store automatically.
+    """
+    refresh_payload = _codex_oauth_refresh(tokens.get("refresh_token"), timeout_seconds)
 
     updated_tokens = dict(tokens)
-    updated_tokens["access_token"] = access_token.strip()
+    updated_tokens["access_token"] = str(refresh_payload["access_token"]).strip()
     next_refresh = refresh_payload.get("refresh_token")
     if isinstance(next_refresh, str) and next_refresh.strip():
         updated_tokens["refresh_token"] = next_refresh.strip()
@@ -995,15 +1006,60 @@ def _refresh_codex_auth_tokens(
     return updated_tokens
 
 
+def _codex_cli_auth_path() -> Path:
+    codex_home = os.getenv("CODEX_HOME", "").strip()
+    if not codex_home:
+        codex_home = str(Path.home() / ".codex")
+    return Path(codex_home).expanduser() / "auth.json"
+
+
+def _save_codex_cli_tokens(tokens: Dict[str, str]) -> None:
+    """Write tokens back to the Codex CLI's own auth file (~/.codex/auth.json).
+
+    Preserves the file's other fields (auth_mode, account_id, id_token, …) so
+    ``codex exec`` keeps working off the same refreshed session.
+    """
+    auth_path = _codex_cli_auth_path()
+    try:
+        existing = json.loads(auth_path.read_text(encoding="utf-8")) if auth_path.is_file() else {}
+    except Exception:
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+    existing["tokens"] = tokens
+    existing["last_refresh"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    tmp_path = auth_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    os.replace(tmp_path, auth_path)
+
+
+def _refresh_codex_cli_tokens(
+    tokens: Dict[str, str],
+    timeout_seconds: float,
+) -> Dict[str, str]:
+    """Refresh the Codex CLI session in place (write-back to ~/.codex/auth.json).
+
+    This is exactly what ``codex exec`` does on expiry, so omp/hermes and the
+    CLI stay on one live session instead of rotating against each other.
+    """
+    refresh_payload = _codex_oauth_refresh(tokens.get("refresh_token"), timeout_seconds)
+
+    updated_tokens = dict(tokens)
+    updated_tokens["access_token"] = str(refresh_payload["access_token"]).strip()
+    next_refresh = refresh_payload.get("refresh_token")
+    if isinstance(next_refresh, str) and next_refresh.strip():
+        updated_tokens["refresh_token"] = next_refresh.strip()
+
+    _save_codex_cli_tokens(updated_tokens)
+    return updated_tokens
+
+
 def _import_codex_cli_tokens() -> Optional[Dict[str, str]]:
     """Try to read tokens from ~/.codex/auth.json (Codex CLI shared file).
     
     Returns tokens dict if valid, None otherwise. Does NOT write to the shared file.
     """
-    codex_home = os.getenv("CODEX_HOME", "").strip()
-    if not codex_home:
-        codex_home = str(Path.home() / ".codex")
-    auth_path = Path(codex_home).expanduser() / "auth.json"
+    auth_path = _codex_cli_auth_path()
     if not auth_path.is_file():
         return None
     try:
@@ -1024,7 +1080,47 @@ def resolve_codex_runtime_credentials(
     refresh_if_expiring: bool = True,
     refresh_skew_seconds: int = CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
 ) -> Dict[str, Any]:
-    """Resolve runtime credentials from Hermes's own Codex token store."""
+    """Resolve runtime credentials for the ChatGPT-subscription Codex backend.
+
+    Live Codex CLI session first: the OAuth bundle in ~/.codex/auth.json is
+    the same one ``codex exec`` uses, so omp/hermes and the CLI stay on one
+    live session.  A near-expiry access token is refreshed in place (written
+    back to the CLI file, exactly as the CLI does) rather than rotated
+    against it.  The Hermes-owned store (~/.hermes/auth.json) is only a
+    fallback for legacy sessions without a CLI login.
+    """
+    base_url = (
+        os.getenv("HERMES_CODEX_BASE_URL", "").strip().rstrip("/")
+        or DEFAULT_CODEX_BASE_URL
+    )
+    refresh_timeout_seconds = float(os.getenv("HERMES_CODEX_REFRESH_TIMEOUT_SECONDS", "20"))
+
+    cli_tokens = _import_codex_cli_tokens()
+    if cli_tokens:
+        access_token = str(cli_tokens.get("access_token") or "").strip()
+        needs_refresh = bool(force_refresh) or (
+            refresh_if_expiring
+            and _codex_access_token_is_expiring(access_token, refresh_skew_seconds)
+        )
+        if needs_refresh and access_token:
+            try:
+                cli_tokens = _refresh_codex_cli_tokens(cli_tokens, refresh_timeout_seconds)
+                access_token = str(cli_tokens.get("access_token") or "").strip()
+            except AuthError as exc:
+                # CLI refresh failed (e.g. its refresh token was rotated away
+                # by another login). Fall through to the store — never return
+                # a dead token.
+                logger.debug("Codex CLI token refresh failed: %s", exc)
+                access_token = ""
+        if access_token:
+            return {
+                "provider": "openai-codex",
+                "base_url": base_url,
+                "api_key": access_token,
+                "source": "codex-cli-live",
+                "auth_mode": "chatgpt",
+            }
+
     try:
         data = _read_codex_tokens()
     except AuthError as orig_err:
@@ -1046,7 +1142,6 @@ def resolve_codex_runtime_credentials(
             raise
     tokens = dict(data["tokens"])
     access_token = str(tokens.get("access_token", "") or "").strip()
-    refresh_timeout_seconds = float(os.getenv("HERMES_CODEX_REFRESH_TIMEOUT_SECONDS", "20"))
 
     should_refresh = bool(force_refresh)
     if (not should_refresh) and refresh_if_expiring:
@@ -1063,13 +1158,29 @@ def resolve_codex_runtime_credentials(
                 should_refresh = _codex_access_token_is_expiring(access_token, refresh_skew_seconds)
 
             if should_refresh:
-                tokens = _refresh_codex_auth_tokens(tokens, refresh_timeout_seconds)
-                access_token = str(tokens.get("access_token", "") or "").strip()
-
-    base_url = (
-        os.getenv("HERMES_CODEX_BASE_URL", "").strip().rstrip("/")
-        or DEFAULT_CODEX_BASE_URL
-    )
+                try:
+                    tokens = _refresh_codex_auth_tokens(tokens, refresh_timeout_seconds)
+                except AuthError as exc:
+                    if not exc.relogin_required:
+                        raise
+                    # The Hermes-owned session is dead (refresh token revoked
+                    # or rotated away, e.g. by a newer `codex login`).  Borrow
+                    # the Codex CLI's live access token from ~/.codex/auth.json
+                    # — same ChatGPT subscription — WITHOUT adopting its
+                    # refresh token, so the CLI keeps sole ownership of the
+                    # refresh session and no rotation conflict is introduced.
+                    cli_tokens = _import_codex_cli_tokens()
+                    cli_access = (
+                        str((cli_tokens or {}).get("access_token") or "").strip()
+                        if cli_tokens
+                        else ""
+                    )
+                    if not cli_access:
+                        raise
+                    tokens = dict(tokens)
+                    tokens["access_token"] = cli_access
+                    _save_codex_tokens(tokens)
+                access_token = str(tokens.get("access_token") or "").strip()
 
     return {
         "provider": "openai-codex",

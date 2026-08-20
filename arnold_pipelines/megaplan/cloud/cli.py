@@ -2367,11 +2367,11 @@ def _cloud_profile_warnings(preflight_summary: Mapping[str, Any], spec: CloudSpe
         if "ANTHROPIC_API_KEY" not in configured_secrets:
             warnings.append(
                 "resolved chain routing includes Claude/Shannon phases. "
-                "Codex-only cloud workers should use profile all-codex or explicit codex phase_model pins; "
+                "Codex-only cloud workers should use profile partnered-codex or explicit codex phase_model pins; "
                 "mixed profiles need Claude CLI/auth and ANTHROPIC_API_KEY available on the worker."
             )
     if required_agents == {"codex"}:
-        warnings.append("resolved chain routing is Codex-only; this is compatible with all-codex-style cloud workers.")
+        warnings.append("resolved chain routing is Codex-only; this is compatible with partnered-codex cloud workers.")
     return warnings
 
 

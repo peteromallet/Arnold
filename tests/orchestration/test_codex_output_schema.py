@@ -82,7 +82,7 @@ def test_revise_schema_requires_every_north_star_closeout_field() -> None:
     }
 
 
-def test_all_codex_output_schemas_have_strict_required_properties() -> None:
+def test_codex_output_schemas_have_strict_required_properties() -> None:
     for schema in SCHEMAS.values():
         strict = _enforce_openai_strict_mode(strict_schema(deepcopy(schema)))
         _assert_required_keys_have_properties(strict)
