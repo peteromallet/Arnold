@@ -6570,10 +6570,19 @@ def handle_execute_one_batch(
         and task.get("id") not in effective_completed_id_set
         and task.get("id") not in batch_blocked_id_set
     ]
+    # P6 reconcile selection envelope: a read-only selector's selection JSON is
+    # the batch's completion evidence; per-task terminal statuses are not
+    # produced, so the pending-left-behind blocker must not fire for it.
+    selection_complete = bool(
+        isinstance(result.payload, Mapping)
+        and (
+            "selected_shas" in result.payload or "verification_evidence" in result.payload
+        )
+    )
     pending_left_behind_reason = _pending_left_behind_reason(
         batch_pending_left_behind_ids
     )
-    if pending_left_behind_reason:
+    if not selection_complete and pending_left_behind_reason:
         blocking_reasons.append(pending_left_behind_reason)
     if result.routing_degradations:
         blocking_reasons.extend(result.routing_degradations)
@@ -9450,7 +9459,15 @@ def handle_execute_auto_loop(
     pending_left_behind_reason = _pending_left_behind_reason(
         pending_left_behind_task_ids
     )
-    if pending_left_behind_reason:
+    # P6 reconcile selection envelope: the selection JSON carried in the batch
+    # payloads IS the completion evidence for a read-only reconcile selector;
+    # suppress the pending-left-behind blocker for it.
+    selection_complete = any(
+        isinstance(payload, Mapping)
+        and ("selected_shas" in payload or "verification_evidence" in payload)
+        for payload in batch_payloads
+    )
+    if not selection_complete and pending_left_behind_reason:
         blocking_reasons.append(pending_left_behind_reason)
     active_blocked_task_ids = {
         task["id"]
