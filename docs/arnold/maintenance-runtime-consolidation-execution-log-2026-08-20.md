@@ -178,3 +178,13 @@ Directives for consolidation:
 - Invocation mrc-f278d0e0… closed completed/exit 0 but stdout = single byte "1"; no commit created, no worktree/branch left, no wrapper change, test count still 13. No deliverable exists.
 - Disposition: mechanical receipt rejection (not a judgment); re-dispatch R003-REV2 with the same brief.
 
+
+## F-R003-002 — close path leaves stale allowance_digest (validator DIGEST_MISMATCH)
+
+- Finding (from canonical validator run at commit 6f3739823e): allowances[0] (R002-resume, closed) has allowance_digest cc26ce79… which no longer matches canonical registry content because active/lifecycle_state changed on close. DIGEST_MISMATCH.
+- Root cause: R003-REV2 deactivate_allowance sets active/lifecycle_state/closed_at_utc but does NOT recompute allowance_digest (canonical_allowance digest includes active + lifecycle_state). The wrapper's own close corrupts the registry invariant the validator enforces.
+- Severity: must (registry records must stay self-consistent).
+- Classification: [HARD-REVISION] — single production file + test; frozen contract (allowance digest is part of the T0.3 canonical_allowance contract); no authority/custody/identity/migration/concurrency/compat/live-runtime/scope/policy change.
+- Required fix: deactivate_allowance recomputes allowance_digest over the mutated record (active:false, lifecycle_state:closed) before writing; add a focused test asserting the closed record's digest equals canonical_allowance of the closed record; byte-lossless preservation of all OTHER bytes still required (the digest field value changes by design).
+- Route: Luna [HARD-REVISION] (R003-REV3) → independent re-review → re-run close on R002-resume (or patch the record digest via the fixed close path idempotently) → commit → validator exit 0.
+
