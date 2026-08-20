@@ -307,8 +307,7 @@ Follow the document exactly:
 2. **Batch 1 / G1:** deterministic observation, pure operational reporting,
    efficiency read model and inert proposals. Luna implements and an independent
    Luna reviews.
-3. **Batch 2 / G2:** scheduler claims, typed dispatch receipts, evidence-bound
-   repair classification. Luna implements/reviews with focused shards.
+3. **Batch 2 / G2:** scheduler claims, typed dispatch receipts, fixer transport honesty (T2.4), evidence-bound repair classification. Luna implements/reviews with focused shards.
 4. **Batch 3 / G3:** explicit queue migration, bounded unblocker, read-only
    six-hour audit. Luna implements/reviews.
 5. **G3.5 `[XHARD-REVIEW]`:** Grok reads the complete diff since `fce` and

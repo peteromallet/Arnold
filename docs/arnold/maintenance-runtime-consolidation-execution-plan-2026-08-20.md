@@ -59,6 +59,51 @@ The residual uncertainty is concentrated in the tasks marked `[XHARD]`. Those ta
 - **SD-010** — Promotion is a pointer/selection change with an already-proven rollback target, never an in-place rewrite of live state. _load_bearing: true_
   Rationale: Rollback must be immediate and must not require data repair.
 
+## Incident class 2026-08-20 mapping (astrid-first)
+
+| Failure | Plan home | Not |
+|---|---|---|
+| Unguarded stdout tee `BrokenPipeError` | T7.1 already-present helper (P9) | T4.*, identity |
+| Babysitter goal/sandbox vs bwrap | T2.4 (P1), P6 | T3.3 product read-only |
+| Receipt failed + rc 0 | T2.2 (P2) + T2.4 | T2.1 second claim |
+| Phantom PID owner | T2.4 + G3.5/G6.4 (P8) | T4.1 PID-as-authority (already forbidden) |
+| Ambient vs seed `megaplan_engine_root()` | T4.1 import_root binding (P3) | SHA pin / `advance_generation` |
+| Operator recover-blocked + rebind + start | T3.2 sequence + T4.2 label guard (P4) | Unblocker self-effect |
+| Two-commit/two-rebind tax | Protocol note + T4.3 deletion (P5) | Recovery design |
+| Phase-contract 3/3 fence | T2.3 keep (P7) | Mechanical replay |
+
+SD-009 still forbids mutating the live Astrid/maintenance epics as consolidation. This table is a successor contract, not a live-box repair instruction.
+
+## Post-G0 amendment constraints and residual risks
+
+The operator-directed post-G0 source additions are `7fe994abf` (babysitter sandbox plus false-success return-code fix), bound to T2.4, and `0425372ec` (stdout-tee `BrokenPipeError` helper), bound to T2.4/T7.1 as applicable. Both are on the epic branch for candidate `astrid-first` (`/workspace/arnold-ref/.git/worktrees/astrid-first`) and were not in the G0 M1–M5 selection. They must not be treated as covered by the existing G0 manifest: T0.2 requires a follow-on additive selection-manifest update card before the affected implementation cards are fully source-bound. This amendment does not rewrite or regenerate the G0 manifest.
+
+Rejected and forbidden alternatives:
+
+- no T4.4-shaped atomic identity vector, seed/preflight-SHA/epoch pin, or state-schema launch pin;
+- no second occurrence owner, claim API, cutover writer, rebind writer, or authority seam;
+- no restoration of the babysitter manifest→marker→chain→seed ceremony;
+- no automatic `recover-blocked`, automatic rebind, or watchdog replay from T3.2;
+- no `advance_generation` as recovery;
+- no receipt↔rc coupling duplicated in T2.2 rather than enforced once in T2.4;
+- the fixer sequence is not a normal operator runbook; it is a fixer-executable last-rung contract;
+- no `--sandbox read-only` on this host when bwrap user-namespace creation fails;
+- product read-only is a production-API write prohibition, not a process-sandbox assumption;
+- a dead PID is not an active owner, and a live PID is not authority;
+- the 3/3 deterministic phase-contract fence is not weakened;
+- the stdout helper is not moved to T5.1 or dropped because G0 omitted its hunk;
+- the G0 manifest is not rewritten in this amendment;
+- no production code, tests, validators, evidence-manifest changes, or live-epic mutation are authorized by this card.
+
+Residual risks:
+
+1. The two source commits remain unbound in the existing selection manifest until the follow-on additive T0.2 card; implementation must not pretend the current G0 manifest covers them.
+2. The pre-T4.3 expected-head/content-digest tax remains operationally noisy until the gates are deleted and must not become successor authority.
+3. Cloud bwrap namespace failure is infrastructure; later shards must prove product non-mutation with spies/fingerprints and classify namespace failure separately.
+4. This explicit operator amendment changes plan authority after J1; the single amendment commit and changed-file list are the audit boundary.
+5. The goal-document line is intentionally minimal; this plan remains complete task-order authority.
+6. This card produces no implementation or test evidence; later T2.4/T7.1 implementation and independent reviews must prove these contracts.
+
 ## Source custody and selection
 
 The source tips to preserve are:
@@ -106,6 +151,8 @@ Large but mechanically bounded tasks are not marked `[XHARD]`.
 - Each reviewer reads the diff and production paths, specifies a concrete counterexample test when useful, and reports must/should findings with file and function evidence. A fresh routed `[HARD-REVISION]` or `[XHARD-REVISION]` subagent adds any required test/fix; read-only reviewers do not edit.
 - A task with an unresolved must-level authority, identity, migration, or replay finding does not advance.
 - Merge cards in the order below. Preserve user changes and never reset the integration worktree.
+- Every operator mutation against a live epic — `recover-blocked`, `runtime-rebind`, `chain start`, and engine-runtime admission — runs under the seed/import environment: `PYTHONPATH=<import_root>`, `ARNOLD_RUNTIME_MANIFEST=...`, and the generation interpreter. Ambient-shell engine-root resolution is forbidden.
+- **Pre-deletion operator tax (evidence/compatibility, not authority):** until the seed-store, `dispatch-current.json`, `MEGAPLAN_RUNTIME_LAUNCH_SEED`, same-root receipt-byte-equality, and `runtime_vector_sha256` gates are deleted, each engine commit still pays the known tax: update manifest `expected_head` telemetry without `advance_generation`, then perform content-digest rebind if that binding still exists. This must not be ported as a successor gate or recovery design; after T4.3 gate deletion, same `import_root` is a non-event.
 
 ## Review ownership and timing
 
@@ -168,6 +215,7 @@ Acceptance:
 - At minimum it resolves the full source SHAs and hunks behind the known seeds `fa42ff979f69` (T1.1), `3a94a1f54` (T3.1), `9056775d6c` (T4.1), and `62d3cae7fb` (T5.1).
 - Every selected card identifies whether it is an exact port, an adaptation, or already present at `fce` before code begins.
 - No unclassified production commit remains. Every exclusion names its replacement function/test or is explicitly classified `evidence/config-only` or `unresolved-policy`.
+- Operator-directed post-G0 additions do not rewrite this committed G0 manifest. T0.2 must carry a follow-on additive selection-manifest update that binds `7fe994abf` to T2.4 and `0425372ec` to T2.4/T7.1 before those cards are treated as fully source-bound.
 
 ### T0.3 Scaffold the machine-readable evidence contract
 
@@ -292,8 +340,44 @@ Acceptance:
 - A request file's existence is never treated as completion.
 - Reconciliation after a crash is exactly-once and side-effect-free after terminal adoption.
 - Allowlisted routing is explicit.
+- Watchdog re-arm of the same occurrence requires a failed session receipt, not a completed receipt whose payload was later rewritten.
 
-Focused tests: identity mismatch, partial receipt, effect-before-receipt crash, duplicate reconciliation, stale occurrence, unknown receipt state, and report/effect cross-kind rejection.
+- Focused tests: identity mismatch, partial receipt, effect-before-receipt crash, duplicate reconciliation, stale occurrence, unknown receipt state, report/effect cross-kind rejection, no re-arm after rc 0, and re-arm after an honesty-failed session with nonzero rc.
+
+### T2.4 `[XHARD]` Fixer transport honesty
+
+Goal: make the babysitter/watchdog loop honest about session outcome, sandbox capability, and owner liveness. This is one receipt/transport enforcement point, not a second claim or cutover writer. Live Tree Authority is unchanged, and the J2-deleted babysitter manifest→marker→chain→seed ceremony remains deleted.
+
+Likely files: `cloud/babysitter/launch.py`, `cloud/babysitter/render_babysitter_goal.py`, the watchdog owner-liveness reader, `resident/subagent.py`, and focused babysitter/managed-provider tests.
+
+Dependencies: T2.2.
+
+Sandbox contract:
+
+- Probe bwrap capability with `bwrap --ro-bind / / -- true`.
+- When the probe fails on this host, use `--sandbox danger-full-access` plus an explicit no-mutation contract and pre/post product-tree fingerprints. Goal text and exec argv must agree. Never emit `--sandbox read-only` on this host.
+
+Receipt/return-code contract:
+
+- Receipt `status` and process return code are one fact at this enforcement point.
+- An honesty downgrade, including a still-blocked or failed target, writes `status=failed` and returns nonzero. A downgraded receipt with rc 0 is a contract failure. The watchdog must not re-arm the same occurrence from rc 0.
+
+Owner-liveness contract:
+
+- Use `kill(pid, 0)` or an equivalent liveness check against recorded `babysitter_pid` and `supervisor_pid` where applicable.
+- A `launched`/`running` receipt whose recorded PID is dead is `failed`, not an active owner; a later incarnation may start. A live PID still stands down. A recorded PID is not authority.
+
+Focused acceptance:
+
+- A failing bwrap probe produces `danger-full-access` in both goal text and argv.
+- A false-success downgrade returns nonzero; a dead-PID receipt is reclaimable/classified failed; a live-PID receipt stands down; a fingerprint mismatch fails the session rather than claiming success; and a still-blocked target cannot close as success.
+- The receipt, return-code, and owner-liveness fixtures cover the transport contract without adding authority.
+
+Operator-directed post-G0 source additions: `7fe994abf` (babysitter sandbox plus false-success return-code fix) and `0425372ec` (stdout-tee `BrokenPipeError` helper) are on the epic branch for candidate `astrid-first` (`/workspace/arnold-ref/.git/worktrees/astrid-first`) and were not in the G0 M1–M5 selection. Bind `7fe994abf` to T2.4 and `0425372ec` to T2.4/T7.1 as applicable; do not rewrite the G0 manifest here. T0.2 requires a follow-on additive selection-manifest update card to bind these commits before the affected implementation cards are treated as fully source-bound.
+
+Forbidden within T2.4: no new claim API, rebind writer, seed ceremony, SHA pin, occurrence owner, or live-chain recovery.
+
+Focused tests: bwrap-fail→danger-full-access, false-success rc nonzero, phantom-PID reclaim, live-PID stand-down, fingerprint mismatch, and still-blocked-target closure refusal.
 
 ### T2.3 Evidence-bound repair classification
 
@@ -307,12 +391,13 @@ Acceptance:
 
 - Generic `quality_gate_blocked`, liveness, quota, open-PR, human-only, and awaiting-human states remain non-dispatchable.
 - Only complete, scoped evidence with matching cursor, target, digest, and trusted producer provenance can authorize a repair request.
+- The phase-contract fence stays: identical `deterministic_phase_failure` fingerprints cannot be mechanically retried without an explicit `repair-commit` bound to `engine_runtime`. Observation, liveness, and babysitter completion cannot waive it.
 
 Focused tests: each rejected class, missing scope, stale target, mismatched cursor/hash, and one valid complete shape.
 
 ### Gate G2 `[HARD-REVIEW]` — Authority-entry review
 
-Run scheduler/claim, receipt, and repair-contract shards. The reviewer proves there is one claim point, one receipt identity, and no alternate repair-eligibility path.
+Run scheduler/claim, receipt, repair-contract, and fixer-transport shards, using the P6 verification transport where applicable. The reviewer proves there is one claim point, one receipt identity, and no alternate repair-eligibility path; babysitter session rc, receipt status, and owner-PID liveness cannot disagree, and a still-blocked target cannot close as success. T2.4 is included in this review scope with its focused transport tests.
 
 ## Batch 3 — Explicit migration and bounded recovery
 
@@ -350,6 +435,12 @@ Likely files: new `cloud/maintenance_unblocker.py`, bounded resident handler int
 
 Dependencies: T1.2, T2.1, T2.2, T2.3.
 
+Non-goals:
+
+- automatic `recover-blocked`;
+- automatic `runtime-rebind`;
+- watchdog replay of a deterministic phase failure without a new repair commit.
+
 Acceptance:
 
 - One observation remains unknown.
@@ -359,7 +450,21 @@ Acceptance:
 - The unblocker cannot approve or perform its own effect.
 - Replay and stale-lease checkpointing are safe.
 
-Focused tests: changed PID, changed lease epoch, changed runtime manifest, duplicate stale projection with different timestamp, missing evidence, producer/verifier separation, replay, stale fence, and no direct mutation.
+Supported fixer-executable recovery contract for `deterministic_phase_failure` with `retry_strategy=repair_phase_contract` (explicit, documented, tested, and not automatic):
+
+1. Land the engine patch on the live `import_root` tree.
+2. Until T4.3 deletes the seed gates, update manifest `expected_head` as telemetry only; do not call `advance_generation`.
+3. Until those gates are deleted, perform `runtime-rebind` for any remaining content-digest binding using the milestone identity **label** `m7`, never the sequence index `6`.
+4. Run `override recover-blocked` with `--repair-commit <sha> --failure-fingerprint <exact> --repair-scope engine_runtime --user-approved`.
+5. Run `chain start --one`.
+
+All applicable commands run under the T4.1 seed/import environment. The milestone-label guard accepts `m7` and rejects numeric index `6` with an error identifying `_identity_labels`. The recover receipt authority is `explicit_repair_commit_bound_to_engine_runtime`. After seed-gate deletion, same-import-root is a non-event. The operator may execute this only as the last rung of babysitting 1.3; this sequence primarily specifies fixer verbs, not a standing human runbook. T3.2 remains observation-only and may emit only the typed request/checkpoint naming this sequence; it cannot perform recover-blocked, rebind, or chain start.
+
+The phase-contract fence remains in force: identical `deterministic_phase_failure` fingerprints cannot be mechanically retried without a new repair commit bound to `engine_runtime`.
+
+Focused tests: label `m7` accepted; numeric index `6` rejected with an error naming `_identity_labels`; ambient-root recovery rejected; seed/import-root recovery admitted with the explicit receipt authority; same-import-root post-gate deletion is a non-event; and replay without a new repair commit remains fenced.
+
+Focused tests: changed PID, changed lease epoch, changed runtime manifest, duplicate stale projection with different timestamp, missing evidence, producer/verifier separation, replay, stale fence, no direct mutation, and observation-only fixer-sequence emission.
 
 ### T3.3 Read-only six-hour audit enhancements
 
@@ -374,6 +479,7 @@ Acceptance:
 - Boundary, skew, late, duplicate, out-of-order, censored, and invalid-cadence cases remain deterministic and conservative.
 - Missing source evidence produces unknown.
 - The auditor is read-only; green never derives from process activity alone.
+- Cloud-box verification follows the isolation transport in P6: a test requiring a working bwrap user namespace is invalid infrastructure for this host. When the probe fails, use `--sandbox danger-full-access` with explicit no-mutation and pre/post product-tree fingerprints. Product read-only remains a production-API write prohibition proven by mutation spies and fingerprints.
 
 Focused tests: the focused six-hour auditor/controller shard plus mutation spies.
 
@@ -393,6 +499,7 @@ Acceptance:
 - Constraints are located at load-bearing boundaries rather than duplicated through callers.
 - Redundant checks and adapters are identified for deletion before T4 begins.
 - The branch still matches the G0 selection manifest and has not absorbed generated or unresolved policy material.
+- Owner-liveness classification for babysitter/watchdog uses a live PID check; a recorded PID is neither authority (SD-005) nor proof of a live owner. Dead-PID-as-live-owner is over-enforcement, phantom-PID stand-down is operational paralysis, and live-PID-as-authority is under-enforcement already forbidden by the settled decisions. T2.4 owns this transport contract; T2.1 remains the sole claim seam.
 
 ## Batch 4 — Authority convergence
 
@@ -412,6 +519,7 @@ Frozen contract before implementation:
 - Only exact current target, occurrence/cursor, custody, fence, and required evidence may authorize an effect.
 - No consumer may reconstruct authority from a subset of those facts.
 - The root seam returns a typed `MutationCapability` bound to action type, occurrence, target, cursor, fence epoch, evidence digest, scope, and expiry. Downstream code may narrow/validate its scope but cannot independently grant authority.
+- For `engine_runtime` / `recover-blocked`, `MutationCapability` binds the live tree at `epic.runtime_root` (`import_root`) plus the generation interpreter. Ambient `megaplan_engine_root()` resolved from the container `PYTHONPATH` is not an authority input; on the incident host it resolves to a read-only `-live` tree and causes `phase_repair_commit_mismatch`. The SHA of the import-root tree is telemetry only, never the CAS authority or a new pin.
 
 Acceptance:
 
@@ -422,7 +530,8 @@ Acceptance:
 - Old convenience gates are removed rather than layered beside the root gate.
 - Valid downstream receipt/cutover/operator evidence without the root capability still rejects.
 
-Focused tests: permission truth table; stale/live PID combinations; marker/manifest contradiction; stale cursor/fence; valid downstream evidence with absent capability; action/scope replay; complete authorized path; static search proving no bypassing in-scope consumer.
+- An ambient-vs-seed fixture where ambient `megaplan_engine_root()` is a foreign/read-only tree and seed `PYTHONPATH=<import_root>` is the live tree proves `engine_runtime` admission and `MutationCapability` minting bind the live `epic.runtime_root` (`import_root`) plus the generation interpreter; ambient mismatch is a typed error rather than silent alternate-root selection. Operator recovery commands that admit `engine_runtime` refuse unless process `import_root` equals the manifest tree selector.
+Focused tests: permission truth table; stale/live PID combinations; marker/manifest contradiction; stale cursor/fence; valid downstream evidence with absent capability; action/scope replay; complete authorized path; ambient-vs-seed import-root mismatch; static search proving no bypassing in-scope consumer.
 
 ### Gate G4.1 `[XHARD-REVIEW]` — Liveness authority attack
 
@@ -443,8 +552,9 @@ Acceptance:
 - PID, tmux, repo-path similarity, stopped lease, or stale marker cannot authorize adoption.
 - A valid operator token replayed against another occurrence or action rejects.
 - Rollback returns to the exact prior binding.
+- The `runtime-rebind` guard accepts milestone identity label `m7` and rejects sequence index `6` with an error identifying `_identity_labels`; rebind cannot be authorized by a numeric sequence index.
 
-Focused tests: mismatched occurrence/plan/runtime; stale marker with live process; stale epoch; pause/resume race; cursor and plan-payload preservation alongside allowed pause-event append; action/occurrence token replay; duplicate adoption; rebind rollback.
+Focused tests: permission truth table; stale/live PID combinations; marker/manifest contradiction; stale cursor/fence; valid downstream evidence with absent capability; action/scope replay; complete authorized path; ambient-vs-seed import-root mismatch; runtime-rebind label/index guard; static search proving no bypassing in-scope consumer.
 
 ### Gate G4.2 `[XHARD-REVIEW]` — Operator-authority attack
 
@@ -466,6 +576,7 @@ Acceptance:
 - Crash at any publication boundary leaves either the prior target or a resumable, provable transition.
 - Duplicate delivery is idempotent.
 - Rollback restores the exact prior selection without rewriting plan state.
+- After cutover, an engine commit on the same `import_root` requires no rebind and no generation bump. A test that still requires the two-commit/two-rebind dance after gate deletion is a must-fail.
 
 Focused tests: selector-before-marker/receipt crash, marker/receipt-before-selector crash, every other publication boundary, selector CAS race, absent root capability with otherwise-valid evidence, stale token, live-writer refusal, mismatch, duplicate, and rollback.
 
@@ -589,6 +700,9 @@ Acceptance:
 - A valid diagnostic workflow still functions without mutation authority; safety has not become operational paralysis.
 - The reviewer proposes deletions and simplifications, not only additional gates.
 
+- A fixer or diagnostic loop that exits 0, stands down, or reports completed while the target occurrence is still blocked is a must finding, even if a receipt field was later rewritten to failed.
+- The reviewer must demand simplification rather than a second occurrence owner or cutover writer. T2.1 remains the sole claim seam; T4.4 remains absent.
+
 ## Batch 7 — Convergence, runtime validation, and promotion evidence
 
 ### T7.1 Completeness and contradiction audit
@@ -603,6 +717,7 @@ Acceptance:
 - Every excluded production patch still has a recorded reason.
 - No older identity/manifest/parser implementation overwrote `fce`.
 - No duplicate enforcement point or contradictory default remains.
+- The successor contains the best-effort stdout writer for managed-provider tees from the epic `resident/subagent.py` helper in `0425372ec`, swallowing both `BrokenPipeError` and `OSError` on begin, chunk, recovery, and end writes. Absence is a must finding even though G0 did not select the hunk: it is a live execute-batch blocker, not an identity concern. This source addition is also a T0.2 follow-on additive selection-manifest obligation; do not edit the G0 manifest here.
 - Freeze `docs/arnold/maintenance-runtime-consolidation-evidence/test-shards.json` with exactly nine ordered shard IDs, each shard's full `python -m pytest -q <selectors...>` command, command digest, complete selector/test-file set, changed behavior/task coverage, approved interpreter digest, and disposable-root policy.
 - The evidence validator proves every selected behavior and every changed/new test file is covered by at least one intended shard, no test selector/file is assigned to multiple shards, all commands resolve at the current SHA, and shard IDs/order match T7.2.
 
@@ -614,7 +729,7 @@ Run each of these nine frozen canonical commands once and in order, by a Luna va
 
 1. contracts, identities, manifests, markers, digests;
 2. repair classification, queue migration, unblocker;
-3. scheduler claims, receipts, delivery, pause/rebind/adoption;
+3. scheduler claims, receipts, fixer transport honesty (T2.4), delivery, pause/rebind/adoption;
 4. status projection, operational policy, six-hour auditor;
 5. efficiency sources, unknowns, analysis, baselines, clustering, economics;
 6. inert routing, fenced reporting, daily runner, negative authority;
@@ -623,6 +738,8 @@ Run each of these nine frozen canonical commands once and in order, by a Luna va
 9. shared-venv manifest, frozen-spec digest, package provenance, and cross-candidate path isolation.
 
 Every shard records command, commit, environment identity, result, and artifact digest. State-writing tests use an explicit disposable root.
+
+Shard runners on the cloud box follow the P6 transport: probe `bwrap --ro-bind / / -- true`; when namespace creation fails, use `--sandbox danger-full-access` with explicit no-mutation and pre/post product-tree fingerprints. A shard failure caused by bwrap namespace creation is infrastructure, not a product failure. Product read-only remains proven by mutation spies and fingerprints.
 
 ### T7.3 Candidate runtime installation proof
 
@@ -702,7 +819,8 @@ Each task dispatched to its routed Grok 4.6 or Luna agent must contain only:
 5. the focused test commands; and
 6. the required return schema;
 7. the explicit disposable test root; and
-8. a prohibition on writing project or live runtime state from tests.
+8. a prohibition on writing project or live runtime state from tests;
+9. verification isolation: if `bwrap --ro-bind / / -- true` fails, investigators and validators run with `--sandbox danger-full-access` under an explicit no-mutation contract and pre/post product-tree fingerprints. Do not use `--sandbox read-only` as the isolation mechanism on this host. Product read-only remains a write-prohibition on production APIs, proven by mutation spies and fingerprints, not by bwrap.
 
 Do not give an implementer the entire epic history or ask it to run the full suite. If a task grows beyond its allowed file set or discovers a new authority transition, stop that card, record the evidence, and split it rather than improvising a new policy.
 
