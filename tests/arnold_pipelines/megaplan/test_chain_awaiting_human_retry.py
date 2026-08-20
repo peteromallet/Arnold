@@ -1061,6 +1061,54 @@ def test_run_chain_does_not_replay_durably_blocked_plan_on_restart(
     assert any("already durably blocked" in message for message in messages)
 
 
+def test_blocked_validation_failure_reopens_supported_execute_retry_frontier(
+    tmp_path: Path,
+) -> None:
+    """A fresh deferred validation block must be retried on chain restart."""
+    plan_name = "m7-plan"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+    batch_dir = plan_dir / "execute_batches" / "batch_9"
+    batch_dir.mkdir(parents=True)
+    plan_state = {
+        "current_state": "blocked",
+        "active_step": None,
+        "history": [
+            {
+                "step": "execute",
+                "result": "error",
+                "message": "validation job VJ14 exited 1; expected one of [0]",
+            }
+        ],
+    }
+    (plan_dir / "state.json").write_text(json.dumps(plan_state), encoding="utf-8")
+    (batch_dir / "tasks_retry.json").write_text(
+        json.dumps(
+            {
+                "batch_scope": {"batch_number": 9, "task_ids": ["T7", "T13"]},
+                "task_updates": [
+                    {"task_id": "T7", "status": "done"},
+                    {
+                        "task_id": "T13",
+                        "status": "blocked",
+                        "executor_notes": "test budget exhausted",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = ChainState(
+        current_plan_name=plan_name,
+        last_state="blocked",
+    )
+
+    assert _blocked_plan_replay_would_be_redundant(
+        state,
+        plan_state=plan_state,
+        root=tmp_path,
+    ) is False
+
+
 def test_no_push_reconciliation_never_fabricates_open_pr_as_merged(
     tmp_path: Path,
 ) -> None:

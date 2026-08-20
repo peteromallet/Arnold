@@ -5890,15 +5890,68 @@ def _blocked_plan_replay_would_be_redundant(
     state: ChainState,
     *,
     plan_state: Mapping[str, Any],
+    root: Path | None = None,
 ) -> bool:
+    """Return whether a blocked plan has no safe retry frontier.
+
+    Deferred validation failures are retryable across chain sessions. Keep
+    every other durable block parked, but allow replay when the latest execute
+    error names a validation job and the latest canonical batch artifact
+    contains a blocked task update.
+    """
     current_state = plan_state.get("current_state")
     if not isinstance(current_state, str):
         return False
-    return (
+    blocked_without_worker = (
         state.last_state == STATE_BLOCKED
         and current_state == STATE_BLOCKED
         and not _plan_has_live_active_step(plan_state)
     )
+    if not blocked_without_worker:
+        return False
+
+    history = plan_state.get("history")
+    latest_execute: Mapping[str, Any] | None = None
+    if isinstance(history, list):
+        for entry in reversed(history):
+            if isinstance(entry, Mapping) and entry.get("step") == "execute":
+                latest_execute = entry
+                break
+    if not isinstance(latest_execute, Mapping):
+        return True
+    if latest_execute.get("result") != "error":
+        return True
+    message = latest_execute.get("message")
+    if not isinstance(message, str) or not re.match(
+        r"^validation job [^ ]+ exited \d+; expected one of \[", message
+    ):
+        return True
+    if root is None or not state.current_plan_name:
+        return True
+    try:
+        plan_dir = resolve_plan_dir(root, state.current_plan_name)
+        latest_batch = list_batch_artifacts(plan_dir)[-1]
+        payload = json.loads(latest_batch.read_text(encoding="utf-8"))
+    except (CliError, OSError, UnicodeDecodeError, json.JSONDecodeError, IndexError):
+        return True
+    if not isinstance(payload, Mapping):
+        return True
+
+    blocked_task_ids: list[str] = []
+    task_id = payload.get("task_id") or payload.get("id")
+    if payload.get("status") == "blocked" and isinstance(task_id, str) and task_id.strip():
+        blocked_task_ids.append(task_id)
+    task_updates = payload.get("task_updates")
+    if isinstance(task_updates, list):
+        blocked_task_ids.extend(
+            update["task_id"]
+            for update in task_updates
+            if isinstance(update, Mapping)
+            and update.get("status") == "blocked"
+            and isinstance(update.get("task_id"), str)
+            and update["task_id"].strip()
+        )
+    return not blocked_task_ids
 
 
 def _chain_policy_milestone_label(plan_state: dict[str, Any]) -> str | None:
@@ -8446,7 +8499,11 @@ def run_chain(
                     _rearm_stale_execute_authority_divergence(plan_dir, writer=writer)
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
-                if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
+                if _blocked_plan_replay_would_be_redundant(
+                    state,
+                    plan_state=plan_state,
+                    root=root,
+                ):
                     _emit_chain_work_boundary(
                         "replay",
                         plan_name=plan_name,
