@@ -128,13 +128,22 @@ _RECONCILE_OUTPUT_SHAPE_EXAMPLE = textwrap.dedent(
     ```json
     {
       "selected_shas": [
-        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-        "f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1"
+        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
       ],
       "verification_evidence": {
+        "candidate_count": 3,
+        "divergence_mode": "strict_ancestor",
         "reachability_checked": true,
         "all_selected_reachable_from_target": true,
         "chain_control_commits_excluded": true,
+        "target_ref": "origin/main",
+        "target_sha": "f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1",
+        "local_main_sha": "f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1",
+        "source_head_sha": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        "promotion_evidence_refs": [
+          {"ref": "manifest.indirection.verified_head", "resolves": true}
+        ],
+        "promotion_evidence_status": "ok",
         "excluded_shas": ["c0c0c0d0d0d0e0e0f0f0a0a0b0b0c0c0d0d0e0e0"],
         "per_phase": [
           {
@@ -172,15 +181,42 @@ _RECONCILE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     - EXCLUDE chain-control and meta commits: briefs, docs, .megaplan chain
       scaffolding, generated milestone artifacts, seed/template commits, and
       anything that only manages the chain process itself.
-    - A commit is selected only if it is REACHABLE from the reconcile target
-      branch's history (the target is `main` for generated reconcile
-      milestones).  When reachability cannot be verified, do not select it;
-      note the uncertainty in `verification_evidence`.
+    - A commit is selected only if it is REACHABLE from the SOURCE LINEAGE
+      (the current fixer branch / HEAD — the branch the epic's commits live
+      on).  Reachability from `main` is NOT the criterion: the controller
+      validates source-lineage reachability before cherry-picking, and
+      `main`/`origin/main` ancestry is the "already published" test, not a
+      selection test.  When reachability cannot be verified, do not select
+      it; note the uncertainty in `verification_evidence`.
+    - Resolve the divergence mode with read-only git BEFORE classifying:
+      `equal` (origin/main == source HEAD, or each is an ancestor of the
+      other), `strict_ancestor` (origin/main strictly behind HEAD),
+      `ahead_or_diverged` (origin/main not an ancestor of HEAD), or
+      `origin/main` unresolvable (stop and report).
+    - In `equal` mode: do NOT select anything.  Classify every candidate as
+      `coincident_ref` ("origin/main == source HEAD; possible stale/divergent
+      remote ref — typed UNKNOWN/INCOHERENT") or `promotion_evidence` (covered
+      by a promotion-evidence ref) and emit `selected_shas: []`.  NEVER use
+      "already published" in equal mode — the label would assert publication
+      the evidence cannot establish.  An empty selection fails closed at the
+      controller; the typed evidence survives in the batch artifact.
+    - In `strict_ancestor` / `ahead_or_diverged` modes: EXCLUDE a candidate
+      when it is an ancestor of `origin/main` (already_on_target), when it is
+      covered by promotion evidence, when it touches no engine-source path, or
+      when it is not reachable from HEAD; SELECT it otherwise.
     - When in doubt between including and excluding a commit, EXCLUDE it and
       record the reason — a false inclusion corrupts the release branch,
       while an excluded commit stays in the epic's own history.
     - Do not modify files, open PRs, or touch the repository state.  This is
       a read-only selection task; the controller performs the cherry-pick.
+    - `verification_evidence` MUST carry: `divergence_mode`, `candidate_count`
+      (== len(candidate_commits)), `target_ref` (`origin/main`), `target_sha`,
+      `local_main_sha`, `source_head_sha`, `promotion_evidence_refs` (with
+      `resolves` per ref), `promotion_evidence_status`, and `per_phase` with
+      an entry for EVERY candidate (sha + subject + reason from the allowed
+      vocabulary: already_on_target / promotion_evidence / non_engine_path /
+      not_reachable_from_source / coincident_ref / unresolved).  Never emit a
+      partial per_phase list.
 
     Return the following JSON exactly (the authoritative output — no prose
     outside the JSON):
