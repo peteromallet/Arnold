@@ -1,0 +1,324 @@
+{
+  "id": "J3",
+  "kind": "material-judgment",
+  "role": "JUDGMENT",
+  "label": "[XHARD-REVIEW]",
+  "model": "grok-4.6",
+  "verdict": "AMEND",
+  "verdict_semantics": "AMEND = Option A, amended: redact in place, preserve auditability, rewrite reachable history so the pushed graph is clean. Not PASS (push remains blocked until hygiene is proven). Not FAIL (T0.0 is retained; G0 PASS / J1 / J2 / Live Tree Authority are unchanged).",
+  "decisive_recommendation": "A-amended — redact only the secret-bearing env value in the canonical T0.0 observation, keep all surrounding container-identity structure, record a redaction receipt, rewrite history from b14c727e29 through descendants so no pushed reachable object contains OPENAI_KEY_F-002, then re-validate. The redacted artifact becomes the canonical comparison input. Original capture bytes remain local-history-only provenance, never pushed.",
+  "question": "How to reconcile T0.0 content-addressed immutability with GitHub push protection after OPENAI_KEY_F-002 was captured into committed baseline/T0.0/raw-cloud-container.txt, given that the remote never received the object, T7.4 compares against T0.0, T0.3 digest checks remain authoritative, and J1/J2/G0/Live Tree Authority must not be reopened?",
+  "observed_facts": {
+    "remote_integration_ref": "origin/fixer/runtime-convergence-r = a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "local_HEAD": "2cf3ad97d97eb796476ba5ca48ad5bc72c2effd0",
+    "secret_introduced_at": "b14c727e2909317862d01c48f08c16b719ab8131",
+    "rewrite_window_old_commits": [
+      "b14c727e2909317862d01c48f08c16b719ab8131",
+      "cefd55aa693e596da800bd052d5bef2ccc5ecf61",
+      "f25d9be90d53c91b14dd3f0df721d7d1381ece42",
+      "a6eb0eae9554504d0cb98a3ab83ac9f1c0e6518a",
+      "2cf3ad97d97eb796476ba5ca48ad5bc72c2effd0"
+    ],
+    "github_received_secret": false,
+    "push_protection_blocked_real_push": true,
+    "dry_run_push_passes_protocol": true,
+    "raw_cloud_container_in_T0.0_required_artifacts": false,
+    "T0.0_required_artifact_count": 19,
+    "T0.0_indexed_artifact_count": 46,
+    "working_tree_execution_log_contains_plaintext_secret": true,
+    "HEAD_execution_log_contains_plaintext_secret": false
+  },
+  "evidence_inputs": [
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md",
+      "sha256": "86ab7d54bf4b3aa0017d9dc59594eadf5549c38fa6f3aeea31a6ac1c1725f5b0",
+      "note": "working-tree log containing F-002; HEAD blob sha256 fe92701b634b0d006a4f85511eba735041e2ceb621f6228dfff69ca1f88db311 has no sk-token. Do not commit the current working-tree log until F-002 text is rewritten to omit the literal key."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt",
+      "sha256": "ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60",
+      "byte_length": 8289,
+      "status": "captured-secret-bearing"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/baseline.json",
+      "sha256": "f5dfdf50bf3c552d24a53b0027b05123228135cc5473fdf1ddd5d842d2b4149b",
+      "byte_length": 24317
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/commands.ndjson",
+      "sha256": "277e5b3587d869f83fbfc23a52e1ffe61255d407cfe58062bcf9ff9008c9d517",
+      "note": "indexes raw-cloud-container digest; must be updated after redaction"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json",
+      "sha256": "51f945b169680795601eed8d1450ed229321c1bb552ef339c94e0d99c3ae1141"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.schema.v1.json",
+      "sha256": "fc30257f4656067fb920157a0bf3711c686e7d7752c995732bbfb09fdf7a7a94"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md",
+      "note": "T0.0 / T0.3 / T7.4 cards"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J1-grok-judgment.json",
+      "sha256": "8a43b98852009649474fa792fbfef063290a0f90e181c9bc22fdd1652a578734"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J2-amended-freeze-grok-judgment.json",
+      "sha256": "727196ce91c4bfe20145aea9ed53060d9551e59ee54df2e3b006f5589f9f4bfd"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/gates/G0/G0-rereview-grok-judgment.json",
+      "sha256": "71f93e0cf15153936cd4a673d277245826425f6b2f73d16ab64f0546d1129a2c",
+      "overall_verdict": "PASS"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json",
+      "sha256": "60a2de9cf8770c67bdf7f226f29a84dba5dc6a9b16b7bda849eaaccad2ab5c71",
+      "note": "contains a T0.0 inventory member digest for raw-cloud-container.txt; must be updated after redaction"
+    }
+  ],
+  "secret_field": {
+    "token_name": "OPENAI_KEY_F-002",
+    "placeholder": "<REDACTED-OPENAI-KEY>",
+    "artifact_path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt",
+    "json_path": "Config.Env[0]",
+    "env_key": "DEEPSEEK_API_KEY",
+    "value_length": 35,
+    "whole_file_sk_token_count": 1,
+    "sk_tokens_outside_Config.Env": [],
+    "classification": "captured-secret field, not a T0.0 state dimension",
+    "not_a_state_dimension_proof": [
+      "T0.0 capture list is process identities, selectors/markers/manifests, leases/fences, plan/chain state, schedule store, ledger, candidate roots/provenance, integration refs — not provider credentials.",
+      "raw-cloud-container.txt is not in baseline.json required_artifacts (19 required; this file is supporting raw observation).",
+      "Container identity used for non-interference is Id, Name, Image, State.{Status,Running,Pid,StartedAt}, Created, Path/Args, Mounts, NetworkSettings — all outside Config.Env[0].",
+      "processes-cloud.json is the required process-identity artifact and is derived from ps/pgrep, not docker inspect Env.",
+      "The env value is a credential blob. Presence/absence of a placeholder does not change unknown/unreadable dimensions, Live Tree Authority, import_root, or generation interpreter."
+    ]
+  },
+  "rejected_alternatives": [
+    "B — keep local bytes, omit artifact from push: integration branch / evidence manifest / T0.0 index would either lie about presence or fail T0.3 digest/existence checks. No coherent validator-passing publication contract without claiming the artifact is present.",
+    "C — drop the artifact: destroys container-identity observation (Id/Name/Image/State/Created) needed for T7.4 exact comparison; silent deletion forbidden; completeness of the 46-artifact index would be falsified.",
+    "A-unamended (redact without history rewrite): HEAD would be clean but old commits b14c727e29..2cf3ad97d9 remain reachable and GitHub push protection would still reject the object graph.",
+    "D-filter-repo-without-redacted-canonical: equivalent to C for comparison purposes.",
+    "Broad ignore-secrets comparator: forbidden. Only Config.Env[0] / DEEPSEEK_API_KEY value is excepted, and only because it is classified captured-secret, not state.",
+    "Bypass GitHub push protection or republish the credential: forbidden.",
+    "New gate / G0.1 / T4.4 / G4.4 / STATE_SCHEMA_EPOCH / launch-pin change: forbidden. F-002 is evidence hygiene, not authority.",
+    "Judge implementation, commit, rewrite, push, or key rotation: forbidden. Judge has no mutation authority.",
+    "Commit current working-tree execution log as-is: it currently contains the literal key. Must be rewritten to OPENAI_KEY_F-002 / <REDACTED-OPENAI-KEY> before any evidence commit."
+  ],
+  "immutability_ruling": {
+    "what_remains_immutable": [
+      "Original captured observation bytes (sha256 ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60, 8289 bytes) as local-history-only provenance. Never pushed. Never recaptured.",
+      "T0.0 capture event itself: read-only, pre-stateful, unknown/unreadable dimensions unchanged, no live/runtime mutation at capture or now.",
+      "J1 frozen committed plan/goal boundary a610c220da.",
+      "J2 Live Tree Authority freeze (import_root + generation interpreter; Git SHA observation-only; no T4.4 scope).",
+      "G0 re-review PASS against the J2 freeze."
+    ],
+    "what_becomes_canonical_published_evidence": "The redacted raw-cloud-container.txt after a single-field substitution of the Config.Env[0] value with <REDACTED-OPENAI-KEY>, plus the updated baseline.json entry (new digest + byte_length) and redaction receipt.",
+    "comparison_input_after_hygiene": "redacted canonical raw-cloud-container.txt bytes, as indexed by the post-hygiene baseline.json. Not the original secret-bearing bytes. Not a field-stripping comparator except for the one named captured-secret field when comparing a later inspect that still contains a live credential.",
+    "unknown_stays_unknown": "Redaction does not invent process/plan/chain/selector/lease/ledger/candidate state. It does not convert an unknown into captured. It does not alter authority or identity dimensions.",
+    "authority_identity_untouched": "No change to Live Tree Authority, import_root, generation interpreter, G0 selection, T2.1 claim seam, or T4.4 (still no surviving scope)."
+  },
+  "rotation_recommendation": {
+    "operator_should_rotate_or_revoke": true,
+    "reason": "OPENAI_KEY_F-002 existed in plaintext in local git objects from b14c727e29 onward and in the working-tree execution log. GitHub did not receive it; local object database, worktree, and any scrapes/backups of those objects are sufficient exposure.",
+    "consolidation_must_not": [
+      "touch the live box",
+      "call a provider",
+      "rotate or revoke the key",
+      "mutate runtime env, container, or resident"
+    ],
+    "who": "human operator, outside consolidation, after or in parallel with hygiene. Not Luna. Not this judge."
+  },
+  "redaction_requirements": {
+    "scope": "Replace only the value of Config.Env[0] (env key DEEPSEEK_API_KEY) in baseline/T0.0/raw-cloud-container.txt with the exact placeholder <REDACTED-OPENAI-KEY>. Preserve JSON structure, key name, all other Env entries, and all non-Env inspect fields.",
+    "also_redact_before_commit": "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md F-002 cause line: replace the literal key with OPENAI_KEY_F-002 or <REDACTED-OPENAI-KEY>. Current working-tree log must not be committed until that substitution exists.",
+    "do_not_redact": "DISCORD_BOT_TOKEN, GROQ_API_KEY, or other env values unless a subsequent scan proves GitHub push protection also matches them. This ruling's secret is OPENAI_KEY_F-002 only. If a later scan finds additional push-blocking tokens in the same inspect, stop and route a new material judgment; do not silently broaden.",
+    "receipt_path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/F-002-redaction-receipt.json",
+    "receipt_must_contain": [
+      "finding_id: F-002",
+      "affected_path: baseline/T0.0/raw-cloud-container.txt",
+      "original_artifact_digest: sha256:ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60",
+      "original_byte_length: 8289",
+      "redacted_artifact_digest: <computed after substitution>",
+      "redacted_byte_length: <computed after substitution>",
+      "reason: GitHub push protection blocked batch-0 push; live credential cannot be published; T0.0 observation otherwise retained",
+      "exact_redaction_scope: Config.Env[0] value for DEEPSEEK_API_KEY; placeholder <REDACTED-OPENAI-KEY>",
+      "baseline.json entry update: path, new content_digest, new byte_length; resulting baseline.json digest",
+      "commands.ndjson output_artifact_digest update for the docker-inspect command record",
+      "refs-manifest.json T0.0 inventory member sha256 update",
+      "provenance: original captured before redaction; original bytes remain local-history-only; never pushed",
+      "T7.4 comparison semantics as in this judgment",
+      "history_rewrite_scope: filter/rewrite from b14c727e29 through all descendants currently 2cf3ad97d9; old-to-new commit map",
+      "resulting_current_sha after rewrite",
+      "no reproduction of OPENAI_KEY_F-002"
+    ]
+  },
+  "history_rewrite_requirements": {
+    "start": "b14c727e2909317862d01c48f08c16b719ab8131",
+    "descendants_currently": [
+      "cefd55aa693e596da800bd052d5bef2ccc5ecf61",
+      "f25d9be90d53c91b14dd3f0df721d7d1381ece42",
+      "a6eb0eae9554504d0cb98a3ab83ac9f1c0e6518a",
+      "2cf3ad97d97eb796476ba5ca48ad5bc72c2effd0"
+    ],
+    "method": "history rewrite / filter of the affected file contents (and execution-log plaintext if any rewritten commit contains it). Prefer git filter-repo or equivalent that rewrites blobs, not a new commit that leaves old blobs reachable from the branch.",
+    "preserve": "auditable old-SHA → new-SHA map in the redaction receipt. Do not delete local original objects until the map exists; they stay unpushed.",
+    "must_not": [
+      "force-push before clean reachable-object scan",
+      "rewrite commits before b14c727e29",
+      "rewrite origin/fixer/runtime-convergence-r (still a610c220da, clean)",
+      "reset user work unrelated to F-002",
+      "touch live refs, selectors, candidates, or the cloud box"
+    ],
+    "proof_of_clean_graph": "After rewrite, every blob reachable from the to-be-pushed tip must fail a secret scan for OPENAI_KEY_F-002 and for sk- tokens matching the original captured value. Scan must not print the value."
+  },
+  "t03_validator_and_manifest": {
+    "this_judgment_is_a_material_judgment_record": true,
+    "link_to_F-002": "material_judgments[].judgment_id = J3; findings[].finding_id = F-002; finding.adjudicated_revision_class = HARD-REVISION; finding.classification_disposition = bounded-evidence-hygiene-after-G0-PASS; J3.question names F-002; redaction receipt finding_id F-002.",
+    "required_updates": [
+      "baseline.json artifacts[] entry for baseline/T0.0/raw-cloud-container.txt: content_digest and byte_length to redacted values; do not drop the entry; do not add the secret as a known state dimension",
+      "baseline.json file digest changes as a consequence; record new sha256 of baseline.json in the redaction receipt and any manifest live_state_snapshots / required_artifacts that cite it",
+      "commands.ndjson docker-inspect record: output_artifact_digest must match redacted file",
+      "milestones/T0.1/refs-manifest.json T0.0 inventory member sha256 for raw-cloud-container.txt",
+      "manifest.json: add findings[F-002], material_judgments[J3], redaction-receipt artifact, updated integration_current_sha after rewrite, updated digests for any cited T0.0 paths, G0 selection-manifest digest unchanged (e087a70a…)",
+      "J3 receipt file: docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J3-grok-judgment.json transcribed from this judgment without interpretation",
+      "schema: no change. Do not weaken DIGEST_MISMATCH. Do not add an ignore-secrets validator exception.",
+      "superseded_artifact_digests on F-002 must include ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60"
+    ],
+    "g0_selection_manifest_digest_unchanged": "e087a70a1429cd4e40a3b2c0769441447390864af038a455f0be4c531ae5a742",
+    "validator_command": "python scripts/validate_maintenance_runtime_consolidation_evidence.py docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json",
+    "validator_must_pass_after_revision": true,
+    "bypass_forbidden": true
+  },
+  "t74_comparison_rule": {
+    "canonical_T0.0_input": "post-hygiene redacted raw-cloud-container.txt as indexed by post-hygiene baseline.json",
+    "exact_byte_comparison": "All T0.0 artifacts except the named captured-secret field remain exact-compare against T0.0 and against the immediate pre-canary snapshot, minus already-allowed disposable-root artifacts and separately approved candidate-install receipts.",
+    "named_field_exception": {
+      "artifact": "baseline/T0.0/raw-cloud-container.txt and the corresponding later inspect snapshots of the same container",
+      "field": "docker inspect JSON Config.Env entry whose key is DEEPSEEK_API_KEY (observed index Config.Env[0] at T0.0 capture)",
+      "treatment": "If a later snapshot still contains a live credential in that field, compare after substituting the same placeholder used in the canonical T0.0 artifact. Do not ignore any other Env key, State field, Id, Name, Image, Mounts, or NetworkSettings.",
+      "preferred": "Operator rotation outside consolidation may make later inspects differ in that field; the field is not a non-interference state dimension. A later snapshot that changes Id/Name/Image/State.Pid/State.StartedAt/Mounts is a real delta and fails T7.4."
+    },
+    "pre_canary": "refresh T0.0 dimensions without replacing the immutable T0.0 baseline; compare refreshed snapshot to redacted canonical T0.0 with the named-field rule only",
+    "post_canary": "exact vs immediate pre-canary and vs redacted T0.0 except disposable-root + approved install receipts + named captured-secret field",
+    "post_rollback": "same as post_canary; rollback is pointer-only",
+    "provenance_without_exposure": "redaction receipt records original digest/byte_length and redacted digest/byte_length. Original bytes stay local-history-only. Receipts, logs, and this judgment never contain OPENAI_KEY_F-002."
+  },
+  "g0_interaction": {
+    "bounded_hygiene_after_G0_PASS": true,
+    "repeat_G0_review": false,
+    "why_bounded": "F-002 does not change source selection, keep/adapt/drop, T0.2 hunks, seed custody, claim seam, Live Tree Authority, or the J1 sequence. It rewrites an evidence blob that G0 did not adjudicate as a selection input. G0-rereview PASS (71f93e0c…) remains binding. Batch 1 remains allowed under the J2 freeze after push unblocks.",
+    "J1_unchanged": true,
+    "J2_unchanged": true,
+    "live_tree_authority_unchanged": true,
+    "no_new_gate": true,
+    "no_T44_scope": true
+  },
+  "affected_contracts": [
+    "T0.0: published canonical observation is the redacted artifact; original capture bytes are local-history-only; unknown/unreadable dimensions unchanged",
+    "T0.3: validator remains authoritative; digest/byte_length/current-SHA/manifest/finding/judgment records must be updated; no schema weakening",
+    "T7.4: compare against redacted canonical T0.0; named captured-secret field Config.Env DEEPSEEK_API_KEY only; no broad ignore-secrets",
+    "F-002: resolved by A-amended hygiene + history rewrite + validator pass; push stays blocked until those complete",
+    "batch-0 push: blocked until push-unblock conditions",
+    "G0: PASS unchanged; not rerun",
+    "J1: unchanged",
+    "J2: unchanged",
+    "T4.4/G4.4: still no surviving scope"
+  ],
+  "downstream_route": [
+    {
+      "order": 1,
+      "role": "Luna evidence recorder",
+      "label": "[HARD]",
+      "action": "Transcribe this J3 judgment unchanged to docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J3-grok-judgment.json. Do not interpret missing decisions. Do not echo OPENAI_KEY_F-002. Rewrite the working-tree F-002 log line to use the token name/placeholder before any commit of the execution log."
+    },
+    {
+      "order": 2,
+      "role": "Luna bounded revision implementer",
+      "label": "[HARD-REVISION]",
+      "action": "Perform the redaction, index/manifest/receipt updates, history rewrite, secret scan, and validator pass. Not a new card. Existing HARD-REVISION route under frozen T0.3 evidence contract. Judge does not implement."
+    },
+    {
+      "order": 3,
+      "role": "Luna [HARD-REVISION] implementer",
+      "allowed_files_and_surfaces": [
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt (single-field redaction only)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/baseline.json (digest/byte_length for that artifact only; optional hygiene note field, no state-dimension invention)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/commands.ndjson (output_artifact_digest for the inspect command only)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/F-002-redaction-receipt.json (create)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json (T0.0 inventory member digest only)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json (F-002 finding, J3 judgment, receipt artifact, integration_current_sha, cited T0.0 digests)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J3-grok-judgment.json",
+        "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md (F-002 section: remove literal key; record J3; no other plan/goal edits)",
+        "git history rewrite of those blobs from b14c727e29 through current descendants",
+        "old-to-new commit map inside the redaction receipt"
+      ],
+      "prohibited": [
+        "live/runtime/cloud/container/env/selector/marker/manifest/lease/fence/ledger/candidate mutation",
+        "provider API calls, key rotation, revocation",
+        "plan/goal/T0.2 source-selection edits",
+        "J1/J2/G0 receipt mutation",
+        "validator schema weakening or DIGEST_MISMATCH bypass",
+        "new cards, gates, T4.4, G0.1",
+        "push before unblock conditions",
+        "self-review"
+      ]
+    },
+    {
+      "order": 4,
+      "role": "independent Luna [HARD-REVIEW]",
+      "action": "Review the complete hygiene diff + rewrite map + scan output + validator result. Must-findings block push. Reviewer does not edit."
+    },
+    {
+      "order": 5,
+      "role": "Luna integration",
+      "label": "existing integration/push role",
+      "action": "After passing HARD-REVIEW, validator success, and clean reachable-object scan, push explicitly HEAD:fixer/runtime-convergence-r. Force-push of rewritten local history is required because the secret-bearing commits must not remain on the pushed branch; it is allowed only after the clean-scan proof. Remote currently a610c220da (no secret)."
+    }
+  ],
+  "revision_class": "HARD-REVISION",
+  "why_not_XHARD_REVISION": "Does not change authority, custody, identity, migration, concurrency/replay, compatibility/public schema, live-runtime behavior, task scope, acceptance semantics, or policy. It rewrites a supporting evidence blob and its indexes so the existing contracts remain satisfiable and pushable. Ambiguity was this judgment; classification is now frozen.",
+  "push_disposition": {
+    "currently": "BLOCKED",
+    "may_proceed_when_all_true": [
+      "J3 receipt recorded unchanged",
+      "raw-cloud-container.txt redacted at Config.Env[0] only; placeholder <REDACTED-OPENAI-KEY>",
+      "execution log F-002 line contains no literal key",
+      "redaction receipt complete with original+redacted digest/byte_length, rewrite map, T7.4 semantics",
+      "baseline.json, commands.ndjson, refs-manifest.json, manifest.json digests/byte_lengths/current SHA consistent",
+      "python scripts/validate_maintenance_runtime_consolidation_evidence.py docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json exits 0",
+      "independent Luna HARD-REVIEW PASS on the hygiene revision",
+      "no blob reachable from the to-be-pushed tip contains OPENAI_KEY_F-002 (scan without printing the value)",
+      "remote still a610c220da or fast-forward/force-with-lease only of rewritten secret-free history onto fixer/runtime-convergence-r",
+      "no live/runtime mutation performed"
+    ],
+    "if_still_blocked": "Concrete blocker is GitHub push protection on the secret-bearing blob reachable from b14c727e29..HEAD, plus the uncommitted execution-log copy of the same token. Next route remains the Luna [HARD-REVISION] above, not a new gate."
+  },
+  "judge_prohibitions": [
+    "This judge makes no edits, commits, rebases, history rewrites, pushes, force-pushes, branch/ref updates, or working-tree mutations.",
+    "This judge does not rotate or revoke keys and does not access the live cloud box.",
+    "This judgment does not itself rewrite history or unblock the push.",
+    "No secret, prefix, suffix, or recoverable fragment of OPENAI_KEY_F-002 is reproduced here."
+  ],
+  "recorded_note": "Suitable for Luna evidence recorder transcription without interpreting missing decisions.",
+  "grok_invocation": {
+    "model": "grok-4.6",
+    "task_id": "J3-grok",
+    "role": "JUDGMENT",
+    "invocation_id": "mrc-5f6b612541c10c76baf40a25c22ec9cf4eb7b9e1333264df",
+    "exit_status": 0,
+    "elapsed_seconds": 705.5303560000611,
+    "allowance_digest": "08afc5bf9c7fa8571b3a41b2155e01294c24cf300279bf5f8c8b4a5f9824f86e",
+    "brief_digest": "08e6525ad6e9c692d7f1f4a03eea2fa5affcbfc48babe06ba2e6e03b568db2d3",
+    "command_digest": "7fa2fdc0eaeace775162b33f5f5136692a0ab9fa72ea6a98f0916eb53d1640c1",
+    "result_digest": "31f306e7c4289cb08c669a6f5623320040cb3942c861e8a98ca2280d6bf1bf84",
+    "stdout_digest": "86016287a8e5156e18d4c4fd83f809ae48a50df1e1d86507ee840b439be4151e",
+    "stderr_digest": "97ee9ea8a07fe8932b7283d69a52844bf00b3a7dc2769de8c9b1f0ec0d2b1a32"
+  },
+  "recorded_at_utc": "2026-08-20T19:11:14Z"
+}

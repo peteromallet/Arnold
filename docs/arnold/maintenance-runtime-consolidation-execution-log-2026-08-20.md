@@ -121,3 +121,13 @@ Directives for consolidation:
 - FRESH Grok 4.6 re-review (G0-rereview, mrc-9f978205…): **PASS** — all MF-001..005 + J2 launch-seed amendment verified against revised T0.2 + seed custody; must_findings=[]; should-residuals are hygiene/evidence-text lag only; J1 sequence preserved (Batch 4 = T4.1→G4.1→T4.2→G4.2→T4.3→G4.3; Batch 5 = T5.1 after G4.3; no T4.4/G4.4); Live Tree Authority freeze binding with zero authority drift.
 - G0 disposition: PASS. Batch 1 may start under the J2 freeze. Next: record receipt → commit batch-0 evidence + push → T1.1/T1.2/T1.3.
 
+
+## F-002 — LIVE SECRET in committed T0.0 baseline; push blocked (material judgment)
+
+- GitHub push protection rejected `git push origin HEAD:fixer/runtime-convergence-r` (batch-0 closeout, INT-b0push, mrc-47667cce…). Remote still a610c220da. Dry-run push passes at protocol level (server-side secret scanning only runs on real object upload).
+- Cause: `docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt` (committed at b14c727e29 as part of T0.0 baseline) contains a live OpenAI-format API key `<REDACTED-OPENAI-KEY>` captured from the cloud container env via docker inspect.
+- Inventory: exact-file scan of all committed evidence under docs/arnold/maintenance-runtime-consolidation-evidence/ finds ONLY this file. No other secret-like content.
+- Conflict: T0.0 baseline is contractually immutable/content-addressed (T7.4 compares against it; SF-004 unknowns stay unknown); a live secret cannot be pushed to GitHub.
+- Material judgment required: how to reconcile baseline immutability with pushability (redact-and-audit vs. exclude vs. other), plus rotation recommendation for the exposed key (it never reached GitHub, but was written to local git objects in plaintext).
+- Routed: fresh Grok 4.6 judgment (J3) via wrapper. Batch-0 push stays blocked pending ruling.
+

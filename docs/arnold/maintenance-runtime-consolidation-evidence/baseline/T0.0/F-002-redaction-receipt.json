@@ -1,0 +1,76 @@
+{
+  "finding_id": "F-002",
+  "affected_path": "baseline/T0.0/raw-cloud-container.txt",
+  "original_artifact": {
+    "digest": "sha256:ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60",
+    "byte_length": 8289
+  },
+  "redacted_artifact": {
+    "digest": "sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2",
+    "byte_length": 8275
+  },
+  "reason": "GitHub push protection blocked the batch-0 push; the live credential cannot be published; the T0.0 observation is otherwise retained.",
+  "exact_redaction_scope": {
+    "field": "Config.Env[0] value for DEEPSEEK_API_KEY",
+    "replacement": "<REDACTED-OPENAI-KEY>",
+    "preservation": "All other env entries and all non-Env inspect fields remain exact."
+  },
+  "index_updates": {
+    "baseline_entry": {
+      "path": "baseline/T0.0/raw-cloud-container.txt",
+      "content_digest": "sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2",
+      "byte_length": 8275
+    },
+    "baseline_json": {
+      "path": "baseline/T0.0/baseline.json",
+      "sha256": "sha256:e44eb42ca267dd46bc0300f8286e7a830339833ddeb4bceb368b6d4e997f771f",
+      "byte_length": 24317
+    },
+    "commands_ndjson": {
+      "path": "baseline/T0.0/commands.ndjson",
+      "record": "docker-inspect command record on line 4",
+      "output_artifact_digest": "sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2",
+      "sha256": "sha256:fbb4a98be97f20b3b45e78dd32238d6d1239b800e61c7b1e036977a04a6377e3",
+      "byte_length": 17621
+    },
+    "t01_refs_manifest": {
+      "path": "milestones/T0.1/refs-manifest.json",
+      "inventory_member": "T0.0 raw-cloud-container.txt",
+      "sha256": "sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2",
+      "size_bytes": 8289,
+      "refs_manifest_sha256": "sha256:6bd333ec7b0e133386786fd381e2be05933c8faf4e628eb2058a198a68e58a34",
+      "refs_manifest_byte_length": 116353,
+      "size_note": "The existing refs-manifest contract and intended narrow update change the inventory digest only; its recorded size_bytes remains unchanged."
+    }
+  },
+  "provenance": {
+    "original_capture_preceded_redaction": true,
+    "original_bytes": "Original capture bytes remain local-history-only and are never pushed."
+  },
+  "t74_semantics": {
+    "canonical_input": "Redacted canonical T0.0 raw-cloud-container.txt bytes as indexed by post-hygiene baseline.json.",
+    "comparison": "All other T0.0 fields and artifacts remain exact-compare.",
+    "named_field_normalization": "Only the named captured-secret field may be normalized to the same placeholder when a later inspect still contains a live credential.",
+    "ignored_fields": "No other Env key, Id, Name, Image, State, Mounts, or NetworkSettings may be ignored."
+  },
+  "history_rewrite_scope": {
+    "start_commit": "b14c727e2909317862d01c48f08c16b719ab8131",
+    "descendant_commits": [
+      "cefd55aa693e596da800bd052d5bef2ccc5ecf61",
+      "f25d9be90d53c91b14dd3f0df721d7d1381ece42",
+      "a6eb0eae9554504d0cb98a3ab83ac9f1c0e6518a",
+      "2cf3ad97d97eb796476ba5ca48ad5bc72c2effd0"
+    ],
+    "old_to_new": {
+      "b14c727e2909317862d01c48f08c16b719ab8131": "1dbcc2ae9f8f5fbd7f01649e78ddcc65484329af",
+      "cefd55aa693e596da800bd052d5bef2ccc5ecf61": "a9babdbc66d770323b4528de044e69ca27b18d65",
+      "f25d9be90d53c91b14dd3f0df721d7d1381ece42": "afd42c0ca713e16e2d4aa13a444fdd488f1124bb",
+      "a6eb0eae9554504d0cb98a3ab83ac9f1c0e6518a": "ceea2737b8ec480c82b6b34f609a9d7079012253",
+      "2cf3ad97d97eb796476ba5ca48ad5bc72c2effd0": "683ced301c6eeee0f43baff726998162046401e8"
+    }
+  },
+  "resulting_current_sha": "683ced301c6eeee0f43baff726998162046401e8",
+  "final_hygiene_commit_sha": null,
+  "final_hygiene_commit_sha_note": "Reported separately after the one final hygiene commit; intentionally not self-referential.",
+  "no_secret_reproduction_statement": "This receipt contains no OPENAI_KEY_F-002 credential, prefix, suffix, fragment, or recoverable secret-bearing command output."
+}
