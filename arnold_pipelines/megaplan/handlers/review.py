@@ -561,6 +561,28 @@ def _review_execution_batch_completed_task_ids(
     return completed
 
 
+def _reconcile_selection_batch_present(plan_dir: Path) -> bool:
+    """Return whether a reconcile plan has an authoritative selection envelope.
+
+    Reconcile execution is a read-only selector: its ``selected_shas`` and
+    ``verification_evidence`` envelope is the task-completion authority, even
+    when the selector has no generic ``task_updates`` rows.  Ordinary execute
+    plans retain the per-task authority rule below.
+    """
+    for batch_path in sorted(list_batch_artifacts(plan_dir)):
+        try:
+            payload = read_json(batch_path)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if "selected_shas" in payload and isinstance(
+            payload.get("verification_evidence"), dict
+        ):
+            return True
+    return False
+
+
 def _review_execute_authority_gaps(
     *,
     finalize_data: dict[str, Any],
@@ -589,6 +611,8 @@ def _review_execute_authority_gaps(
         project_dir=project_dir,
         state=state,
     )
+    if _reconcile_selection_batch_present(plan_dir):
+        return []
     gaps: list[str] = []
     for task in tasks:
         task_id = str(task.get("id") or task.get("task_id") or "")

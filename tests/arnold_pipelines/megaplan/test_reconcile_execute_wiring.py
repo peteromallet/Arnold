@@ -437,3 +437,14 @@ def test_reconcile_selection_payload_corroborates_completion_authority(
 
     ok, reason = chain_mod._latest_execution_batch_all_tasks_done(plan_dir)
     assert ok is True, reason
+
+    from arnold_pipelines.megaplan.handlers.review import (
+        _review_execute_authority_gaps,
+    )
+
+    assert _review_execute_authority_gaps(
+        finalize_data={"tasks": [{"id": "T1", "status": "pending"}, {"id": "T2", "status": "pending"}]},
+        plan_dir=plan_dir,
+        project_dir=tmp_path,
+        state={"config": {"project_dir": str(tmp_path)}, "meta": {}},
+    ) == []
