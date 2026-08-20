@@ -111,6 +111,29 @@ def epic_status(epic: str) -> dict:
             "chain_rev": _short(cur.get("source_revision")),
             "chain_digest": _short(cur.get("content_sha256")),
         }
+        # Milestone denominator from the epic's chain.yaml (top-level
+        # "- label:" entries incl. the terminal reconcile milestone).
+        # Without it, `done=6` reads as 6/6 when the true total is 9
+        # (2026-08-20 astrid-first m7 park misread by the babysitter).
+        total = None
+        project = _resolve_project(epic)
+        if project:
+            spec_dir = Path(project) / ".megaplan" / "initiatives"
+            if spec_dir.is_dir():
+                for spec_candidate in sorted(spec_dir.glob("*/chain.yaml")):
+                    try:
+                        spec_text = spec_candidate.read_text(encoding="utf-8")
+                    except OSError:
+                        continue
+                    n = sum(
+                        1
+                        for line in spec_text.splitlines()
+                        if line.startswith("- label:")
+                    )
+                    if n:
+                        total = n
+                        break
+        chain["total"] = total
     out["chain"] = chain
     # plan + events
     project = _resolve_project(epic)
@@ -203,8 +226,11 @@ def render(epics: list[dict]) -> str:
         lines.append(f"  manifest: gen={m.get('generation')} head={m.get('head')}")
         c = e.get("chain") or {}
         if c:
+            _done = c.get('done')
+            _total = c.get('total')
+            _done_str = f"{_done}/{_total}" if (_done is not None and _total) else str(_done)
             lines.append(
-                f"  chain: {c.get('last_state')} | idx={c.get('idx')} | done={c.get('done')} "
+                f"  chain: {c.get('last_state')} | idx={c.get('idx')} | done={_done_str} "
                 f"| plan={c.get('plan')} | rev={c.get('chain_rev')}"
             )
         p = e.get("plan") or {}

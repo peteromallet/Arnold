@@ -2031,6 +2031,17 @@ def _classify_repair_dispatch_canonical(
                 retry_strategy=retry_strategy,
                 failure_kind=failure_kind,
             )
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_L1,
+            dispatch_intent=DISPATCH_INTENT_L1,
+            rationale=("terminality contradiction reopens repair custody (no request)",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
     if state is CanonicalState.COMPLETED:
         return _make_dispatch_decision(
             decision=DISPATCH_DECISION_TERMINAL,
@@ -5248,30 +5259,6 @@ def _is_exact_phase_request_shape(
         and failure_kind in {"phase_failed", "deterministic_phase_failure"}
         and retry_strategy in {"rerun_phase", "repair_phase_contract"}
     )
-
-
-def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
-    """Return true for states that must reopen custody despite a success label."""
-    target = _as_mapping(current_target)
-    active_step = _as_mapping(target.get("active_step_heartbeat"))
-    if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
-        if active_step.get("pid_live") is True:
-            return False
-        return _has_current_target_evidence(target)
-    stale_kinds = {
-        _as_text(_as_mapping(item).get("kind"))
-        for item in _as_list(target.get("stale_evidence"))
-        if isinstance(item, Mapping)
-    }
-    if "stale_active_step_dead_pid" in stale_kinds:
-        return _has_current_target_evidence(target)
-    chain = _as_mapping(target.get("chain_state"))
-    try:
-        total = int(chain.get("milestone_total"))
-        completed = int(chain.get("completed_count") or 0)
-    except (TypeError, ValueError):
-        return False
-    return total > 0 and completed < total and _has_current_target_evidence(target)
 
 
 def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:

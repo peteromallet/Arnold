@@ -1183,7 +1183,6 @@ def _overlay_newer_chain_state(
     )
     custody_mismatch = bool(
         last_state.lower() in {"done", "complete", "completed"}
-        and not current_plan_name
         and milestone_count is not None
         and completed_len < milestone_count
     )
@@ -1263,8 +1262,11 @@ def _chain_state_complete(
 ) -> bool:
     if last_state.strip().lower() not in {"done", "complete", "completed"}:
         return False
-    if milestone_count is None:
-        return True
+    if milestone_count is None or milestone_count <= 0:
+        # Unknown or empty milestone count is incomplete, never complete:
+        # a fail-open here would let plan-done advertise epic-done while
+        # milestones remain unaccounted (2026-08-20 astrid-first m7 park).
+        return False
     return completed_len >= milestone_count
 
 

@@ -715,8 +715,25 @@ def classify_completed(ctx: ResolverContext) -> "CanonicalRunState | None":
     # A chain-level success projection cannot complete a named, nonterminal
     # current plan.  Prefer the plan lifecycle when it exists; use chain
     # completion only when no plan lifecycle is available.
-    authority_done = plan_current == "done" or (
-        not plan_current and chain_last == "done"
+    # A parked mid-epic chain (plan done but milestones remain, or a current
+    # plan under a done chain label) is NOT epic-done: refusing COMPLETED
+    # keeps the repair resolver actionable instead of minting TERMINAL.
+    _chain = (
+        ctx.evidence.get("chain_state")
+        if isinstance(ctx.evidence.get("chain_state"), Mapping)
+        else {}
+    )
+    try:
+        _milestone_total = int(_chain.get("milestone_total") or 0)
+        _completed_count = int(_chain.get("completed_count") or 0)
+    except (TypeError, ValueError):
+        _milestone_total, _completed_count = 0, 0
+    _chain_incomplete = (_milestone_total > 0 and _completed_count < _milestone_total) or (
+        chain_last in {"done", "complete", "completed"}
+        and bool(str(_chain.get("current_plan_name") or "").strip())
+    )
+    authority_done = (not _chain_incomplete) and (
+        plan_current == "done" or (not plan_current and chain_last == "done")
     )
     # Secondary branch: real work completed (files changed) while a stale
     # chain layer still projects failed/no_next_step and the worker is not

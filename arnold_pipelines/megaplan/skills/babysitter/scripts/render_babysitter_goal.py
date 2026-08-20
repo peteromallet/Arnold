@@ -387,11 +387,24 @@ Operator contract:
         resume) so the milestone actually progresses.  A plan that is simply
         between milestones with a completed milestone is NOT a stoppage —
         verify the current milestone has a born-but-unstarted plan and no
-        worker/driver before acting.
-  Verify (a)-(d) from CURRENT state before declaring no-action: read
-  manifest.epic.expected_head vs the seed file, tail the plan history, and
-  compare events.ndjson growth. Only when all four are clean is
-  "nothing to fix" the honest verdict.
+        worker/driver before acting;
+    (e) CHAIN PARKED MID-EPIC (FALSE TERMINAL): the chain reports
+        last_state in {done, complete, completed} but the milestone set is
+        NOT durably complete — completed_count < milestone_count, or a
+        current_plan_name is set while current_milestone_index <
+        milestone_count (e.g. the 2026-08-20 astrid-first m7 park: plan
+        done, 6/9 milestones, m8 + reconcile never materialized, every
+        babysitter round wrote a no-action receipt for 30+ minutes).  This
+        is NOT epic-terminal: the plan finished but the milestone completion
+        boundary never advanced the chain.  Treat as stopped/actionable and
+        drive via `chain start` (no --fresh, no state edit, same seed env).
+        A no-action receipt is only valid when completed_count >=
+        milestone_count AND no current_plan_name remains.
+  Verify (a)-(e) from CURRENT state before declaring no-action: read
+  manifest.epic.expected_head vs the seed file, tail the plan history,
+  compare events.ndjson growth, and read completed_count vs
+  milestone_count from the chain state + spec. Only when all five are
+  clean is "nothing to fix" the honest verdict.
 - COORDINATION GUARD: before any recovery, check whether another fixer/repair
   is already active for the target chain (fresh managed subagent dir, held
   repair lease, or running subagent_worker for this session).  If active,
