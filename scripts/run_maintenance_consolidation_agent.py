@@ -21,9 +21,10 @@ LAUNCHERS = {
     "gpt-5.6-luna": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py", "codex:gpt-5.6-luna"),
     "gpt-5.6-sol": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py", "codex:gpt-5.6-sol"),
     "grok-4.6": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "grok-4.6"),
+    "ox-alpha": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "openrouter/stealth/ox-alpha"),
 }
 ROUTES = {
-    "XHARD": "grok-4.6", "XHARD-REVIEW": "grok-4.6", "XHARD-REVISION": "grok-4.6", "JUDGMENT": "grok-4.6",
+    "XHARD": "ox-alpha", "XHARD-REVIEW": "ox-alpha", "XHARD-REVISION": "ox-alpha", "JUDGMENT": "ox-alpha",
     "HARD": "gpt-5.6-luna", "HARD-REVIEW": "gpt-5.6-luna", "HARD-REVISION": "gpt-5.6-luna",
     "BRIEF": "gpt-5.6-luna", "WORKSPACE": "gpt-5.6-luna", "INTEGRATION": "gpt-5.6-luna",
     "VALIDATION": "gpt-5.6-luna", "REPORT": "gpt-5.6-luna", "SOL-REVIEW": "gpt-5.6-sol",
