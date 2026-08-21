@@ -268,3 +268,39 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Review cadence: one review per subsection at G1/G2/G3/G4/G5/G6.3, with one-per-subsection complete-diff/call-graph/evidence reading; three end-stage Sol reviews are mandatory (architecture/authority/simplification covering G3.5+G6.4; evidence/selection completeness and validator integrity covering T7.1/T7.5; G7 promotion recommendation after canonical validator pass). Authority-changing dispositions remain fresh Grok/JUDGMENT; reviewers remain read-only and independent; must findings block.
 - Joint reading preserves no standalone G3.5 invocation claim, serial T4.1 → T4.2 → T4.3 followed by one G4, existing G7.4-pre/post canary surfaces, T2.4 Grok `[XHARD]` implementation with Luna G2 review, M5 report-only behavior, and Live Tree Authority as sole authority.
 - Next: T1.1/T1.2/T1.3 brief-preps.
+
+## G1 HARD-REVIEW — findings (7 must) → T1.3 revision chain
+
+- Reviewer: independent Luna (mrc-2ce733dd…). Focused shard 334 passed (99+235). T1.1 rendering purity PASS; T1.2 policy/reporting purity PASS (ledger/projection are evidence seams); legacy parity PASS; determinism PASS; allowance boundaries PASS.
+- Must findings (all in T1.3 efficiency surfaces):
+  - G1-F-001 [XHARD-REVISION]: efficiency_sources.py adapters accept+retain mutation-capable provider objects (store: Any, only named reads called but no mutation-method rejection). Violates T1.3 "no mutation-capable provider accepted".
+  - G1-F-002 [XHARD-REVISION]: efficiency_routing.py accepts opaque Callable seams (prior_key_lookup, initiative_eligible) without read-only protocol/capability check — hidden authority reachability.
+  - G1-F-003 [HARD-REVISION]: join_observation_envelope promotes missing owner environment into coherent envelope (expected_env from first present; missing treated compatible) — incomplete evidence supports proposals.
+  - G1-F-004 [HARD-REVISION]: efficiency_analysis _exact_accepted_outcome_economics divides known-duration sum by full denominator (missing duration → misleading numeric claim).
+  - G1-F-005 [HARD-REVISION]: efficiency_clustering same partial-economics defect (avoidable_impact numeric from incomplete time).
+  - G1-F-006 [HARD-REVISION]: NormalizedCall/ClusterEvidence accept censored=True with exact elapsed/time + no lower bound — right-censored treated as completed.
+  - G1-F-007 [HARD-REVISION]: RootCauseCandidate/DailyEfficiencyProposal permit empty occurrence/evidence refs; routed proposals emitted without underlying evidence links.
+- Routing: F-001+F-002 → fresh Grok 4.6 [XHARD-REVISION] (G1-RX); F-003..F-007 → fresh Luna [HARD-REVISION] (G1-RH). Both touch efficiency_sources.py (F-001, F-003) → SERIAL: Grok first, then Luna. After both: fresh independent G1 re-review of complete Batch-1 diff.
+
+
+## G1 complete re-review — F-003..007 CLOSED; F-001/F-002 OPEN → G1-RX2
+
+- Reviewer: independent Luna (mrc-dde41450…). Focused shard 347 passed.
+- G1-F-003..007 CLOSED (envelope env check, denominator preservation, censored lower-bound enforcement, ref-required candidates/proposals — all verified by direct assertions).
+- G1-F-001 OPEN (must, XHARD-REVISION): _seal_named_reads/_seal_callable wrappers retain the original provider via closure + bound-method __self__ (bound_method_self_is_original True); _is_writer_named vocabulary misses equivalent writer names (commit() admitted).
+- G1-F-002 OPEN (must, XHARD-REVISION): PriorKeyLookup/_seal_routing_operation retain the raw callback via closure; _ROUTING_MUTATION_VERBS omits commit-style names.
+- Root cause: name-denylist + closure-retention sealing is bypassable; the requirement is NO original provider/callback reachability and NO mutation-capable surface — a whitelist of exactly the declared read surface, with the original object unreachable through any wrapper.
+- Route: fresh Grok 4.6 [XHARD-REVISION] (G1-RX2) → fresh independent Grok re-review (original gate's required model) → then G1 closeout.
+
+
+## G1 — Batch-1 purity and conservative-evidence review — PASS (after 2 revision rounds)
+
+- G1 review (mrc-2ce733dd…): 7 must findings. Focused shard 334 passed (99+235).
+- G1-RX (Grok, f982fb2f0d): sealed providers/routing; F-001/F-002 partially fixed but re-review found closure/bound-method __self__ retention + deny-list bypass (commit() admitted).
+- G1-RH (Luna, 2e5ebcd3ef): F-003..007 closed (missing-env → INCOMPLETE/unknown; partial durations → None; censored requires lower bound; candidates/proposals require refs). Focused shard 248 passed.
+- G1 complete re-review (mrc-dde41450…): F-003..007 CLOSED; F-001/F-002 OPEN (347 passed).
+- G1-RX2 (Grok, 1a10d5215f): exact-whitelist + private 1-tuple keepalive + weakref proxy; original provider unreachable; commit()-style writers rejected pre-read; raw callbacks refused.
+- G1-RX2 Grok re-review (mrc-46b6ef48…): **PASS, no findings**. Data-model callables (copy/count/etc.) filtered, not escaped; _keep is the chosen lifetime mechanism; fail-closed for non-weakref-able providers; G1-F-003..007 not reopened.
+- G1 disposition: PASS. Batch 1 complete (T1.1+T1.2+T1.3 + revisions) at HEAD 1a10d5215f. Focused shard 347+ passing.
+- NEXT: commit accumulated log → Batch 2 (T2.1, T2.4 [XHARD], T2.3, T2.2 per amended plan) with additive T0.2 binding for 7fe994abf/0425372ec BEFORE T2.4 (J5 hard stop).
+
