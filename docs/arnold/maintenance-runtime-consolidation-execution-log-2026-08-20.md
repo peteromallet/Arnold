@@ -312,3 +312,18 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Wrapper impact: add a `gpt-5.6-sol` model route (hermes launcher --model=codex:gpt-5.6-sol) + role mapping so SOL-REVIEW dispatches route correctly; one bounded revision.
 - Luna still used for mechanical roles per model routing (integration, validation, evidence recording, report assembly) unless the directive says otherwise — it explicitly removed only brief-preparation from Luna.
 
+
+## Baseline test note (pre-existing, not a Batch-2 regression)
+
+- `tests/cloud/test_watchdog_wrappers.py::test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot[arnold-watchdog-ARNOLD_WATCHDOG]` fails at fce base, at 595c3513d7 (pre-T2.4), at 11d4126b6e (pre-T2.3), and at HEAD. Assertion expects `trap 'rm -f -- "$ARNOLD_WATCHDOG_SNAPSHOT_PATH"' EXIT`; the wrapper uses a `watchdog_snapshot` re-exec + cleanup-path-from-BASH_SOURCE mechanism instead. Stale test vs current wrapper; pre-existing.
+- All Batch-2 focused tests that pass: T2.1 schedules (27), T2.2 dispatch + controller (8+17), T2.3 cutover (8) + classifier (28), T2.4 babysitter (39), plus wrapper tests excluding the stale snapshot assertion.
+- Recorded for G2 reviewer: this assertion is out of Batch-2 change scope; treat as pre-existing baseline incompatibility, not a must finding on Batch 2 (do not block G2 on it).
+
+
+## G2 — Batch-2 authority-entry review — PASS
+
+- Single Grok review (mrc-578fe9cd…): PASS. One claim point (T2.1 ScheduleService.claim/claim_superfixer_occurrence CAS), one receipt identity (typed report/effect separation, exactly-once), one repair-eligibility path (quality labels L1 only via _is_evidence_bound_deterministic_quality_block; watchdog DISPATCH_DECISION from classify_repair_dispatch), T2.4 transport honesty verified; no observation→authority conversion; M5 report-only.
+- Should residuals (non-blocking): G2-S001..S005. Notable: S003 reconcile_terminal_runs unfenced (pre-existing); S004 M5 controller authorized=True (pre-existing, wrapper default report-only); S005 supervise queues repair without classifier for review_rework_exhausted/binding-drift (second queue seam — flagged for end-stage Sol review 1 aggregation/simplification scope).
+- Baseline note honored: stale watchdog snapshot test excluded (fails at fce; pre-existing).
+- Batch 2 CLOSED. NEXT: Batch 3 (T3.1 migration running; T3.2 unblocker; T3.3 six-hour auditor) → G3.
+
