@@ -6,10 +6,16 @@ import argparse
 import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+import re
+import sys
+import threading
 from typing import Any
+
+from importlib.util import module_from_spec, spec_from_file_location
 
 from pydantic import ValidationError
 
@@ -56,7 +62,10 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     )
     discord_parser.add_argument(
         "--profile",
-        help="Resident profile to run for Discord.",
+        help=(
+            "Resident profile: 'megaplan', 'agentbox_operator', or a trusted "
+            "repo-relative path.py:Class (imported unsandboxed)."
+        ),
     )
 
     scheduler_parser = sub.add_parser("scheduler-once", parents=[shared], help="Claim and process due resident jobs once")
@@ -1005,6 +1014,17 @@ def _resident_discord(
     token = discord_token_from_env(config.discord_bot_token_env)
     _validate_resident_profile(config.profile)
     if dry_run:
+        if config.profile not in {"megaplan", "agentbox_operator"}:
+            authorizer = ResidentAuthorizer(config)
+            confirmation_manager = StoreBackedConfirmationManager(config, store)
+            _resident_profile(
+                root=root,
+                profile=config.profile,
+                store=store,
+                authorizer=authorizer,
+                config=config,
+                confirmation_manager=confirmation_manager,
+            )
         return {
             "success": True,
             "step": "resident",
@@ -1123,12 +1143,201 @@ def _resident_runner(config: ResidentConfig, root: Path, *, store: Store | None 
     return OpenAICompatibleAgentRunner(config)
 
 
+_EXTERNAL_PROFILE_IMPORT_LOCK = threading.RLock()
+_EXTERNAL_PROFILE_MODULE_PREFIX = "_arnold_resident_profile"
+_PROFILE_CLASS_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_MISSING_EXTERNAL_PROFILE_CLASS = object()
+
+
+def _external_profile_error(code: str, message: str) -> CliError:
+    return CliError(code, message)
+
+
+def _parse_external_profile_spec(profile: str) -> tuple[str, str]:
+    separator = profile.rfind(":")
+    if separator < 0 or (
+        separator == 1
+        and PureWindowsPath(profile).drive == profile[:2]
+    ):
+        raise _external_profile_error(
+            "resident_profile_malformed",
+            f"Malformed resident profile {profile!r}; expected path.py:Class",
+        )
+    path_text, class_name = profile[:separator], profile[separator + 1 :]
+    if not path_text or not class_name or _PROFILE_CLASS_NAME.fullmatch(class_name) is None:
+        raise _external_profile_error(
+            "resident_profile_malformed",
+            f"Malformed resident profile {profile!r}; expected path.py:Class",
+        )
+    relative_path = Path(path_text)
+    windows_path = PureWindowsPath(path_text)
+    drive_colon = (
+        len(path_text) >= 2
+        and path_text[1] == ":"
+        and windows_path.drive == path_text[:2]
+    )
+    if path_text.count(":") > int(drive_colon):
+        raise _external_profile_error(
+            "resident_profile_malformed",
+            f"Malformed resident profile {profile!r}; expected path.py:Class",
+        )
+    if (
+        relative_path.is_absolute()
+        or windows_path.is_absolute()
+        or windows_path.drive
+    ):
+        raise _external_profile_error(
+            "resident_profile_containment_escape",
+            f"Resident profile path must be repo-relative: {path_text!r}",
+        )
+    if not path_text.endswith(".py") or "\\" in path_text:
+        raise _external_profile_error(
+            "resident_profile_malformed",
+            f"Malformed resident profile {profile!r}; expected path.py:Class",
+        )
+    if ".." in relative_path.parts:
+        raise _external_profile_error(
+            "resident_profile_containment_escape",
+            f"Resident profile path cannot contain '..': {path_text!r}",
+        )
+    return path_text, class_name
+
+
+def _resident_profile_module_name(root: Path, relative_path: Path) -> str:
+    digest = hashlib.sha256(
+        f"{root}\0{relative_path}".encode("utf-8")
+    ).hexdigest()
+    safe_stem = re.sub(r"[^A-Za-z0-9_]+", "_", relative_path.stem).strip("_") or "profile"
+    if safe_stem[0].isdigit():
+        safe_stem = f"_{safe_stem}"
+    return f"{_EXTERNAL_PROFILE_MODULE_PREFIX}_{safe_stem}_{digest}"
+
+
+def _load_external_resident_profile(
+    *,
+    root: Path,
+    profile: str,
+    store: Store,
+    authorizer: ResidentAuthorizer,
+    config: ResidentConfig,
+    confirmation_manager: StoreBackedConfirmationManager,
+):
+    """Load a trusted project profile; external code is imported unsandboxed."""
+    path_text, class_name = _parse_external_profile_spec(profile)
+    relative_path = Path(path_text)
+    try:
+        resolved_root = root.resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise _external_profile_error(
+            "resident_profile_missing_file",
+            f"Resident profile project root is unavailable: {root}",
+        ) from exc
+
+    candidate = resolved_root / relative_path
+    try:
+        resolved_candidate = candidate.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise _external_profile_error(
+            "resident_profile_missing_file",
+            f"Resident profile file not found: {path_text!r}",
+        ) from exc
+    except OSError as exc:
+        raise _external_profile_error(
+            "resident_profile_missing_file",
+            f"Resident profile file cannot be resolved: {path_text!r}",
+        ) from exc
+    try:
+        resolved_candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise _external_profile_error(
+            "resident_profile_containment_escape",
+            f"Resident profile path escapes project root: {path_text!r}",
+        ) from exc
+    if not resolved_candidate.is_file():
+        raise _external_profile_error(
+            "resident_profile_missing_file",
+            f"Resident profile file not found: {path_text!r}",
+        )
+    if resolved_candidate.suffix != ".py":
+        raise _external_profile_error(
+            "resident_profile_not_python",
+            f"Resident profile target must be a .py file: {path_text!r}",
+        )
+
+    module_name = _resident_profile_module_name(resolved_root, relative_path)
+    from agentbox.resident_profile import AgentBoxOperatorProfile
+
+    with _EXTERNAL_PROFILE_IMPORT_LOCK:
+        sys.modules.pop(module_name, None)
+        module_loaded_successfully = False
+        try:
+            spec = spec_from_file_location(module_name, resolved_candidate)
+            if spec is None or spec.loader is None:
+                raise _external_profile_error(
+                    "resident_profile_import_error",
+                    f"Could not import resident profile {path_text!r}: no import loader was available",
+                )
+            module = module_from_spec(spec)
+            sys.modules[module_name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception as exc:
+                raise _external_profile_error(
+                    "resident_profile_import_error",
+                    f"Could not import resident profile {path_text!r}: {exc}",
+                ) from exc
+
+            target = getattr(module, class_name, _MISSING_EXTERNAL_PROFILE_CLASS)
+            if target is _MISSING_EXTERNAL_PROFILE_CLASS:
+                raise _external_profile_error(
+                    "resident_profile_missing_class",
+                    f"Resident profile class {class_name!r} was not found in {path_text!r}",
+                )
+
+            if (
+                not isinstance(target, type)
+                or target is AgentBoxOperatorProfile
+                or not issubclass(target, AgentBoxOperatorProfile)
+            ):
+                raise _external_profile_error(
+                    "resident_profile_wrong_base",
+                    f"Resident profile class {class_name!r} must subclass AgentBoxOperatorProfile",
+                )
+            try:
+                profile_instance = target(
+                    store=store,
+                    authorizer=authorizer,
+                    config=config,
+                    confirmation_manager=confirmation_manager,
+                )
+            except Exception as exc:
+                raise _external_profile_error(
+                    "resident_profile_constructor_error",
+                    f"Could not construct resident profile {class_name!r}: {exc}",
+                ) from exc
+            module_loaded_successfully = True
+            return profile_instance
+        except CliError:
+            raise
+        except Exception as exc:
+            raise _external_profile_error(
+                "resident_profile_import_error",
+                f"Could not import resident profile {path_text!r}: {exc}",
+            ) from exc
+        finally:
+            if not module_loaded_successfully:
+                sys.modules.pop(module_name, None)
+
+
 def _validate_resident_profile(profile: str) -> None:
-    if profile not in {"megaplan", "agentbox_operator"}:
+    if profile in {"megaplan", "agentbox_operator"}:
+        return
+    if ":" not in profile and "/" not in profile and "\\" not in profile and not profile.endswith(".py"):
         raise CliError(
             "invalid_args",
             f"Unknown resident profile {profile!r}; expected 'megaplan' or 'agentbox_operator'",
         )
+    _parse_external_profile_spec(profile)
 
 
 def _resident_profile(
@@ -1151,12 +1360,21 @@ def _resident_profile(
             config=config,
             confirmation_manager=confirmation_manager,
         )
-    return MegaplanResidentProfile(
+    if profile == "megaplan":
+        return MegaplanResidentProfile(
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+            cloud_backend=CloudCliBackend(),
+        )
+    return _load_external_resident_profile(
+        root=root,
+        profile=profile,
         store=store,
         authorizer=authorizer,
         config=config,
         confirmation_manager=confirmation_manager,
-        cloud_backend=CloudCliBackend(),
     )
 
 

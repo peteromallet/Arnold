@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import contextvars
 import asyncio
 import json
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,6 +29,7 @@ from arnold_pipelines.megaplan.resident.cli import (
     _resident_config,
     _resident_discord,
     _resident_profile,
+    _resident_profile_module_name,
 )
 from arnold_pipelines.megaplan.cli import main as megaplan_main
 from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
@@ -295,6 +299,348 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
     assert ResidentConfig().model_provider == "hermes"
     assert ResidentConfig().model_name == "zhipu:glm-5.2"
     assert env_config.profile == "agentbox_operator"
+
+
+def _write_external_profile(root: Path, source: str, relative: str = "resident_profile.py") -> str:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+    return f"{relative}:DemoResidentProfile"
+
+
+def _demo_external_profile_source(marker: str) -> str:
+    return f"""
+from agentbox.resident_profile import AgentBoxOperatorProfile
+
+
+class DemoResidentProfile(AgentBoxOperatorProfile):
+    marker = {marker!r}
+
+    def __init__(self, *, store, authorizer, config, confirmation_manager):
+        self.received_store = store
+        self.received_authorizer = authorizer
+        self.received_config = config
+        self.received_confirmation_manager = confirmation_manager
+        super().__init__(
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+        )
+"""
+
+
+def _load_external_profile(root: Path, spec: str):
+    config = ResidentConfig(profile=spec)
+    return _resident_profile(
+        root=root,
+        profile=spec,
+        store=FileStore(root / "store"),
+        authorizer=None,
+        config=config,
+    )
+
+
+def test_external_profile_injects_exact_builtin_constructor_dependencies(tmp_path: Path) -> None:
+    spec = _write_external_profile(
+        tmp_path,
+        _demo_external_profile_source("injected"),
+        ".agentbox/resident_profile.py",
+    )
+    store = FileStore(tmp_path / "store")
+    authorizer = object()
+    config = ResidentConfig(profile=spec)
+    confirmation_manager = object()
+
+    profile = _resident_profile(
+        root=tmp_path,
+        profile=spec,
+        store=store,
+        authorizer=authorizer,
+        config=config,
+        confirmation_manager=confirmation_manager,
+    )
+
+    assert isinstance(profile, AgentBoxOperatorProfile)
+    assert profile.marker == "injected"
+    assert profile.received_store is store
+    assert profile.received_authorizer is authorizer
+    assert profile.received_config is config
+    assert profile.received_confirmation_manager is confirmation_manager
+
+
+@pytest.mark.parametrize(
+    ("spec", "code"),
+    [
+        ("resident.txt:DemoResidentProfile", "resident_profile_malformed"),
+        ("resident_profile.py", "resident_profile_malformed"),
+        ("resident_profile.py:bad-name", "resident_profile_malformed"),
+        ("resident_profile.py:DemoResidentProfile:Extra", "resident_profile_malformed"),
+    ],
+)
+def test_external_profile_rejects_malformed_specs(
+    tmp_path: Path,
+    spec: str,
+    code: str,
+) -> None:
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, spec)
+
+    assert error.value.code == code
+
+
+def test_external_profile_rejects_absolute_path(tmp_path: Path) -> None:
+    path = tmp_path / "resident_profile.py"
+    path.write_text(_demo_external_profile_source("absolute"), encoding="utf-8")
+
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, f"{path}:DemoResidentProfile")
+
+    assert error.value.code == "resident_profile_containment_escape"
+
+
+def test_external_profile_rejects_windows_absolute_path(tmp_path: Path) -> None:
+    with pytest.raises(CliError) as error:
+        _load_external_profile(
+            tmp_path,
+            r"C:\repo\resident_profile.py:DemoResidentProfile",
+        )
+
+    assert error.value.code == "resident_profile_containment_escape"
+
+
+def test_external_profile_rejects_traversal(tmp_path: Path) -> None:
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, "../resident_profile.py:DemoResidentProfile")
+
+    assert error.value.code == "resident_profile_containment_escape"
+
+
+def test_external_profile_rejects_symlink_escape(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
+    outside.write_text(_demo_external_profile_source("outside"), encoding="utf-8")
+    link = tmp_path / "resident_profile.py"
+    link.symlink_to(outside)
+
+    try:
+        with pytest.raises(CliError) as error:
+            _load_external_profile(tmp_path, "resident_profile.py:DemoResidentProfile")
+    finally:
+        outside.unlink()
+
+    assert error.value.code == "resident_profile_containment_escape"
+
+
+def test_external_profile_rejects_contained_symlink_to_non_python_target(tmp_path: Path) -> None:
+    target = tmp_path / "resident_profile.txt"
+    target.write_text(_demo_external_profile_source("not-python"), encoding="utf-8")
+    link = tmp_path / "resident_profile.py"
+    link.symlink_to(target)
+
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, "resident_profile.py:DemoResidentProfile")
+
+    assert error.value.code == "resident_profile_not_python"
+
+
+def test_external_profile_reports_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, "resident_profile.py:DemoResidentProfile")
+
+    assert error.value.code == "resident_profile_missing_file"
+
+
+def test_external_profile_reports_missing_class(tmp_path: Path) -> None:
+    source = "from agentbox.resident_profile import AgentBoxOperatorProfile\n"
+    spec = _write_external_profile(tmp_path, source)
+
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, spec)
+
+    assert error.value.code == "resident_profile_missing_class"
+
+
+def test_external_profile_reports_wrong_base(tmp_path: Path) -> None:
+    source = "DemoResidentProfile = None\n"
+    spec = _write_external_profile(tmp_path, source)
+
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, spec)
+
+    assert error.value.code == "resident_profile_wrong_base"
+
+
+def test_external_profile_reports_import_error_and_evicts_module(tmp_path: Path) -> None:
+    source = "raise RuntimeError('profile import exploded')\n"
+    spec = _write_external_profile(tmp_path, source)
+    module_name = _resident_profile_module_name(tmp_path.resolve(), Path("resident_profile.py"))
+
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, spec)
+
+    assert error.value.code == "resident_profile_import_error"
+    assert module_name not in sys.modules
+
+
+def test_external_profile_reports_constructor_error_and_evicts_module(tmp_path: Path) -> None:
+    source = """
+from agentbox.resident_profile import AgentBoxOperatorProfile
+
+
+class DemoResidentProfile(AgentBoxOperatorProfile):
+    def __init__(self, required):
+        super().__init__()
+"""
+    spec = _write_external_profile(tmp_path, source)
+    module_name = _resident_profile_module_name(tmp_path.resolve(), Path("resident_profile.py"))
+
+    with pytest.raises(CliError) as error:
+        _load_external_profile(tmp_path, spec)
+
+    assert error.value.code == "resident_profile_constructor_error"
+    assert module_name not in sys.modules
+
+
+def test_external_profile_repeated_loads_are_fresh(tmp_path: Path) -> None:
+    spec = _write_external_profile(tmp_path, _demo_external_profile_source("first"))
+    first = _load_external_profile(tmp_path, spec)
+    (tmp_path / "resident_profile.py").write_text(
+        _demo_external_profile_source("second"),
+        encoding="utf-8",
+    )
+
+    second = _load_external_profile(tmp_path, spec)
+
+    assert first.marker == "first"
+    assert second.marker == "second"
+    assert first is not second
+
+
+def test_external_profile_identity_is_deterministic_and_cross_repo_distinct(tmp_path: Path) -> None:
+    root_one = tmp_path / "one"
+    root_two = tmp_path / "two"
+    relative_path = Path("nested/profile-v1.py")
+    spec_one = _write_external_profile(
+        root_one,
+        _demo_external_profile_source("root-one"),
+        str(relative_path),
+    )
+    spec_two = _write_external_profile(
+        root_two,
+        _demo_external_profile_source("root-two"),
+        str(relative_path),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        profiles = list(
+            executor.map(
+                lambda item: _load_external_profile(*item),
+                ((root_one, spec_one), (root_two, spec_two)),
+            )
+        )
+    module_one = _resident_profile_module_name(root_one.resolve(), relative_path)
+    module_two = _resident_profile_module_name(root_two.resolve(), relative_path)
+
+    expected_digest_one = hashlib.sha256(
+        (str(root_one.resolve()) + "\0" + str(relative_path)).encode("utf-8")
+    ).hexdigest()
+    expected_digest_two = hashlib.sha256(
+        (str(root_two.resolve()) + "\0" + str(relative_path)).encode("utf-8")
+    ).hexdigest()
+
+    assert profiles[0].marker == "root-one"
+    assert profiles[1].marker == "root-two"
+    assert module_one == f"_arnold_resident_profile_profile_v1_{expected_digest_one}"
+    assert module_two == f"_arnold_resident_profile_profile_v1_{expected_digest_two}"
+    assert module_one == _resident_profile_module_name(root_one.resolve(), relative_path)
+    assert module_one != module_two
+    assert module_one in sys.modules
+    assert module_two in sys.modules
+
+
+@pytest.mark.parametrize(
+    ("spec", "source", "code"),
+    [
+        ("resident.txt:DemoResidentProfile", None, "resident_profile_malformed"),
+        (
+            "../resident_profile.py:DemoResidentProfile",
+            None,
+            "resident_profile_containment_escape",
+        ),
+        (
+            "resident_profile.py:DemoResidentProfile",
+            None,
+            "resident_profile_missing_file",
+        ),
+        (
+            "resident_profile.py:DemoResidentProfile",
+            "from agentbox.resident_profile import AgentBoxOperatorProfile\n",
+            "resident_profile_missing_class",
+        ),
+        (
+            "resident_profile.py:DemoResidentProfile",
+            "class DemoResidentProfile:\n    pass\n",
+            "resident_profile_wrong_base",
+        ),
+        (
+            "resident_profile.py:DemoResidentProfile",
+            "raise RuntimeError('profile import exploded')\n",
+            "resident_profile_import_error",
+        ),
+        (
+            "resident_profile.py:DemoResidentProfile",
+            (
+                "from agentbox.resident_profile import AgentBoxOperatorProfile\n\n"
+                "class DemoResidentProfile(AgentBoxOperatorProfile):\n"
+                "    def __init__(self, required):\n"
+                "        super().__init__()\n"
+            ),
+            "resident_profile_constructor_error",
+        ),
+    ],
+)
+def test_external_profile_rejections_are_json_cli_errors(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    spec: str,
+    source: str | None,
+    code: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_STORE_ROOT", raising=False)
+    if source is not None:
+        (tmp_path / "resident_profile.py").write_text(source, encoding="utf-8")
+
+    result = megaplan_main(["resident", "discord", "--profile", spec, "--dry-run"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert result == 1
+    assert payload["success"] is False
+    assert payload["error"] == code
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
+
+
+def test_external_profile_dry_run_constructs_profile_without_starting_discord(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_STORE_ROOT", raising=False)
+    spec = _write_external_profile(tmp_path, _demo_external_profile_source("dry-run"))
+
+    result = megaplan_main(["resident", "discord", "--profile", spec, "--dry-run"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert payload["success"] is True
+    assert payload["dry_run"] is True
+    assert payload["profile"] == spec
 
 
 @pytest.mark.parametrize("profile_value", ["", "   "])
