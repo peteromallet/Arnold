@@ -18,7 +18,15 @@ from pathlib import Path
 import re
 import time
 from typing import Any
+from arnold_pipelines.megaplan.receipts import schema
 
+from arnold_pipelines.megaplan.cloud.maintenance_dispatch import (
+    MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+    initialize_maintenance_dispatch_receipt,
+    prepare_maintenance_dispatch_receipt,
+    reconcile_maintenance_receipt,
+    record_maintenance_started,
+)
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     EscalationPolicy,
     bounded_repair_context,
@@ -481,6 +489,8 @@ def run_escalation_controller(
     policy: EscalationPolicy | None = None,
     transition_writer: RuntimeTransitionWriter | None = None,
     chain_spec_sha256: str = "",
+    dispatch_receipt_root: Path | None = None,
+    resolved_runtime_model: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate findings and, if authorized, invoke canonical repair custody.
 
@@ -809,7 +819,40 @@ def run_escalation_controller(
                 finalize_record(record)
                 continue
 
+            dispatch_receipt: schema.AutomaticDispatchReceipt | None = None
+            if dispatch_receipt_root is not None:
+                if resolved_runtime_model != MAINTENANCE_REQUIRED_RUNTIME_MODEL:
+                    raise ValueError(
+                        "maintenance dispatch requires the exact resolved runtime "
+                        f"model {MAINTENANCE_REQUIRED_RUNTIME_MODEL!r}"
+                    )
+                dispatch_receipt = initialize_maintenance_dispatch_receipt(
+                    dispatch_receipt_root,
+                    prepare_maintenance_dispatch_receipt(
+                        action="l3_escalation_dispatch",
+                        configured_model=MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+                    ),
+                )
+                record["dispatch_receipt_root"] = str(dispatch_receipt_root)
+                record["dispatch_id"] = dispatch_receipt["dispatch_id"]
+
             trigger = runner([*trigger_argv, "--request-id", request_id])
+            if dispatch_receipt is not None:
+                try:
+                    dispatch_receipt = record_maintenance_started(
+                        dispatch_receipt_root,
+                        dispatch_receipt,
+                        resolved_runtime_model=resolved_runtime_model,
+                    )
+                    reconciliation = reconcile_maintenance_receipt(
+                        dispatch_receipt,
+                        required_runtime_model=MAINTENANCE_REQUIRED_RUNTIME_MODEL,
+                    )
+                    record["dispatch_receipt_state"] = reconciliation.state.value
+                except Exception as exc:
+                    record["dispatch_receipt_state"] = "indeterminate"
+                    record["dispatch_receipt_error"] = str(exc)
+
             event = _trigger_event(trigger.stdout, request_id)
             record["trigger_returncode"] = trigger.returncode
             record["trigger_event"] = event
