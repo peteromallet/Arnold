@@ -1353,12 +1353,14 @@ def _resident_profile(
     if profile == "agentbox_operator":
         from agentbox.resident_profile import AgentBoxOperatorProfile
 
-        return AgentBoxOperatorProfile(
+        profile_instance = AgentBoxOperatorProfile(
             store=store,
             authorizer=authorizer,
             config=config,
             confirmation_manager=confirmation_manager,
         )
+        profile_instance.cloud_backend = CloudCliBackend()
+        return profile_instance
     if profile == "megaplan":
         return MegaplanResidentProfile(
             store=store,
@@ -1367,7 +1369,7 @@ def _resident_profile(
             confirmation_manager=confirmation_manager,
             cloud_backend=CloudCliBackend(),
         )
-    return _load_external_resident_profile(
+    profile_instance = _load_external_resident_profile(
         root=root,
         profile=profile,
         store=store,
@@ -1375,6 +1377,8 @@ def _resident_profile(
         config=config,
         confirmation_manager=confirmation_manager,
     )
+    profile_instance.cloud_backend = CloudCliBackend()
+    return profile_instance
 
 
 def _model(row: Any) -> dict[str, Any]:

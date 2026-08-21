@@ -48,7 +48,7 @@ from arnold_pipelines.megaplan.resident.auth import (
     ResidentAuthorizer,
     StoreBackedConfirmationManager,
 )
-from arnold_pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult
+from arnold_pipelines.megaplan.resident.cloud import CloudCliBackend, CloudToolRequest, CloudToolResult
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.escalations import (
     EscalationAnswerDecision,
@@ -366,6 +366,7 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
     assert dry_run["model_provider"] == "hermes"
     assert dry_run["model"] == "zhipu:glm-5.2"
     assert isinstance(selected, AgentBoxOperatorProfile)
+    assert isinstance(selected.cloud_backend, CloudCliBackend)
     assert isinstance(megaplan_selected, MegaplanResidentProfile)
     assert ResidentConfig().profile == "megaplan"
     assert ResidentConfig().model_provider == "hermes"
@@ -450,6 +451,7 @@ def test_external_profile_injects_exact_builtin_constructor_dependencies(tmp_pat
 
     assert isinstance(profile, AgentBoxOperatorProfile)
     assert profile.marker == "injected"
+    assert isinstance(profile.cloud_backend, CloudCliBackend)
     assert profile.received_store is store
     assert profile.received_authorizer is authorizer
     assert profile.received_config is config
