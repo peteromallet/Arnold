@@ -4,3 +4,4 @@
 - Model policy: normal=codex:gpt-5.6-luna, [XHARD]=codex:gpt-5.6-sol, oracle=Sol
 - Next: Batch 1 (T3 Sol then T1 Luna), then oracle checkpoint
 - Blocker/escalation: none in-run; main-tree purge (bg_7) timed out — post-run resolution
+- 2026-08-21: user switched [XHARD] class to openrouter:stealth/ox-alpha (probe OK); oracle stays Sol. In-flight Sol T8b completes; applies from next [XHARD] dispatch.

@@ -58,9 +58,9 @@ Implement and prove, end to end, the custom-agent capability on the Arnold repo
   or any discovered need to touch `main` or rename compat surfaces.
 
 ## Model policy (user-declared; no automatic routing)
-- **Normal tasks (explore, execute, review passes): GPT-5.6 Luna** (`codex:gpt-5.6-luna`).
-- **[XHARD] tasks: GPT-5.6 Sol** (`codex:gpt-5.6-sol`, high reasoning).
-- **Planner / Oracle / sense checker: GPT-5.6 Sol** (`gpt-5.6-sol`, high reasoning).
+- **Normal tasks (explore, execute, review passes): GPT-5.6 Luna** (`codex:gpt-5.6-luna`). UNCHANGED.
+- **[XHARD] tasks: stealth/ox-alpha via OpenRouter** (`openrouter:stealth/ox-alpha`) — user switch 2026-08-21, replacing GPT-5.6 Sol. Probe verified (PROBE-OK, 6.5s).
+- **Planner / Oracle / sense checker: GPT-5.6 Sol** (`gpt-5.6-sol`, high reasoning). UNCHANGED unless user says otherwise.
 - Switching any class requires user approval; record every receipt with model + rationale.
 
 ## Done criteria (all must pass)
