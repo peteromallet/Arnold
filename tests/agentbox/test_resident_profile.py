@@ -58,6 +58,25 @@ def _set_runtime_subject(subject: object) -> contextvars.Token:
     )
 
 
+def test_arnold_agent_prompt_has_raw_byte_parity_with_resident_profile() -> None:
+    agent_file = Path(__file__).parents[2] / "agentbox" / "agents" / "arnold.md"
+    raw = agent_file.read_bytes()
+    assert raw.startswith(b"---")
+
+    closing_index = raw.index(b"\n---", 3)
+    assert raw[closing_index : closing_index + 5] == b"\n---\n"
+    raw_body = raw[closing_index + 5 :]
+
+    normalized = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    normalized_closing_index = normalized.index("\n---", 3)
+    parsed_body = normalized[normalized_closing_index + 4 :].strip().encode()
+    expected_prompt = AgentBoxOperatorProfile().system_prompt().encode()
+
+    # Semantic prompt edits MUST change both the agent file and resident_profile.py
+    # and bump AGENTBOX_OPERATOR_PROMPT_VERSION; raw-bytes is the authority
+    # (no whitespace normalization).
+    assert parsed_body == expected_prompt
+    assert raw_body == expected_prompt + b"\n"
 
 
 def test_agentbox_operator_profile_registers_exact_v0_tool_catalog(
