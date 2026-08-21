@@ -41,6 +41,7 @@ Env overrides (all optional):
 """
 
 from __future__ import annotations
+import subprocess
 
 import argparse
 import datetime as dt
