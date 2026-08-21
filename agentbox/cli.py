@@ -594,13 +594,21 @@ def _rewrite_agent_frontmatter(
     lines = frontmatter.splitlines(keepends=True)
     found_description = False
     rewritten: list[str] = []
-    for line in lines:
+    for index, line in enumerate(lines):
         content = line.rstrip("\r\n")
         newline = line[len(content):]
-        key, separator, _value = content.partition(":")
+        key, separator, source_value = content.partition(":")
         if separator and key.strip() == "name" and name is not None:
             line = f"name: {name}{newline}"
         elif separator and key.strip() == "description" and description is not None:
+            if source_value.strip().startswith((">", "|")) or (
+                index + 1 < len(lines)
+                and lines[index + 1].strip()
+                and lines[index + 1][0].isspace()
+            ):
+                raise ValueError(
+                    "description override requires a single-line frontmatter scalar"
+                )
             line = f"description: {_frontmatter_scalar(description)}{newline}"
             found_description = True
         rewritten.append(line)
@@ -651,8 +659,17 @@ def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
         )
     target_dir.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f".{output_name}.md.tmp-{uuid4().hex[:8]}")
-    tmp.write_bytes(installed_text.encode("utf-8"))
-    os.replace(tmp, target)
+    try:
+        tmp.write_bytes(installed_text.encode("utf-8"))
+        try:
+            os.link(tmp, target, follow_symlinks=False)
+        except FileExistsError:
+            return _diagnostic(
+                f"target already exists: {target}",
+                json_output=json_output,
+            )
+    finally:
+        tmp.unlink(missing_ok=True)
     _emit(
         {
             "agent": output_name,

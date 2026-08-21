@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from agentbox.cli import build_parser, main
+from agentbox import cli as cli_module
+
 from agentbox.config import AgentBoxConfig
 from agentbox.guardian.scheduler import ensure_guardian_tasks
 from agentbox.guardian.state import GuardianStateStore
@@ -205,6 +207,66 @@ def test_cli_install_omp_agent_rejects_existing_target_without_clobbering(
 
     assert result == 1
     assert installed.read_bytes() == original
+
+def test_cli_install_omp_agent_race_does_not_clobber_and_cleans_tmp(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    target = tmp_path / "agents"
+    installed = target / "arnold.md"
+    original_link = cli_module.os.link
+
+    def create_target_before_publish(source, destination, *, follow_symlinks=True):
+        Path(destination).write_bytes(b"created concurrently\n")
+        return original_link(source, destination, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(cli_module.os, "link", create_target_before_publish)
+
+    result = main(["install-omp-agent", "arnold", "--target", str(target)])
+
+    assert result == 1
+    assert installed.read_bytes() == b"created concurrently\n"
+    assert list(target.glob(".arnold.md.tmp-*")) == []
+    assert capsys.readouterr().err == f"agentbox: target already exists: {installed}\n"
+
+
+def test_cli_install_omp_agent_rejects_block_scalar_description(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    source = tmp_path / "arnold.md"
+    target = tmp_path / "agents"
+    monkeypatch.setattr(cli_module, "_packaged_omp_agent_path", lambda name: source)
+
+    for marker in (">", "|"):
+        source.write_text(
+            f"---\nname: arnold\ndescription: {marker}\n  stale continuation\n---\nbody\n",
+            encoding="utf-8",
+        )
+
+        result = main(
+            [
+                "install-omp-agent",
+                "arnold",
+                "--description",
+                "replacement",
+                "--target",
+                str(target),
+            ]
+        )
+
+        assert result == 1
+        assert not target.exists()
+        assert (
+            capsys.readouterr().err
+            == "agentbox: description override requires a single-line frontmatter scalar\n"
+        )
 
 
 def test_cli_install_omp_agent_rejects_unknown_name(tmp_path, monkeypatch) -> None:
