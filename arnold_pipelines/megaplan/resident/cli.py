@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 import json
 import os
@@ -84,6 +84,18 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     status_tree_parser.add_argument("--node", default="root", help="Node ID from the root or prior response")
     status_tree_parser.add_argument("--cursor", type=int, default=0)
     status_tree_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
+    unblocker_parser = sub.add_parser(
+        "maintenance-unblocker",
+        parents=[shared],
+        help="Join two independent observations into an inert typed request/checkpoint",
+    )
+    unblocker_parser.add_argument("--observations-file", required=True)
+    unblocker_parser.add_argument(
+        "--checkpoint-root",
+        help="Explicit disposable root for the optional replay-safe checkpoint",
+    )
+    unblocker_parser.add_argument("--fence", type=int, default=0)
+
 
     context_parser = sub.add_parser(
         "context", parents=[shared], help="Read one typed branch of the resident context tree"
@@ -236,9 +248,11 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     config = _resident_config(args)
+    action = args.resident_action
+    if action == "maintenance-unblocker":
+        return _resident_maintenance_unblocker(args)
     store = _resident_store(root, args)
     try:
-        action = args.resident_action
         if action == "health":
             return _resident_health(store, config, limit=args.limit)
         if action == "scheduler-once":
@@ -291,6 +305,68 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         if callable(close):
             close()
     raise CliError("invalid_args", f"Unknown resident action: {getattr(args, 'resident_action', None)!r}")
+
+
+def handle_maintenance_unblocker_wakeup(
+    payload: Mapping[str, Any],
+    *,
+    checkpoint_root: Path | None = None,
+    fence: int = 0,
+) -> dict[str, Any]:
+    """Return only an observation-bound request/checkpoint.
+
+    This resident boundary intentionally does not import the scheduler or
+    schedule store.  It is a bounded adapter for already-captured evidence;
+    claims, approvals, repairs, rebinds, and chain starts remain outside it.
+    """
+    from arnold_pipelines.megaplan.cloud.maintenance_unblocker import (
+        CheckpointStore,
+        ObservationEvidence,
+        emit_observation_bound_request,
+    )
+
+    raw_observations = payload.get("observations")
+    if raw_observations is None:
+        raw_observations = [
+            item
+            for item in (payload.get("observation"), payload.get("prior_observation"))
+            if isinstance(item, Mapping)
+        ]
+    if not isinstance(raw_observations, Sequence) or isinstance(raw_observations, (str, bytes)):
+        raise ValueError("maintenance_unblocker observations must be a JSON array")
+    observations = tuple(ObservationEvidence.model_validate(item) for item in raw_observations)
+    store = CheckpointStore(checkpoint_root) if checkpoint_root is not None else None
+    result = emit_observation_bound_request(
+        observations,
+        fence=fence,
+        checkpoint_store=store,
+    )
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "maintenance-unblocker",
+        **result.model_dump(mode="json"),
+    }
+
+
+def _resident_maintenance_unblocker(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        payload = json.loads(
+            Path(args.observations_file).expanduser().resolve().read_text(encoding="utf-8")
+        )
+        if not isinstance(payload, Mapping):
+            raise ValueError("maintenance-unblocker input must be a JSON object")
+        return handle_maintenance_unblocker_wakeup(
+            payload,
+            checkpoint_root=(
+                Path(args.checkpoint_root).expanduser().resolve()
+                if args.checkpoint_root
+                else None
+            ),
+            fence=args.fence,
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise CliError("maintenance_unblocker_rejected", str(exc)) from exc
 
 
 def _resident_supersede_todo(
