@@ -119,6 +119,7 @@ class AgentBoxOperatorProfile:
     authorizer: Any | None = None
     config: Any = field(default_factory=lambda: _resident_symbol("config", "ResidentConfig")())
     confirmation_manager: Any | None = None
+    cloud_backend: Any | None = None
     agentbox_config_factory: Callable[[], AgentBoxConfig] = load_agentbox_config
     tool_registry: Any = field(default_factory=lambda: _resident_symbol("tool_registry", "ToolRegistry")())
     _registered_default_tools: bool = False

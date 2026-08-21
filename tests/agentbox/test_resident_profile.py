@@ -48,7 +48,12 @@ from arnold_pipelines.megaplan.resident.auth import (
     ResidentAuthorizer,
     StoreBackedConfirmationManager,
 )
+from arnold_pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
+from arnold_pipelines.megaplan.resident.escalations import (
+    EscalationAnswerDecision,
+    EscalationTarget,
+)
 from arnold_pipelines.megaplan.resident.runtime import InboundEvent, OutboundMessage, ResidentRuntime
 from arnold_pipelines.megaplan.store import FileStore, ResidentConversationInput
 
@@ -123,6 +128,68 @@ def test_agentbox_operator_profile_registers_exact_v0_tool_catalog(
     assert "channel_id" not in {
         field for tool in tools for field in tool.input_model.model_fields
     }
+
+
+def test_generated_agentbox_profile_subclass_retains_exact_v0_tool_catalog() -> None:
+    class GeneratedResidentProfile(AgentBoxOperatorProfile):
+        pass
+
+    profile = GeneratedResidentProfile()
+
+    assert tuple(tool.name for tool in profile.tools().list()) == AGENTBOX_OPERATOR_TOOL_NAMES
+
+
+def test_agentbox_profile_cloud_resume_uses_injected_backend(tmp_path: Path) -> None:
+    backend = _RecordingCloudBackend()
+    repair_data_dir = tmp_path / "repair-data"
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        escalation_repair_lock_dir=tmp_path / "repair-lock",
+    )
+    store = FileStore(tmp_path / "store")
+    authorizer = ResidentAuthorizer(config)
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            cloud_backend=backend,
+        ),
+        runner=_ExplodingAgentRunner(),
+        outbound=_FakeOutboundSink(),
+    )
+    event, decision = _cloud_resume_fixture()
+
+    asyncio.run(runtime._handle_escalation_resolution(event, decision, str(repair_data_dir)))
+
+    assert len(backend.calls) == 1
+    assert backend.calls[0].operation == "cloud_resume"
+    assert backend.calls[0].target_id == "plan-1"
+
+
+def test_agentbox_profile_cloud_resume_without_backend_fails_clearly(tmp_path: Path) -> None:
+    repair_data_dir = tmp_path / "repair-data"
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        escalation_repair_lock_dir=tmp_path / "repair-lock",
+    )
+    store = FileStore(tmp_path / "store")
+    authorizer = ResidentAuthorizer(config)
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(store=store, authorizer=authorizer, config=config),
+        runner=_ExplodingAgentRunner(),
+        outbound=_FakeOutboundSink(),
+    )
+    event, decision = _cloud_resume_fixture()
+
+    with pytest.raises(RuntimeError, match=r"cloud_resume escalation requires profile\.cloud_backend"):
+        asyncio.run(runtime._handle_escalation_resolution(event, decision, str(repair_data_dir)))
 
 
 def test_agentbox_operator_help_lists_v0_capabilities_without_slash_commands(
@@ -2519,6 +2586,40 @@ class _FakeOutboundSink:
 
     async def send(self, message: OutboundMessage) -> None:
         self.sent.append(message)
+
+
+class _RecordingCloudBackend:
+    def __init__(self) -> None:
+        self.calls: list[CloudToolRequest] = []
+
+    async def run(self, request: CloudToolRequest) -> CloudToolResult:
+        self.calls.append(request)
+        return CloudToolResult(classification="running", summary="cloud_resume: running")
+
+
+def _cloud_resume_fixture() -> tuple[InboundEvent, EscalationAnswerDecision]:
+    target = EscalationTarget(
+        escalation_id="esc-1",
+        session="session-1",
+        target_id="target-1",
+        current_plan="plan-1",
+        channel_id="channel-1",
+        responder_user_id="user-1",
+        message_ids=("message-1",),
+        resume_handler="cloud_resume",
+    )
+    return (
+        InboundEvent(
+            idempotency_key="discord:message:answer-1",
+            conversation_key="discord:dm:user-1",
+            subject=AuthorizationSubject(user_id="user-1", channel_id="channel-1"),
+            content="resume it",
+            escalation_id="esc-1",
+            resume_handler="cloud_resume",
+            raw={"discord_message_id": "answer-1"},
+        ),
+        EscalationAnswerDecision(allowed=True, target=target),
+    )
 
 
 class _ExplodingAgentRunner:

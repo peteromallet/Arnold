@@ -1479,7 +1479,12 @@ class ResidentRuntime:
             )
             marker_path = Path(repair_data_dir) / f"{target.session}.needs-human.json"
             if resume_handler == "cloud_resume":
-                cloud_result = await self.profile.cloud_backend.run(
+                cloud_backend = getattr(self.profile, "cloud_backend", None)
+                if cloud_backend is None:
+                    raise RuntimeError(
+                        "cloud_resume escalation requires profile.cloud_backend"
+                    )
+                cloud_result = await cloud_backend.run(
                     CloudToolRequest(
                         operation="cloud_resume",
                         target_id=target.current_plan or target.target_id,
