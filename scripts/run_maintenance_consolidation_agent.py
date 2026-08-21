@@ -19,13 +19,14 @@ from typing import Any
 INTEGRATION_WORKTREE = Path(__file__).resolve().parents[1]
 LAUNCHERS = {
     "gpt-5.6-luna": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py", "codex:gpt-5.6-luna"),
+    "gpt-5.6-sol": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py", "codex:gpt-5.6-sol"),
     "grok-4.6": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "grok-4.6"),
 }
 ROUTES = {
     "XHARD": "grok-4.6", "XHARD-REVIEW": "grok-4.6", "XHARD-REVISION": "grok-4.6", "JUDGMENT": "grok-4.6",
     "HARD": "gpt-5.6-luna", "HARD-REVIEW": "gpt-5.6-luna", "HARD-REVISION": "gpt-5.6-luna",
     "BRIEF": "gpt-5.6-luna", "WORKSPACE": "gpt-5.6-luna", "INTEGRATION": "gpt-5.6-luna",
-    "VALIDATION": "gpt-5.6-luna", "REPORT": "gpt-5.6-luna",
+    "VALIDATION": "gpt-5.6-luna", "REPORT": "gpt-5.6-luna", "SOL-REVIEW": "gpt-5.6-sol",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
