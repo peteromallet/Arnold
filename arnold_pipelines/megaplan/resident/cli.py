@@ -694,20 +694,20 @@ def _resident_inspect_subagent_queue(
 def _resident_config(args: argparse.Namespace) -> ResidentConfig:
     try:
         config = ResidentConfig.from_env()
+        mode = getattr(args, "mode", None)
+        profile = getattr(args, "profile", None)
+        updates = {}
+        if mode:
+            updates["mode"] = mode
+        if profile is not None:
+            updates["profile"] = profile
+        return ResidentConfig.model_validate({**config.model_dump(), **updates})
     except ValidationError as exc:
         details = "; ".join(
             f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
             for error in exc.errors()
         )
         raise CliError("invalid_args", f"Invalid resident configuration: {details}") from exc
-    mode = getattr(args, "mode", None)
-    profile = getattr(args, "profile", None)
-    updates = {}
-    if mode:
-        updates["mode"] = mode
-    if profile:
-        updates["profile"] = profile
-    return config.model_copy(update=updates) if updates else config
 
 
 def _resident_store(root: Path, args: argparse.Namespace) -> Store:
@@ -1227,7 +1227,7 @@ def _load_external_resident_profile(
     relative_path = Path(path_text)
     try:
         resolved_root = root.resolve(strict=True)
-    except (FileNotFoundError, OSError) as exc:
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         raise _external_profile_error(
             "resident_profile_missing_file",
             f"Resident profile project root is unavailable: {root}",
@@ -1241,7 +1241,7 @@ def _load_external_resident_profile(
             "resident_profile_missing_file",
             f"Resident profile file not found: {path_text!r}",
         ) from exc
-    except OSError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         raise _external_profile_error(
             "resident_profile_missing_file",
             f"Resident profile file cannot be resolved: {path_text!r}",

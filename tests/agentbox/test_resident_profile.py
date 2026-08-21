@@ -624,6 +624,128 @@ def test_external_profile_rejections_are_json_cli_errors(
     assert "Traceback" not in captured.err
 
 
+
+@pytest.mark.parametrize("profile_value", ["", "   "])
+def test_invalid_profile_cli_is_a_cli_error(
+    profile_value: str,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
+
+    result = megaplan_main(
+        ["resident", "discord", "--profile", profile_value, "--dry-run"]
+    )
+
+    assert result == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["success"] is False
+    assert payload["error"] == "invalid_args"
+    assert "Invalid resident configuration" in payload["message"]
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
+
+
+
+@pytest.mark.parametrize(
+    "resolution_error_type",
+    [RuntimeError, ValueError],
+    ids=["runtime-error", "value-error"],
+)
+def test_external_profile_root_resolution_errors_are_json_cli_errors(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    resolution_error_type: type[Exception],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cli._find_megaplan_root",
+        lambda start: tmp_path,
+    )
+    store = FileStore(tmp_path / "store")
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli._resident_store",
+        lambda root, args: store,
+    )
+
+    def fail_resolve(self: Path, *args, **kwargs):
+        raise resolution_error_type("root resolution failed")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    result = megaplan_main(
+        [
+            "resident",
+            "discord",
+            "--profile",
+            "resident_profile.py:DemoResidentProfile",
+            "--dry-run",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert result == 1
+    assert payload["success"] is False
+    assert payload["error"] == "resident_profile_missing_file"
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "resolution_error_type",
+    [RuntimeError, ValueError],
+    ids=["runtime-error", "value-error"],
+)
+def test_external_profile_candidate_resolution_errors_are_json_cli_errors(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    resolution_error_type: type[Exception],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cli._find_megaplan_root",
+        lambda start: tmp_path,
+    )
+    store = FileStore(tmp_path / "store")
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli._resident_store",
+        lambda root, args: store,
+    )
+    profile_path = tmp_path / "resident_profile.py"
+    profile_path.write_text(_demo_external_profile_source("resolution"), encoding="utf-8")
+    original_resolve = Path.resolve
+
+    def fail_candidate_resolve(self: Path, *args, **kwargs):
+        if self == profile_path:
+            raise resolution_error_type("candidate resolution failed")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_candidate_resolve)
+
+    result = megaplan_main(
+        [
+            "resident",
+            "discord",
+            "--profile",
+            "resident_profile.py:DemoResidentProfile",
+            "--dry-run",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert result == 1
+    assert payload["success"] is False
+    assert payload["error"] == "resident_profile_missing_file"
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
+
 def test_external_profile_dry_run_constructs_profile_without_starting_discord(
     tmp_path: Path,
     monkeypatch,
