@@ -362,3 +362,18 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - T4.3 delivery/cutover: 55ca4522f6 + a0dde0ea0d; single review BLOCKED (T43-001..004 — un-wired production cutover, seed tax not deleted, torn authority readable, adoption unwrapped) → revision → re-review PASS (mrc-296ff64b…). Integrated (merge in progress). 26 tests. Residuals: one-token cutover needs both pause+rebind handles; same-root must-fail test-shape; launch-seed telemetry non-authority.
 - Batch 4 implementation DONE. NEXT: G4 subsection review (single Grok, attacks G4.1 liveness + G4.2 operator-authority + G4.3 cutover/custody over the whole T4 diff).
 
+
+## G4 — Batch-4 authority convergence review — PASS (after FAIL→revision→re-review)
+
+- Single Grok review (mrc-cabd81ee…): FAIL, 4 musts — G4-001 launch SHA pin still live on real chain start (two-commit tax); G4-002 cloud resume-chain unwrapped + session-name handle theft; G4-003 FCE target_rebind rewrites resume_cursor before wrap raises; G4-004 watchdog needs-human/marker rm-f sites unfenced.
+- One Grok revision (85e3b444ff, 96 focused tests): production launch checks import_root+interpreter only (no --expected-revision; provenance mismatch = telemetry); cloud pause/resume sealed operator intents with minted handle + occurrence/target/fence threaded end-to-end, no session-name synthesis; _update_plan preserves resume_cursor + plan payload bytes; all five rm-f sites + meta_dispatch_marker_clear require MUTATION_CAPABILITY_PRESENT or observe-only.
+- Fresh G4 re-review (mrc-1fb9dd7d…): PASS, no must findings. Residuals non-blocking (auto-mode/template expected_head; ssh status --expected-revision; plan_payload_without_pause binding fields; systemd run-once; over-fenced dead T29-BYPASS-202..205 deletes).
+- Integrated (merge in progress). Batch 4 CLOSED. NEXT: Batch 5 (T5.1 real elapsed deadlines, Grok XHARD) + G5.
+
+
+## T5.1 review — HOLLOW RECEIPT, re-dispatched
+
+- T5.1 single Grok review (mrc-f09bfe8a…) returned only a 3-line summary: "BLOCKED. Must findings: F-T51-001 through F-T51-005. Revision class XHARD-REVISION. Do not cherry-pick 1184d237f5." No finding content, no file/function evidence, no counterexamples.
+- A review that names musts without evidence is incomplete — mechanically rejected (not a second review round).
+- Re-dispatched the single T5.1 review to a FRESH Grok instance with an explicit demand for the complete finding text (evidence paths, file:function, counterexamples, proposed fix per finding).
+
