@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -96,10 +97,114 @@ def test_cli_install_omp_agent_installs_packaged_agent(tmp_path, monkeypatch) ->
 
     assert result == 0
     installed = target / "arnold.md"
+    source = Path(__file__).parents[2] / "agentbox" / "agents" / "arnold.md"
     assert installed.is_file()
-    text = installed.read_text(encoding="utf-8")
-    assert text.startswith("---\nname: arnold\n")
-    assert "You are the AgentBox Operator for Discord" in text
+    assert installed.read_bytes() == source.read_bytes()
+
+
+def test_cli_install_omp_agent_name_override_changes_filename_and_frontmatter(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    target = tmp_path / "agents"
+    source = (Path(__file__).parents[2] / "agentbox" / "agents" / "arnold.md").read_bytes()
+
+    result = main(
+        [
+            "install-omp-agent",
+            "arnold",
+            "--name",
+            "my-op",
+            "--target",
+            str(target),
+        ]
+    )
+
+    assert result == 0
+    installed = (target / "my-op.md").read_bytes()
+    assert installed.split(b"---", 2)[2] == source.split(b"---", 2)[2]
+    assert b"name: my-op\n" in installed
+    assert b"name: arnold\n" not in installed
+
+
+def test_cli_install_omp_agent_description_override_preserves_name_and_body(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    target = tmp_path / "agents"
+    source = (Path(__file__).parents[2] / "agentbox" / "agents" / "arnold.md").read_bytes()
+
+    result = main(
+        [
+            "install-omp-agent",
+            "arnold",
+            "--description",
+            "Op for X",
+            "--target",
+            str(target),
+        ]
+    )
+
+    assert result == 0
+    installed = (target / "arnold.md").read_bytes()
+    assert installed.split(b"---", 2)[2] == source.split(b"---", 2)[2]
+    assert b"name: arnold\n" in installed
+    assert b'description: "Op for X"\n' in installed
+    assert b'Arnold resident operator' not in installed
+
+
+@pytest.mark.parametrize(
+    ("template_name", "output_name"),
+    [
+        ("..", None),
+        (".", None),
+        ("a/b", None),
+        ("", None),
+        ("arnold", ""),
+        ("arnold", "unsafe name"),
+    ],
+)
+def test_cli_install_omp_agent_rejects_unsafe_names(
+    tmp_path, monkeypatch, template_name, output_name
+) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    target = tmp_path / "agents"
+    argv = ["install-omp-agent", template_name, "--target", str(target)]
+    if output_name is not None:
+        argv[2:2] = ["--name", output_name]
+
+    result = main(argv)
+
+    assert result == 1
+    assert not target.exists()
+
+
+def test_cli_install_omp_agent_rejects_existing_target_without_clobbering(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    target = tmp_path / "agents"
+    target.mkdir()
+    installed = target / "arnold.md"
+    original = b"existing content\n"
+    installed.write_bytes(original)
+
+    result = main(["install-omp-agent", "arnold", "--target", str(target)])
+
+    assert result == 1
+    assert installed.read_bytes() == original
 
 
 def test_cli_install_omp_agent_rejects_unknown_name(tmp_path, monkeypatch) -> None:
@@ -112,4 +217,4 @@ def test_cli_install_omp_agent_rejects_unknown_name(tmp_path, monkeypatch) -> No
     result = main(["install-omp-agent", "does-not-exist", "--target", str(target), "--json"])
 
     assert result == 1
-    assert not (target / "does-not-exist.md").exists()
+    assert not target.exists()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 import json
@@ -227,7 +228,19 @@ def build_parser() -> argparse.ArgumentParser:
         "install-omp-agent",
         help="Install a packaged omp agent definition into ~/.omp/agent/agents.",
     )
-    install_parser.add_argument("name", help="Agent name (e.g. 'arnold').")
+    install_parser.add_argument(
+        "template_name",
+        help="Packaged source agent name (e.g. 'arnold').",
+    )
+    install_parser.add_argument(
+        "--name",
+        dest="output_name",
+        help="Override the installed filename and frontmatter name.",
+    )
+    install_parser.add_argument(
+        "--description",
+        help="Override the installed frontmatter description.",
+    )
     install_parser.add_argument(
         "--target",
         help="Target agents directory (default ~/.omp/agent/agents).",
@@ -558,30 +571,91 @@ def _agent_frontmatter_name(text: str) -> str | None:
     return None
 
 
+_AGENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _valid_agent_name(name: str) -> bool:
+    return name not in {".", ".."} and bool(_AGENT_NAME_PATTERN.fullmatch(name))
+
+
+def _frontmatter_scalar(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _rewrite_agent_frontmatter(
+    text: str,
+    *,
+    name: str | None,
+    description: str | None,
+) -> str:
+    if name is None and description is None:
+        return text
+    _head, frontmatter, body = text.split("---", 2)
+    lines = frontmatter.splitlines(keepends=True)
+    found_description = False
+    rewritten: list[str] = []
+    for line in lines:
+        content = line.rstrip("\r\n")
+        newline = line[len(content):]
+        key, separator, _value = content.partition(":")
+        if separator and key.strip() == "name" and name is not None:
+            line = f"name: {name}{newline}"
+        elif separator and key.strip() == "description" and description is not None:
+            line = f"description: {_frontmatter_scalar(description)}{newline}"
+            found_description = True
+        rewritten.append(line)
+    if description is not None and not found_description:
+        rewritten.append(f"description: {_frontmatter_scalar(description)}\n")
+    return "---" + "".join(rewritten) + "---" + body
+
+
 def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
-    name = args.name
-    source = _packaged_omp_agent_path(name)
+    template_name = args.template_name
+    output_name = args.output_name if args.output_name is not None else template_name
+    for label, name in (("template", template_name), ("output", output_name)):
+        if not _valid_agent_name(name):
+            return _diagnostic(
+                f"invalid {label} agent name {name!r}; use only letters, numbers, '.', '_' and '-'",
+                json_output=json_output,
+            )
+    source = _packaged_omp_agent_path(template_name)
     if not source.is_file():
         return _diagnostic(
-            f"no packaged omp agent named {name!r} (expected {source})",
+            f"no packaged omp agent named {template_name!r} (expected {source})",
             json_output=json_output,
         )
-    text = source.read_text(encoding="utf-8")
+    source_bytes = source.read_bytes()
+    text = source_bytes.decode("utf-8")
     parsed_name = _agent_frontmatter_name(text)
-    if parsed_name != name:
+    if parsed_name != template_name:
         return _diagnostic(
-            f"frontmatter name mismatch: {parsed_name!r} != {name!r}",
+            f"frontmatter name mismatch: {parsed_name!r} != {template_name!r}",
+            json_output=json_output,
+        )
+    installed_text = _rewrite_agent_frontmatter(
+        text,
+        name=output_name if args.output_name is not None else None,
+        description=args.description,
+    )
+    if _agent_frontmatter_name(installed_text) != output_name:
+        return _diagnostic(
+            f"installed frontmatter name mismatch: {_agent_frontmatter_name(installed_text)!r} != {output_name!r}",
             json_output=json_output,
         )
     target_dir = Path(args.target) if args.target else Path.home() / ".omp" / "agent" / "agents"
+    target = target_dir / f"{output_name}.md"
+    if target.exists():
+        return _diagnostic(
+            f"target already exists: {target}",
+            json_output=json_output,
+        )
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{name}.md"
-    tmp = target.with_name(f".{name}.md.tmp-{uuid4().hex[:8]}")
-    tmp.write_text(text, encoding="utf-8")
+    tmp = target.with_name(f".{output_name}.md.tmp-{uuid4().hex[:8]}")
+    tmp.write_bytes(installed_text.encode("utf-8"))
     os.replace(tmp, target)
     _emit(
         {
-            "agent": name,
+            "agent": output_name,
             "source": str(source),
             "target": str(target),
             "installed": True,
