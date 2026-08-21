@@ -54,7 +54,7 @@ import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
@@ -134,6 +134,205 @@ def _environment(value: EnvironmentId | str | None) -> EnvironmentId | None:
     if isinstance(value, EnvironmentId):
         return value
     return EnvironmentId(value)
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed source-provider admission (G1-F-001)
+# ---------------------------------------------------------------------------
+# Injected stores and callables are admitted only when they expose the
+# declared read surface and no mutation-capable public method.  Adapters
+# retain a sealed named-operation object — never the original provider.
+
+
+class ProviderAdmissionError(TypeError):
+    """Construction-time refusal of a mutation-capable or incomplete provider."""
+
+
+class WbcReadProvider(Protocol):
+    """Declared WBC read/query/version surface (no writer methods)."""
+
+    def get_contract_version(self) -> Any: ...
+
+    def get_store_version(self) -> Any: ...
+
+    def read_events(self, attempt_id: str) -> Any: ...
+
+    def read_ledger(self, attempt_id: str) -> Any: ...
+
+    def get_terminal_event(self, attempt_id: str) -> Any: ...
+
+    def query_gaps(self, attempt_id: str) -> Any: ...
+
+    def query_source_cursor(self, attempt_id: str, cursor_key: str) -> Any: ...
+
+
+class CustodyReadProvider(Protocol):
+    """Declared Custody load/replay surface (no writer methods)."""
+
+    def load_history(self, lease_id: str) -> Any: ...
+
+    def replay_history(self, lease_id: str) -> Any: ...
+
+
+_WBC_READ_OPERATIONS: tuple[str, ...] = (
+    "get_contract_version",
+    "get_store_version",
+    "read_events",
+    "read_ledger",
+    "get_terminal_event",
+    "query_gaps",
+    "query_source_cursor",
+)
+
+_CUSTODY_READ_OPERATIONS: tuple[str, ...] = (
+    "load_history",
+    "replay_history",
+)
+
+_PROVIDER_MUTATION_VERBS: frozenset[str] = frozenset(
+    {
+        "append",
+        "reserve",
+        "update",
+        "write",
+        "delete",
+        "remove",
+        "create",
+        "acquire",
+        "renew",
+        "transfer",
+        "release",
+        "expire",
+        "fence",
+        "migrate",
+        "insert",
+        "reclaim",
+        "record_event",
+    }
+)
+
+
+def _is_writer_named(name: str) -> bool:
+    lowered = name.lower().replace("-", "_")
+    if lowered in _PROVIDER_MUTATION_VERBS:
+        return True
+    return any(
+        part in _PROVIDER_MUTATION_VERBS for part in lowered.split("_") if part
+    )
+
+
+def _public_callable_names(provider: object) -> tuple[str, ...]:
+    names: list[str] = []
+    for name in dir(provider):
+        if name.startswith("_"):
+            continue
+        try:
+            attr = getattr(provider, name)
+        except Exception:
+            continue
+        if callable(attr):
+            names.append(name)
+    return tuple(names)
+
+
+def _reject_writer_methods(
+    provider: object,
+    *,
+    allowed: frozenset[str],
+    what: str,
+) -> None:
+    writers = [
+        name
+        for name in _public_callable_names(provider)
+        if name not in allowed and _is_writer_named(name)
+    ]
+    if writers:
+        raise ProviderAdmissionError(
+            f"{what} exposes mutation-capable method(s) {sorted(writers)!r}; "
+            "read adapters admit only the declared read surface"
+        )
+
+
+def _require_operations(
+    provider: object,
+    operations: tuple[str, ...],
+    *,
+    what: str,
+) -> None:
+    missing = [
+        name
+        for name in operations
+        if not callable(getattr(provider, name, None))
+    ]
+    if missing:
+        raise ProviderAdmissionError(
+            f"{what} is missing required read operation(s) {missing!r}"
+        )
+
+
+def _wrap_operation(operation: Any, name: str) -> Any:
+    def _bound(*args: Any, **kwargs: Any) -> Any:
+        return operation(*args, **kwargs)
+
+    _bound.__name__ = name
+    _bound.__qualname__ = name
+    return _bound
+
+
+def _seal_named_reads(
+    provider: object,
+    operations: tuple[str, ...],
+    *,
+    metadata: tuple[str, ...] = (),
+    what: str,
+) -> Any:
+    """Admit *provider* and return a sealed surface with only declared reads."""
+    if provider is None:
+        raise ProviderAdmissionError(f"{what} is required")
+    _require_operations(provider, operations, what=what)
+    _reject_writer_methods(provider, allowed=frozenset(operations), what=what)
+    sealed_type = type(
+        "SealedReadSurface",
+        (),
+        {"__slots__": operations + metadata, "__module__": __name__},
+    )
+    sealed = sealed_type.__new__(sealed_type)
+    for name in operations:
+        object.__setattr__(
+            sealed, name, _wrap_operation(getattr(provider, name), name)
+        )
+    for name in metadata:
+        if hasattr(provider, name):
+            object.__setattr__(sealed, name, getattr(provider, name))
+    return sealed
+
+
+class _SealedCallable:
+    """Sealed callable read provider; original object is not retained."""
+
+    __slots__ = ("_call", "environment")
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return object.__getattribute__(self, "_call")(*args, **kwargs)
+
+
+def _seal_callable(provider: object, *, what: str) -> _SealedCallable:
+    if not callable(provider):
+        raise ProviderAdmissionError(f"{what} must be a callable read provider")
+    _reject_writer_methods(provider, allowed=frozenset(), what=what)
+    sealed = _SealedCallable.__new__(_SealedCallable)
+    object.__setattr__(sealed, "_call", _wrap_operation(provider, "__call__"))
+    if hasattr(provider, "environment"):
+        object.__setattr__(sealed, "environment", getattr(provider, "environment"))
+    return sealed
+
+
+def _seal_optional_callable(
+    provider: object | None, *, what: str
+) -> _SealedCallable | None:
+    if provider is None:
+        return None
+    return _seal_callable(provider, what=what)
 
 
 # ---------------------------------------------------------------------------
@@ -584,9 +783,14 @@ class RunAuthorityAcceptedOutcomeAdapter:
         environment: EnvironmentId | str | None = None,
         active_custody_provider: Callable[[], Sequence[Any]] | None = None,
     ) -> None:
-        self._view_provider = view_provider
+        self._view_provider = _seal_callable(
+            view_provider, what="Run Authority view provider"
+        )
         self._environment = _environment(environment)
-        self._active_custody_provider = active_custody_provider
+        self._active_custody_provider = _seal_optional_callable(
+            active_custody_provider,
+            what="Run Authority active-custody provider",
+        )
 
     def _version_vector(
         self, before: str | None, after: str | None
@@ -699,14 +903,21 @@ class WbcWorkEvidenceAdapter:
 
     def __init__(
         self,
-        store: Any,
+        store: WbcReadProvider,
         *,
         environment: EnvironmentId | str | None = None,
         active_custody_provider: Callable[[], Sequence[Any]] | None = None,
     ) -> None:
-        self._store = store
+        self._store = _seal_named_reads(
+            store,
+            _WBC_READ_OPERATIONS,
+            what="WBC work-evidence store",
+        )
         self._environment = _environment(environment)
-        self._active_custody_provider = active_custody_provider
+        self._active_custody_provider = _seal_optional_callable(
+            active_custody_provider,
+            what="WBC active-custody provider",
+        )
 
     def _version_vector(
         self, before: str | None, after: str | None
@@ -970,11 +1181,16 @@ class CustodyLeaseHistoryAdapter:
 
     def __init__(
         self,
-        store: Any,
+        store: CustodyReadProvider,
         *,
         environment: EnvironmentId | str | None = None,
     ) -> None:
-        self._store = store
+        self._store = _seal_named_reads(
+            store,
+            _CUSTODY_READ_OPERATIONS,
+            metadata=("environment",),
+            what="Custody lease-history store",
+        )
         self._environment = _environment(environment)
 
     def _version_vector(
@@ -1243,9 +1459,15 @@ class NativeProofQualityAdapter:
         sensitive_provider: Callable[[str], Sequence[Any]] | None = None,
         environment: EnvironmentId | str | None = None,
     ) -> None:
-        self._proof_provider = proof_provider
-        self._quality_provider = quality_provider
-        self._sensitive_provider = sensitive_provider
+        self._proof_provider = _seal_callable(
+            proof_provider, what="Native proof provider"
+        )
+        self._quality_provider = _seal_optional_callable(
+            quality_provider, what="Native quality provider"
+        )
+        self._sensitive_provider = _seal_optional_callable(
+            sensitive_provider, what="Native sensitive-evidence provider"
+        )
         self._environment = _environment(environment)
 
     def _version_vector(
@@ -1420,7 +1642,7 @@ def read_run_authority_accepted_outcomes(
 
 
 def read_wbc_work_evidence(
-    store: Any,
+    store: WbcReadProvider,
     attempt_id: str,
     *,
     environment: EnvironmentId | str | None = None,
@@ -1436,7 +1658,7 @@ def read_wbc_work_evidence(
 
 
 def read_custody_lease_history(
-    store: Any,
+    store: CustodyReadProvider,
     lease_id: str,
     *,
     environment: EnvironmentId | str | None = None,
@@ -1595,7 +1817,9 @@ class OpenTicketLookupAdapter:
         *,
         environment: EnvironmentId | str | None = None,
     ) -> None:
-        self._lookup_provider = lookup_provider
+        self._lookup_provider = _seal_callable(
+            lookup_provider, what="Open-ticket lookup provider"
+        )
         self._environment = _environment(environment)
 
     def _version_vector(
@@ -1760,7 +1984,9 @@ class DispatchReceiptsAdapter:
         *,
         environment: EnvironmentId | str | None = None,
     ) -> None:
-        self._receipt_provider = receipt_provider
+        self._receipt_provider = _seal_callable(
+            receipt_provider, what="Dispatch-receipt provider"
+        )
         self._environment = _environment(environment)
 
     def _version_vector(
@@ -3038,6 +3264,7 @@ __all__ = [
     "CoherentObservationEnvelope",
     "CustodyLeaseHistoryAdapter",
     "CustodyLeaseHistoryRead",
+    "CustodyReadProvider",
     "DEFAULT_CLASSIFIER_VERSION",
     "DispatchReceiptHighWaterRead",
     "DispatchReceiptsAdapter",
@@ -3051,11 +3278,13 @@ __all__ = [
     "NormalizedWorkFacts",
     "OpenTicketLookupAdapter",
     "OpenTicketSnapshotRead",
+    "ProviderAdmissionError",
     "RepairOccurrenceFacts",
     "RunAuthorityAcceptedOutcomeAdapter",
     "RunAuthorityAcceptedOutcomeRead",
     "SourceReadDisposition",
     "SourceReadFailure",
+    "WbcReadProvider",
     "WbcWorkEvidenceAdapter",
     "WbcWorkEvidenceRead",
     "WorkEvidenceFacts",

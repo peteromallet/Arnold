@@ -481,6 +481,13 @@ def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
         environment="production",
     ).read()
     prior_keys: list[str] = []
+    lookup_calls: list[str] = []
+
+    def _pure_lookup(key: str) -> bool:
+        lookup_calls.append(key)
+        prior_keys.append(key)
+        return False
+
     result = er.route_recommendations(
         candidates=[candidate],
         ticket_read=ticket_read,
@@ -489,7 +496,7 @@ def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
         window=EventWindow(start=UtcTime(_ts(12)), end=UtcTime(_ts(13))),
         generated_at=UtcTime(_ts(12)),
         cluster_refs={"candidate-1": _ref("maintenance", "cluster://candidate-1")},
-        prior_key_lookup=lambda key: prior_keys.append(key) or False,
+        prior_key_lookup=er.PriorKeyLookup(_pure_lookup),
     )
 
     assert len(result.decisions) == 1
@@ -507,8 +514,85 @@ def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
     assert decision.proposal.cluster_ref.locator == "cluster://candidate-1"
     assert decision.proposal.proposal_key == decision.proposal_key
     assert len(prior_keys) == 1
+    assert len(lookup_calls) == 1
 
     decoded = strict_loads(ec.DailyEfficiencyProposal, canonical_dumps(decision.proposal))
     assert decoded == decision.proposal
     with pytest.raises(Exception):
         decision.proposal.auto_materialization = True  # type: ignore[misc]
+
+
+class _MutatingPriorLookup:
+    """Would write a ledger/ticket if invoked; must be refused first."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, key: str) -> bool:
+        self.calls.append(key)
+        self.append(key)
+        return False
+
+    def append(self, key: str) -> None:
+        self.calls.append(f"append:{key}")
+
+
+def test_routing_rejects_opaque_and_mutation_capable_callbacks() -> None:
+    candidate = ec.RootCauseCandidate(
+        candidate_id="candidate-1",
+        root_cause_fingerprint="fingerprint-1",
+        affected_contract="contract-1",
+        classifier_version="classifier-1",
+        coverage=_denominator(
+            numerator=4,
+            denominator=5,
+            unknown_count=0,
+            censored_count=1,
+        ),
+        confidence=_bounds(0.9, 0.9, 0.9),
+        recurrence_count_7d=2,
+        recurrence_count_30d=2,
+        evidence_refs=(_ref("wbc", "wbc://occurrence-1"),),
+    )
+    ticket_read = es.OpenTicketLookupAdapter(
+        lambda: SimpleNamespace(
+            stable=True,
+            ticket_id=None,
+            row_count=0,
+            content_digest=None,
+            file_stats_before=(),
+            file_stats_after=(),
+        ),
+        environment="production",
+    ).read()
+    mutating = _MutatingPriorLookup()
+    kwargs = {
+        "candidates": [candidate],
+        "ticket_read": ticket_read,
+        "policy": er.DEFAULT_ROUTING_POLICY,
+        "environment": EnvironmentId("production"),
+        "window": EventWindow(start=UtcTime(_ts(12)), end=UtcTime(_ts(13))),
+        "generated_at": UtcTime(_ts(12)),
+        "cluster_refs": {"candidate-1": _ref("maintenance", "cluster://candidate-1")},
+    }
+    with pytest.raises(er.RoutingAdmissionError):
+        er.route_recommendations(**kwargs, prior_key_lookup=mutating)
+    assert mutating.calls == []
+    with pytest.raises(er.RoutingAdmissionError):
+        er.route_recommendations(**kwargs, prior_key_lookup=lambda _key: False)
+    with pytest.raises(er.RoutingAdmissionError):
+        er.PriorKeyLookup(mutating)
+    assert mutating.calls == []
+    with pytest.raises(er.RoutingAdmissionError):
+        er.route_recommendations(
+            **kwargs,
+            prior_key_lookup=er.PriorKeyLookup(lambda _key: False),
+            initiative_eligible=lambda _candidate: True,
+        )
+    sealed = er.PriorKeyLookup(lambda _key: False)
+    public = {
+        name
+        for name in dir(sealed)
+        if not name.startswith("_") and callable(getattr(sealed, name, None))
+    }
+    assert public == {"lookup"}

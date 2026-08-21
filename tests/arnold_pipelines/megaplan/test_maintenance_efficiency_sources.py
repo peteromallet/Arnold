@@ -585,6 +585,123 @@ def test_wbc_torn_model_requires_matching_disposition() -> None:
         )
 
 
+class _MutatingWbcStore(_SpyStore):
+    """Required WBC reads plus a writer; must be refused at construction."""
+
+    def append(self, *_args: object, **_kwargs: object) -> None:
+        self.calls.append("append")
+
+
+class _MutatingCallableProvider:
+    """Callable read provider that also exposes a writer method."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, *_args: object, **_kwargs: object) -> object:
+        self.calls.append("__call__")
+        raise AssertionError("mutation-capable provider must not be invoked")
+
+    def append(self, *_args: object, **_kwargs: object) -> None:
+        self.calls.append("append")
+
+
+def _public_callables(obj: object) -> set[str]:
+    return {
+        name
+        for name in dir(obj)
+        if not name.startswith("_") and callable(getattr(obj, name, None))
+    }
+
+
+def test_wbc_mutation_capable_store_is_rejected_before_any_read() -> None:
+    store = _MutatingWbcStore()
+    with pytest.raises(es.ProviderAdmissionError, match="append"):
+        es.WbcWorkEvidenceAdapter(store)
+    assert store.calls == []
+    with pytest.raises(es.ProviderAdmissionError, match="append"):
+        es.read_wbc_work_evidence(store, "att-1")
+    assert store.calls == []
+
+
+def test_wbc_pure_read_store_is_sealed_and_not_retained() -> None:
+    store = _wbc_store()
+    adapter = es.WbcWorkEvidenceAdapter(store)
+    assert adapter._store is not store
+    assert _public_callables(adapter._store) == _ALLOWED_WBC_CALLS
+    read = adapter.read("att-1")
+    assert read.disposition is es.SourceReadDisposition.COHERENT
+    assert set(store.calls) <= _ALLOWED_WBC_CALLS
+    assert "append" not in store.calls
+
+
+def test_sibling_callable_provider_with_writer_is_rejected() -> None:
+    provider = _MutatingCallableProvider()
+    with pytest.raises(es.ProviderAdmissionError, match="append"):
+        es.OpenTicketLookupAdapter(provider)
+    assert provider.calls == []
+    with pytest.raises(es.ProviderAdmissionError, match="append"):
+        es.RunAuthorityAcceptedOutcomeAdapter(provider)
+    assert provider.calls == []
+    with pytest.raises(es.ProviderAdmissionError, match="append"):
+        es.DispatchReceiptsAdapter(provider)
+    assert provider.calls == []
+    with pytest.raises(es.ProviderAdmissionError, match="append"):
+        es.NativeProofQualityAdapter(proof_provider=provider)
+    assert provider.calls == []
+
+
+def test_all_source_adapters_use_the_same_sealed_admission_boundary() -> None:
+    mutating_store = _MutatingWbcStore()
+    mutating_callable = _MutatingCallableProvider()
+
+    class _MutatingCustodyProvider:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def load_history(self, lease_id: str) -> list[object]:
+            self.calls.append("load_history")
+            return []
+
+        def replay_history(self, lease_id: str) -> None:
+            self.calls.append("replay_history")
+            return None
+
+        def append(self, *_args: object, **_kwargs: object) -> None:
+            self.calls.append("append")
+
+    mutating_custody = _MutatingCustodyProvider()
+
+    refusals: list[object] = []
+    constructors = (
+        lambda: es.WbcWorkEvidenceAdapter(mutating_store),
+        lambda: es.CustodyLeaseHistoryAdapter(mutating_custody),
+        lambda: es.RunAuthorityAcceptedOutcomeAdapter(mutating_callable),
+        lambda: es.OpenTicketLookupAdapter(mutating_callable),
+        lambda: es.DispatchReceiptsAdapter(mutating_callable),
+        lambda: es.NativeProofQualityAdapter(proof_provider=mutating_callable),
+        lambda: es.RunAuthorityAcceptedOutcomeAdapter(
+            lambda: _View(),
+            active_custody_provider=mutating_callable,
+        ),
+        lambda: es.WbcWorkEvidenceAdapter(
+            _wbc_store(),
+            active_custody_provider=mutating_callable,
+        ),
+    )
+    for construct in constructors:
+        with pytest.raises(es.ProviderAdmissionError):
+            construct()
+        refusals.append(True)
+    assert len(refusals) == 8
+    assert mutating_store.calls == []
+    assert mutating_custody.calls == []
+    assert mutating_callable.calls == []
+
+    sealed = es.WbcWorkEvidenceAdapter(_wbc_store())
+    assert _public_callables(sealed._store) == _ALLOWED_WBC_CALLS
+
+
 # ---------------------------------------------------------------------------
 # Convenience entry points
 # ---------------------------------------------------------------------------
@@ -818,6 +935,8 @@ def test_custody_adapter_returns_locator_only_lease_and_history_refs() -> None:
 
     # Only the named read/replay APIs were called.
     assert set(store.calls) <= _CUSTODY_READ_CALLS
+    assert adapter._store is not store
+    assert _public_callables(adapter._store) == _CUSTODY_READ_CALLS
 
     # Replayable digest and frozen immutability; no mutation surface.
     assert read.digest == canonical_digest(read)
