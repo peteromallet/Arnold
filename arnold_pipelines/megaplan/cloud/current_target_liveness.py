@@ -19,7 +19,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
-from weakref import WeakSet
+from weakref import WeakSet, WeakValueDictionary
 
 from arnold_pipelines.megaplan.cloud.liveness_lease import observe_liveness_lease
 
@@ -532,6 +532,7 @@ _CAPABILITY_FIELDS = (
 )
 _CAPABILITY_MAC_KEY = secrets.token_bytes(32)
 _MINTED_CAPABILITIES: WeakSet[MutationCapability] = WeakSet()
+_CAPABILITY_HANDLES: WeakValueDictionary[str, MutationCapability] = WeakValueDictionary()
 
 
 def _canonical_digest(value: Any) -> str:
@@ -871,6 +872,89 @@ def _minted_object(capability: object) -> MutationCapability | None:
     return capability
 
 
+def _handle_key(identity: str) -> str:
+    return _text(identity)
+
+
+def attach_mutation_capability(
+    capability: MutationCapability,
+    *,
+    identity: str,
+) -> MutationCapability:
+    """Hold a minted capability by request/occurrence identity for in-process pass-through.
+
+    The handle is process-local. Serializing ``to_dict()`` and reconstructing
+    a Mapping is not authority.
+    """
+
+    minted = _minted_object(capability)
+    if minted is None:
+        raise MutationDenied(
+            "mutation requires a previously minted MutationCapability",
+            code="capability_reconstructed",
+        )
+    key = _handle_key(identity)
+    if not key:
+        raise MutationDenied(
+            "mutation capability handle requires occurrence-bound identity",
+            code="identity_incomplete",
+        )
+    if not _text(minted.custody):
+        raise MutationDenied(
+            "mutation identity incomplete: custody",
+            code="identity_incomplete",
+        )
+    if minted.occurrence and minted.occurrence != key:
+        raise MutationDenied(
+            "capability occurrence does not match the requested occurrence",
+            code="occurrence_mismatch",
+        )
+    _CAPABILITY_HANDLES[key] = minted
+    return minted
+
+
+def resolve_mutation_capability(identity: str) -> MutationCapability | None:
+    """Return the process-held minted capability for ``identity``, if any."""
+
+    key = _handle_key(identity)
+    if not key:
+        return None
+    held = _CAPABILITY_HANDLES.get(key)
+    return _minted_object(held)
+
+
+def _capability_from_carrier(carrier: object) -> object:
+    """Resolve a live minted object or process-held handle; Mapping is never authority."""
+
+    minted = _minted_object(carrier)
+    if minted is not None:
+        return minted
+    if isinstance(carrier, Mapping):
+        for key in ("mutation_capability", "capability"):
+            nested = carrier.get(key)
+            minted = _minted_object(nested)
+            if minted is not None:
+                return minted
+        # Explicit process-local handles only. Occurrence/token fields on a
+        # reconstructed Mapping are not a grant, even when a live handle
+        # exists for the same identity.
+        handle_id = _text(
+            carrier.get("mutation_capability_handle")
+            or carrier.get("capability_handle")
+        )
+        if handle_id:
+            held = resolve_mutation_capability(handle_id)
+            if held is not None:
+                return held
+        return carrier
+    handle_id = _text(carrier)
+    if handle_id:
+        held = resolve_mutation_capability(handle_id)
+        if held is not None:
+            return held
+    return carrier
+
+
 def require_mutation_capability(
     capability: MutationCapability | Mapping[str, Any] | None,
     *,
@@ -882,6 +966,9 @@ def require_mutation_capability(
 
     A reconstructed Mapping is not authority. Valid downstream
     receipt/cutover/operator evidence without this object still rejects.
+    The grant must carry a verifiable mint signature and occurrence-bound
+    custody. Process-held handles keyed to the request/occurrence identity
+    are accepted; HMAC-verified ``to_dict()`` rebuilds are not.
     """
 
     if capability is None:
@@ -889,12 +976,13 @@ def require_mutation_capability(
             "mutation requires a root MutationCapability",
             code="capability_absent",
         )
-    if isinstance(capability, Mapping):
+    resolved = _capability_from_carrier(capability)
+    if isinstance(resolved, Mapping):
         raise MutationDenied(
             "reconstructed Mapping is not a minted MutationCapability",
             code="capability_reconstructed",
         )
-    minted = _minted_object(capability)
+    minted = _minted_object(resolved)
     if minted is None:
         raise MutationDenied(
             "mutation requires a previously minted MutationCapability",
@@ -907,6 +995,11 @@ def require_mutation_capability(
         raise MutationDenied(
             "mutation capability token does not match bound identity",
             code="capability_forged",
+        )
+    if not _text(minted.custody):
+        raise MutationDenied(
+            "mutation identity incomplete: custody",
+            code="identity_incomplete",
         )
     try:
         expires = datetime.fromisoformat(minted.expires_at.replace("Z", "+00:00"))
@@ -1021,6 +1114,7 @@ __all__ = [
     "DEFAULT_CAPABILITY_TTL",
     "MutationCapability",
     "MutationDenied",
+    "attach_mutation_capability",
     "control_liveness_from_current_target",
     "liveness_from_current_target",
     "mint_mutation_capability",
@@ -1028,4 +1122,5 @@ __all__ = [
     "process_import_root",
     "process_interpreter",
     "require_mutation_capability",
+    "resolve_mutation_capability",
 ]

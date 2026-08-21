@@ -1498,13 +1498,13 @@ def _override_recover_blocked(
         if str(repair_scope or "").strip().lower() == "engine_runtime":
             from arnold_pipelines.megaplan.cloud.current_target_liveness import (
                 MutationDenied,
+                attach_mutation_capability,
                 mint_mutation_capability,
             )
 
             fingerprint = str(
                 compact_failure_identity(latest_failure).get("fingerprint") or ""
             )
-            cursor_payload = dict(resume_cursor)
             evidence = {
                 "occurrence": fingerprint,
                 "target": fingerprint,
@@ -1512,6 +1512,11 @@ def _override_recover_blocked(
                 "evidence_digest": fingerprint,
                 "scope": "engine_runtime",
                 "repair_scope": "engine_runtime",
+                "custody": {
+                    "identity": f"custody:{fingerprint}",
+                    "occurrence": fingerprint,
+                    "occurrence_fingerprint": fingerprint,
+                },
                 "runtime_manifest_path": getattr(args, "runtime_manifest", None),
                 "ambient_engine_root": getattr(args, "ambient_engine_root", None),
                 "runtime_manifest": getattr(args, "runtime_manifest_payload", None),
@@ -1528,13 +1533,15 @@ def _override_recover_blocked(
                     action="recover-blocked",
                     evidence=evidence,
                 )
+                attach_mutation_capability(capability, identity=fingerprint)
             except MutationDenied as exc:
                 raise CliError(
                     exc.code,
                     f"engine_runtime recover-blocked refused: {exc.reason}",
                 ) from exc
             resume_cursor = dict(resume_cursor)
-            resume_cursor["mutation_capability"] = capability.to_dict()
+            resume_cursor["mutation_capability"] = capability
+            resume_cursor["mutation_capability_handle"] = fingerprint
             state["resume_cursor"] = resume_cursor
         phase_repair_evidence = validated_deterministic_phase_repair(
             root,
@@ -1637,7 +1644,11 @@ def _override_recover_blocked(
             "reason": reason,
             "from_state": previous_state,
             "to_state": recovered_state,
-            "resume_cursor": dict(resume_cursor),
+            "resume_cursor": {
+                key: value
+                for key, value in dict(resume_cursor).items()
+                if key != "mutation_capability"
+            },
             "blocker_ids": blocker_ids,
             "archived_phase_result": archived_phase_result,
             **(
@@ -1661,6 +1672,13 @@ def _override_recover_blocked(
         meta["provider_contract_repair_retry"] = {
             **phase_repair_evidence,
             "status": "available",
+        }
+    persisted_cursor = state.get("resume_cursor")
+    if isinstance(persisted_cursor, dict) and "mutation_capability" in persisted_cursor:
+        state["resume_cursor"] = {
+            key: value
+            for key, value in persisted_cursor.items()
+            if key != "mutation_capability"
         }
     save_state_merge_meta(plan_dir, state)
     response: StepResponse = {

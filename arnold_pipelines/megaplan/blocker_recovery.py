@@ -158,19 +158,25 @@ def validated_deterministic_phase_repair(
             MutationDenied,
             process_import_root,
             require_mutation_capability,
+            resolve_mutation_capability,
         )
 
         live_root = process_import_root()
         capability_payload = None
         if isinstance(resume_cursor, Mapping):
-            capability_payload = (
-                resume_cursor.get("mutation_capability")
-                or resume_cursor.get("capability")
-            )
+            capability_payload = resume_cursor.get("mutation_capability")
+            if capability_payload is None:
+                capability_payload = resume_cursor.get("capability")
+            if capability_payload is None:
+                handle_id = (
+                    resume_cursor.get("mutation_capability_handle")
+                    or current_fingerprint
+                )
+                capability_payload = resolve_mutation_capability(str(handle_id or ""))
         if capability_payload is None and isinstance(state, Mapping):
-            capability_payload = (
-                state.get("mutation_capability") or state.get("capability")
-            )
+            capability_payload = state.get("mutation_capability") or state.get("capability")
+            if capability_payload is None:
+                capability_payload = resolve_mutation_capability(current_fingerprint)
         try:
             capability = require_mutation_capability(
                 capability_payload,

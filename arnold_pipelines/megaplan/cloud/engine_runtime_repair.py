@@ -223,8 +223,19 @@ def validate_engine_runtime_repair_admission(
         )
     payload = value if isinstance(value, Mapping) else {}
     try:
+        from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+            resolve_mutation_capability,
+        )
+
+        capability_payload = payload.get("mutation_capability") or payload.get("capability")
+        if capability_payload is None:
+            handle_id = (
+                payload.get("mutation_capability_handle")
+                or parsed.occurrence_fingerprint
+            )
+            capability_payload = resolve_mutation_capability(str(handle_id or ""))
         require_mutation_capability(
-            payload.get("mutation_capability") or payload.get("capability"),
+            capability_payload,
             action="engine_runtime",
             occurrence=parsed.occurrence_fingerprint,
             scope="engine_runtime",
