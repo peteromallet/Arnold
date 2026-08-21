@@ -13,10 +13,12 @@ from arnold_pipelines.megaplan.cloud.current_target_liveness import (
     SCHEMA,
     MutationCapability,
     MutationDenied,
+    attach_mutation_capability,
     control_liveness_from_current_target,
     mint_mutation_capability,
     observe_current_target_liveness,
     require_mutation_capability,
+    resolve_mutation_capability,
 )
 from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
     ENGINE_RUNTIME_EFFECT_CLASS,
@@ -433,6 +435,149 @@ def test_missing_custody_fails_closed_identity_incomplete(tmp_path: Path) -> Non
         )
     assert denied.value.code == "identity_incomplete"
     assert "custody" in denied.value.reason
+
+
+def test_recover_blocked_live_handle_require_succeeds_mapping_rebuild_rejects(
+    tmp_path: Path,
+) -> None:
+    fingerprint = "fp-recover-blocked-1"
+    evidence = _complete_evidence(
+        tmp_path / "recover-blocked",
+        action="recover-blocked",
+        occurrence=fingerprint,
+        extra={
+            "scope": "engine_runtime",
+            "repair_scope": "engine_runtime",
+            "target": fingerprint,
+            "evidence_digest": fingerprint,
+            "custody": {
+                "identity": f"custody:{fingerprint}",
+                "occurrence": fingerprint,
+                "occurrence_fingerprint": fingerprint,
+            },
+        },
+    )
+    live_root = Path(str(evidence["import_root"]))
+    interpreter = Path(str(evidence["interpreter"]))
+    minted = mint_mutation_capability(
+        action="recover-blocked",
+        evidence=evidence,
+        process_root=live_root,
+        process_python=interpreter,
+    )
+    assert minted.custody
+    assert minted.occurrence == fingerprint
+    attach_mutation_capability(minted, identity=fingerprint)
+
+    resume_cursor = {
+        "phase": "critique",
+        "retry_strategy": "repair_phase_contract",
+        "mutation_capability": minted,
+        "mutation_capability_handle": fingerprint,
+    }
+    checked = require_mutation_capability(
+        resume_cursor,
+        action="recover-blocked",
+        occurrence=fingerprint,
+        scope="engine_runtime",
+    )
+    assert checked is minted
+    handle_only = require_mutation_capability(
+        {"mutation_capability_handle": fingerprint},
+        action="recover-blocked",
+        occurrence=fingerprint,
+        scope="engine_runtime",
+    )
+    assert handle_only is minted
+    assert resolve_mutation_capability(fingerprint) is minted
+
+    rebuilt = dict(minted.to_dict())
+    with pytest.raises(MutationDenied) as denied:
+        require_mutation_capability(
+            rebuilt,
+            action="recover-blocked",
+            occurrence=fingerprint,
+            scope="engine_runtime",
+        )
+    assert denied.value.code == "capability_reconstructed"
+
+    from arnold_pipelines.megaplan.blocker_recovery import compact_failure_identity
+    from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
+        ENGINE_RUNTIME_EFFECT_CLASS,
+        ENGINE_RUNTIME_REPAIR_SCHEMA,
+        SOURCE_REPAIR_SCOPE,
+        validate_engine_runtime_repair_admission,
+    )
+
+    latest_failure = {
+        "kind": "deterministic_phase_failure",
+        "phase": "critique",
+        "message": "phase contract failed",
+    }
+    compact = compact_failure_identity(latest_failure)
+    assert compact.get("fingerprint")
+    # Producer custody is occurrence-bound to the compact failure fingerprint.
+    producer_evidence = _complete_evidence(
+        tmp_path / "producer",
+        action="recover-blocked",
+        occurrence=str(compact["fingerprint"]),
+        extra={
+            "scope": "engine_runtime",
+            "repair_scope": "engine_runtime",
+            "target": str(compact["fingerprint"]),
+            "evidence_digest": str(compact["fingerprint"]),
+            "custody": {
+                "identity": f"custody:{compact['fingerprint']}",
+                "occurrence": str(compact["fingerprint"]),
+                "occurrence_fingerprint": str(compact["fingerprint"]),
+            },
+        },
+    )
+    producer_cap = mint_mutation_capability(
+        action="recover-blocked",
+        evidence=producer_evidence,
+        process_root=Path(str(producer_evidence["import_root"])),
+        process_python=Path(str(producer_evidence["interpreter"])),
+    )
+    attach_mutation_capability(producer_cap, identity=str(compact["fingerprint"]))
+    required = require_mutation_capability(
+        {"mutation_capability_handle": compact["fingerprint"]},
+        action="recover-blocked",
+        occurrence=str(compact["fingerprint"]),
+        scope="engine_runtime",
+    )
+    assert required is producer_cap
+
+    admission = {
+        "schema_version": ENGINE_RUNTIME_REPAIR_SCHEMA,
+        "admission_id": "admission:recover-blocked",
+        "effect_class": ENGINE_RUNTIME_EFFECT_CLASS,
+        "repair_scope": SOURCE_REPAIR_SCOPE,
+        "occurrence_fingerprint": "sha256:occurrence",
+        "candidate": {
+            "revision": "0123456789abcdef0123456789abcdef01234567",
+            "runtime_sha256": "a" * 64,
+            "verification_digest": "b" * 64,
+            "provenance_digest": "c" * 64,
+            "effect_barrier_digest": "d" * 64,
+        },
+        "authority": {
+            "decision": "approved",
+            "model": "gpt-5.6-sol",
+            "profile": "horizon-a",
+        },
+        "run_authority_receipt": "run-authority:one",
+        "custody_receipt": "custody:one",
+        "wbc_receipt": "wbc:one",
+        "fence_token": "fence:one",
+        "one_effect": True,
+        "mutation_capability": dict(minted.to_dict()),
+    }
+    ok, reason = validate_engine_runtime_repair_admission(
+        admission, occurrence_fingerprint="sha256:occurrence"
+    )
+    assert ok is False
+    assert "reconstructed Mapping is not a minted MutationCapability" in reason
 
 
 def test_static_search_proves_no_bypassing_in_scope_consumer() -> None:

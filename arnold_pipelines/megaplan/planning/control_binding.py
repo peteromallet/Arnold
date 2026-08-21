@@ -1265,6 +1265,7 @@ class PlanningControlBinding:
                 if str(repair_scope or "").strip().lower() == "engine_runtime":
                     from arnold_pipelines.megaplan.cloud.current_target_liveness import (
                         MutationDenied,
+                        attach_mutation_capability,
                         mint_mutation_capability,
                     )
                     from arnold_pipelines.megaplan.blocker_recovery import (
@@ -1281,6 +1282,11 @@ class PlanningControlBinding:
                         "evidence_digest": fingerprint,
                         "scope": "engine_runtime",
                         "repair_scope": "engine_runtime",
+                        "custody": {
+                            "identity": f"custody:{fingerprint}",
+                            "occurrence": fingerprint,
+                            "occurrence_fingerprint": fingerprint,
+                        },
                         "runtime_manifest_path": transition.payload.get(
                             "runtime_manifest"
                         ),
@@ -1303,13 +1309,15 @@ class PlanningControlBinding:
                             action="recover-blocked",
                             evidence=evidence,
                         )
+                        attach_mutation_capability(capability, identity=fingerprint)
                     except MutationDenied as exc:
                         raise CliError(
                             exc.code,
                             f"engine_runtime recover-blocked refused: {exc.reason}",
                         ) from exc
                     resume_cursor = dict(resume_cursor)
-                    resume_cursor["mutation_capability"] = capability.to_dict()
+                    resume_cursor["mutation_capability"] = capability
+                    resume_cursor["mutation_capability_handle"] = fingerprint
                 phase_repair_evidence = validated_deterministic_phase_repair(
                     project_dir,
                     state,
@@ -1368,7 +1376,11 @@ class PlanningControlBinding:
                 "reason": reason,
                 "from_state": previous_state,
                 "to_state": recovered_state,
-                "resume_cursor": dict(resume_cursor),
+                "resume_cursor": {
+                    key: value
+                    for key, value in dict(resume_cursor).items()
+                    if key != "mutation_capability"
+                },
                 "blocker_ids": blocker_ids,
                 **(
                     {"phase_contract_repair": phase_repair_evidence}

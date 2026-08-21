@@ -1320,6 +1320,10 @@ emit_current_needs_human_sidecar() {
     fi
     compare_needs_human_to_resolver "$session" "$current_plan" "true" "${stale_marker_plans:-}"
     if [[ "$stale_clear_verdict" == clear:* ]]; then
+      if [[ "${MUTATION_CAPABILITY_PRESENT:-0}" != "1" ]]; then
+        log "stale repair needs-human marker preserved; observe-only without minted MutationCapability session=$session canonical_state=$stale_clear_state live_plan=${current_plan:-unknown} marker_plans=${stale_marker_plans:-unknown}"
+        return 0
+      fi
       rm -f "$marker_path" 2>/dev/null || authority_gap_continue "T29-BYPASS-126" "authority-risk bypass converted to typed evidence gap"
       log "stale repair needs-human marker cleared; canonical resolver permits stale clear session=$session canonical_state=$stale_clear_state live_plan=${current_plan:-unknown} marker_plans=${stale_marker_plans:-unknown}"
       return 1
@@ -1336,6 +1340,12 @@ emit_current_needs_human_sidecar() {
   # that used to dispatch from here was removed with the layered stack. The
   # single-flash babysitter dispatches from launch_chain_tick, not here.
   if command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "$current_plan"; then
+    if [[ "${MUTATION_CAPABILITY_PRESENT:-0}" != "1" ]]; then
+      log "stale repair needs-human marker preserved; observe-only without minted MutationCapability session=$session live_plan=${current_plan:-unknown}"
+      repair_summary="$(repair_needs_human_summary "$session")"
+      report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+      return 0
+    fi
     rm -f "$marker_path" 2>/dev/null || authority_gap_continue "T29-BYPASS-127" "authority-risk bypass converted to typed evidence gap"
     log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${current_plan:-unknown}"
     return 1
@@ -5439,6 +5449,10 @@ kimi_dispatch_marker_set() {
 }
 
 kimi_dispatch_marker_clear() {
+  if [[ "${MUTATION_CAPABILITY_PRESENT:-0}" != "1" ]]; then
+    log "kimi dispatch marker clear observe-only without minted MutationCapability session=${1:-}"
+    return 0
+  fi
   rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")" 2>/dev/null || authority_gap_continue "T29-BYPASS-147" "authority-risk bypass converted to typed evidence gap"
 }
 
@@ -5575,6 +5589,10 @@ persist_environment_gone_outcome() {
   local remote_spec="$3"
   local run_kind="${4:-chain}"
   local plan_name="${5:-}"
+  if [[ "${MUTATION_CAPABILITY_PRESENT:-0}" != "1" ]]; then
+    log "environment-gone retirement observe-only without minted MutationCapability session=$session"
+    return 0
+  fi
   local data_file="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/${session}.repair-data.json"
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$data_file" "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" <<'PY' 2>>"${LOG:-/dev/null}" || authority_gap_continue "T29-BYPASS-154" "authority-risk bypass converted to typed evidence gap"
 import pathlib
@@ -5606,6 +5624,10 @@ PY
 clear_session_tracking_artifacts() {
   local session="$1"
   local plan_name="${2:-}"
+  if [[ "${MUTATION_CAPABILITY_PRESENT:-0}" != "1" ]]; then
+    log "session tracking artifacts observe-only without minted MutationCapability session=$session"
+    return 0
+  fi
   rm -f "$(session_marker_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-155" "authority-risk bypass converted to typed evidence gap"
   kimi_dispatch_marker_clear "$session"
   rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-156" "authority-risk bypass converted to typed evidence gap"
@@ -7900,12 +7922,18 @@ PY
   # Babysitter/relaunch/drive require a minted MutationCapability; without
   # one this wrapper stays observe-only. UNKNOWN remains a non-granting
   # denial so incomplete identity cannot relaunch.
+  # Env-gone retirement, alive-path marker-clear, and sidecar stale-clear
+  # are also observe-only unless a minted MutationCapability is attached.
   local canonical_liveness_known=1
   if [[ "$canonical_control_state" == "unknown" ]]; then
     canonical_liveness_known=0
     log "canonical target liveness is UNKNOWN; continuing read-only classification while mutation/retrigger/escalation/retirement remain fenced session=$session"
   fi
-  log "current-target canonical-control session=$session state=$canonical_control_state known=$canonical_liveness_known evidence=$current_target_observation"
+  local MUTATION_CAPABILITY_PRESENT="${MUTATION_CAPABILITY_PRESENT:-0}"
+  if [[ "$MUTATION_CAPABILITY_PRESENT" != "1" ]]; then
+    MUTATION_CAPABILITY_PRESENT=0
+  fi
+  log "current-target canonical-control session=$session state=$canonical_control_state known=$canonical_liveness_known capability=$MUTATION_CAPABILITY_PRESENT evidence=$current_target_observation"
 
   canonical_mutation_fenced() {
     local action="${1:-mutation}"
@@ -8190,6 +8218,11 @@ PY
     env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
     env_gone_rc=$?
     if (( env_gone_rc == 0 )); then
+      if [[ "$MUTATION_CAPABILITY_PRESENT" != "1" ]]; then
+        log "environment gone observed; retirement fenced without minted MutationCapability session=$session workspace=$workspace spec=$remote_spec_path"
+        report_item "$report_items" "$session" "observe" "environment_gone" "workspace/spec wiped; observe-only without minted MutationCapability" "$workspace" "$remote_spec"
+        return 0
+      fi
       log "environment gone; retiring session after env-gone strikes session=$session workspace=$workspace spec=$remote_spec_path"
       persist_environment_gone_outcome "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name"
       clear_session_tracking_artifacts "$session" "$plan_name"
@@ -8269,8 +8302,12 @@ PY
     # marker so a future stop dispatches the primary repair fresh instead of
     # falling back.
     if [[ "$canonical_liveness_known" == "1" ]]; then
-      kimi_dispatch_marker_clear "$session"
-      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-191" "authority-risk bypass converted to typed evidence gap"
+      if [[ "$MUTATION_CAPABILITY_PRESENT" == "1" ]]; then
+        kimi_dispatch_marker_clear "$session"
+        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-191" "authority-risk bypass converted to typed evidence gap"
+      else
+        log "alive-path marker-clear observe-only without minted MutationCapability session=$session"
+      fi
       write_partial_liveness_tick "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$health"
     fi
     # STOPPED PRE-EXECUTE STALL is still a mutation (drive). Known liveness
