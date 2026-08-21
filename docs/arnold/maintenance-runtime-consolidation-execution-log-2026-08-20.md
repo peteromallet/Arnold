@@ -211,3 +211,12 @@ Required amendments (authoritative):
 Not-to-do: no T4.4-shaped identity vector, no second occurrence owner, no SHA/epoch pins, no babysitter ceremony restoration, no automatic recover-blocked from T3.2, no advance_generation as recovery.
 
 Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Luna [HARD] implementer on a fresh task worktree, then integration) AFTER R002 history rewrite lands. Todo list updated with T2.4. A fresh Grok 4.6 review of the amended frozen contracts (J4) will be routed before Batch 1 production code starts. Both fix commits to be preserved under safety refs (T0.1 additive) and bound into T2.4/T7.1 allowances.
+
+## F-002/J3 hygiene chain — CLOSED (push unblocked)
+
+- R002 complete re-review (mrc-4bc7e122…): R002-001 CLOSED, R002-002 CLOSED, R002-003/004 OPEN (citation to missing log heading).
+- Root cause of R002-003/004: the 10-item OPERATOR DIRECTIVE log section was lost when R002-REV2's detached worktree copy overwrote the integration worktree log (based on pre-directive b26f3f5778). Restored the full section (heading + 10 items + incident table + not-to-do) into the log; committed 0241c065 ("docs(mrc): restore operator 10-item plan-amendment directive section").
+- R002-003/004 closure verification (mrc-fe6da83d…): **CLOSED, pass with no findings**. Final tip 0241c065; validator valid; reachable-blob scan 36,474 blobs / 0 key matches; safety+seed refs intact; J1/J2/G0 receipts unchanged; no T4.4 material.
+- F-002 chain complete: J3 judgment → R002 redaction + history rewrite → R002-REV2 (receipt/map/operator-amendment disposition) → R003 wrapper lifecycle (deactivation path) → R003-REV2 (lossless) → R003-REV3 (digest recompute) → REG-repair (closed-record digest) → complete re-review + closure review. All J3 push-unblock conditions met.
+- NEXT: batch-0 push (explicit HEAD:fixer/runtime-convergence-r, force-with-lease of rewritten history after clean-scan proof per J3) → then plan-amendment verification + J4 → Batch 1.
+
