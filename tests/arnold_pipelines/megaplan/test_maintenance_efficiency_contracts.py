@@ -20,8 +20,10 @@ sorted references so the digest is independent of input order.
 
 from __future__ import annotations
 
+import gc
+import inspect
 from datetime import datetime, timezone
-from types import SimpleNamespace
+from types import FunctionType, MethodType, SimpleNamespace
 
 import pytest
 
@@ -501,11 +503,13 @@ def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
     prior_keys: list[str] = []
     lookup_calls: list[str] = []
 
-    def _pure_lookup(key: str) -> bool:
-        lookup_calls.append(key)
-        prior_keys.append(key)
-        return False
+    class _PureLookup:
+        def __call__(self, key: str) -> bool:
+            lookup_calls.append(key)
+            prior_keys.append(key)
+            return False
 
+    pure_lookup = _PureLookup()
     result = er.route_recommendations(
         candidates=[candidate],
         ticket_read=ticket_read,
@@ -514,7 +518,7 @@ def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
         window=EventWindow(start=UtcTime(_ts(12)), end=UtcTime(_ts(13))),
         generated_at=UtcTime(_ts(12)),
         cluster_refs={"candidate-1": _ref("maintenance", "cluster://candidate-1")},
-        prior_key_lookup=er.PriorKeyLookup(_pure_lookup),
+        prior_key_lookup=er.PriorKeyLookup(pure_lookup),
     )
 
     assert len(result.decisions) == 1
@@ -561,6 +565,91 @@ class _MutatingPriorLookup:
 
     def append(self, key: str) -> None:
         self.calls.append(f"append:{key}")
+
+
+class _CommitPriorLookup:
+    """Callable lookup plus an equivalent writer outside the deny-list."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, key: str) -> bool:
+        self.calls.append(key)
+        self.commit(key)
+        return False
+
+    def commit(self, key: str) -> None:
+        self.calls.append(f"commit:{key}")
+
+
+class _PurePriorLookup:
+    """Weakref-capable pure lookup used by sealed-capability tests."""
+
+    def __call__(self, key: str) -> bool:
+        return False
+
+
+def _identity_reachable(root: object, target: object, *, budget: int = 256) -> bool:
+    seen: set[int] = set()
+    stack: list[object] = [root]
+    while stack and budget > 0:
+        current = stack.pop()
+        budget -= 1
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        if current is target:
+            return True
+        if isinstance(current, MethodType):
+            stack.append(current.__self__)
+            stack.append(current.__func__)
+            continue
+        if isinstance(current, FunctionType):
+            closure = current.__closure__
+            if closure is not None:
+                stack.extend(cell.cell_contents for cell in closure)
+            continue
+        if inspect.ismethoddescriptor(current) or inspect.isbuiltin(current):
+            continue
+        try:
+            names = dir(current)
+        except Exception:
+            continue
+        for name in names:
+            if name in {"__class__", "__dict__", "__weakref__", "__mro__", "_keep"}:
+                continue
+            try:
+                value = object.__getattribute__(current, name)
+            except Exception:
+                try:
+                    value = getattr(current, name)
+                except Exception:
+                    continue
+            if value is target or isinstance(value, (MethodType, FunctionType)):
+                stack.append(value)
+            elif not name.startswith("_"):
+                stack.append(value)
+    return False
+
+
+def _assert_raw_unreachable(capability: object, raw: object) -> None:
+    gc.collect()
+    assert capability is not raw
+    assert not _identity_reachable(capability, raw)
+    for name in dir(capability):
+        if name.startswith("_"):
+            continue
+        try:
+            attr = getattr(capability, name)
+        except Exception:
+            continue
+        if isinstance(attr, MethodType):
+            assert attr.__self__ is not raw
+        if isinstance(attr, FunctionType) and attr.__closure__:
+            for cell in attr.__closure__:
+                assert cell.cell_contents is not raw
+
 
 
 def test_routing_rejects_opaque_and_mutation_capable_callbacks() -> None:
@@ -610,16 +699,67 @@ def test_routing_rejects_opaque_and_mutation_capable_callbacks() -> None:
     with pytest.raises(er.RoutingAdmissionError):
         er.PriorKeyLookup(mutating)
     assert mutating.calls == []
+    pure_lookup = _PurePriorLookup()
     with pytest.raises(er.RoutingAdmissionError):
         er.route_recommendations(
             **kwargs,
-            prior_key_lookup=er.PriorKeyLookup(lambda _key: False),
+            prior_key_lookup=er.PriorKeyLookup(pure_lookup),
             initiative_eligible=lambda _candidate: True,
         )
-    sealed = er.PriorKeyLookup(lambda _key: False)
+    commit_lookup = _CommitPriorLookup()
+    with pytest.raises(er.RoutingAdmissionError, match="commit"):
+        er.PriorKeyLookup(commit_lookup)
+    assert commit_lookup.calls == []
+    with pytest.raises(er.RoutingAdmissionError, match="commit"):
+        er.route_recommendations(
+            **kwargs, prior_key_lookup=er.PriorKeyLookup(commit_lookup)
+        )
+    assert commit_lookup.calls == []
+
+    class _CommitEligibility:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def __call__(self, candidate: object) -> bool:
+            self.calls.append("eligible")
+            return True
+
+        def commit(self, *_args: object, **_kwargs: object) -> None:
+            self.calls.append("commit")
+
+    commit_eligible = _CommitEligibility()
+    with pytest.raises(er.RoutingAdmissionError, match="commit"):
+        er.InitiativeEligibility(commit_eligible)
+    assert commit_eligible.calls == []
+
+    sealed = er.PriorKeyLookup(pure_lookup)
     public = {
         name
         for name in dir(sealed)
         if not name.startswith("_") and callable(getattr(sealed, name, None))
     }
     assert public == {"lookup"}
+    _assert_raw_unreachable(sealed, pure_lookup)
+
+    class _PureEligible:
+        def __call__(self, candidate: object) -> bool:
+            return False
+
+    raw_eligible = _PureEligible()
+    sealed_eligible = er.InitiativeEligibility(raw_eligible)
+    eligible_public = {
+        name
+        for name in dir(sealed_eligible)
+        if not name.startswith("_")
+        and callable(getattr(sealed_eligible, name, None))
+    }
+    assert eligible_public == {"eligible"}
+    _assert_raw_unreachable(sealed_eligible, raw_eligible)
+
+    with pytest.raises(er.RoutingAdmissionError):
+        er.route_recommendations(
+            **kwargs,
+            prior_key_lookup=sealed,
+            initiative_eligible=raw_eligible,
+        )
+

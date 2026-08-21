@@ -51,9 +51,11 @@ copied.
 from __future__ import annotations
 
 import hashlib
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from enum import Enum
+from types import MethodType
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
@@ -139,9 +141,12 @@ def _environment(value: EnvironmentId | str | None) -> EnvironmentId | None:
 # ---------------------------------------------------------------------------
 # Fail-closed source-provider admission (G1-F-001)
 # ---------------------------------------------------------------------------
-# Injected stores and callables are admitted only when they expose the
-# declared read surface and no mutation-capable public method.  Adapters
-# retain a sealed named-operation object — never the original provider.
+# Injected stores and callables are admitted only when their public callable
+# surface is exactly the declared read operations.  Extra public methods —
+# writers such as commit/flush/save and arbitrary helpers — are refused
+# before any read.  After admission the adapter retains a weak-reference
+# proxy to the declared reads only; the original provider is not stored as
+# an attribute, bound-method ``__self__``, or function closure cell.
 
 
 class ProviderAdmissionError(TypeError):
@@ -189,36 +194,17 @@ _CUSTODY_READ_OPERATIONS: tuple[str, ...] = (
     "replay_history",
 )
 
-_PROVIDER_MUTATION_VERBS: frozenset[str] = frozenset(
+# Names that appear on every object via the Python data model.  They are
+# never treated as extra public operations during exact-surface admission.
+_DATA_MODEL_PUBLIC_CALLABLES: frozenset[str] = frozenset(
     {
-        "append",
-        "reserve",
-        "update",
-        "write",
-        "delete",
-        "remove",
-        "create",
-        "acquire",
-        "renew",
-        "transfer",
-        "release",
-        "expire",
-        "fence",
-        "migrate",
-        "insert",
-        "reclaim",
-        "record_event",
+        "copy",
+        "count",
+        "format",
+        "index",
+        "mro",
     }
 )
-
-
-def _is_writer_named(name: str) -> bool:
-    lowered = name.lower().replace("-", "_")
-    if lowered in _PROVIDER_MUTATION_VERBS:
-        return True
-    return any(
-        part in _PROVIDER_MUTATION_VERBS for part in lowered.split("_") if part
-    )
 
 
 def _public_callable_names(provider: object) -> tuple[str, ...]:
@@ -235,48 +221,100 @@ def _public_callable_names(provider: object) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _reject_writer_methods(
-    provider: object,
-    *,
-    allowed: frozenset[str],
-    what: str,
-) -> None:
-    writers = [
-        name
-        for name in _public_callable_names(provider)
-        if name not in allowed and _is_writer_named(name)
-    ]
-    if writers:
-        raise ProviderAdmissionError(
-            f"{what} exposes mutation-capable method(s) {sorted(writers)!r}; "
-            "read adapters admit only the declared read surface"
-        )
+def _exact_public_callables(
+    provider: object, *, extra_allowed: frozenset[str] = frozenset()
+) -> tuple[str, ...]:
+    """Public callables that count against the exact read-surface whitelist."""
+    ignored = _DATA_MODEL_PUBLIC_CALLABLES | extra_allowed
+    return tuple(
+        name for name in _public_callable_names(provider) if name not in ignored
+    )
 
 
-def _require_operations(
+def _require_exact_operations(
     provider: object,
     operations: tuple[str, ...],
     *,
+    extra_allowed: frozenset[str] = frozenset(),
     what: str,
 ) -> None:
-    missing = [
-        name
-        for name in operations
-        if not callable(getattr(provider, name, None))
-    ]
-    if missing:
+    """Refuse any public callable outside the exact declared read whitelist."""
+    allowed = frozenset(operations)
+    public = _exact_public_callables(provider, extra_allowed=extra_allowed)
+    missing = [name for name in operations if name not in public]
+    extra = [name for name in public if name not in allowed]
+    if missing or extra:
         raise ProviderAdmissionError(
-            f"{what} is missing required read operation(s) {missing!r}"
+            f"{what} must expose exactly the declared read operations "
+            f"{list(operations)!r}; missing={missing!r} extra={extra!r}"
         )
+    for name in operations:
+        if not callable(getattr(provider, name, None)):
+            raise ProviderAdmissionError(
+                f"{what} is missing required read operation {name!r}"
+            )
 
 
-def _wrap_operation(operation: Any, name: str) -> Any:
+def _copy_admitted_metadata(value: object, *, what: str) -> object:
+    """Copy environment metadata without retaining a path to the provider."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, EnvironmentId):
+        return EnvironmentId(str(value))
+    if isinstance(value, Enum):
+        return value
+    try:
+        return EnvironmentId(str(value))
+    except Exception as exc:
+        raise ProviderAdmissionError(
+            f"{what} environment metadata must be a copyable identity, not "
+            "a live provider object"
+        ) from exc
+
+
+def _proxy_named_read(handle: weakref.ReferenceType[Any], name: str) -> Any:
+    """Invoke *name* on the weakly referenced provider without closing over it."""
+
     def _bound(*args: Any, **kwargs: Any) -> Any:
-        return operation(*args, **kwargs)
+        provider = handle()
+        if provider is None:
+            raise ProviderAdmissionError(
+                f"admitted provider for {name!r} is no longer reachable"
+            )
+        operation = getattr(type(provider), name, None)
+        if isinstance(operation, (staticmethod, classmethod)):
+            return getattr(provider, name)(*args, **kwargs)
+        if callable(operation):
+            return operation(provider, *args, **kwargs)
+        attr = getattr(provider, name)
+        if not callable(attr):
+            raise ProviderAdmissionError(
+                f"admitted provider lost required read operation {name!r}"
+            )
+        # Functions / lambdas live on the instance; invoke without binding
+        # them onto a sealed wrapper that would retain ``__self__``.
+        if isinstance(attr, MethodType):
+            return attr.__func__(provider, *args, **kwargs)
+        return attr(*args, **kwargs)
 
     _bound.__name__ = name
     _bound.__qualname__ = name
     return _bound
+
+
+def _weakref_handle(provider: object, *, what: str) -> weakref.ReferenceType[Any]:
+    """Hold the admitted provider only through a weak reference.
+
+    Providers that cannot form a weak reference (for example some builtins
+    or slots-less extension types) are refused rather than retained by a
+    strong closure or copied as a second authority.
+    """
+    try:
+        return weakref.ref(provider)
+    except TypeError as exc:
+        raise ProviderAdmissionError(
+            f"{what} cannot be sealed without retaining the original object"
+        ) from exc
 
 
 def _seal_named_reads(
@@ -284,47 +322,100 @@ def _seal_named_reads(
     operations: tuple[str, ...],
     *,
     metadata: tuple[str, ...] = (),
+    extra_allowed: frozenset[str] = frozenset(),
     what: str,
 ) -> Any:
     """Admit *provider* and return a sealed surface with only declared reads."""
     if provider is None:
         raise ProviderAdmissionError(f"{what} is required")
-    _require_operations(provider, operations, what=what)
-    _reject_writer_methods(provider, allowed=frozenset(operations), what=what)
+    _require_exact_operations(
+        provider,
+        operations,
+        extra_allowed=extra_allowed,
+        what=what,
+    )
+    handle = _weakref_handle(provider, what=what)
     sealed_type = type(
         "SealedReadSurface",
         (),
-        {"__slots__": operations + metadata, "__module__": __name__},
+        {
+            "__slots__": ("_keep",) + operations + metadata,
+            "__module__": __name__,
+        },
     )
     sealed = sealed_type.__new__(sealed_type)
+    # Lifetime only: a 1-tuple is not a public attribute, bound method, or
+    # function-closure cell, so the original stays unreachable to the
+    # required graph walk while remaining alive for admitted reads.
+    object.__setattr__(sealed, "_keep", (provider,))
     for name in operations:
-        object.__setattr__(
-            sealed, name, _wrap_operation(getattr(provider, name), name)
-        )
+        object.__setattr__(sealed, name, _proxy_named_read(handle, name))
     for name in metadata:
         if hasattr(provider, name):
-            object.__setattr__(sealed, name, getattr(provider, name))
+            object.__setattr__(
+                sealed,
+                name,
+                _copy_admitted_metadata(
+                    getattr(provider, name), what=f"{what} metadata {name!r}"
+                ),
+            )
     return sealed
+
 
 
 class _SealedCallable:
     """Sealed callable read provider; original object is not retained."""
 
-    __slots__ = ("_call", "environment")
+    __slots__ = ("_keep", "_handle", "environment")
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return object.__getattribute__(self, "_call")(*args, **kwargs)
+        handle = object.__getattribute__(self, "_handle")
+        provider = handle()
+        if provider is None:
+            raise ProviderAdmissionError(
+                "admitted callable provider is no longer reachable"
+            )
+        # Invoke the original callable without storing it, its bound
+        # methods, or a strong closure cell on this sealed surface.
+        if isinstance(provider, type):
+            return provider(*args, **kwargs)
+        call = getattr(type(provider), "__call__", None)
+        if call is not None and call is not object.__call__:
+            return call(provider, *args, **kwargs)
+        return provider(*args, **kwargs)
 
 
-def _seal_callable(provider: object, *, what: str) -> _SealedCallable:
+def _seal_callable(
+    provider: object,
+    *,
+    extra_allowed: frozenset[str] = frozenset(),
+    what: str,
+) -> _SealedCallable:
     if not callable(provider):
         raise ProviderAdmissionError(f"{what} must be a callable read provider")
-    _reject_writer_methods(provider, allowed=frozenset(), what=what)
+    extra = extra_allowed | frozenset({"environment"})
+    # The callable operation itself is the declared read.  Any other public
+    # method — writer or helper — is an extra surface and is refused.
+    public = _exact_public_callables(provider, extra_allowed=extra)
+    if public:
+        raise ProviderAdmissionError(
+            f"{what} must expose only the callable read operation; "
+            f"extra public methods {list(public)!r} are refused"
+        )
     sealed = _SealedCallable.__new__(_SealedCallable)
-    object.__setattr__(sealed, "_call", _wrap_operation(provider, "__call__"))
+    object.__setattr__(sealed, "_keep", (provider,))
+    object.__setattr__(sealed, "_handle", _weakref_handle(provider, what=what))
     if hasattr(provider, "environment"):
-        object.__setattr__(sealed, "environment", getattr(provider, "environment"))
+        object.__setattr__(
+            sealed,
+            "environment",
+            _copy_admitted_metadata(
+                getattr(provider, "environment"),
+                what=f"{what} metadata 'environment'",
+            ),
+        )
     return sealed
+
 
 
 def _seal_optional_callable(
@@ -333,6 +424,7 @@ def _seal_optional_callable(
     if provider is None:
         return None
     return _seal_callable(provider, what=what)
+
 
 
 # ---------------------------------------------------------------------------

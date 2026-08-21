@@ -29,7 +29,10 @@ The adapters reuse the existing before/after source coordinates
 
 from __future__ import annotations
 
+import gc
+import inspect
 import re
+from types import FunctionType, MethodType
 
 import pytest
 
@@ -606,12 +609,97 @@ class _MutatingCallableProvider:
         self.calls.append("append")
 
 
+class _CommitWbcStore(_SpyStore):
+    """Required WBC reads plus an equivalent writer outside the deny-list."""
+
+    def commit(self, *_args: object, **_kwargs: object) -> None:
+        self.calls.append("commit")
+
+
+class _CommitCallableProvider:
+    """Callable sibling with a commit-style writer beyond the declared read."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, *_args: object, **_kwargs: object) -> object:
+        self.calls.append("__call__")
+        raise AssertionError("commit-capable provider must not be invoked")
+
+    def commit(self, *_args: object, **_kwargs: object) -> None:
+        self.calls.append("commit")
+
+
+
 def _public_callables(obj: object) -> set[str]:
     return {
         name
         for name in dir(obj)
         if not name.startswith("_") and callable(getattr(obj, name, None))
     }
+
+
+def _identity_reachable(root: object, target: object, *, budget: int = 256) -> bool:
+    """Walk public attrs, bound-method ``__self__``, and closures from *root*."""
+    seen: set[int] = set()
+    stack: list[object] = [root]
+    while stack and budget > 0:
+        current = stack.pop()
+        budget -= 1
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        if current is target:
+            return True
+        if isinstance(current, MethodType):
+            stack.append(current.__self__)
+            stack.append(current.__func__)
+            continue
+        if isinstance(current, FunctionType):
+            closure = current.__closure__
+            if closure is not None:
+                stack.extend(cell.cell_contents for cell in closure)
+            continue
+        if inspect.ismethoddescriptor(current) or inspect.isbuiltin(current):
+            continue
+        try:
+            names = dir(current)
+        except Exception:
+            continue
+        for name in names:
+            if name in {"__class__", "__dict__", "__weakref__", "__mro__", "_keep"}:
+                continue
+            try:
+                value = object.__getattribute__(current, name)
+            except Exception:
+                try:
+                    value = getattr(current, name)
+                except Exception:
+                    continue
+            if value is target or isinstance(value, (MethodType, FunctionType)):
+                stack.append(value)
+            elif not name.startswith("_"):
+                stack.append(value)
+    return False
+
+
+def _assert_original_unreachable(adapter: object, original: object) -> None:
+    gc.collect()
+    assert adapter is not original
+    assert not _identity_reachable(adapter, original)
+    for name in dir(adapter):
+        if name.startswith("_"):
+            continue
+        try:
+            attr = getattr(adapter, name)
+        except Exception:
+            continue
+        if isinstance(attr, MethodType):
+            assert attr.__self__ is not original
+        if isinstance(attr, FunctionType) and attr.__closure__:
+            for cell in attr.__closure__:
+                assert cell.cell_contents is not original
 
 
 def test_wbc_mutation_capable_store_is_rejected_before_any_read() -> None:
@@ -624,15 +712,30 @@ def test_wbc_mutation_capable_store_is_rejected_before_any_read() -> None:
     assert store.calls == []
 
 
+
 def test_wbc_pure_read_store_is_sealed_and_not_retained() -> None:
     store = _wbc_store()
     adapter = es.WbcWorkEvidenceAdapter(store)
     assert adapter._store is not store
     assert _public_callables(adapter._store) == _ALLOWED_WBC_CALLS
+    _assert_original_unreachable(adapter, store)
+    _assert_original_unreachable(adapter._store, store)
     read = adapter.read("att-1")
     assert read.disposition is es.SourceReadDisposition.COHERENT
     assert set(store.calls) <= _ALLOWED_WBC_CALLS
     assert "append" not in store.calls
+    _assert_original_unreachable(adapter, store)
+
+
+def test_wbc_commit_writer_is_rejected_before_any_read() -> None:
+    store = _CommitWbcStore()
+    with pytest.raises(es.ProviderAdmissionError, match="commit"):
+        es.WbcWorkEvidenceAdapter(store)
+    assert store.calls == []
+    with pytest.raises(es.ProviderAdmissionError, match="commit"):
+        es.read_wbc_work_evidence(store, "att-1")
+    assert store.calls == []
+
 
 
 def test_sibling_callable_provider_with_writer_is_rejected() -> None:
@@ -649,6 +752,69 @@ def test_sibling_callable_provider_with_writer_is_rejected() -> None:
     with pytest.raises(es.ProviderAdmissionError, match="append"):
         es.NativeProofQualityAdapter(proof_provider=provider)
     assert provider.calls == []
+
+    commit_provider = _CommitCallableProvider()
+    sibling_constructors = (
+        lambda: es.OpenTicketLookupAdapter(commit_provider),
+        lambda: es.RunAuthorityAcceptedOutcomeAdapter(commit_provider),
+        lambda: es.DispatchReceiptsAdapter(commit_provider),
+        lambda: es.NativeProofQualityAdapter(proof_provider=commit_provider),
+        lambda: es.RunAuthorityAcceptedOutcomeAdapter(
+            lambda: _View(),
+            active_custody_provider=commit_provider,
+        ),
+        lambda: es.WbcWorkEvidenceAdapter(
+            _wbc_store(),
+            active_custody_provider=commit_provider,
+        ),
+    )
+    for construct in sibling_constructors:
+        with pytest.raises(es.ProviderAdmissionError, match="commit"):
+            construct()
+    assert commit_provider.calls == []
+
+    class _CommitCustodyProvider:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def load_history(self, lease_id: str) -> list[object]:
+            self.calls.append("load_history")
+            return []
+
+        def replay_history(self, lease_id: str) -> None:
+            self.calls.append("replay_history")
+            return None
+
+        def commit(self, *_args: object, **_kwargs: object) -> None:
+            self.calls.append("commit")
+
+    custody = _CommitCustodyProvider()
+    with pytest.raises(es.ProviderAdmissionError, match="commit"):
+        es.CustodyLeaseHistoryAdapter(custody)
+    with pytest.raises(es.ProviderAdmissionError, match="commit"):
+        es.read_custody_lease_history(custody, "lease-1")
+    assert custody.calls == []
+
+
+def test_sealed_callable_provider_does_not_retain_original() -> None:
+    class _PureCallable:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def __call__(self) -> _View:
+            self.calls.append("__call__")
+            return _View()
+
+    provider = _PureCallable()
+    adapter = es.RunAuthorityAcceptedOutcomeAdapter(provider)
+    assert _public_callables(adapter._view_provider) == set()
+    _assert_original_unreachable(adapter, provider)
+    _assert_original_unreachable(adapter._view_provider, provider)
+    read = adapter.read()
+    assert read.disposition is es.SourceReadDisposition.COHERENT
+    assert provider.calls == ["__call__", "__call__"]
+    _assert_original_unreachable(adapter, provider)
+
 
 
 def test_all_source_adapters_use_the_same_sealed_admission_boundary() -> None:

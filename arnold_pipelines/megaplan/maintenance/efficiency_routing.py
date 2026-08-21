@@ -36,7 +36,8 @@ mutation-capable module (proven by the negative tests in
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+import weakref
+from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import Literal
 
@@ -87,45 +88,28 @@ def _coerce_environment(environment: EnvironmentId | str | None) -> EnvironmentI
 # ---------------------------------------------------------------------------
 # Fail-closed routing callback admission (G1-F-002)
 # ---------------------------------------------------------------------------
-# Opaque lambdas / functions / writer objects are refused.  The router
-# accepts only the explicit read-only capability wrappers below, then
-# retains a sealed single-operation surface — never the original callback.
+# Opaque lambdas / functions / writer objects are refused at the router.
+# Construction of PriorKeyLookup / InitiativeEligibility admits a payload
+# only when its public callable surface is exactly the declared read
+# (the callable itself).  Extra public methods, including commit-style
+# writers, are refused before any invocation.  The capability retains the
+# payload only through a weak reference so the raw callback is not
+# reachable via attributes, bound-method ``__self__``, or closures.
 
 
 class RoutingAdmissionError(TypeError):
     """Construction-time refusal of an opaque or mutation-capable routing seam."""
 
 
-_ROUTING_MUTATION_VERBS: frozenset[str] = frozenset(
+_ROUTING_DATA_MODEL_PUBLIC_CALLABLES: frozenset[str] = frozenset(
     {
-        "append",
-        "reserve",
-        "update",
-        "write",
-        "delete",
-        "remove",
-        "create",
-        "acquire",
-        "renew",
-        "transfer",
-        "release",
-        "expire",
-        "fence",
-        "migrate",
-        "insert",
-        "reclaim",
-        "record_event",
+        "copy",
+        "count",
+        "format",
+        "index",
+        "mro",
     }
 )
-
-
-def _routing_writer_named(name: str) -> bool:
-    lowered = name.lower().replace("-", "_")
-    if lowered in _ROUTING_MUTATION_VERBS:
-        return True
-    return any(
-        part in _ROUTING_MUTATION_VERBS for part in lowered.split("_") if part
-    )
 
 
 def _routing_public_callables(provider: object) -> tuple[str, ...]:
@@ -142,88 +126,130 @@ def _routing_public_callables(provider: object) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _reject_routing_writers(
+def _routing_exact_public_callables(
+    provider: object, *, extra_allowed: frozenset[str] = frozenset()
+) -> tuple[str, ...]:
+    ignored = _ROUTING_DATA_MODEL_PUBLIC_CALLABLES | extra_allowed
+    return tuple(
+        name for name in _routing_public_callables(provider) if name not in ignored
+    )
+
+
+def _reject_extra_routing_callables(
     provider: object, *, allowed: frozenset[str], what: str
 ) -> None:
-    writers = [
+    extra = [
         name
-        for name in _routing_public_callables(provider)
-        if name not in allowed and _routing_writer_named(name)
+        for name in _routing_exact_public_callables(provider)
+        if name not in allowed
     ]
-    if writers:
+    if extra:
         raise RoutingAdmissionError(
-            f"{what} exposes mutation-capable method(s) {sorted(writers)!r}; "
-            "routing admits only the declared read-only capability"
+            f"{what} must expose only the declared read-only operation(s) "
+            f"{sorted(allowed)!r}; extra public methods {sorted(extra)!r} "
+            "are refused"
         )
 
 
-def _wrap_routing_operation(operation: Callable[..., bool], name: str) -> Callable[..., bool]:
-    def _bound(*args: object, **kwargs: object) -> bool:
-        return bool(operation(*args, **kwargs))
+def _weakref_routing_handle(
+    payload: object, *, what: str
+) -> weakref.ReferenceType[object]:
+    try:
+        return weakref.ref(payload)
+    except TypeError as exc:
+        raise RoutingAdmissionError(
+            f"{what} cannot be sealed without retaining the original callback"
+        ) from exc
 
-    _bound.__name__ = name
-    _bound.__qualname__ = name
-    return _bound
+
+def _invoke_routing_payload(payload: object, *args: object) -> bool:
+    if isinstance(payload, type):
+        return bool(payload(*args))
+    call = getattr(type(payload), "__call__", None)
+    if call is not None and call is not object.__call__:
+        return bool(call(payload, *args))
+    return bool(payload(*args))
 
 
 class PriorKeyLookup:
     """Explicit read-only prior-proposal-key lookup (``str -> bool``)."""
 
-    __slots__ = ("_lookup",)
+    __slots__ = ("_keep", "_handle")
 
-    def __init__(self, lookup: Callable[[str], bool]) -> None:
+    def __init__(self, lookup: object) -> None:
         if not callable(lookup):
             raise RoutingAdmissionError(
                 "prior-key lookup payload must be a callable str -> bool"
             )
-        _reject_routing_writers(
+        _reject_extra_routing_callables(
             lookup, allowed=frozenset(), what="prior-key lookup payload"
         )
+        object.__setattr__(self, "_keep", (lookup,))
         object.__setattr__(
-            self, "_lookup", _wrap_routing_operation(lookup, "lookup")
+            self,
+            "_handle",
+            _weakref_routing_handle(lookup, what="prior-key lookup payload"),
         )
 
     def lookup(self, key: str) -> bool:
-        return bool(object.__getattribute__(self, "_lookup")(key))
+        handle = object.__getattribute__(self, "_handle")
+        payload = handle()
+        if payload is None:
+            raise RoutingAdmissionError(
+                "admitted prior-key lookup payload is no longer reachable"
+            )
+        return _invoke_routing_payload(payload, key)
 
 
 class InitiativeEligibility:
     """Explicit read-only initiative-eligibility predicate (candidate -> bool)."""
 
-    __slots__ = ("_eligible",)
+    __slots__ = ("_keep", "_handle")
 
-    def __init__(self, predicate: Callable[[RootCauseCandidate], bool]) -> None:
+    def __init__(self, predicate: object) -> None:
         if not callable(predicate):
             raise RoutingAdmissionError(
                 "initiative-eligibility payload must be a callable "
                 "RootCauseCandidate -> bool"
             )
-        _reject_routing_writers(
+        _reject_extra_routing_callables(
             predicate,
             allowed=frozenset(),
             what="initiative-eligibility payload",
         )
+        object.__setattr__(self, "_keep", (predicate,))
         object.__setattr__(
-            self, "_eligible", _wrap_routing_operation(predicate, "eligible")
+            self,
+            "_handle",
+            _weakref_routing_handle(
+                predicate, what="initiative-eligibility payload"
+            ),
         )
 
     def eligible(self, candidate: RootCauseCandidate) -> bool:
-        return bool(object.__getattribute__(self, "_eligible")(candidate))
+        handle = object.__getattribute__(self, "_handle")
+        payload = handle()
+        if payload is None:
+            raise RoutingAdmissionError(
+                "admitted initiative-eligibility payload is no longer reachable"
+            )
+        return _invoke_routing_payload(payload, candidate)
 
 
-def _seal_routing_operation(
+
+def _admit_explicit_capability(
     capability: object,
     *,
     expected_type: type,
     operation: str,
     what: str,
-) -> Callable[..., bool]:
+) -> object:
     if not isinstance(capability, expected_type):
         raise RoutingAdmissionError(
             f"{what} must be an explicit {expected_type.__name__} "
             "read-only capability; unwrapped callables are refused"
         )
-    _reject_routing_writers(
+    _reject_extra_routing_callables(
         capability, allowed=frozenset({operation}), what=what
     )
     method = getattr(capability, operation, None)
@@ -231,33 +257,32 @@ def _seal_routing_operation(
         raise RoutingAdmissionError(
             f"{what} is missing required read operation {operation!r}"
         )
-    return _wrap_routing_operation(method, operation)
+    return capability
 
 
-def _admit_prior_key_lookup(capability: object) -> Callable[[str], bool]:
-    return _seal_routing_operation(
+def _admit_prior_key_lookup(capability: object) -> PriorKeyLookup:
+    admitted = _admit_explicit_capability(
         capability,
         expected_type=PriorKeyLookup,
         operation="lookup",
         what="prior_key_lookup",
     )
+    return admitted  # type: ignore[return-value]
 
 
 def _admit_initiative_eligibility(
     capability: object | None,
-) -> Callable[[RootCauseCandidate], bool]:
+) -> InitiativeEligibility | None:
     if capability is None:
-
-        def _closed(_candidate: RootCauseCandidate) -> bool:
-            return False
-
-        return _closed
-    return _seal_routing_operation(
+        return None
+    admitted = _admit_explicit_capability(
         capability,
         expected_type=InitiativeEligibility,
         operation="eligible",
         what="initiative_eligible",
     )
+    return admitted  # type: ignore[return-value]
+
 
 
 class RecommendationKind(str, Enum):
@@ -725,7 +750,7 @@ def route_recommendations(
             proposal_kind = ProposalKind.TICKET
             proposal_ticket_identity = ticket_read.ticket_identity
             decision_ticket_identity = ticket_read.ticket_identity
-        elif initiative_gate(candidate):
+        elif initiative_gate is not None and initiative_gate.eligible(candidate):
             kind = RecommendationKind.INITIATIVE_RECOMMENDATION
             proposal_kind = ProposalKind.INITIATIVE
             proposal_ticket_identity = None
@@ -755,7 +780,7 @@ def route_recommendations(
         )
         proposal_key = proposal.proposal_key
 
-        if prior_lookup(proposal_key):
+        if prior_lookup.lookup(proposal_key):
             decisions.append(
                 RoutingDecision(
                     candidate_id=candidate.candidate_id,
