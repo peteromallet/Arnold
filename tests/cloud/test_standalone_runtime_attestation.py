@@ -532,6 +532,41 @@ def test_standalone_publication_rejects_unsafe_reused_directory_at_0755(
     assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
     assert paths["pointer"].read_bytes() == pointer_before
 
+def test_standalone_publication_rejects_unsafe_mode_reuse_without_advancing_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reused seed/receipt must be regular 0600 files matching their digests."""
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    pointer_before = paths["pointer"].read_bytes()
+    # Valid 0600 idempotent reuse of BOTH immutable objects stays unchanged.
+    attestation.write_standalone_runtime_publication(
+        seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+    )
+    assert paths["pointer"].read_bytes() == pointer_before
+    # Tampered seed mode (content identical): reject, never advance or repair.
+    paths["seed"].chmod(0o644)
+    with pytest.raises(CliError) as excinfo:
+        attestation.write_standalone_runtime_publication(
+            seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+        )
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert stat.S_IMODE(paths["seed"].stat().st_mode) == 0o644  # never repaired
+    assert paths["pointer"].read_bytes() == pointer_before
+    # Tampered receipt mode (content identical): same fail-closed behavior.
+    paths["seed"].chmod(0o600)
+    receipt_path = next((state / "receipts").glob("*.json"))
+    receipt_path.chmod(0o664)
+    with pytest.raises(CliError) as excinfo:
+        attestation.write_standalone_runtime_publication(
+            seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+        )
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o664  # never repaired
+    assert stat.S_IMODE(paths["seed"].stat().st_mode) == 0o600
+    assert paths["pointer"].read_bytes() == pointer_before
+
 
 
 def test_standalone_publication_rejection_does_not_create_missing_siblings(

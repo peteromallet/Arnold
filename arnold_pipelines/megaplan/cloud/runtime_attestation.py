@@ -1455,6 +1455,35 @@ def load_standalone_runtime_dispatch_pointer(root: Path) -> dict[str, Any]:
     return pointer
 
 
+def _verify_reused_immutable_object(
+    path: Path, payload: Mapping[str, Any], *, label: str
+) -> None:
+    """Accept a ``FileExistsError`` reuse only when custody is intact.
+
+    The existing object must be a regular non-symlink file with mode exactly
+    ``0600`` whose canonical digest matches the expected immutable object.
+    Anything else rejects without repair, chmod, or mutation so the dispatch
+    pointer can never advance onto a tampered custody object.
+    """
+    try:
+        st = path.lstat()
+    except OSError as exc:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, f"standalone {label} is unreadable") from exc
+    if path.is_symlink() or not stat.S_ISREG(st.st_mode):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, f"standalone {label} is not a regular file")
+    if stat.S_IMODE(st.st_mode) != 0o600:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, f"standalone {label} permissions are unsafe")
+    existing = _json_file(path, label=f"standalone runtime {label}")
+    expected_digest = str(payload.get("content_sha256") or "")
+    existing_core = {key: value for key, value in existing.items() if key != "content_sha256"}
+    if (
+        existing.get("content_sha256") != expected_digest
+        or _canonical_sha256(existing_core) != expected_digest
+        or existing != dict(payload)
+    ):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, f"immutable standalone {label} collision")
+
+
 def write_standalone_runtime_publication(
     *, seed: Mapping[str, Any], seed_path: Path, root: Path, generated_at: str | None = None
 ) -> dict[str, Any]:
@@ -1469,9 +1498,7 @@ def write_standalone_runtime_publication(
     try:
         _exclusive_write_json(paths["seed"], seed, mode=0o600)
     except FileExistsError:
-        existing = _json_file(paths["seed"], label="standalone runtime launch seed")
-        if existing != dict(seed):
-            raise CliError(RUNTIME_ATTESTATION_ERROR, "immutable standalone seed collision")
+        _verify_reused_immutable_object(paths["seed"], seed, label="launch seed")
     receipt = build_standalone_runtime_attestation_receipt(
         seed=seed, seed_path=paths["seed"], pointer_path=paths["pointer"], generated_at=generated_at
     )
@@ -1481,9 +1508,7 @@ def write_standalone_runtime_publication(
     try:
         _exclusive_write_json(receipt_path, receipt, mode=0o600)
     except FileExistsError:
-        existing_receipt = _json_file(receipt_path, label="standalone runtime attestation receipt")
-        if existing_receipt != receipt:
-            raise CliError(RUNTIME_ATTESTATION_ERROR, "immutable standalone receipt collision")
+        _verify_reused_immutable_object(receipt_path, receipt, label="attestation receipt")
     pointer = {
         "schema": STANDALONE_DISPATCH_POINTER_SCHEMA,
         "authority": RUNTIME_LAUNCH_STANDALONE_AUTHORITY,
