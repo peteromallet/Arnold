@@ -1011,27 +1011,25 @@ def _resident_discord(
     listener_only: bool = False,
     recovery_seed: str | None = None,
 ) -> dict[str, Any]:
-    token = discord_token_from_env(config.discord_bot_token_env)
     _validate_resident_profile(config.profile)
     if dry_run:
-        if config.profile not in {"megaplan", "agentbox_operator"}:
-            authorizer = ResidentAuthorizer(config)
-            confirmation_manager = StoreBackedConfirmationManager(config, store)
-            _resident_profile(
-                root=root,
-                profile=config.profile,
-                store=store,
-                authorizer=authorizer,
-                config=config,
-                confirmation_manager=confirmation_manager,
-            )
+        authorizer = ResidentAuthorizer(config)
+        confirmation_manager = StoreBackedConfirmationManager(config, store)
+        _resident_profile(
+            root=root,
+            profile=config.profile,
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+        )
         return {
             "success": True,
             "step": "resident",
             "action": "discord",
             "dry_run": True,
             "listener_only": listener_only,
-            "token_configured": bool(token),
+            "token_configured": False,
             "profile": config.profile,
             "model_provider": config.model_provider,
             "model": config.model_name,
@@ -1039,6 +1037,7 @@ def _resident_discord(
             "model_max_tokens": config.model_max_tokens,
             "conversation_count": len(store.list_resident_conversations(transport="discord", limit=100)),
         }
+    token = discord_token_from_env(config.discord_bot_token_env)
     if token is None:
         raise CliError("missing_discord_token", f"{config.discord_bot_token_env} is required")
     _require_discord_runtime_launch(

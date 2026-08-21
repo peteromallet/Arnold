@@ -42,7 +42,12 @@ from arnold_pipelines.megaplan.resident.agent_loop import (
     ToolRuntimeContext,
     _TOOL_RUNTIME_CONTEXT,
 )
-from arnold_pipelines.megaplan.resident.auth import AuthorizationSubject, ConfirmationManager, ResidentAuthorizer
+from arnold_pipelines.megaplan.resident.auth import (
+    AuthorizationSubject,
+    ConfirmationManager,
+    ResidentAuthorizer,
+    StoreBackedConfirmationManager,
+)
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.runtime import InboundEvent, OutboundMessage, ResidentRuntime
 from arnold_pipelines.megaplan.store import FileStore, ResidentConversationInput
@@ -315,8 +320,12 @@ from agentbox.resident_profile import AgentBoxOperatorProfile
 
 class DemoResidentProfile(AgentBoxOperatorProfile):
     marker = {marker!r}
+    constructed = []
 
     def __init__(self, *, store, authorizer, config, confirmation_manager):
+        type(self).constructed.append(
+            (store, authorizer, config, confirmation_manager)
+        )
         self.received_store = store
         self.received_authorizer = authorizer
         self.received_config = config
@@ -327,6 +336,17 @@ class DemoResidentProfile(AgentBoxOperatorProfile):
             config=config,
             confirmation_manager=confirmation_manager,
         )
+"""
+
+
+def _failing_external_profile_source() -> str:
+    return """
+from agentbox.resident_profile import AgentBoxOperatorProfile
+
+
+class DemoResidentProfile(AgentBoxOperatorProfile):
+    def __init__(self, *, store, authorizer, config, confirmation_manager):
+        raise RuntimeError("constructor exploded")
 """
 
 
@@ -754,15 +774,92 @@ def test_external_profile_dry_run_constructs_profile_without_starting_discord(
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
     monkeypatch.delenv("MEGAPLAN_RESIDENT_STORE_ROOT", raising=False)
-    spec = _write_external_profile(tmp_path, _demo_external_profile_source("dry-run"))
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "token-that-dry-run-must-not-read")
 
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError("dry-run reached a live Discord/runtime path")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli.discord_token_from_env",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli._require_discord_runtime_launch",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli._resident_runner",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli.ResidentDiscordService",
+        unexpected_call,
+    )
+
+    spec = _write_external_profile(tmp_path, _demo_external_profile_source("dry-run"))
     result = megaplan_main(["resident", "discord", "--profile", spec, "--dry-run"])
 
     payload = json.loads(capsys.readouterr().out)
+    module_name = _resident_profile_module_name(
+        tmp_path.resolve(), Path("resident_profile.py")
+    )
+    constructed = sys.modules[module_name].DemoResidentProfile.constructed
+    assert len(constructed) == 1
+    received_store, received_authorizer, received_config, received_confirmation = constructed[0]
+    assert isinstance(received_store, FileStore)
+    assert isinstance(received_authorizer, ResidentAuthorizer)
+    assert isinstance(received_config, ResidentConfig)
+    assert isinstance(received_confirmation, StoreBackedConfirmationManager)
     assert result == 0
     assert payload["success"] is True
     assert payload["dry_run"] is True
+    assert payload["token_configured"] is False
     assert payload["profile"] == spec
+
+
+def test_external_profile_constructor_failure_is_a_concise_dry_run_cli_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_STORE_ROOT", raising=False)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "token-that-dry-run-must-not-read")
+
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError("dry-run reached a live Discord/runtime path")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli.discord_token_from_env",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli._require_discord_runtime_launch",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli._resident_runner",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.cli.ResidentDiscordService",
+        unexpected_call,
+    )
+
+    spec = _write_external_profile(
+        tmp_path, _failing_external_profile_source()
+    )
+    result = megaplan_main(["resident", "discord", "--profile", spec, "--dry-run"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert result == 1
+    assert payload["success"] is False
+    assert payload["error"] == "resident_profile_constructor_error"
+    assert "constructor exploded" in payload["message"]
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
 
 
 @pytest.mark.parametrize("profile_value", ["", "   "])
