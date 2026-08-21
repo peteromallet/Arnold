@@ -533,6 +533,32 @@ def test_standalone_publication_rejects_unsafe_reused_directory_at_0755(
     assert paths["pointer"].read_bytes() == pointer_before
 
 
+
+def test_standalone_publication_rejection_does_not_create_missing_siblings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejected publication with an unsafe ``status`` creates no missing siblings."""
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state = tmp_path / "runtime-launch"
+    state.mkdir(mode=0o700)
+    state.chmod(0o700)
+    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root, create=True: state)
+    unsafe_status = state / "status"
+    unsafe_status.mkdir()
+    unsafe_status.chmod(0o755)
+    seed_path = state / "seeds" / f"standalone-{revision}-{seed['content_sha256']}.json"
+    with pytest.raises(CliError) as excinfo:
+        attestation.write_standalone_runtime_publication(
+            seed=seed, seed_path=seed_path, root=root, generated_at=seed["generated_at"]
+        )
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert stat.S_IMODE(unsafe_status.stat().st_mode) == 0o755  # never repaired
+    assert not (state / "seeds").exists()  # missing sibling never created by rejection
+    assert not (state / "receipts").exists()  # missing sibling never created by rejection
+    assert sorted(entry.name for entry in state.iterdir()) == ["status"]
+
+
 @pytest.mark.parametrize("directory_name", ["seeds", "receipts", "status"])
 def test_standalone_load_rejects_unsafe_reused_directory_at_0755(
     tmp_path: Path,

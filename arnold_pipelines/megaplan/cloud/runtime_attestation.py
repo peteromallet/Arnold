@@ -1298,13 +1298,12 @@ def validate_standalone_runtime_launch_seed(
     }
 
 
-def _require_standalone_operational_dir(state: Path, name: str, *, create: bool) -> None:
-    """Require a real, state-contained ``0700`` operational directory.
+def _inspect_standalone_operational_dir(state: Path, name: str) -> bool:
+    """Non-mutating check: True when present and safe, False when absent.
 
-    Reused directories are validated, never repaired: an existing symlink,
-    non-directory, or permissive mode fails closed before any seed, receipt,
-    pointer, or attestation bytes change.  Only freshly created directories
-    are normalized to ``0700``.
+    Any existing symlink, non-directory, unreadable entry, or mode other
+    than ``0700`` rejects; absence alone is not an error so callers can
+    record the entry as eligible for later creation.
     """
     directory = state / name
     try:
@@ -1321,21 +1320,41 @@ def _require_standalone_operational_dir(state: Path, name: str, *, create: bool)
     try:
         info = directory.stat()
     except FileNotFoundError:
-        if not create:
-            raise CliError(RUNTIME_ATTESTATION_ERROR, f"resident {name} directory is unavailable") from None
-        directory.mkdir(mode=0o700)
-        directory.chmod(0o700)
-        return
+        return False
     except OSError as exc:
         raise CliError(RUNTIME_ATTESTATION_ERROR, f"resident {name} directory is unreadable") from exc
     if stat.S_IMODE(info.st_mode) != 0o700:
         raise CliError(RUNTIME_ATTESTATION_ERROR, f"resident {name} directory permissions are unsafe")
+    return True
+
+
+def _require_standalone_operational_dir(state: Path, name: str, *, create: bool) -> None:
+    """Require a real, state-contained ``0700`` operational directory.
+
+    Reused directories are validated, never repaired: an existing symlink,
+    non-directory, or permissive mode fails closed before any seed, receipt,
+    pointer, or attestation bytes change.  Only freshly created directories
+    are normalized to ``0700``.
+    """
+    if _inspect_standalone_operational_dir(state, name):
+        return
+    if not create:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, f"resident {name} directory is unavailable")
+    (state / name).mkdir(mode=0o700)
+    (state / name).chmod(0o700)
 
 
 def standalone_dispatch_paths(root: Path, *, head: str, seed_sha256: str) -> dict[str, Path]:
     state = standalone_runtime_launch_dir(root)
     expected = _validate_full_revision(head, label="expected HEAD")
-    for name in ("seeds", "receipts", "status"):
+    # Preflight every operational directory non-mutating before creating any:
+    # an unsafe reused entry rejects while custody state still lacks siblings.
+    missing = [
+        name
+        for name in ("seeds", "receipts", "status")
+        if not _inspect_standalone_operational_dir(state, name)
+    ]
+    for name in missing:
         _require_standalone_operational_dir(state, name, create=True)
     return {
         "seed": _standalone_path(root, f"seeds/standalone-{expected}-{seed_sha256}.json"),
