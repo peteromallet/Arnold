@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.cloud.repair_requests import (
     enqueue_repair_request as _enqueue_repair_request,
     iter_repair_decisions,
 )
+from arnold_pipelines.megaplan.handlers.review import _review_quality_block_failure
 from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 from tests.cloud.repair_identity_fixtures import identity_for_signature
 
@@ -860,3 +861,175 @@ def test_classifier_dispatches_deterministic_phase_failure_with_canonical_reques
     assert decision.dispatch_intent == DISPATCH_INTENT_L1
     assert decision.request_id == str(queued["request"]["request_id"])
     assert decision.failure_kind == "deterministic_phase_failure"
+ 
+ 
+def _quality_dispatch_fixture(tmp_path: Path) -> tuple[dict[str, object], dict[str, object]]:
+    disposable_root = (tmp_path / "t23-disposable").resolve()
+    disposable_root.mkdir(exist_ok=True)
+    project_root = Path(__file__).parents[2].resolve()
+    assert disposable_root != project_root and project_root not in disposable_root.parents
+    state: dict[str, object] = {
+        "name": "review-quality-plan",
+        "current_state": "blocked",
+        "history": [{"step": "review", "result": "needs_rework"}] * 4,
+    }
+    failure = _review_quality_block_failure(
+        state=state,  # type: ignore[arg-type]
+        blockers=["unresolved blocking rework: deterministic import check"],
+        rework_items=[
+            {
+                "task_id": "T2",
+                "issue": "import check failed",
+                "deterministic_check": {
+                    "command": "python -c 'import package'",
+                    "baseline_status": "failed",
+                    "post_status": "failed",
+                },
+            }
+        ],
+        review_artifact_hash="a" * 64,
+    )
+    state["latest_failure"] = failure
+    state["resume_cursor"] = {
+        "phase": "review",
+        "retry_strategy": "manual_review",
+        "evidence_cursor": dict(failure["evidence_cursor"]),  # type: ignore[index]
+    }
+    target: dict[str, object] = {
+        "authoritative_source": "plan_state",
+        "current_refs": {
+            "current_plan_name": "review-quality-plan",
+            "plan_current_state": "blocked",
+        },
+        "plan_state": {
+            "present": True,
+            "name": "review-quality-plan",
+            "current_state": "blocked",
+            "current_phase": "review",
+            "resume_cursor": dict(state["resume_cursor"]),  # type: ignore[arg-type]
+        },
+    }
+    return state, target
+
+
+def _quality_dispatch_decision(
+    state: dict[str, object], target: dict[str, object]
+) -> RepairDispatchDecision:
+    return classify_repair_dispatch(
+        plan_state=state,
+        current_target=target,
+        custody_projection={
+            "blocker_id": "blocker:quality-review",
+            "active_request_ids": ["request-quality-review"],
+            "custody_bucket": CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+        },
+    )
+
+
+def test_t23_valid_complete_quality_failure_dispatches(tmp_path: Path) -> None:
+    state, target = _quality_dispatch_fixture(tmp_path)
+    decision = _quality_dispatch_decision(state, target)
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
+    assert decision.request_id == "request-quality-review"
+
+
+def test_t23_generic_quality_gate_blocked_is_not_dispatchable(tmp_path: Path) -> None:
+    state, target = _quality_dispatch_fixture(tmp_path)
+    state["latest_failure"] = {
+        "kind": "quality_gate_blocked",
+        "phase": "review",
+        "metadata": {},
+    }
+    decision = _quality_dispatch_decision(state, target)
+    assert decision.dispatch_intent != DISPATCH_INTENT_L1
+
+
+def test_t23_non_review_failure_classes_are_not_dispatchable(tmp_path: Path) -> None:
+    for failure_kind in (
+        "liveness",
+        "quota_exceeded",
+        "open_pr",
+        "human_only",
+        "awaiting_human",
+    ):
+        state, target = _quality_dispatch_fixture(tmp_path)
+        state["latest_failure"] = {
+            "kind": failure_kind,
+            "phase": "review",
+            "metadata": {"deterministic": True, "repairability": "deterministic_machine"},
+        }
+        decision = _quality_dispatch_decision(state, target)
+        assert decision.dispatch_intent != DISPATCH_INTENT_L1, failure_kind
+
+
+def test_t23_missing_scope_is_not_dispatchable(tmp_path: Path) -> None:
+    state, target = _quality_dispatch_fixture(tmp_path)
+    failure = state["latest_failure"]
+    assert isinstance(failure, dict)
+    metadata = failure["metadata"]
+    assert isinstance(metadata, dict)
+    metadata.pop("scope")
+    decision = _quality_dispatch_decision(state, target)
+    assert decision.dispatch_intent != DISPATCH_INTENT_L1
+
+
+def test_t23_stale_target_is_not_dispatchable(tmp_path: Path) -> None:
+    state, target = _quality_dispatch_fixture(tmp_path)
+    refs = target["current_refs"]
+    assert isinstance(refs, dict)
+    refs["current_plan_name"] = "different-plan"
+    decision = _quality_dispatch_decision(state, target)
+    assert decision.dispatch_intent != DISPATCH_INTENT_L1
+
+
+def test_t23_mismatched_cursor_is_not_dispatchable(tmp_path: Path) -> None:
+    state, target = _quality_dispatch_fixture(tmp_path)
+    plan_state = target["plan_state"]
+    assert isinstance(plan_state, dict)
+    resume_cursor = plan_state["resume_cursor"]
+    assert isinstance(resume_cursor, dict)
+    cursor = resume_cursor["evidence_cursor"]
+    assert isinstance(cursor, dict)
+    cursor["history_index"] = 99
+    decision = _quality_dispatch_decision(state, target)
+    assert decision.dispatch_intent != DISPATCH_INTENT_L1
+
+
+def test_t23_mismatched_evidence_hash_is_not_dispatchable(tmp_path: Path) -> None:
+    state, target = _quality_dispatch_fixture(tmp_path)
+    failure = state["latest_failure"]
+    assert isinstance(failure, dict)
+    cursor = failure["evidence_cursor"]
+    assert isinstance(cursor, dict)
+    cursor["review_artifact_hash"] = "b" * 64
+    decision = _quality_dispatch_decision(state, target)
+    assert decision.dispatch_intent != DISPATCH_INTENT_L1
+
+
+def test_t23_untrusted_producer_or_mismatched_digest_is_not_dispatchable(
+    tmp_path: Path,
+) -> None:
+    for field, value in (
+        ("trusted", False),
+        ("evidence_digest", "0" * 64),
+    ):
+        state, target = _quality_dispatch_fixture(tmp_path)
+        failure = state["latest_failure"]
+        assert isinstance(failure, dict)
+        if field == "trusted":
+            provenance = failure["producer_provenance"]
+            assert isinstance(provenance, dict)
+            provenance["trusted"] = value
+            metadata = failure["metadata"]
+            assert isinstance(metadata, dict)
+            metadata_provenance = metadata["producer_provenance"]
+            assert isinstance(metadata_provenance, dict)
+            metadata_provenance["trusted"] = value
+        else:
+            failure["evidence_digest"] = value
+            metadata = failure["metadata"]
+            assert isinstance(metadata, dict)
+            metadata["evidence_digest"] = value
+        decision = _quality_dispatch_decision(state, target)
+        assert decision.dispatch_intent != DISPATCH_INTENT_L1, field

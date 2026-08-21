@@ -5146,6 +5146,76 @@ def _is_known_repairable_shape(
     return False
 
 
+_REVIEW_QUALITY_FAILURE_KIND = "quality_gate_blocked"
+_REVIEW_QUALITY_PRODUCER_SCHEMA = "arnold.megaplan.review_quality_failure_provenance.v1"
+_REVIEW_QUALITY_PRODUCER = "arnold_pipelines.megaplan.handlers.review"
+_REVIEW_QUALITY_PRODUCER_FUNCTION = "_review_quality_block_failure"
+
+
+def _review_quality_target_cursor(
+    current_target: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    event_cursors = _as_mapping(current_target.get("event_cursors"))
+    plan_state = _as_mapping(current_target.get("plan_state"))
+    resume_cursor = _as_mapping(current_target.get("resume_cursor"))
+    plan_resume_cursor = _as_mapping(plan_state.get("resume_cursor"))
+    for candidate in (
+        current_target.get("evidence_cursor"),
+        event_cursors.get("review_evidence_cursor"),
+        event_cursors.get("evidence_cursor"),
+        resume_cursor.get("evidence_cursor"),
+        plan_resume_cursor.get("evidence_cursor"),
+    ):
+        if isinstance(candidate, Mapping) and candidate:
+            return candidate
+    return {}
+
+def _review_quality_target_fingerprint(
+    current_target: Mapping[str, Any],
+) -> str:
+    explicit = _first_non_empty(
+        _as_text(current_target.get("target_fingerprint")),
+        _as_text(_as_mapping(current_target.get("plan_state")).get("target_fingerprint")),
+    )
+    if explicit:
+        return explicit
+    plan_state = _as_mapping(current_target.get("plan_state"))
+    current_refs = _as_mapping(current_target.get("current_refs"))
+    cursor = _review_quality_target_cursor(current_target)
+    if cursor:
+        return _review_quality_digest(
+            {
+                "current_state": _first_non_empty(
+                    _as_text(plan_state.get("current_state")),
+                    _as_text(current_refs.get("plan_current_state")),
+                ),
+                "history_index": cursor.get("history_index"),
+                "phase": _first_non_empty(
+                    _as_text(plan_state.get("current_phase")),
+                    "review",
+                ),
+                "plan_name": _review_quality_plan_name(current_target),
+                "evidence_cursor": dict(cursor),
+            }
+        )
+    return ""
+
+
+def _review_quality_plan_name(current_target: Mapping[str, Any]) -> str:
+    current_refs = _as_mapping(current_target.get("current_refs"))
+    plan_state = _as_mapping(current_target.get("plan_state"))
+    return _first_non_empty(
+        _as_text(current_refs.get("current_plan_name")),
+        _as_text(plan_state.get("name")),
+    )
+
+
+def _review_quality_digest(payload: Mapping[str, Any]) -> str:
+    return sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _is_evidence_bound_deterministic_quality_block(
     *,
     current_state: str,
@@ -5154,67 +5224,158 @@ def _is_evidence_bound_deterministic_quality_block(
     latest_failure: Mapping[str, Any],
     current_target: Mapping[str, Any],
 ) -> bool:
-    """Whitelist only the executor's bounded deterministic review failure.
+    """Whitelist one complete, current, review-produced quality failure.
 
     ``quality_gate_blocked`` is otherwise a human-review-shaped label.  It is
-    machine repairable only when the persisted failure carries the complete
-    deterministic evidence contract emitted by ``handlers.review`` and a
-    current target fingerprint.  Partial metadata must remain conservative.
+    dispatchable only when the review producer bound the failure to a current
+    plan-state fingerprint, an exact review cursor/artifact, a non-empty
+    task scope, a recomputable evidence digest, and its trusted provenance.
     """
-
     if not (
         current_state == "blocked"
         and retry_strategy == "manual_review"
-        and failure_kind == "quality_gate_blocked"
-        and _has_current_target_evidence(current_target)
+        and failure_kind == _REVIEW_QUALITY_FAILURE_KIND
     ):
         return False
+
     failure = _as_mapping(latest_failure)
     metadata = _as_mapping(failure.get("metadata"))
     if (
-        _as_text(failure.get("kind")) != failure_kind
+        _as_text(failure.get("kind")) != _REVIEW_QUALITY_FAILURE_KIND
         or metadata.get("deterministic") is not True
         or _as_text(metadata.get("repairability")) != "deterministic_machine"
+        or _as_text(failure.get("phase")) != "review"
     ):
         return False
+
     cursor = _as_mapping(failure.get("evidence_cursor"))
     metadata_cursor = _as_mapping(metadata.get("evidence_cursor"))
-    if not cursor or not metadata_cursor or dict(cursor) != dict(metadata_cursor):
+    if not cursor or dict(cursor) != dict(metadata_cursor):
         return False
     history_index = cursor.get("history_index")
+    review_artifact_hash = _as_text(cursor.get("review_artifact_hash"))
     if (
         not isinstance(history_index, int)
         or isinstance(history_index, bool)
         or history_index < 0
-        or not _as_text(cursor.get("review_artifact_hash"))
+        or not review_artifact_hash
     ):
         return False
+    target_cursor = _review_quality_target_cursor(current_target)
+    if not target_cursor or dict(target_cursor) != dict(cursor):
+        return False
+
+    evidence = _as_list(metadata.get("deterministic_evidence"))
     blocked_task_ids = {
         _as_text(value)
         for value in _as_list(metadata.get("blocked_task_ids"))
         if _as_text(value)
     }
-    blocker_ids = {
+    scope = _as_mapping(metadata.get("scope"))
+    failure_scope = _as_mapping(failure.get("scope"))
+    scope_task_ids = {
         _as_text(value)
-        for value in _as_list(failure.get("blocker_ids"))
+        for value in _as_list(scope.get("blocked_task_ids"))
         if _as_text(value)
     }
-    evidence = _as_list(metadata.get("deterministic_evidence"))
-    if not blocked_task_ids or not blocker_ids or not evidence:
+    if (
+        not blocked_task_ids
+        or not evidence
+        or scope_task_ids != blocked_task_ids
+        or dict(scope) != dict(failure_scope)
+        or _as_text(scope.get("plan_name")) != _review_quality_plan_name(current_target)
+        or _as_text(scope.get("phase")) != "review"
+    ):
         return False
+
     evidenced_task_ids: set[str] = set()
     for raw_item in evidence:
         item = _as_mapping(raw_item)
         task_id = _as_text(item.get("task_id"))
+        command = _as_text(item.get("command"))
+        baseline = _as_text(item.get("baseline_status")).lower()
+        post = _as_text(item.get("post_status")).lower()
+        artifact_hash = _as_text(item.get("artifact_hash"))
+        expected_artifact_hash = _review_quality_digest(
+            {
+                "baseline_status": baseline,
+                "command": command,
+                "post_status": post,
+            }
+        )
         if (
             task_id not in blocked_task_ids
-            or not _as_text(item.get("command"))
-            or not _as_text(item.get("baseline_status"))
-            or not _as_text(item.get("post_status"))
+            or not command
+            or not artifact_hash
+            or artifact_hash != expected_artifact_hash
+            or not ({baseline, post} & {"fail", "failed", "error"})
         ):
             return False
         evidenced_task_ids.add(task_id)
-    return evidenced_task_ids == blocked_task_ids
+    if evidenced_task_ids != blocked_task_ids:
+        return False
+
+    target = _as_mapping(metadata.get("target"))
+    failure_target = _as_mapping(failure.get("target"))
+    target_fingerprint = _first_non_empty(
+        _as_text(target.get("target_fingerprint")),
+        _as_text(target.get("plan_state_fingerprint")),
+    )
+    current_target_fingerprint = (
+        _review_quality_target_fingerprint(current_target)
+        if _as_text(target.get("target_fingerprint"))
+        else _as_text(_as_mapping(current_target.get("plan_state")).get("fingerprint"))
+    )
+    if (
+        not target
+        or dict(target) != dict(failure_target)
+        or _as_text(target.get("plan_name")) != _review_quality_plan_name(current_target)
+        or not target_fingerprint
+        or target_fingerprint != current_target_fingerprint
+    ):
+        return False
+    manifest = _as_mapping(metadata.get("manifest"))
+    failure_manifest = _as_mapping(failure.get("manifest"))
+    if (
+        not manifest
+        or dict(manifest) != dict(failure_manifest)
+        or _as_text(manifest.get("artifact")) != "review.json"
+        or _as_text(manifest.get("sha256")) != review_artifact_hash
+    ):
+        return False
+
+    provenance = _as_mapping(metadata.get("producer_provenance"))
+    failure_provenance = _as_mapping(failure.get("producer_provenance"))
+    if (
+        dict(provenance) != dict(failure_provenance)
+        or _as_text(provenance.get("schema")) != _REVIEW_QUALITY_PRODUCER_SCHEMA
+        or _as_text(provenance.get("producer")) != _REVIEW_QUALITY_PRODUCER
+        or _as_text(provenance.get("function")) != _REVIEW_QUALITY_PRODUCER_FUNCTION
+        or provenance.get("trusted") is not True
+    ):
+        return False
+
+    digest_payload = {
+        "cursor": dict(cursor),
+        "deterministic_evidence": evidence,
+        "manifest": dict(manifest),
+        "producer_provenance": dict(provenance),
+        "scope": dict(scope),
+        "target": dict(target),
+    }
+    expected_digest = _review_quality_digest(digest_payload)
+    if (
+        _as_text(failure.get("evidence_digest")) != expected_digest
+        or _as_text(metadata.get("evidence_digest")) != expected_digest
+    ):
+        return False
+
+    blockers = sorted(_as_text(value) for value in _as_list(metadata.get("blocking_reasons")))
+    blocker_ids = _as_list(failure.get("blocker_ids"))
+    expected_blocker_id = "quality:review:" + _review_quality_digest(
+        {"blockers": blockers, "evidence_digest": expected_digest}
+    )
+    return blocker_ids == [expected_blocker_id]
 
 
 def _is_exact_phase_request_shape(
