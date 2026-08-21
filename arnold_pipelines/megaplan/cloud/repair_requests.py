@@ -7,6 +7,10 @@ import json
 import os
 import socket
 import time
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - this package's production queue is POSIX-only.
+    fcntl = None  # type: ignore[assignment]
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -134,6 +138,211 @@ OWNER_ADOPTION_FORBIDDEN_FIELDS = (
     "custody_epoch",
 )
 
+
+MIGRATION_STORE_DIR_NAME = "migration-store"
+MIGRATION_LOCKS_DIR_NAME = "locks"
+MIGRATION_RECEIPTS_DIR_NAME = "receipts"
+MIGRATION_EPOCHS_DIR_NAME = "epochs"
+MIGRATION_SCHEMA_VERSION = 1
+MAX_MIGRATION_REQUESTS = 100
+
+
+class MigrationRequestError(ValueError):
+    """Typed fail-closed error for an invalid or conflicting migration."""
+
+
+@dataclass(frozen=True)
+class MigrationRequest:
+    """Operator-supplied, content-addressed request for one queue migration."""
+
+    migration_id: str
+    source_queue_root: str
+    target_queue_root: str
+    source_identity: str
+    source_digest: str
+    target_identity: str
+    target_digest: str
+    max_requests: int
+    requester_identity: str
+    request_timestamp: str
+
+    def __post_init__(self) -> None:
+        source = validate_queue_root(self.source_queue_root)
+        target = validate_queue_root(self.target_queue_root)
+        if source == target:
+            raise MigrationRequestError("source and target queue roots must differ")
+        for name, value in (
+            ("migration_id", self.migration_id),
+            ("source_identity", self.source_identity),
+            ("target_identity", self.target_identity),
+            ("requester_identity", self.requester_identity),
+            ("request_timestamp", self.request_timestamp),
+        ):
+            if not str(value).strip():
+                raise MigrationRequestError(f"{name} is required")
+        if isinstance(self.max_requests, bool) or not (
+            1 <= int(self.max_requests) <= MAX_MIGRATION_REQUESTS
+        ):
+            raise MigrationRequestError(
+                f"max_requests must be between 1 and {MAX_MIGRATION_REQUESTS}"
+            )
+        if _normalize_migration_digest(self.source_digest) != migration_identity_digest(
+            self.source_identity
+        ):
+            raise MigrationRequestError("source identity/digest mismatch")
+        if _normalize_migration_digest(self.target_digest) != migration_identity_digest(
+            self.target_identity
+        ):
+            raise MigrationRequestError("target identity/digest mismatch")
+        object.__setattr__(self, "source_queue_root", str(source))
+        object.__setattr__(self, "target_queue_root", str(target))
+        object.__setattr__(self, "migration_id", str(self.migration_id).strip())
+        object.__setattr__(self, "source_identity", str(self.source_identity).strip())
+        object.__setattr__(self, "target_identity", str(self.target_identity).strip())
+        object.__setattr__(self, "requester_identity", str(self.requester_identity).strip())
+        object.__setattr__(self, "request_timestamp", str(self.request_timestamp).strip())
+        object.__setattr__(self, "max_requests", int(self.max_requests))
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "MigrationRequest":
+        if not isinstance(payload, Mapping):
+            raise MigrationRequestError("migration request must be an object")
+        timestamp = payload.get("request_timestamp", payload.get("requested_at"))
+        try:
+            return cls(
+                migration_id=str(payload["migration_id"]),
+                source_queue_root=str(
+                    payload.get("source_queue_root", payload.get("source_root"))
+                ),
+                target_queue_root=str(
+                    payload.get("target_queue_root", payload.get("target_root"))
+                ),
+                source_identity=str(payload["source_identity"]),
+                source_digest=str(payload["source_digest"]),
+                target_identity=str(payload["target_identity"]),
+                target_digest=str(payload["target_digest"]),
+                max_requests=int(payload["max_requests"]),
+                requester_identity=str(payload["requester_identity"]),
+                request_timestamp=str(timestamp),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, MigrationRequestError):
+                raise
+            raise MigrationRequestError(f"invalid migration request: {exc}") from exc
+
+    @classmethod
+    def for_roots(
+        cls,
+        *,
+        migration_id: str,
+        source_queue_root: str | Path,
+        target_queue_root: str | Path,
+        max_requests: int,
+        requester_identity: str,
+        request_timestamp: str,
+        source_identity: str = "legacy-split-queue",
+        target_identity: str = "central-repair-queue",
+    ) -> "MigrationRequest":
+        return cls(
+            migration_id=migration_id,
+            source_queue_root=str(validate_queue_root(source_queue_root)),
+            target_queue_root=str(validate_queue_root(target_queue_root)),
+            source_identity=source_identity,
+            source_digest=migration_identity_digest(source_identity),
+            target_identity=target_identity,
+            target_digest=migration_identity_digest(target_identity),
+            max_requests=max_requests,
+            requester_identity=requester_identity,
+            request_timestamp=request_timestamp,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": MIGRATION_SCHEMA_VERSION,
+            "kind": "repair_queue_migration_request",
+            "migration_id": self.migration_id,
+            "source_queue_root": self.source_queue_root,
+            "target_queue_root": self.target_queue_root,
+            "source_identity": self.source_identity,
+            "source_digest": self.source_digest,
+            "target_identity": self.target_identity,
+            "target_digest": self.target_digest,
+            "max_requests": self.max_requests,
+            "requester_identity": self.requester_identity,
+            "request_timestamp": self.request_timestamp,
+        }
+
+
+@dataclass(frozen=True)
+class MigrationReceipt:
+    """Durable proof returned by an operator migration transaction."""
+
+    request_digest: str
+    lock_owner: Mapping[str, Any]
+    fence_epoch: int
+    source_high_water_mark: str
+    adopted_request_ids: tuple[str, ...]
+    adopted_content_digests: tuple[str, ...]
+    retained_original_proof: Mapping[str, Any]
+    terminal_state: str
+    receipt_digest: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": MIGRATION_SCHEMA_VERSION,
+            "kind": "repair_queue_migration_receipt",
+            "request_digest": self.request_digest,
+            "lock_owner": dict(self.lock_owner),
+            "fence_epoch": self.fence_epoch,
+            "source_high_water_mark": self.source_high_water_mark,
+            "adopted_request_ids": list(self.adopted_request_ids),
+            "adopted_content_digests": list(self.adopted_content_digests),
+            "retained_original_proof": dict(self.retained_original_proof),
+            "terminal_state": self.terminal_state,
+            "receipt_digest": self.receipt_digest,
+        }
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "MigrationReceipt":
+        if payload.get("kind") != "repair_queue_migration_receipt":
+            raise MigrationRequestError("migration receipt has invalid kind")
+        return cls(
+            request_digest=str(payload["request_digest"]),
+            lock_owner=dict(payload["lock_owner"]),
+            fence_epoch=int(payload["fence_epoch"]),
+            source_high_water_mark=str(payload["source_high_water_mark"]),
+            adopted_request_ids=tuple(str(item) for item in payload["adopted_request_ids"]),
+            adopted_content_digests=tuple(
+                str(item) for item in payload["adopted_content_digests"]
+            ),
+            retained_original_proof=dict(payload["retained_original_proof"]),
+            terminal_state=str(payload["terminal_state"]),
+            receipt_digest=str(payload["receipt_digest"]),
+        )
+
+
+def migration_identity_digest(identity: str) -> str:
+    """Return the stable digest binding an opaque queue identity token."""
+
+    value = str(identity or "").strip()
+    if not value:
+        raise MigrationRequestError("migration queue identity is required")
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _normalize_migration_digest(value: str) -> str:
+    raw = str(value or "").strip().lower()
+    if raw.startswith("sha256:"):
+        raw = raw[7:]
+    if len(raw) != 64 or any(char not in "0123456789abcdef" for char in raw):
+        return ""
+    return "sha256:" + raw
+
+
+def migration_request_digest(request: MigrationRequest) -> str:
+    """Return the immutable digest of every operator request field."""
+
+    return "sha256:" + _sha256_json(request.to_dict())
 
 def build_normalized_repair_identity(
     *,
@@ -1044,6 +1253,272 @@ def resolve_aligned_repair_queue_root(
     )
     return repair_queue_dir(marker_dir)
 
+
+def _migration_store_dir(queue_root: Path) -> Path:
+    return queue_root / MIGRATION_STORE_DIR_NAME
+
+
+def _migration_paths(target_root: Path) -> tuple[Path, Path, Path]:
+    store = _migration_store_dir(target_root)
+    token = _claim_path_token(str(target_root))
+    return (
+        store / MIGRATION_LOCKS_DIR_NAME / f"{token}.lock",
+        store / MIGRATION_EPOCHS_DIR_NAME / f"{token}.json",
+        store / MIGRATION_RECEIPTS_DIR_NAME,
+    )
+
+
+@contextmanager
+def _migration_transaction_lock(
+    target_root: Path,
+) -> Iterator[None]:
+    """Hold the durable target-queue lock across the whole migration step."""
+
+    if fcntl is None:  # pragma: no cover - production is POSIX.
+        raise MigrationRequestError("locked queue migration requires POSIX file locking")
+    lock_path, _, _ = _migration_paths(target_root)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _migration_write_owner(lock_path: Path, owner: Mapping[str, Any]) -> None:
+    repair_contract.atomic_write_json(
+        lock_path.with_suffix(".owner.json"),
+        dict(owner),
+        include_resident_provenance=False,
+    )
+
+
+def _migration_next_fence_epoch(target_root: Path, migration_id: str) -> int:
+    _, epoch_path, _ = _migration_paths(target_root)
+    current = 0
+    if epoch_path.exists():
+        try:
+            payload = json.loads(epoch_path.read_text(encoding="utf-8"))
+            if isinstance(payload, Mapping):
+                current = int(payload.get("fence_epoch") or 0)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            raise MigrationRequestError("migration fence epoch store is invalid")
+    next_epoch = current + 1
+    repair_contract.atomic_write_json(
+        epoch_path,
+        {"kind": "repair_queue_migration_epoch", "migration_id": migration_id, "fence_epoch": next_epoch},
+        include_resident_provenance=False,
+    )
+    return next_epoch
+
+
+def _migration_load_receipt(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise MigrationRequestError(f"migration receipt is unreadable: {path}") from exc
+    if not isinstance(payload, dict):
+        raise MigrationRequestError("migration receipt is not an object")
+    receipt = MigrationReceipt.from_mapping(payload)
+    expected = _migration_receipt_digest(payload)
+    if receipt.receipt_digest != expected:
+        raise MigrationRequestError("migration receipt digest mismatch")
+    return payload
+
+
+def _migration_receipt_digest(payload: Mapping[str, Any]) -> str:
+    unsigned = dict(payload)
+    unsigned.pop("receipt_digest", None)
+    return "sha256:" + _sha256_json(unsigned)
+
+
+def _migration_persist_state(path: Path, state: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(state)
+    payload["receipt_digest"] = _migration_receipt_digest(payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    repair_contract.atomic_write_json(
+        path, payload, include_resident_provenance=False
+    )
+    return payload
+
+
+def _migration_source_entries(source_root: Path) -> list[dict[str, str]]:
+    directory = requests_dir(source_root)
+    if not directory.exists():
+        return []
+    entries: list[dict[str, str]] = []
+    for path in sorted(directory.glob("*.json"), key=lambda item: item.name):
+        raw = path.read_bytes()
+        request_id = ""
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            if isinstance(payload, Mapping):
+                request_id = str(payload.get("request_id") or "").strip()
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+        entries.append(
+            {
+                "name": path.name,
+                "request_id": request_id,
+                "content_digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            }
+        )
+    return entries
+
+
+def _migration_source_high_water_mark(entries: list[Mapping[str, Any]]) -> str:
+    return "sha256:" + _sha256_json(entries)
+
+
+def _migration_write_bytes_once(path: Path, raw: bytes) -> bool:
+    """Atomically publish a request marker without deleting or replacing one."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        return False
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            return False
+        finally:
+            temporary.unlink(missing_ok=True)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _migration_owner(request: MigrationRequest, lock_path: Path) -> dict[str, Any]:
+    return {
+        "requester_identity": request.requester_identity,
+        "pid": os.getpid(),
+        "hostname": _hostname(),
+        "process_identity": process_owner_identity(os.getpid()),
+        "lock_path": str(lock_path),
+        "acquired_at": utc_now(),
+    }
+
+
+def migrate_stranded_requests(request: MigrationRequest) -> MigrationReceipt:
+    """Adopt bounded stranded markers through one explicit operator transaction.
+
+    This is deliberately not called by queue readers, observation, status,
+    import, scheduler, or wakeup paths.  The caller must be the explicit
+    operator CLI, and the request binds both queue identities before any write.
+    """
+
+    if not isinstance(request, MigrationRequest):
+        raise MigrationRequestError("migrate_stranded_requests requires MigrationRequest")
+    source_root = validate_queue_root(request.source_queue_root)
+    target_root = validate_queue_root(request.target_queue_root)
+    if source_root == target_root:
+        raise MigrationRequestError("source and target queue roots must differ")
+    lock_path, _, receipts_dir = _migration_paths(target_root)
+    receipt_path = receipts_dir / f"{request.migration_id}.json"
+    owner = _migration_owner(request, lock_path)
+    request_digest = migration_request_digest(request)
+
+    with _migration_transaction_lock(target_root):
+        existing = _migration_load_receipt(receipt_path)
+        if existing is not None:
+            if str(existing.get("request_digest") or "") != request_digest:
+                raise MigrationRequestError(
+                    "migration_id is already bound to a different request digest"
+                )
+            if existing.get("terminal_state") == "completed":
+                return MigrationReceipt.from_mapping(existing)
+            state = dict(existing)
+            fence_epoch = _migration_next_fence_epoch(target_root, request.migration_id)
+            state["lock_owner"] = owner
+            state["fence_epoch"] = fence_epoch
+        else:
+            entries = _migration_source_entries(source_root)
+            state = {
+                "schema_version": MIGRATION_SCHEMA_VERSION,
+                "kind": "repair_queue_migration_receipt",
+                "migration_id": request.migration_id,
+                "request_digest": request_digest,
+                "source_queue_root": str(source_root),
+                "target_queue_root": str(target_root),
+                "source_entries": entries,
+                "source_high_water_mark": _migration_source_high_water_mark(entries),
+                "processed_source_names": [],
+                "adopted_request_ids": [],
+                "adopted_content_digests": [],
+                "retained_original_names": [],
+                "lock_owner": owner,
+                "fence_epoch": _migration_next_fence_epoch(target_root, request.migration_id),
+                "terminal_state": "partial" if entries else "completed",
+                "retained_original_proof": {},
+            }
+        _migration_write_owner(lock_path, owner)
+        state = _migration_persist_state(receipt_path, state)
+
+        processed = set(str(item) for item in state.get("processed_source_names", []))
+        entries = [dict(item) for item in state.get("source_entries", [])]
+        adopted_ids = list(str(item) for item in state.get("adopted_request_ids", []))
+        adopted_digests = list(str(item) for item in state.get("adopted_content_digests", []))
+        retained_names = set(str(item) for item in state.get("retained_original_names", []))
+        examined = 0
+        for entry in entries:
+            name = str(entry.get("name") or "")
+            if not name or name in processed:
+                continue
+            if examined >= request.max_requests:
+                break
+            examined += 1
+            source_path = requests_dir(source_root) / name
+            if not source_path.is_file():
+                raise MigrationRequestError(
+                    f"source request disappeared before verified adoption: {name}"
+                )
+            raw = source_path.read_bytes()
+            digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+            if digest != str(entry.get("content_digest") or ""):
+                raise MigrationRequestError(f"source request changed during migration: {name}")
+            target_path = requests_dir(target_root) / name
+            _migration_write_bytes_once(target_path, raw)
+            if not target_path.is_file() or target_path.read_bytes() != raw:
+                raise MigrationRequestError(
+                    f"target request was not verified after adoption: {name}"
+                )
+            request_id = str(entry.get("request_id") or "").strip()
+            if request_id and request_id not in adopted_ids:
+                adopted_ids.append(request_id)
+                adopted_digests.append(digest)
+            processed.add(name)
+            retained_names.add(name)
+            state["processed_source_names"] = sorted(processed)
+            state["adopted_request_ids"] = adopted_ids
+            state["adopted_content_digests"] = adopted_digests
+            state["retained_original_names"] = sorted(retained_names)
+            state = _migration_persist_state(receipt_path, state)
+
+        all_processed = len(processed) == len(entries)
+        for name in retained_names:
+            if not (requests_dir(source_root) / name).is_file():
+                raise MigrationRequestError(f"retained original is missing: {name}")
+        retained_proof = {
+            "source_root": str(source_root),
+            "retained_original_names": sorted(retained_names),
+            "all_adopted_originals_retained": True,
+            "verified": True,
+            "proof_digest": "sha256:" + _sha256_json(sorted(retained_names)),
+        }
+        state["retained_original_proof"] = retained_proof
+        state["terminal_state"] = "completed" if all_processed else "partial"
+        state = _migration_persist_state(receipt_path, state)
+        return MigrationReceipt.from_mapping(state)
 
 def requests_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / REQUESTS_DIR_NAME
@@ -3168,6 +3643,12 @@ def enqueue_owner_adopted_repair_request(
 
 
 __all__ = [
+    "MAX_MIGRATION_REQUESTS",
+    "MIGRATION_SCHEMA_VERSION",
+    "MIGRATION_STORE_DIR_NAME",
+    "MigrationReceipt",
+    "MigrationRequest",
+    "MigrationRequestError",
     "ACTIVE_CLAIMS_DIR_NAME",
     "ADOPTION_ATTEMPT_PREFIX",
     "ADOPTION_RUN_PREFIX",
@@ -3219,6 +3700,9 @@ __all__ = [
     "occurrence_claims_dir",
     "record_malformed_file",
     "redacted_hint_hash",
+    "migration_identity_digest",
+    "migration_request_digest",
+    "migrate_stranded_requests",
     "repair_queue_dir",
     "repair_identity_key",
     "record_unclaimed_request_failure",
