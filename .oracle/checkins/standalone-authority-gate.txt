@@ -1,0 +1,41 @@
+# T8a standalone authority gate
+
+**Verdict: PASS.** Existing provenance/vector collectors, canonical digest validation, O_EXCL immutable publication, atomic pointer publication, and process-attestation primitives can express this fail-closed. T8b must extend the canonical module; it must not weaken or bypass the cloud/chain path.
+
+## 1. Authority discriminator
+
+Keep seed `schema = "arnold.megaplan.runtime_launch_seed.v1"`. Add the mandatory, digest-covered field:
+
+- `authority = "arnold.megaplan.runtime-launch/cloud-chain/v1"` for seeds from `build_runtime_launch_seed` / `ensure_runtime_launch_seed`.
+- `authority = "arnold.megaplan.runtime-launch/standalone-resident/v1"` for seeds from the new standalone builder used only by `resident attest`.
+
+Missing, unknown, or mismatched authority fails; there is no legacy/missing-field fallback. `_verify_seed_digest` must require the schema, canonical `content_sha256`, and one recognized authority. `validate_runtime_launch_seed` must select exactly one validator and never retry the other: cloud requires all existing manifest-generation, marker launch-binding, supervisor receipt/runtime, hot-env, and chain-runtime-binding checks; standalone requires the standalone evidence below and rejects nonempty `manifest_sha256`, `marker`, `supervisor_receipt`, `supervisor_runtime`, `hot_env`, or `chain_runtime_binding`.
+
+`_launch_seed_current`, `_find_current_seed`, `ensure_runtime_launch_seed`, and `refresh_runtime_launch_seed_for_worker_dispatch` require cloud-chain. The standalone builder/pointer loader require standalone-resident. `require_configured_runtime_launch`, `create_runtime_process_attestation`, and `validate_runtime_process_attestation` must preserve and check the selected authority; the process receipt includes `authority`. A dual-authority resident may dispatch once on the exact field, but validation may not fall back across domains.
+
+## 2. Standalone evidence
+
+The digest-covered standalone seed contains: resolved `expected_root`; explicit full `expected_revision`; separately collected `live_revision`; existing `schema`; exact `authority`; RFC3339 UTC `generated_at`; `runtime_provenance`; `loaded_modules`; `interpreter`; `site_pth`; `wrappers`; `errors`; `ready`; and canonical `content_sha256`.
+
+`--repo-root` is resolved with `strict=True`; `git rev-parse --show-toplevel` must equal it. `--expected-head` must be a full hex commit OID and equal `git rev-parse HEAD` byte-for-byte. Collect with the existing `runtime_provenance`, `_module_vector`, `_pth_vector`, `_wrapper_vector`, `_interpreter_vector`, and revision helpers. Re-run the same vectors at startup. Foreign module/PTH roots, changed wrapper/interpreter/provenance, edited seed/digest, wrong root, or HEAD drift fails with `runtime_launch_attestation_mismatch`. Timestamp is audit evidence, not an expiry or waiver. No cloud marker, manifest, chain spec/binding, hot-env, or supervisor evidence is synthesized.
+
+## 3. State directory
+
+Use `<resolved-repo-root>/.megaplan/resident/runtime-launch/`; `.agentbox/` remains readable scaffold/config, not operational state.
+
+- `seeds/standalone-<head>-<content_sha256>.json`
+- `seeds/dispatch-current.json`
+- `receipts/<receipt-content_sha256>.json`
+- `status/resident.runtime-process-attestation.json`
+
+Create directories `0700`; seeds, receipts, pointer, and status files are `0600`. Reject symlink/containment escape at every resolved path. Publish immutable seed and issuance receipt with `_exclusive_write_json` (extend its mode parameter, retaining `O_EXCL|O_NOFOLLOW`); publish pointer and per-process status with `_atomic_write` (`fsync` then `os.replace`). The standalone pointer has `schema = "arnold.megaplan.standalone_runtime_dispatch_pointer.v1"`, authority, absolute seed/receipt paths, root, expected revision, generation time, seed digest, and receipt digest. Validate containment and both referenced digests before reuse.
+
+## 4. `resident attest`
+
+`megaplan resident attest --repo-root ROOT --expected-head OID [--json]`
+
+It performs the admission checks above, builds then validates the standalone seed, writes the immutable seed and issuance receipt, atomically advances the pointer, and validates the published objects again. Receipt schema is `arnold.megaplan.standalone_runtime_attestation_receipt.v1`; it records authority, root, expected/live HEAD, generated time, seed path/digest, pointer path, and its own canonical digest.
+
+Without `--json`, stdout is only the absolute seed path for launcher export. With it, stdout is one object containing `success`, authority, root, expected/live HEAD, `seed_path`, `seed_sha256`, `receipt_path`, `receipt_sha256`, `pointer_path`, and `generated_at`. Exit `0` on success; `2` for argument/admission/custody mismatch; `1` for unexpected publication/I/O failure. Failure never advances the pointer.
+
+Research receipt: GPT-5.6 Luna/high audited the machinery; GPT-5.6 Sol/high independently validated and froze this decision.
