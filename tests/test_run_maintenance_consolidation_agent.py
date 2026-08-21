@@ -42,7 +42,7 @@ class MalformedProcess(FakeProcess):
         raise AssertionError("fake process should not be killed")
 
 
-def _args(root: Path, *, role: str = "[HARD]", route: str = "gpt-5.6-luna") -> list[str]:
+def _args(root: Path, *, role: str = "[HARD]", route: str = "ox-alpha") -> list[str]:
     project = root / "project"
     project.mkdir(parents=True, exist_ok=True)
     query = root / "brief.md"
@@ -291,18 +291,18 @@ def test_sol_review_dispatch_builds_sol_command_and_rejects_wrong_route(tmp_path
 
     monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
     root = tmp_path / "sol-review"
-    assert launcher.main(_args(root, role="[SOL-REVIEW]", route="gpt-5.6-sol")) == 0
+    assert launcher.main(_args(root, role="[SOL-REVIEW]", route="ox-alpha")) == 0
 
     command = commands[0]
     assert command[1] == str(
         launcher.INTEGRATION_WORKTREE
-        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py"
     )
-    assert "--model=codex:gpt-5.6-sol" in command
+    assert "--model=openrouter/stealth/ox-alpha" in command
 
     capsys.readouterr()
     wrong_root = tmp_path / "sol-review-wrong-route"
-    assert launcher.main(_args(wrong_root, role="[SOL-REVIEW]", route="gpt-5.6-luna")) == 2
+    assert launcher.main(_args(wrong_root, role="[SOL-REVIEW]", route="gpt-5.6-sol")) == 2
     assert "WRONG_MODEL_ROUTE" in capsys.readouterr().err
     assert len(commands) == 1
 
