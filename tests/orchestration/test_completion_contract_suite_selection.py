@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.orchestration.completion_contract import (
     WorkerDidWorkProvider,
     compute_verdict,
 )
+from arnold_pipelines.megaplan.orchestration import suite_runner
 from arnold_pipelines.megaplan.orchestration.suite_runner import _pytest_command
 
 
@@ -95,12 +96,39 @@ def test_green_suite_prefers_recorded_baseline_command(tmp_path):
     assert config["test_command"] == "pytest tests/test_baseline.py"
 
 
-def test_pytest_command_uses_current_python_for_default_and_bare_pytest():
+def test_pytest_command_uses_current_python_without_manifest(monkeypatch):
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
     default_parts = shlex.split(_pytest_command(None))
     explicit_parts = shlex.split(_pytest_command("pytest tests/test_narrow.py"))
 
     assert default_parts[:3] == [sys.executable, "-m", "pytest"]
     assert explicit_parts[:4] == [sys.executable, "-m", "pytest", "tests/test_narrow.py"]
+
+
+def test_pytest_command_uses_manifest_dependency_interpreter(monkeypatch):
+    dependency_python = "/runtime-venvs/frozen/bin/python"
+    monkeypatch.setattr(
+        suite_runner,
+        "_manifest_validation_interpreter",
+        lambda: dependency_python,
+    )
+
+    bare = shlex.split(_pytest_command("pytest tests/test_narrow.py"))
+    explicit = shlex.split(_pytest_command("python3 -m pytest tests/test_narrow.py"))
+    wrapped = shlex.split(
+        _pytest_command("timeout 120 python3 -m pytest tests/test_narrow.py")
+    )
+
+    assert bare[:4] == [dependency_python, "-m", "pytest", "tests/test_narrow.py"]
+    assert explicit[:4] == [dependency_python, "-m", "pytest", "tests/test_narrow.py"]
+    assert wrapped[:6] == [
+        "timeout",
+        "120",
+        dependency_python,
+        "-m",
+        "pytest",
+        "tests/test_narrow.py",
+    ]
 
 
 def _write_execute_acceptance_contract(plan_dir: Path) -> None:

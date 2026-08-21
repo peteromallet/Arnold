@@ -298,19 +298,59 @@ def _hash_paths_from_config(config: dict[str, Any]) -> list[str] | None:
     return out or None
 
 
-def _pytest_command(command: str | None) -> str:
+def _manifest_validation_interpreter() -> str | None:
+    """Return the frozen dependency-generation interpreter for validation.
+
+    A chain controller may be bootstrapped by a different Python environment
+    than the one that owns the runtime's declared dependencies.  Validation is
+    evidence about that bound generation, so bare pytest commands must not be
+    rewritten to the controller's ambient ``sys.executable``.
+    """
+    manifest_path = str(os.environ.get("ARNOLD_RUNTIME_MANIFEST") or "").strip()
+    if not manifest_path:
+        return None
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        dependency_generation_proof,
+        load_manifest,
+    )
+
+    try:
+        manifest = load_manifest(Path(manifest_path))
+        proof = dependency_generation_proof(manifest)
+    except ManifestError as exc:
+        raise RuntimeError(
+            f"runtime validation dependency generation is unavailable: {exc}"
+        ) from exc
+    interpreter = str(proof.get("interpreter_path") or "").strip()
+    path = Path(interpreter).expanduser()
+    if not interpreter or not path.is_file() or not os.access(path, os.X_OK):
+        raise RuntimeError(
+            "runtime validation dependency generation interpreter is unavailable: "
+            f"{interpreter or '<missing>'}"
+        )
+    return str(path)
+
+
+def _pytest_command(
+    command: str | None,
+    *,
+    interpreter: str | None = None,
+) -> str:
+    interpreter = interpreter or _manifest_validation_interpreter() or sys.executable
     if not command:
-        return f"{shlex.quote(sys.executable)} -m pytest --tb=no -q --no-header -rA"
+        return f"{shlex.quote(interpreter)} -m pytest --tb=no -q --no-header -rA"
     parts = shlex.split(command)
     if not parts:
-        return f"{shlex.quote(sys.executable)} -m pytest --tb=no -q --no-header -rA"
+        return f"{shlex.quote(interpreter)} -m pytest --tb=no -q --no-header -rA"
     first = Path(parts[0]).name
     if first == "pytest":
-        parts = [sys.executable, "-m", "pytest", *parts[1:]]
+        parts = [interpreter, "-m", "pytest", *parts[1:]]
     elif first.startswith("pytest"):
-        parts = [sys.executable, "-m", "pytest", *parts[1:]]
+        parts = [interpreter, "-m", "pytest", *parts[1:]]
     elif first in {"python", "python3"} or first.startswith("python"):
-        pass
+        if len(parts) >= 3 and parts[1] == "-m" and parts[2] == "pytest":
+            parts[0] = interpreter
     elif "pytest" not in command:
         return command
     elif "pytest" in parts:
@@ -318,13 +358,15 @@ def _pytest_command(command: str | None) -> str:
         # otherwise leave ``pytest`` resolved via PATH, which fails when the
         # launch env omits the pyenv shims.  Rewrite the executable token to the
         # running interpreter so validation never depends on PATH.
-        rewritten: list[str] = []
-        for token in parts:
-            if token == "pytest":
-                rewritten.extend([sys.executable, "-m", "pytest"])
-            else:
-                rewritten.append(token)
-        parts = rewritten
+        pytest_index = parts.index("pytest")
+        if (
+            pytest_index >= 2
+            and parts[pytest_index - 1] == "-m"
+            and Path(parts[pytest_index - 2]).name.startswith("python")
+        ):
+            parts[pytest_index - 2] = interpreter
+        else:
+            parts[pytest_index : pytest_index + 1] = [interpreter, "-m", "pytest"]
     parts = ["-rA" if p == "-rN" else p for p in parts]
     present = set(parts)
     for flag in ("--tb=no", "-q", "--no-header", "-rA"):
