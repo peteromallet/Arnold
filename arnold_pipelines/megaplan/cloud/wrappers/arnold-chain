@@ -19,9 +19,11 @@ readonly PINNED_RUNTIME_MANIFEST
 if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;
 if [[ -n "$PINNED_RUNTIME_MANIFEST" ]]; then export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; fi
 
-# Fail closed (T-0011): a readable per-session ARNOLD_RUNTIME_MANIFEST pin
-# with nonempty epic.runtime_root + epic.expected_head and a successful
-# runtime_provenance check is MANDATORY before any launch.
+# Fail closed (T-0011 / G4-001): a readable per-session ARNOLD_RUNTIME_MANIFEST
+# pin with nonempty epic.runtime_root (Live Tree Authority import_root) plus a
+# successful runtime_provenance import-root check is MANDATORY before any
+# launch. epic.expected_head is telemetry only — Git SHA is not launch
+# authority, so a same-import_root cutover must not pay a two-commit dance.
 if [[ -z "$PINNED_RUNTIME_MANIFEST" ]]; then
   echo "[arnold-chain] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >&2
   exit 24
@@ -78,11 +80,9 @@ if [[ -z "$ENGINE_DIR" ]]; then
   echo "[arnold-chain] isolated_chain_runtime_binding_drift: manifest lacks epic.runtime_root" >&2
   exit 24
 fi
-EXPECTED_REVISION="$(_read_manifest_field "$PINNED_RUNTIME_MANIFEST" "expected_head")"
-if [[ -z "$EXPECTED_REVISION" ]]; then
-  echo "[arnold-chain] isolated_chain_runtime_binding_drift: manifest lacks epic.expected_head" >&2
-  exit 24
-fi
+# G4-001: expected_head stays telemetry. An empty SHA must not fail-close
+# launch; Live Tree Authority is import_root + generation interpreter.
+_TELEMETRY_REVISION="$(_read_manifest_field "$PINNED_RUNTIME_MANIFEST" "expected_head")"
 # T-0301: the generation-interpreter gate (proof completeness + executable
 # check) runs before the provenance check, and BOTH the provenance probe and
 # the launch execute under the generation interpreter — never the ambient
@@ -100,12 +100,17 @@ fi
 # set to exactly the manifest root (worktree-first: runtime code from the
 # pinned worktree, frozen dependencies from the immutable generation) so
 # active imports cannot resolve through an unbound shared checkout.
+# G4-001: do NOT pass --expected-revision. SHA equality is telemetry, not
+# launch authority. Same-import_root after cutover is a non-event.
 if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" \
     "$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
-    --expected-root "$ENGINE_DIR" \
-    --expected-revision "$EXPECTED_REVISION" >/dev/null 2>&1; then
+    --expected-root "$ENGINE_DIR" >/dev/null 2>&1; then
   echo "[arnold-chain] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >&2
   exit 24
+fi
+# Telemetry only: surface the recorded SHA when present, never as a gate.
+if [[ -n "$_TELEMETRY_REVISION" ]]; then
+  echo "[arnold-chain] expected_head telemetry=${_TELEMETRY_REVISION}" >&2
 fi
 
 # ── pre-flight acceptance gate ───────────────────────────────────────

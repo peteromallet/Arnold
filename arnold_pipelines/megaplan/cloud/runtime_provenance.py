@@ -206,13 +206,11 @@ def runtime_provenance(
             errors.append("editable_pth_mismatch")
         if any(not bool(record.get("readable")) for record in pth):
             errors.append("editable_pth_unreadable")
-    if expected_revision and source_revision != expected_revision:
-        # Codex fix 2026-08-17: exact revision check restored. A worker's
-        # seed binds ONE immutable generation; the live checkout revision must
-        # equal the seed's expected_revision exactly. There is no
-        # "follow_accepted_generation" path — a newer accepted manifest head
-        # must never silently re-interpret an already-issued seed.
-        errors.append("source_revision_mismatch")
+    # G4-001: Git SHA is telemetry, not launch authority. Live Tree Authority
+    # is import_root + generation interpreter. A same-import_root commit after
+    # cutover must not fail-close provenance. Record source_revision_mismatch
+    # as an observation only; never append it to errors.
+    revision_mismatch = bool(expected_revision and source_revision != expected_revision)
     return {
         "ok": not errors,
         "errors": errors,
@@ -225,6 +223,7 @@ def runtime_provenance(
         "source_revision": source_revision,
         "runtime_revision": source_revision,
         "imports": imports,
+        "source_revision_mismatch": revision_mismatch,
     }
 
 

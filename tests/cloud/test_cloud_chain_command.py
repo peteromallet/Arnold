@@ -270,16 +270,17 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert 'd.get("schema")=="1"' in command
     assert "all(k in d for k in R)" in command
     assert "all(k in e for k in E)" in command
-    # T-0011: the ENGINE_DIR fallback is gone — the manifest pin is mandatory
-    # and fails closed on a missing/unreadable manifest, empty runtime_root or
-    # expected_head, or a failed runtime_provenance check.
+    # T-0011 / G4-001: the ENGINE_DIR fallback is gone — the manifest pin is
+    # mandatory and fails closed on a missing/unreadable manifest, empty
+    # runtime_root, or a failed runtime_provenance import-root check.
+    # Git SHA (expected_head) is telemetry, never a launch gate.
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=' not in command
     assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in command
     assert "isolated_chain_runtime_binding_drift: runtime manifest unreadable" in command
     assert "isolated_chain_runtime_binding_drift: manifest lacks runtime_root" in command
-    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" in command
+    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" not in command
     assert '--expected-root "$ENGINE_DIR"' in command
-    assert '--expected-revision "$_EXPECTED_REVISION"' in command
+    assert '--expected-revision "$_EXPECTED_REVISION"' not in command
     # G5 round-2 finding 1: the pin existence/readability checks run BEFORE
     # the manifest JSON-reader subprocess — on a missing or unreadable pin
     # the gate exits 24 with ZERO subprocess starts.
@@ -356,18 +357,18 @@ def test_epic_chain_start_command_pins_manifest_before_hot_env_and_fails_closed(
     assert 'd.get("schema")=="1"' in command
     assert "all(k in d for k in R)" in command
     assert "all(k in e for k in E)" in command
-    # G2 round 2: the epic-chain parent launch has NO fixed engine dir — the
-    # per-session manifest pin is mandatory and fails closed (exit 24) on a
-    # missing/unreadable manifest, empty runtime_root or expected_head, or a
-    # failed runtime_provenance check.
+    # G2 round 2 / G4-001: the epic-chain parent launch has NO fixed engine
+    # dir — the per-session manifest pin is mandatory and fails closed (exit
+    # 24) on a missing/unreadable manifest, empty runtime_root, or a failed
+    # runtime_provenance import-root check. Git SHA is telemetry.
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=' not in command
     assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in command
     assert "isolated_chain_runtime_binding_drift: runtime manifest unreadable" in command
     assert "isolated_chain_runtime_binding_drift: manifest lacks runtime_root" in command
-    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" in command
+    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" not in command
     assert "isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" in command
     assert '--expected-root "$ENGINE_DIR"' in command
-    assert '--expected-revision "$_EXPECTED_REVISION"' in command
+    assert '--expected-revision "$_EXPECTED_REVISION"' not in command
     assert (
         'cd "$ENGINE_DIR" && env -u PYTHONHOME PYTHONSAFEPATH=1 '
         'PYTHONPATH="$ENGINE_DIR"' in command
@@ -724,12 +725,12 @@ def test_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
-    # + the T-0301 generation-interpreter read) run inside the pin gate;
-    # provenance + chain start follow.
-    assert len(observations) == 5, observations
+    # Two manifest JSON-reader subprocesses (runtime_root + the T-0301
+    # generation-interpreter read) run inside the pin gate. G4-001: expected_head
+    # is telemetry and is not read as a launch gate. provenance + chain start follow.
+    assert len(observations) == 4, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 3, observations
+    assert len(json_reads) == 2, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 2, observations
     for observation in main:
@@ -756,7 +757,7 @@ def test_chain_launch_keeps_manifest_pin_across_poisoned_hot_env(
         assert hot_env_sourced == "1"
         assert pythonhome == "unset"
     assert "runtime_provenance" in main[0]
-    assert f"--expected-revision {revision}" in main[0]
+    assert "--expected-revision" not in main[0]
     assert "chain start" in main[1]
 
 
@@ -804,13 +805,12 @@ def test_chain_launch_fails_closed_before_chain_on_runtime_drift(
 
     assert result.returncode == 24
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # The three manifest JSON-reader subprocesses (runtime_root +
-    # expected_head + the T-0301 generation-interpreter read) ran inside the
-    # pin gate; provenance is the only main-step invocation (chain start
-    # never ran).
-    assert len(observations) == 4, observations
+    # Two manifest JSON-reader subprocesses (runtime_root + the T-0301
+    # generation-interpreter read) ran inside the pin gate; provenance is the
+    # only main-step invocation (chain start never ran).
+    assert len(observations) == 3, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 3, observations
+    assert len(json_reads) == 2, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 1, observations
     assert "runtime_provenance" in main[0]
@@ -955,12 +955,12 @@ def test_epic_chain_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
-    # + the T-0301 generation-interpreter read) run inside the pin gate;
-    # provenance + epic-chain start follow.
-    assert len(observations) == 5, observations
+    # Two manifest JSON-reader subprocesses (runtime_root + the T-0301
+    # generation-interpreter read) run inside the pin gate. G4-001: SHA is
+    # telemetry. provenance + epic-chain start follow.
+    assert len(observations) == 4, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 3, observations
+    assert len(json_reads) == 2, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 2, observations
     for observation in main:
@@ -1036,12 +1036,6 @@ def test_epic_chain_launch_unbound_manifest_fails_closed_before_launch(
             {"epic": {}},
             0,
             "manifest lacks runtime_root",
-        ),
-        (
-            "no-expected-head",
-            _canonical_manifest_payload("/some/root", expected_head=""),
-            0,
-            "manifest lacks runtime identity",
         ),
         (
             "schema-invalid",
@@ -1185,12 +1179,12 @@ def test_plan_auto_launch_bound_manifest_uses_only_manifest_root_on_pythonpath(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
-    # + the T-0301 generation-interpreter read) run inside the pin gate;
-    # provenance + auto follow.
-    assert len(observations) == 5, observations
+    # Two manifest JSON-reader subprocesses (runtime_root + the T-0301
+    # generation-interpreter read) run inside the pin gate. G4-001: SHA is
+    # telemetry. provenance + auto follow.
+    assert len(observations) == 4, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 3, observations
+    assert len(json_reads) == 2, observations
     main = [o for o in observations if "json.load(open(sys.argv[1]))" not in o]
     assert len(main) == 2, observations
     for observation in main:
@@ -1267,12 +1261,6 @@ def test_plan_auto_launch_unbound_manifest_fails_closed_before_launch(
             {"epic": {}},
             0,
             "manifest lacks runtime_root",
-        ),
-        (
-            "no-expected-head",
-            _canonical_manifest_payload("/some/root", expected_head=""),
-            0,
-            "manifest lacks runtime identity",
         ),
         (
             "schema-invalid",
@@ -1460,12 +1448,12 @@ def test_bootstrap_launch_bound_manifest_reaches_init_with_manifest_root_only(
 
     assert result.returncode == 0, result.stderr
     observations = capture.read_text(encoding="utf-8").splitlines()
-    # Three manifest JSON-reader subprocesses (runtime_root + expected_head
-    # + the T-0301 generation-interpreter read) run inside the pin gate,
-    # then runtime_provenance, then init.
-    assert len(observations) == 5, observations
+    # Two manifest JSON-reader subprocesses (runtime_root + the T-0301
+    # generation-interpreter read) run inside the pin gate, then
+    # runtime_provenance, then init. G4-001: SHA is telemetry.
+    assert len(observations) == 4, observations
     json_reads = [o for o in observations if "json.load(open(sys.argv[1]))" in o]
-    assert len(json_reads) == 3, observations
+    assert len(json_reads) == 2, observations
     provenance = [o for o in observations if "runtime_provenance" in o]
     init = [o for o in observations if "arnold_pipelines.megaplan init" in o]
     assert len(provenance) == 1 and len(init) == 1, observations
@@ -1501,7 +1489,7 @@ def test_chain_spec_enables_post_hot_env_runtime_gate_regardless_of_isolated_run
 
         assert "isolated_chain_runtime_binding_drift" in command
         assert "--expected-root" in command
-        assert "--expected-revision" in command
+        assert "--expected-revision" not in command
         assert ". /workspace/.cloud-hot-env" in command
 
 

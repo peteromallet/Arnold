@@ -545,6 +545,9 @@ def _update_plan(
     target_head: str,
     event_sha256: str,
 ) -> None:
+    # G4-003: do NOT rewrite resume_cursor, latest_failure, last_gate,
+    # active_step, or gate artifacts. Update only the authorized binding
+    # receipt plus append-only pause telemetry.
     meta = plan.setdefault("meta", {})
     if not isinstance(meta, dict):
         meta = {}
@@ -559,24 +562,8 @@ def _update_plan(
     if isinstance(execution, dict):
         execution["target_head"] = target_head
         execution["last_observed_phase"] = "target_rebind"
-    for key in ("gate_artifact_recovery", "gate_feasibility", "replan_feasibility"):
-        meta.pop(key, None)
-    plan.pop("active_step", None)
-    plan.pop("latest_failure", None)
-    plan["last_gate"] = {}
-    plan["resume_cursor"] = {
-        "phase": "critique",
-        "retry_strategy": "fresh_critique_after_project_source_rebind",
-        "project_source_rebind_sha256": event_sha256,
-    }
     plan_pause = meta.get(AUTHORITY_KEY)
     if isinstance(plan_pause, dict):
-        # A source rebind invalidates the relationship between the latest plan
-        # version and its critique-custody receipt.  Returning directly to gate
-        # can therefore loop forever when, for example, plan_v4 exists but only
-        # critique_custody_v3.json survived the cutover.  Always reacquire
-        # critique custody from the rebound source before gating.
-        plan_pause["previous_current_state"] = "planned"
         plan_pause["project_source_rebind_sha256"] = event_sha256
 
 

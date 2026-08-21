@@ -975,3 +975,107 @@ def test_production_occurrence_adopt_wraps_guarded_owner() -> None:
     assert "guarded_occurrence_adoption(" in adopt_block
     assert "fce_adopt=adopt_occurrence" in adopt_block
     assert "payload = adopt_occurrence(" not in adopt_block
+
+
+
+def test_production_chain_start_after_same_import_root_cutover_is_non_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G4-001: a real production launch after same-import_root cutover is a non-event.
+
+    The two-commit dance (expected_head + content-digest rebind) must fail.
+    Live Tree Authority is import_root + generation interpreter; Git SHA is
+    telemetry. A real _chain_start_command / arnold-chain launch must not
+    require SHA equality.
+    """
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    fixture = _Fixture(tmp_path)
+    _stub_identity(monkeypatch, fixture)
+    deliver_runtime_cutover(**fixture.kwargs())  # type: ignore[arg-type]
+    result = same_import_root_commit_after_cutover(
+        binding_root=fixture.binding,
+        import_root=fixture.to_root,
+        manifest_path=fixture.manifest_path,
+        new_head="e" * 40,
+    )
+    assert result["non_event"] is True
+    assert result["rebind"] is False
+    with pytest.raises(CliError) as denied:
+        same_import_root_commit_after_cutover(
+            binding_root=fixture.binding,
+            import_root=fixture.to_root,
+            manifest_path=fixture.manifest_path,
+            new_head="e" * 40,
+            require_rebind=True,
+            require_generation_bump=True,
+        )
+    assert denied.value.code == "same_import_root_is_non_event"
+
+    wrapper = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain").read_text()
+    assert "manifest lacks epic.expected_head" not in wrapper
+    live_lines = [line for line in wrapper.splitlines() if not line.lstrip().startswith("#")]
+    assert all("--expected-revision" not in line for line in live_lines)
+    assert all("EXPECTED_REVISION" not in line for line in live_lines)
+
+    command = cloud_cli._chain_start_command(
+        str(tmp_path / "chain.yaml"),
+        project_dir=str(tmp_path),
+        engine_dir="/fallback/runtime",
+        log_relative="chain.log",
+    )
+    assert "--expected-revision" not in command
+    assert "_EXPECTED_REVISION" not in command
+    assert "manifest lacks runtime identity" not in command
+    assert '--expected-root "$ENGINE_DIR"' in command
+
+    shim = tmp_path / "bin" / "python"
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    capture = tmp_path / "capture.txt"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *json.load*)\n"
+        "    exec \"$REAL_PYTHON\" \"$@\" ;;\n"
+        "  *arnold_pipelines.megaplan.cloud.runtime_provenance*)\n"
+        "    printf '%s\\n' \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "    if printf '%s' \"$*\" | grep -q -- --expected-revision; then exit 97; fi\n"
+        "    exit 0 ;;\n"
+        "  *\"arnold_pipelines.megaplan chain start\"*)\n"
+        "    printf 'launched\\n' >> \"$RUNTIME_CAPTURE\"\n"
+        "    exit 0 ;;\n"
+        "esac\n"
+        "exec \"$REAL_PYTHON\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    accepted = tmp_path / "accepted-runtime"
+    accepted.mkdir()
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import write_manifest as _write
+    stale_head = "0" * 40
+    manifest = _make_manifest(
+        runtime_root=str(accepted),
+        expected_head=stale_head,
+        venv_path=str(accepted / ".venv"),
+        repair_bin=str(accepted / "bin" / "arnold-babysitter"),
+        interpreter_path=str(shim),
+    )
+    manifest_path = tmp_path / "stale-head-manifest.json"
+    _write(manifest, manifest_path)
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "REAL_PYTHON": __import__("sys").executable,
+            "ARNOLD_RUNTIME_MANIFEST": str(manifest_path),
+        },
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    captured = capture.read_text(encoding="utf-8")
+    assert "launched" in captured
+    assert "--expected-revision" not in captured

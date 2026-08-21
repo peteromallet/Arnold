@@ -797,6 +797,10 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "resume-chain", parents=[shared], help="Explicitly resume a durably paused chain"
     )
     resume_chain_parser.add_argument("--actor", default="operator")
+    resume_chain_parser.add_argument("--occurrence", required=False)
+    resume_chain_parser.add_argument("--target", required=False)
+    resume_chain_parser.add_argument("--fence-epoch", type=int, required=False)
+    resume_chain_parser.add_argument("--capability-handle", required=False)
     resume_chain_parser.add_argument(
         "--no-start",
         action="store_true",
@@ -1383,19 +1387,19 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             ]
             if action == "pause-chain":
                 argv.extend(["--reason", str(args.reason)])
-                occurrence = str(getattr(args, "occurrence", "") or "").strip()
-                target = str(getattr(args, "target", "") or "").strip()
-                fence_epoch = getattr(args, "fence_epoch", None)
-                handle = str(getattr(args, "capability_handle", "") or "").strip()
-                if occurrence:
-                    argv.extend(["--occurrence", occurrence])
-                if target:
-                    argv.extend(["--target", target])
-                if fence_epoch is not None:
-                    argv.extend(["--fence-epoch", str(fence_epoch)])
-                if handle:
-                    argv.extend(["--capability-handle", handle])
-            elif bool(getattr(args, "no_start", False)):
+            occurrence = str(getattr(args, "occurrence", "") or "").strip()
+            target = str(getattr(args, "target", "") or "").strip()
+            fence_epoch = getattr(args, "fence_epoch", None)
+            handle = str(getattr(args, "capability_handle", "") or "").strip()
+            if occurrence:
+                argv.extend(["--occurrence", occurrence])
+            if target:
+                argv.extend(["--target", target])
+            if fence_epoch is not None:
+                argv.extend(["--fence-epoch", str(fence_epoch)])
+            if handle:
+                argv.extend(["--capability-handle", handle])
+            if action == "resume-chain" and bool(getattr(args, "no_start", False)):
                 argv.append("--no-start")
             result = provider.ssh_exec(shlex.join(argv))
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
@@ -3655,14 +3659,16 @@ def _manifest_pin_fail_closed_prefix(
     """Shell fragment enforcing the manifest-bound runtime pin (T-0021).
 
     Derives ENGINE_DIR ONLY from the pinned per-session runtime manifest's
-    ``epic.runtime_root`` and requires nonempty ``epic.expected_head`` plus a
-    successful runtime_provenance check.  Missing, unreadable, or disagreeing
-    pins exit 24 (``isolated_chain_runtime_binding_drift``) BEFORE any state
-    load or subprocess starts — there is NO fixed-path shared-root fallback
-    (no ``megaplan.src_path`` read, no ``/workspace/arnold``).  The caller
-    must have exported ``PINNED_RUNTIME_MANIFEST`` (readonly) beforehand and
-    must place this fragment before the first state-loading subprocess.  The
-    pin existence/readability checks here run before this fragment's own
+    ``epic.runtime_root`` (Live Tree Authority import_root) and requires a
+    successful runtime_provenance import-root check.  Missing, unreadable, or
+    disagreeing pins exit 24 (``isolated_chain_runtime_binding_drift``)
+    BEFORE any state load or subprocess starts — there is NO fixed-path
+    shared-root fallback (no ``megaplan.src_path`` read, no
+    ``/workspace/arnold``).  Git SHA (``epic.expected_head``) is telemetry
+    only and is never a launch gate (G4-001).  The caller must have exported
+    ``PINNED_RUNTIME_MANIFEST`` (readonly) beforehand and must place this
+    fragment before the first state-loading subprocess.  The pin
+    existence/readability checks here run before this fragment's own
     manifest JSON-reader subprocesses (G5 round-2 finding 1): on a missing or
     unreadable pin the gate exits 24 with ZERO subprocess starts.  The field
     reads are themselves gated on the CANONICAL manifest schema (G6 round-2
@@ -3716,24 +3722,16 @@ def _manifest_pin_fail_closed_prefix(
         )
         + 'exit 24; '
         'fi; '
-        f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
-        'if [ -z "$_EXPECTED_REVISION" ]; then '
-        + _drift_echo(
-            "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity"
-        )
-        + 'exit 24; '
-        'fi; '
         # T-0301: the generation interpreter gate (proof completeness +
         # executable check) runs before the provenance check, and BOTH the
         # provenance probe and the launch execute under the generation
         # interpreter — never the ambient python and never an editable
-        # install.
+        # install. G4-001: do NOT pass --expected-revision; SHA is telemetry.
         + _generation_interpreter_gate(log_target)
         + 'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
         'PYTHONPATH="$ENGINE_DIR" '
         '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
         '--expected-root "$ENGINE_DIR" '
-        '--expected-revision "$_EXPECTED_REVISION" '
         f'>> {log_target} 2>&1; then '
         + _drift_echo(
             "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime"
@@ -3810,14 +3808,15 @@ def _chain_start_command(
         # live outside the workspace); the megaplan process receives
         # --project-dir and an absolute log target explicitly, so the shell
         # cwd is only a fallback that must point at the accepted root.
-        # Fail closed (T-0011): there is NO fixed-path ENGINE_DIR fallback.
-        # Every production chain start requires a readable per-session
-        # ARNOLD_RUNTIME_MANIFEST pin with nonempty epic.runtime_root +
-        # epic.expected_head and a successful runtime_provenance check,
-        # regardless of isolated_chain_runner.  G5 round-2 finding 1: the
-        # pin existence/readability checks run BEFORE the manifest field-read
-        # subprocesses — on a missing or unreadable pin the gate exits 24
-        # with ZERO subprocess starts.
+        # Fail closed (T-0011 / G4-001): there is NO fixed-path ENGINE_DIR
+        # fallback. Every production chain start requires a readable
+        # per-session ARNOLD_RUNTIME_MANIFEST pin with nonempty
+        # epic.runtime_root (Live Tree Authority import_root) plus a
+        # successful runtime_provenance import-root check, regardless of
+        # isolated_chain_runner. Git SHA (epic.expected_head) is telemetry
+        # only. G5 round-2 finding 1: the pin existence/readability checks
+        # run BEFORE the manifest field-read subprocesses — on a missing or
+        # unreadable pin the gate exits 24 with ZERO subprocess starts.
         prefix += (
             'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then '
             f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >> {log_target}; '
@@ -3834,22 +3833,17 @@ def _chain_start_command(
             f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime_root" >> {log_target}; '
             'exit 24; '
             'fi; '
-            f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
-            'if [ -z "$_EXPECTED_REVISION" ]; then '
-            f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
-            'exit 24; '
-            'fi; '
             # T-0301: the generation interpreter gate runs before the
             # provenance check; BOTH the provenance probe and the launch run
             # under the generation interpreter (worktree-first PYTHONPATH,
             # frozen deps from the immutable generation).  No ambient-python
-            # launch and no editable-install fallback.
+            # launch and no editable-install fallback. G4-001: SHA is
+            # telemetry — do not pass --expected-revision.
             + _generation_interpreter_gate(log_target)
             + 'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
             'PYTHONPATH="$ENGINE_DIR" '
             '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
             '--expected-root "$ENGINE_DIR" '
-            '--expected-revision "$_EXPECTED_REVISION" '
             f'>> {log_target} 2>&1; then '
             f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >> {log_target}; '
             'exit 24; '
@@ -3909,11 +3903,11 @@ def _plan_auto_command(
 
     The auto relaunch is manifest-bound like chain start (T-0021): the engine
     dir (PYTHONPATH) derives ONLY from the per-session runtime manifest pin
-    (``ARNOLD_RUNTIME_MANIFEST`` -> ``epic.runtime_root``) validated against
-    ``epic.expected_head`` by the runtime_provenance check.  There is NO
-    ``megaplan.src_path`` read and NO fixed-path ``/workspace/arnold``
-    fallback; a missing, unreadable, or disagreeing pin exits 24 BEFORE any
-    state load or subprocess starts.
+    (``ARNOLD_RUNTIME_MANIFEST`` -> ``epic.runtime_root``) validated by the
+    runtime_provenance import-root check. Git SHA (``epic.expected_head``)
+    is telemetry only (G4-001). There is NO ``megaplan.src_path`` read and
+    NO fixed-path ``/workspace/arnold`` fallback; a missing, unreadable, or
+    disagreeing pin exits 24 BEFORE any state load or subprocess starts.
     """
     log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
     # Capture the pin before the mutable box-wide hot env is sourced, then
@@ -4468,15 +4462,15 @@ def _epic_chain_start_command(
             run_kind="epic_chain",
             marker_dir=repair_marker_dir,
         )
-    # Fail closed (G2 round 2): there is NO fixed-path ENGINE_DIR fallback
-    # for the epic-chain parent launch.  Every epic-chain start requires a
-    # readable per-session ARNOLD_RUNTIME_MANIFEST pin with nonempty
-    # epic.runtime_root + epic.expected_head and a successful
-    # runtime_provenance check; the manifest root is the ONLY directory that
-    # reaches PYTHONPATH.  G5 round-2 finding 1: the pin existence/
-    # readability checks run BEFORE the manifest field-read subprocesses —
-    # on a missing or unreadable pin the gate exits 24 with ZERO subprocess
-    # starts.
+    # Fail closed (G2 round 2 / G4-001): there is NO fixed-path ENGINE_DIR
+    # fallback for the epic-chain parent launch. Every epic-chain start
+    # requires a readable per-session ARNOLD_RUNTIME_MANIFEST pin with
+    # nonempty epic.runtime_root (Live Tree Authority import_root) plus a
+    # successful runtime_provenance import-root check; the manifest root is
+    # the ONLY directory that reaches PYTHONPATH. Git SHA is telemetry only.
+    # G5 round-2 finding 1: the pin existence/readability checks run BEFORE
+    # the manifest field-read subprocesses — on a missing or unreadable pin
+    # the gate exits 24 with ZERO subprocess starts.
     prefix += (
         'if [ -z "$PINNED_RUNTIME_MANIFEST" ]; then '
         f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing runtime manifest pin" >> {log_target}; '
@@ -4493,21 +4487,15 @@ def _epic_chain_start_command(
         f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime_root" >> {log_target}; '
         'exit 24; '
         'fi; '
-        f'_EXPECTED_REVISION="{_pinned_manifest_field_read("expected_head")}"; '
-        'if [ -z "$_EXPECTED_REVISION" ]; then '
-        f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: manifest lacks runtime identity" >> {log_target}; '
-        'exit 24; '
-        'fi; '
         # T-0301: the generation interpreter gate runs before the provenance
         # check; BOTH the provenance probe and the launch run under the
         # generation interpreter (worktree-first PYTHONPATH, frozen deps
-        # from the immutable generation).
+        # from the immutable generation). G4-001: SHA is telemetry.
         + _generation_interpreter_gate(log_target)
         + 'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
         'PYTHONPATH="$ENGINE_DIR" '
         '"$GEN_INTERPRETER" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
         '--expected-root "$ENGINE_DIR" '
-        '--expected-revision "$_EXPECTED_REVISION" '
         f'>> {log_target} 2>&1; then '
         f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with manifest-bound runtime" >> {log_target}; '
         'exit 24; '

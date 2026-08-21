@@ -892,3 +892,216 @@ def test_production_runtime_rebind_rejects_sha_cas(tmp_path: Path) -> None:
     )
     rc = run_chain_cli(project, args)
     assert rc != 0
+
+
+
+def test_cloud_pause_and_resume_chain_are_sealed_operator_intents(tmp_path: Path) -> None:
+    """G4-002: cloud pause-chain AND resume-chain thread minted identity.
+
+    Session-name handle synthesis is not authority. Absent handle ->
+    capability_absent. A leftover handle keyed to the session name cannot
+    steal pause/resume.
+    """
+    import argparse
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+    from arnold_pipelines.megaplan.cloud import operator_control
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        MutationDenied,
+        attach_mutation_capability,
+    )
+
+    parser = argparse.ArgumentParser()
+    cloud_cli._register_cloud_subcommands(parser)
+    pause = parser.parse_args(
+        [
+            "pause-chain",
+            "--reason",
+            "operator pause",
+            "--occurrence",
+            "occ-1",
+            "--target",
+            "target-1",
+            "--fence-epoch",
+            "3",
+            "--capability-handle",
+            "occ-1",
+        ]
+    )
+    resume = parser.parse_args(
+        [
+            "resume-chain",
+            "--occurrence",
+            "occ-1",
+            "--target",
+            "target-1",
+            "--fence-epoch",
+            "3",
+            "--capability-handle",
+            "occ-1",
+        ]
+    )
+    assert pause.occurrence == "occ-1"
+    assert pause.target == "target-1"
+    assert pause.fence_epoch == 3
+    assert pause.capability_handle == "occ-1"
+    assert resume.occurrence == "occ-1"
+    assert resume.target == "target-1"
+    assert resume.fence_epoch == 3
+    assert resume.capability_handle == "occ-1"
+
+    source = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/cli.py").read_text()
+    dispatch = source.split('if action in {"pause-chain", "resume-chain"}:', 1)[1]
+    dispatch = dispatch.split("if action == \"retire-chain\":", 1)[0]
+    assert 'if action == "pause-chain":' in dispatch
+    assert "argv.extend([\"--occurrence\", occurrence])" in dispatch
+    assert 'if action == "resume-chain"' in dispatch
+    assert "capability_handle" in dispatch
+
+    control_src = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/operator_control.py").read_text()
+    assert "occurrence or session" not in control_src
+    assert "session-name handle synthesis is not authority" in control_src
+
+    marker_path = tmp_path / "demo.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(tmp_path),
+                "remote_spec": str(tmp_path / "chain.yaml"),
+                "relaunch_command": "true",
+                "operator_pause": {"active": True},
+                "should_run": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(MutationDenied) as denied:
+        operator_control.pause_session(
+            spec=tmp_path / "chain.yaml",
+            workspace=tmp_path,
+            session="demo",
+            marker_path=marker_path,
+            reason="operator pause",
+            actor="operator",
+        )
+    assert denied.value.code == "capability_absent"
+    with pytest.raises(MutationDenied) as denied:
+        operator_control.resume_session(
+            spec=tmp_path / "chain.yaml",
+            workspace=tmp_path,
+            session="demo",
+            marker_path=marker_path,
+            actor="operator",
+        )
+    assert denied.value.code == "capability_absent"
+
+    rc = operator_control.main(
+        [
+            "resume",
+            "--spec",
+            str(tmp_path / "chain.yaml"),
+            "--workspace",
+            str(tmp_path),
+            "--session",
+            "demo",
+            "--marker",
+            str(marker_path),
+            "--capability-handle",
+            "demo",
+            "--occurrence",
+            "demo",
+            "--target",
+            "demo",
+            "--fence-epoch",
+            "3",
+            "--no-start",
+        ]
+    )
+    assert rc != 0
+
+    cap = _mint(tmp_path, action=PAUSE_ACTION, occurrence="occ-1", target="target-1")
+    attach_mutation_capability(cap, identity="occ-1")
+    stolen = operator_control.main(
+        [
+            "resume",
+            "--spec",
+            str(tmp_path / "chain.yaml"),
+            "--workspace",
+            str(tmp_path),
+            "--session",
+            "demo",
+            "--marker",
+            str(marker_path),
+            "--capability-handle",
+            "demo",
+            "--occurrence",
+            "demo",
+            "--target",
+            "demo",
+            "--fence-epoch",
+            "3",
+            "--no-start",
+        ]
+    )
+    assert stolen != 0
+
+
+
+def test_target_rebind_preserves_resume_cursor_and_plan_payload_bytes(tmp_path: Path) -> None:
+    """G4-003: target_rebind must not rewrite the logical resume cursor.
+
+    Cursor and plan payload remain byte-equivalent through rebind. The
+    rebind updates only the authorized binding; the cloud wrap must not
+    observe a durable cursor mutation.
+    """
+    from arnold_pipelines.megaplan.chain.target_rebind import _update_plan
+    from arnold_pipelines.megaplan.cloud.target_rebind import target_rebind as cloud_target_rebind
+
+    source = (REPO_ROOT / "arnold_pipelines/megaplan/chain/target_rebind.py").read_text()
+    assert "fresh_critique_after_project_source_rebind" not in source
+    assert 'plan["resume_cursor"]' not in source
+
+    plan = {
+        "name": "m7-plan",
+        "current_state": "paused",
+        "resume_cursor": {
+            "phase": "gate",
+            "retry_strategy": "repair_phase_contract",
+        },
+        "latest_failure": {"kind": "deterministic_phase_failure", "phase": "gate"},
+        "last_gate": {"ok": False},
+        "active_step": None,
+        "meta": {
+            "operator_pause": {
+                "schema_version": "arnold.megaplan.operator-pause.v1",
+                "previous_current_state": "blocked",
+            },
+            "chain_policy": {"milestone_base_sha": "a" * 40},
+            "execution_environment": {"target_head": "a" * 40},
+            "kept": True,
+        },
+    }
+    cursor_before = resume_cursor_bytes(plan)
+    payload_before = plan_payload_without_pause(plan)
+    _update_plan(
+        plan,
+        binding={"current": {"head": "b" * 40}},
+        target_head="b" * 40,
+        event_sha256="c" * 64,
+    )
+    assert resume_cursor_bytes(plan) == cursor_before
+    assert plan_payload_without_pause(plan) == payload_before
+    assert plan["resume_cursor"] == {
+        "phase": "gate",
+        "retry_strategy": "repair_phase_contract",
+    }
+    assert plan["latest_failure"]["phase"] == "gate"
+    assert plan["last_gate"] == {"ok": False}
+    assert plan["meta"]["chain_policy"]["milestone_base_sha"] == "b" * 40
+    assert plan["meta"]["project_source_binding"]["current"]["head"] == "b" * 40
+    assert plan["meta"]["operator_pause"]["project_source_rebind_sha256"] == "c" * 64
+
+    wrap = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/target_rebind.py").read_text()
+    assert "cursor_mutated" in wrap
+    assert "plan_payload_mutated" in wrap
+    assert cloud_target_rebind.__doc__

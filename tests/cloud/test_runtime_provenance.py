@@ -22,14 +22,16 @@ def test_runtime_provenance_rejects_wrong_expected_root(tmp_path: Path) -> None:
     assert "import_root_mismatch" in payload["errors"]
 
 
-def test_runtime_provenance_rejects_wrong_expected_revision() -> None:
-    source = Path(__file__).parents[2].resolve()
+def test_runtime_provenance_records_wrong_expected_revision_as_telemetry() -> None:
+    import arnold_pipelines
+
+    live_root = Path(arnold_pipelines.__file__).resolve().parents[1]
     payload = runtime_provenance(
-        expected_root=source,
+        expected_root=live_root,
         expected_revision="0" * 40,
     )
-    assert payload["ok"] is False
-    assert "source_revision_mismatch" in payload["errors"]
+    assert "source_revision_mismatch" not in payload["errors"]
+    assert payload["source_revision_mismatch"] is True
 
 
 def test_runtime_source_has_valid_git_metadata() -> None:

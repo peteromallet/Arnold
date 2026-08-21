@@ -520,18 +520,18 @@ def test_cutover_switches_configured_branch_and_rebinds_both_states(
     assert chain["metadata"]["execution_environment"]["target_head"] == fixture["target"]
     assert chain["target_base_ref"] == "launch-base-must-not-change"
     assert plan["current_state"] == "paused"
-    assert plan["meta"]["operator_pause"]["previous_current_state"] == "planned"
+    assert plan["meta"]["operator_pause"]["previous_current_state"] == "blocked"
     assert chain["metadata"]["operator_pause"]["previous_plan_state"] == "planned"
     assert chain["metadata"]["operator_pause"]["previous_chain_last_state"] == "planned"
     assert plan["resume_cursor"] == {
-        "phase": "critique",
-        "retry_strategy": "fresh_critique_after_project_source_rebind",
-        "project_source_rebind_sha256": binding["rebind_events"][0][
-            "content_sha256"
-        ],
+        "phase": "gate",
+        "retry_strategy": "repair_phase_contract",
     }
-    assert "latest_failure" not in plan
-    assert "gate_artifact_recovery" not in plan["meta"]
+    assert plan["latest_failure"] == {
+        "kind": "deterministic_phase_failure",
+        "phase": "gate",
+    }
+    assert plan["meta"]["gate_artifact_recovery"] == {"stale": True}
     assert not (fixture["plan_dir"] / "phase_result.json").exists()
     invalidated = binding["rebind_events"][0]["invalidated_artifacts"]
     assert invalidated[0]["artifact"] == "phase_result.json"
@@ -729,6 +729,10 @@ def test_rollback_is_exact_inverse_before_execute(tmp_path: Path) -> None:
         "rollback",
     ]
     assert plan["meta"]["chain_policy"]["milestone_base_sha"] == fixture["source"]
+    assert plan["resume_cursor"] == {
+        "phase": "gate",
+        "retry_strategy": "repair_phase_contract",
+    }
 
 
 def test_cutover_can_repeat_after_exact_pre_execute_rollback(tmp_path: Path) -> None:

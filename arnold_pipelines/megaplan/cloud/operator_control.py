@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.cloud.current_target_liveness import MutationDenied
 from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
     require_production_operator_binding,
 )
@@ -92,20 +93,11 @@ def pause_session(
 ) -> dict[str, Any]:
     marker, marker_sha256 = _load_marker(marker_path)
     if capability is None:
-        class _Args:
-            pass
-        args = _Args()
-        args.occurrence = occurrence or session
-        args.target = target or session
-        args.fence_epoch = fence_epoch
-        args.capability_handle = occurrence or session
-        args.mutation_capability = None
-        capability = require_production_operator_binding(
-            args, action="pause_chain", scope="pause_chain"
+        raise MutationDenied(
+            "pause_session requires a process-held minted MutationCapability; "
+            "session-name handle synthesis is not authority",
+            code="capability_absent",
         )
-        occurrence = capability.occurrence
-        target = capability.target
-        fence_epoch = capability.fence_epoch
     result = pause_chain(
         spec,
         workspace,
@@ -176,20 +168,11 @@ def resume_session(
 ) -> dict[str, Any]:
     marker, marker_sha256 = _load_marker(marker_path)
     if capability is None:
-        class _Args:
-            pass
-        args = _Args()
-        args.occurrence = occurrence or session
-        args.target = target or session
-        args.fence_epoch = fence_epoch
-        args.capability_handle = occurrence or session
-        args.mutation_capability = None
-        capability = require_production_operator_binding(
-            args, action="pause_chain", scope="pause_chain"
+        raise MutationDenied(
+            "resume_session requires a process-held minted MutationCapability; "
+            "session-name handle synthesis is not authority",
+            code="capability_absent",
         )
-        occurrence = capability.occurrence
-        target = capability.target
-        fence_epoch = capability.fence_epoch
     relaunch: str | None = None
     if start_runner:
         relaunch = marker_relaunch_command(marker)
@@ -426,21 +409,34 @@ def main(argv: list[str] | None = None) -> int:
         "marker_path": Path(args.marker),
         "actor": args.actor,
     }
-    payload = (
-        pause_session(
-            **common,
-            reason=args.reason,
-            occurrence=args.occurrence,
-            target=args.target,
-            fence_epoch=args.fence_epoch,
+    try:
+        binding = require_production_operator_binding(
+            args,
+            action="pause_chain",
+            scope="pause_chain",
         )
-        if args.action == "pause"
-        else resume_session(
-            **common,
-            no_push=args.no_push,
-            start_runner=not args.no_start,
-        )
-    )
+        if args.action == "pause":
+            payload = pause_session(
+                **common,
+                reason=args.reason,
+                capability=binding,
+                occurrence=binding.occurrence,
+                target=binding.target,
+                fence_epoch=binding.fence_epoch,
+            )
+        else:
+            payload = resume_session(
+                **common,
+                no_push=args.no_push,
+                start_runner=not args.no_start,
+                capability=binding,
+                occurrence=binding.occurrence,
+                target=binding.target,
+                fence_epoch=binding.fence_epoch,
+            )
+    except MutationDenied as denied:
+        print(json.dumps({"success": False, "error": denied.code, "message": str(denied)}, indent=2, sort_keys=True))
+        return 2
     print(json.dumps({"success": True, **payload}, indent=2, sort_keys=True))
     return 0
 

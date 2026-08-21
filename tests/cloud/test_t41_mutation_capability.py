@@ -653,3 +653,106 @@ def test_static_search_proves_no_bypassing_in_scope_consumer() -> None:
     for producer in ("manual_repair_trigger.py", "repair_requests.py", "auto.py", "maintenance_recovery.py"):
         assert producer in out_of_scope_names
 
+
+
+
+def test_watchdog_marker_deletions_require_minted_capability_or_are_observe_only() -> None:
+    """G4-004: the five rm -f sites require minted MutationCapability.
+
+    canonical_mutation_fenced always returns 0 and is not a grant.
+    No capability -> no deletion. Clearing needs-human unparks automation.
+    """
+    wrapper = REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"
+    source = wrapper.read_text(encoding="utf-8")
+    sites = (
+        "T29-BYPASS-186B",
+        "T29-BYPASS-197",
+        "T29-BYPASS-198",
+        "T29-BYPASS-200",
+        "T29-BYPASS-201",
+        "T29-BYPASS-151",
+    )
+    for site in sites:
+        idx = source.index(site)
+        window = source[max(0, idx - 400) : idx]
+        assert "MUTATION_CAPABILITY_PRESENT" in window, site
+        assert 'MUTATION_CAPABILITY_PRESENT:-0}" != "1"' in window or 'MUTATION_CAPABILITY_PRESENT:-0}" != "1"' in source[max(0, idx - 500) : idx + 80], site
+
+    meta = source[source.index("meta_dispatch_marker_clear() {"):]
+    meta = meta[: meta.index("write_partial_liveness_tick() {")]
+    assert 'MUTATION_CAPABILITY_PRESENT:-0}" != "1"' in meta
+    assert "observe-only without minted MutationCapability" in meta
+
+    fence = source[source.index("canonical_mutation_fenced() {"):]
+    fence = fence[: fence.index("babysitter_parked_chain_stall")]
+    assert "return 0" in fence
+    assert "canonical_mutation_permitted=1" not in source
+
+
+
+def test_watchdog_five_rm_sites_are_observe_only_without_minted_capability(
+    tmp_path: Path,
+) -> None:
+    """G4-004 behavioral: no capability -> no deletion at the five sites."""
+    import subprocess
+    import textwrap
+
+    wrapper = REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"
+    source = wrapper.read_text(encoding="utf-8")
+
+    def _extract(name: str, until: str) -> str:
+        start = source.index(f"{name}() {{")
+        end = source.index(f"{until}() {{", start)
+        return source[start:end]
+
+    root = tmp_path / "g4-004"
+    root.mkdir()
+    session = "demo-session"
+    marker_dir = root / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    log_path = root / "watchdog.log"
+    workspace = root / "workspace"
+    workspace.mkdir()
+    spec = workspace / "chain.yaml"
+    spec.write_text("anchors: {}\n", encoding="utf-8")
+    meta_marker = marker_dir / f"{session}.meta-dispatch"
+    meta_pgid = marker_dir / f"{session}.meta-pgid"
+    env_gone = marker_dir / f"{session}.env-gone"
+    for path, body in (
+        (meta_marker, "dispatch\n"),
+        (meta_pgid, "123\n"),
+        (env_gone, "2\n"),
+    ):
+        path.write_text(body, encoding="utf-8")
+
+    helpers = "\n".join(
+        [
+            _extract("safe_name", "repair_pidfile_path"),
+            _extract("meta_dispatch_marker_path", "meta_pgid_path"),
+            _extract("meta_pgid_path", "session_marker_path"),
+            _extract("meta_dispatch_marker_clear", "write_partial_liveness_tick"),
+            _extract("env_gone_sidecar_path", "environment_gone_check"),
+            _extract("environment_gone_check", "persist_environment_gone_outcome"),
+        ]
+    )
+    script = textwrap.dedent(
+        f"""
+        set -euo pipefail
+        MARKER_DIR={str(marker_dir)!r}
+        REPAIR_DATA_DIR={str(repair_data_dir)!r}
+        LOG={str(log_path)!r}
+        MUTATION_CAPABILITY_PRESENT=0
+        ENV_GONE_STRIKES=3
+        log() {{ printf '%s\\n' "$*" >>"$LOG"; }}
+        authority_gap_continue() {{ return 0; }}
+        {helpers}
+        meta_dispatch_marker_clear {session!r}
+        environment_gone_check {session!r} {str(workspace)!r} {str(spec)!r} >/dev/null || true
+        """
+    )
+    subprocess.run(["bash", "-c", script], check=True, cwd=str(root))
+    assert meta_marker.exists()
+    assert meta_pgid.exists()
+    assert env_gone.exists()

@@ -88,6 +88,19 @@ def plan_payload_without_pause(plan: Mapping[str, Any]) -> bytes:
     meta = payload.get("meta")
     if isinstance(meta, dict):
         meta.pop("operator_pause", None)
+        # Authorized binding receipt (import_root / interpreter / project
+        # source) is not the logical plan payload. G4-003 preserves cursor
+        # + payload; rebind may update only the authorized binding.
+        meta.pop("project_source_binding", None)
+        policy = meta.get("chain_policy")
+        if isinstance(policy, dict):
+            policy.pop("milestone_base_sha", None)
+            meta["chain_policy"] = policy
+        execution = meta.get("execution_environment")
+        if isinstance(execution, dict):
+            execution.pop("target_head", None)
+            execution.pop("last_observed_phase", None)
+            meta["execution_environment"] = execution
         payload["meta"] = meta
     return _canonical_bytes(payload)
 
