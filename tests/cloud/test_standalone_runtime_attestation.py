@@ -84,7 +84,7 @@ def test_standalone_seed_validates_and_process_attestation_binds_authority(
     state = tmp_path / "runtime-launch"
     state.mkdir(mode=0o700)
     state.chmod(0o700)
-    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root: state)
+    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root, create=True: state)
     paths = attestation.standalone_dispatch_paths(
         Path(str(seed["expected_root"])),
         head=str(seed["expected_revision"]),
@@ -265,7 +265,7 @@ def test_publication_pointer_is_content_addressed_and_rejects_tampering(
     state = tmp_path / "runtime-launch"
     state.mkdir(mode=0o700)
     state.chmod(0o700)
-    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root: state)
+    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root, create=True: state)
     paths = attestation.standalone_dispatch_paths(root, head=revision, seed_sha256=seed["content_sha256"])
     published = attestation.write_standalone_runtime_publication(
         seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
@@ -469,7 +469,7 @@ def _publish_healthy_state(
     """Publish a healthy standalone state into an isolated state directory."""
     state = tmp_path / "runtime-launch"
     state.mkdir(mode=0o700)
-    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root: state)
+    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root, create=True: state)
     paths = attestation.standalone_dispatch_paths(
         root, head=revision, seed_sha256=str(seed["content_sha256"])
     )
@@ -598,3 +598,48 @@ def test_resident_process_read_rejects_unsafe_status_directory_at_0755(
     assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
     assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
     assert paths["status"].read_bytes() == status_before
+
+
+def test_standalone_load_rejection_does_not_mutate_filesystem(tmp_path: Path) -> None:
+    """Rejected standalone loads create no directories and change no modes."""
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def filesystem_snapshot() -> dict[str, tuple[str, int]]:
+        return {
+            str(path.relative_to(root)): (
+                "dir" if path.is_dir() else "file",
+                stat.S_IMODE(path.lstat().st_mode),
+            )
+            for path in sorted(root.rglob("*"))
+        }
+
+    def expect_rejection(context: str) -> None:
+        before = filesystem_snapshot()
+        with pytest.raises(CliError):
+            attestation.load_standalone_runtime_dispatch_pointer(root)
+        assert filesystem_snapshot() == before, f"load mutated filesystem: {context}"
+
+    expect_rejection("missing .megaplan parent")
+    (root / ".megaplan").mkdir(mode=0o700)
+    expect_rejection("missing .megaplan/resident parent")
+    (root / ".megaplan" / "resident").mkdir(mode=0o700)
+    expect_rejection("missing runtime-launch state directory")
+    state = root / ".megaplan" / "resident" / "runtime-launch"
+    state.mkdir(mode=0o700)
+    expect_rejection("missing operational directories")
+    (state / "seeds").mkdir(mode=0o700)
+    expect_rejection("missing receipts and status directories")
+    assert not (state / "receipts").exists()  # never created by rejection
+    assert not (state / "status").exists()  # never created by rejection
+    (state / "receipts").mkdir(mode=0o700)
+    (state / "status").mkdir(mode=0o700)
+    expect_rejection("missing dispatch pointer")
+    assert not (state / "seeds" / "dispatch-current.json").exists()
+    state.chmod(0o755)
+    expect_rejection("unsafe state directory mode")
+    assert stat.S_IMODE(state.stat().st_mode) == 0o755  # never repaired
+    state.chmod(0o700)
+    (state / "receipts").chmod(0o755)
+    expect_rejection("unsafe receipts directory mode")
+    assert stat.S_IMODE((state / "receipts").stat().st_mode) == 0o755  # never repaired

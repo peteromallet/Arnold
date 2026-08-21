@@ -1066,11 +1066,17 @@ def _exclusive_write_json(
         raise
 
 
-def standalone_runtime_launch_dir(expected_root: Path) -> Path:
+def standalone_runtime_launch_dir(expected_root: Path, *, create: bool = True) -> Path:
     """Return the root-custodied resident launch state directory.
 
     The root is intentionally resolved strictly: a resident attestation is
     never issued for a missing checkout or through a symlinked repository.
+
+    ``create=False`` is the read-only contract for every load/read path: the
+    existing root, state, and parent custody chain are validated without any
+    ``mkdir``, ``chmod``, or write, so a rejected load can never repair or
+    normalize reused state.  Creation and ``0700`` normalization remain
+    exclusive to true publication and process-create callers (the default).
     """
     try:
         root = expected_root.expanduser().resolve(strict=True)
@@ -1081,7 +1087,25 @@ def standalone_runtime_launch_dir(expected_root: Path) -> Path:
         state.relative_to(root)
     except ValueError as exc:  # defensive; the relative constant is fixed
         raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state escaped repository root") from exc
-    for directory in (root / ".megaplan", root / ".megaplan" / "resident", state):
+    chain = (root / ".megaplan", root / ".megaplan" / "resident", state)
+    if not create:
+        # Validate-only: fail closed on missing, symlinked, non-directory, or
+        # permissive custody state; never touch the filesystem.
+        for directory in chain:
+            if directory.is_symlink():
+                raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state contains a symlink")
+            try:
+                info = directory.stat()
+            except FileNotFoundError as exc:
+                raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state is unavailable") from None
+            except OSError as exc:
+                raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state is unreadable") from exc
+            if not stat.S_ISDIR(info.st_mode):
+                raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state is not a real directory")
+        if stat.S_IMODE(state.stat().st_mode) != 0o700:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state permissions are unsafe")
+        return state
+    for directory in chain:
         if directory.exists() and directory.is_symlink():
             raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state contains a symlink")
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1342,7 +1366,7 @@ def build_standalone_runtime_attestation_receipt(
 
 
 def load_standalone_runtime_dispatch_pointer(root: Path) -> dict[str, Any]:
-    state = standalone_runtime_launch_dir(root)
+    state = standalone_runtime_launch_dir(root, create=False)
     for name in ("seeds", "receipts", "status"):
         _require_standalone_operational_dir(state, name, create=False)
     pointer_path = state / "seeds" / "dispatch-current.json"
@@ -1369,7 +1393,7 @@ def load_standalone_runtime_dispatch_pointer(root: Path) -> dict[str, Any]:
                 raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch object permissions are unsafe")
         except OSError as exc:
             raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch object is unreadable") from exc
-        state = standalone_runtime_launch_dir(resolved_root)
+        state = standalone_runtime_launch_dir(resolved_root, create=False)
         try:
             lexical = path.relative_to(state)
         except ValueError as exc:
@@ -2392,7 +2416,7 @@ def configured_process_attestation_path(
 ) -> Path:
     value = str(os.environ.get("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION") or "").strip()
     if seed is not None and seed.get("authority") == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
-        return standalone_runtime_launch_dir(Path(str(seed.get("expected_root") or ""))) / "status" / (
+        return standalone_runtime_launch_dir(Path(str(seed.get("expected_root") or "")), create=False) / "status" / (
             f"{component}.runtime-process-attestation.json"
         )
     if value:
@@ -2432,8 +2456,8 @@ def require_configured_runtime_launch(
     pid = target_pid or os.getpid()
     attestation_path = configured_process_attestation_path(component, seed=seed)
     if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
-        state = standalone_runtime_launch_dir(Path(str(seed.get("expected_root") or "")))
-        _require_standalone_operational_dir(state, "status", create=False)
+        state = standalone_runtime_launch_dir(Path(str(seed.get("expected_root") or "")), create=create)
+        _require_standalone_operational_dir(state, "status", create=create)
         if attestation_path.is_symlink():
             raise CliError(RUNTIME_ATTESTATION_ERROR, "resident process attestation path is a symlink")
         try:
