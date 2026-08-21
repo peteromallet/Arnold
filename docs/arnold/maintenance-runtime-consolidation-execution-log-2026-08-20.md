@@ -377,3 +377,9 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - A review that names musts without evidence is incomplete — mechanically rejected (not a second review round).
 - Re-dispatched the single T5.1 review to a FRESH Grok instance with an explicit demand for the complete finding text (evidence paths, file:function, counterexamples, proposed fix per finding).
 
+
+## G5 revisions — done (a76d12041e); routing switch to ox-alpha
+
+- G5 musts fixed by Grok XHARD-REVISION (mrc-f2571f70): G5-001 one charge owner (complete_run on the launched BudgetState; load_budget_state/settle no longer fire on live subprocess; test proves consumed==3.0, run_count==1 after persist active_run + suite duration=3); G5-002 scope-recovery side path admits v2 without v1 per-command/total-max (test: `timeout 180` + budget 200 admits, subprocess_timeout_seconds==180; v1 still fails). Commit `a76d12041e` on task branch.
+- OPERATOR DIRECTIVE (2026-08-22): switch XHARD task routing from Grok 4.6 to **stealth/ox-alpha via OpenRouter**. Wrapper updated: `scripts/run_maintenance_consolidation_agent.py` LAUNCHERS gains `"ox-alpha": (launch_omp_agent.py, "openrouter/stealth/ox-alpha")`; ROUTES remaps XHARD/XHARD-REVIEW/XHARD-REVISION/JUDGMENT → ox-alpha. Availability probed: omp built-in openrouter provider resolves `openrouter/stealth/ox-alpha` (1M ctx / 131K out), live ping OK. HARD/Luna, SOL-REVIEW/Sol unchanged. 15 wrapper tests pass.
+- Pending: fresh-role G5 re-review of the full Batch-5 diff (via ox-alpha now), then integrate G5-rev a76d12041e, then Batch 6.
