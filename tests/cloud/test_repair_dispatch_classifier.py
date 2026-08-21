@@ -872,6 +872,7 @@ def _quality_dispatch_fixture(tmp_path: Path) -> tuple[dict[str, object], dict[s
         "name": "review-quality-plan",
         "current_state": "blocked",
         "history": [{"step": "review", "result": "needs_rework"}] * 4,
+        "meta": {"total_cost_usd": 0.0},
     }
     failure = _review_quality_block_failure(
         state=state,  # type: ignore[arg-type]

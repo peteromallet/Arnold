@@ -1810,6 +1810,7 @@ def classify_repair_dispatch(
             current_state=current_state,
             retry_strategy=normalized_retry_strategy,
             failure_kind=failure_kind,
+            latest_failure=failure_payload,
             event_plan_dir=event_plan_dir,
             target_payload=target_payload,
             human_blocker_classification=human_blocker_classification,
@@ -2107,6 +2108,31 @@ def _classify_repair_dispatch_canonical(
         CanonicalState.REAL_IMPLEMENTATION_BLOCK,
         CanonicalState.RETRYABLE_EXECUTION_BLOCK,
     }:
+        if failure_kind in {
+            "quality_gate_blocked",
+            "review_quality_blocked_unknown",
+            "quality_gate_circuit_open",
+        } and not _is_evidence_bound_deterministic_quality_block(
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+            latest_failure=latest_failure,
+            current_target=current_target,
+        ):
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_HUMAN_REQUIRED,
+                dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
+                rationale=(
+                    "resolver enforcement: quality_gate_blocked admits L1 only through "
+                    "the evidence-bound deterministic quality-block gate",
+                ),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
         if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
             return _make_dispatch_decision(
                 decision=DISPATCH_DECISION_REPAIRING,
@@ -2414,6 +2440,7 @@ def _classify_from_recovery_view(
     current_state: str,
     retry_strategy: str,
     failure_kind: str,
+    latest_failure: Mapping[str, Any],
     event_plan_dir: Path | None,
     target_payload: Mapping[str, Any],
     human_blocker_classification: Any,
@@ -2567,6 +2594,31 @@ def _classify_from_recovery_view(
         rationale.append(
             "recovery view diagnostics: " + ", ".join(sorted(recovery_diag_codes))
         )
+
+    latest_failure = _as_mapping(latest_failure)
+    quality_label = failure_kind in {
+        "quality_gate_blocked",
+        "review_quality_blocked_unknown",
+        "quality_gate_circuit_open",
+    } or _as_text(latest_failure.get("kind")) in {
+        "quality_gate_blocked",
+        "review_quality_blocked_unknown",
+        "quality_gate_circuit_open",
+    }
+    if quality_label and decision == DISPATCH_DECISION_L1:
+        if not _is_evidence_bound_deterministic_quality_block(
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind or _as_text(latest_failure.get("kind")),
+            latest_failure=latest_failure,
+            current_target=target_payload,
+        ):
+            decision = DISPATCH_DECISION_HUMAN_REQUIRED
+            dispatch_intent = DISPATCH_INTENT_HUMAN_REQUIRED
+            rationale.append(
+                "recovery view: quality_gate_blocked admits L1 only through "
+                "evidence-bound deterministic quality-block gate"
+            )
 
     return _make_dispatch_decision(
         decision=decision,
@@ -5326,10 +5378,19 @@ def _is_evidence_bound_deterministic_quality_block(
         if _as_text(target.get("target_fingerprint"))
         else _as_text(_as_mapping(current_target.get("plan_state")).get("fingerprint"))
     )
+    live_current_state = _first_non_empty(
+        _as_text(_as_mapping(current_target.get("plan_state")).get("current_state")),
+        _as_text(_as_mapping(current_target.get("current_refs")).get("plan_current_state")),
+        current_state,
+    )
+    live_history_index = _review_quality_target_cursor(current_target).get("history_index")
     if (
         not target
         or dict(target) != dict(failure_target)
         or _as_text(target.get("plan_name")) != _review_quality_plan_name(current_target)
+        or _as_text(target.get("current_state")) != "blocked"
+        or _as_text(target.get("current_state")) != live_current_state
+        or target.get("history_index") != live_history_index
         or not target_fingerprint
         or target_fingerprint != current_target_fingerprint
     ):

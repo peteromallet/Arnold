@@ -167,13 +167,11 @@ for chain_path in chains:
     kind = str(failure.get("kind") or "").strip().lower()
     message = str(failure.get("message") or "").strip().lower()
     blocked = str(state.get("current_state") or "").strip().lower() == "blocked"
-    quality_block = (
-        kind.startswith("review_quality_blocked")
-        or kind in {"quality_gate_blocked", "review_rework_exhausted"}
-        or "review rework budget exhausted" in message
-    )
-    if blocked and quality_block:
-        print(f"durable_review_quality_block:{kind or 'unknown'}")
+    # Label-only quality_gate_blocked is not a supervisor L1 admission path.
+    # Durable review-quality repair is admitted only by the shared evidence-bound
+    # classifier (dispatch_l1_repair), never by kind/message tokens here.
+    if blocked and kind == "review_rework_exhausted":
+        print(f"durable_review_quality_block:{kind}")
     break
 PY
 )"
