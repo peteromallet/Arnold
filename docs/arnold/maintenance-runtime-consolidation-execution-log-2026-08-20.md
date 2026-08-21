@@ -219,4 +219,21 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - R002-003/004 closure verification (mrc-fe6da83d…): **CLOSED, pass with no findings**. Final tip 0241c065; validator valid; reachable-blob scan 36,474 blobs / 0 key matches; safety+seed refs intact; J1/J2/G0 receipts unchanged; no T4.4 material.
 - F-002 chain complete: J3 judgment → R002 redaction + history rewrite → R002-REV2 (receipt/map/operator-amendment disposition) → R003 wrapper lifecycle (deactivation path) → R003-REV2 (lossless) → R003-REV3 (digest recompute) → REG-repair (closed-record digest) → complete re-review + closure review. All J3 push-unblock conditions met.
 - NEXT: batch-0 push (explicit HEAD:fixer/runtime-convergence-r, force-with-lease of rewritten history after clean-scan proof per J3) → then plan-amendment verification + J4 → Batch 1.
+- Supplement (F-002/J3 hygiene chain): The earlier closure claim covered the one-field graph only and is superseded for the current graph by F-004/J4. The historical section and its one-field findings remain preserved.
 
+
+## F-004 — GitHub push protection found ADDITIONAL secrets in same artifact (J3 condition triggered)
+
+- INT-b0push3 (mrc-e82c7c04…): force-with-lease push `HEAD:fixer/runtime-convergence-r` rejected by GitHub push protection: `push declined due to repository rule violations`, commit 1dbcc2ae9f, path `docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt:6` (the Config.Env array). J3's own residual-risk note said exactly this: "If a later scan finds additional push-blocking tokens in the same inspect, stop and route a new material judgment; do not silently broaden."
+- Inventory (env-field names/lengths only; values never printed): Config.Env has 32 entries; DEEPSEEK_API_KEY already redacted (placeholder len 21); DISCORD_BOT_TOKEN len 72 (Discord bot-token format); GROQ_API_KEY len 56 (Groq API key format); MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV is an env-NAME reference ("GROQ") not a secret; all other entries are plain config/paths.
+- Local reachable-graph scan (count-only, custom pattern) passes because it only looks for the original captured key; GitHub's push protection uses its own broader secret patterns (Discord/Groq/etc.) — the local scan is not a substitute for GitHub's secret-scanning rule set.
+- Decision: fresh Grok 4.6 material judgment (J4) per J3 — may the redaction be broadened to DISCORD_BOT_TOKEN + GROQ_API_KEY (and any other GitHub-flagged field) under the same single-field-per-record discipline, or must the artifact be handled differently (exclude/rotate/etc.)? Push stays blocked pending J4.
+
+
+## F-004/J4 — evidence recorder record
+
+- Finding: F-004. GitHub push protection rejected INT-b0push3 for `DISCORD_BOT_TOKEN` and `GROQ_API_KEY` in `docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt:6`.
+- Field inventory (names and lengths only): `DEEPSEEK_API_KEY` placeholder length 21; `DISCORD_BOT_TOKEN` length 72; `GROQ_API_KEY` length 56.
+- J4 ruling: `AMEND` / `A-extended`. Apply per-field redaction to the exact set `{DEEPSEEK_API_KEY, DISCORD_BOT_TOKEN, GROQ_API_KEY}`; retain the existing placeholder for `DEEPSEEK_API_KEY`; replace only the two newly authorized field values with their named placeholders; preserve all other fields and structure. Do not redact `MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV` (field length 12) or any other non-flagged field.
+- Push disposition: `BLOCKED`. J4 alone does not rewrite history or unblock the push. Push remains blocked until the receipt, chained digests, complete reachable-history rewrite, broader non-echoing scan, validator pass, and independent `[HARD-REVIEW]` pass are complete.
+- Next route: Luna evidence recorder → Luna `[HARD-REVISION]` implementer → independent Luna `[HARD-REVIEW]` → existing integration/push role using `HEAD:fixer/runtime-convergence-r` and no additional refspec.

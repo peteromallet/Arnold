@@ -301,10 +301,10 @@
       "status": "captured"
     },
     {
-      "byte_length": 8275,
+      "byte_length": 8198,
       "captured_at": "2026-08-20T14:34:04Z",
       "container": "megaplan-cloud-agent-resident-only",
-      "content_digest": "sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2",
+      "content_digest": "sha256:c68fcfbb56e5b97d8a89dcb12cae88e85592afa90ef251ab5b51591edff28871",
       "host": "cloud",
       "path": "baseline/T0.0/raw-cloud-container.txt",
       "source_cursor": null,

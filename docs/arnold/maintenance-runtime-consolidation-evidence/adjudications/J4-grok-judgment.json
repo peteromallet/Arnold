@@ -1,0 +1,644 @@
+{
+  "id": "J4",
+  "kind": "material-judgment",
+  "role": "JUDGMENT",
+  "label": "[XHARD-REVIEW]",
+  "model": "grok-4.6",
+  "verdict": "AMEND",
+  "verdict_semantics": "AMEND = Candidate A, extended: apply J3's amended in-place per-field redaction to each additional GitHub-proven credential in the same T0.0 inspect; preserve T0.0 structure; rewrite reachable history; re-validate. Not PASS (push stays blocked until the extended hygiene is recorded, rewritten, scanned, validated, and independently reviewed). Not FAIL (T0.0 is retained; J1 / J2 / J3 / G0 PASS / Live Tree Authority are unchanged).",
+  "question": "After J3's one-field redaction of DEEPSEEK_API_KEY, GitHub push protection rejected the rewritten graph for additional recognized credentials in the same T0.0 raw inspect. May the named-field exception be extended to those exact GitHub-flagged fields under J3's per-field discipline, or must the artifact be handled differently, given that T7.4 still compares against T0.0, T0.3 digest checks remain authoritative, and J1/J2/J3/G0/Live Tree Authority must not be reopened?",
+  "finding": "F-004",
+  "triggers_j3_residual_risk": true,
+  "j3_residual_risk_quote": "If a later scan finds additional push-blocking tokens in the same inspect, stop and route a new material judgment; do not silently broaden.",
+  "evidence_inputs": [
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md",
+      "section": "F-004 — GitHub push protection found ADDITIONAL secrets in same artifact (J3 condition triggered)",
+      "role": "finding record"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J3-grok-judgment.json",
+      "role": "governing J3 contract; t74_comparison_rule and residual-risk trigger"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt",
+      "role": "current working-tree T0.0 docker-inspect observation"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/F-002-redaction-receipt.json",
+      "role": "existing one-field redaction receipt / index contract"
+    },
+    {
+      "path": "evidence/artifacts/mrc-e82c7c04fb04da8bb735906c562dbf8e314f40abd5bae35c.stdout",
+      "run_tree": "mrc-run-20260820",
+      "role": "INT-b0push3 GitHub push-protection rejection receipt"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/R002-003-004-operator-plan-amendment-disposition.md",
+      "role": "R002-003/004 disposition; one-field review history"
+    }
+  ],
+  "observed_facts": {
+    "remote_integration_ref": "origin/fixer/runtime-convergence-r = a610c220da202c6c4a45c4c990ebef4be9f53942",
+    "local_HEAD_at_judgment": "e70073a4781adb69ad663c0e3f05ef2696aee948",
+    "rejected_commit": "1dbcc2ae9f8f5fbd7f01649e78ddcc65484329af",
+    "rejected_commit_is_ancestor_of_HEAD": true,
+    "rejected_path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt:6",
+    "github_secret_type_labels": [
+      "Discord Bot Token",
+      "Groq API Key"
+    ],
+    "github_received_additional_secrets": false,
+    "push_protection_blocked_real_push": true,
+    "post_push_verification_or_mutation": false,
+    "github_unblock_urls": "present in GitHub output; omitted from INT-b0push3 receipt as security-control material; not reproduced here",
+    "int_b0push3_invocation_id": "mrc-e82c7c04fb04da8bb735906c562dbf8e314f40abd5bae35c",
+    "int_b0push3_task_id": "INT-b0push3",
+    "int_b0push3_exit_status": 0,
+    "int_b0push3_push_command_exit": 1,
+    "current_raw_artifact_byte_length": 8275,
+    "current_raw_artifact_digest": "sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2",
+    "original_pre_F002_artifact_digest": "sha256:ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60",
+    "original_pre_F002_byte_length": 8289,
+    "config_env_entry_count": 32,
+    "inspect_json_line": 6,
+    "raw_cloud_container_in_T0.0_required_artifacts": false,
+    "T0.0_required_artifact_count": 19,
+    "T0.0_indexed_artifact_count": 46,
+    "container_identity_retained": {
+      "Name": "/megaplan-cloud-agent-resident-only",
+      "Id_length": 64,
+      "State.Status": "running",
+      "State.Running": true,
+      "has_Mounts": true,
+      "has_NetworkSettings": true
+    }
+  },
+  "env_field_inventory_names_and_lengths_only": [
+    {
+      "index": 0,
+      "key": "DEEPSEEK_API_KEY",
+      "value_length": 21,
+      "classification": "already-redacted-placeholder; J3 named field"
+    },
+    {
+      "index": 1,
+      "key": "DISCORD_BOT_TOKEN",
+      "value_length": 72,
+      "classification": "recognized-credential; GitHub-flagged Discord Bot Token"
+    },
+    {
+      "index": 2,
+      "key": "DISCORD_DM_USER_ID",
+      "value_length": 18,
+      "classification": "ordinary-identity-config; not a credential; do not redact"
+    },
+    {
+      "index": 3,
+      "key": "GROQ_API_KEY",
+      "value_length": 56,
+      "classification": "recognized-credential; GitHub-flagged Groq API Key"
+    },
+    {
+      "index": 4,
+      "key": "MEGAPLAN_RESIDENT_ADMIN_USERS",
+      "value_length": 18,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 5,
+      "key": "MEGAPLAN_RESIDENT_ALLOWED_GUILDS",
+      "value_length": 19,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 6,
+      "key": "MEGAPLAN_RESIDENT_ALLOWED_USERS",
+      "value_length": 18,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 7,
+      "key": "MEGAPLAN_RESIDENT_CLOUD_YAML",
+      "value_length": 75,
+      "classification": "ordinary-path-config"
+    },
+    {
+      "index": 8,
+      "key": "MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT",
+      "value_length": 4,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 9,
+      "key": "MEGAPLAN_RESIDENT_CODEX_SANDBOX",
+      "value_length": 18,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 10,
+      "key": "MEGAPLAN_RESIDENT_HISTORY_WINDOW",
+      "value_length": 2,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 11,
+      "key": "MEGAPLAN_RESIDENT_MODE",
+      "value_length": 10,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 12,
+      "key": "MEGAPLAN_RESIDENT_MODEL",
+      "value_length": 26,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 13,
+      "key": "MEGAPLAN_RESIDENT_MODEL_PROVIDER",
+      "value_length": 6,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 14,
+      "key": "MEGAPLAN_RESIDENT_PROFILE",
+      "value_length": 8,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 15,
+      "key": "MEGAPLAN_RESIDENT_REQUIRE_CLOUD_CONFIRMATION",
+      "value_length": 5,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 16,
+      "key": "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_TOOLSETS",
+      "value_length": 17,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 17,
+      "key": "MEGAPLAN_RESIDENT_STORE_ROOT",
+      "value_length": 36,
+      "classification": "ordinary-path-config"
+    },
+    {
+      "index": 18,
+      "key": "MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV",
+      "value_length": 12,
+      "classification": "environment-name-reference; NOT a credential; do not redact merely because the field name contains API_KEY"
+    },
+    {
+      "index": 19,
+      "key": "MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_BASE_URL",
+      "value_length": 30,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 20,
+      "key": "MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_MODEL",
+      "value_length": 22,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 21,
+      "key": "MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_PROVIDER",
+      "value_length": 4,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 22,
+      "key": "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED",
+      "value_length": 1,
+      "classification": "ordinary-runtime-setting"
+    },
+    {
+      "index": 23,
+      "key": "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE",
+      "value_length": 10,
+      "classification": "ordinary-config"
+    },
+    {
+      "index": 24,
+      "key": "PYTHONPATH",
+      "value_length": 82,
+      "classification": "ordinary-path"
+    },
+    {
+      "index": 25,
+      "key": "PATH",
+      "value_length": 81,
+      "classification": "ordinary-path"
+    },
+    {
+      "index": 26,
+      "key": "DEBIAN_FRONTEND",
+      "value_length": 14,
+      "classification": "ordinary-runtime-setting"
+    },
+    {
+      "index": 27,
+      "key": "LANG",
+      "value_length": 7,
+      "classification": "ordinary-runtime-setting"
+    },
+    {
+      "index": 28,
+      "key": "LC_ALL",
+      "value_length": 7,
+      "classification": "ordinary-runtime-setting"
+    },
+    {
+      "index": 29,
+      "key": "PYENV_ROOT",
+      "value_length": 12,
+      "classification": "ordinary-path"
+    },
+    {
+      "index": 30,
+      "key": "NVM_DIR",
+      "value_length": 10,
+      "classification": "ordinary-path"
+    },
+    {
+      "index": 31,
+      "key": "BUN_INSTALL",
+      "value_length": 10,
+      "classification": "ordinary-path"
+    }
+  ],
+  "redaction_field_set": {
+    "exact_set": [
+      "DEEPSEEK_API_KEY",
+      "DISCORD_BOT_TOKEN",
+      "GROQ_API_KEY"
+    ],
+    "set_bound": "Exactly the J3-named field plus the exact GitHub-flagged fields in this artifact. Not a family mask. Not Config.Env as a block.",
+    "already_redacted": [
+      "DEEPSEEK_API_KEY"
+    ],
+    "newly_authorized_for_this_revision": [
+      "DISCORD_BOT_TOKEN",
+      "GROQ_API_KEY"
+    ],
+    "do_not_redact": [
+      "MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV",
+      "DISCORD_DM_USER_ID",
+      "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE",
+      "all remaining Config.Env keys listed as ordinary-config / ordinary-path / ordinary-runtime-setting",
+      "Id",
+      "Name",
+      "Image",
+      "Created",
+      "Path",
+      "Args",
+      "State",
+      "Mounts",
+      "NetworkSettings",
+      "HostConfig",
+      "Config keys other than the named Env values"
+    ],
+    "additional_match_rule": "If GitHub or an equivalent independently evidenced scan flags any further exact field in this same inspect during the authorized rewrite, STOP. Record the exact field name, JSON path, value_length only, and scan provenance. Route a new material judgment. Do not silently sweep unknown or future fields into this set.",
+    "silent_broadening_forbidden": true
+  },
+  "placeholders": {
+    "DEEPSEEK_API_KEY": "<REDACTED-OPENAI-KEY>",
+    "DISCORD_BOT_TOKEN": "<REDACTED-DISCORD-BOT-TOKEN>",
+    "GROQ_API_KEY": "<REDACTED-GROQ-API-KEY>",
+    "discipline": "Deterministic, non-secret, field-specific placeholders. Do not reuse one placeholder across fields. Do not encode, hash, prefix, suffix, or otherwise transform original values. Replace only the value after '=' in the named Config.Env entry."
+  },
+  "decisive_recommendation": "A-extended — keep J3's amended in-place hygiene. Substitute only the values of DISCORD_BOT_TOKEN and GROQ_API_KEY in the already-J3-redacted canonical T0.0 inspect; leave DEEPSEEK_API_KEY as its existing placeholder; preserve JSON/object structure, field names, Env ordering, all non-secret Env entries, and every non-Env inspect field. Record a J4 per-field redaction receipt (or equivalent per-field audit records) with original-versus-redacted digest/byte_length and no values. Update chained baseline/index/manifest/command-record digests. Rewrite every descendant reachable from the to-be-pushed tip so no pushed object contains the newly flagged credentials. Run a scan that is not limited to the original captured-key pattern. Pass the existing validator. Independent [HARD-REVIEW] of the extension only. Push remains blocked until those conditions are true. The redacted canonical artifact remains the T7.4 comparison input. Original secret-bearing bytes remain local-history-only provenance.",
+  "rejected_alternatives": [
+    {
+      "id": "B",
+      "title": "Redact or replace the entire Config.Env array or a credential block",
+      "decision": "REJECTED",
+      "why": "Unnecessary for push safety. GitHub flagged two exact credential types at raw-cloud-container.txt:6, corresponding to DISCORD_BOT_TOKEN and GROQ_API_KEY. Per-field substitution of those values, plus the already-redacted DEEPSEEK_API_KEY, is sufficient. Whole-array replacement would destroy lossless evidence: 29 non-secret Env entries (paths, model, mode, store-root, PYTHONPATH, ordinary identity IDs, the environment-name reference MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV) would be lost or masked. That weakens T7.4 by converting real non-interference Env deltas into an opaque block ignore. J3 already forbade a broad ignore-secrets comparator. If selected it would still require field-level accounting; it is not selected."
+    },
+    {
+      "id": "C",
+      "title": "Exclude or drop the artifact",
+      "decision": "REJECTED",
+      "why": "New facts do not change J3's analysis. The file is a supporting raw observation (not one of the 19 required_artifacts) but is one of 46 indexed T0.0 artifacts. T7.4 compares against the canonical T0.0 observation; baseline.json and T0.1 refs-manifest already cite its digest. Omission would either lie about presence or fail T0.3 existence/digest checks. Deletion would destroy container-identity observation (Id/Name/Image/State/Created/Mounts/NetworkSettings) needed for exact comparison. Silent deletion remains forbidden. No coherent validator-passing publication contract exists that claims the observation is present while excluding it."
+    },
+    {
+      "id": "D-rotate-first",
+      "title": "Rotate first as the publication fix",
+      "decision": "REJECTED as consolidation resolution; RECOMMENDED as operator-only exposure reduction",
+      "why": "Rotation cannot remove plaintext values from local git objects and cannot make the reachable branch pushable. Operator rotation/revocation of DISCORD_BOT_TOKEN and GROQ_API_KEY is recommended outside consolidation. Judge and Luna must not rotate, call a provider, or touch the live box."
+    },
+    {
+      "id": "D-bypass",
+      "title": "Bypass GitHub push protection or publish credentials elsewhere",
+      "decision": "FORBIDDEN"
+    },
+    {
+      "id": "A-silent-broaden",
+      "title": "Treat J3 as already authorizing these extra fields",
+      "decision": "REJECTED",
+      "why": "J3 forbade silent broadening and required this judgment. F-004 is a new material fact. Implementation-side interpretation of J3 is not authorized."
+    },
+    {
+      "id": "A-unamended-no-rewrite",
+      "title": "Redact HEAD only without history rewrite",
+      "decision": "REJECTED",
+      "why": "Rejected commit 1dbcc2ae9f is an ancestor of current HEAD. GitHub scans the reachable graph. Old blobs would remain push-blocking."
+    },
+    {
+      "id": "new-gate-or-card",
+      "title": "Create G0.1, a new card, T4.4/G4.4, schema epoch, or policy dimension",
+      "decision": "FORBIDDEN"
+    },
+    {
+      "id": "reopen-G0-J1-J2-J3",
+      "title": "Reopen or mutate G0/J1/J2/J3",
+      "decision": "FORBIDDEN",
+      "why": "This is bounded evidence hygiene after G0 PASS. No contradiction was found that would reopen those rulings."
+    }
+  ],
+  "immutability_ruling": {
+    "j3_t00_load_bearing_status_preserved": true,
+    "contradiction_found_in_cited_evidence": false,
+    "what_remains_immutable": [
+      "Original captured observation bytes (pre-F-002 digest sha256:ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60, 8289 bytes) as local-history-only provenance. Never pushed. Never recaptured.",
+      "The post-J3 one-field-redacted bytes (digest sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2, 8275 bytes) as local-history-only superseded provenance after J4 substitution. Never recaptured.",
+      "T0.0 capture event itself: read-only, pre-stateful, unknown/unreadable dimensions unchanged. Hygiene must not recapture the cloud container or change live state.",
+      "J1 frozen committed plan/goal boundary.",
+      "J2 Live Tree Authority freeze (import_root + generation interpreter; Git SHA observation-only; no T4.4 scope; sole rebind CAS unchanged).",
+      "J3 T0.0 hygiene contract, including single-field discipline now explicitly extended by this judgment rather than silently broadened.",
+      "G0 re-review PASS. This is bounded evidence hygiene after that PASS."
+    ],
+    "what_becomes_canonical_published_evidence": "The T0.0 raw-cloud-container.txt after the additional in-place substitutions of DISCORD_BOT_TOKEN and GROQ_API_KEY values with the named placeholders, with DEEPSEEK_API_KEY remaining <REDACTED-OPENAI-KEY>, plus updated baseline.json / commands.ndjson / refs-manifest / top-level manifest digests and the J4 redaction receipt.",
+    "comparison_input_after_hygiene": "The J4-redacted canonical raw-cloud-container.txt bytes, as indexed by the post-J4 baseline.json. Not the original secret-bearing bytes. Not the J3-only redacted bytes once J4 lands. Not a field-stripping comparator except for the exact named captured-secret fields when comparing a later inspect that still contains a live credential in those fields.",
+    "credential_fields_are_not_state_dimensions": true,
+    "redaction_does_not_change_runtime_or_container_identity": true,
+    "do_not_recapture_T0.0": true,
+    "unknown_stays_unknown": "Redaction does not invent process/plan/chain/selector/lease/ledger/candidate state. It does not convert an unknown into captured. It does not alter authority or identity dimensions."
+  },
+  "rotation_recommendation": {
+    "operator_should_rotate_or_revoke": true,
+    "fields": [
+      "DISCORD_BOT_TOKEN",
+      "GROQ_API_KEY"
+    ],
+    "also_still_applies_from_j3": [
+      "DEEPSEEK_API_KEY"
+    ],
+    "reason": "These values existed in plaintext in local git objects (rejected reachable commit 1dbcc2ae9f and descendants including current HEAD). GitHub did not receive them; the rejected push performed no post-push verification or mutation. Local object database, worktrees, and any scrapes/backups of those objects are sufficient exposure.",
+    "outside_consolidation": true,
+    "consolidation_must_not": [
+      "touch the live cloud box",
+      "call a provider",
+      "rotate or revoke keys",
+      "mutate runtime env, container, resident, selectors, markers, manifests, leases, fences, ledgers, or candidates"
+    ],
+    "who": "human operator, outside consolidation, after or in parallel with hygiene. Not Luna. Not this judge."
+  },
+  "redaction_requirements": {
+    "scope": "In baseline/T0.0/raw-cloud-container.txt, replace only the values of Config.Env entries whose keys are DISCORD_BOT_TOKEN and GROQ_API_KEY with the exact placeholders named above. Leave DEEPSEEK_API_KEY as <REDACTED-OPENAI-KEY>. Preserve JSON structure, key names, Env ordering (32 entries), all other Env values, and all non-Env inspect fields.",
+    "json_paths": [
+      "Config.Env[0] DEEPSEEK_API_KEY (already placeholder; retain)",
+      "Config.Env[1] DISCORD_BOT_TOKEN (replace value only)",
+      "Config.Env[3] GROQ_API_KEY (replace value only)"
+    ],
+    "receipt_path": "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/F-004-redaction-receipt.json",
+    "receipt_may_be_equivalent_per_field_records": true,
+    "do_not_overwrite_F-002_receipt": "F-002-redaction-receipt.json remains the historical one-field record. J4 adds F-004; it does not erase F-002.",
+    "receipt_must_contain": [
+      "finding_id: F-004",
+      "governing_judgments: [J3, J4]",
+      "affected_path: baseline/T0.0/raw-cloud-container.txt",
+      "pre_j4_artifact_digest and byte_length of the current J3-redacted file (sha256:48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2, 8275) as the immediate original for this extension",
+      "superseded_original_capture_digest sha256:ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60 (8289) retained as local-history-only provenance",
+      "post_j4_redacted_artifact_digest and byte_length computed after the two additional substitutions",
+      "per_field records for DEEPSEEK_API_KEY (already redacted; no further value change), DISCORD_BOT_TOKEN, and GROQ_API_KEY: exact JSON path, env key, placeholder, reason, original_artifact digest/length and redacted_artifact digest/length for the file at that step or the pair of pre/post J4 file digests, with NO original values",
+      "reason: GitHub push protection on INT-b0push3 rejected Discord Bot Token and Groq API Key in the same inspect; live credentials cannot be published; T0.0 observation otherwise retained",
+      "INT-b0push3 provenance: invocation mrc-e82c7c04…, rejected commit 1dbcc2ae9f, path raw-cloud-container.txt:6, no post-push mutation, unblock URLs omitted",
+      "baseline.json entry update: path, new content_digest, new byte_length; resulting baseline.json digest and byte_length",
+      "commands.ndjson docker-inspect output_artifact_digest update and resulting commands.ndjson digest/byte_length",
+      "refs-manifest.json T0.0 inventory member digest/size update and resulting refs-manifest digest/byte_length",
+      "manifest.json finding F-004, judgment J4, receipt artifact, updated integration_current_sha, cited T0.0 digests",
+      "history_rewrite_scope: every descendant reachable from the to-be-pushed tip that still contains the additional secret-bearing blobs; complete old-to-new commit map including any pre-boundary rewritten objects if the rewrite tool rewrites them; blob-equality proof for any pre-boundary trees that must remain byte-identical except for the authorized blob substitutions",
+      "final_hygiene_commit_sha: non-null after the rewrite lands",
+      "T7.4 comparison semantics as in this judgment",
+      "no reproduction of any credential value, prefix, suffix, fragment, encoding, or GitHub unblock URL"
+    ]
+  },
+  "history_rewrite_requirements": {
+    "cover": "every descendant reachable from the to-be-pushed tip that can reach a secret-bearing blob of DISCORD_BOT_TOKEN or GROQ_API_KEY in this artifact (and retain J3's DEEPSEEK_API_KEY absence)",
+    "known_rejected_commit_in_graph": "1dbcc2ae9f8f5fbd7f01649e78ddcc65484329af is an ancestor of current HEAD e70073a4781adb69ad663c0e3f05ef2696aee948",
+    "method": "history rewrite / filter of the affected file contents. Prefer git filter-repo or equivalent that rewrites blobs, not a new commit that leaves old blobs reachable from the branch.",
+    "preserve": "auditable old-SHA → new-SHA map in the F-004 redaction receipt. Do not delete local original objects until the map exists; they stay unpushed.",
+    "must_not": [
+      "force-push before clean reachable-object scan",
+      "rewrite origin/fixer/runtime-convergence-r (still a610c220da, no these secrets published)",
+      "reset user work unrelated to F-004",
+      "touch live refs, selectors, candidates, or the cloud box",
+      "print credential values during rewrite or scan"
+    ],
+    "proof_of_clean_graph": "After rewrite, a secret scan that is NOT limited to the original captured-key / OPENAI_KEY_F-002 pattern must emit no credential values and find no recognized secret in any blob reachable from the to-be-pushed tip. At minimum the scan must cover Discord-bot-token and Groq-api-key patterns equivalent to GitHub's independent rules for this artifact, plus the already-redacted DEEPSEEK_API_KEY / original captured-key pattern. Count-only or type-label output only. A local scan that only searches the original key remains insufficient."
+  },
+  "t03_validator_and_manifest": {
+    "this_judgment_is_a_material_judgment_record": true,
+    "link_to_F-004": "material_judgments[].judgment_id = J4; findings[].finding_id = F-004; finding.adjudicated_revision_class = HARD-REVISION; finding.classification_disposition = bounded-evidence-hygiene-after-G0-PASS; J4.question names F-004; redaction receipt finding_id F-004.",
+    "do_not_erase_F-002_or_J3": true,
+    "required_updates": [
+      "baseline/T0.0/raw-cloud-container.txt: substitute DISCORD_BOT_TOKEN and GROQ_API_KEY values only; keep DEEPSEEK_API_KEY placeholder; keep all other structure",
+      "baseline/T0.0/baseline.json artifacts[] entry for baseline/T0.0/raw-cloud-container.txt: content_digest and byte_length to post-J4 values; do not drop the entry; do not add credentials as known state dimensions; record new sha256 and byte_length of baseline.json",
+      "baseline/T0.0/commands.ndjson docker-inspect record: output_artifact_digest must match post-J4 file; record new commands.ndjson digest/byte_length",
+      "milestones/T0.1/refs-manifest.json T0.0 inventory member for raw-cloud-container.txt: digest (and size_bytes if that contract requires the new byte length; do not leave a silent digest/size split undocumented)",
+      "manifest.json: add findings[F-004], material_judgments[J4], F-004-redaction-receipt artifact, updated integration_current_sha after rewrite, updated digests for any cited T0.0 paths; retain F-002 and J3 records",
+      "J4 receipt file: docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J4-grok-judgment.json transcribed from this judgment without interpretation",
+      "schema: no change. Do not weaken DIGEST_MISMATCH. Do not add an ignore-secrets validator exception. Do not weaken required-artifact existence checks.",
+      "superseded_artifact_digests on F-004 must include the J3-redacted digest 48b0c66368d42ac69c63227e6f9fce4e573b2b1fda8691dc00ae10e7709546b2; may also cite original capture ad7453540d85e0a54ae6423011948ef84dcfc5e7b7d1ce5b86249cdf831d9d60 as still-unpushed local provenance"
+    ],
+    "g0_selection_manifest_digest_unchanged": "e087a70a1429cd4e40a3b2c0769441447390864af038a455f0be4c531ae5a742",
+    "validator_command": "python scripts/validate_maintenance_runtime_consolidation_evidence.py docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json",
+    "validator_must_pass_after_revision": true,
+    "bypass_forbidden": true,
+    "no_new_validator_exception": true
+  },
+  "t74_comparison_rule": {
+    "amends_j3_named_field_exception": true,
+    "does_not_replace_j3_with_broad_ignore": true,
+    "canonical_T0.0_input": "post-J4 redacted raw-cloud-container.txt as indexed by post-J4 baseline.json",
+    "exact_byte_comparison": "All T0.0 artifacts except the named captured-secret fields remain exact-compare against T0.0 and against the immediate pre-canary snapshot, minus already-allowed disposable-root artifacts and separately approved candidate-install receipts.",
+    "named_field_exception": {
+      "artifact": "baseline/T0.0/raw-cloud-container.txt and the corresponding later inspect snapshots of the same container",
+      "fields": [
+        "docker inspect JSON Config.Env entry whose key is DEEPSEEK_API_KEY (observed index Config.Env[0] at T0.0 capture)",
+        "docker inspect JSON Config.Env entry whose key is DISCORD_BOT_TOKEN (observed index Config.Env[1] at T0.0 capture)",
+        "docker inspect JSON Config.Env entry whose key is GROQ_API_KEY (observed index Config.Env[3] at T0.0 capture)"
+      ],
+      "exact_set": [
+        "DEEPSEEK_API_KEY",
+        "DISCORD_BOT_TOKEN",
+        "GROQ_API_KEY"
+      ],
+      "treatment": "If a later snapshot still contains a live credential in one of those exact fields, compare after substituting the same placeholder used in the canonical T0.0 artifact for that field. Do not ignore any other Env key. Do not ignore State, Id, Name, Image, Mounts, or NetworkSettings. Do not ignore MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV.",
+      "later_snapshot_procedure": "Parse later docker-inspect JSON; for each key in the exact set, if the value is not already the canonical placeholder, substitute that field's placeholder only; then exact-compare the remainder, including all other Config.Env entries by name and value, Env ordering unless an independently evidenced non-secret reordering is separately approved (none is approved here), and all identity/state/network/mount fields.",
+      "preferred": "Operator rotation outside consolidation may make later inspects differ in those fields; the fields are not non-interference state dimensions. A later snapshot that changes Id/Name/Image/State.Pid/State.StartedAt/Mounts/NetworkSettings or any non-excepted Env key is a real delta and fails T7.4."
+    },
+    "pre_canary": "refresh T0.0 dimensions without replacing the immutable T0.0 baseline; compare refreshed snapshot to redacted canonical T0.0 with the named-field rule only",
+    "post_canary": "exact vs immediate pre-canary and vs redacted T0.0 except disposable-root + approved install receipts + the three named captured-secret fields",
+    "post_rollback": "same as post_canary; rollback is pointer-only",
+    "provenance_without_exposure": "F-004 redaction receipt records original digest/byte_length and redacted digest/byte_length per authorized step, plus exact field paths and placeholders. Original bytes stay local-history-only. Receipts, logs, and this judgment never contain credential values or GitHub unblock URLs.",
+    "forbidden_comparators": [
+      "broad ignore-secrets",
+      "entire Config.Env array ignore",
+      "block mask over unknown future fields",
+      "comparator that hides real non-interference deltas"
+    ]
+  },
+  "g0_j1_j2_j3_interaction": {
+    "bounded_hygiene_after_G0_PASS": true,
+    "repeat_G0_review": false,
+    "J1_unchanged": true,
+    "J2_unchanged": true,
+    "J3_unchanged_except_named_field_set_extended_by_this_judgment": true,
+    "live_tree_authority_unchanged": true,
+    "no_new_gate": true,
+    "no_T44_scope": true,
+    "no_G0_1": true,
+    "why_bounded": "F-004 does not change source selection, keep/adapt/drop, T0.2 hunks, seed custody, claim seam, Live Tree Authority, launch pin, or the J1 sequence. It extends an evidence-blob hygiene already classified HARD-REVISION by J3. G0 did not adjudicate docker-inspect Env credentials as a selection input. Batch 1 remains allowed under the J2 freeze after push unblocks. The operator-directed plan amendment (T2.4 etc.) is a separate controlled boundary change already dispositioned under R002-003/004; J4 does not reopen it."
+  },
+  "revision_class": "HARD-REVISION",
+  "why_not_XHARD_REVISION": "Does not change authority, source selection, T0.2, seed custody, claim seam, runtime behavior, custody, identity, migration, concurrency/replay, compatibility/public schema, task scope, acceptance semantics, or policy. There is no surviving T4.4/G4.4 scope. It rewrites a supporting evidence blob and its indexes so existing contracts remain satisfiable and pushable. Ambiguity was this judgment; classification is now frozen as HARD-REVISION under J3's existing route.",
+  "r002_review_validity": {
+    "prior_r002_reviews_are_not_approval_of_this_extension": true,
+    "do_not_erase_or_rewrite_prior_review_history": true,
+    "r002_one_field_findings_remain_valid_for_the_already_reviewed_one_field_work": true,
+    "records": {
+      "R002-001": "CLOSED; remains valid for the F-002 one-field receipt final_hygiene_commit_sha defect and its repair. Not approval of F-004.",
+      "R002-002": "CLOSED; remains valid for the F-002 rewrite-map / pre-boundary blob-equality defect and its repair. The F-004 rewrite must meet the same map completeness standard; that is a new proof, not a silent reuse of the old map.",
+      "R002-003": "CLOSED by R002-003-004-operator-plan-amendment-disposition.md plus restored operator-directive log heading; remains valid as a controlled operator-authorized plan-amendment disposition, not as F-004 approval.",
+      "R002-004": "CLOSED on the same disposition; plan/goal amendment remains outside the F-002/F-004 redaction surface.",
+      "R002 complete re-review mrc-4bc7e122": "valid for one-field hygiene at that tip; superseded as a push-unblock for the current graph because GitHub found additional secrets. Do not rewrite that review.",
+      "R002-003/004 closure verification mrc-fe6da83d": "valid for the restored operator-directive citation and one-field preservation checks at tip 0241c065; the '0 key matches' scan was the original captured-key pattern and is now proven insufficient. Supplement, do not erase."
+    },
+    "required_new_review": "A new bounded independent Luna [HARD-REVIEW] of the F-004 additional-field diff, per-field receipts, old-to-new rewrite map, broader scan output, validator result, T7.4 named-field amendment, and this R002 interaction. That review is not a new card and not a G0 rerun. It does not re-litigate closed one-field findings absent concrete contradictory evidence.",
+    "specific_record_to_supplement": "Supplement the F-002/J3 hygiene-chain CLOSED (push unblocked) execution-log claim. That claim is false for the current graph after INT-b0push3. Record F-004 + J4 as the residual blocker. Do not rewrite the historical R002 close-review artifacts."
+  },
+  "affected_contracts": [
+    "T0.0: published canonical observation is the J4-redacted artifact; original capture bytes and J3-only bytes are local-history-only; unknown/unreadable dimensions unchanged",
+    "T0.3: validator remains authoritative; digest/byte_length/current-SHA/manifest/finding/judgment records must be updated; no schema weakening",
+    "T7.4: compare against J4-redacted canonical T0.0; named captured-secret fields exactly {DEEPSEEK_API_KEY, DISCORD_BOT_TOKEN, GROQ_API_KEY}; no broad ignore-secrets",
+    "F-002: remains resolved as one-field hygiene; not reopened; not treated as covering F-004",
+    "F-004: resolved by A-extended hygiene + history rewrite + broader scan + validator pass + independent HARD-REVIEW; push stays blocked until those complete",
+    "batch-0 push: blocked until push-unblock conditions",
+    "G0: PASS unchanged; not rerun",
+    "J1: unchanged",
+    "J2: unchanged",
+    "J3: binding; named-field set extended only by this judgment",
+    "T4.4/G4.4: still no surviving scope",
+    "R002: historical one-field reviews remain valid for that scope; new review required for the extension"
+  ],
+  "downstream_route": [
+    {
+      "order": 1,
+      "role": "Luna evidence recorder",
+      "label": "[HARD]",
+      "action": "Transcribe this J4 judgment unchanged to docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J4-grok-judgment.json. Do not interpret missing decisions. Do not echo credentials or GitHub unblock URLs. Record F-004 in the execution log by field names and lengths only."
+    },
+    {
+      "order": 2,
+      "role": "Luna [HARD-REVISION] implementer",
+      "label": "[HARD-REVISION]",
+      "action": "Perform only the authorized additional field redactions, F-004 receipt/index/manifest updates, history rewrite covering every reachable secret-bearing descendant, non-echoing broader scan, and existing validator pass. Not a new card. Existing HARD-REVISION route under frozen T0.3 evidence contract. Judge does not implement."
+    },
+    {
+      "order": 3,
+      "role": "Luna [HARD-REVISION] implementer",
+      "allowed_files_and_surfaces": [
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/raw-cloud-container.txt (DISCORD_BOT_TOKEN and GROQ_API_KEY value substitution only; DEEPSEEK_API_KEY placeholder retained)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/baseline.json (digest/byte_length for that artifact only; optional hygiene note field, no state-dimension invention)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/commands.ndjson (output_artifact_digest for the inspect command only)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/baseline/T0.0/F-004-redaction-receipt.json (create; do not overwrite F-002-redaction-receipt.json)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/refs-manifest.json (T0.0 inventory member digest/size only)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json (F-004 finding, J4 judgment, receipt artifact, integration_current_sha, cited T0.0 digests; retain F-002/J3)",
+        "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J4-grok-judgment.json",
+        "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md (F-004 / J4 section only; no plan/goal edits; no secret values)",
+        "git history rewrite of those blobs across every reachable secret-bearing descendant of the to-be-pushed tip",
+        "old-to-new commit map inside the F-004 redaction receipt"
+      ],
+      "prohibited": [
+        "live/runtime/cloud/container/env/selector/marker/manifest/lease/fence/ledger/candidate mutation",
+        "provider API calls, key rotation, revocation",
+        "plan/goal/T0.2 source-selection edits",
+        "J1/J2/J3/G0 receipt mutation",
+        "validator schema weakening or DIGEST_MISMATCH bypass",
+        "new cards, gates, G0.1, T4.4, G4.4, schema epoch, launch pin, policy dimension",
+        "whole Config.Env block replacement",
+        "redaction of MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV or other non-flagged fields",
+        "silent deletion or exclusion of the artifact",
+        "push before unblock conditions",
+        "self-review",
+        "echoing secrets or GitHub unblock URLs"
+      ]
+    },
+    {
+      "order": 4,
+      "role": "independent Luna [HARD-REVIEW]",
+      "label": "[HARD-REVIEW]",
+      "action": "Review the complete F-004 extension diff, per-field receipts, old-to-new rewrite map, broader scan output, validator result, T7.4 named-field amendment, and R002 interaction. Must-findings block push. Reviewer does not edit. This is not a re-review of closed one-field R002 findings unless concrete contradictory evidence appears. Reviewer must not treat prior R002 PASS as covering these additional fields."
+    },
+    {
+      "order": 5,
+      "role": "Luna integration/push role",
+      "label": "existing integration/push role",
+      "action": "Push only after every unblock condition passes. Explicit destination/ref protocol only: HEAD:fixer/runtime-convergence-r. No additional refspec. Force-with-lease of rewritten local history is required because secret-bearing commits must not remain on the pushed branch; it is allowed only after the clean-scan proof. Remote currently a610c220da (no these secrets published)."
+    }
+  ],
+  "push_disposition": {
+    "currently": "BLOCKED",
+    "judgment_alone_does_not_rewrite_history_or_unblock_push": true,
+    "may_proceed_when_all_true": [
+      "J4 receipt recorded unchanged",
+      "raw-cloud-container.txt redacted at DISCORD_BOT_TOKEN and GROQ_API_KEY values only; DEEPSEEK_API_KEY remains <REDACTED-OPENAI-KEY>; placeholders <REDACTED-DISCORD-BOT-TOKEN> and <REDACTED-GROQ-API-KEY>",
+      "MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV and all other non-set Env entries unchanged",
+      "F-004 redaction receipt complete with per-field original+redacted digest/byte_length, exact field paths, rewrite map, T7.4 semantics, no values",
+      "baseline.json, commands.ndjson, refs-manifest.json, manifest.json digests/byte_lengths/current SHA consistent",
+      "python scripts/validate_maintenance_runtime_consolidation_evidence.py docs/arnold/maintenance-runtime-consolidation-evidence/manifest.json exits 0",
+      "history rewrite covers every reachable secret-bearing descendant of the to-be-pushed tip",
+      "broader clean scan emits no credential values and finds no recognized secret in the to-be-pushed graph",
+      "independent Luna [HARD-REVIEW] PASS on the F-004 extension",
+      "remote still a610c220da or force-with-lease only of rewritten secret-free history onto fixer/runtime-convergence-r using the existing destination/ref protocol and no additional refspec",
+      "no live/runtime mutation performed"
+    ],
+    "if_still_blocked": "Concrete next route remains Luna evidence recorder → Luna [HARD-REVISION] implementer → independent Luna [HARD-REVIEW] → existing integration/push role. Not a new gate, not G0 rerun, not Candidate B/C, not bypass. If the broader scan or GitHub flags an additional exact field beyond {DEEPSEEK_API_KEY, DISCORD_BOT_TOKEN, GROQ_API_KEY}, stop and route a new material judgment."
+  },
+  "judge_prohibitions": [
+    "This judge makes no edits, commits, rebases, history rewrites, pushes, force-pushes, branch/ref updates, or working-tree mutations.",
+    "This judge does not rotate or revoke keys and does not access the live cloud box, container, resident, or runtime environment.",
+    "This judgment does not itself rewrite history, rotate credentials, or unblock the push.",
+    "No secret value, prefix, suffix, fragment, encoded credential, or GitHub unblock URL is reproduced here.",
+    "No silent broadening beyond exact named fields proven GitHub-flagged in this artifact.",
+    "No new cards, gates, G0.1, T4.4/G4.4 scope, runtime authority, launch pin, schema epoch, or policy dimension.",
+    "No mutation or invalidation of binding J1/J2/J3/G0 decisions.",
+    "No self-review."
+  ],
+  "recorded_note": "Suitable for Luna evidence recorder transcription without interpreting missing decisions.",
+  "grok_invocation": {
+    "invocation_id": "mrc-21e4d4262e01024b55534e859ff6a3fa23e940a9a8df67e9",
+    "model": "grok-4.6",
+    "resolved_model": "grok-4.6",
+    "role": "JUDGMENT",
+    "label": "[XHARD-REVIEW] J4 additional-secret redaction extension",
+    "task_id": "J4-grok",
+    "schema": "maintenance-consolidation-invocation-receipt.v1",
+    "status": "completed",
+    "exit_status": 0,
+    "elapsed_seconds": 496.79577045794576,
+    "start_timestamp": "2026-08-21T00:59:49.072203Z",
+    "end_timestamp": "2026-08-21T01:08:05.875770Z",
+    "allowance_digest": "08afc5bf9c7fa8571b3a41b2155e01294c24cf300279bf5f8c8b4a5f9824f86e",
+    "brief_digest": "6af9868d300699927531140fe78b7757f16e4d5886fb27b328a57b190f7a74c9",
+    "command_digest": "834976af8b74d5f7961aa7154fa3d234df6d9e72d670ea1b2cab476ad61b582c",
+    "stdout_digest": "d32699b77309fa3e86d1446ca60c356bc1e28ece91ada485ba1671e0168bc52e",
+    "stderr_digest": "97ee9ea8a07fe8932b7283d69a52844bf00b3a7dc2769de8c9b1f0ec0d2b1a32",
+    "result_digest": "daf9760e4cc4dd5eb58101b03672c1580187d3d06d096ae528fdfce0360657e5",
+    "wrapper_receipt_path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/receipts/mrc-21e4d4262e01024b55534e859ff6a3fa23e940a9a8df67e9.json"
+  },
+  "recorded_at_utc": "2026-08-21T01:10:01Z"
+}
