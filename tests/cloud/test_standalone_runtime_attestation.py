@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -455,3 +456,128 @@ def test_resident_attest_publication_failure_does_not_advance_pointer(
     assert rc == 2
     assert paths["pointer"].read_bytes() == before
     assert json.loads(capsys.readouterr().out)["success"] is False
+
+
+def _publish_healthy_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    seed: dict[str, Any],
+    root: Path,
+    revision: str,
+) -> tuple[Path, dict[str, Path]]:
+    """Publish a healthy standalone state into an isolated state directory."""
+    state = tmp_path / "runtime-launch"
+    state.mkdir(mode=0o700)
+    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root: state)
+    paths = attestation.standalone_dispatch_paths(
+        root, head=revision, seed_sha256=str(seed["content_sha256"])
+    )
+    attestation.write_standalone_runtime_publication(
+        seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+    )
+    return state, paths
+
+
+def _patch_resident_process_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    paths: dict[str, Path],
+) -> None:
+    process = {
+        "pid": 123,
+        "start_ticks": "456",
+        "executable": str(Path(sys.executable).resolve()),
+        "executable_sha256": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+        "selectors": {},
+    }
+    monkeypatch.setattr(attestation, "_proc_identity", lambda _pid: process)
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(paths["seed"]))
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION", str(paths["status"]))
+
+
+def test_worker_refresh_rejects_standalone_seed_without_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    _state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(paths["seed"]))
+    for absent_manifest in (True, False):
+        if absent_manifest:
+            monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+        else:
+            monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", "   ")
+        with pytest.raises(CliError) as excinfo:
+            attestation.refresh_runtime_launch_seed_for_worker_dispatch()
+        assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+        assert "cloud-chain" in excinfo.value.message
+
+
+@pytest.mark.parametrize("directory_name", ["seeds", "receipts", "status"])
+def test_standalone_publication_rejects_unsafe_reused_directory_at_0755(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory_name: str,
+) -> None:
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    pointer_before = paths["pointer"].read_bytes()
+    unsafe = state / directory_name
+    unsafe.chmod(0o755)
+    with pytest.raises(CliError) as excinfo:
+        attestation.write_standalone_runtime_publication(
+            seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+        )
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
+    assert paths["pointer"].read_bytes() == pointer_before
+
+
+@pytest.mark.parametrize("directory_name", ["seeds", "receipts"])
+def test_standalone_load_rejects_unsafe_reused_directory_at_0755(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory_name: str,
+) -> None:
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    pointer_before = paths["pointer"].read_bytes()
+    unsafe = state / directory_name
+    unsafe.chmod(0o755)
+    with pytest.raises(CliError):
+        attestation.load_standalone_runtime_dispatch_pointer(root)
+    assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
+    assert paths["pointer"].read_bytes() == pointer_before
+
+
+def test_resident_process_create_rejects_unsafe_status_directory_at_0755(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    _patch_resident_process_identity(monkeypatch, paths)
+    unsafe = state / "status"
+    unsafe.chmod(0o755)
+    with pytest.raises(CliError) as excinfo:
+        attestation.require_configured_runtime_launch("resident", target_pid=123, create=True)
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
+    assert not paths["status"].exists()
+
+
+def test_resident_process_read_rejects_unsafe_status_directory_at_0755(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    _patch_resident_process_identity(monkeypatch, paths)
+    attestation.require_configured_runtime_launch("resident", target_pid=123, create=True)
+    status_before = paths["status"].read_bytes()
+    unsafe = state / "status"
+    unsafe.chmod(0o755)
+    with pytest.raises(CliError) as excinfo:
+        attestation.require_configured_runtime_launch("resident", target_pid=123, create=False)
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
+    assert paths["status"].read_bytes() == status_before

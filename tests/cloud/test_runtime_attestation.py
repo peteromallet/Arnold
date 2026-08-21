@@ -1333,6 +1333,29 @@ def test_worker_preflight_reads_configured_launch_seed_env(
     assert observed["path"] == str(seed_path)
 
 
+@pytest.mark.parametrize("authority", [[], {}], ids=["list", "dict"])
+def test_non_string_authority_fails_with_typed_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    authority: object,
+) -> None:
+    seed = {
+        "schema": attestation.RUNTIME_LAUNCH_SEED_SCHEMA,
+        "authority": authority,
+        "content_sha256": "unused",
+    }
+    with pytest.raises(CliError) as excinfo:
+        attestation._verify_seed_digest(seed)
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+
+    seed_path = tmp_path / "seed.json"
+    _write_json(seed_path, seed)
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(seed_path))
+    with pytest.raises(CliError) as excinfo:
+        attestation.require_configured_runtime_launch("worker")
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+
+
 def test_attestation_disable_without_seed_does_not_authorize_production_launch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
