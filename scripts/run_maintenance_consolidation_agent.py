@@ -25,9 +25,9 @@ LAUNCHERS = {
 }
 ROUTES = {
     "XHARD": "ox-alpha", "XHARD-REVIEW": "ox-alpha", "XHARD-REVISION": "ox-alpha", "JUDGMENT": "ox-alpha",
-    "HARD": "gpt-5.6-luna", "HARD-REVIEW": "gpt-5.6-luna", "HARD-REVISION": "gpt-5.6-luna",
-    "BRIEF": "gpt-5.6-luna", "WORKSPACE": "gpt-5.6-luna", "INTEGRATION": "gpt-5.6-luna",
-    "VALIDATION": "gpt-5.6-luna", "REPORT": "gpt-5.6-luna", "SOL-REVIEW": "gpt-5.6-sol",
+    "HARD": "ox-alpha", "HARD-REVIEW": "ox-alpha", "HARD-REVISION": "ox-alpha",
+    "BRIEF": "ox-alpha", "WORKSPACE": "ox-alpha", "INTEGRATION": "ox-alpha",
+    "VALIDATION": "ox-alpha", "REPORT": "ox-alpha", "SOL-REVIEW": "ox-alpha",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
