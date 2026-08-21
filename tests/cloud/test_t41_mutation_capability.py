@@ -74,6 +74,7 @@ def _complete_evidence(
         "fence_epoch": fence_epoch,
         "evidence_digest": _digest({"occurrence": occurrence, "cursor": cursor}),
         "scope": action,
+        "custody": f"custody:{occurrence}",
         "import_root": str(root),
         "interpreter": str(interpreter),
         "runtime_manifest": {
@@ -204,6 +205,7 @@ def test_marker_manifest_contradiction_fails_closed(tmp_path: Path) -> None:
         "fence_epoch": 1,
         "evidence_digest": "a" * 64,
         "scope": "repair",
+        "custody": "custody:occ-1",
         "import_root": str(live),
         "interpreter": str(interpreter),
         "marker": {"import_root": str(foreign)},
@@ -304,7 +306,7 @@ def test_action_and_scope_replay_rejects(tmp_path: Path) -> None:
     forged["occurrence"] = "occ-replay"
     with pytest.raises(MutationDenied) as forged_denied:
         require_mutation_capability(forged, action="repair")
-    assert forged_denied.value.code == "capability_forged"
+    assert forged_denied.value.code == "capability_reconstructed"
 
     expired_evidence = _complete_evidence(tmp_path / "expired")
     expired = mint_mutation_capability(
@@ -323,12 +325,14 @@ def test_action_and_scope_replay_rejects(tmp_path: Path) -> None:
 def test_complete_authorized_path(tmp_path: Path) -> None:
     cap = _mint(tmp_path, action="repair")
     checked = require_mutation_capability(
-        cap.to_dict(), action="repair", occurrence="occ-1", scope="repair"
+        cap, action="repair", occurrence="occ-1", scope="repair"
     )
-    assert checked.token == cap.token
+    assert checked is cap
+    assert checked.custody == "custody:occ-1"
     narrowed = checked.narrow("repair")
     assert narrowed.scope == "repair"
     assert narrowed.import_root.endswith("live-import-root")
+    require_mutation_capability(narrowed, action="repair", occurrence="occ-1", scope="repair")
 
 
 def test_ambient_vs_seed_import_root_mismatch(tmp_path: Path) -> None:
@@ -345,6 +349,7 @@ def test_ambient_vs_seed_import_root_mismatch(tmp_path: Path) -> None:
         "evidence_digest": "b" * 64,
         "scope": "engine_runtime",
         "repair_scope": "engine_runtime",
+        "custody": "custody:occ-engine",
         "import_root": str(live),
         "interpreter": str(interpreter),
         "ambient_engine_root": str(ambient),
@@ -404,36 +409,63 @@ def test_diagnostic_callers_remain_usable_when_evidence_incomplete(tmp_path: Pat
     assert classified["control_permitted"] is False
 
 
+def test_reconstructed_mapping_is_not_authority(tmp_path: Path) -> None:
+    minted = _mint(tmp_path, action="repair")
+    reconstructed = dict(minted.to_dict())
+    with pytest.raises(MutationDenied) as denied:
+        require_mutation_capability(reconstructed, action="repair")
+    assert denied.value.code == "capability_reconstructed"
+
+    with pytest.raises(MutationDenied) as ctor:
+        MutationCapability(**reconstructed)
+    assert ctor.value.code == "capability_reconstructed"
+
+
+def test_missing_custody_fails_closed_identity_incomplete(tmp_path: Path) -> None:
+    evidence = _complete_evidence(tmp_path / "no-custody")
+    evidence.pop("custody")
+    with pytest.raises(MutationDenied) as denied:
+        mint_mutation_capability(
+            action="repair",
+            evidence=evidence,
+            process_root=Path(str(evidence["import_root"])),
+            process_python=Path(str(evidence["interpreter"])),
+        )
+    assert denied.value.code == "identity_incomplete"
+    assert "custody" in denied.value.reason
+
+
 def test_static_search_proves_no_bypassing_in_scope_consumer() -> None:
-    in_scope = [
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/current_target_liveness.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/cli.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/supervise.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/meta_repair.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/engine_runtime_repair.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/repair_contract.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/blocker_recovery.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/handlers/override.py",
-        REPO_ROOT / "arnold_pipelines/megaplan/planning/control_binding.py",
-    ]
-    required = {
-        "supervise.py": "require_mutation_capability",
-        "meta_repair.py": "require_mutation_capability",
-        "engine_runtime_repair.py": "require_mutation_capability",
-        "repair_contract.py": "require_mutation_capability",
-        "progress_auditor_controller.py": "require_mutation_capability",
-        "six_hour_auditor.py": "require_mutation_capability",
-        "blocker_recovery.py": "require_mutation_capability",
-        "override.py": "mint_mutation_capability",
-        "control_binding.py": "mint_mutation_capability",
-        "current_target_liveness.py": "class MutationCapability",
-        "cli.py": '"mutation_permitted": False',
+    in_scope = {
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/current_target_liveness.py": "class MutationCapability",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/cli.py": '"mutation_permitted": False',
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/supervise.py": "require_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/meta_repair.py": "require_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/engine_runtime_repair.py": "require_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/repair_contract.py": "require_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py": "require_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/six_hour_auditor.py": "require_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/blocker_recovery.py": "require_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/handlers/override.py": "mint_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/planning/control_binding.py": "mint_mutation_capability",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog": "canonical_mutation_fenced",
     }
-    for path in in_scope:
+    out_of_scope = {
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/manual_repair_trigger.py": (
+            "generic queue producer; T4.1 selected M3b/M4 mutation paths only"
+        ),
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/repair_requests.py": (
+            "occurrence-bound queue write; not a selected M3b/M4 mutation grant"
+        ),
+        REPO_ROOT / "arnold_pipelines/megaplan/auto.py": (
+            "lifecycle_failure enqueue; generic queue producer, not T4.1 grant"
+        ),
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/maintenance_recovery.py": (
+            "allowlisted repair effects remain out of T4.1 root-grant scope"
+        ),
+    }
+    for path, needle in in_scope.items():
         source = path.read_text(encoding="utf-8")
-        needle = required[path.name]
         assert needle in source, f"{path.name} missing {needle}"
         if path.suffix == ".py" and path.name != "current_target_liveness.py":
             tree = ast.parse(source)
@@ -450,3 +482,29 @@ def test_static_search_proves_no_bypassing_in_scope_consumer() -> None:
                 "cli.py",
                 "current_target_liveness.py",
             }
+        if path.name == "arnold-watchdog":
+            assert "canonical_mutation_permitted=1" not in source
+            assert "minted MutationCapability" in source
+            assert "babysitter/relaunch/drive require a minted MutationCapability" in source
+
+    for path, reason in out_of_scope.items():
+        assert path.exists(), f"missing out-of-scope producer {path}"
+        source = path.read_text(encoding="utf-8")
+        assert "mint_mutation_capability" not in source
+        assert "require_mutation_capability" not in source
+        assert reason
+
+    named = {
+        "manual_repair_trigger": "out_of_scope",
+        "repair_requests": "out_of_scope",
+        "auto.py": "out_of_scope",
+        "maintenance_recovery": "out_of_scope",
+        "arnold-watchdog": "in_scope",
+    }
+    in_scope_names = {path.name for path in in_scope}
+    out_of_scope_names = {path.name for path in out_of_scope}
+    assert named["arnold-watchdog"] == "in_scope"
+    assert "arnold-watchdog" in in_scope_names
+    for producer in ("manual_repair_trigger.py", "repair_requests.py", "auto.py", "maintenance_recovery.py"):
+        assert producer in out_of_scope_names
+

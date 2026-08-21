@@ -10,14 +10,16 @@ validate that capability's scope but cannot independently grant authority.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
+import secrets
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from weakref import WeakSet
 
 from arnold_pipelines.megaplan.cloud.liveness_lease import observe_liveness_lease
 
@@ -417,27 +419,50 @@ class MutationDenied(PermissionError):
         self.code = code
 
 
-@dataclass(frozen=True)
 class MutationCapability:
     """Typed, evidence-bound permission for one selected mutation.
 
-    Downstream code may narrow ``scope`` or re-validate identity fields.  It
-    cannot mint a new grant or reconstruct authority from a subset of facts.
+    Mint-only. Downstream code may narrow ``scope`` or re-validate identity
+    fields. It cannot reconstruct authority from public fields or a Mapping.
     """
 
-    schema: str
-    action: str
-    occurrence: str
-    target: str
-    cursor: str
-    fence_epoch: int
-    evidence_digest: str
-    scope: str
-    expires_at: str
-    import_root: str
-    interpreter: str
-    tree_sha_telemetry: str
-    token: str
+    __slots__ = (
+        "schema",
+        "action",
+        "occurrence",
+        "target",
+        "cursor",
+        "fence_epoch",
+        "evidence_digest",
+        "scope",
+        "expires_at",
+        "import_root",
+        "interpreter",
+        "tree_sha_telemetry",
+        "custody",
+        "token",
+        "__weakref__",
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise MutationDenied(
+            "MutationCapability is mint-only; reconstructed constructors are not authority",
+            code="capability_reconstructed",
+        )
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    @classmethod
+    def _mint(cls, fields: Mapping[str, Any]) -> MutationCapability:
+        capability = object.__new__(cls)
+        for key in _CAPABILITY_FIELDS:
+            object.__setattr__(capability, key, fields[key])
+        _MINTED_CAPABILITIES.add(capability)
+        return capability
 
     def narrow(self, scope: str) -> MutationCapability:
         """Return a capability whose scope is a prefix of this one."""
@@ -450,21 +475,10 @@ class MutationCapability:
                 f"cannot widen capability scope {self.scope!r} to {wanted!r}",
                 code="scope_widen",
             )
-        return MutationCapability(
-            schema=self.schema,
-            action=self.action,
-            occurrence=self.occurrence,
-            target=self.target,
-            cursor=self.cursor,
-            fence_epoch=self.fence_epoch,
-            evidence_digest=self.evidence_digest,
-            scope=wanted,
-            expires_at=self.expires_at,
-            import_root=self.import_root,
-            interpreter=self.interpreter,
-            tree_sha_telemetry=self.tree_sha_telemetry,
-            token=self.token,
-        )
+        fields = self.to_dict()
+        fields["scope"] = wanted
+        fields["token"] = _sign_capability(fields)
+        return MutationCapability._mint(fields)
 
     def requires_action(self, action: str) -> None:
         if _text(action) != self.action:
@@ -495,6 +509,7 @@ class MutationCapability:
             "import_root": self.import_root,
             "interpreter": self.interpreter,
             "tree_sha_telemetry": self.tree_sha_telemetry,
+            "custody": self.custody,
             "token": self.token,
         }
 
@@ -512,8 +527,11 @@ _CAPABILITY_FIELDS = (
     "import_root",
     "interpreter",
     "tree_sha_telemetry",
+    "custody",
     "token",
 )
+_CAPABILITY_MAC_KEY = secrets.token_bytes(32)
+_MINTED_CAPABILITIES: WeakSet[MutationCapability] = WeakSet()
 
 
 def _canonical_digest(value: Any) -> str:
@@ -615,6 +633,48 @@ def _extract_occurrence(evidence: Mapping[str, Any]) -> str:
         if text:
             return text
     return ""
+
+
+def _extract_custody(evidence: Mapping[str, Any], *, occurrence: str) -> str:
+    """Return occurrence-bound custody identity, or empty when absent."""
+
+    identity = evidence.get("occurrence_identity")
+    candidates: list[object] = []
+    if isinstance(identity, Mapping):
+        candidates.extend(
+            identity.get(key)
+            for key in ("custody", "custody_identity", "custody_receipt")
+        )
+    for key in (
+        "custody",
+        "custody_identity",
+        "custody_receipt",
+        "repair_custody",
+    ):
+        candidates.append(evidence.get(key))
+    for candidate in candidates:
+        if isinstance(candidate, Mapping):
+            bound = _text(
+                candidate.get("identity")
+                or candidate.get("custody_identity")
+                or candidate.get("receipt")
+                or candidate.get("lease_id")
+            )
+            bound_occurrence = _text(
+                candidate.get("occurrence")
+                or candidate.get("occurrence_fingerprint")
+            )
+            if bound_occurrence and occurrence and bound_occurrence != occurrence:
+                continue
+            if bound:
+                return bound
+            if candidate:
+                return _canonical_digest(dict(candidate))
+        text = _text(candidate)
+        if text:
+            return text
+    return ""
+
 
 
 def _extract_cursor(evidence: Mapping[str, Any]) -> str:
@@ -795,9 +855,20 @@ def _bind_live_tree(
     return live_root, live_interpreter or str(process_python), _tree_sha_telemetry(live_root)
 
 
-def _mint_token(fields: Mapping[str, Any]) -> str:
+def _sign_capability(fields: Mapping[str, Any]) -> str:
     payload = {key: fields[key] for key in _CAPABILITY_FIELDS if key != "token"}
-    return "mc:" + _canonical_digest(payload)
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str
+    ).encode()
+    return "mc:" + hmac.new(_CAPABILITY_MAC_KEY, encoded, hashlib.sha256).hexdigest()
+
+
+def _minted_object(capability: object) -> MutationCapability | None:
+    if not isinstance(capability, MutationCapability):
+        return None
+    if capability not in _MINTED_CAPABILITIES:
+        return None
+    return capability
 
 
 def require_mutation_capability(
@@ -809,8 +880,8 @@ def require_mutation_capability(
 ) -> MutationCapability:
     """Accept only a previously minted root capability.
 
-    Valid downstream receipt/cutover/operator evidence without this object
-    still rejects.
+    A reconstructed Mapping is not authority. Valid downstream
+    receipt/cutover/operator evidence without this object still rejects.
     """
 
     if capability is None:
@@ -819,43 +890,39 @@ def require_mutation_capability(
             code="capability_absent",
         )
     if isinstance(capability, Mapping):
-        try:
-            capability = MutationCapability(
-                **{key: capability[key] for key in _CAPABILITY_FIELDS}
-            )
-        except (KeyError, TypeError) as exc:
-            raise MutationDenied(
-                "mutation capability payload is incomplete",
-                code="capability_malformed",
-            ) from exc
-    if not isinstance(capability, MutationCapability):
         raise MutationDenied(
-            "mutation requires a typed MutationCapability",
-            code="capability_absent",
+            "reconstructed Mapping is not a minted MutationCapability",
+            code="capability_reconstructed",
         )
-    if capability.schema != MUTATION_CAPABILITY_SCHEMA:
+    minted = _minted_object(capability)
+    if minted is None:
+        raise MutationDenied(
+            "mutation requires a previously minted MutationCapability",
+            code="capability_reconstructed",
+        )
+    if minted.schema != MUTATION_CAPABILITY_SCHEMA:
         raise MutationDenied("unknown mutation capability schema", code="capability_schema")
-    expected = _mint_token(capability.to_dict())
-    if capability.token != expected:
+    expected = _sign_capability(minted.to_dict())
+    if not hmac.compare_digest(minted.token, expected):
         raise MutationDenied(
             "mutation capability token does not match bound identity",
             code="capability_forged",
         )
     try:
-        expires = datetime.fromisoformat(capability.expires_at.replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(minted.expires_at.replace("Z", "+00:00"))
     except ValueError as exc:
         raise MutationDenied("capability expiry is unreadable", code="capability_expiry") from exc
     if _aware_utc(None) > _aware_utc(expires):
         raise MutationDenied("mutation capability has expired", code="capability_expired")
-    capability.requires_action(action)
-    if occurrence and occurrence != capability.occurrence:
+    minted.requires_action(action)
+    if occurrence and occurrence != minted.occurrence:
         raise MutationDenied(
             "capability occurrence does not match the requested occurrence",
             code="occurrence_mismatch",
         )
     if scope:
-        capability.requires_scope(scope)
-    return capability
+        minted.requires_scope(scope)
+    return minted
 
 
 def mint_mutation_capability(
@@ -871,6 +938,7 @@ def mint_mutation_capability(
 
     Diagnostic callers must not use this function.  Incomplete or
     contradictory identity refuses rather than describing the gap.
+    Occurrence-bound custody is required at mint time.
     """
 
     action_name = _text(action)
@@ -895,6 +963,7 @@ def mint_mutation_capability(
     cursor = _extract_cursor(evidence)
     fence_epoch = _extract_fence_epoch(evidence)
     evidence_digest = _extract_evidence_digest(evidence)
+    custody = _extract_custody(evidence, occurrence=occurrence)
     scope = _text(evidence.get("scope") or action_name)
     missing = [
         name
@@ -904,6 +973,7 @@ def mint_mutation_capability(
             ("cursor", cursor),
             ("evidence_digest", evidence_digest),
             ("scope", scope),
+            ("custody", custody),
         )
         if not value
     ]
@@ -936,10 +1006,13 @@ def mint_mutation_capability(
         "import_root": live_root,
         "interpreter": live_interpreter,
         "tree_sha_telemetry": tree_sha,
+        "custody": custody,
         "token": "",
     }
-    fields["token"] = _mint_token(fields)
-    return MutationCapability(**fields)  # type: ignore[arg-type]
+    fields["token"] = _sign_capability(fields)
+    return MutationCapability._mint(fields)
+
+
 
 
 __all__ = [
