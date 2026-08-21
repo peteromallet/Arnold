@@ -327,3 +327,12 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Baseline note honored: stale watchdog snapshot test excluded (fails at fce; pre-existing).
 - Batch 2 CLOSED. NEXT: Batch 3 (T3.1 migration running; T3.2 unblocker; T3.3 six-hour auditor) → G3.
 
+
+## INCIDENT — INT-t31 removed the integration worktree (recovered)
+
+- INT-t31 (mrc-a1889408…) integrated T3.1 correctly (merge f516dd215f, branch tip 973a6fe6ce) but then removed `/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution` believing it was the T3.1 task worktree. The real T3.1 task worktree/branch (fix/repair-t3.1-migration) was cleaned correctly.
+- Impact: working tree of the integration worktree was deleted from disk. All commits, the branch ref, wrapper script, evidence, and log survived in the shared object store (branch tip 973a6fe6ce).
+- Recovery: re-created the integration worktree at the same path from refs/heads/integration/goal-maintenance-runtime-20260820 (973a6fe6ce). Wrapper, evidence dir, and execution log verified present; working tree clean.
+- Prevention: subsequent integration cards must NOT remove the integration worktree; task-worktree removal must verify the target is not the integration worktree (exact path match).
+- State after recovery: HEAD 973a6fe6ce; T3.1 integrated + reviewed PASS; Batch 3 in progress (T3.2 next).
+
