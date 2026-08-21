@@ -551,6 +551,9 @@ class ResidentJobHandlers:
         anywhere (definitions and heads are never rewritten here).
         """
         job = _job_from_payload(job_payload)
+        persisted_job = self.store.load_scheduled_job(job.id)
+        if persisted_job is not None:
+            job = persisted_job
         manifest_path = _runtime_manifest_path()
         pin_ok, pin_reason = runtime_pin_ok(manifest_path=manifest_path)
         if not pin_ok:
@@ -569,6 +572,17 @@ class ResidentJobHandlers:
             manifest_path=manifest_path,
             dry_run=bool(job.payload.get("dry_run", False)),
         )
+        if bool(job.payload.get("schedule_owned")):
+            from .schedules import TERMINAL_OCCURRENCE_STATES
+            bound = self._bound_superfixer_occurrence(job)
+            if (
+                job.payload.get("keep_cancelled")
+                or (bound is not None and (
+                    bound.state in TERMINAL_OCCURRENCE_STATES
+                    or bound.manifest_path is not None
+                ))
+            ):
+                return
         payload = dict(job.payload)
         payload["seam_dispatch_plan"] = dispatch
         payload["superfixer_occurrence_state"] = "planned"

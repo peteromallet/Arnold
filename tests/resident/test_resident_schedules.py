@@ -187,6 +187,104 @@ def test_stale_claim_is_recovered_with_a_higher_fence(tmp_path: Path) -> None:
         )
 
 
+def test_occurrence_digest_mismatch_fails_closed_before_claim_append(tmp_path: Path) -> None:
+    service = ScheduleService(tmp_path)
+    row, _ = service.create(definition(), idempotency_key="digest-mismatch")
+    service.materialize(now=NOW)
+    projection = service.repo.occurrences(row.schedule_id)[0]
+    event_path = service.repo.transition_path(projection.occurrence.occurrence_id)
+    before = event_path.read_text(encoding="utf-8")
+    occurrence_path = service.repo.occurrence_path(projection.occurrence.occurrence_id)
+    payload = json.loads(occurrence_path.read_text(encoding="utf-8"))
+    payload["pinned_definition_digest"] = "sha256:" + "0" * 64
+    occurrence_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="digest mismatch"):
+        service.claim(worker_id="digest-worker", now=NOW)
+
+    assert event_path.read_text(encoding="utf-8") == before
+    persisted = service.load_occurrence(projection.occurrence.occurrence_id)
+    assert persisted is not None
+    assert persisted.state == "scheduled"
+    assert persisted.fence == 0
+    assert persisted.claim_owner is None
+    assert Path(tmp_path).resolve() != Path.cwd().resolve()
+
+
+def test_terminal_transition_replay_is_idempotent_but_stale_epoch_is_rejected(
+    tmp_path: Path,
+) -> None:
+    service = ScheduleService(tmp_path)
+    row, _ = service.create(
+        definition(
+            timing={
+                "kind": "interval",
+                "every": "PT1H",
+                "anchor_at": (NOW - timedelta(hours=1)).isoformat(),
+                "cadence": "fixed_rate",
+                "timezone": "UTC",
+            },
+            bounds={"max_occurrences": 2},
+        ),
+        idempotency_key="terminal-replay",
+    )
+    service.materialize(now=NOW)
+    first = service.claim(worker_id="owner-a", now=NOW, lease_seconds=10)[0]
+    terminal_changes = {
+        "state": "terminal",
+        "decision": "finished",
+        "claim_owner": None,
+        "claim_token": None,
+        "claim_expires_at": None,
+    }
+    service.repo.transition(
+        first.occurrence.occurrence_id,
+        event="occurrence_terminal",
+        actor="owner-a",
+        expected_fence=first.fence,
+        expected_token=first.claim_token,
+        changes=terminal_changes,
+    )
+    event_path = service.repo.transition_path(first.occurrence.occurrence_id)
+    after_terminal = event_path.read_text(encoding="utf-8")
+    replay = service.repo.transition(
+        first.occurrence.occurrence_id,
+        event="occurrence_terminal",
+        actor="owner-a",
+        expected_fence=first.fence,
+        expected_token=first.claim_token,
+        changes=terminal_changes,
+    )
+    assert replay.state == "terminal"
+    assert event_path.read_text(encoding="utf-8") == after_terminal
+
+    stale_service = ScheduleService(tmp_path / "stale")
+    stale_row, _ = stale_service.create(
+        definition(schedule_id="sched_stale", bounds={"max_occurrences": 2}),
+        idempotency_key="stale-terminal",
+    )
+    stale_service.materialize(now=NOW)
+    second = stale_service.claim(worker_id="owner-b", now=NOW, lease_seconds=10)[0]
+    reclaimed = stale_service.claim(
+        worker_id="owner-c",
+        now=NOW + timedelta(seconds=11),
+        lease_seconds=10,
+    )[0]
+    second_event_path = stale_service.repo.transition_path(second.occurrence.occurrence_id)
+    before_stale = second_event_path.read_text(encoding="utf-8")
+    with pytest.raises(RuntimeError, match="stale occurrence fence"):
+        stale_service.repo.transition(
+            second.occurrence.occurrence_id,
+            event="occurrence_terminal",
+            actor="owner-b",
+            expected_fence=second.fence,
+            expected_token=second.claim_token,
+            changes=terminal_changes,
+        )
+    assert reclaimed.fence == second.fence + 1
+    assert second_event_path.read_text(encoding="utf-8") == before_stale
+
+
 def test_timing_update_increments_generation_and_cancels_unclaimed_old_occurrence(tmp_path: Path) -> None:
     service = ScheduleService(tmp_path)
     current, _ = service.create(definition(bounds={"max_occurrences": 5}), idempotency_key="revise")

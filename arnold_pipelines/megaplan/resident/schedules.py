@@ -642,7 +642,15 @@ class ScheduleRepository:
                 payload.update(changes)
                 projection = OccurrenceProjection.model_validate(payload)
         return projection
-
+    def _validate_occurrence_binding(self, occurrence: ScheduleOccurrence) -> None:
+        """Reject tampered occurrence bindings before any state append."""
+        pinned = occurrence.pinned_launch_spec
+        authorization = pinned.get("authorization") if isinstance(pinned, Mapping) else None
+        if not isinstance(authorization, Mapping) or _digest(authorization) != occurrence.authorization_digest:
+            raise RuntimeError("occurrence authorization digest mismatch")
+        definition = self.read_definition(occurrence.schedule_id, occurrence.schedule_revision)
+        if _digest(definition.model_dump(mode="json", by_alias=True)) != occurrence.pinned_definition_digest:
+            raise RuntimeError("occurrence pinned definition digest mismatch")
     def transition(self, occurrence_id: str, *, event: str, actor: str,
                    changes: Mapping[str, Any], expected_fence: int | None = None,
                    expected_token: str | None = None) -> OccurrenceProjection:
@@ -656,7 +664,23 @@ class ScheduleRepository:
                              changes: Mapping[str, Any], expected_fence: int | None = None,
                              expected_token: str | None = None) -> OccurrenceProjection:
         occurrence = ScheduleOccurrence.model_validate_json(self.occurrence_path(occurrence_id).read_text(encoding="utf-8"))
+        self._validate_occurrence_binding(occurrence)
         current = self.project(occurrence)
+        if (
+            current.state in TERMINAL_OCCURRENCE_STATES
+            and changes.get("state") in TERMINAL_OCCURRENCE_STATES
+            and expected_fence is not None
+        ):
+            for line in reversed(self.transition_path(occurrence_id).read_text(encoding="utf-8").splitlines()):
+                prior = json.loads(line)
+                if (
+                    prior.get("event") == event
+                    and prior.get("changes") == dict(changes)
+                    and prior.get("expected_fence") == expected_fence
+                    and prior.get("expected_token") == expected_token
+                    and current.fence == expected_fence
+                ):
+                    return current
         if expected_fence is not None and current.fence != expected_fence:
             raise RuntimeError("stale occurrence fence")
         if expected_token is not None and current.claim_token != expected_token:
@@ -668,6 +692,7 @@ class ScheduleRepository:
             "generation": occurrence.generation, "occurrence_id": occurrence_id,
             "occurrence_key": occurrence.occurrence_key, "nominal_at": occurrence.nominal_at,
             "at": now, "actor": actor, "source_digest": occurrence.authorization_digest,
+            "expected_fence": expected_fence, "expected_token": expected_token,
             "previous_event_hash": self._last_event_hash(self.transition_path(occurrence_id)),
             "changes": dict(changes),
         }
@@ -1042,6 +1067,7 @@ class ScheduleService:
                 if len(claimed) >= limit:
                     break
                 definition = self.repo.read_definition(projection.occurrence.schedule_id)
+                self.repo._validate_occurrence_binding(projection.occurrence)
                 if definition.state not in {"active", "exhausted"}:
                     continue
                 stale = (projection.state == "claimed" and projection.claim_expires_at is not None
@@ -1106,6 +1132,7 @@ class ScheduleService:
             occurrence = ScheduleOccurrence.model_validate_json(
                 path.read_text(encoding="utf-8")
             )
+            self.repo._validate_occurrence_binding(occurrence)
             current = self.repo.project(occurrence)
             if current.manifest_path is not None:
                 raise RuntimeError(
