@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.execute.test_budget import (
     STATE_FIELD_V2,
     BudgetState,
     classify_narrow_tests,
+    classify_task_budget,
     complete_run,
     load_budget_state,
     persist_budget_state,
@@ -30,6 +31,12 @@ from arnold_pipelines.megaplan.execute.test_budget import (
     settle_interrupted_active_run,
     subprocess_timeout_seconds,
     v2_admission_for_command,
+)
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
+from arnold_pipelines.megaplan.handlers.finalize import _force_new_plan_elapsed_budget_v2
+from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+    FinalizeMutationContext,
+    _validate_field_ownership,
 )
 from arnold_pipelines.megaplan.orchestration.task_feasibility import compile_task_feasibility
 from arnold_pipelines.megaplan.orchestration.task_splitter import (
@@ -185,34 +192,18 @@ def test_sleep_command_is_capped_by_remaining_budget(tmp_path: Path) -> None:
     root = _assert_disposable_root(tmp_path / "sleep-slow-command")
     task = _task("T1", _v2_narrow(test_budget_seconds=1, max_runs=2))
     started = time.monotonic()
-
-    def _sleep_runner(timeout_seconds: float) -> float:
-        t0 = time.monotonic()
-        completed = subprocess.run(
-            ["sleep", "5"],
-            cwd=root,
-            timeout=timeout_seconds,
-            check=False,
-        )
-        assert completed.returncode != 0 or timeout_seconds >= 5
-        return time.monotonic() - t0
-
-    with pytest.raises(subprocess.TimeoutExpired):
-        subprocess.run(["sleep", "5"], cwd=root, timeout=0.3, check=False)
-
-    elapsed_probe = time.monotonic() - started
-    assert elapsed_probe < 2.0
-
     decision = run_elapsed_command(
         task,
-        "timeout 30 pytest tests/test_t1.py",
+        f"sleep 5",
         run_id="sleep-1",
         command_timeout=30,
-        runner=lambda timeout: min(timeout, 0.4),
     )
+    elapsed = time.monotonic() - started
     assert decision.subprocess_timeout_seconds == pytest.approx(1.0)
-    assert task[STATE_FIELD_V2]["consumed_seconds"] == pytest.approx(0.4)
+    assert elapsed < 2.5
+    assert task[STATE_FIELD_V2]["consumed_seconds"] >= 0.5
     assert "monotonic" not in json.dumps(task[STATE_FIELD_V2])
+    assert (root / ".t51-disposable-root").exists()
 
 
 def test_interrupted_subprocess_and_resume_cannot_reset_consumed(tmp_path: Path) -> None:
@@ -249,6 +240,7 @@ def test_interrupted_subprocess_and_resume_cannot_reset_consumed(tmp_path: Path)
     assert resumed is not None
     assert resumed.active_run is None
     assert resumed.consumed_seconds == pytest.approx(7.0)
+    assert resumed.run_count == 2
     persist_budget_state(task, resumed)
     retry = run_elapsed_command(
         task,
@@ -260,7 +252,7 @@ def test_interrupted_subprocess_and_resume_cannot_reset_consumed(tmp_path: Path)
     )
     assert retry.state is not None
     assert retry.state.consumed_seconds == pytest.approx(7.5)
-    assert retry.state.run_count == 2
+    assert retry.state.run_count == 3
 
 
 def test_monotonic_within_process_and_utc_persisted(tmp_path: Path) -> None:
@@ -425,15 +417,24 @@ def test_subprocess_timeout_is_min_of_command_and_remaining() -> None:
 def test_feasibility_emits_visible_v1_and_v2_classifications() -> None:
     v2 = _task("T1", _v2_narrow())
     v1 = _task("T2", _v1_narrow())
-    report = compile_task_feasibility(
-        {"task_contract_version": 2, "tasks": [v2, v1], "validation_jobs": []}
+    v2_report = compile_task_feasibility(
+        {"task_contract_version": 2, "tasks": [v2], "validation_jobs": []}
     )
-    by_id = {row["task_id"]: row for row in report["budget_classifications"]}
+    v1_report = compile_task_feasibility(
+        {"tasks": [v1], "validation_jobs": []}
+    )
+    by_id = {row["task_id"]: row for row in v2_report["budget_classifications"] + v1_report["budget_classifications"]}
     assert by_id["T1"]["budget_classification"] == CLASSIFICATION_V2
     assert by_id["T2"]["budget_classification"] == CLASSIFICATION_V1
     assert by_id["T1"]["enforcement_seam"] == "arnold_pipelines.megaplan.execute.test_budget"
     assert "elapsed_wall_clock_v2" in by_id["T1"]["message"]
     assert "declared_timeout_sum_v1" in by_id["T2"]["message"]
+    mixed = compile_task_feasibility(
+        {"task_contract_version": 2, "tasks": [v1], "validation_jobs": []}
+    )
+    codes = {item["code"] for item in mixed["diagnostics"]}
+    assert "task_test_budget_v2_required" in codes
+    assert mixed["admitted"] is False
 
 
 def test_splitter_and_validation_jobs_describe_seam_without_timeout_sum() -> None:
@@ -454,3 +455,217 @@ def test_splitter_and_validation_jobs_describe_seam_without_timeout_sum() -> Non
     assert v1_job is not None
     assert v1_job["budget_classification"] == CLASSIFICATION_V1
     assert v1_job["timeout_seconds"] == 90
+
+def test_merge_charges_elapsed_from_commands_run_without_duration_list() -> None:
+    target = _task("T1", _v2_narrow(test_budget_seconds=5, max_runs=2))
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": ["timeout 30 pytest tests/test_t1.py"],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([entry], targets_by_id={"T1": target}, issues=issues)
+    assert entry["status"] == "blocked"
+    assert entry[STATE_FIELD_V2]["consumed_seconds"] == pytest.approx(5.0)
+    assert entry[STATE_FIELD_V2]["consumed_seconds"] != 0.0
+    assert "elapsed_budget_exhausted" in {
+        item["kind"] for item in entry["task_test_budget_violations"]
+    }
+
+
+def test_merge_fast_command_under_budget_without_duration_list_stays_done() -> None:
+    target = _task("T1", _v2_narrow(test_budget_seconds=5, max_runs=2))
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": ["timeout 2 pytest tests/test_t1.py"],
+        "test_run_durations_seconds": [0.2],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([entry], targets_by_id={"T1": target}, issues=issues)
+    assert entry["status"] == "done"
+    assert issues == []
+    assert entry[STATE_FIELD_V2]["consumed_seconds"] == pytest.approx(0.2)
+    assert entry[STATE_FIELD_V2]["run_count"] == 1
+
+
+def test_production_runner_kills_slow_command_and_admits_fast_command(tmp_path: Path) -> None:
+    root = _assert_disposable_root(tmp_path / "prod-slow-fast")
+    slow = _task("T1", _v2_narrow(test_budget_seconds=1, max_runs=2))
+    started = time.monotonic()
+    slow_decision = run_elapsed_command(
+        slow,
+        "sleep 5",
+        run_id="slow",
+        command_timeout=30,
+    )
+    slow_elapsed = time.monotonic() - started
+    assert slow_decision.subprocess_timeout_seconds == pytest.approx(1.0)
+    assert slow_elapsed < 2.5
+    assert slow[STATE_FIELD_V2]["consumed_seconds"] >= 0.5
+    assert slow[STATE_FIELD_V2]["run_count"] == 1
+    assert slow_decision.admitted is False
+    assert slow_decision.kind == "elapsed_budget_exhausted"
+
+    fast = _task("T2", _v2_narrow(test_budget_seconds=5, max_runs=2))
+    fast_started = time.monotonic()
+    fast_decision = run_elapsed_command(
+        fast,
+        "true",
+        run_id="fast",
+        command_timeout=30,
+    )
+    fast_elapsed = time.monotonic() - fast_started
+    assert fast_decision.subprocess_timeout_seconds == pytest.approx(5.0)
+    assert fast_elapsed < 2.0
+    assert fast[STATE_FIELD_V2]["consumed_seconds"] < 2.0
+    assert fast[STATE_FIELD_V2]["run_count"] == 1
+    assert fast_decision.admitted is True
+    assert (root / ".t51-disposable-root").exists()
+
+
+def test_admission_stops_at_zero_remaining_budget() -> None:
+    task = _task("T1", _v2_narrow(test_budget_seconds=1, max_runs=5))
+    first = run_elapsed_command(
+        task,
+        "sleep 5",
+        run_id="first",
+        command_timeout=30,
+    )
+    assert first.admitted is False
+    second, state = v2_admission_for_command(
+        task,
+        "timeout 30 pytest tests/test_t1.py",
+        run_id="second",
+        command_timeout=30,
+    )
+    assert second.admitted is False
+    assert second.kind == "elapsed_budget_exhausted"
+    assert second.subprocess_timeout_seconds == 0.0
+    assert state is not None
+    assert state.remaining_seconds() == 0.0
+
+
+def test_v2_budget_block_is_execute_mutable() -> None:
+    before = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "pending",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+            }
+        ]
+    }
+    after = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "blocked",
+                "executor_notes": "task_test_budget_exhausted",
+                "files_changed": [],
+                "commands_run": ["timeout 30 pytest tests/test_t1.py"],
+                "task_test_budget_exhausted": "elapsed wall-clock budget exhausted",
+                "task_test_budget_violations": [{"kind": "elapsed_budget_exhausted"}],
+                "budget_classification": CLASSIFICATION_V2,
+                "test_budget_state_v2": {
+                    "allowed_seconds": 1.0,
+                    "consumed_seconds": 1.0,
+                    "run_count": 1,
+                    "active_run": None,
+                    "updated_at_utc": "2026-08-21T12:00:00.000000Z",
+                },
+                "test_run_durations_seconds": [1.0],
+            }
+        ]
+    }
+    context = FinalizeMutationContext(owner="execute", operation="t51-block", attempt_id="a1")
+    paths = _validate_field_ownership(before, after, context)
+    assert "tasks[T1].task_test_budget_violations" in paths
+    assert "tasks[T1].test_budget_state_v2" in paths
+
+
+def test_new_finalize_schema_requires_elapsed_v2_fields() -> None:
+    required = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"]["tasks"]["items"]["properties"]["narrow_tests"]["required"]
+    assert "budget_semantics" in required
+    assert "test_budget_seconds" in required
+    assert "max_runs" in required
+    assert "max_seconds" not in required
+    properties = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"]["tasks"]["items"]["properties"]["narrow_tests"]["properties"]
+    assert "max_seconds" not in properties
+    payload = {
+        "task_contract_version": 1,
+        "tasks": [
+            {
+                "id": "T1",
+                "narrow_tests": {"selectors": ["tests/test_t1.py"], "max_seconds": 90, "max_runs": 2},
+            }
+        ],
+    }
+    _force_new_plan_elapsed_budget_v2(payload)
+    assert payload["task_contract_version"] == 2
+    narrow = payload["tasks"][0]["narrow_tests"]
+    assert narrow["budget_semantics"] == BUDGET_SEMANTICS_V2
+    assert narrow["test_budget_seconds"] == 90
+    assert narrow["max_runs"] == 2
+    assert "max_seconds" not in narrow
+
+
+def test_persisted_top_level_v2_and_nested_v1_is_mixed(tmp_path: Path) -> None:
+    root = _assert_disposable_root(tmp_path / "persisted-mix")
+    task = _task("T1", _v2_narrow())
+    task[STATE_FIELD_V2] = {
+        "allowed_seconds": 5,
+        "consumed_seconds": 0,
+        "run_count": 0,
+        "active_run": None,
+        "updated_at_utc": "2026-08-21T12:00:00.000000Z",
+    }
+    task["narrow_tests"][STATE_FIELD_V1] = {"consumed_seconds": 1}
+    (root / "mixed.json").write_text(json.dumps(task), encoding="utf-8")
+    classification = classify_task_budget(task)
+    assert classification.mixes_state_fields is True
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "verified",
+        "commands_run": ["timeout 5 pytest tests/test_t1.py"],
+        "test_run_durations_seconds": [0.1],
+    }
+    issues: list[str] = []
+    _enforce_task_test_budgets([entry], targets_by_id={"T1": task}, issues=issues)
+    assert entry["status"] == "blocked"
+    assert {item["kind"] for item in entry["task_test_budget_violations"]} == {"mixed_budget_state"}
+
+
+def test_one_run_count_source_at_complete_and_interrupted_settlement() -> None:
+    clock = FakeClock()
+    task = _task("T1", _v2_narrow(test_budget_seconds=10, max_runs=3))
+    first = run_elapsed_command(
+        task,
+        "timeout 30 pytest tests/test_t1.py",
+        run_id="r1",
+        clock=clock,
+        command_timeout=30,
+        runner=lambda timeout: 1.0,
+    )
+    assert first.state is not None
+    assert first.state.run_count == 1
+    decision, launched = v2_admission_for_command(
+        task,
+        "timeout 30 pytest tests/test_t1.py",
+        run_id="r2",
+        clock=clock,
+        command_timeout=30,
+    )
+    assert decision.admitted is True
+    persist_budget_state(task, launched)
+    resume_clock = FakeClock(utc=clock.utcnow() + timedelta(seconds=2))
+    settled = load_budget_state(task, clock=resume_clock)
+    assert settled is not None
+    assert settled.active_run is None
+    assert settled.run_count == 2
+

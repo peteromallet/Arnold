@@ -56,6 +56,7 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     compile_task_feasibility,
 )
+from arnold_pipelines.megaplan.execute.test_budget import BUDGET_SEMANTICS_V2
 from arnold_pipelines.megaplan.orchestration.task_splitter import (
     SplitDiagnostic,
     split_high_complexity_tasks,
@@ -1204,6 +1205,43 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
         "baseline_cwd": baseline_cwd,
         "baseline_source_revision": baseline_source_revision,
     }
+
+def _force_new_plan_elapsed_budget_v2(payload: dict[str, Any]) -> None:
+    """New finalized plans write elapsed_wall_clock_v2 + one positive test_budget_seconds + max_runs.
+
+    Does not rewrite stored v1 artifacts: this runs only on the in-memory
+    finalize payload before it is admitted.
+    """
+
+    payload["task_contract_version"] = 2
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        narrow = task.get("narrow_tests")
+        if not isinstance(narrow, dict):
+            narrow = {"selectors": [], "max_runs": 0}
+            task["narrow_tests"] = narrow
+        selectors = narrow.get("selectors")
+        if not isinstance(selectors, list):
+            narrow["selectors"] = []
+        max_runs = narrow.get("max_runs")
+        if not isinstance(max_runs, int) or isinstance(max_runs, bool) or max_runs < 0:
+            narrow["max_runs"] = 0
+        budget = narrow.get("test_budget_seconds")
+        if not isinstance(budget, (int, float)) or isinstance(budget, bool) or float(budget) <= 0:
+            legacy = narrow.get("max_seconds")
+            if isinstance(legacy, (int, float)) and not isinstance(legacy, bool) and float(legacy) > 0:
+                budget = float(legacy)
+            else:
+                budget = 120
+            narrow["test_budget_seconds"] = budget
+        narrow["budget_semantics"] = BUDGET_SEMANTICS_V2
+        narrow.pop("max_seconds", None)
+        narrow.pop("test_budget_state_v1", None)
+
 
 def _normalize_task_complexity(payload: dict[str, Any]) -> None:
     """Safety net for the complexity fields of programmatically-injected tasks.
@@ -2612,6 +2650,7 @@ def _write_finalize_artifacts(
         _ensure_user_actions_post_gate_task(payload, state)
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
+    _force_new_plan_elapsed_budget_v2(payload)
     splitter_diagnostics = _split_finalize_tasks(payload)
     validation_compilation = compile_validation_contract(payload)
     # ── M8A T4: Compile harness-owned validation jobs after handler task

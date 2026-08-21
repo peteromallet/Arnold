@@ -34,7 +34,7 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
 from arnold_pipelines.megaplan.execute.test_budget import (
     CLASSIFICATION_V2,
     capped_subprocess_timeout,
-    classify_narrow_tests,
+    classify_task_budget,
     describe_budget_for_feasibility,
 )
 
@@ -364,7 +364,7 @@ def _compile_narrow_recheck(
 
     if not selectors:
         return None
-    classification = classify_narrow_tests(narrow)
+    classification = classify_task_budget(task)
     declared_timeout = narrow.get("max_seconds")
     if classification.semantics == CLASSIFICATION_V2:
         declared_timeout = classification.allowed_seconds

@@ -15,7 +15,7 @@ from typing import Any, Mapping
 from arnold_pipelines.megaplan._core.io import compute_task_batches
 from arnold_pipelines.megaplan.execute.test_budget import (
     CLASSIFICATION_V2,
-    classify_narrow_tests,
+    classify_task_budget,
     describe_budget_for_feasibility,
 )
 
@@ -237,12 +237,9 @@ def compile_task_feasibility(
             diagnostics.append(FeasibilityDiagnostic("task_id_invalid", "Task IDs must be non-empty and unique.", str(task_id)))
             continue
         ids.append(task["id"])
-        narrow_for_class = task.get("narrow_tests")
         budget_classifications.append({
             "task_id": task["id"],
-            **describe_budget_for_feasibility(
-                classify_narrow_tests(narrow_for_class if isinstance(narrow_for_class, Mapping) else None)
-            ),
+            **describe_budget_for_feasibility(classify_task_budget(task)),
         })
         objective = task.get("objective")
         if not isinstance(objective, str) or not objective.strip():
@@ -279,7 +276,7 @@ def compile_task_feasibility(
             selectors = narrow.get("selectors")
             max_seconds = narrow.get("max_seconds")
             max_runs = narrow.get("max_runs")
-            classification = classify_narrow_tests(narrow)
+            classification = classify_task_budget(task)
             if classification.mixes_state_fields:
                 diagnostics.append(FeasibilityDiagnostic(
                     "task_test_budget_state_mixed",
@@ -304,7 +301,28 @@ def compile_task_feasibility(
                     "Narrow selectors must be concrete pytest path selectors (e.g. tests/core/store/test_x.py or tests/x.py::test_y); shell commands (pytest ..., python -m ..., bash ..., make ...) and flags are not allowed.",
                     task["id"],
                 ))
-            if classification.semantics == CLASSIFICATION_V2:
+            if payload.get("task_contract_version") == TASK_CONTRACT_VERSION:
+                if classification.semantics != CLASSIFICATION_V2:
+                    diagnostics.append(FeasibilityDiagnostic(
+                        "task_test_budget_v2_required",
+                        "New finalized plans must use elapsed_wall_clock_v2 with one positive test_budget_seconds; v1 max_seconds is not admitted on task_contract_version=2 graphs.",
+                        task["id"],
+                    ))
+                else:
+                    budget = narrow.get("test_budget_seconds")
+                    if not isinstance(budget, (int, float)) or isinstance(budget, bool) or not 0 < float(budget) <= MAX_NARROW_TEST_SECONDS:
+                        diagnostics.append(FeasibilityDiagnostic(
+                            "task_test_time_budget_exceeded",
+                            f"narrow_tests.test_budget_seconds must be in (0..{MAX_NARROW_TEST_SECONDS}] for elapsed_wall_clock_v2.",
+                            task["id"],
+                        ))
+                    if "max_seconds" in narrow:
+                        diagnostics.append(FeasibilityDiagnostic(
+                            "task_test_budget_v1_on_v2_graph",
+                            "narrow_tests.max_seconds is a v1 field and is not admitted on task_contract_version=2 graphs.",
+                            task["id"],
+                        ))
+            elif classification.semantics == CLASSIFICATION_V2:
                 budget = narrow.get("test_budget_seconds")
                 if not isinstance(budget, (int, float)) or isinstance(budget, bool) or not 0 < float(budget) <= MAX_NARROW_TEST_SECONDS:
                     diagnostics.append(FeasibilityDiagnostic(

@@ -14,6 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -42,8 +44,6 @@ class Clock(Protocol):
 @dataclass(frozen=True, slots=True)
 class SystemClock:
     def monotonic(self) -> float:
-        import time
-
         return time.monotonic()
 
     def utcnow(self) -> datetime:
@@ -118,6 +118,10 @@ def _is_number(value: Any) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _mixes_budget_state_fields(holder: Mapping[str, Any]) -> bool:
+    return bool(STATE_FIELD_V1 in holder and STATE_FIELD_V2 in holder)
+
+
 def classify_narrow_tests(narrow: Mapping[str, Any] | None) -> BudgetClassification:
     """Visible compatibility classification. Never mixes v1/v2 state fields."""
 
@@ -135,9 +139,7 @@ def classify_narrow_tests(narrow: Mapping[str, Any] | None) -> BudgetClassificat
     max_seconds = narrow.get("max_seconds")
     test_budget_seconds = narrow.get("test_budget_seconds")
     max_runs = narrow.get("max_runs") if _is_int(narrow.get("max_runs")) else None
-    has_v1_state = STATE_FIELD_V1 in narrow
-    has_v2_state = STATE_FIELD_V2 in narrow
-    mixes = bool(has_v1_state and has_v2_state)
+    mixes = _mixes_budget_state_fields(narrow)
 
     if semantics == BUDGET_SEMANTICS_V2:
         allowed: float | None = None
@@ -179,6 +181,28 @@ def classify_narrow_tests(narrow: Mapping[str, Any] | None) -> BudgetClassificat
         mixes_state_fields=mixes,
         message="narrow_tests is present but has no recognized budget semantics.",
     )
+
+
+def classify_task_budget(task: Mapping[str, Any] | None) -> BudgetClassification:
+    """Classify a persisted task, including top-level v2 state next to nested v1."""
+
+    if not isinstance(task, Mapping):
+        return classify_narrow_tests(None)
+    raw_narrow = task.get("narrow_tests")
+    holder: dict[str, Any] = dict(raw_narrow) if isinstance(raw_narrow, Mapping) else {}
+    if STATE_FIELD_V1 in task and STATE_FIELD_V1 not in holder:
+        holder[STATE_FIELD_V1] = task[STATE_FIELD_V1]
+    if STATE_FIELD_V2 in task and STATE_FIELD_V2 not in holder:
+        holder[STATE_FIELD_V2] = task[STATE_FIELD_V2]
+    if "budget_semantics" not in holder and task.get("budget_semantics") is not None:
+        holder["budget_semantics"] = task.get("budget_semantics")
+    if "test_budget_seconds" not in holder and task.get("test_budget_seconds") is not None:
+        holder["test_budget_seconds"] = task.get("test_budget_seconds")
+    if "max_seconds" not in holder and task.get("max_seconds") is not None:
+        holder["max_seconds"] = task.get("max_seconds")
+    if "max_runs" not in holder and task.get("max_runs") is not None:
+        holder["max_runs"] = task.get("max_runs")
+    return classify_narrow_tests(holder)
 
 
 def command_digest(command: str) -> str:
@@ -252,7 +276,6 @@ def _active_run_from_mapping(raw: Any) -> ActiveRun | None:
     )
 
 
-
 def load_budget_state(
     task: Mapping[str, Any],
     *,
@@ -262,7 +285,7 @@ def load_budget_state(
     """Load persisted v2 state. Interrupted active_run is charged conservatively."""
 
     clock = clock or SystemClock()
-    classification = classification or classify_narrow_tests(task.get("narrow_tests") if isinstance(task.get("narrow_tests"), Mapping) else task)
+    classification = classification or classify_task_budget(task)
     if classification.semantics != CLASSIFICATION_V2:
         return None
     if classification.mixes_state_fields:
@@ -340,7 +363,7 @@ def settle_interrupted_active_run(
     return BudgetState(
         allowed_seconds=state.allowed_seconds,
         consumed_seconds=consumed,
-        run_count=state.run_count,
+        run_count=state.run_count + 1,
         active_run=None,
         updated_at_utc=_format_utc(now),
     )
@@ -485,9 +508,7 @@ def v2_admission_for_command(
     command_timeout: float | None = None,
 ) -> tuple[AdmissionDecision, BudgetState | None]:
     clock = clock or SystemClock()
-    classification = classify_narrow_tests(
-        task.get("narrow_tests") if isinstance(task.get("narrow_tests"), Mapping) else None
-    )
+    classification = classify_task_budget(task)
     if classification.semantics != CLASSIFICATION_V2:
         return (
             AdmissionDecision(
@@ -606,6 +627,7 @@ def default_command_timeout(command: str) -> float:
         return _DEFAULT_COMMAND_TIMEOUT_SECONDS
     return parsed
 
+
 def capped_subprocess_timeout(
     task: Mapping[str, Any],
     command_timeout: float | None,
@@ -615,9 +637,7 @@ def capped_subprocess_timeout(
     """Describe remaining subprocess timeout without a second arithmetic owner."""
 
     clock = clock or SystemClock()
-    classification = classify_narrow_tests(
-        task.get("narrow_tests") if isinstance(task.get("narrow_tests"), Mapping) else None
-    )
+    classification = classify_task_budget(task)
     if classification.semantics != CLASSIFICATION_V2:
         if command_timeout is None:
             return 0.0
@@ -625,6 +645,82 @@ def capped_subprocess_timeout(
     state = load_budget_state(task, classification=classification, clock=clock)
     remaining = state.remaining_seconds() if state is not None else 0.0
     return subprocess_timeout_seconds(command_timeout, remaining)
+
+
+def durations_from_commands_run(commands: list[str]) -> list[float]:
+    """Derive charged durations from recorded commands when the worker omitted them.
+
+    Production execution.json historically records command strings, not durations.
+    A declared ``timeout <N>`` is a conservative elapsed charge for each
+    pytest invocation so a v2 task cannot complete with consumed_seconds=0.0.
+    """
+
+    durations: list[float] = []
+    for command in commands:
+        if not isinstance(command, str):
+            continue
+        parsed = parse_declared_timeout_seconds(command)
+        if parsed is None:
+            durations.append(_DEFAULT_COMMAND_TIMEOUT_SECONDS)
+        else:
+            durations.append(float(parsed))
+    return durations
+
+
+def charge_elapsed_commands(
+    task: Mapping[str, Any],
+    *,
+    commands: list[str],
+    durations: list[float] | None = None,
+    clock: Clock | None = None,
+) -> tuple[BudgetState | None, list[float]]:
+    """Charge recorded pytest invocations at the single elapsed seam.
+
+    ``durations`` is the production worker's recorded elapsed list when present.
+    Otherwise durations are derived from ``commands_run``. Each duration is
+    charged through ``complete_run`` so run_count has one source.
+    """
+
+    clock = clock or SystemClock()
+    classification = classify_task_budget(task)
+    state = load_budget_state(task, classification=classification, clock=clock)
+    if state is None:
+        return None, []
+    charged_durations = list(durations) if durations else durations_from_commands_run(commands)
+    charged = state
+    for raw in charged_durations:
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw < 0:
+            duration = charged.remaining_seconds()
+        else:
+            duration = float(raw)
+        charged = complete_run(
+            charged,
+            monotonic_duration_seconds=duration,
+            clock=clock,
+        )
+    return charged, charged_durations
+
+
+def default_elapsed_runner(command: str) -> Callable[[float], float]:
+    """Production runner: launch ``command`` under remaining-budget timeout."""
+
+    def _run(timeout_seconds: float) -> float:
+        started = time.monotonic()
+        if timeout_seconds <= 0.0:
+            return 0.0
+        try:
+            subprocess.run(
+                command,
+                shell=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+        return time.monotonic() - started
+
+    return _run
+
 
 def run_elapsed_command(
     task: dict[str, Any],
@@ -638,8 +734,10 @@ def run_elapsed_command(
     """Admit, run, and charge one command at the single elapsed-budget seam.
 
     ``runner(timeout_seconds)`` returns the monotonic duration of the
-    subprocess. Tests inject a fake runner; production callers supply the
-    actual wait. A raw monotonic timestamp is never persisted.
+    subprocess. Tests inject a fake runner; production uses
+    :func:`default_elapsed_runner` so the subprocess timeout is
+    ``min(command_timeout, remaining_budget)``. A raw monotonic timestamp
+    is never persisted.
     """
     clock = clock or SystemClock()
     timeout_arg = (
@@ -659,9 +757,8 @@ def run_elapsed_command(
             persist_budget_state(task, state)
         return decision
     persist_budget_state(task, state)
-    duration = 0.0
-    if runner is not None:
-        duration = float(runner(decision.subprocess_timeout_seconds))
+    active_runner = runner if runner is not None else default_elapsed_runner(command)
+    duration = float(active_runner(decision.subprocess_timeout_seconds))
     completed = complete_run(state, monotonic_duration_seconds=duration, clock=clock)
     persist_budget_state(task, completed)
     remaining = completed.remaining_seconds()
@@ -675,9 +772,6 @@ def run_elapsed_command(
         classification=decision.classification,
         state=completed,
     )
-
-
-
 
 
 __all__ = [
@@ -694,13 +788,17 @@ __all__ = [
     "Clock",
     "SystemClock",
     "begin_run",
+    "charge_elapsed_commands",
     "classify_narrow_tests",
+    "classify_task_budget",
     "command_digest",
     "complete_run",
     "default_command_timeout",
+    "default_elapsed_runner",
     "describe_budget_for_feasibility",
     "describe_budget_for_prompts",
     "describe_budget_for_splitter",
+    "durations_from_commands_run",
     "enforce_max_runs",
     "load_budget_state",
     "parse_declared_timeout_seconds",

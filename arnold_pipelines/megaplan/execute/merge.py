@@ -12,9 +12,8 @@ from arnold_pipelines.megaplan.execute.test_budget import (
     CLASSIFICATION_V2,
     STATE_FIELD_V2,
     SystemClock,
-    classify_narrow_tests,
-    complete_run,
-    load_budget_state,
+    charge_elapsed_commands,
+    classify_task_budget,
     persist_budget_state,
     remaining_task_budget,
 )
@@ -1047,7 +1046,8 @@ def _enforce_task_test_budgets(
         narrow = target.get("narrow_tests") if isinstance(target, dict) else None
         if not isinstance(narrow, Mapping):
             continue  # Stored v1 tasks retain their legacy execution behavior.
-        classification = classify_narrow_tests(narrow)
+        holder = dict(target) if isinstance(target, dict) else dict(entry)
+        classification = classify_task_budget(holder)
         entry["budget_classification"] = classification.visible
         if isinstance(target, dict):
             target["budget_classification"] = classification.visible
@@ -1171,28 +1171,22 @@ def _apply_elapsed_wall_clock_v2(
             holder[STATE_FIELD_V2] = target[STATE_FIELD_V2]
     elif STATE_FIELD_V2 in entry:
         holder[STATE_FIELD_V2] = entry[STATE_FIELD_V2]
-    state = load_budget_state(holder, classification=classification, clock=clock)
+    recorded = entry.get("test_run_durations_seconds")
+    durations = None
+    if isinstance(recorded, list) and recorded:
+        durations = [float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw >= 0 else -1.0 for raw in recorded]
+    state, charged_durations = charge_elapsed_commands(
+        holder,
+        commands=commands,
+        durations=durations,
+        clock=clock,
+    )
     if state is None:
         violations.append("elapsed_wall_clock_v2 state could not be loaded")
         typed_violations.append({"kind": "elapsed_budget_unreadable"})
         return
-    durations = entry.get("test_run_durations_seconds")
-    if isinstance(durations, list) and durations:
-        charged = state
-        for raw in durations:
-            if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw < 0:
-                charged = complete_run(
-                    charged,
-                    monotonic_duration_seconds=charged.remaining_seconds(),
-                    clock=clock,
-                )
-            else:
-                charged = complete_run(
-                    charged,
-                    monotonic_duration_seconds=float(raw),
-                    clock=clock,
-                )
-        state = charged
+    if charged_durations:
+        entry["test_run_durations_seconds"] = charged_durations
     remaining = remaining_task_budget(state)
     persist_budget_state(entry, state)
     if isinstance(target, dict):
@@ -1446,10 +1440,19 @@ def _merge_batch_results(
             "commands_run",
             "budget_classification",
             STATE_FIELD_V2,
+            "task_test_budget_exhausted",
+            "task_test_budget_violations",
+            "test_run_durations_seconds",
         ) + evidence_context_fields
-        array_fields = ("files_changed", "commands_run")
+        array_fields = ("files_changed", "commands_run", "task_test_budget_violations", "test_run_durations_seconds")
         object_fields = (STATE_FIELD_V2,)
-        optional_fields = evidence_context_fields + ("budget_classification", STATE_FIELD_V2, "test_run_durations_seconds")
+        optional_fields = evidence_context_fields + (
+            "budget_classification",
+            STATE_FIELD_V2,
+            "test_run_durations_seconds",
+            "task_test_budget_exhausted",
+            "task_test_budget_violations",
+        )
     merge_targets_by_id = {
         task_id: task
         for task_id, task in plan_tasks_by_id.items()

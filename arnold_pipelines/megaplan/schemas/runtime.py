@@ -972,6 +972,11 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         },
                         "budget_classification": {"type": "string"},
                         "test_budget_state_v2": {"type": "object"},
+                        "task_test_budget_violations": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
+                        "task_test_budget_exhausted": {"type": "string"},
                     },
                     "required": ["task_id", "status", "executor_notes", "files_changed", "commands_run"],
                     "x-preserve-explicit-required": True,

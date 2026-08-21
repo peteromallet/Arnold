@@ -100,6 +100,14 @@ from arnold_pipelines.megaplan.execute.merge import (
     _merge_batch_results,
     _merge_scoped_batch_artifact_through_validator,
 )
+from arnold_pipelines.megaplan.execute.test_budget import (
+    CLASSIFICATION_V2,
+    SystemClock,
+    complete_run,
+    load_budget_state,
+    persist_budget_state,
+    v2_admission_for_command,
+)
 from arnold_pipelines.megaplan.execute.wbc import (
     EXECUTE_DISPATCH_WBC_KEY,
     build_execute_batch_dispatch_spec,
@@ -4716,6 +4724,41 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             # planner probe budget is a cost hint, never a deadline for a
             # required revalidation.
             _run_deadline_seconds = float(_comparison_ceiling)
+        _owner_task = None
+        if kind == "narrow_recheck":
+            _owner_id = str(job.get("task_id") or "")
+            _owner_task = next(
+                (
+                    item
+                    for item in finalize_data.get("tasks", [])
+                    if isinstance(item, dict) and item.get("id") == _owner_id
+                ),
+                None,
+            )
+            if isinstance(_owner_task, dict):
+                _admission, _launched = v2_admission_for_command(
+                    _owner_task,
+                    str(_effective_command),
+                    run_id=f"{job_id}-elapsed",
+                    command_timeout=_run_deadline_seconds,
+                )
+                if _admission.classification.semantics == CLASSIFICATION_V2:
+                    if not _admission.admitted:
+                        if _launched is not None:
+                            persist_budget_state(_owner_task, _launched)
+                        raise CliError(
+                            "validation_job_failed",
+                            f"validation job {job_id} refused: no positive elapsed budget remains",
+                            valid_next=["execute", "revise"],
+                            extra={
+                                "job_id": job_id,
+                                "validation_job_kind": kind,
+                                "reason": _admission.kind or "elapsed_budget_exhausted",
+                                "remaining_seconds": _admission.remaining_seconds,
+                            },
+                        )
+                    persist_budget_state(_owner_task, _launched)
+                    _run_deadline_seconds = float(_admission.subprocess_timeout_seconds)
         try:
             result = _suite_runner.run_suite(
                 Path(project_dir),
@@ -4724,6 +4767,17 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 deadline_seconds=time.monotonic() + _run_deadline_seconds,
                 idle_seconds=None,
             )
+            if isinstance(_owner_task, dict) and getattr(result, "duration", None) is not None:
+                _charged = load_budget_state(_owner_task, clock=SystemClock())
+                if _charged is not None:
+                    persist_budget_state(
+                        _owner_task,
+                        complete_run(
+                            _charged,
+                            monotonic_duration_seconds=float(result.duration),
+                            clock=SystemClock(),
+                        ),
+                    )
         except Exception as exc:
             log.warning("validation job %s failed: %s", job_id, exc)
             error_detail = f"{type(exc).__name__}: {exc}"

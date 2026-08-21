@@ -127,8 +127,10 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         # the final-sweep reconciler writes the durable accepted-with-debt
         # record + receipt.  Both are execute-owned mutable fields.
         "task_test_budget_debt",
+        "task_test_budget_violations",
         "budget_classification",
         "test_budget_state_v2",
+        "test_run_durations_seconds",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})
