@@ -304,3 +304,11 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - G1 disposition: PASS. Batch 1 complete (T1.1+T1.2+T1.3 + revisions) at HEAD 1a10d5215f. Focused shard 347+ passing.
 - NEXT: commit accumulated log → Batch 2 (T2.1, T2.4 [XHARD], T2.3, T2.2 per amended plan) with additive T0.2 binding for 7fe994abf/0425372ec BEFORE T2.4 (J5 hard stop).
 
+
+## OPERATOR DIRECTIVE (2026-08-21) — review-process simplification (supersedes prior cadence)
+
+- User directive: (1) orchestrator authors the cards directly — NO Luna brief-preparation subagent for remaining work; (2) ONE Grok revision/review per task — the single Grok reviewer is told it is the ONLY review, so it must be comprehensive; (3) at the very end of the whole run, THREE whole-system reviews with GPT-5.6 Sol (`codex:gpt-5.6-sol`).
+- Implementation: orchestrator drafts each card brief itself (wrapper still enforces hashing/allowances/routing); one Grok XHARD-REVIEW per task (role XHARD-REVIEW → grok-4.6) with an explicit "single review" instruction; at most one revision round per finding (if a must finding survives one verified repair, fresh Grok adjudication decides accept-residual vs block — no unbounded chains); the three end-stage reviews are Sol-based (architecture/authority/simplification; evidence+validator completeness; final promotion).
+- Wrapper impact: add a `gpt-5.6-sol` model route (hermes launcher --model=codex:gpt-5.6-sol) + role mapping so SOL-REVIEW dispatches route correctly; one bounded revision.
+- Luna still used for mechanical roles per model routing (integration, validation, evidence recording, report assembly) unless the directive says otherwise — it explicitly removed only brief-preparation from Luna.
+
