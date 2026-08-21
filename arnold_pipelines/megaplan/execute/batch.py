@@ -103,8 +103,8 @@ from arnold_pipelines.megaplan.execute.merge import (
 from arnold_pipelines.megaplan.execute.test_budget import (
     CLASSIFICATION_V2,
     SystemClock,
+    classify_task_budget,
     complete_run,
-    load_budget_state,
     persist_budget_state,
     v2_admission_for_command,
 )
@@ -356,6 +356,77 @@ def _m8a_repair_adoption_enforcement_enabled() -> bool:
     if raw in _M8A_REPAIR_ADOPTION_DISABLE_VALUES:
         return False
     return True
+
+
+def _admit_scope_recovery_verification_commands(
+    task_record: dict[str, Any],
+    commands: list[str],
+) -> list[str]:
+    """Admit successor verification commands at the one remaining-budget seam.
+
+    v1 tasks keep declared timeout-sum arithmetic. v2 tasks skip that
+    per-command / total-max check; remaining-budget admission at the root
+    seam is the only timeout bound.
+    """
+
+    from arnold_pipelines.megaplan.execute.merge import _test_command_evidence
+
+    narrow = task_record.get("narrow_tests")
+    narrow = narrow if isinstance(narrow, Mapping) else {}
+    allowed_selectors = {
+        str(selector).strip().lstrip("./")
+        for selector in narrow.get("selectors", [])
+        if isinstance(selector, str) and selector.strip()
+    }
+    per_command_max = narrow.get(
+        "per_command_max_seconds",
+        narrow.get("max_seconds", 120),
+    )
+    total_max = narrow.get("total_max_seconds")
+    max_runs = narrow.get("max_runs", 2)
+    admission_errors: list[str] = []
+    total_declared = 0
+    scope_is_v2 = classify_task_budget(task_record).semantics == CLASSIFICATION_V2
+    if isinstance(max_runs, int) and len(commands) > max_runs:
+        admission_errors.append("verification command count exceeds max_runs")
+    for command in commands:
+        parsed = _test_command_evidence(command)
+        if parsed is None:
+            admission_errors.append(f"not a bounded test command: {command!r}")
+            continue
+        timeout_seconds, selectors = parsed
+        if timeout_seconds is None:
+            admission_errors.append(f"missing timeout wrapper: {command!r}")
+        elif not scope_is_v2:
+            total_declared += timeout_seconds
+            if (
+                isinstance(per_command_max, int)
+                and timeout_seconds > per_command_max
+            ):
+                admission_errors.append(
+                    f"command timeout {timeout_seconds}s exceeds "
+                    f"per-command maximum {per_command_max}s"
+                )
+        for selector in selectors:
+            selector_base = selector.split("::", 1)[0]
+            if not any(
+                selector == allowed
+                or selector_base == allowed.split("::", 1)[0]
+                for allowed in allowed_selectors
+            ):
+                admission_errors.append(
+                    f"selector {selector!r} is outside admitted narrow tests"
+                )
+    if (
+        not scope_is_v2
+        and isinstance(total_max, int)
+        and total_declared > total_max
+    ):
+        admission_errors.append(
+            f"declared timeout total {total_declared}s exceeds "
+            f"total maximum {total_max}s"
+        )
+    return admission_errors
 
 
 def _collect_pending_repair_receipts(
@@ -858,55 +929,18 @@ def _run_repair_adoption_check(
 
                     narrow = task_record.get("narrow_tests")
                     narrow = narrow if isinstance(narrow, Mapping) else {}
-                    allowed_selectors = {
-                        str(selector).strip().lstrip("./")
-                        for selector in narrow.get("selectors", [])
-                        if isinstance(selector, str) and selector.strip()
-                    }
                     per_command_max = narrow.get(
                         "per_command_max_seconds",
                         narrow.get("max_seconds", 120),
                     )
-                    total_max = narrow.get("total_max_seconds")
-                    max_runs = narrow.get("max_runs", 2)
                     commands = list(successor["verification_commands"])
-                    admission_errors: list[str] = []
-                    total_declared = 0
-                    if isinstance(max_runs, int) and len(commands) > max_runs:
-                        admission_errors.append("verification command count exceeds max_runs")
-                    for command in commands:
-                        parsed = _test_command_evidence(command)
-                        if parsed is None:
-                            admission_errors.append(f"not a bounded test command: {command!r}")
-                            continue
-                        timeout_seconds, selectors = parsed
-                        if timeout_seconds is None:
-                            admission_errors.append(f"missing timeout wrapper: {command!r}")
-                        else:
-                            total_declared += timeout_seconds
-                            if (
-                                isinstance(per_command_max, int)
-                                and timeout_seconds > per_command_max
-                            ):
-                                admission_errors.append(
-                                    f"command timeout {timeout_seconds}s exceeds "
-                                    f"per-command maximum {per_command_max}s"
-                                )
-                        for selector in selectors:
-                            selector_base = selector.split("::", 1)[0]
-                            if not any(
-                                selector == allowed
-                                or selector_base == allowed.split("::", 1)[0]
-                                for allowed in allowed_selectors
-                            ):
-                                admission_errors.append(
-                                    f"selector {selector!r} is outside admitted narrow tests"
-                                )
-                    if isinstance(total_max, int) and total_declared > total_max:
-                        admission_errors.append(
-                            f"declared timeout total {total_declared}s exceeds "
-                            f"total maximum {total_max}s"
-                        )
+                    admission_errors = _admit_scope_recovery_verification_commands(
+                        task_record,
+                        commands,
+                    )
+                    _scope_is_v2 = (
+                        classify_task_budget(task_record).semantics == CLASSIFICATION_V2
+                    )
                     verification_results = []
                     if not admission_errors:
                         try:
@@ -928,6 +962,32 @@ def _run_repair_adoption_check(
                         for command in commands:
                             parsed = _test_command_evidence(command)
                             timeout_seconds = parsed[0] if parsed is not None else None
+                            if _scope_is_v2:
+                                _scope_admission, _scope_launched = v2_admission_for_command(
+                                    task_record,
+                                    command,
+                                    run_id=f"{successor['claim_id']}-elapsed",
+                                    command_timeout=(
+                                        float(timeout_seconds)
+                                        if timeout_seconds is not None
+                                        else None
+                                    ),
+                                )
+                                if not _scope_admission.admitted:
+                                    admission_errors.append(
+                                        _scope_admission.reason
+                                        or "no positive elapsed budget remains"
+                                    )
+                                    break
+                                persist_budget_state(task_record, _scope_launched)
+                                _scope_deadline = float(
+                                    _scope_admission.subprocess_timeout_seconds
+                                )
+                            else:
+                                _scope_launched = None
+                                _scope_deadline = float(
+                                    timeout_seconds or per_command_max or 120
+                                )
                             result = _scope_suite_runner.run_suite(
                                 _scope_project_dir,
                                 {
@@ -937,11 +997,19 @@ def _run_repair_adoption_check(
                                 },
                                 phase="scope_recovery_verification",
                                 deadline_seconds=(
-                                    time.monotonic()
-                                    + float(timeout_seconds or per_command_max or 120)
+                                    time.monotonic() + _scope_deadline
                                 ),
                                 idle_seconds=None,
                             )
+                            if _scope_is_v2 and _scope_launched is not None:
+                                persist_budget_state(
+                                    task_record,
+                                    complete_run(
+                                        _scope_launched,
+                                        monotonic_duration_seconds=float(result.duration),
+                                        clock=SystemClock(),
+                                    ),
+                                )
                             verification_results.append(
                                 {
                                     "command": result.command,
@@ -4725,6 +4793,7 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             # required revalidation.
             _run_deadline_seconds = float(_comparison_ceiling)
         _owner_task = None
+        _launched = None
         if kind == "narrow_recheck":
             _owner_id = str(job.get("task_id") or "")
             _owner_task = next(
@@ -4767,17 +4836,19 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 deadline_seconds=time.monotonic() + _run_deadline_seconds,
                 idle_seconds=None,
             )
-            if isinstance(_owner_task, dict) and getattr(result, "duration", None) is not None:
-                _charged = load_budget_state(_owner_task, clock=SystemClock())
-                if _charged is not None:
-                    persist_budget_state(
-                        _owner_task,
-                        complete_run(
-                            _charged,
-                            monotonic_duration_seconds=float(result.duration),
-                            clock=SystemClock(),
-                        ),
-                    )
+            if (
+                isinstance(_owner_task, dict)
+                and _launched is not None
+                and getattr(result, "duration", None) is not None
+            ):
+                persist_budget_state(
+                    _owner_task,
+                    complete_run(
+                        _launched,
+                        monotonic_duration_seconds=float(result.duration),
+                        clock=SystemClock(),
+                    ),
+                )
         except Exception as exc:
             log.warning("validation job %s failed: %s", job_id, exc)
             error_detail = f"{type(exc).__name__}: {exc}"

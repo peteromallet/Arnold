@@ -669,3 +669,124 @@ def test_one_run_count_source_at_complete_and_interrupted_settlement() -> None:
     assert settled.active_run is None
     assert settled.run_count == 2
 
+
+def test_live_subprocess_complete_run_does_not_double_charge(tmp_path: Path) -> None:
+    """G5-001: persist active_run, suite duration=3 -> consumed==3, run_count==1."""
+
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import _run_batch_validation_jobs
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    root = _assert_disposable_root(tmp_path / "g5-001-one-charge")
+    plan_dir = root / "plan"
+    project_dir = root / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    selector = "tests/test_t1.py"
+    selector_path = project_dir / selector
+    selector_path.parent.mkdir(parents=True, exist_ok=True)
+    selector_path.write_text("def test_ok(): pass\n", encoding="utf-8")
+
+    task = _task("T1", _v2_narrow(test_budget_seconds=10, max_runs=3))
+    task["write_set"] = {"paths": [selector], "complete": True}
+    command = f"python3 -m pytest {selector} --tb=short -q"
+    fake = SuiteRunResult(
+        run_id="g5-001",
+        phase="m8a_validation",
+        command=command,
+        duration=3.0,
+        collected=1,
+        collected_ids=["tests/test_t1.py::test_ok"],
+        failures=[],
+        passes=["tests/test_t1.py::test_ok"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:g5-001",
+        collections_parse_ok=True,
+    )
+    finalize_data = {
+        "tasks": [task],
+        "validation_jobs": [
+            {
+                "id": "VJ-G5-001",
+                "kind": "narrow_recheck",
+                "command": command,
+                "selectors": [selector],
+                "timeout_seconds": 30,
+                "task_id": "T1",
+                "mutates": False,
+                "writes_files": False,
+                "expected_exit_codes": [0],
+            }
+        ],
+    }
+    state = {
+        "name": "g5-001",
+        "iteration": 1,
+        "current_state": "executing",
+        "config": {"mode": "code", "project_dir": str(project_dir)},
+        "meta": {},
+        "history": [],
+        "sessions": {},
+    }
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake,
+    ):
+        with patch(
+            "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+            return_value={"event_id": "ev"},
+        ):
+            with patch(
+                "arnold_pipelines.megaplan.observability.work_ledger.emit_unavailable_reason",
+            ):
+                evidence = _run_batch_validation_jobs(
+                    plan_dir=plan_dir,
+                    project_dir=project_dir,
+                    finalize_data=finalize_data,
+                    batch_task_ids=["T1"],
+                    state=state,
+                )
+    assert evidence
+    assert evidence[0]["status"] == "passed"
+    charged = load_budget_state(task)
+    assert charged is not None
+    assert charged.active_run is None
+    assert charged.consumed_seconds == 3.0
+    assert charged.run_count == 1
+    assert charged.remaining_seconds() == 7.0
+    assert (root / ".t51-disposable-root").exists()
+
+
+def test_v2_timeout_180_is_admitted_by_scope_recovery_side_path() -> None:
+    """G5-002: legal v2 timeout 180 with budget 200 is not rejected by v1 timeout-sum."""
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _admit_scope_recovery_verification_commands,
+    )
+
+    task = _task(
+        "T1",
+        _v2_narrow(test_budget_seconds=200, max_runs=2),
+    )
+    command = "timeout 180 pytest tests/test_t1.py --tb=short -q"
+    errors = _admit_scope_recovery_verification_commands(task, [command])
+    assert errors == []
+    decision, launched = v2_admission_for_command(
+        task,
+        command,
+        run_id="g5-002",
+        command_timeout=180,
+    )
+    assert decision.admitted is True
+    assert decision.subprocess_timeout_seconds == 180.0
+    assert launched is not None
+    assert launched.remaining_seconds() == 200.0
+
+    v1 = _task("T2", _v1_narrow(max_seconds=120, max_runs=2))
+    v1_errors = _admit_scope_recovery_verification_commands(v1, [command])
+    assert any("exceeds per-command maximum" in item for item in v1_errors)
+
+
