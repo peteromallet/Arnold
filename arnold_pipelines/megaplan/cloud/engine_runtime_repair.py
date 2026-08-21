@@ -21,6 +21,11 @@ from dataclasses import dataclass
 import re
 from typing import Any, Mapping
 
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    MutationDenied,
+    require_mutation_capability,
+)
+
 
 ENGINE_RUNTIME_REPAIR_SCHEMA = "arnold.engine-runtime-repair-admission.v1"
 ENGINE_RUNTIME_EFFECT_CLASS = "engine_runtime"
@@ -216,6 +221,16 @@ def validate_engine_runtime_repair_admission(
             "admission bound to the exact occurrence, candidate, receipts, "
             "and one-effect fence"
         )
+    payload = value if isinstance(value, Mapping) else {}
+    try:
+        require_mutation_capability(
+            payload.get("mutation_capability") or payload.get("capability"),
+            action="engine_runtime",
+            occurrence=parsed.occurrence_fingerprint,
+            scope="engine_runtime",
+        )
+    except MutationDenied as exc:
+        return False, f"engine_runtime mutation denied: {exc.reason}"
     return True, "typed Horizon-A engine-runtime source-repair admission"
 
 

@@ -8068,7 +8068,9 @@ def _canonical_runner_from_plan_status(
         mismatches.append("plan_state_name_mismatch")
 
     liveness = control_liveness_from_current_target(target, action="mutation")
-    if not mismatches and liveness.get("action_permitted") is True:
+    # Liveness is diagnostic.  Exact-target identity is eligibility, not a
+    # MutationCapability grant.  Consumers must mint the root capability.
+    if not mismatches and liveness.get("known") is True:
         source = str(liveness.get("source") or "")
         identity = liveness.get("identity")
         identity = identity if isinstance(identity, Mapping) else {}
@@ -8103,7 +8105,6 @@ def _canonical_runner_from_plan_status(
         liveness["diagnostics"] = mismatches
 
     state = str(liveness.get("state") or "unknown")
-    action_permitted = bool(liveness.get("action_permitted") is True)
     exact_target = not mismatches
     runner_identity = liveness.get("identity")
     runner_identity = runner_identity if isinstance(runner_identity, Mapping) else {}
@@ -8112,7 +8113,8 @@ def _canonical_runner_from_plan_status(
         "state": state,
         "authority": "canonical_current_target",
         "exact_target": exact_target,
-        "mutation_permitted": bool(exact_target and action_permitted),
+        "mutation_permitted": False,
+        "mutation_eligible": bool(exact_target and liveness.get("known") is True),
         "session": session,
         "workspace": workspace,
         "remote_spec": remote_spec,

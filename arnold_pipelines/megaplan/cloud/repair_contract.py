@@ -1944,6 +1944,24 @@ def admit_repair_effect_class(
 
         admitted, admission_reason = validate_engine_runtime_repair_admission(admission)
         if admitted:
+            from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+                MutationDenied,
+                require_mutation_capability,
+            )
+
+            payload = admission if isinstance(admission, Mapping) else {}
+            try:
+                require_mutation_capability(
+                    payload.get("mutation_capability") or payload.get("capability"),
+                    action="engine_runtime",
+                    occurrence=str(payload.get("occurrence_fingerprint") or ""),
+                    scope="engine_runtime",
+                )
+            except MutationDenied as exc:
+                reason = f"engine_runtime mutation denied: {exc.reason}"
+                if source:
+                    reason += f" (source: {source})"
+                return False, reason
             return True, admission_reason
         reason = admission_reason
         if source:
@@ -3212,6 +3230,9 @@ COMPLETE = "complete"
 PROGRESSED = "progressed"
 LIVE_WITH_FRESH_ACTIVITY = "live_with_fresh_activity"
 TRUE_HUMAN_BLOCKER = "true_human_blocker"
+# Canonical M1 name for liveness-only evidence.
+PROVISIONAL_LIVENESS = "provisional_liveness"
+# Legacy spelling preserved for historical read compatibility.
 PARTIAL_LIVENESS = "partial_liveness"
 REPAIRING = "repairing"
 RETRY_PENDING = "recurring_retry_pending"
@@ -3228,6 +3249,11 @@ NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
 ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
 
+# Legacy spellings still accepted on read, mapped to their canonical values.
+LEGACY_OUTCOME_ALIASES: dict[str, str] = {
+    PARTIAL_LIVENESS: PROVISIONAL_LIVENESS,
+}
+
 SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER}
 )
@@ -3235,7 +3261,7 @@ SUCCESS_OUTCOMES: frozenset[str] = frozenset(
 NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {
         LIVE_WITH_FRESH_ACTIVITY,
-        PARTIAL_LIVENESS,
+        PROVISIONAL_LIVENESS,
         REPAIRING,
         RETRY_PENDING,
         REPAIR_APPLIED_REINVESTIGATE,
@@ -3253,29 +3279,61 @@ NON_TERMINAL_OUTCOMES: frozenset[str] = frozenset(
         REPAIRING,
         RETRY_PENDING,
         REPAIR_APPLIED_REINVESTIGATE,
-        PARTIAL_LIVENESS,
+        PROVISIONAL_LIVENESS,
         LIVE_WITH_FRESH_ACTIVITY,
     }
 )
+
+#: Every canonical repair outcome plus its legacy aliases — the closed lattice.
+KNOWN_REPAIR_OUTCOMES: frozenset[str] = ALL_OUTCOMES | frozenset(LEGACY_OUTCOME_ALIASES)
+
+
+def normalize_repair_outcome(outcome: str) -> str:
+    """Return the canonical spelling of a repair outcome, failing closed.
+
+    Legacy aliases (``partial_liveness``) normalize to their canonical value
+    (``provisional_liveness``).  Anything outside the closed outcome lattice
+    raises :exc:`ValueError` rather than being treated as a valid outcome.
+    """
+    cleaned = str(outcome or "").strip()
+    if not cleaned:
+        raise ValueError("repair outcome must be non-empty")
+    if cleaned in ALL_OUTCOMES:
+        return cleaned
+    canonical = LEGACY_OUTCOME_ALIASES.get(cleaned)
+    if canonical is not None:
+        return canonical
+    raise ValueError(
+        f"unknown repair outcome {outcome!r}; expected one of "
+        f"{sorted(KNOWN_REPAIR_OUTCOMES)}"
+    )
+
+
+def _canonical_outcome(outcome: str) -> str:
+    """Map a legacy alias to its canonical form without rejecting unknowns."""
+    cleaned = str(outcome or "").strip()
+    return LEGACY_OUTCOME_ALIASES.get(cleaned, cleaned)
 
 
 def is_success_outcome(outcome: str) -> bool:
     """Return True when *outcome* is a terminal repair success.
 
     Only ``complete``, ``progressed``, and ``true_human_blocker`` are
-    considered success. Liveness/activity-only outcomes are explicitly
-    excluded because they do not prove the original blocker cleared.
+    considered success. Liveness/activity-only outcomes (including the legacy
+    ``partial_liveness`` spelling) are explicitly excluded because they do not
+    prove the original blocker cleared.
     """
-    return outcome in SUCCESS_OUTCOMES
+    return _canonical_outcome(outcome) in SUCCESS_OUTCOMES
 
 
 def is_terminal_outcome(outcome: str) -> bool:
     """Return True when *outcome* is terminal (success or non-success).
 
     Repairing, retry-pending, and liveness-only outcomes retain durable custody.
-    None may close the semantic repair goal.
+    None may close the semantic repair goal.  The legacy ``partial_liveness``
+    spelling is recognized as its canonical ``provisional_liveness`` value.
     """
-    return outcome not in NON_TERMINAL_OUTCOMES
+    return _canonical_outcome(outcome) not in NON_TERMINAL_OUTCOMES
 
 
 # -- one-hour budget helpers ------------------------------------------------
@@ -3331,9 +3389,9 @@ def classify_verification_outcome(
 
     1. *is_complete* → :data:`COMPLETE` (terminal success)
     2. *has_progressed* → :data:`PROGRESSED` (terminal success)
-    3. *has_fresh_activity* → :data:`PARTIAL_LIVENESS` (terminal non-success)
+    3. *has_fresh_activity* → :data:`PROVISIONAL_LIVENESS` (non-success)
     4. *has_true_human_blocker* → :data:`TRUE_HUMAN_BLOCKER` (terminal success)
-    5. *is_live* with no progress/fresh-activity/blocker → :data:`PARTIAL_LIVENESS` (terminal non-success)
+    5. *is_live* with no progress/fresh-activity/blocker → :data:`PROVISIONAL_LIVENESS` (non-success)
     6. Otherwise → :data:`REPAIRING` (non-terminal)
 
     *pre_snapshot* and *post_snapshot* are accepted for forward compatibility
@@ -3345,11 +3403,11 @@ def classify_verification_outcome(
     if has_progressed:
         return PROGRESSED
     if has_fresh_activity:
-        return PARTIAL_LIVENESS
+        return PROVISIONAL_LIVENESS
     if has_true_human_blocker:
         return TRUE_HUMAN_BLOCKER
     if is_live:
-        return PARTIAL_LIVENESS
+        return PROVISIONAL_LIVENESS
     return REPAIRING
 
 
@@ -3408,12 +3466,14 @@ def classify_recovery_verification(
 
     observation_kind = str(observation.get("kind") or "").strip().lower()
     has_provisional_signal = observation_kind in {
-        "pid", "process", "heartbeat", "liveness", "partial_liveness", "subprocess_success"
+        "pid", "process", "heartbeat", "liveness", "partial_liveness",
+        "provisional_liveness", "subprocess_success", "tmux", "lease"
     } or any(
         observation.get(key) is True
         for key in (
             "pid_alive", "process_alive", "heartbeat_active", "is_live",
             "has_fresh_activity", "subprocess_succeeded",
+            "session_live", "lease_live",
         )
     )
     if observation.get("returncode") == 0:
@@ -5565,6 +5625,7 @@ _OUTCOME_TO_VERDICT_KIND: dict[str, RepairVerdictKind] = {
     NEEDS_HUMAN: REPAIR_VERDICT_ESCALATED,
     REPAIR_EXHAUSTED: REPAIR_VERDICT_NO_FIX,
     REPAIR_TIMEOUT: REPAIR_VERDICT_NO_FIX,
+    PROVISIONAL_LIVENESS: REPAIR_VERDICT_NO_VERDICT,
     PARTIAL_LIVENESS: REPAIR_VERDICT_NO_VERDICT,
     "live_with_fresh_activity": REPAIR_VERDICT_NO_VERDICT,
     "recurring_retry_pending": REPAIR_VERDICT_NO_FIX,
@@ -5791,14 +5852,18 @@ def detect_no_verdict_artifact(
     """Return ``(True, reason)`` when *payload* has no meaningful verdict evidence.
 
     A verdict is absent when there is no outcome or the outcome is liveness-only
-    (``partial_liveness`` / ``live_with_fresh_activity``) and no before/after
-    evidence refs exist.
+    (``provisional_liveness`` / legacy ``partial_liveness`` /
+    ``live_with_fresh_activity``) and no before/after evidence refs exist.
     """
     outcome = _as_text(payload.get("outcome"))
     if not outcome:
         return True, "repair data payload has no outcome field"
 
-    liveness_outcomes = {PARTIAL_LIVENESS, "live_with_fresh_activity"}
+    liveness_outcomes = {
+        PROVISIONAL_LIVENESS,
+        PARTIAL_LIVENESS,
+        "live_with_fresh_activity",
+    }
     if outcome in liveness_outcomes:
         before = _as_list(payload.get("before_evidence_refs") or payload.get("before_evidence") or [])
         after = _as_list(payload.get("after_evidence_refs") or payload.get("after_evidence") or [])
@@ -6499,11 +6564,14 @@ __all__ = [
     "DISPATCH_INTENT_QUEUE_ONLY",
     "DISCORD_ESCALATED",
     "ENVIRONMENT_GONE",
+    "KNOWN_REPAIR_OUTCOMES",
+    "LEGACY_OUTCOME_ALIASES",
     "LIVE_WITH_FRESH_ACTIVITY",
     "NEEDS_HUMAN",
     "NON_TERMINAL_OUTCOMES",
     "NON_SUCCESS_OUTCOMES",
     "PARTIAL_LIVENESS",
+    "PROVISIONAL_LIVENESS",
     "PROGRESSED",
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",

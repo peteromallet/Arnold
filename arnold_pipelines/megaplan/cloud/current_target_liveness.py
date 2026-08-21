@@ -1,17 +1,21 @@
-"""One identity-bound tri-state liveness view for cloud control decisions.
+"""Identity-bound current-target liveness and the T4.1 mutation gate.
 
-PIDs and tmux sessions are namespace-local.  This module is the sole place
-where those observations may become ``live`` or ``dead``.  A local PID is
-authoritative only when both its PID namespace and process-start identity are
-bound to the target.  A runner-owned, marker-bound lease is the cross-container
-path to ``live``.  Everything else is ``unknown`` and therefore cannot
-authorize mutation, escalation, or retrigger.
+Liveness describes activity and contradictions.  It never authorizes an
+effect.  Selected M3b/M4 mutation paths mint a typed
+:class:`MutationCapability` from exact current target, occurrence/cursor,
+custody, fence, and required evidence.  Downstream code may narrow or
+validate that capability's scope but cannot independently grant authority.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-from datetime import datetime
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -19,6 +23,8 @@ from arnold_pipelines.megaplan.cloud.liveness_lease import observe_liveness_leas
 
 
 SCHEMA = "arnold.megaplan.current_target_liveness.v1"
+MUTATION_CAPABILITY_SCHEMA = "arnold.megaplan.mutation_capability.v1"
+DEFAULT_CAPABILITY_TTL = timedelta(minutes=5)
 
 PidProbe = Callable[[int], bool | None]
 ProcessStartProbe = Callable[[int], str | None]
@@ -41,7 +47,7 @@ def _integer(value: object) -> int | None:
 
 def _namespace_id() -> str:
     try:
-        return os.readlink("/proc/self/ns/pid")
+        return Path("/proc/self/ns/pid").resolve().as_posix()
     except OSError:
         return ""
 
@@ -50,12 +56,11 @@ def _process_start_identity(pid: int) -> str | None:
     """Return Linux boot-id + start ticks for one PID incarnation."""
 
     try:
-        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-        start_ticks = raw.rsplit(")", 1)[1].strip().split()[19]
-        boot_id = (
-            Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
-        )
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        start_ticks = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
     except (OSError, IndexError):
+        return None
+    if not boot_id or not start_ticks:
         return None
     return f"{boot_id}:{start_ticks}"
 
@@ -170,10 +175,15 @@ def _result(
         "identity": dict(identity),
         "lease": dict(lease),
         "diagnostics": diagnostics,
-        "control_permitted": known,
-        "mutation_permitted": known,
-        "escalation_permitted": known,
-        "retrigger_permitted": known,
+        # A "live" observation is liveness-only evidence: it is provisional and
+        # must never authorize verified recovery on its own.
+        "provisional_liveness": state == "live",
+        # Diagnostic projections only.  They never authorize an effect.
+        "control_permitted": False,
+        "mutation_permitted": False,
+        "escalation_permitted": False,
+        "retrigger_permitted": False,
+        "authorizes_mutation": False,
     }
 
 
@@ -307,12 +317,23 @@ def observe_current_target_liveness(
 
 
 def liveness_from_current_target(target: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Return the canonical view, never upgrading legacy booleans to authority."""
+    """Return the canonical diagnostic view.
+
+    Legacy booleans and permission-looking flags are never upgraded to
+    authority.  Incomplete evidence remains usable as a description.
+    """
 
     if isinstance(target, Mapping):
         value = target.get("current_target_liveness") or target.get("liveness")
         if isinstance(value, Mapping) and value.get("schema") == SCHEMA:
-            return dict(value)
+            observed = dict(value)
+            observed["control_permitted"] = False
+            observed["mutation_permitted"] = False
+            observed["escalation_permitted"] = False
+            observed["retrigger_permitted"] = False
+            observed["authorizes_mutation"] = False
+            observed["provisional_liveness"] = observed.get("state") == "live"
+            return observed
     return _result(
         "unknown",
         source="canonical_observation_missing",
@@ -323,30 +344,16 @@ def liveness_from_current_target(target: Mapping[str, Any] | None) -> dict[str, 
     )
 
 
-_ACTION_FLAG = {
-    "control": "control_permitted",
-    "mutation": "mutation_permitted",
-    "escalation": "escalation_permitted",
-    "retrigger": "retrigger_permitted",
-}
-
-
 def control_liveness_from_current_target(
     target: Mapping[str, Any] | None, *, action: str = "control"
 ) -> dict[str, Any]:
-    """Return a strict canonical observation suitable for wrapper control.
+    """Return a strict canonical *diagnostic* observation.
 
-    ``liveness_from_current_target`` is also a compatibility reader for older
-    callers that only display the record.  Control-plane wrappers need a
-    stronger contract: the schema, tri-state booleans, and action-specific
-    permission bit must all agree.  Missing, truncated, hand-written, or
-    otherwise corrupt records therefore collapse to ``unknown``.  Legacy PID,
-    tmux, heartbeat, and runner-transition fields are deliberately ignored.
+    This is not a permission gate.  ``action_permitted`` is always False.
+    Mutation callers must mint :class:`MutationCapability` instead.
     """
 
-    required_flag = _ACTION_FLAG.get(action)
-    if required_flag is None:
-        raise ValueError(f"unsupported liveness control action: {action}")
+    del action  # retained for call-site compatibility; never a grant
     raw = None
     if isinstance(target, Mapping):
         candidate = target.get("current_target_liveness") or target.get("liveness")
@@ -361,10 +368,6 @@ def control_liveness_from_current_target(
         and raw.get("known") is known
         and raw.get("live") is (state == "live")
         and raw.get("dead") is (state == "dead")
-        and raw.get("control_permitted") is known
-        and raw.get("mutation_permitted") is known
-        and raw.get("escalation_permitted") is known
-        and raw.get("retrigger_permitted") is known
     )
     if not structurally_valid:
         result = _result(
@@ -378,29 +381,578 @@ def control_liveness_from_current_target(
         result.update(
             {
                 "authoritative": False,
-                "requested_action": action,
+                "requested_action": "observe",
                 "action_permitted": False,
             }
         )
         return result
-    result = dict(raw)
-    permitted = bool(known and raw.get(required_flag) is True)
+    result: dict[str, Any] = dict(raw)
     result.update(
         {
-            "authoritative": True,
-            "requested_action": action,
-            "action_permitted": permitted,
-            "control_permitted": bool(
-                known and raw.get("control_permitted") is True
-            ),
+            "authoritative": False,
+            "requested_action": "observe",
+            "action_permitted": False,
+            "control_permitted": False,
+            "mutation_permitted": False,
+            "escalation_permitted": False,
+            "retrigger_permitted": False,
+            "authorizes_mutation": False,
+            "provisional_liveness": state == "live",
         }
     )
     return result
 
 
+# ---------------------------------------------------------------------------
+# MutationCapability — the sole T4.1 permission seam
+# ---------------------------------------------------------------------------
+
+
+class MutationDenied(PermissionError):
+    """Mutation callers fail closed on missing or contradictory identity."""
+
+    def __init__(self, reason: str, *, code: str = "mutation_denied") -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.code = code
+
+
+@dataclass(frozen=True)
+class MutationCapability:
+    """Typed, evidence-bound permission for one selected mutation.
+
+    Downstream code may narrow ``scope`` or re-validate identity fields.  It
+    cannot mint a new grant or reconstruct authority from a subset of facts.
+    """
+
+    schema: str
+    action: str
+    occurrence: str
+    target: str
+    cursor: str
+    fence_epoch: int
+    evidence_digest: str
+    scope: str
+    expires_at: str
+    import_root: str
+    interpreter: str
+    tree_sha_telemetry: str
+    token: str
+
+    def narrow(self, scope: str) -> MutationCapability:
+        """Return a capability whose scope is a prefix of this one."""
+
+        wanted = _text(scope)
+        if not wanted:
+            raise MutationDenied("narrowed scope must be non-empty", code="scope_empty")
+        if wanted != self.scope and not wanted.startswith(self.scope + "."):
+            raise MutationDenied(
+                f"cannot widen capability scope {self.scope!r} to {wanted!r}",
+                code="scope_widen",
+            )
+        return MutationCapability(
+            schema=self.schema,
+            action=self.action,
+            occurrence=self.occurrence,
+            target=self.target,
+            cursor=self.cursor,
+            fence_epoch=self.fence_epoch,
+            evidence_digest=self.evidence_digest,
+            scope=wanted,
+            expires_at=self.expires_at,
+            import_root=self.import_root,
+            interpreter=self.interpreter,
+            tree_sha_telemetry=self.tree_sha_telemetry,
+            token=self.token,
+        )
+
+    def requires_action(self, action: str) -> None:
+        if _text(action) != self.action:
+            raise MutationDenied(
+                f"capability action {self.action!r} does not match {action!r}",
+                code="action_mismatch",
+            )
+
+    def requires_scope(self, scope: str) -> None:
+        wanted = _text(scope)
+        if wanted != self.scope:
+            raise MutationDenied(
+                f"capability scope {self.scope!r} does not match {wanted!r}",
+                code="scope_mismatch",
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "action": self.action,
+            "occurrence": self.occurrence,
+            "target": self.target,
+            "cursor": self.cursor,
+            "fence_epoch": self.fence_epoch,
+            "evidence_digest": self.evidence_digest,
+            "scope": self.scope,
+            "expires_at": self.expires_at,
+            "import_root": self.import_root,
+            "interpreter": self.interpreter,
+            "tree_sha_telemetry": self.tree_sha_telemetry,
+            "token": self.token,
+        }
+
+
+_CAPABILITY_FIELDS = (
+    "schema",
+    "action",
+    "occurrence",
+    "target",
+    "cursor",
+    "fence_epoch",
+    "evidence_digest",
+    "scope",
+    "expires_at",
+    "import_root",
+    "interpreter",
+    "tree_sha_telemetry",
+    "token",
+)
+
+
+def _canonical_digest(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def process_import_root() -> Path:
+    """Return the live process import root of ``arnold_pipelines``.
+
+    This is the tree the running interpreter actually imported, not
+    :func:`megaplan_engine_root` (ambient PYTHONPATH / module-path walk).
+    """
+
+    import arnold_pipelines
+
+    return Path(arnold_pipelines.__file__).resolve().parents[1]
+
+
+def process_interpreter() -> Path:
+    return Path(sys.executable).resolve()
+
+
+def _load_runtime_manifest(path: str | Path | None) -> Mapping[str, Any] | None:
+    raw_path = _text(path) or _text(os.environ.get("ARNOLD_RUNTIME_MANIFEST"))
+    if not raw_path:
+        return None
+    try:
+        payload = json.loads(Path(raw_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return payload if isinstance(payload, Mapping) else None
+
+
+def _manifest_import_root(manifest: Mapping[str, Any] | None) -> str:
+    if not isinstance(manifest, Mapping):
+        return ""
+    epic = manifest.get("epic")
+    epic = epic if isinstance(epic, Mapping) else {}
+    root = _text(epic.get("runtime_root"))
+    if not root:
+        return ""
+    return str(Path(root).expanduser().resolve())
+
+
+def _manifest_interpreter(manifest: Mapping[str, Any] | None) -> str:
+    if not isinstance(manifest, Mapping):
+        return ""
+    epic = manifest.get("epic")
+    epic = epic if isinstance(epic, Mapping) else {}
+    generation = epic.get("dependency_generation")
+    generation = generation if isinstance(generation, Mapping) else {}
+    interpreter = _text(generation.get("interpreter_path"))
+    if not interpreter:
+        return ""
+    return str(Path(interpreter).expanduser().resolve())
+
+
+def _tree_sha_telemetry(root: str) -> str:
+    if not root:
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    head = result.stdout.strip().lower() if result.returncode == 0 else ""
+    return head if len(head) == 40 else ""
+
+
+def _aware_utc(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _extract_occurrence(evidence: Mapping[str, Any]) -> str:
+    identity = evidence.get("occurrence_identity")
+    if isinstance(identity, Mapping):
+        for key in ("occurrence", "occurrence_fingerprint", "repair_identity_key"):
+            text = _text(identity.get(key))
+            if text:
+                return text
+    for key in (
+        "occurrence",
+        "occurrence_fingerprint",
+        "occurrence_digest",
+        "repair_identity_key",
+    ):
+        text = _text(evidence.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _extract_cursor(evidence: Mapping[str, Any]) -> str:
+    cursor = evidence.get("cursor")
+    if isinstance(cursor, Mapping):
+        digest = _text(cursor.get("digest") or cursor.get("evidence_cursor_digest"))
+        if digest:
+            return digest
+        return _canonical_digest(dict(cursor))
+    for key in ("cursor", "plan_cursor", "resume_cursor", "evidence_cursor_digest"):
+        value = evidence.get(key)
+        if isinstance(value, Mapping):
+            return _canonical_digest(dict(value))
+        text = _text(value)
+        if text:
+            return text
+    return ""
+
+
+def _extract_target(evidence: Mapping[str, Any]) -> str:
+    target = evidence.get("target")
+    if isinstance(target, Mapping):
+        for key in ("target_fingerprint", "plan_state_fingerprint", "digest"):
+            text = _text(target.get(key))
+            if text:
+                return text
+        return _canonical_digest(dict(target))
+    for key in ("target", "target_digest", "target_fingerprint"):
+        text = _text(evidence.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _extract_fence_epoch(evidence: Mapping[str, Any]) -> int | None:
+    for key in ("fence_epoch", "fence"):
+        value = evidence.get(key)
+        if isinstance(value, Mapping):
+            value = value.get("epoch") or value.get("fence_epoch")
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value >= 0:
+            return value
+        text = _text(value)
+        if text.isdigit():
+            return int(text)
+    return None
+
+
+def _extract_evidence_digest(evidence: Mapping[str, Any]) -> str:
+    digest = _text(evidence.get("evidence_digest"))
+    if digest:
+        return digest.lower()
+    payload = {
+        key: evidence[key]
+        for key in sorted(evidence)
+        if key not in {"capability", "mutation_capability", "liveness"}
+    }
+    return _canonical_digest(payload)
+
+
+def _contradictions(evidence: Mapping[str, Any], liveness: Mapping[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if liveness.get("source") == "contradictory_bound_evidence":
+        reasons.append("liveness_contradiction")
+    evidence_state = evidence.get("evidence_state")
+    if isinstance(evidence_state, Mapping):
+        if _text(evidence_state.get("unknown_type")).lower() == "contradictory":
+            reasons.append("evidence_state_contradictory")
+        if evidence_state.get("authorizes_mutation") is True:
+            reasons.append("evidence_state_claimed_authority")
+    stale = evidence.get("stale_evidence")
+    if isinstance(stale, list):
+        kinds = {
+            _text(item.get("kind"))
+            for item in stale
+            if isinstance(item, Mapping)
+        }
+        if "contradictory_plan_identity" in kinds:
+            reasons.append("marker_plan_identity_contradiction")
+        if "contradictory_manifest_identity" in kinds:
+            reasons.append("marker_manifest_contradiction")
+    if evidence.get("contradictory") is True:
+        reasons.append("evidence_flagged_contradictory")
+    marker = evidence.get("marker")
+    manifest = evidence.get("manifest") or evidence.get("runtime_manifest")
+    if isinstance(marker, Mapping) and isinstance(manifest, Mapping):
+        marker_root = _text(
+            marker.get("import_root")
+            or (marker.get("runtime_identity") or {}).get("import_root")
+            if isinstance(marker.get("runtime_identity"), Mapping)
+            else marker.get("import_root")
+        )
+        epic = manifest.get("epic") if isinstance(manifest.get("epic"), Mapping) else manifest
+        manifest_root = _text(epic.get("runtime_root") if isinstance(epic, Mapping) else "")
+        if marker_root and manifest_root:
+            try:
+                if Path(marker_root).resolve() != Path(manifest_root).resolve():
+                    reasons.append("marker_manifest_root_mismatch")
+            except OSError:
+                reasons.append("marker_manifest_root_unreadable")
+    expected_cursor = _text(evidence.get("expected_cursor") or evidence.get("live_cursor"))
+    supplied_cursor = _extract_cursor(evidence)
+    if expected_cursor and supplied_cursor and expected_cursor != supplied_cursor:
+        reasons.append("stale_cursor")
+    expected_fence = evidence.get("expected_fence_epoch")
+    supplied_fence = _extract_fence_epoch(evidence)
+    if (
+        isinstance(expected_fence, int)
+        and not isinstance(expected_fence, bool)
+        and supplied_fence is not None
+        and supplied_fence < expected_fence
+    ):
+        reasons.append("stale_fence")
+    return reasons
+
+
+def _bind_live_tree(
+    *,
+    action: str,
+    evidence: Mapping[str, Any],
+    process_root: Path,
+    process_python: Path,
+) -> tuple[str, str, str]:
+    """Return (import_root, interpreter, tree_sha_telemetry) or raise."""
+
+    manifest = evidence.get("runtime_manifest")
+    if not isinstance(manifest, Mapping):
+        manifest = _load_runtime_manifest(evidence.get("runtime_manifest_path"))
+    live_root = _manifest_import_root(manifest) or _text(
+        evidence.get("import_root") or evidence.get("runtime_root")
+    )
+    if live_root:
+        live_root = str(Path(live_root).expanduser().resolve())
+    live_interpreter = _manifest_interpreter(manifest) or _text(
+        evidence.get("interpreter") or evidence.get("interpreter_path")
+    )
+    if live_interpreter:
+        live_interpreter = str(Path(live_interpreter).expanduser().resolve())
+
+    needs_live_tree = action in {"engine_runtime", "recover-blocked"} or (
+        _text(evidence.get("repair_scope")) == "engine_runtime"
+        or _text(evidence.get("scope")) in {"engine_runtime", "source_repair"}
+    )
+    if not needs_live_tree:
+        return live_root, live_interpreter, _tree_sha_telemetry(live_root)
+
+    if not live_root:
+        raise MutationDenied(
+            "engine_runtime/recover-blocked requires epic.runtime_root import_root",
+            code="import_root_missing",
+        )
+    if process_root != Path(live_root):
+        raise MutationDenied(
+            "process import_root does not equal the live epic.runtime_root; "
+            "ambient megaplan_engine_root() is not authority",
+            code="import_root_mismatch",
+        )
+    if live_interpreter and process_python != Path(live_interpreter):
+        raise MutationDenied(
+            "process interpreter does not equal the generation interpreter",
+            code="interpreter_mismatch",
+        )
+    ambient = evidence.get("ambient_engine_root")
+    if ambient:
+        try:
+            ambient_root = Path(str(ambient)).expanduser().resolve()
+        except OSError:
+            ambient_root = Path(str(ambient))
+        if ambient_root != Path(live_root):
+            # Ambient mismatch is a typed error, not silent alternate-root
+            # selection.  The capability still binds the live tree.
+            raise MutationDenied(
+                "ambient megaplan_engine_root() is a foreign/read-only tree; "
+                "MutationCapability binds epic.runtime_root import_root",
+                code="ambient_engine_root_rejected",
+            )
+    return live_root, live_interpreter or str(process_python), _tree_sha_telemetry(live_root)
+
+
+def _mint_token(fields: Mapping[str, Any]) -> str:
+    payload = {key: fields[key] for key in _CAPABILITY_FIELDS if key != "token"}
+    return "mc:" + _canonical_digest(payload)
+
+
+def require_mutation_capability(
+    capability: MutationCapability | Mapping[str, Any] | None,
+    *,
+    action: str,
+    occurrence: str = "",
+    scope: str = "",
+) -> MutationCapability:
+    """Accept only a previously minted root capability.
+
+    Valid downstream receipt/cutover/operator evidence without this object
+    still rejects.
+    """
+
+    if capability is None:
+        raise MutationDenied(
+            "mutation requires a root MutationCapability",
+            code="capability_absent",
+        )
+    if isinstance(capability, Mapping):
+        try:
+            capability = MutationCapability(
+                **{key: capability[key] for key in _CAPABILITY_FIELDS}
+            )
+        except (KeyError, TypeError) as exc:
+            raise MutationDenied(
+                "mutation capability payload is incomplete",
+                code="capability_malformed",
+            ) from exc
+    if not isinstance(capability, MutationCapability):
+        raise MutationDenied(
+            "mutation requires a typed MutationCapability",
+            code="capability_absent",
+        )
+    if capability.schema != MUTATION_CAPABILITY_SCHEMA:
+        raise MutationDenied("unknown mutation capability schema", code="capability_schema")
+    expected = _mint_token(capability.to_dict())
+    if capability.token != expected:
+        raise MutationDenied(
+            "mutation capability token does not match bound identity",
+            code="capability_forged",
+        )
+    try:
+        expires = datetime.fromisoformat(capability.expires_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MutationDenied("capability expiry is unreadable", code="capability_expiry") from exc
+    if _aware_utc(None) > _aware_utc(expires):
+        raise MutationDenied("mutation capability has expired", code="capability_expired")
+    capability.requires_action(action)
+    if occurrence and occurrence != capability.occurrence:
+        raise MutationDenied(
+            "capability occurrence does not match the requested occurrence",
+            code="occurrence_mismatch",
+        )
+    if scope:
+        capability.requires_scope(scope)
+    return capability
+
+
+def mint_mutation_capability(
+    *,
+    action: str,
+    evidence: Mapping[str, Any] | None,
+    now: datetime | None = None,
+    ttl: timedelta = DEFAULT_CAPABILITY_TTL,
+    process_root: Path | None = None,
+    process_python: Path | None = None,
+) -> MutationCapability:
+    """Mint the sole T4.1 permission grant, or fail closed.
+
+    Diagnostic callers must not use this function.  Incomplete or
+    contradictory identity refuses rather than describing the gap.
+    """
+
+    action_name = _text(action)
+    if not action_name:
+        raise MutationDenied("mutation action is required", code="action_missing")
+    if not isinstance(evidence, Mapping) or not evidence:
+        raise MutationDenied(
+            "mutation requires complete evidence-bound identity",
+            code="evidence_missing",
+        )
+
+    liveness = liveness_from_current_target(evidence)
+    contradictions = _contradictions(evidence, liveness)
+    if contradictions:
+        raise MutationDenied(
+            "contradictory identity refuses mutation: " + ",".join(contradictions),
+            code="identity_contradiction",
+        )
+
+    occurrence = _extract_occurrence(evidence)
+    target = _extract_target(evidence)
+    cursor = _extract_cursor(evidence)
+    fence_epoch = _extract_fence_epoch(evidence)
+    evidence_digest = _extract_evidence_digest(evidence)
+    scope = _text(evidence.get("scope") or action_name)
+    missing = [
+        name
+        for name, value in (
+            ("occurrence", occurrence),
+            ("target", target),
+            ("cursor", cursor),
+            ("evidence_digest", evidence_digest),
+            ("scope", scope),
+        )
+        if not value
+    ]
+    if fence_epoch is None:
+        missing.append("fence_epoch")
+    if missing:
+        raise MutationDenied(
+            "mutation identity incomplete: " + ", ".join(missing),
+            code="identity_incomplete",
+        )
+
+    live_root, live_interpreter, tree_sha = _bind_live_tree(
+        action=action_name,
+        evidence=evidence,
+        process_root=(process_root or process_import_root()).resolve(),
+        process_python=(process_python or process_interpreter()).resolve(),
+    )
+    issued = _aware_utc(now)
+    expires = issued + ttl
+    fields = {
+        "schema": MUTATION_CAPABILITY_SCHEMA,
+        "action": action_name,
+        "occurrence": occurrence,
+        "target": target,
+        "cursor": cursor,
+        "fence_epoch": fence_epoch,
+        "evidence_digest": evidence_digest,
+        "scope": scope,
+        "expires_at": expires.isoformat().replace("+00:00", "Z"),
+        "import_root": live_root,
+        "interpreter": live_interpreter,
+        "tree_sha_telemetry": tree_sha,
+        "token": "",
+    }
+    fields["token"] = _mint_token(fields)
+    return MutationCapability(**fields)  # type: ignore[arg-type]
+
+
 __all__ = [
     "SCHEMA",
+    "MUTATION_CAPABILITY_SCHEMA",
+    "DEFAULT_CAPABILITY_TTL",
+    "MutationCapability",
+    "MutationDenied",
     "control_liveness_from_current_target",
     "liveness_from_current_target",
+    "mint_mutation_capability",
     "observe_current_target_liveness",
+    "process_import_root",
+    "process_interpreter",
+    "require_mutation_capability",
 ]

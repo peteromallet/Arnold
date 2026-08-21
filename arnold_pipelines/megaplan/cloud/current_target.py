@@ -420,6 +420,22 @@ def resolve_current_target(
         rationale.append("nonterminal current plan supersedes terminal chain projection")
 
     plan_state_name = _safe_plan_name(plan_state.get("name"))
+    if (
+        run_kind == "plan"
+        and marker_plan_name
+        and plan_state_name
+        and marker_plan_name != plan_state_name
+    ):
+        stale_evidence.append(
+            _artifact(
+                kind="contradictory_plan_identity",
+                path=plan_state_path,
+                marker_plan_name=marker_plan_name,
+                plan_state_name=plan_state_name,
+            )
+        )
+        rationale.append("marker and plan state identify different current plans")
+
     if chain_current_plan and plan_state_name and chain_current_plan != plan_state_name:
         stale_evidence.append(
             _artifact(

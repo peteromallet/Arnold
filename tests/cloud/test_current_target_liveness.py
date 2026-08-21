@@ -328,19 +328,16 @@ def _canonical(state: str) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize(
-    ("state", "permitted"),
-    [("live", True), ("dead", True), ("unknown", False)],
-)
-def test_wrapper_control_adapter_is_strict_tri_state(
-    state: str, permitted: bool
-) -> None:
+@pytest.mark.parametrize("state", ["live", "dead", "unknown"])
+def test_wrapper_control_adapter_is_strict_tri_state(state: str) -> None:
     result = control_liveness_from_current_target(
         {"current_target_liveness": _canonical(state)}, action="mutation"
     )
 
     assert result["state"] == state
-    assert result.get("action_permitted", False) is permitted
+    assert result.get("action_permitted", False) is False
+    assert result.get("mutation_permitted") is False
+    assert result.get("authorizes_mutation") is False
 
 
 @pytest.mark.parametrize(
@@ -374,7 +371,19 @@ def test_missing_or_corrupt_canonical_record_blocks_legacy_control(
 ) -> None:
     result = control_liveness_from_current_target(target, action="mutation")
 
-    assert result["state"] == "unknown"
+    raw = (target or {}).get("current_target_liveness") if isinstance(target, dict) else None
+    tri_state_ok = (
+        isinstance(raw, dict)
+        and raw.get("schema") == SCHEMA
+        and raw.get("state") in {"live", "dead", "unknown"}
+        and raw.get("known") is (raw.get("state") in {"live", "dead"})
+        and raw.get("live") is (raw.get("state") == "live")
+        and raw.get("dead") is (raw.get("state") == "dead")
+    )
+    if tri_state_ok:
+        assert result["state"] == raw["state"]
+    else:
+        assert result["state"] == "unknown"
     assert result["action_permitted"] is False
     assert result["mutation_permitted"] is False
 

@@ -7781,7 +7781,7 @@ for path in goals:
     )
     target_worker_live = bool(
         target_liveness.get("state") == "live"
-        and target_liveness.get("action_permitted") is True
+        and target_liveness.get("known") is True
     )
     if status != "active":
         print(
@@ -7829,7 +7829,7 @@ try:
 except (IndexError, json.JSONDecodeError, TypeError):
     raise SystemExit(1)
 liveness = control_liveness_from_current_target(record, action="control")
-raise SystemExit(0 if liveness.get("state") == "live" and liveness.get("action_permitted") is True else 1)
+raise SystemExit(0 if liveness.get("state") == "live" and liveness.get("known") is True else 1)
 PY
 }
 
@@ -7891,9 +7891,14 @@ try:
 except (IndexError, TypeError, ValueError):
     target = None
 record = control_liveness_from_current_target(target, action="mutation")
-print(record["state"] if record.get("action_permitted") is True else "unknown")
+# Diagnostic tri-state only. MutationCapability is the grant; unknown remains
+# readable but cannot authorize babysitter/relaunch.
+print(record["state"] if record.get("known") is True else "unknown")
 PY
   )"
+  # Known live/dead is diagnostic eligibility, not a grant. UNKNOWN still
+  # fences wrapper mutation so incomplete identity cannot relaunch. A known
+  # state is not itself MutationCapability; Python repair seams mint that.
   local canonical_mutation_permitted=1
   if [[ "$canonical_control_state" == "unknown" ]]; then
     canonical_mutation_permitted=0

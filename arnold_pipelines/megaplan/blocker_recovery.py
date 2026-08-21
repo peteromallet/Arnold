@@ -150,10 +150,52 @@ def validated_deterministic_phase_repair(
     if selected_scope == "engine_runtime":
         # Provider response compilation and engine phase-contract repairs are
         # engine-owned. Binding these repairs to the target product HEAD would
-        # create a receipt for the wrong code surface.
-        from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+        # create a receipt for the wrong code surface. Ambient
+        # megaplan_engine_root() is not authority: it can resolve to a
+        # read-only -live tree.  The live tree is epic.runtime_root
+        # (import_root) plus the generation interpreter.
+        from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+            MutationDenied,
+            process_import_root,
+            require_mutation_capability,
+        )
 
-        repair_root = megaplan_engine_root()
+        live_root = process_import_root()
+        capability_payload = None
+        if isinstance(resume_cursor, Mapping):
+            capability_payload = (
+                resume_cursor.get("mutation_capability")
+                or resume_cursor.get("capability")
+            )
+        if capability_payload is None and isinstance(state, Mapping):
+            capability_payload = (
+                state.get("mutation_capability") or state.get("capability")
+            )
+        try:
+            capability = require_mutation_capability(
+                capability_payload,
+                action="recover-blocked",
+                occurrence=current_fingerprint,
+                scope="engine_runtime",
+            )
+        except MutationDenied as exc:
+            raise CliError(
+                exc.code,
+                f"engine_runtime recover-blocked refused: {exc.reason}",
+                extra={"repair_scope": selected_scope},
+            ) from exc
+        if Path(capability.import_root) != live_root:
+            raise CliError(
+                "import_root_mismatch",
+                "process import_root does not equal the capability-bound "
+                "epic.runtime_root; ambient megaplan_engine_root() is not authority",
+                extra={
+                    "repair_scope": selected_scope,
+                    "process_import_root": str(live_root),
+                    "capability_import_root": capability.import_root,
+                },
+            )
+        repair_root = Path(capability.import_root)
     repair_head_label = (
         "engine runtime HEAD"
         if selected_scope == "engine_runtime"

@@ -1261,13 +1261,62 @@ class PlanningControlBinding:
             )
             if deterministic_phase_repair_required:
                 project_dir = Path(str(transition.payload.get("root") or plan_dir))
+                repair_scope = transition.payload.get("repair_scope")
+                if str(repair_scope or "").strip().lower() == "engine_runtime":
+                    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+                        MutationDenied,
+                        mint_mutation_capability,
+                    )
+                    from arnold_pipelines.megaplan.blocker_recovery import (
+                        compact_failure_identity,
+                    )
+
+                    fingerprint = str(
+                        compact_failure_identity(latest_failure).get("fingerprint") or ""
+                    )
+                    evidence = {
+                        "occurrence": fingerprint,
+                        "target": fingerprint,
+                        "cursor": str(resume_cursor.get("phase") or ""),
+                        "evidence_digest": fingerprint,
+                        "scope": "engine_runtime",
+                        "repair_scope": "engine_runtime",
+                        "runtime_manifest_path": transition.payload.get(
+                            "runtime_manifest"
+                        ),
+                        "ambient_engine_root": transition.payload.get(
+                            "ambient_engine_root"
+                        ),
+                        "runtime_manifest": transition.payload.get(
+                            "runtime_manifest_payload"
+                        ),
+                        "import_root": transition.payload.get("import_root"),
+                        "interpreter": transition.payload.get("interpreter"),
+                    }
+                    fence_epoch = transition.payload.get("fence_epoch")
+                    if fence_epoch is None:
+                        fence_epoch = resume_cursor.get("fence_epoch")
+                    if fence_epoch is not None:
+                        evidence["fence_epoch"] = fence_epoch
+                    try:
+                        capability = mint_mutation_capability(
+                            action="recover-blocked",
+                            evidence=evidence,
+                        )
+                    except MutationDenied as exc:
+                        raise CliError(
+                            exc.code,
+                            f"engine_runtime recover-blocked refused: {exc.reason}",
+                        ) from exc
+                    resume_cursor = dict(resume_cursor)
+                    resume_cursor["mutation_capability"] = capability.to_dict()
                 phase_repair_evidence = validated_deterministic_phase_repair(
                     project_dir,
                     state,
                     resume_cursor,
                     transition.payload.get("repair_commit"),
                     transition.payload.get("failure_fingerprint"),
-                    transition.payload.get("repair_scope"),
+                    repair_scope,
                 )
                 if phase_repair_evidence is None:  # defensive: predicate above is exact
                     raise CliError("missing_phase_result", "deterministic repair evidence is missing")
