@@ -455,7 +455,7 @@ plan_attention_status_env() {
   local remote_spec_path="$2"
   local run_kind="${3:-chain}"
   local plan_name="${4:-}"
-  python3 - "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" <<'PY'
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" <<'PY'
 import hashlib
 import json
 import os
@@ -907,6 +907,88 @@ if isinstance(active_step, dict):
 manual_review = current_state == "manual_review" or retry_strategy == "manual_review"
 awaiting_human = (current_state in human_gate_states or chain_last_state in human_gate_states) and not state_mismatch
 
+# Fail closed: missing/unknown/label-only classifier output never becomes
+# dispatch_l1_repair. Only an evidence-bound classify_repair_dispatch result
+# may emit that decision; any exception or unrecognized kind stays empty.
+# Keep inner Python closers off their own line: _extract_wrapper_function
+# stops at the first bare "\n}\n".
+dispatch_decision = ""
+dispatch_intent = ""
+dispatch_custody_bucket = ""
+dispatch_blocker_id = ""
+dispatch_request_id = ""
+_QUALITY_LABELS = {"quality_gate_blocked", "review_quality_blocked_unknown", "quality_gate_circuit_open"}
+if state:
+    try:
+        from arnold_pipelines.megaplan.cloud.repair_contract import DISPATCH_DECISION_L1, classify_repair_dispatch, project_repair_custody, _is_evidence_bound_deterministic_quality_block
+        latest_failure_payload = latest_failure if isinstance(latest_failure, dict) else {}
+        resume_cursor_payload = resume_cursor if isinstance(resume_cursor, dict) else {}
+        evidence_cursor = latest_failure_payload.get("evidence_cursor")
+        if not isinstance(evidence_cursor, dict):
+            evidence_cursor = resume_cursor_payload.get("evidence_cursor")
+        if not isinstance(evidence_cursor, dict):
+            evidence_cursor = {}
+        current_phase = ""
+        if isinstance(resume_cursor_payload.get("phase"), str) and resume_cursor_payload.get("phase"):
+            current_phase = resume_cursor_payload["phase"]
+        elif failure_phase:
+            current_phase = failure_phase
+        current_target = {"authoritative_source": "plan_state", "current_refs": {"current_plan_name": resolved_plan_name, "plan_current_state": current_state}, "plan_state": {"present": True, "name": resolved_plan_name, "current_state": current_state, "current_phase": current_phase, "resume_cursor": dict(resume_cursor_payload)}, "event_cursors": {"evidence_cursor": dict(evidence_cursor)}}
+        failure_target = latest_failure_payload.get("target")
+        if isinstance(failure_target, dict):
+            target_fp = failure_target.get("target_fingerprint")
+            if isinstance(target_fp, str) and target_fp:
+                current_target["plan_state"]["target_fingerprint"] = target_fp
+        custody_projection = None
+        try:
+            queue_root = workspace / ".megaplan" / "repair-queue"
+            repair_data_dir = workspace / ".megaplan" / "cloud-sessions" / "repair-data"
+            custody_projection = project_repair_custody(plan_state=state, current_target=current_target, queue_root=queue_root if queue_root.is_dir() else None, repair_data_dir=repair_data_dir if repair_data_dir.is_dir() else None)
+        except Exception:
+            custody_projection = None
+        classified = classify_repair_dispatch(plan_state=state, current_target=current_target, latest_failure=latest_failure_payload or None, retry_strategy=retry_strategy, custody_projection=custody_projection)
+        classified_decision = getattr(classified, "decision", "")
+        classified_intent = getattr(classified, "dispatch_intent", "")
+        if not isinstance(classified_decision, str):
+            classified_decision = ""
+        if not isinstance(classified_intent, str):
+            classified_intent = ""
+        quality_bound = False
+        try:
+            quality_bound = bool(_is_evidence_bound_deterministic_quality_block(current_state=current_state, retry_strategy=retry_strategy, failure_kind=failure_kind, latest_failure=latest_failure_payload, current_target=current_target))
+        except Exception:
+            quality_bound = False
+        # Unknown / non-string classifier output stays empty (fail closed).
+        if classified_decision:
+            dispatch_decision = classified_decision
+            dispatch_intent = classified_intent
+        dispatch_custody_bucket = getattr(classified, "custody_bucket", "") or ""
+        dispatch_blocker_id = getattr(classified, "blocker_id", "") or ""
+        dispatch_request_id = getattr(classified, "request_id", "") or ""
+        if not isinstance(dispatch_custody_bucket, str):
+            dispatch_custody_bucket = ""
+        if not isinstance(dispatch_blocker_id, str):
+            dispatch_blocker_id = ""
+        if not isinstance(dispatch_request_id, str):
+            dispatch_request_id = ""
+        # Quality-block admission is evidence-bound only. Label-only /
+        # unknown / missing classifier output fail closed (empty).
+        # Complete evidence-bound shape emits dispatch_l1_repair even when
+        # custody has not yet queued a request (equivalent gate).
+        if failure_kind in _QUALITY_LABELS:
+            if classified_decision == DISPATCH_DECISION_L1 or quality_bound:
+                dispatch_decision = DISPATCH_DECISION_L1
+                dispatch_intent = classified_intent or "dispatch_l1"
+            else:
+                dispatch_decision = ""
+                dispatch_intent = ""
+    except Exception:
+        dispatch_decision = ""
+        dispatch_intent = ""
+        dispatch_custody_bucket = ""
+        dispatch_blocker_id = ""
+        dispatch_request_id = ""
+
 emit("PLAN_STATUS_FOUND", "1" if state else "0")
 emit("PLAN_STATUS_PLAN_NAME", resolved_plan_name)
 emit("PLAN_STATUS_CURRENT_STATE", current_state)
@@ -930,6 +1012,11 @@ emit("PLAN_STATUS_STATE_MISMATCH_SUMMARY", state_mismatch_summary)
 emit("PLAN_STATUS_CHAIN_COMPLETE", "1" if chain_complete else "0")
 emit("PLAN_STATUS_CHAIN_CURRENT_INDEX", str(chain_current_index))
 emit("PLAN_STATUS_CHAIN_MILESTONE_COUNT", str(chain_milestone_count))
+emit("PLAN_STATUS_DISPATCH_DECISION", dispatch_decision)
+emit("PLAN_STATUS_DISPATCH_INTENT", dispatch_intent)
+emit("PLAN_STATUS_CUSTODY_BUCKET", dispatch_custody_bucket)
+emit("PLAN_STATUS_BLOCKER_ID", dispatch_blocker_id)
+emit("PLAN_STATUS_REQUEST_ID", dispatch_request_id)
 PY
 }
 
@@ -8449,14 +8536,17 @@ PY
         "resolver suppressed human gate: ${resolver_human_verdict#suppress:}; $human_summary"
       return 0
     fi
+    quality_block_dispatch="${PLAN_STATUS_DISPATCH_DECISION:-}"
     if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" ]] \
-      || [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]] \
+      || [[ "$quality_block_dispatch" == "dispatch_l1_repair" ]] \
       || [[ "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
-      # manual_review classified for repair dispatch (blocked_recovery,
-      # dispatch_l1_repair, auto_stall). quality_gate_blocked /
-      # review_quality_blocked_unknown / quality_gate_circuit_open are NOT
-      # L1-admitted by label: they reach babysitter only when the shared
-      # evidence-bound quality-block gate already classified dispatch_l1_repair.
+      # Quality-block babysitter admission is SOLELY the classifier decision
+      # emitted by plan_attention_status_env. quality_gate_blocked /
+      # review_quality_blocked_unknown / quality_gate_circuit_open MUST NOT
+      # OR into this predicate. They reach babysitter only when
+      # classify_repair_dispatch already classified dispatch_l1_repair from
+      # complete evidence-bound quality-block shape.
+      # blocked_recovery_not_resolved and auto_stall remain non-quality paths.
       # A durable needs-human marker that survives the fresh-classifier
       # checks below is reported as-is.
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then

@@ -256,3 +256,139 @@ def test_t23_watchdog_and_supervise_do_not_dispatch_on_quality_label() -> None:
     assert 'kind in {"quality_gate_blocked", "review_rework_exhausted"}' not in supervise
     assert 'kind.startswith("review_quality_blocked")' not in supervise
     assert "PLAN_STATUS_DISPATCH_DECISION" in watchdog
+    assert "classify_repair_dispatch" in watchdog
+    assert "quality_block_dispatch=" in watchdog
+    assert "emit(\"PLAN_STATUS_DISPATCH_DECISION\"" in watchdog
+
+
+def _t23_eval_plan_attention_env(tmp_path: Path, state: dict[str, object]) -> dict[str, str]:
+    """Exec production plan_attention_status_env and eval its emitted env."""
+    from tests.cloud.test_watchdog_wrappers import (
+        _extract_wrapper_function,
+        _run_watchdog_shell,
+    )
+
+    workspace = tmp_path / "ws"
+    plan_dir = workspace / ".megaplan" / "plans" / "review-quality-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    initiative_dir = workspace / ".megaplan" / "initiatives" / "demo"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    initiative_dir.mkdir(parents=True)
+    spec_path = initiative_dir / "chain.yaml"
+    spec_path.write_text("milestones:\n  - label: m1\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"chain-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "review-quality-plan",
+                "current_milestone_index": 0,
+                "last_state": "blocked",
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    repo_root = Path(__file__).parents[2].resolve()
+    script = "\n\n".join(
+        [
+            f"SRC_DIR={str(repo_root)!r}",
+            f"PYTHONPATH={str(repo_root)!r}:${{PYTHONPATH:-}}",
+            "export SRC_DIR PYTHONPATH",
+            _extract_wrapper_function("plan_attention_status_env"),
+            (
+                "eval \"$(plan_attention_status_env "
+                f"{str(workspace)!r} {str(spec_path)!r} chain '')\""
+            ),
+            'printf "DECISION=%s\\n" "${PLAN_STATUS_DISPATCH_DECISION-UNSET}"',
+            'printf "INTENT=%s\\n" "${PLAN_STATUS_DISPATCH_INTENT-UNSET}"',
+            'printf "KIND=%s\\n" "${PLAN_STATUS_FAILURE_KIND-UNSET}"',
+            (
+                'if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; '
+                'then printf "ADMIT=1\\n"; else printf "ADMIT=0\\n"; fi'
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr + "\n" + result.stdout
+    parsed: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            parsed[key] = value
+    return parsed
+
+
+def test_t23_label_only_quality_gate_blocked_does_not_dispatch_via_env_eval(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "t23-label-env").mkdir()
+    state: dict[str, object] = {
+        "name": "review-quality-plan",
+        "current_state": STATE_BLOCKED,
+        "history": [{"step": "review", "result": "needs_rework"}] * 4,
+        "meta": {"total_cost_usd": 0.0},
+        "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+        "latest_failure": {
+            "kind": "quality_gate_blocked",
+            "phase": "review",
+            "metadata": {},
+        },
+    }
+    parsed = _t23_eval_plan_attention_env(tmp_path / "label-only", state)
+    assert parsed["KIND"] == "quality_gate_blocked"
+    assert parsed["DECISION"] == ""
+    assert parsed["ADMIT"] == "0"
+
+
+def test_t23_complete_evidence_bound_shape_is_only_quality_block_l1_via_env_eval(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "t23-bound-env").mkdir()
+    state: dict[str, object] = {
+        "name": "review-quality-plan",
+        "current_state": STATE_EXECUTED,
+        "history": [{"step": "review", "result": "needs_rework"}] * 3,
+        "meta": {"total_cost_usd": 0.0},
+    }
+    failure = _emit_in_production_order(state)
+    assert failure["kind"] == "quality_gate_blocked"
+    parsed = _t23_eval_plan_attention_env(tmp_path / "complete-shape", state)
+    assert parsed["KIND"] == "quality_gate_blocked"
+    assert parsed["DECISION"] == "dispatch_l1_repair"
+    assert parsed["ADMIT"] == "1"
+
+    closed: dict[str, object] = {
+        "name": "review-quality-plan",
+        "current_state": STATE_BLOCKED,
+        "history": [{"step": "review", "result": "needs_rework"}] * 4,
+        "meta": {"total_cost_usd": 0.0},
+        "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+        "latest_failure": {
+            "kind": "review_quality_blocked_unknown",
+            "phase": "review",
+            "metadata": {"deterministic": True, "repairability": "deterministic_machine"},
+        },
+    }
+    unknown = _t23_eval_plan_attention_env(tmp_path / "unknown-label", closed)
+    assert unknown["KIND"] == "review_quality_blocked_unknown"
+    assert unknown["DECISION"] == ""
+    assert unknown["ADMIT"] == "0"
+
+    circuit: dict[str, object] = {
+        "name": "review-quality-plan",
+        "current_state": STATE_BLOCKED,
+        "history": [{"step": "review", "result": "needs_rework"}] * 4,
+        "meta": {"total_cost_usd": 0.0},
+        "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+        "latest_failure": {
+            "kind": "quality_gate_circuit_open",
+            "phase": "review",
+            "metadata": {},
+        },
+    }
+    circuit_parsed = _t23_eval_plan_attention_env(tmp_path / "circuit-open", circuit)
+    assert circuit_parsed["KIND"] == "quality_gate_circuit_open"
+    assert circuit_parsed["DECISION"] == ""
+    assert circuit_parsed["ADMIT"] == "0"
