@@ -137,8 +137,9 @@ class NormalizedCall(BaseModel):
     signatures (empty when the call has none).  ``accepted_outcome_id`` pins
     the exact accepted outcome the call is attributed to (the impact
     denominator basis); when present, ``accepted_resolution_refs`` must
-    carry the exact resolution anchors (T3 contract).  ``censored=True``
-    marks right-censored evidence (never coerced to completion).
+    carry the exact resolution anchors (T3 contract).  A completed call may
+    have an exact measure or an unknown measure.  A censored call carries
+    only an explicit lower bound and is never coerced to completion.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -156,6 +157,7 @@ class NormalizedCall(BaseModel):
     elapsed_seconds: float | None = Field(default=None, ge=0)
     no_progress_delta_seconds: float | None = Field(default=None, ge=0)
     censored: bool = False
+    lower_bound_seconds: float | None = Field(default=None, ge=0)
     #: Exact source evidence refs for this call (mandatory: normalized facts
     #: always carry immutable source references).
     refs: tuple[OwnerRef, ...] = ()
@@ -192,6 +194,23 @@ class NormalizedCall(BaseModel):
         if not self.refs:
             raise ValueError(
                 "normalized calls require at least one exact source ref"
+            )
+        if self.censored:
+            if (
+                self.elapsed_seconds is not None
+                or self.no_progress_delta_seconds is not None
+            ):
+                raise ValueError(
+                    "censored calls cannot carry an exact elapsed or "
+                    "no_progress_delta_seconds measure"
+                )
+            if self.lower_bound_seconds is None:
+                raise ValueError(
+                    "censored calls require an explicit lower_bound_seconds"
+                )
+        elif self.lower_bound_seconds is not None:
+            raise ValueError(
+                "completed calls cannot carry a lower_bound_seconds"
             )
         if self.accepted_outcome_id is not None and not self.accepted_resolution_refs:
             raise ValueError(
@@ -239,12 +258,13 @@ def _loop_span_seconds(calls: Sequence[NormalizedCall]) -> float | None:
 
 
 def _call_time_seconds(call: NormalizedCall) -> float | None:
-    """Exact time measure of one call: elapsed, else the no-progress delta.
+    """Exact completed time measure of one call.
 
-    Both are exact non-negative call measures (never coerced); for
-    no-progress findings the wasted delta is the meaningful per-accepted
-    time when no full elapsed is recorded.
+    Censored calls retain their explicit lower bound for context, but that
+    bound is never used as a completed numeric duration.
     """
+    if call.censored:
+        return None
     if call.elapsed_seconds is not None:
         return call.elapsed_seconds
     return call.no_progress_delta_seconds
@@ -266,9 +286,10 @@ def _exact_accepted_outcome_economics(
         return None
     denominator = len({call.accepted_outcome_id for call in attributed})
     times = [_call_time_seconds(call) for call in attributed]
-    known = [value for value in times if value is not None]
     time_per_accepted = (
-        round(sum(known) / denominator, 6) if known else None
+        round(sum(value for value in times if value is not None) / denominator, 6)
+        if all(value is not None for value in times)
+        else None
     )
     return AcceptedOutcomeEconomics(
         accepted_outcome_count=denominator,

@@ -2499,20 +2499,28 @@ def join_observation_envelope(
                 return _failure(reason, contaminated=True)
             return _failure(reason)
 
-    # 2. Single-environment: the authoritative expected environment must
-    #    agree with every owner-declared environment; absent coordinates are
-    #    never inferred, and an envelope without any environment coordinate
-    #    is incomplete (cannot prove single-environment binding).
-    declared = [read.environment for _, read in reads if read.environment is not None]
+    # 2. Single-environment: every owner read and its version vector must
+    #    carry an explicit environment coordinate.  Missing coordinates are
+    #    incomplete, even when another read or expected_environment supplies
+    #    a value; an absent coordinate is never inferred.
+    for label, read in reads:
+        read_environment = read.environment
+        vector_environment = read.version_vector.environment
+        if read_environment is None or vector_environment is None:
+            return _failure(SourceReadFailure.INCOMPLETE, incomplete=True)
+        if read_environment != vector_environment:
+            return _failure(SourceReadFailure.CROSS_ENVIRONMENT, contaminated=True)
+
+    declared = [read.environment for _, read in reads]
     expected_env = (
         _environment(expected_environment)
         if expected_environment is not None
-        else (_environment(declared[0]) if declared else None)
+        else _environment(declared[0])
     )
     if expected_env is None:
         return _failure(SourceReadFailure.INCOMPLETE, incomplete=True)
     for label, read in reads:
-        if read.environment is not None and read.environment != expected_env:
+        if read.environment != expected_env:
             return _failure(SourceReadFailure.CROSS_ENVIRONMENT, contaminated=True)
 
     # 3. Staleness: an owner source whose post-read version differs from the
@@ -2650,7 +2658,7 @@ class CallFacts(BaseModel):
     elapsed_seconds: float | None = Field(default=None, ge=0)
     no_progress_delta_seconds: float | None = Field(default=None, ge=0)
     censored: bool = False
-
+    lower_bound_seconds: float | None = Field(default=None, ge=0)
     @field_validator("call_id", "stage")
     @classmethod
     def _validate_identity(cls, value: str) -> str:
@@ -3138,6 +3146,7 @@ def normalize_observation_facts(
             elapsed_seconds=call.elapsed_seconds,
             no_progress_delta_seconds=call.no_progress_delta_seconds,
             censored=call.censored,
+            lower_bound_seconds=call.lower_bound_seconds,
             refs=source_refs,
             accepted_resolution_refs=accepted_resolution_refs,
             gate_backoff_refs=(),

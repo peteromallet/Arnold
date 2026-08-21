@@ -452,6 +452,23 @@ def test_family_contracts_reject_unknown_fields_at_strict_decode() -> None:
             strict_loads(model_cls, data)  # type: ignore[arg-type]
 
 
+
+
+def test_unlinked_candidates_are_rejected_before_routing() -> None:
+    base = {
+        "candidate_id": "candidate-unlinked",
+        "root_cause_fingerprint": "fingerprint-unlinked",
+        "affected_contract": "contract-1",
+        "classifier_version": "classifier-1",
+        "coverage": _denominator(numerator=4, denominator=5, unknown_count=0),
+        "confidence": _bounds(0.9, 0.9, 0.9),
+        "recurrence_count_7d": 2,
+        "recurrence_count_30d": 2,
+    }
+    with pytest.raises(ValueError):
+        ec.RootCauseCandidate(**base, occurrence_refs=[], evidence_refs=[_ref("wbc", "wbc://e")])
+    with pytest.raises(ValueError):
+        ec.RootCauseCandidate(**base, occurrence_refs=[_ref("wbc", "wbc://o")], evidence_refs=[])
 def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
     candidate = ec.RootCauseCandidate(
         candidate_id="candidate-1",
@@ -467,7 +484,8 @@ def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
         confidence=_bounds(0.9, 0.9, 0.9),
         recurrence_count_7d=2,
         recurrence_count_30d=2,
-        evidence_refs=(_ref("wbc", "wbc://occurrence-1"),),
+        occurrence_refs=(_ref("wbc", "wbc://occurrence-1"),),
+        evidence_refs=(_ref("wbc", "wbc://occurrence-1/evidence"),),
     )
     ticket_read = es.OpenTicketLookupAdapter(
         lambda: SimpleNamespace(
@@ -518,6 +536,14 @@ def test_routing_emits_inert_deterministic_no_match_proposal() -> None:
 
     decoded = strict_loads(ec.DailyEfficiencyProposal, canonical_dumps(decision.proposal))
     assert decoded == decision.proposal
+    invalid = decision.proposal.model_dump(mode="python")
+    invalid["candidate_refs"] = ()
+    with pytest.raises(ValueError):
+        ec.DailyEfficiencyProposal.model_validate(invalid)
+    invalid["candidate_refs"] = decision.proposal.candidate_refs
+    invalid["evidence_refs"] = ()
+    with pytest.raises(ValueError):
+        ec.DailyEfficiencyProposal.model_validate(invalid)
     with pytest.raises(Exception):
         decision.proposal.auto_materialization = True  # type: ignore[misc]
 
@@ -552,7 +578,8 @@ def test_routing_rejects_opaque_and_mutation_capable_callbacks() -> None:
         confidence=_bounds(0.9, 0.9, 0.9),
         recurrence_count_7d=2,
         recurrence_count_30d=2,
-        evidence_refs=(_ref("wbc", "wbc://occurrence-1"),),
+        occurrence_refs=(_ref("wbc", "wbc://occurrence-1"),),
+        evidence_refs=(_ref("wbc", "wbc://occurrence-1/evidence"),),
     )
     ticket_read = es.OpenTicketLookupAdapter(
         lambda: SimpleNamespace(

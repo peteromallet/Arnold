@@ -114,11 +114,14 @@ class ClusterEvidence(BaseModel):
     input-order independent.  ``occurred_at`` timestamps bound the recurrence
     windows; occurrences without timestamps contribute to the group total
     only (recurrence counts stay exact counts of timestamped occurrences —
-    missing timestamps are never inferred).  ``accepted_outcome_id`` pins the
-    exact accepted outcome the evidence is attributed to (the avoidable-impact
-    denominator basis); when present, ``accepted_resolution_refs`` must carry
-    the exact resolution anchors (T3 contract).  Active custody appears only
-    as reference/covariate refs — never claimed.
+    missing timestamps are never inferred).  ``accepted_outcome_id`` pins
+    the exact accepted outcome the evidence is attributed to (the avoidable-
+    impact denominator basis); when present, ``accepted_resolution_refs``
+    must carry the exact resolution anchors (T3 contract).  A completed
+    evidence item may have an exact measure or an unknown measure.  Censored
+    evidence carries only an explicit lower bound and is never coerced to
+    completion.  Active custody appears only as reference/covariate refs —
+    never claimed.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -133,6 +136,7 @@ class ClusterEvidence(BaseModel):
     #: Exact time measure of the evidence (never coerced; may be absent).
     time_seconds: float | None = Field(default=None, ge=0)
     censored: bool = False
+    lower_bound_seconds: float | None = Field(default=None, ge=0)
     #: Exact source evidence refs for this evidence (mandatory).
     refs: tuple[OwnerRef, ...] = ()
     accepted_resolution_refs: tuple[OwnerRef, ...] = ()
@@ -180,6 +184,19 @@ class ClusterEvidence(BaseModel):
         if not self.refs:
             raise ValueError(
                 "cluster evidence requires at least one exact source ref"
+            )
+        if self.censored:
+            if self.time_seconds is not None:
+                raise ValueError(
+                    "censored evidence cannot carry an exact time_seconds"
+                )
+            if self.lower_bound_seconds is None:
+                raise ValueError(
+                    "censored evidence requires an explicit lower_bound_seconds"
+                )
+        elif self.lower_bound_seconds is not None:
+            raise ValueError(
+                "completed evidence cannot carry a lower_bound_seconds"
             )
         if self.accepted_outcome_id is not None and not self.accepted_resolution_refs:
             raise ValueError(
@@ -379,9 +396,14 @@ def _exact_accepted_outcome_economics(
     if not attributed:
         return None
     denominator = len({item.accepted_outcome_id for item in attributed})
-    known = [item.time_seconds for item in attributed if item.time_seconds is not None]
+    times = [
+        None if item.censored else item.time_seconds
+        for item in attributed
+    ]
     time_per_accepted = (
-        round(sum(known) / denominator, 6) if known else None
+        round(sum(value for value in times if value is not None) / denominator, 6)
+        if all(value is not None for value in times)
+        else None
     )
     return AcceptedOutcomeEconomics(
         accepted_outcome_count=denominator,
@@ -517,9 +539,7 @@ def _build_candidate(
         active_custody_refs=_union_refs(
             [item.active_custody_refs for item in group]
         ),
-        evidence_refs=_union_refs(
-            [item.accepted_resolution_refs for item in group]
-        ),
+        evidence_refs=_union_refs([item.refs for item in group]),
         avoidable_impact=_exact_accepted_outcome_economics(group),
     )
 

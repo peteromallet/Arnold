@@ -1283,6 +1283,14 @@ class RootCauseCandidate(BaseModel):
                 "root-cause candidate coverage requires an exact denominator; "
                 "coverage is never fabricated from a missing denominator"
             )
+        if not self.occurrence_refs:
+            raise ValueError(
+                "root-cause candidates require non-empty occurrence_refs"
+            )
+        if not self.evidence_refs:
+            raise ValueError(
+                "root-cause candidates require non-empty evidence_refs"
+            )
         if self.recurrence_count_30d < self.recurrence_count_7d:
             raise ValueError(
                 "recurrence_count_30d cannot be below recurrence_count_7d "
@@ -1732,6 +1740,14 @@ class DailyEfficiencyProposal(BaseModel):
 
     @model_validator(mode="after")
     def _check_locked_identity(self) -> DailyEfficiencyProposal:
+        if not self.candidate_refs:
+            raise ValueError(
+                "daily efficiency proposals require non-empty candidate_refs"
+            )
+        if not self.evidence_refs:
+            raise ValueError(
+                "daily efficiency proposals require non-empty evidence_refs"
+            )
         expected_id = derive_proposal_occurrence_id(
             proposal_kind=self.proposal_kind,
             root_cause_fingerprint=self.root_cause_fingerprint,

@@ -60,6 +60,7 @@ def _evidence(
     accepted_outcome_id: str | None = None,
     time_seconds: float | None = None,
     censored: bool = False,
+    lower_bound_seconds: float | None = None,
     custody: bool = False,
     **overrides: object,
 ) -> cl.ClusterEvidence:
@@ -80,6 +81,7 @@ def _evidence(
         "accepted_outcome_id": accepted_outcome_id,
         "time_seconds": time_seconds,
         "censored": censored,
+        "lower_bound_seconds": lower_bound_seconds,
         "refs": refs,
         "accepted_resolution_refs": accepted_refs,
         "active_custody_refs": custody_refs,
@@ -115,6 +117,65 @@ def test_cluster_evidence_attribution_requires_resolution_refs() -> None:
             accepted_resolution_refs=[],
         )
 
+
+def test_cluster_evidence_censoring_requires_explicit_lower_bound() -> None:
+    with pytest.raises(ValueError):
+        _evidence(
+            "censored-exact",
+            accepted_outcome_id="outcome-1",
+            censored=True,
+            time_seconds=10.0,
+            lower_bound_seconds=5.0,
+        )
+    with pytest.raises(ValueError):
+        _evidence("censored-missing-bound", censored=True)
+
+
+def test_cluster_evidence_lower_bound_stays_unknown_to_exact_economics() -> None:
+    result = cl.cluster_root_causes(
+        [
+            _evidence(
+                "censored-bound",
+                occurred_at=_ts(0),
+                accepted_outcome_id="outcome-1",
+                censored=True,
+                lower_bound_seconds=5.0,
+            ),
+            _evidence(
+                "exact",
+                occurred_at=_ts(1),
+                accepted_outcome_id="outcome-2",
+                time_seconds=10.0,
+            ),
+        ]
+    )
+    candidate = result.candidates[0]
+    assert candidate.avoidable_impact is not None
+    assert candidate.avoidable_impact.accepted_outcome_count == 2
+    assert candidate.avoidable_impact.time_seconds_per_accepted is None
+
+
+
+def test_cluster_does_not_average_partial_accepted_outcome_time() -> None:
+    result = cl.cluster_root_causes(
+        [
+            _evidence(
+                "known",
+                occurred_at=_ts(0),
+                accepted_outcome_id="outcome-1",
+                time_seconds=10.0,
+            ),
+            _evidence(
+                "unknown",
+                occurred_at=_ts(1),
+                accepted_outcome_id="outcome-2",
+            ),
+        ]
+    )
+    candidate = result.candidates[0]
+    assert candidate.avoidable_impact is not None
+    assert candidate.avoidable_impact.accepted_outcome_count == 2
+    assert candidate.avoidable_impact.time_seconds_per_accepted is None
 
 def test_cluster_evidence_features_are_sorted_and_deduped() -> None:
     item = cl.ClusterEvidence(
@@ -419,7 +480,12 @@ def test_candidate_confidence_is_conservative_under_censoring() -> None:
     censored = [
         _evidence("ev-1", occurred_at=_ts(0), accepted_outcome_id="outcome-1"),
         _evidence("ev-2", occurred_at=_ts(1), accepted_outcome_id="outcome-1"),
-        _evidence("ev-3", occurred_at=_ts(2), censored=True),
+        _evidence(
+            "ev-3",
+            occurred_at=_ts(2),
+            censored=True,
+            lower_bound_seconds=5.0,
+        ),
     ]
     result = cl.cluster_root_causes(censored)
     candidate = result.candidates[0]

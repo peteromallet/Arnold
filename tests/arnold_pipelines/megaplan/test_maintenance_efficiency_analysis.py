@@ -62,6 +62,7 @@ def _call(
     elapsed_seconds: float | None = None,
     no_progress_delta_seconds: float | None = None,
     censored: bool = False,
+    lower_bound_seconds: float | None = None,
     started_at: datetime | None = None,
     ended_at: datetime | None = None,
 ) -> ea.NormalizedCall:
@@ -83,6 +84,7 @@ def _call(
         elapsed_seconds=elapsed_seconds,
         no_progress_delta_seconds=no_progress_delta_seconds,
         censored=censored,
+        lower_bound_seconds=lower_bound_seconds,
         started_at=started_at,
         ended_at=ended_at,
         refs=refs,
@@ -116,6 +118,39 @@ def test_normalized_call_attribution_requires_resolution_refs() -> None:
             refs=[_ref("wbc", "wbc://call-1")],
             accepted_resolution_refs=[],
         )
+
+
+def test_normalized_call_censoring_requires_explicit_lower_bound() -> None:
+    with pytest.raises(ValueError):
+        _call(
+            "censored-exact",
+            accepted_outcome_id="outcome-1",
+            censored=True,
+            elapsed_seconds=10.0,
+            lower_bound_seconds=5.0,
+        )
+    with pytest.raises(ValueError):
+        _call("censored-missing-bound", censored=True)
+
+
+def test_normalized_call_lower_bound_stays_unknown_to_exact_economics() -> None:
+    censored = _call(
+        "censored-bound",
+        duplicate_key="dup-censored",
+        accepted_outcome_id="outcome-1",
+        censored=True,
+        lower_bound_seconds=5.0,
+    )
+    exact = _call(
+        "exact",
+        duplicate_key="dup-censored",
+        accepted_outcome_id="outcome-2",
+        elapsed_seconds=10.0,
+    )
+    finding = ea.analyze_duplicate_calls([censored, exact])[0]
+    assert finding.economics is not None
+    assert finding.economics.accepted_outcome_count == 2
+    assert finding.economics.time_seconds_per_accepted is None
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +242,8 @@ def test_retry_loops_group_by_operation_key() -> None:
         _call("occ-2", operation_key="op-1", accepted_outcome_id="out-1"),
         _call("occ-3", operation_key="op-2"),
     ]
+
+
     findings = ea.analyze_retry_loops(calls)
     assert len(findings) == 1
     assert findings[0].kind is ec.LoopFindingKind.RETRY_LOOP
@@ -239,6 +276,26 @@ def test_duplicate_calls_count_impacts_against_exact_accepted_outcomes() -> None
     assert finding.economics is not None
     assert finding.economics.accepted_outcome_count == 2
     assert finding.economics.time_seconds_per_accepted == (600.0 + 300.0 + 900.0) / 2
+
+
+def test_duplicate_calls_do_not_average_partial_accepted_outcome_time() -> None:
+    calls = [
+        _call(
+            "known",
+            duplicate_key="dup-partial",
+            accepted_outcome_id="outcome-1",
+            elapsed_seconds=10.0,
+        ),
+        _call(
+            "unknown",
+            duplicate_key="dup-partial",
+            accepted_outcome_id="outcome-2",
+        ),
+    ]
+    finding = ea.analyze_duplicate_calls(calls)[0]
+    assert finding.economics is not None
+    assert finding.economics.accepted_outcome_count == 2
+    assert finding.economics.time_seconds_per_accepted is None
 
 
 def test_duplicate_calls_without_accepted_outcome_anchor_yield_no_finding() -> None:
@@ -323,7 +380,7 @@ def test_no_progress_impacts_counted_only_against_exact_accepted_outcomes() -> N
 def test_findings_union_exact_reference_bundles() -> None:
     calls = [
         _call("occ-1", failure_signature="sig-a", accepted_outcome_id="out-1",
-              censored=True),
+              censored=True, lower_bound_seconds=5.0),
         _call("occ-2", failure_signature="sig-a", accepted_outcome_id="out-2"),
     ]
     findings = ea.analyze_equivalent_failures(calls)

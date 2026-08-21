@@ -1885,6 +1885,33 @@ def test_envelope_join_incomplete_page_is_non_supporting() -> None:
     assert envelope.supports_proposal is False
 
 
+def test_envelope_join_missing_wbc_environment_cannot_be_filled() -> None:
+    reads = _coherent_reads()
+    wbc = reads["wbc_read"]
+    reads["wbc_read"] = wbc.model_copy(  # type: ignore[attr-defined]
+        update={
+            "environment": None,
+            "version_vector": wbc.version_vector.model_copy(
+                update={"environment": None}
+            ),
+        }
+    )
+    envelope = es.join_observation_envelope(
+        task_or_milestone_identity="task-m1",
+        stage="finalize",
+        expected_environment="production",
+        **reads,  # type: ignore[arg-type]
+    )
+    assert envelope.disposition is es.SourceReadDisposition.UNKNOWN
+    assert envelope.disposition_reason is es.SourceReadFailure.INCOMPLETE
+    assert envelope.incomplete is True
+    assert envelope.supports_finding is False
+    assert envelope.supports_proposal is False
+    assert envelope.environment is None
+    assert envelope.owner_versions == ()
+    assert envelope.immutable_refs == ()
+
+
 def test_envelope_join_unavailable_source_fails_closed() -> None:
     broken = es.WbcWorkEvidenceAdapter(
         _BrokenStore(), environment="production"
