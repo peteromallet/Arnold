@@ -346,6 +346,16 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Overwrite an existing cloud.yaml",
     )
 
+    migration_parser = cloud_sub.add_parser(
+        "migrate-repair-requests",
+        help="Explicitly migrate bounded stranded repair requests under a durable lock",
+    )
+    migration_parser.add_argument(
+        "--request",
+        required=True,
+        help="JSON file containing one typed MigrationRequest",
+    )
+
     cloud_sub.add_parser("build", parents=[shared], help="Build the cloud image")
     cloud_sub.add_parser("deploy", parents=[shared], help="Deploy the cloud runner")
     cloud_sub.add_parser(
@@ -917,6 +927,8 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                             "cloud init cannot overwrite an isolated chain-runner profile",
                         )
             return _run_init(root, args)
+        if action == "migrate-repair-requests":
+            return _run_repair_queue_migration(root, args)
         early_spec: CloudSpec | None = None
         if selected_cloud.is_file():
             early_spec = _load_cloud_spec(root, args)
@@ -1469,6 +1481,8 @@ def _status_retirement_argv(args: argparse.Namespace) -> list[str]:
         "--expect-marker-sha256",
         str(args.expect_marker_sha256),
         "--reason",
+
+
         str(args.reason),
         "--actor",
         str(args.actor),
@@ -1479,6 +1493,31 @@ def _run_status_retirement(args: argparse.Namespace) -> int:
     from arnold_pipelines.megaplan.cloud.status_retirement import main
 
     return main(_status_retirement_argv(args))
+def _run_repair_queue_migration(root: Path, args: argparse.Namespace) -> int:
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        MigrationRequest,
+        MigrationRequestError,
+        migrate_stranded_requests,
+    )
+
+    request_path = Path(args.request).expanduser()
+    if not request_path.is_absolute():
+        request_path = root / request_path
+    try:
+        payload = json.loads(request_path.read_text(encoding="utf-8"))
+        request = MigrationRequest.from_mapping(payload)
+        receipt = migrate_stranded_requests(request)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, MigrationRequestError) as exc:
+        raise CliError("repair_queue_migration_rejected", str(exc)) from exc
+    sys.stdout.write(
+        json.dumps(
+            {"success": True, "action": "migrate-repair-requests", "receipt": receipt.to_dict()},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return 0
 
 
 def _cloud_yaml_path(root: Path, args: argparse.Namespace) -> Path:
