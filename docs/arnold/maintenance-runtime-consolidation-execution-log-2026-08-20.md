@@ -336,3 +336,21 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Prevention: subsequent integration cards must NOT remove the integration worktree; task-worktree removal must verify the target is not the integration worktree (exact path match).
 - State after recovery: HEAD 973a6fe6ce; T3.1 integrated + reviewed PASS; Batch 3 in progress (T3.2 next).
 
+
+## Batch 3 — implementation complete (T3.1, T3.2, T3.3)
+
+- T3.1 migration: reviewed PASS (mrc-d6729762…); integrated via merge f516dd215f; residual risks accepted (operator-only topological, per-target fence epoch, source basename preservation, max_requests per invocation).
+- INCIDENT (INT-t31, mrc-a1889408…): integration agent removed the integration worktree believing it was the T3.1 task worktree; recovered from shared object store (branch ref + commits intact); worktree re-created at 973a6fe6ce; prevention instruction added to integration cards.
+- T3.2 unblocker: reviewed PASS (mrc-25616f61…), 18 tests; should residual T32-SF-003 (STALE_FENCE attaches in-memory request; consumers key off outcome).
+- T3.3 auditor: reviewed PASS (mrc-0203d6f4…); should residuals S-T33-01 (censoring as evidence-absence not typed category) + S-T33-02 (legacy path compatibility).
+- Integrated: 4b8fe323c2 (merge feat/maintenance-unblocker-t32). Validator valid. Worktree intact.
+- NEXT: G3 migration/recovery review (single Grok), then Batch 4.
+
+
+## G3 — Batch-3 migration/recovery review — PASS
+
+- Single Grok review (mrc-85c293b9…): PASS, no must findings. No observation→migration, no self-authorizing/single-observation unblocker, no auditor-green-from-activity, no second claim/writer seam. M5 report-only.
+- Should residuals (deferred to end-stage Sol review 1): G3-S004 legacy builder path can verdict ok without canonical context; G3-S006 pre-existing _live_process_finding can ok on process presence (not in T3.3 hunk); S-T33-01 typed censoring; T32-SF-003 STALE_FENCE request attachment; G3-S002/G3-S001 earlier residuals.
+- DISK INCIDENT: data volume 100% full (203MiB free) blocked the first G3 dispatch (artifact write ENOSPC). Reclaimed ~4.4GiB by removing stale run worktree checkouts (runtime-convergence-r, runtime-convergence-bootstrap, t0.1-t3.1-external-seed-custody, T1.2, t2-1 leftovers) — all branch refs preserved in the shared object store; integration worktree untouched. G3 retried successfully at 4.6GiB free.
+- Batch 3 CLOSED at 4b8fe323c2. NEXT: Batch 4 (serial T4.1 → T4.2 → T4.3, then one G4 subsection review). No standalone G3.5; its concerns go to end-stage Sol review 1.
+
