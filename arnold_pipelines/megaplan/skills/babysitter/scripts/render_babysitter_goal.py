@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.babysitter.routing import resolve_babysitter_routing
@@ -35,6 +36,26 @@ def _safe_text(value: object) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _probe_bwrap_userns() -> bool:
+    """Same host probe as launch.investigator_sandbox_flag, without importing launch."""
+    try:
+        completed = subprocess.run(
+            ("bwrap", "--ro-bind", "/", "/", "--", "true"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return False
+    return int(getattr(completed, "returncode", 1) or 1) == 0
+
+
+def _investigator_sandbox_flag(investigator_sandbox: str | None = None) -> str:
+    if investigator_sandbox:
+        return investigator_sandbox
+    return "danger-full-access" if not _probe_bwrap_userns() else "read-only"
 
 
 def _json_block(label: str, payload: object) -> str:
@@ -120,6 +141,7 @@ def render_babysitter_goal(
     planner_repair: dict[str, object] | None = None,
     occurrence_digest: str = "",
     recovery_dir: str = "",
+    investigator_sandbox: str | None = None,
 ) -> str:
     """Render the status-trigger babysitter /goal for *target* (epic/session).
 
@@ -135,6 +157,7 @@ def render_babysitter_goal(
     scratch.
     """
     routing = resolve_babysitter_routing()
+    sandbox = _investigator_sandbox_flag(investigator_sandbox)
     encoded_target = json.dumps(target, ensure_ascii=False)
     context_lines = [
         "- target: " + encoded_target,
@@ -168,11 +191,15 @@ investigate, propose, implement the narrowest source-level fix, relaunch the
 chain, and prove movement.  You are not an auditor who reports back; you drive
 the chain out of the blocked/failed state."""
         investigator_step = f"""- STEP 1 — DEPLOY CODEX INVESTIGATORS: over the failure evidence, run one
-  bounded, read-only investigator per scoping question through foreground
+  bounded, NO-MUTATION investigator per scoping question through foreground
   `codex exec` commands using `-m {routing.investigator_model.split(':', 1)[1]}`
-  and a read-only sandbox.  Record the actual provider/model/transport in every
-  report.  Do not invoke Hermes, DeepSeek, or another provider under this
-  explicit override."""
+  and `--sandbox {sandbox}` (process-level transport only; product read-only is
+  a write prohibition, not a sandbox claim).  Probe once at start:
+  `bwrap --ro-bind / / -- true`; if it fails, never emit a read-only sandbox flag.
+  Investigators must not mutate the product workspace or runtime state.  Capture
+  a pre-call product-tree fingerprint and a matching post-call fingerprint
+  before treating the investigator as complete.  Record the actual
+  provider/model/transport in every report.  Do not invoke Hermes, DeepSeek, or another provider under this explicit override."""
     else:
         controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
 hermes:deepseek:deepseek-v4-flash managed agent and the ORCHESTRATOR of the
@@ -181,12 +208,18 @@ read-only swarm over the failure evidence, hand the packed context to codex
 for a proper solution proposal, implement the narrowest source-level fix,
 relaunch the chain, and prove movement.  You are not an auditor who reports
 back; you drive the chain out of the blocked/failed state."""
-        investigator_step = """- STEP 1 — DEPLOY THE SWARM: over the failure evidence, fan out one bounded,
-  read-only investigator per scoping question in parallel through
+        investigator_step = f"""- STEP 1 — DEPLOY THE SWARM: over the failure evidence, fan out one bounded,
+  NO-MUTATION investigator per scoping question in parallel through
   $subagent-launcher / skills/subagent-launcher/fan.py, using
-  hermes:deepseek:deepseek-v4-flash investigators.  Record the actual
-  model/provider/transport in every report.  If Flash is unavailable, stop at
-  that exact gate — do not silently substitute another model for the
+  hermes:deepseek:deepseek-v4-flash investigators.  Nested `codex exec`
+  investigators MUST use `--sandbox {sandbox}` (process-level transport only;
+  product read-only is a write prohibition, not a sandbox claim).  Probe once
+  at start: `bwrap --ro-bind / / -- true`; if it fails, never emit a
+  read-only sandbox flag.  Investigators must not mutate the product workspace
+  or runtime state.  Capture a pre-call product-tree fingerprint and a matching
+  post-call fingerprint before treating the investigator as complete.  Record
+  the actual model/provider/transport in every report.  If Flash is unavailable,
+  stop at that exact gate — do not silently substitute another model for the
   investigator role."""
     return f"""/goal
 {controller_intro}
@@ -210,7 +243,7 @@ Mandatory flow — follow the five steps exactly:
   and sleep/tail-poll a supervisor file (I51b: that poll is fake progress and
   the consult hung 65 min at 0% CPU / 0 sockets):
     timeout --signal=TERM --kill-after=30s 900s \\
-      codex exec --sandbox danger-full-access --ephemeral \\
+      codex exec --sandbox {sandbox} --ephemeral \\
       -m gpt-5.6-sol -c model_reasoning_effort=high \\
       -C "$PWD" -o "$EVIDENCE_DIR/codex/sol-stage2-proposal.md" \\
       "$(cat "$EVIDENCE_DIR/codex/sol-stage2-prompt.md")" </dev/null

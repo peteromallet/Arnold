@@ -379,3 +379,122 @@ def test_provider_environment_preserves_absent_provenance(
     # The child did not need the variable; the assertion documents that the
     # runner succeeded after environment_with_provenance removed stale custody.
     assert os.environ["ARNOLD_RESIDENT_DELEGATION_CONTEXT"] == "stale"
+
+
+
+def test_managed_provider_stdout_tee_swallows_broken_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan.resident import subagent
+
+    run_dir = tmp_path / "hermes"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    prompt_path.write_text("Reply with READY.", encoding="utf-8")
+    result_path = run_dir / "result.md"
+    log_path = run_dir / "run.log"
+    log_path.touch()
+    raw_output_path = run_dir / "provider.raw"
+    raw_output_path.write_bytes(b"READY\n")
+    metadata_path = run_dir / "provider-metadata.json"
+    events_path = run_dir / "events.jsonl"
+    events_path.touch()
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-managed-agent-run-v2",
+                "run_kind": "resident_delegated_agent",
+                "custodian": "arnold.megaplan.managed_agent",
+                "run_id": "hermes",
+                "status": "running",
+                "prompt_path": str(prompt_path),
+                "result_path": str(result_path),
+                "log_path": str(log_path),
+                "provider_raw_output_path": str(raw_output_path),
+                "provider_metadata_path": str(metadata_path),
+                "provider_events_path": str(events_path),
+                "project_dir": str(tmp_path),
+                "backend": "hermes",
+                "model": "zhipu:glm-5.2",
+                "reasoning_effort": "medium",
+                "provider_options": {"toolsets": "file", "max_tokens": 128, "timeout_s": 30},
+                "timeout_policy": {"mode": "explicit", "source": "trusted_cli", "timeout_s": 30},
+                "status_history": [],
+                "completion_delivery": {"status": "not_applicable"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    writes = {"begin": 0, "chunk": 0, "end": 0, "unavailable": 0}
+
+    class _BrokenBuffer:
+        def write(self, data):
+            text = data.decode("utf-8", "replace") if isinstance(data, (bytes, bytearray)) else data
+            if "managed-provider-raw begin" in text:
+                writes["begin"] += 1
+                raise BrokenPipeError("begin closed")
+            if "managed-provider-raw end" in text:
+                writes["end"] += 1
+                raise OSError("end closed")
+            if "managed-provider-raw unavailable" in text:
+                writes["unavailable"] += 1
+                raise OSError("unavailable closed")
+            writes["chunk"] += 1
+            raise BrokenPipeError("chunk closed")
+
+        def flush(self):
+            return None
+
+    class _BrokenStdout:
+        buffer = _BrokenBuffer()
+
+        def write(self, data):
+            raise BrokenPipeError("text write closed")
+
+        def flush(self):
+            return None
+
+    def fake_popen(argv, **kwargs):
+        session_id = argv[argv.index("--session-id") + 1]
+        Path(argv[argv.index("--metadata-file") + 1]).write_text(
+            json.dumps(
+                {
+                    "session_id": session_id,
+                    "resolved_model": "zhipu:glm-5.2",
+                    "toolsets": ["file"],
+                    "usage": {"output_tokens": 1},
+                    "events": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        output = kwargs.get("stdout")
+        if output is not None:
+            output.write(b"READY\n")
+            output.flush()
+        return _Worker()
+
+    monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(subagent.sys, "stdout", _BrokenStdout())
+    monkeypatch.setattr(subagent, "LAUNCHER_PATH", tmp_path / "fake_hermes.py")
+    (tmp_path / "fake_hermes.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    rc = subagent._run_managed_manifest(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert rc == 0
+    assert manifest["status"] == "completed"
+    assert writes["begin"] == 1
+    assert writes["chunk"] >= 1
+    assert writes["end"] == 1
+    assert Path(manifest["provider_raw_output_path"]).read_bytes()

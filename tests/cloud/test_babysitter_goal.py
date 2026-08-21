@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -19,6 +20,13 @@ RENDERER = (
 )
 
 
+def _renderer_env() -> dict[str, str]:
+    env = os.environ.copy()
+    root = str(pathlib.Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return env
+
+
 def _load_renderer():
     spec = importlib.util.spec_from_file_location("render_babysitter_goal", RENDERER)
     assert spec and spec.loader
@@ -27,7 +35,8 @@ def _load_renderer():
     return module
 
 
-def test_renderer_requires_single_flash_orchestrator_contract() -> None:
+def test_renderer_requires_single_flash_orchestrator_contract(monkeypatch) -> None:
+    monkeypatch.setenv("ARNOLD_BABYSITTER_ROUTING", "codex")
     renderer = _load_renderer()
     goal = renderer.render_babysitter_goal("demo-session")
     for required in (
@@ -100,6 +109,11 @@ def test_renderer_cli_mentions_single_flash_contract(tmp_path: pathlib.Path) -> 
         json.dumps({"kind": "stall_detected", "message": "driver stalled"}),
         encoding="utf-8",
     )
+    env = os.environ.copy()
+    env["ARNOLD_BABYSITTER_ROUTING"] = "codex"
+    env["PYTHONPATH"] = str(pathlib.Path(__file__).resolve().parents[2]) + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -118,6 +132,8 @@ def test_renderer_cli_mentions_single_flash_contract(tmp_path: pathlib.Path) -> 
         capture_output=True,
         text=True,
         check=False,
+        env=env,
+        cwd=str(pathlib.Path(__file__).resolve().parents[2]),
     )
     assert result.returncode == 0, result.stderr
     assert "STEP 1 — DEPLOY CODEX INVESTIGATORS" in result.stdout
@@ -195,6 +211,8 @@ def test_renderer_absent_recovery_dir_is_orientation_not_error(
         capture_output=True,
         text=True,
         check=False,
+        env=_renderer_env(),
+        cwd=str(pathlib.Path(__file__).resolve().parents[2]),
     )
     assert result.returncode == 0, result.stderr
     assert "Recovery evidence root not provided/unreadable" in result.stdout
@@ -220,6 +238,8 @@ def test_renderer_noop_guard_teaches_real_health_condition(
         capture_output=True,
         text=True,
         check=False,
+        env=_renderer_env(),
+        cwd=str(pathlib.Path(__file__).resolve().parents[2]),
     )
     assert result.returncode == 0, result.stderr
     assert "REAL CONDITION" in result.stdout
@@ -229,3 +249,37 @@ def test_renderer_noop_guard_teaches_real_health_condition(
     assert "SAME phase erroring" in result.stdout
     assert "events.ndjson is not advancing" in result.stdout
     assert "driver-alive is NOT health" in result.stdout
+
+
+
+def test_renderer_bwrap_fail_danger_full_access_both_modes(monkeypatch) -> None:
+    renderer = _load_renderer()
+    monkeypatch.setattr(renderer, "_probe_bwrap_userns", lambda: False)
+    monkeypatch.delenv("ARNOLD_BABYSITTER_ROUTING", raising=False)
+    legacy = renderer.render_babysitter_goal("demo-session")
+    assert "--sandbox danger-full-access" in legacy
+    assert "--sandbox read-only" not in legacy.replace("read-only sandbox flag", "")
+    assert "NO-MUTATION" in legacy
+    assert "pre-call product-tree fingerprint" in legacy
+    assert "post-call fingerprint" in legacy
+    monkeypatch.setenv("ARNOLD_BABYSITTER_ROUTING", "codex")
+    codex = renderer.render_babysitter_goal("demo-session")
+    assert "--sandbox danger-full-access" in codex
+    assert "--sandbox read-only" not in codex.replace("read-only sandbox flag", "")
+    assert "NO-MUTATION" in codex
+    assert "pre-call product-tree fingerprint" in codex
+    assert "post-call fingerprint" in codex
+
+
+def test_renderer_injected_sandbox_agrees_without_live_probe(monkeypatch) -> None:
+    renderer = _load_renderer()
+
+    def boom(**_kwargs):
+        raise AssertionError("renderer must use the injected sandbox flag")
+
+    monkeypatch.setattr(renderer, "_probe_bwrap_userns", boom)
+    goal = renderer.render_babysitter_goal(
+        "demo-session", investigator_sandbox="danger-full-access"
+    )
+    assert "--sandbox danger-full-access" in goal
+    assert "--sandbox read-only" not in goal.replace("read-only sandbox flag", "")
