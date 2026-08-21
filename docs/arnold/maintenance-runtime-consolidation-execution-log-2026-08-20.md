@@ -354,3 +354,11 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - DISK INCIDENT: data volume 100% full (203MiB free) blocked the first G3 dispatch (artifact write ENOSPC). Reclaimed ~4.4GiB by removing stale run worktree checkouts (runtime-convergence-r, runtime-convergence-bootstrap, t0.1-t3.1-external-seed-custody, T1.2, t2-1 leftovers) — all branch refs preserved in the shared object store; integration worktree untouched. G3 retried successfully at 4.6GiB free.
 - Batch 3 CLOSED at 4b8fe323c2. NEXT: Batch 4 (serial T4.1 → T4.2 → T4.3, then one G4 subsection review). No standalone G3.5; its concerns go to end-stage Sol review 1.
 
+
+## Batch 4 — authority convergence — implementation complete (T4.1, T4.2, T4.3)
+
+- T4.1 root liveness/action authority: 053abea267 + 91c1d49695 + 75fd4756e9; single review BLOCKED (F-001..004) → J7 adjudication → completion revision → final re-review PASS (mrc-90dfae1b…). Integrated 7bc9f6b3. 36 focused tests. Residuals: watchdog env-flag grant default 0, leftover rm-f sites, canonical_mutation_fenced=0 (T4.2 must attach real minted objects).
+- T4.2 adoption/rebind/pause: 26aa6b04c9 + d6049a756a; single review BLOCKED (MF-001..005 — production bypass, second authority, SHA CAS, non-durable pause identity, argv-only m7) → revision wired guards into production transitions → re-review PASS (mrc-7bcd1d79…). Integrated a73ca3c8b. 41 tests. Residuals deferred to T4.3 (SHA cutover, resume-chain flags, adoption wrap).
+- T4.3 delivery/cutover: 55ca4522f6 + a0dde0ea0d; single review BLOCKED (T43-001..004 — un-wired production cutover, seed tax not deleted, torn authority readable, adoption unwrapped) → revision → re-review PASS (mrc-296ff64b…). Integrated (merge in progress). 26 tests. Residuals: one-token cutover needs both pause+rebind handles; same-root must-fail test-shape; launch-seed telemetry non-authority.
+- Batch 4 implementation DONE. NEXT: G4 subsection review (single Grok, attacks G4.1 liveness + G4.2 operator-authority + G4.3 cutover/custody over the whole T4 diff).
+
