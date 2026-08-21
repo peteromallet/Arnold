@@ -120,6 +120,7 @@ def render_babysitter_goal(
     planner_repair: dict[str, object] | None = None,
     occurrence_digest: str = "",
     recovery_dir: str = "",
+    run_id: str = "",
 ) -> str:
     """Render the status-trigger babysitter /goal for *target* (epic/session).
 
@@ -458,6 +459,11 @@ def main() -> int:
     parser.add_argument("--planner-repair-json", default=None, help="path to planner_repair JSON")
     parser.add_argument("--occurrence-digest", default="", help="occurrence/failure fingerprint")
     parser.add_argument(
+        "--run-id",
+        default="",
+        help="this babysitter run id (for coordination-guard self-exclusion)",
+    )
+    parser.add_argument(
         "--recovery-dir",
         default="",
         help="chain recovery evidence root (.megaplan/plans/.chains/recovery) to scan for prior fixer occurrences",
@@ -481,6 +487,7 @@ def main() -> int:
             planner_repair=_load_json(args.planner_repair_json),
             occurrence_digest=args.occurrence_digest,
             recovery_dir=args.recovery_dir,
+            run_id=args.run_id,
         )
     )
     return 0

@@ -519,7 +519,9 @@ def run_chain(
                         last_phase=None,
                     ),
                 )
-                if _blocked_plan_replay_would_be_redundant(chain_state, raw_state=raw_state):
+                if _blocked_plan_replay_would_be_redundant(
+                    chain_state, raw_state=raw_state, root=root
+                ):
                     chain_spec.save_chain_state(spec_path, chain_state)
                     return _result(
                         "stopped",
@@ -1301,15 +1303,54 @@ def _blocked_plan_replay_would_be_redundant(
     chain_state: chain_spec.ChainState,
     *,
     raw_state: Mapping[str, Any],
+    root: Path | None = None,
 ) -> bool:
     current_state = raw_state.get("current_state")
     if not isinstance(current_state, str):
         return False
-    return (
+    if not (
         chain_state.last_state == "blocked"
         and current_state == "blocked"
         and not _plan_has_live_active_step(raw_state)
-    )
+    ):
+        return False
+    # Align with chain/__init__.py:5941 (f4742dea2): a typed
+    # validation-blocked execute block is a retryable frontier, not a
+    # park. 2026-08-20 astrid-first m8 T4/T5/T7/T9: execution_blocked with
+    # phase_result exit_kind blocked_by_prereq + blocker_kind
+    # validation_blocked; VJ7 recheck passed exit 0 yet the supervisor
+    # parked it. Mirror the legacy typed check so the supervisor path
+    # does not re-introduce the two-copy divergence (babysitting 3.1.6).
+    if root is not None and chain_state.current_plan_name:
+        try:
+            plan_dir = _plan_dir(root, chain_state.current_plan_name)
+            phase_result = json.loads(
+                (plan_dir / "phase_result.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            phase_result = None
+        if isinstance(phase_result, Mapping):
+            blocked_tasks = phase_result.get("blocked_tasks")
+            typed_validation_block = (
+                phase_result.get("phase") == "execute"
+                and phase_result.get("exit_kind") == "blocked_by_prereq"
+                and isinstance(blocked_tasks, list)
+                and any(
+                    isinstance(task, Mapping)
+                    and isinstance(task.get("task_id"), str)
+                    and task.get("task_id", "").strip()
+                    and task.get("blocker_kind") == "validation_blocked"
+                    for task in blocked_tasks
+                )
+            )
+            latest_failure = raw_state.get("latest_failure")
+            if typed_validation_block and isinstance(latest_failure, Mapping):
+                if (
+                    latest_failure.get("kind") == "execution_blocked"
+                    and latest_failure.get("phase") == "execute"
+                ):
+                    return False
+    return True
 
 
 def _execution_batch_sort_key(path: Path) -> tuple[int, int, str]:
