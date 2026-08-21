@@ -494,6 +494,24 @@ def enqueue_audit_repair_request(
             "six-hour audit repair request not enqueued: runtime transition "
             f"not durably recorded: {exc}"
         ) from exc
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        MutationDenied,
+        require_mutation_capability,
+    )
+
+    capability = (
+        audit_item.get("mutation_capability")
+        or escalation_gate.get("mutation_capability")
+    )
+    if capability is None and isinstance(occurrence_identity, dict):
+        capability = occurrence_identity.get("mutation_capability")
+    try:
+        require_mutation_capability(capability, action="escalation", scope="escalation")
+    except MutationDenied as exc:
+        raise ValueError(
+            f"six-hour audit repair request not enqueued: {exc.reason}"
+        ) from exc
+
     return enqueue_occurrence_bound_repair_request(
         queue_root=queue_root,
         session=session,

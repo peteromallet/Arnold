@@ -687,6 +687,30 @@ def run_escalation_controller(
                 finalize_record(record)
                 continue
 
+            from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+                MutationDenied,
+                require_mutation_capability,
+            )
+
+            capability = (
+                finding.get("mutation_capability")
+                or gate.get("mutation_capability")
+                or (finding.get("current_target") or {}).get("mutation_capability")
+            )
+            try:
+                require_mutation_capability(
+                    capability, action="escalation", scope="escalation"
+                )
+            except MutationDenied as exc:
+                record.update(
+                    {
+                        "decision": "capability_denied",
+                        "reason": f"L3 escalation denied: {exc.reason}",
+                    }
+                )
+                finalize_record(record)
+                continue
+
             context_path = _context_path(state_root, str(gate["escalation_id"]))
             context = bounded_repair_context(finding)
             _atomic_json(context_path, context)

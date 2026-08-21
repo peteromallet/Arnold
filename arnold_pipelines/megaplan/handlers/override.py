@@ -1494,13 +1494,55 @@ def _override_recover_blocked(
         # or attempt (the r5 incident retained `revise` while `critique`
         # failed).  That stale artifact must not bypass the commit- and
         # failure-fingerprint-bound repair gate.
+        repair_scope = getattr(args, "repair_scope", None)
+        if str(repair_scope or "").strip().lower() == "engine_runtime":
+            from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+                MutationDenied,
+                mint_mutation_capability,
+            )
+
+            fingerprint = str(
+                compact_failure_identity(latest_failure).get("fingerprint") or ""
+            )
+            cursor_payload = dict(resume_cursor)
+            evidence = {
+                "occurrence": fingerprint,
+                "target": fingerprint,
+                "cursor": str(resume_cursor.get("phase") or ""),
+                "evidence_digest": fingerprint,
+                "scope": "engine_runtime",
+                "repair_scope": "engine_runtime",
+                "runtime_manifest_path": getattr(args, "runtime_manifest", None),
+                "ambient_engine_root": getattr(args, "ambient_engine_root", None),
+                "runtime_manifest": getattr(args, "runtime_manifest_payload", None),
+                "import_root": getattr(args, "import_root", None),
+                "interpreter": getattr(args, "interpreter", None),
+            }
+            fence_epoch = getattr(args, "fence_epoch", None)
+            if fence_epoch is None:
+                fence_epoch = resume_cursor.get("fence_epoch")
+            if fence_epoch is not None:
+                evidence["fence_epoch"] = fence_epoch
+            try:
+                capability = mint_mutation_capability(
+                    action="recover-blocked",
+                    evidence=evidence,
+                )
+            except MutationDenied as exc:
+                raise CliError(
+                    exc.code,
+                    f"engine_runtime recover-blocked refused: {exc.reason}",
+                ) from exc
+            resume_cursor = dict(resume_cursor)
+            resume_cursor["mutation_capability"] = capability.to_dict()
+            state["resume_cursor"] = resume_cursor
         phase_repair_evidence = validated_deterministic_phase_repair(
             root,
             state,
             resume_cursor,
             getattr(args, "repair_commit", None),
             getattr(args, "failure_fingerprint", None),
-            getattr(args, "repair_scope", None),
+            repair_scope,
         )
         if phase_repair_evidence is None:  # defensive: predicate above is exact
             raise CliError("missing_phase_result", "deterministic repair evidence is missing")

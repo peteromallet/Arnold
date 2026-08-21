@@ -2317,11 +2317,27 @@ def retrigger_ordinary_repair(
     from arnold_pipelines.megaplan.cloud.repair_requests import (
         normalize_repair_identity,
     )
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        MutationDenied,
+        require_mutation_capability,
+    )
 
     if normalize_repair_identity(repair_identity) is None:
         raise PermissionError(
             "ordinary repair retrigger requires the current normalized repair identity"
         )
+    capability = None
+    if isinstance(repair_identity, Mapping):
+        capability = (
+            repair_identity.get("mutation_capability")
+            or repair_identity.get("capability")
+        )
+    try:
+        require_mutation_capability(capability, action="retrigger", scope="retrigger")
+    except MutationDenied as exc:
+        raise PermissionError(
+            f"ordinary repair retrigger denied: {exc.reason}"
+        ) from exc
 
     # ── M7 shadow validation before repair retrigger ────────────────────
     if _M7_VALIDATOR_AVAILABLE:

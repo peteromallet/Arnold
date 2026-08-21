@@ -13,6 +13,7 @@ import json
 import shlex
 import sys
 from pathlib import Path, PurePosixPath
+from collections.abc import Mapping
 from typing import Any
 
 from arnold_pipelines.megaplan.custody.process_adapter_wbc import begin_process_adapter_attempt
@@ -172,14 +173,19 @@ def _canonical_runner_mutation_gate(
     runner: Any,
     *,
     require_dead: bool,
+    capability: Any = None,
 ) -> tuple[bool, str]:
-    """Authorize supervisor effects only from the exact canonical target.
+    """Authorize supervisor effects only from a root MutationCapability.
 
     The cloud status payload deliberately carries tmux/``ps`` observations as
-    diagnostics.  This gate never reads them.  A known canonical live target
-    may authorize benign sync refresh, while restart/advance/wake additionally
-    require canonical death so a second runner cannot be created.
+    diagnostics.  This gate never reads them.  Exact-target liveness is
+    eligibility only; the typed capability is the grant.
     """
+
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        MutationDenied,
+        require_mutation_capability,
+    )
 
     if not isinstance(runner, dict):
         return False, "canonical current-target runner evidence is missing"
@@ -187,14 +193,20 @@ def _canonical_runner_mutation_gate(
         return False, "runner evidence is not canonical current-target authority"
     if runner.get("exact_target") is not True:
         return False, "canonical runner does not match the exact session/workspace/spec/plan"
-    if runner.get("mutation_permitted") is not True:
-        return False, "canonical current-target liveness is UNKNOWN or malformed"
     state = str(runner.get("state") or "").lower()
     if state not in {"live", "dead"}:
         return False, "canonical current-target liveness is not known"
     if require_dead and state != "dead":
         return False, "canonical current target is live; duplicate launch refused"
-    return True, "canonical exact-target liveness permits mutation"
+    try:
+        require_mutation_capability(
+            capability if capability is not None else runner.get("mutation_capability"),
+            action="retrigger",
+            scope="retrigger",
+        )
+    except MutationDenied as exc:
+        return False, f"supervisor mutation denied: {exc.reason}"
+    return True, "root MutationCapability permits supervisor mutation"
 
 
 def _supervisor_problem_signature(
@@ -322,6 +334,23 @@ def enqueue_supervisor_repair_request(
     # Supervisor liveness and log metadata are evidence, not authority.  Only
     # reuse the complete identity persisted by the current-target owner.
     occurrence_identity = derive_repair_identity(current_target=current)
+
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        MutationDenied,
+        require_mutation_capability,
+    )
+
+    capability = None
+    if isinstance(current, Mapping):
+        capability = current.get("mutation_capability") or current.get("capability")
+    try:
+        require_mutation_capability(capability, action="repair", scope="repair")
+    except MutationDenied as exc:
+        return {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "reason": f"supervisor repair enqueue denied: {exc.reason}",
+        }
 
     return enqueue_occurrence_bound_repair_request(
         queue_root=queue_root,

@@ -37,7 +37,7 @@ def classify_runner_liveness(
             {"current_target_liveness": bound_observation}, action="escalation"
         )
         state = str(canonical.get("state") or "unknown")
-        known = state != "unknown" and canonical.get("action_permitted") is True
+        known = state in {"live", "dead"} and canonical.get("known") is True
         return {
             "state": state,
             "live": state == "live",
@@ -59,8 +59,9 @@ def classify_runner_liveness(
             ),
             "tmux_live_status": "unknown",
             "watchdog_statuses": [],
-            "control_permitted": known,
-            "authoritative": canonical.get("authoritative") is True,
+            "control_permitted": False,
+            "authoritative": False,
+            "diagnostic_only": True,
         }
 
     tmux = tmux if isinstance(tmux, Mapping) else {}

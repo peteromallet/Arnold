@@ -4754,7 +4754,7 @@ def _active_step_ghost_worker_reason(ev):
         not isinstance(liveness, dict)
         or not liveness.get("present")
         or canonical.get("state") != "dead"
-        or canonical.get("action_permitted") is not True
+        or canonical.get("known") is not True
     ):
         return ""
     pid = liveness.get("worker_pid") or ""
@@ -4892,7 +4892,7 @@ def _superfixer_cycle_evidence(ev):
             "authoritative": False,
         }
     dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
-    runner_dead = bool(liveness["dead"] and liveness.get("control_permitted") is True)
+    runner_dead = bool(liveness["dead"] and liveness.get("known") is True)
     incomplete_chain = _chain_state_looks_nonterminal(chain_current)
 
     current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
@@ -4998,7 +4998,7 @@ def _marker_present_stopped_without_chain_state_reason(ev):
     # escalation; only the identity-bound canonical record can do that.
     runner_dead = bool(
         canonical.get("state") == "dead"
-        and canonical.get("action_permitted") is True
+        and canonical.get("known") is True
     )
     launch_outcome = session_header.get("launch_outcome") if isinstance(session_header.get("launch_outcome"), dict) else {}
     launch_failed = str(launch_outcome.get("status") or "").strip().lower() == "failed"
