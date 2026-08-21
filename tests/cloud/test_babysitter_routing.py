@@ -108,3 +108,38 @@ def test_launch_receipt_contains_resolved_controller_and_investigator_models(tmp
     assert payload["controller_model"] == "codex:gpt-5.6-luna"
     assert payload["investigator_backend"] == "codex"
     assert payload["investigator_model"] == "codex:gpt-5.6-luna"
+
+
+def test_bwrap_fail_sandbox_argv_agrees_for_both_routing_modes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(launch, "probe_bwrap_userns", lambda **_kwargs: False)
+    goal = tmp_path / "goal.md"
+    goal.write_text("prove movement", encoding="utf-8")
+    for env in ({}, {"ARNOLD_BABYSITTER_ROUTING": "codex"}):
+        route = resolve_babysitter_routing(env)
+        ctx = {
+            "engine_root": Path(__file__).resolve().parents[2],
+            "run_root": tmp_path / "run",
+            "session": "astrid-first",
+            "occurrence": "occurrence",
+            "run_id": "run",
+            "plan": "m7",
+            "routing": route,
+            "model": route.controller_model,
+            "difficulty": 8,
+            "remote_spec": "",
+            "workspace": str(tmp_path),
+            "mode": "superfixer",
+            "investigator_sandbox": launch.investigator_sandbox_flag(bwrap_ok=False),
+        }
+        spec = launch._managed_spec(ctx, goal_path=goal, identity_key="identity")
+        sandbox = spec.links["investigator_sandbox"]
+        investigator_argv = spec.links["investigator_exec_argv"]
+        assert sandbox == "danger-full-access"
+        assert investigator_argv[investigator_argv.index("--sandbox") + 1] == sandbox
+        assert "--sandbox" in investigator_argv
+        assert "read-only" not in investigator_argv
+        if route.mode == "codex":
+            assert spec.argv[spec.argv.index("--sandbox") + 1] == sandbox
+            assert "read-only" not in spec.argv

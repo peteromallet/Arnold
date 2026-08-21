@@ -44,9 +44,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import runpy
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -118,6 +120,268 @@ def _pid_live(pid: object) -> bool:
     except (OSError, IndexError):
         pass
     return True
+
+
+BWRAP_PROBE_ARGV = ("bwrap", "--ro-bind", "/", "/", "--", "true")
+SANDBOX_DANGER_FULL_ACCESS = "danger-full-access"
+SANDBOX_READ_ONLY = "read-only"
+
+
+def probe_bwrap_userns(*, run=subprocess.run) -> bool:
+    """True when ``bwrap --ro-bind / / -- true`` succeeds on this host.
+
+    Probe failure is the transport signal that ``--sandbox read-only`` cannot
+    be created here. Tests inject ``run`` so the fixture never depends on a
+    real cloud/container.
+    """
+    try:
+        completed = run(
+            BWRAP_PROBE_ARGV,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return False
+    return int(getattr(completed, "returncode", 1) or 1) == 0
+
+
+def investigator_sandbox_flag(*, bwrap_ok: bool | None = None, run=subprocess.run) -> str:
+    """One sandbox flag for goal text and every sandbox-bearing exec argv.
+
+    Process-level transport only. Product read-only remains a no-mutation
+    contract plus pre/post fingerprints, not a sandbox claim. Probe failure
+    never emits ``--sandbox read-only``.
+    """
+    if bwrap_ok is None:
+        bwrap_ok = probe_bwrap_userns(run=run)
+    return SANDBOX_DANGER_FULL_ACCESS if not bwrap_ok else SANDBOX_READ_ONLY
+
+
+def _ctx_sandbox(ctx: dict[str, Any]) -> str:
+    sandbox = ctx.get("investigator_sandbox")
+    if not sandbox:
+        sandbox = investigator_sandbox_flag()
+        ctx["investigator_sandbox"] = sandbox
+    return str(sandbox)
+
+
+def investigator_exec_argv(*, sandbox: str, investigator_model: str) -> list[str]:
+    """Sandbox-bearing investigator argv that must agree with goal text."""
+    return [
+        "codex",
+        "exec",
+        "--sandbox",
+        sandbox,
+        "--ephemeral",
+        "-m",
+        investigator_model.split(":", 1)[-1],
+        "-c",
+        "model_reasoning_effort=high",
+        "-",
+    ]
+
+
+def _recorded_babysitter_pid(payload: dict[str, Any]) -> object:
+    """Liveness evidence is the recorded babysitter_pid, never supervisor_pid."""
+    return payload.get("babysitter_pid")
+
+
+def classify_owner_receipt(payload: object) -> dict[str, Any]:
+    """Classify a launched/running receipt from recorded babysitter_pid liveness.
+
+    A recorded PID is evidence of liveness only, never authority. Dead,
+    invalid, non-positive, boolean, and zombie PIDs are reclaimable; only a
+    live recorded babysitter_pid stands down a new launch. ``supervisor_pid``
+    is compatibility and must not override babysitter_pid.
+    """
+    if not isinstance(payload, dict):
+        return {
+            "active_owner": False,
+            "reclaimable": True,
+            "status": "failed",
+            "reason": "invalid_receipt",
+        }
+    status = str(payload.get("status") or "")
+    if status not in {"launched", "running"}:
+        return {
+            "active_owner": False,
+            "reclaimable": status in {"failed", "completed", "interrupted", "already_running"},
+            "status": status or "unknown",
+            "reason": "not_active_status",
+        }
+    pid = _recorded_babysitter_pid(payload)
+    if _pid_live(pid):
+        return {
+            "active_owner": True,
+            "reclaimable": False,
+            "status": status,
+            "reason": "live_babysitter_pid",
+        }
+    return {
+        "active_owner": False,
+        "reclaimable": True,
+        "status": "failed",
+        "reason": "dead_or_invalid_babysitter_pid",
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _collect_product_tree_paths(root: Path) -> list[Path]:
+    skip_names = {".git", ".megaplan", "__pycache__", ".pytest_cache", ".babysitter-runs"}
+    paths: list[Path] = []
+    if not root.is_dir():
+        return paths
+    for current, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in sorted(dirnames) if name not in skip_names]
+        current_path = Path(current)
+        for name in sorted(filenames):
+            if name.endswith(".pyc"):
+                continue
+            paths.append(current_path / name)
+    return paths
+
+
+def product_tree_fingerprint(root: Path) -> str:
+    """Canonical product-tree fingerprint from disposable/canonical files."""
+    digest = hashlib.sha256()
+    root = Path(root)
+    for path in _collect_product_tree_paths(root):
+        rel = path.relative_to(root).as_posix().encode("utf-8")
+        digest.update(rel)
+        digest.update(b"\0")
+        try:
+            digest.update(_sha256_file(path).encode("ascii"))
+        except OSError:
+            digest.update(b"unreadable")
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _canonical_plan_state_path(workspace: str, plan_name: str) -> Path:
+    return Path(workspace) / ".megaplan" / "plans" / plan_name / "state.json"
+
+
+def _canonical_failure_fingerprint(plan_payload: dict[str, Any]) -> str:
+    failure = plan_payload.get("latest_failure")
+    if not isinstance(failure, dict):
+        failure = {}
+    explicit = str(
+        failure.get("fingerprint")
+        or failure.get("failure_fingerprint")
+        or plan_payload.get("failure_fingerprint")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+    parts = (
+        str(plan_payload.get("current_state") or ""),
+        str(failure.get("kind") or ""),
+        str(failure.get("message") or ""),
+    )
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def evaluate_canonical_honesty(
+    ctx: dict[str, Any],
+    *,
+    pre_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    """Fail closed from canonical/disposable state, never a self-report."""
+    plan_name = str(ctx.get("plan") or "").strip()
+    workspace = str(ctx.get("workspace") or "").strip()
+    reasons: list[str] = []
+    still_blocked = False
+    fingerprint_mismatch = False
+    post_fingerprint = ""
+    failure_fingerprint = ""
+    current_state = ""
+    if workspace:
+        post_fingerprint = product_tree_fingerprint(Path(workspace))
+    if plan_name and workspace:
+        plan_state_path = _canonical_plan_state_path(workspace, plan_name)
+        if plan_state_path.is_file():
+            try:
+                plan_payload = json.loads(plan_state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                reasons.append(f"canonical_state_unreadable:{type(exc).__name__}")
+                plan_payload = {}
+            if isinstance(plan_payload, dict) and plan_payload:
+                current_state = str(plan_payload.get("current_state") or "")
+                failure_fingerprint = _canonical_failure_fingerprint(plan_payload)
+                if current_state in {"blocked", "failed"}:
+                    still_blocked = True
+                    failure = plan_payload.get("latest_failure") or {}
+                    failure_kind = (
+                        str(failure.get("kind") or "") if isinstance(failure, dict) else ""
+                    )
+                    reasons.append(
+                        f"plan still {current_state} after fixer exit; "
+                        f"failure_kind={failure_kind or 'unknown'}"
+                    )
+                recorded_pre = str(ctx.get("pre_failure_fingerprint") or "").strip()
+                if recorded_pre and failure_fingerprint and recorded_pre == failure_fingerprint:
+                    fingerprint_mismatch = True
+                    reasons.append("failure_fingerprint_unchanged")
+                expected_failure = str(ctx.get("occurrence") or "").strip()
+                if (
+                    expected_failure
+                    and failure_fingerprint
+                    and expected_failure == failure_fingerprint
+                    and "failure_fingerprint_unchanged" not in reasons
+                ):
+                    fingerprint_mismatch = True
+                    reasons.append("failure_fingerprint_unchanged")
+        expected_pre = pre_fingerprint or str(ctx.get("pre_product_tree_fingerprint") or "")
+        if (
+            expected_pre
+            and post_fingerprint
+            and post_fingerprint != expected_pre
+            and (still_blocked or fingerprint_mismatch)
+        ):
+            fingerprint_mismatch = True
+            reasons.append("product_tree_fingerprint_mismatch")
+    failed = still_blocked or fingerprint_mismatch or bool(reasons)
+    return {
+        "failed": failed,
+        "still_blocked": still_blocked,
+        "fingerprint_mismatch": fingerprint_mismatch,
+        "current_state": current_state,
+        "failure_fingerprint": failure_fingerprint,
+        "post_fingerprint": post_fingerprint,
+        "reason": "; ".join(reasons),
+    }
+
+
+def terminal_transport_result(
+    *,
+    worker_rc: int,
+    managed_terminal: str,
+    honesty: dict[str, Any] | None = None,
+) -> tuple[str, int, str]:
+    """One enforcement point: receipt status and process rc are one fact."""
+    honesty = honesty or {}
+    if managed_terminal == "interrupted":
+        status = "interrupted"
+    elif worker_rc == 0 and managed_terminal == "completed":
+        status = "completed"
+    else:
+        status = "failed"
+    reason = str(honesty.get("reason") or "")
+    if status == "completed" and honesty.get("failed"):
+        status = "failed"
+        if not reason:
+            reason = "honesty_downgrade"
+    if status == "failed":
+        return status, (1 if int(worker_rc) == 0 else int(worker_rc)), reason
+    return status, int(worker_rc), reason
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -369,7 +633,7 @@ def _receipt_candidates(ctx: dict[str, Any]) -> list[Path]:
 
 
 def _dedup_already_running(ctx: dict[str, Any]) -> bool:
-    """True when a live babysitter supervisor owns this occurrence digest."""
+    """True only when a genuinely live recorded babysitter_pid owns this occurrence."""
     occurrence = ctx["occurrence"]
     if not occurrence:
         return False
@@ -382,14 +646,11 @@ def _dedup_already_running(ctx: dict[str, Any]) -> bool:
             continue
         if str(payload.get("occurrence_digest") or "") != occurrence:
             continue
-        if str(payload.get("status") or "") not in {"launched", "running"}:
-            continue
-        pid = payload.get("babysitter_pid")
-        if not isinstance(pid, int):
-            pid = payload.get("supervisor_pid")
+        pid = _recorded_babysitter_pid(payload)
         if pid == os.getpid():
             continue
-        if _pid_live(pid):
+        classification = classify_owner_receipt(payload)
+        if classification["active_owner"]:
             return True
     return False
 
@@ -409,16 +670,22 @@ def _resolve_goal_file(ctx: dict[str, Any]) -> Path:
     render = namespace.get("render_babysitter_goal")
     if not callable(render):
         raise RuntimeError("babysitter goal renderer is unavailable")
-    goal_text = render(
-        ctx["session"],
-        workspace=ctx["workspace"],
-        plan=ctx["plan"],
-        run_kind=ctx["run_kind"],
-        latest_failure=_load_optional_json(ctx["failure_json"]),
-        planner_repair=_load_optional_json(ctx["planner_repair_json"]),
-        occurrence_digest=ctx["occurrence"],
-        recovery_dir=_recovery_evidence_root(ctx["workspace"]),
-    )
+    sandbox = _ctx_sandbox(ctx)
+    render_kwargs = {
+        "workspace": ctx["workspace"],
+        "plan": ctx["plan"],
+        "run_kind": ctx["run_kind"],
+        "latest_failure": _load_optional_json(ctx["failure_json"]),
+        "planner_repair": _load_optional_json(ctx["planner_repair_json"]),
+        "occurrence_digest": ctx["occurrence"],
+        "recovery_dir": _recovery_evidence_root(ctx["workspace"]),
+        "investigator_sandbox": sandbox,
+    }
+    try:
+        goal_text = render(ctx["session"], **render_kwargs)
+    except TypeError:
+        render_kwargs.pop("investigator_sandbox")
+        goal_text = render(ctx["session"], **render_kwargs)
     goal_path = ctx["run_root"] / "babysitter-goal.md"
     goal_path.parent.mkdir(parents=True, exist_ok=True)
     goal_path.write_text(goal_text, encoding="utf-8")
@@ -435,10 +702,11 @@ def _managed_spec(
         # Codex reads the sealed goal from stdin.  Keeping the goal out of argv
         # also makes the managed manifest's stdin hash the exact controller
         # input used for this occurrence.
+        sandbox = _ctx_sandbox(ctx)
         worker_argv = [
             "codex",
             "exec",
-            "--sandbox", "danger-full-access",
+            "--sandbox", sandbox,
             "--ephemeral",
             "-m", cli_model(routing.controller_model),
             "-c", "model_reasoning_effort=high",
@@ -454,6 +722,7 @@ def _managed_spec(
             "codex investigators -> codex controller -> implement -> relaunch -> prove"
         )
     else:
+        sandbox = _ctx_sandbox(ctx)
         launcher = (
             engine_root
             / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
@@ -490,6 +759,11 @@ def _managed_spec(
         "goal_path": str(goal_path),
         "babysitter_mode": ctx["mode"] or "superfixer",
         "routing": routing.as_dict(),
+        "investigator_sandbox": _ctx_sandbox(ctx),
+        "investigator_exec_argv": investigator_exec_argv(
+            sandbox=_ctx_sandbox(ctx),
+            investigator_model=routing.investigator_model,
+        ),
     }
     if ctx.get("repair_data_dir") is not None:
         links["repair_data_dir"] = str(ctx["repair_data_dir"])
@@ -566,6 +840,19 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         managed_run_id = stable_managed_run_id(RUN_KIND, identity_key)
         ctx["managed_run_id"] = managed_run_id
         ctx["managed_manifest_path"] = str(ctx["run_root"] / managed_run_id / "manifest.json")
+        workspace = str(ctx.get("workspace") or "").strip()
+        if workspace:
+            ctx["pre_product_tree_fingerprint"] = product_tree_fingerprint(Path(workspace))
+            plan_name = str(ctx.get("plan") or "").strip()
+            if plan_name:
+                plan_state_path = _canonical_plan_state_path(workspace, plan_name)
+                if plan_state_path.is_file():
+                    try:
+                        pre_payload = json.loads(plan_state_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        pre_payload = {}
+                    if isinstance(pre_payload, dict) and pre_payload:
+                        ctx["pre_failure_fingerprint"] = _canonical_failure_fingerprint(pre_payload)
         spec = _managed_spec(ctx, goal_path=goal_path, identity_key=identity_key)
 
         _write_receipts(ctx, _receipt_payload(ctx, status="running"))
@@ -586,45 +873,16 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
             )
         except (OSError, json.JSONDecodeError):
             pass
-        terminal_status = (
-            "completed"
-            if rc == 0 and managed_terminal == "completed"
-            else "interrupted"
-            if managed_terminal == "interrupted"
-            else "failed"
+        honesty = evaluate_canonical_honesty(
+            ctx,
+            pre_fingerprint=ctx.get("pre_product_tree_fingerprint"),
         )
-        # False-success guard (J2/grok consult 2026-08-16): a managed fixer
-        # that exits 0 while the target chain/plan is STILL in the failure
-        # state is a false success — the watchdog will not re-dispatch a
-        # `completed` run, so the chain strands. Downgrade to `failed` when
-        # the plan the babysitter was dispatched for is still blocked/failed
-        # with a matching failure kind, so the next watchdog scan relaunches
-        # the repair for the same occurrence.
-        false_success_reason = ""
-        if terminal_status == "completed":
-            try:
-                plan_name = str(ctx.get("plan") or "").strip()
-                workspace = str(ctx.get("workspace") or "").strip()
-                if plan_name and workspace:
-                    plan_state_path = (
-                        Path(workspace) / ".megaplan" / "plans" / plan_name / "state.json"
-                    )
-                    if plan_state_path.is_file():
-                        plan_payload = json.loads(
-                            plan_state_path.read_text(encoding="utf-8")
-                        )
-                        state = str(plan_payload.get("current_state") or "")
-                        if state in {"blocked", "failed"}:
-                            failure = plan_payload.get("latest_failure") or {}
-                            failure_kind = str(failure.get("kind") or "")
-                            false_success_reason = (
-                                f"plan still {state} after fixer exit; "
-                                f"failure_kind={failure_kind or 'unknown'}"
-                            )
-            except (OSError, json.JSONDecodeError):
-                pass
+        terminal_status, transport_rc, false_success_reason = terminal_transport_result(
+            worker_rc=rc,
+            managed_terminal=managed_terminal,
+            honesty=honesty,
+        )
         if false_success_reason:
-            terminal_status = "failed"
             _eprint(
                 f"[babysitter] FALSE SUCCESS downgraded to failed "
                 f"session={ctx.get('session', '?')} occurrence={ctx.get('occurrence', '?')} "
@@ -636,12 +894,13 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
                 ctx,
                 status=terminal_status,
                 finished_at=_utcnow_iso(),
-                returncode=rc,
+                returncode=transport_rc,
                 managed_terminal_status=managed_terminal,
                 false_success_reason=false_success_reason or None,
+                honesty=honesty,
             ),
         )
-        return rc
+        return transport_rc
     except SystemExit:
         raise
     except BaseException as exc:
