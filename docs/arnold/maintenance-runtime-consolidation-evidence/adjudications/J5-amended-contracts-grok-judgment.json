@@ -1,0 +1,154 @@
+{
+  "id": "J5",
+  "kind": "material-judgment",
+  "label": "[XHARD-REVIEW]",
+  "verdict": "PASS",
+  "batch_1_may_start": true,
+  "must_findings": [],
+  "should_findings": [
+    {
+      "id": "J5-SF-001",
+      "severity": "should",
+      "card_or_section": "Plan § Review ownership and timing (G3.5, G4.1/G4.2/G4.3, G5, G6.1/G6.2, G7.4-pre/post); Goal § Required execution sequence items 5–9; Log § OPERATOR DIRECTIVE — review cadence relaxation",
+      "evidence": "Plan still requires per-card Grok pre/post around each [XHARD] card and a standalone G3.5 before T4. Log directive (authoritative) replaces those pairs with one subsection review at G1/G2/G3/G4/G5/G6.3 plus up to three end-stage Sol reviews. Goal still lists G3.5 before T4 and Grok pre/post for T4.1–T4.3.",
+      "counterexample": "An executor could wait for a missing standalone G3.5 before T4, or skip G7.4-pre because the directive listed it among replaced per-card pairs, or treat “up to 3” as permission to run zero end reviews.",
+      "disposition": "Documentation lag, not a Batch 1 block. Until a docs-only reconciliation, execute the joint reading in downstream_conditions. Do not invent a replacement gate. Do not rewrite G0."
+    },
+    {
+      "id": "J5-SF-002",
+      "severity": "should",
+      "card_or_section": "Plan header status line; T0.3 schema review_invocations",
+      "evidence": "Plan L3 still says production-code implementation is blocked until G0 passes. G0-rereview verdict is PASS (must_findings []). T0.3 still requires ordered pre-review → implementation → post-review identities for every [XHARD] task, which the cadence directive collapsed to subsection reviews.",
+      "counterexample": "T7.5 validator fails later for missing T2.4/T4.* pre/post records even though G2/G4 subsection reviews exist; or an executor refuses Batch 1 because the stale header still says G0-blocked.",
+      "disposition": "Header is stale after G0 PASS. Interpret T0.3 XHARD review ordering as the subsection gate (G2/G4/G5/G6) plus independent re-review of revisions, or amend the schema before T2.4 closeout — not before Batch 1."
+    },
+    {
+      "id": "J5-SF-003",
+      "severity": "should",
+      "card_or_section": "T2.4 likely files; 7fe994abf renderer path",
+      "evidence": "T2.4 lists cloud/babysitter/render_babysitter_goal.py. Custody and 7fe994abf edit arnold_pipelines/megaplan/skills/babysitter/scripts/render_babysitter_goal.py. launch.py:_resolve_goal_file / renderer_rel already points at that skills path. 7fe994abf only rewrites the Codex investigator_step; the else/hermes branch still says “read-only investigator”.",
+      "counterexample": "T2.4 allowance misses the real renderer, or tests only the Codex branch and hermes goal text still emits --sandbox read-only on this host.",
+      "disposition": "Bind the actual renderer path at T2.4. Focused tests must cover every routing.mode that can emit a sandbox flag. Goal text and exec argv remain one fact. Do not start T2.4 until the additive T0.2 binding exists."
+    },
+    {
+      "id": "J5-SF-004",
+      "severity": "should",
+      "card_or_section": "T3.2 focused-test lists vs observation-only non-goals",
+      "evidence": "T3.2 non-goals forbid performing recover-blocked / runtime-rebind / chain start. The first focused-test list includes “seed/import-root recovery admitted” and “same-import-root post-gate deletion is a non-event”. T4.2 already owns the m7/_identity_labels guard.",
+      "counterexample": "A T3.2 implementer executes recover-blocked in tests and smuggles a live-chain recovery path into the observation card.",
+      "disposition": "T3.2 tests assert typed request/checkpoint emission only. Executable recover-blocked / rebind / chain-start fixtures belong to T4.2 under the seed/import environment. No new card."
+    }
+  ],
+  "contract_rulings": {
+    "whole_plan_coherence": "PASS",
+    "t2_4": "PASS",
+    "fixer_recovery": "PASS",
+    "t4_1_import_root": "PASS",
+    "t4_3_no_rebind": "PASS",
+    "danger_full_access_isolation": "PASS",
+    "t0_2_batch_1_sequence": "PASS",
+    "review_cadence": "PASS"
+  },
+  "evidence": [
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-execution-plan-2026-08-20.md",
+      "sha256": "0c4f891efa36849dc966a63b05fdbc595bc1c31dbc99951dde926cbca4ab1e29",
+      "hash_check": "MATCH"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-execution-log-2026-08-20.md",
+      "sha256": "1184c01dd76ea3d74f8b7617c6037945fbb3d8b87b40b22d9ff9cadf7a3ff492",
+      "hash_check": "MATCH"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J2-amended-freeze-grok-judgment.json",
+      "sha256": "727196ce91c4bfe20145aea9ed53060d9551e59ee54df2e3b006f5589f9f4bfd",
+      "hash_check": "MATCH"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/gates/G0/G0-rereview-grok-judgment.json",
+      "sha256": "71f93e0cf15153936cd4a673d277245826425f6b2f73d16ab64f0546d1129a2c",
+      "hash_check": "MATCH"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/selection/T0.2/source-selection-manifest.json",
+      "sha256": "e087a70a1429cd4e40a3b2c0769441447390864af038a455f0be4c531ae5a742",
+      "hash_check": "MATCH",
+      "note": "16 card_bindings T1.1–T6.3; zero T2.4/7fe994abf/0425372ec mentions; 26 commits all classified; T1.1/T1.2/T1.3 already source-bound"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/milestones/T0.1/fixer-commits-custody.json",
+      "sha256": "2631ef3da0c3c9ef1443c21e8457ca88ffc28f949653483c7944e15ac964dd04",
+      "hash_check": "MATCH",
+      "authority_statement": "provenance evidence, not launch authority — T0.2 additive binding still pending"
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J1-grok-judgment.json",
+      "sha256": "8a43b98852009649474fa792fbfef063290a0f90e181c9bc22fdd1652a578734",
+      "hash_check": "MATCH"
+    },
+    {
+      "commit": "7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8",
+      "ref": "refs/heads/safety/maintenance-fixer-transport-7fe994abf",
+      "files": [
+        "arnold_pipelines/megaplan/cloud/babysitter/launch.py",
+        "arnold_pipelines/megaplan/skills/babysitter/scripts/render_babysitter_goal.py"
+      ],
+      "intended_binding": "T2.4"
+    },
+    {
+      "commit": "0425372eca588a878dfffc5fbce44cbb2624d2c1",
+      "ref": "refs/heads/safety/maintenance-stdout-tee-0425372ec",
+      "files": ["arnold_pipelines/megaplan/resident/subagent.py"],
+      "intended_bindings": ["T2.4", "T7.1"]
+    }
+  ],
+  "rejected_alternatives": [
+    "BLOCK Batch 1 because the G0 manifest lacks 7fe994abf/0425372ec — those objects are post-G0 epic-branch additions, not unclassified milestone-tip production commits; T0.2 completeness is scoped to fce..safety-ref milestone reachability; T1.* are already bound",
+    "Rewrite or silently broaden the G0 manifest to absorb the two commits",
+    "Treat the two safety refs as launch, rebind, admission, claim, cutover, recovery, selector, or seed authority",
+    "Adopt T4.4/G4.4 or a second claim/cutover/rebind writer",
+    "Duplicate receipt↔rc coupling in T2.2",
+    "Promote expected_head, import-root SHA, numeric index 6, ambient megaplan_engine_root(), or seed env vars to successor authority",
+    "Skip G1 because cadence was relaxed — G1 is the Batch 1 subsection review in both plan and directive",
+    "Treat “up to 3” end-stage Sol reviews as optional zero",
+    "Start T2.4 or T7.1, or claim their source coverage, before the additive T0.2 binding",
+    "Perform live-box recover-blocked / runtime-rebind / chain start as consolidation"
+  ],
+  "downstream_conditions": [
+    "Batch 1 T1.1/T1.2/T1.3 may start in parallel only after complete production-and-test file allowances are frozen and proven disjoint. Shared export/fixture/helper/test file serializes the affected cards. G1 HARD-REVIEW is mandatory after the batch.",
+    "Hard source boundary: no T2.4 or T7.1 implementation, allowance, or source-coverage claim until a follow-on additive T0.2 binding records 7fe994abf → T2.4 and 0425372ec → T2.4/T7.1. Do not rewrite G0. Batch 1 must not absorb or modify either preserved commit.",
+    "Review cadence joint reading: one subsection review at G1, G2, G3, G4, G5, G6.3. Three end-stage Sol reviews are mandatory, not optional: (1) architecture/authority/simplification covering G3.5+G6.4 concerns including the PID dual and fixer-exits-0-while-still-blocked; (2) evidence/selection completeness + validator integrity covering T7.1/T7.5; (3) G7 promotion recommendation after the canonical validator passes. Authority-changing dispositions remain fresh Grok/JUDGMENT. Reviewers stay read-only and independent. Must findings still block.",
+    "Do not block Batch 4 on a standalone G3.5 invocation, and do not claim a separate G3.5 ran. G3.5 concerns are evaluated by end-stage Sol review 1.",
+    "J1 task order stands: serial T4.1 → T4.2 → T4.3, then one G4 subsection review that still attacks G4.1 liveness, G4.2 operator-authority, and G4.3 cutover/custody. No T4.4/G4.4. Batch 5 follows that G4, not T4.4.",
+    "Keep existing G7.4-pre/post as the canary mutation-boundary surfaces unless end-stage review 1 actually freezes and then attacks that contract. “Up to 3” does not waive canary freeze.",
+    "T2.4 remains Grok [XHARD] implementation; G2 is the independent subsection review (Luna HARD-REVIEW). Material T2.4 dispositions still route to Grok. T2.4 focused tests already named (bwrap-fail→danger-full-access, false-success rc nonzero, phantom-PID reclaim, live-PID stand-down, fingerprint mismatch, still-blocked-target closure refusal) are sufficient as a contract; they are not yet implementation evidence.",
+    "M5 stays report-only (SD-006, T1.3, T6.1–T6.3). No ticket/repair/schedule/provider/model mutation may be smuggled into Batch 1 or M5.",
+    "Live Tree Authority remains sole authority: live tree at epic.runtime_root (import_root) plus generation interpreter. Seed/import variables are the required execution environment, not a pin. expected_head/content-digest are pre-T4.3 telemetry/compatibility only. Phase-contract 3/3 fence stays. SD-009: no live Astrid/maintenance mutation as consolidation."
+  ],
+  "grok_invocation": {
+    "model": "grok-4.6",
+    "resolved_model": "grok-4.6",
+    "task_id": "J5-grok",
+    "role": "JUDGMENT",
+    "invocation_id": "mrc-4eca82d5636b24387d827808b7b390d458d01775cf7d38d0",
+    "exit_status": 0,
+    "elapsed_seconds": 796.0748684999999,
+    "allowance_digest": "08afc5bf9c7fa8571b3a41b2155e01294c24cf300279bf5f8c8b4a5f9824f86e",
+    "brief_digest": "8e87585a896911ff189aba923f263c8a300bd5177ab436d7369081b4dee2c439",
+    "command_digest": "dea328dfcdfd30d8452b93c915ddf4e87ae3ae14a8efc01a8ce0df06db1cf2e7",
+    "result_digest": "f139531ac2eaf724d7fd94a69fecc9aeb4f365207bccc5f5a173800ed0475309",
+    "stdout_digest": "472fbcef40105f668479ae7c993bfd4f74842e21e0c90146a84f4ee2ffe6b298",
+    "stderr_digest": "97ee9ea8a07fe8932b7283d69a52844bf00b3a7dc2769de8c9b1f0ec0d2b1a32",
+    "start_timestamp": "2026-08-21T03:24:53.511173Z",
+    "end_timestamp": "2026-08-21T03:38:09.596866Z",
+    "status": "completed",
+    "child_process_identity": {
+      "pid": 96957,
+      "source": "wrapper-observed",
+      "started_at": "2026-08-21T03:24:53.511173Z"
+    }
+  },
+  "recorded_at_utc": "2026-08-21T03:40:29Z",
+  "method_limits": "Read-only adjudication. Packet hashes verified. Safety-ref commits inspected. No edits, commits, tests, recover-blocked, runtime-rebind, chain start, or live-state mutation."
+}

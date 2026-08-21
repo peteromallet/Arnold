@@ -252,3 +252,19 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Batch 0 complete and durable: G0 PASS, plan amendment, F-002/F-004 hygiene, wrapper lifecycle, registry, log, all receipts.
 - NEXT: preserve epic fix commits 7fe994abf + 0425372ec under safety refs (T0.1 additive) → route Grok J5 review of amended frozen contracts → Batch 1 (T1.1/T1.2/T1.3) under relaxed review cadence.
 
+
+## T0.1 additive — epic fix-commit preservation — PASS
+
+- Luna implementer (mrc-ba150c89…): read-only pack transfer from cloud candidate astrid-first (gitdir /workspace/arnold-ref/.git/worktrees/astrid-first); CAS-minted refs/heads/safety/maintenance-fixer-transport-7fe994abf → 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8 and refs/heads/safety/maintenance-stdout-tee-0425372ec → 0425372eca588a878dfffc5fbce44cbb2624d2c1; additive evidence milestones/T0.1/fixer-commits-custody.json ("provenance evidence, not launch authority — T2.4/T7.1 source, selected post-G0 by operator directive"; notes T0.2 follow-on binding needed); commit 0b879578. Nine safety refs total; six milestone tips + seed untouched; no push; cloud read-only.
+- NEXT: Grok J5 review of amended frozen contracts (renamed from earlier "J4" label to avoid collision with the F-004 secret judgment) → Batch 1.
+
+ 
+## J5 — amended frozen contracts — PASS (batch-1-go)
+
+- Fresh Grok 4.6 judgment, role `JUDGMENT`, label `[XHARD-REVIEW]`: verdict **PASS**; `batch_1_may_start: true`; `must_findings: []`. Receipt: `docs/arnold/maintenance-runtime-consolidation-evidence/adjudications/J5-amended-contracts-grok-judgment.json`; invocation `mrc-4eca82d5636b24387d827808b7b390d458d01775cf7d38d0`; exit 0; elapsed 796.0748684999999s.
+- Should findings are documentation/contract-lag only, not Batch 1 blocks: J5-SF-001 review-cadence wording still names per-card/G3.5 obligations; J5-SF-002 stale G0-blocked header and T0.3 pre/post schema wording; J5-SF-003 T2.4 must bind the actual `skills/babysitter/scripts/render_babysitter_goal.py` path and cover every sandbox-emitting routing mode; J5-SF-004 T3.2 tests remain typed request/checkpoint assertions, with executable recovery fixtures owned by T4.2.
+- Batch 1 go: T1.1/T1.2/T1.3 may begin in parallel only after complete production-and-test allowances are frozen and proven disjoint; shared export/fixture/helper/test files serialize affected cards; G1 HARD-REVIEW is mandatory after the batch.
+- Hard stop: no T2.4 or T7.1 implementation, allowance, or source-coverage claim until the additive T0.2 binding records `7fe994abf → T2.4` and `0425372ec → T2.4/T7.1`; do not rewrite G0, and Batch 1 must not absorb or modify either preserved commit.
+- Review cadence: one review per subsection at G1/G2/G3/G4/G5/G6.3, with one-per-subsection complete-diff/call-graph/evidence reading; three end-stage Sol reviews are mandatory (architecture/authority/simplification covering G3.5+G6.4; evidence/selection completeness and validator integrity covering T7.1/T7.5; G7 promotion recommendation after canonical validator pass). Authority-changing dispositions remain fresh Grok/JUDGMENT; reviewers remain read-only and independent; must findings block.
+- Joint reading preserves no standalone G3.5 invocation claim, serial T4.1 → T4.2 → T4.3 followed by one G4, existing G7.4-pre/post canary surfaces, T2.4 Grok `[XHARD]` implementation with Luna G2 review, M5 report-only behavior, and Live Tree Authority as sole authority.
+- Next: T1.1/T1.2/T1.3 brief-preps.
