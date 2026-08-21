@@ -1487,6 +1487,7 @@ def replay(
 
 
 __all__ = [
+    "ApplyDisposition",
     "CorrectionKind",
     "DAILY_EVENT_KINDS",
     "daily_commit_key",
