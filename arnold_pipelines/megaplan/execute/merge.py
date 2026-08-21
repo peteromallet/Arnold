@@ -7,6 +7,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Mapping
 
+from arnold_pipelines.megaplan.execute.test_budget import (
+    CLASSIFICATION_V1,
+    CLASSIFICATION_V2,
+    STATE_FIELD_V2,
+    SystemClock,
+    classify_narrow_tests,
+    complete_run,
+    load_budget_state,
+    persist_budget_state,
+    remaining_task_budget,
+)
+
+
 from arnold_pipelines.megaplan._core import (
     atomic_write_text,
     batch_artifact_index,
@@ -1016,9 +1029,16 @@ def _enforce_task_test_budgets(
     targets_by_id: Mapping[str, dict[str, Any]],
     issues: list[str],
     project_dir: str | None = None,
+    clock: Any | None = None,
 ) -> None:
-    """Fail closed when v2 task evidence exceeds its admitted narrow-test budget."""
+    """Fail closed when task evidence exceeds its admitted narrow-test budget.
 
+    T5.1: one production enforcement seam. ``elapsed_wall_clock_v2`` charges
+    actual elapsed time. Legacy ``declared_timeout_sum_v1`` retains timeout-sum
+    arithmetic. ``max_runs`` is enforced at this same seam for both.
+    """
+
+    clock = clock or SystemClock()
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -1027,6 +1047,20 @@ def _enforce_task_test_budgets(
         narrow = target.get("narrow_tests") if isinstance(target, dict) else None
         if not isinstance(narrow, Mapping):
             continue  # Stored v1 tasks retain their legacy execution behavior.
+        classification = classify_narrow_tests(narrow)
+        entry["budget_classification"] = classification.visible
+        if isinstance(target, dict):
+            target["budget_classification"] = classification.visible
+        if classification.mixes_state_fields:
+            _block_test_budget(
+                entry,
+                target if isinstance(target, dict) else None,
+                task_id,
+                issues,
+                ["v1 and v2 budget state fields must not be mixed"],
+                [{"kind": "mixed_budget_state"}],
+            )
+            continue
         commands = entry.get("commands_run")
         if not isinstance(commands, list):
             continue
@@ -1042,7 +1076,7 @@ def _enforce_task_test_budgets(
             for selector in narrow.get("selectors", [])
             if isinstance(selector, str) and selector.strip()
         }
-        max_runs = narrow.get("max_runs")
+        max_runs = classification.max_runs
         max_seconds = narrow.get("max_seconds")
         violations: list[str] = []
         typed_violations: list[dict[str, Any]] = []
@@ -1084,42 +1118,129 @@ def _enforce_task_test_budgets(
                             "selector": selector,
                         }
                     )
-        if isinstance(max_seconds, int) and timeout_total > max_seconds:
-            violations.append(
-                f"declared test timeout total {timeout_total}s exceeds max_seconds={max_seconds}"
-            )
-            typed_violations.append(
-                {
-                    "kind": "max_seconds_exceeded",
-                    "declared_total_seconds": timeout_total,
-                    "max_seconds": max_seconds,
-                }
+        if classification.semantics == CLASSIFICATION_V1:
+            if isinstance(max_seconds, int) and timeout_total > max_seconds:
+                violations.append(
+                    f"declared test timeout total {timeout_total}s exceeds max_seconds={max_seconds}"
+                )
+                typed_violations.append(
+                    {
+                        "kind": "max_seconds_exceeded",
+                        "declared_total_seconds": timeout_total,
+                        "max_seconds": max_seconds,
+                    }
+                )
+        elif classification.semantics == CLASSIFICATION_V2:
+            _apply_elapsed_wall_clock_v2(
+                entry=entry,
+                target=target if isinstance(target, dict) else None,
+                classification=classification,
+                commands=[c for c in commands if isinstance(c, str)],
+                clock=clock,
+                violations=violations,
+                typed_violations=typed_violations,
             )
         if not violations:
             continue
-        reason = "task_test_budget_exhausted: " + "; ".join(dict.fromkeys(violations))
-        entry["status"] = "blocked"
-        # Durable budget-block identity (occurrence 0513dbf3f069): the marker
-        # lives in executor_notes, but the retry reset (_clear_task_attempt_fields)
-        # wipes notes when flipping blocked->pending, and then
-        # _adopt_authority_completed_blocked_tasks re-promotes the
-        # authority-completed row to done WITHOUT evidence -> the quality gate
-        # re-blocks -> infinite loop.  Persist the verdict in a dedicated field
-        # (the adopt helper already pops task_test_budget_exhausted on promote)
-        # so the exclusion survives the reset and the row re-enters the frontier.
-        entry["task_test_budget_exhausted"] = reason
-        entry["task_test_budget_violations"] = typed_violations
-        if isinstance(target, dict):
-            target["task_test_budget_exhausted"] = reason
-            target["task_test_budget_violations"] = typed_violations
-        notes = str(entry.get("executor_notes") or "").strip()
-        entry["executor_notes"] = (
-            f"{notes} [harness] {reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
-        ).strip()
-        issues.append(
-            f"Task {task_id} blocked by admitted test budget: "
-            f"{reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
+        _block_test_budget(
+            entry,
+            target if isinstance(target, dict) else None,
+            task_id,
+            issues,
+            violations,
+            typed_violations,
         )
+
+
+def _apply_elapsed_wall_clock_v2(
+    *,
+    entry: dict[str, Any],
+    target: dict[str, Any] | None,
+    classification: Any,
+    commands: list[str],
+    clock: Any,
+    violations: list[str],
+    typed_violations: list[dict[str, Any]],
+) -> None:
+    """Charge elapsed time; do not reject merely because timeout sums exceed budget."""
+
+    holder: dict[str, Any] = dict(target or {})
+    if isinstance(target, dict):
+        holder["narrow_tests"] = target.get("narrow_tests")
+        if STATE_FIELD_V2 in target:
+            holder[STATE_FIELD_V2] = target[STATE_FIELD_V2]
+    elif STATE_FIELD_V2 in entry:
+        holder[STATE_FIELD_V2] = entry[STATE_FIELD_V2]
+    state = load_budget_state(holder, classification=classification, clock=clock)
+    if state is None:
+        violations.append("elapsed_wall_clock_v2 state could not be loaded")
+        typed_violations.append({"kind": "elapsed_budget_unreadable"})
+        return
+    durations = entry.get("test_run_durations_seconds")
+    if isinstance(durations, list) and durations:
+        charged = state
+        for raw in durations:
+            if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw < 0:
+                charged = complete_run(
+                    charged,
+                    monotonic_duration_seconds=charged.remaining_seconds(),
+                    clock=clock,
+                )
+            else:
+                charged = complete_run(
+                    charged,
+                    monotonic_duration_seconds=float(raw),
+                    clock=clock,
+                )
+        state = charged
+    remaining = remaining_task_budget(state)
+    persist_budget_state(entry, state)
+    if isinstance(target, dict):
+        persist_budget_state(target, state)
+    if remaining <= 0.0 and commands:
+        violations.append(
+            "elapsed wall-clock budget exhausted; admission stops irrespective of declared timeout sums"
+        )
+        typed_violations.append(
+            {
+                "kind": "elapsed_budget_exhausted",
+                "consumed_seconds": state.consumed_seconds,
+                "allowed_seconds": state.allowed_seconds,
+            }
+        )
+
+
+def _block_test_budget(
+    entry: dict[str, Any],
+    target: dict[str, Any] | None,
+    task_id: Any,
+    issues: list[str],
+    violations: list[str],
+    typed_violations: list[dict[str, Any]],
+) -> None:
+    reason = "task_test_budget_exhausted: " + "; ".join(dict.fromkeys(violations))
+    entry["status"] = "blocked"
+    # Durable budget-block identity (occurrence 0513dbf3f069): the marker
+    # lives in executor_notes, but the retry reset (_clear_task_attempt_fields)
+    # wipes notes when flipping blocked->pending, and then
+    # _adopt_authority_completed_blocked_tasks re-promotes the
+    # authority-completed row to done WITHOUT evidence -> the quality gate
+    # re-blocks -> infinite loop.  Persist the verdict in a dedicated field
+    # (the adopt helper already pops task_test_budget_exhausted on promote)
+    # so the exclusion survives the reset and the row re-enters the frontier.
+    entry["task_test_budget_exhausted"] = reason
+    entry["task_test_budget_violations"] = typed_violations
+    if isinstance(target, dict):
+        target["task_test_budget_exhausted"] = reason
+        target["task_test_budget_violations"] = typed_violations
+    notes = str(entry.get("executor_notes") or "").strip()
+    entry["executor_notes"] = (
+        f"{notes} [harness] {reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
+    ).strip()
+    issues.append(
+        f"Task {task_id} blocked by admitted test budget: "
+        f"{reason}. {_TASK_TEST_BUDGET_REMEDIATION}"
+    )
 
 
 def _enforce_task_write_budgets(
@@ -1318,10 +1439,17 @@ def _merge_batch_results(
         array_fields = ("sections_written", "stance_violations")
     else:
         required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
-        merge_fields = ("status", "executor_notes", "files_changed", "commands_run") + evidence_context_fields
+        merge_fields = (
+            "status",
+            "executor_notes",
+            "files_changed",
+            "commands_run",
+            "budget_classification",
+            STATE_FIELD_V2,
+        ) + evidence_context_fields
         array_fields = ("files_changed", "commands_run")
-        object_fields = ()
-        optional_fields = evidence_context_fields
+        object_fields = (STATE_FIELD_V2,)
+        optional_fields = evidence_context_fields + ("budget_classification", STATE_FIELD_V2, "test_run_durations_seconds")
     merge_targets_by_id = {
         task_id: task
         for task_id, task in plan_tasks_by_id.items()

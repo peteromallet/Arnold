@@ -13,6 +13,12 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan._core.io import compute_task_batches
+from arnold_pipelines.megaplan.execute.test_budget import (
+    CLASSIFICATION_V2,
+    classify_narrow_tests,
+    describe_budget_for_feasibility,
+)
+
 
 
 TASK_CONTRACT_VERSION = 2
@@ -206,6 +212,7 @@ def compile_task_feasibility(
     """Return a deterministic report and stable diagnostics for a v2 graph."""
 
     diagnostics: list[FeasibilityDiagnostic] = []
+    budget_classifications: list[dict[str, Any]] = []
     raw_tasks = payload.get("tasks")
     tasks = [dict(task) for task in raw_tasks] if isinstance(raw_tasks, list) and all(isinstance(task, Mapping) for task in raw_tasks) else []
     if payload.get("task_contract_version") != TASK_CONTRACT_VERSION:
@@ -230,6 +237,13 @@ def compile_task_feasibility(
             diagnostics.append(FeasibilityDiagnostic("task_id_invalid", "Task IDs must be non-empty and unique.", str(task_id)))
             continue
         ids.append(task["id"])
+        narrow_for_class = task.get("narrow_tests")
+        budget_classifications.append({
+            "task_id": task["id"],
+            **describe_budget_for_feasibility(
+                classify_narrow_tests(narrow_for_class if isinstance(narrow_for_class, Mapping) else None)
+            ),
+        })
         objective = task.get("objective")
         if not isinstance(objective, str) or not objective.strip():
             diagnostics.append(FeasibilityDiagnostic("task_objective_missing", "Task must declare one primary objective.", task["id"]))
@@ -265,6 +279,13 @@ def compile_task_feasibility(
             selectors = narrow.get("selectors")
             max_seconds = narrow.get("max_seconds")
             max_runs = narrow.get("max_runs")
+            classification = classify_narrow_tests(narrow)
+            if classification.mixes_state_fields:
+                diagnostics.append(FeasibilityDiagnostic(
+                    "task_test_budget_state_mixed",
+                    "v1 and v2 budget state fields must not be mixed; the loader does not rewrite artifacts.",
+                    task["id"],
+                ))
             if not isinstance(selectors, list) or any(not isinstance(item, str) or not item.strip() for item in selectors) or len(selectors) > MAX_NARROW_SELECTORS:
                 diagnostics.append(FeasibilityDiagnostic("task_test_selector_budget_exceeded", f"narrow_tests.selectors must contain at most {MAX_NARROW_SELECTORS} non-empty selectors.", task["id"]))
             elif any(
@@ -283,7 +304,15 @@ def compile_task_feasibility(
                     "Narrow selectors must be concrete pytest path selectors (e.g. tests/core/store/test_x.py or tests/x.py::test_y); shell commands (pytest ..., python -m ..., bash ..., make ...) and flags are not allowed.",
                     task["id"],
                 ))
-            if not isinstance(max_seconds, int) or isinstance(max_seconds, bool) or not 0 <= max_seconds <= MAX_NARROW_TEST_SECONDS:
+            if classification.semantics == CLASSIFICATION_V2:
+                budget = narrow.get("test_budget_seconds")
+                if not isinstance(budget, (int, float)) or isinstance(budget, bool) or not 0 < float(budget) <= MAX_NARROW_TEST_SECONDS:
+                    diagnostics.append(FeasibilityDiagnostic(
+                        "task_test_time_budget_exceeded",
+                        f"narrow_tests.test_budget_seconds must be in (0..{MAX_NARROW_TEST_SECONDS}] for elapsed_wall_clock_v2.",
+                        task["id"],
+                    ))
+            elif not isinstance(max_seconds, int) or isinstance(max_seconds, bool) or not 0 <= max_seconds <= MAX_NARROW_TEST_SECONDS:
                 diagnostics.append(FeasibilityDiagnostic("task_test_time_budget_exceeded", f"narrow_tests.max_seconds must be in 0..{MAX_NARROW_TEST_SECONDS}.", task["id"]))
             if not isinstance(max_runs, int) or isinstance(max_runs, bool) or not 0 <= max_runs <= MAX_NARROW_TEST_RUNS:
                 diagnostics.append(FeasibilityDiagnostic("task_test_run_budget_exceeded", f"narrow_tests.max_runs must be in 0..{MAX_NARROW_TEST_RUNS}.", task["id"]))
@@ -417,6 +446,7 @@ def compile_task_feasibility(
         "seriality": round(seriality, 6),
         "estimated_dispatch_minutes": dispatch_minutes,
         "execute_phase_timeout_minutes": timeout_minutes,
+        "budget_classifications": budget_classifications,
         "warnings": ([{"code": "task_count_high", "message": "Task count exceeds 24; inspect scope."}] if task_count > 24 else []),
         "diagnostics": [diagnostic.as_dict() for diagnostic in diagnostics],
         "admitted": not diagnostics,

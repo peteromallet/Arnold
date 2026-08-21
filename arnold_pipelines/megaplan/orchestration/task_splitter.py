@@ -11,6 +11,12 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
+from arnold_pipelines.megaplan.execute.test_budget import (
+    CLASSIFICATION_V2,
+    classify_narrow_tests,
+    describe_budget_for_splitter,
+)
+
 
 # ---------------------------------------------------------------------------
 # Diagnostic codes
@@ -188,7 +194,8 @@ def _proof_is_exhausted(task: Mapping[str, Any]) -> bool:
     """Return True if no valid proof subtask can be formed.
 
     Proof exhaustion occurs when the task lacks narrow tests entirely,
-    or when the test budget is zeroed out.
+    or when the test budget is zeroed out. Classification is descriptive;
+    remaining-time arithmetic stays in execute.test_budget.
     """
     narrow = task.get("narrow_tests")
     if not isinstance(narrow, Mapping):
@@ -198,10 +205,16 @@ def _proof_is_exhausted(task: Mapping[str, Any]) -> bool:
         return True
     if any(not isinstance(s, str) or not s.strip() for s in selectors):
         return True
-    max_seconds = narrow.get("max_seconds", 0)
+    classification = classify_narrow_tests(narrow)
+    if classification.semantics == CLASSIFICATION_V2:
+        budget = classification.allowed_seconds
+        if not isinstance(budget, (int, float)) or budget <= 0:
+            return True
+    else:
+        max_seconds = narrow.get("max_seconds", 0)
+        if not isinstance(max_seconds, (int, float)) or max_seconds <= 0:
+            return True
     max_runs = narrow.get("max_runs", 0)
-    if not isinstance(max_seconds, (int, float)) or max_seconds <= 0:
-        return True
     if not isinstance(max_runs, int) or max_runs <= 0:
         return True
     return False
@@ -430,40 +443,41 @@ def _adjust_dependency_reasons(
 def _build_impl_narrow_tests(task: Mapping[str, Any]) -> dict[str, Any]:
     """Build the narrow_tests for the implementation subtask.
 
-    The implementation subtask must be able to RUN its implementation tests:
-    the execute worker enforces the admitted ``narrow_tests`` budget as a HARD
-    gate (``task_test_budget_exhausted`` blocks the task when the tests need
-    more time/runs than admitted), and a blocked impl subtask strands the whole
-    batch (astrid m2 reap loop, 2026-08-16). Halving ``max_seconds`` and
-    forcing ``max_runs=1`` guaranteed exhaustion for any non-trivial test file.
-
-    The independent verification role belongs to the PROOF subtask (which
-    deep-copies the full original narrow_tests); the impl subtask carries the
-    full original budget so it can complete its own tests. Both running the
-    declared selectors is the designed split (impl proves the code, proof
-    verifies against the contract). Preserve a safety ceiling (never exceed the
-    original admission) but do not shrink it.
+    Preserve the original admission. Do not recompute remaining elapsed time;
+    execute.test_budget is the only arithmetic owner.
     """
     original = task.get("narrow_tests")
     if not isinstance(original, Mapping):
         return {"selectors": [], "max_seconds": 0, "max_runs": 0}
 
-    selectors = original.get("selectors", [])
+    copied = dict(original)
+    selectors = copied.get("selectors", [])
     if not isinstance(selectors, list):
-        selectors = []
+        copied["selectors"] = []
+    else:
+        copied["selectors"] = list(selectors)
 
-    max_seconds = original.get("max_seconds", 0)
+    classification = classify_narrow_tests(copied)
+    copied["budget_classification"] = classification.visible
+    copied["budget_enforcement_note"] = describe_budget_for_splitter(classification)
+    if classification.semantics == CLASSIFICATION_V2:
+        budget = copied.get("test_budget_seconds", 0)
+        if not isinstance(budget, (int, float)) or budget <= 0:
+            copied["test_budget_seconds"] = 0
+        max_runs = copied.get("max_runs", 0)
+        if not isinstance(max_runs, int) or max_runs <= 0:
+            copied["max_runs"] = 0
+        return copied
+
+    max_seconds = copied.get("max_seconds", 0)
     if not isinstance(max_seconds, (int, float)) or max_seconds <= 0:
-        max_seconds = 0
-    max_runs = original.get("max_runs", 0)
+        copied["max_seconds"] = 0
+    else:
+        copied["max_seconds"] = int(max_seconds)
+    max_runs = copied.get("max_runs", 0)
     if not isinstance(max_runs, int) or max_runs <= 0:
-        max_runs = 0
-
-    return {
-        "selectors": list(selectors),
-        "max_seconds": int(max_seconds),
-        "max_runs": max_runs,
-    }
+        copied["max_runs"] = 0
+    return copied
 
 
 # ---------------------------------------------------------------------------

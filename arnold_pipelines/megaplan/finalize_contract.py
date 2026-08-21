@@ -53,11 +53,16 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                     },
                     "narrow_tests": {
                         "type": "object",
-                        "required": ["selectors", "max_seconds", "max_runs"],
+                        "required": ["selectors", "max_runs"],
                         "properties": {
                             "selectors": {"type": "array", "items": {"type": "string"}},
                             "max_seconds": {"type": "integer"},
                             "max_runs": {"type": "integer"},
+                            "budget_semantics": {
+                                "type": "string",
+                                "enum": ["elapsed_wall_clock_v2"],
+                            },
+                            "test_budget_seconds": {"type": "number", "exclusiveMinimum": 0},
                         },
                     },
                     "checkpoint": {

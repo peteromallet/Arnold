@@ -31,6 +31,13 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
     _existing_pytest_selector_path,
     _looks_like_repo_path,
 )
+from arnold_pipelines.megaplan.execute.test_budget import (
+    CLASSIFICATION_V2,
+    capped_subprocess_timeout,
+    classify_narrow_tests,
+    describe_budget_for_feasibility,
+)
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -357,11 +364,15 @@ def _compile_narrow_recheck(
 
     if not selectors:
         return None
-
-    max_seconds = narrow.get("max_seconds")
-    if not isinstance(max_seconds, int) or max_seconds <= 0:
-        max_seconds = _DEFAULT_NARROW_RECHECK_MAX_SECONDS
-    max_seconds = min(max_seconds, _DEFAULT_NARROW_RECHECK_MAX_SECONDS)
+    classification = classify_narrow_tests(narrow)
+    declared_timeout = narrow.get("max_seconds")
+    if classification.semantics == CLASSIFICATION_V2:
+        declared_timeout = classification.allowed_seconds
+    if not isinstance(declared_timeout, (int, float)) or declared_timeout <= 0:
+        declared_timeout = _DEFAULT_NARROW_RECHECK_MAX_SECONDS
+    declared_timeout = min(int(declared_timeout), _DEFAULT_NARROW_RECHECK_MAX_SECONDS)
+    remaining_timeout = capped_subprocess_timeout(task, float(declared_timeout))
+    timeout_seconds = int(remaining_timeout) if remaining_timeout > 0 else 0
 
     max_runs = narrow.get("max_runs")
     if not isinstance(max_runs, int) or max_runs <= 0:
@@ -377,22 +388,24 @@ def _compile_narrow_recheck(
         "scope": f"narrow_recheck:{task_id}",
         "command": _build_pytest_command(
             selectors,
-            timeout_seconds=max_seconds,
+            timeout_seconds=timeout_seconds,
             embed_timeout=False,
         ),
         "environment": {},
         "expected_exit_codes": [0],
-        "timeout_seconds": max_seconds,
+        "timeout_seconds": timeout_seconds,
         "content_hash_algorithm": "sha256",
         "evidence_label": f"validation:narrow_recheck:{task_id}",
         "mutates": False,
         "selectors": selectors,
-        "max_seconds": max_seconds,
+        "max_seconds": timeout_seconds,
         "max_runs": max_runs,
         "acceptance_mode": "no_new_failures_delta",
         "reason": f"Narrow recheck for task {task_id}: {', '.join(selectors)}",
         "task_id": task_id,
         "writes_files": False,
+        "budget_classification": classification.visible,
+        "budget_description": describe_budget_for_feasibility(classification),
     }
 
 

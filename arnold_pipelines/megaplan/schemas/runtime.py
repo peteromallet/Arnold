@@ -966,6 +966,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},
                         "auto_attributed_files": {"type": ["boolean", "null"]},
+                        "test_run_durations_seconds": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                        },
+                        "budget_classification": {"type": "string"},
+                        "test_budget_state_v2": {"type": "object"},
                     },
                     "required": ["task_id", "status", "executor_notes", "files_changed", "commands_run"],
                     "x-preserve-explicit-required": True,

@@ -126,8 +126,9 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         # (occurrence 927ad612eda8): the merge gate writes the typed list, and
         # the final-sweep reconciler writes the durable accepted-with-debt
         # record + receipt.  Both are execute-owned mutable fields.
-        "task_test_budget_violations",
         "task_test_budget_debt",
+        "budget_classification",
+        "test_budget_state_v2",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})
