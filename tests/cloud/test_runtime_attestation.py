@@ -201,6 +201,7 @@ def test_release_seed_binds_full_runtime_and_seed_document_manifest(
 
     assert seed["ready"] is True
     assert seed["errors"] == []
+    assert seed["authority"] == attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY
     assert seed["expected_root"] == str(paths["root"])
     assert seed["loaded_modules"]
     assert seed["interpreter"]["executable"] == str(Path(sys.executable).resolve())
@@ -1305,7 +1306,14 @@ def test_worker_preflight_reads_configured_launch_seed_env(
     monkeypatch.setattr(
         attestation,
         "_json_file",
-        lambda path, label: (observed.update(path=str(path)) or {"schema": "x", "ready": True}),
+        lambda path, label: (
+            observed.update(path=str(path))
+            or {
+                "schema": attestation.RUNTIME_LAUNCH_SEED_SCHEMA,
+                "authority": attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY,
+                "ready": True,
+            }
+        ),
     )
     monkeypatch.setattr(
         attestation,
@@ -1317,7 +1325,11 @@ def test_worker_preflight_reads_configured_launch_seed_env(
     seed = attestation.require_configured_runtime_launch(
         "worker", target_pid=123, create=True
     )
-    assert seed == {"schema": "x", "ready": True}
+    assert seed == {
+        "schema": attestation.RUNTIME_LAUNCH_SEED_SCHEMA,
+        "authority": attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY,
+        "ready": True,
+    }
     assert observed["path"] == str(seed_path)
 
 

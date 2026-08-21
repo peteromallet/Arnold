@@ -68,6 +68,27 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
         ),
     )
 
+    attest_parser = sub.add_parser(
+        "attest",
+        help="Issue a root-custodied standalone resident runtime attestation",
+    )
+    attest_parser.add_argument(
+        "--repo-root",
+        required=True,
+        type=Path,
+        help="Repository root to admit as the standalone resident runtime",
+    )
+    attest_parser.add_argument(
+        "--expected-head",
+        required=True,
+        help="Full Git commit OID expected at admission",
+    )
+    attest_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the complete attestation result as JSON",
+    )
+
     scheduler_parser = sub.add_parser("scheduler-once", parents=[shared], help="Claim and process due resident jobs once")
     scheduler_parser.add_argument("--worker-id", default="resident-cli-scheduler")
 
@@ -244,7 +265,13 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     run_once.add_argument("--worker-id", default="resident-schedule-cli")
 
 
-def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any] | str:
+    # ``resident attest`` is the standalone custody adapter.  It must not
+    # initialize a resident config/store (which may select a different root or
+    # create unrelated operational state) before the attestation admission.
+    if args.resident_action == "attest":
+        return _resident_attest(args)
+
     config = _resident_config(args)
     store = _resident_store(root, args)
     try:
@@ -301,6 +328,108 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         if callable(close):
             close()
     raise CliError("invalid_args", f"Unknown resident action: {getattr(args, 'resident_action', None)!r}")
+
+
+_STANDALONE_ATTEST_JSON_FIELDS = (
+    "success",
+    "authority",
+    "root",
+    "expected_head",
+    "live_head",
+    "seed_path",
+    "seed_sha256",
+    "receipt_path",
+    "receipt_sha256",
+    "pointer_path",
+    "generated_at",
+)
+
+
+def _resident_attest(args: argparse.Namespace) -> dict[str, Any] | str:
+    """Issue and publish one standalone resident runtime attestation.
+
+    All custody, vector collection, publication ordering, and post-publication
+    validation live in :mod:`cloud.runtime_attestation`.  The resident CLI is
+    intentionally only the argument/output adapter: no cloud evidence is
+    synthesized here, and no pointer is touched if the canonical issuer fails.
+    """
+    from arnold_pipelines.megaplan.cloud import runtime_attestation
+
+    try:
+        seed = runtime_attestation.build_standalone_runtime_launch_seed(
+            expected_root=args.repo_root,
+            expected_revision=args.expected_head,
+        )
+        runtime_attestation.validate_standalone_runtime_launch_seed(seed)
+        root = Path(str(seed["expected_root"])).resolve(strict=True)
+        paths = runtime_attestation.standalone_dispatch_paths(
+            root,
+            head=str(seed["expected_revision"]),
+            seed_sha256=str(seed["content_sha256"]),
+        )
+        published = runtime_attestation.write_standalone_runtime_publication(
+            seed=seed,
+            seed_path=paths["seed"],
+            root=root,
+        )
+        receipt = published["receipt"]
+        pointer = published["pointer"]
+        result = {
+            "success": True,
+            "authority": receipt["authority"],
+            "root": receipt["root"],
+            "expected_head": receipt["expected_head"],
+            "live_head": receipt["live_head"],
+            "seed_path": str(paths["seed"]),
+            "seed_sha256": str(seed["content_sha256"]),
+            "receipt_path": str(published["receipt_path"]),
+            "receipt_sha256": str(receipt["content_sha256"]),
+            "pointer_path": str(published["pointer_path"]),
+            "generated_at": pointer["generated_at"],
+        }
+    except CliError as exc:
+        # Admission/custody failures are a caller/input failure for this
+        # command, even when the lower-level helper used its generic default
+        # exit code.  Publication/I/O failures are represented by ordinary
+        # exceptions and remain exit 1 below.
+        raise CliError(
+            exc.code,
+            exc.message,
+            valid_next=exc.valid_next,
+            extra=exc.extra,
+            exit_code=2,
+        ) from exc
+    except Exception as exc:
+        raise CliError(
+            "runtime_launch_attestation_error",
+            f"standalone runtime attestation failed: {exc}",
+            exit_code=1,
+        ) from exc
+
+    if not isinstance(result, Mapping):
+        raise CliError(
+            "runtime_launch_attestation_error",
+            "standalone runtime attestation issuer returned an invalid result",
+            exit_code=1,
+        )
+    # The canonical issuer returns these exact public fields.  Projecting the
+    # response here prevents internal receipt/seed details from leaking into
+    # the stable ``--json`` contract.
+    payload = {
+        field: result[field]
+        for field in _STANDALONE_ATTEST_JSON_FIELDS
+        if field in result
+    }
+    missing = [field for field in _STANDALONE_ATTEST_JSON_FIELDS if field not in payload]
+    if missing:
+        raise CliError(
+            "runtime_launch_attestation_error",
+            "standalone runtime attestation result is missing: " + ", ".join(missing),
+            exit_code=1,
+        )
+    if not args.json:
+        return str(payload["seed_path"]) + "\n"
+    return payload
 
 
 def _resident_supersede_todo(

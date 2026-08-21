@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import fcntl
 import hashlib
 import importlib
@@ -25,6 +26,15 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 RUNTIME_LAUNCH_SEED_SCHEMA = "arnold.megaplan.runtime_launch_seed.v1"
+RUNTIME_LAUNCH_CLOUD_AUTHORITY = "arnold.megaplan.runtime-launch/cloud-chain/v1"
+RUNTIME_LAUNCH_STANDALONE_AUTHORITY = "arnold.megaplan.runtime-launch/standalone-resident/v1"
+RUNTIME_LAUNCH_AUTHORITIES = frozenset(
+    {RUNTIME_LAUNCH_CLOUD_AUTHORITY, RUNTIME_LAUNCH_STANDALONE_AUTHORITY}
+)
+# Short aliases used by adapters and tests; the serialized values above are
+# the compatibility contract.
+CLOUD_CHAIN_AUTHORITY = RUNTIME_LAUNCH_CLOUD_AUTHORITY
+STANDALONE_RESIDENT_AUTHORITY = RUNTIME_LAUNCH_STANDALONE_AUTHORITY
 RUNTIME_PROCESS_ATTESTATION_SCHEMA = "arnold.megaplan.runtime_process_attestation.v1"
 # Codex fix 2026-08-17: the mutable per-runtime seed slot is retired. Seeds
 # are content-addressed per accepted generation and a separate atomic pointer
@@ -32,6 +42,13 @@ RUNTIME_PROCESS_ATTESTATION_SCHEMA = "arnold.megaplan.runtime_process_attestatio
 # retain the absolute immutable seed path they were dispatched with.
 DISPATCH_POINTER_SCHEMA = "arnold.megaplan.runtime_dispatch_pointer.v1"
 DISPATCH_CURRENT_FILENAME = "dispatch-current.json"
+STANDALONE_DISPATCH_POINTER_SCHEMA = (
+    "arnold.megaplan.standalone_runtime_dispatch_pointer.v1"
+)
+STANDALONE_ATTESTATION_RECEIPT_SCHEMA = (
+    "arnold.megaplan.standalone_runtime_attestation_receipt.v1"
+)
+STANDALONE_RUNTIME_LAUNCH_RELATIVE = Path(".megaplan/resident/runtime-launch")
 RUNTIME_ATTESTATION_ERROR = "runtime_launch_attestation_mismatch"
 # Canonical box-side paths for the per-epic launch-seed build (G14): the
 # supervisor prepare receipt, the box hot-env file, and the launch-seed store
@@ -746,6 +763,7 @@ def build_runtime_launch_seed(
             errors.append(f"mixed_revision_module:{mod.get('module')}")
     core = {
         "schema": RUNTIME_LAUNCH_SEED_SCHEMA,
+        "authority": RUNTIME_LAUNCH_CLOUD_AUTHORITY,
         "expected_root": str(root),
         "expected_revision": expected_revision,
         # Codex fix 2026-08-17: the seed is bound to ONE accepted manifest
@@ -962,6 +980,8 @@ def _launch_seed_current(
         _verify_seed_digest(seed)
     except CliError:
         return False
+    if seed.get("authority") != RUNTIME_LAUNCH_CLOUD_AUTHORITY:
+        return False
     # Codex fix 2026-08-17: a seed built for an EARLIER accepted generation
     # is never reused to dispatch after a promotion. When *generation* is
     # provided it must equal the seed's bound manifest_generation.
@@ -1014,7 +1034,9 @@ def _launch_seed_current(
     )
 
 
-def _exclusive_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+def _exclusive_write_json(
+    path: Path, payload: Mapping[str, Any], *, mode: int = 0o644
+) -> None:
     """Write *payload* to *path* with exclusive-create (``O_EXCL``) semantics.
 
     Codex fix 2026-08-17: an issued generation seed is IMMUTABLE. The file is
@@ -1028,7 +1050,7 @@ def _exclusive_write_json(path: Path, payload: Mapping[str, Any]) -> None:
     fd = os.open(
         str(path),
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        0o644,
+        mode,
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -1042,6 +1064,370 @@ def _exclusive_write_json(path: Path, payload: Mapping[str, Any]) -> None:
         except OSError:
             pass
         raise
+
+
+def standalone_runtime_launch_dir(expected_root: Path) -> Path:
+    """Return the root-custodied resident launch state directory.
+
+    The root is intentionally resolved strictly: a resident attestation is
+    never issued for a missing checkout or through a symlinked repository.
+    """
+    try:
+        root = expected_root.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "resident repository root is unavailable") from exc
+    state = root / STANDALONE_RUNTIME_LAUNCH_RELATIVE
+    try:
+        state.relative_to(root)
+    except ValueError as exc:  # defensive; the relative constant is fixed
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state escaped repository root") from exc
+    for directory in (root / ".megaplan", root / ".megaplan" / "resident", state):
+        if directory.exists() and directory.is_symlink():
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state contains a symlink")
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if directory == state:
+            try:
+                directory.chmod(0o700)
+            except OSError as exc:
+                raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state permissions are unsafe") from exc
+    return state
+
+
+def _standalone_path(root: Path, relative: str) -> Path:
+    """Resolve a path below the resident state, rejecting symlink escapes."""
+    state = standalone_runtime_launch_dir(root)
+    path = Path(relative)
+    candidate = path if path.is_absolute() else state / path
+    try:
+        candidate.relative_to(state)
+    except ValueError as exc:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch path escaped state directory") from exc
+    # Inspect the lexical candidate before resolving it: resolving first would
+    # silently turn a final symlink into its target and erase the custody fact.
+    current = state
+    for part in candidate.relative_to(state).parts:
+        current = current / part
+        if current.is_symlink():
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch path contains a symlink")
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(state.resolve(strict=True))
+    except ValueError as exc:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch path escaped state directory") from exc
+    return resolved
+
+
+def _git_toplevel(root: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _validate_full_revision(value: str, *, label: str = "revision") -> str:
+    revision = str(value or "")
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", revision):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, f"{label} must be a full hexadecimal Git OID")
+    return revision
+
+
+def _standalone_admission(root_value: Path, expected_revision: str) -> tuple[Path, str, str]:
+    try:
+        root = root_value.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "resident repository root is unavailable") from exc
+    top = _git_toplevel(root)
+    try:
+        top_path = Path(top).resolve(strict=True)
+    except OSError as exc:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "resident repository is not a Git checkout") from exc
+    if top_path != root:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "Git top-level does not equal resident repository root")
+    expected = _validate_full_revision(expected_revision, label="expected HEAD")
+    live = _git_revision(root)
+    if live != expected:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "resident repository HEAD does not match expected HEAD")
+    return root, expected, live
+
+
+def build_standalone_runtime_launch_seed(
+    *,
+    expected_root: Path,
+    expected_revision: str,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build a domain-separated resident seed from local runtime evidence."""
+    root, expected, live = _standalone_admission(expected_root, expected_revision)
+    provenance = runtime_provenance(expected_root=root, expected_revision=expected)
+    modules, module_errors = _module_vector(root)
+    pth, pth_errors = _pth_vector(root)
+    wrappers, wrapper_errors = _wrapper_vector(root)
+    errors = [*(provenance.get("errors") or []), *module_errors, *pth_errors, *wrapper_errors]
+    if not provenance.get("ok"):
+        errors.append("runtime_provenance_not_ready")
+    core = {
+        "schema": RUNTIME_LAUNCH_SEED_SCHEMA,
+        "authority": RUNTIME_LAUNCH_STANDALONE_AUTHORITY,
+        "expected_root": str(root),
+        "expected_revision": expected,
+        "live_revision": live,
+        "generated_at": generated_at or now_utc(),
+        "runtime_provenance": provenance,
+        "loaded_modules": modules,
+        "interpreter": _interpreter_vector(
+            direct_url=(provenance.get("direct_url") if isinstance(provenance.get("direct_url"), Mapping) else {})
+        ),
+        "site_pth": pth,
+        "wrappers": wrappers,
+        "errors": sorted(set(errors)),
+        "ready": not errors,
+    }
+    return {**core, "content_sha256": _canonical_sha256(core)}
+
+
+def validate_standalone_runtime_launch_seed(
+    seed: Mapping[str, Any], *, component: str = "resident"
+) -> dict[str, Any]:
+    """Validate only resident evidence; this path never reads cloud artifacts."""
+    _verify_seed_digest(seed)
+    if seed.get("authority") != RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime launch seed authority is not standalone-resident")
+    if component != "resident":
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone runtime launch seed is resident-only")
+    for field in ("manifest_sha256", "marker", "supervisor_receipt", "supervisor_runtime", "hot_env", "chain_runtime_binding"):
+        if seed.get(field):
+            raise CliError(RUNTIME_ATTESTATION_ERROR, f"standalone seed contains cloud field: {field}")
+    required_types = {
+        "expected_root": str,
+        "expected_revision": str,
+        "live_revision": str,
+        "generated_at": str,
+        "runtime_provenance": Mapping,
+        "loaded_modules": list,
+        "interpreter": Mapping,
+        "site_pth": list,
+        "wrappers": list,
+        "errors": list,
+    }
+    for field, expected_type in required_types.items():
+        if not isinstance(seed.get(field), expected_type):
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                f"standalone runtime launch seed has invalid {field}",
+            )
+    if type(seed.get("ready")) is not bool:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "standalone runtime launch seed has invalid ready state",
+        )
+    try:
+        root, expected, live = _standalone_admission(Path(str(seed.get("expected_root") or "")), str(seed.get("expected_revision") or ""))
+    except CliError:
+        raise
+    if str(seed.get("expected_root") or "") != str(root) or str(seed.get("expected_revision") or "") != expected:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone runtime attestation root or revision changed")
+    if str(seed.get("live_revision") or "") != live:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone runtime live revision changed")
+    generated_at = str(seed.get("generated_at") or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", generated_at):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone runtime attestation timestamp is invalid")
+    try:
+        parsed_generated_at = datetime.fromisoformat(
+            generated_at.removesuffix("Z") + "+00:00"
+        )
+    except ValueError as exc:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "standalone runtime attestation timestamp is invalid",
+        ) from exc
+    if parsed_generated_at.utcoffset() is None or parsed_generated_at.utcoffset().total_seconds() != 0:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone runtime attestation timestamp is invalid")
+    provenance = runtime_provenance(expected_root=root, expected_revision=expected)
+    if not provenance.get("ok") or provenance != seed.get("runtime_provenance"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone runtime provenance changed")
+    modules, module_errors = _module_vector(root)
+    pth, pth_errors = _pth_vector(root)
+    wrappers, wrapper_errors = _wrapper_vector(root)
+    interpreter = _interpreter_vector(
+        direct_url=(provenance.get("direct_url") if isinstance(provenance.get("direct_url"), Mapping) else {})
+    )
+    if module_errors or modules != seed.get("loaded_modules"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone loaded module vector changed")
+    if pth_errors or pth != seed.get("site_pth"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone site .pth vector changed")
+    if wrapper_errors or wrappers != seed.get("wrappers"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone wrapper vector changed")
+    if interpreter != seed.get("interpreter"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone interpreter identity changed")
+    if not bool(seed.get("ready")) or seed.get("errors"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone runtime launch seed was not release-ready")
+    return {
+        "status": "ready",
+        "seed_sha256": seed["content_sha256"],
+        "authority": RUNTIME_LAUNCH_STANDALONE_AUTHORITY,
+        "expected_root": str(root),
+        "expected_revision": expected,
+        "runtime_vector_sha256": runtime_vector_sha256(seed),
+    }
+
+
+def standalone_dispatch_paths(root: Path, *, head: str, seed_sha256: str) -> dict[str, Path]:
+    state = standalone_runtime_launch_dir(root)
+    expected = _validate_full_revision(head, label="expected HEAD")
+    seeds = state / "seeds"
+    receipts = state / "receipts"
+    status = state / "status"
+    for directory in (seeds, receipts, status):
+        if directory.is_symlink():
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "resident launch state contains a symlink")
+        directory.mkdir(mode=0o700, exist_ok=True)
+        directory.chmod(0o700)
+    return {
+        "seed": _standalone_path(root, f"seeds/standalone-{expected}-{seed_sha256}.json"),
+        "pointer": _standalone_path(root, "seeds/dispatch-current.json"),
+        "receipts": _standalone_path(root, "receipts"),
+        "status": _standalone_path(root, "status/resident.runtime-process-attestation.json"),
+    }
+
+
+def build_standalone_runtime_attestation_receipt(
+    *, seed: Mapping[str, Any], seed_path: Path, pointer_path: Path, generated_at: str | None = None
+) -> dict[str, Any]:
+    _verify_seed_digest(seed)
+    if seed.get("authority") != RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "receipt requires standalone-resident seed")
+    core = {
+        "schema": STANDALONE_ATTESTATION_RECEIPT_SCHEMA,
+        "authority": RUNTIME_LAUNCH_STANDALONE_AUTHORITY,
+        "root": str(Path(str(seed["expected_root"])).resolve(strict=True)),
+        "expected_head": str(seed["expected_revision"]),
+        "live_head": str(seed.get("live_revision") or ""),
+        "generated_at": generated_at or str(seed.get("generated_at") or now_utc()),
+        "seed_path": str(seed_path.resolve(strict=False)),
+        "seed_sha256": str(seed["content_sha256"]),
+        "pointer_path": str(pointer_path.resolve(strict=False)),
+    }
+    return {**core, "content_sha256": _canonical_sha256(core)}
+
+
+def load_standalone_runtime_dispatch_pointer(root: Path) -> dict[str, Any]:
+    pointer_path = standalone_runtime_launch_dir(root) / "seeds" / "dispatch-current.json"
+    if pointer_path.is_symlink() or pointer_path.parent.is_symlink():
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is a symlink")
+    try:
+        if stat.S_IMODE(pointer_path.stat().st_mode) != 0o600:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer permissions are unsafe")
+    except OSError:
+        pass
+    pointer = _json_file(pointer_path, label="standalone runtime dispatch pointer")
+    if pointer.get("schema") != STANDALONE_DISPATCH_POINTER_SCHEMA or pointer.get("authority") != RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer authority is invalid")
+    resolved_root = Path(str(root)).expanduser().resolve(strict=True)
+    if str(pointer.get("root") or "") != str(resolved_root):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer root mismatch")
+    seed_path = Path(str(pointer.get("seed_path") or ""))
+    receipt_path = Path(str(pointer.get("receipt_path") or ""))
+    for path in (seed_path, receipt_path):
+        if not path.is_absolute() or not path.exists() or path.is_symlink():
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer path is unsafe")
+        try:
+            if stat.S_IMODE(path.stat().st_mode) != 0o600:
+                raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch object permissions are unsafe")
+        except OSError as exc:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch object is unreadable") from exc
+        state = standalone_runtime_launch_dir(resolved_root)
+        try:
+            lexical = path.relative_to(state)
+        except ValueError as exc:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer escaped state directory") from exc
+        current = state
+        for part in lexical.parts:
+            current = current / part
+            if current.is_symlink():
+                raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch path contains a symlink")
+        try:
+            path.resolve(strict=True).relative_to(state.resolve(strict=True))
+        except ValueError as exc:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer escaped state directory") from exc
+    seed = _json_file(seed_path, label="standalone runtime launch seed")
+    receipt = _json_file(receipt_path, label="standalone runtime attestation receipt")
+    _verify_seed_digest(seed)
+    if seed.get("content_sha256") != pointer.get("seed_sha256"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch seed digest mismatch")
+    if seed.get("expected_revision") != pointer.get("expected_revision"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch seed revision mismatch")
+    if receipt.get("content_sha256") != pointer.get("receipt_sha256"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch receipt digest mismatch")
+    receipt_core = {key: value for key, value in receipt.items() if key != "content_sha256"}
+    if receipt.get("schema") != STANDALONE_ATTESTATION_RECEIPT_SCHEMA or receipt.get("authority") != RUNTIME_LAUNCH_STANDALONE_AUTHORITY or receipt.get("content_sha256") != _canonical_sha256(receipt_core):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone attestation receipt is invalid")
+    if receipt.get("seed_path") != str(seed_path.resolve(strict=False)) or receipt.get("seed_sha256") != seed.get("content_sha256"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone attestation receipt seed binding is invalid")
+    if receipt.get("pointer_path") != str(pointer_path.resolve(strict=False)):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone attestation receipt pointer binding is invalid")
+    if (
+        receipt.get("root") != pointer.get("root")
+        or receipt.get("expected_head") != pointer.get("expected_revision")
+        or receipt.get("live_head") != seed.get("live_revision")
+        or receipt.get("generated_at") != seed.get("generated_at")
+        or pointer.get("generated_at") != seed.get("generated_at")
+    ):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone attestation receipt root/revision binding is invalid")
+    validate_standalone_runtime_launch_seed(seed)
+    return pointer
+
+
+def write_standalone_runtime_publication(
+    *, seed: Mapping[str, Any], seed_path: Path, root: Path, generated_at: str | None = None
+) -> dict[str, Any]:
+    """Publish a resident seed, issuance receipt, and dispatch pointer."""
+    validate_standalone_runtime_launch_seed(seed)
+    root, expected, live = _standalone_admission(root, str(seed.get("expected_revision") or ""))
+    if str(seed.get("expected_root") or "") != str(root) or live != str(seed.get("live_revision") or ""):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone seed changed during publication")
+    paths = standalone_dispatch_paths(root, head=expected, seed_sha256=str(seed["content_sha256"]))
+    if paths["seed"].resolve(strict=False) != seed_path.resolve(strict=False):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone seed path is not root-custodied")
+    try:
+        _exclusive_write_json(paths["seed"], seed, mode=0o600)
+    except FileExistsError:
+        existing = _json_file(paths["seed"], label="standalone runtime launch seed")
+        if existing != dict(seed):
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "immutable standalone seed collision")
+    receipt = build_standalone_runtime_attestation_receipt(
+        seed=seed, seed_path=paths["seed"], pointer_path=paths["pointer"], generated_at=generated_at
+    )
+    receipt_path = _standalone_path(
+        root, f"receipts/{receipt['content_sha256']}.json"
+    )
+    try:
+        _exclusive_write_json(receipt_path, receipt, mode=0o600)
+    except FileExistsError:
+        existing_receipt = _json_file(receipt_path, label="standalone runtime attestation receipt")
+        if existing_receipt != receipt:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "immutable standalone receipt collision")
+    pointer = {
+        "schema": STANDALONE_DISPATCH_POINTER_SCHEMA,
+        "authority": RUNTIME_LAUNCH_STANDALONE_AUTHORITY,
+        "seed_path": str(paths["seed"].resolve(strict=False)),
+        "receipt_path": str(receipt_path.resolve(strict=False)),
+        "root": str(root),
+        "expected_revision": expected,
+        "generated_at": str(seed.get("generated_at") or generated_at or now_utc()),
+        "seed_sha256": str(seed["content_sha256"]),
+        "receipt_sha256": str(receipt["content_sha256"]),
+    }
+    if paths["pointer"].is_symlink():
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is a symlink")
+    _atomic_write(paths["pointer"], pointer)
+    # Re-read and validate every published object before handing it to a caller.
+    published = load_standalone_runtime_dispatch_pointer(root)
+    if published != pointer:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "published standalone dispatch pointer changed")
+    return {"seed_path": paths["seed"], "receipt_path": receipt_path, "pointer_path": paths["pointer"], "receipt": receipt, "pointer": pointer}
 
 
 def _write_dispatch_pointer(
@@ -1440,6 +1826,8 @@ def refresh_runtime_launch_seed_for_worker_dispatch() -> Path | None:
     if not manifest_value or current_path is None:
         return current_path
     current = _json_file(current_path, label="runtime launch seed")
+    if current.get("authority") != RUNTIME_LAUNCH_CLOUD_AUTHORITY:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "worker dispatch requires a cloud-chain runtime seed")
     input_paths = current.get("input_paths")
     input_paths = input_paths if isinstance(input_paths, Mapping) else {}
     chain_spec_value = str(input_paths.get("chain_spec") or "").strip()
@@ -1474,9 +1862,12 @@ def refresh_runtime_launch_seed_for_worker_dispatch() -> Path | None:
 
 def _verify_seed_digest(seed: Mapping[str, Any]) -> None:
     core = {key: value for key, value in seed.items() if key != "content_sha256"}
-    if seed.get("schema") != RUNTIME_LAUNCH_SEED_SCHEMA or seed.get(
-        "content_sha256"
-    ) != _canonical_sha256(core):
+    if (
+        seed.get("schema") != RUNTIME_LAUNCH_SEED_SCHEMA
+        or seed.get("authority") not in RUNTIME_LAUNCH_AUTHORITIES
+        or not isinstance(seed.get("content_sha256"), str)
+        or seed.get("content_sha256") != _canonical_sha256(core)
+    ):
         raise CliError(
             RUNTIME_ATTESTATION_ERROR, "runtime launch seed digest is invalid"
         )
@@ -1523,6 +1914,11 @@ def validate_runtime_launch_seed(
     """
 
     _verify_seed_digest(seed)
+    authority = seed.get("authority")
+    if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        return validate_standalone_runtime_launch_seed(seed, component=component)
+    if authority != RUNTIME_LAUNCH_CLOUD_AUTHORITY:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime launch seed authority is invalid")
     if not bool(seed.get("ready")) or seed.get("errors"):
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
@@ -1825,6 +2221,7 @@ def create_runtime_process_attestation(
         )
     core = {
         "schema": RUNTIME_PROCESS_ATTESTATION_SCHEMA,
+        "authority": seed.get("authority"),
         "component": component,
         "seed_sha256": validation["seed_sha256"],
         "runtime_vector_sha256": validation["runtime_vector_sha256"],
@@ -1851,10 +2248,19 @@ def validate_runtime_process_attestation(
     manifest, the current remote head, or a newly published generation.
     """
     _verify_seed_digest(seed)
+    if (
+        seed.get("authority") == RUNTIME_LAUNCH_STANDALONE_AUTHORITY
+        and component != "resident"
+    ):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "standalone runtime process attestation is resident-only",
+        )
     core = {
         key: attestation.get(key)
         for key in (
             "schema",
+            "authority",
             "component",
             "seed_sha256",
             "runtime_vector_sha256",
@@ -1863,6 +2269,7 @@ def validate_runtime_process_attestation(
     }
     if (
         attestation.get("schema") != RUNTIME_PROCESS_ATTESTATION_SCHEMA
+        or attestation.get("authority") != seed.get("authority")
         or attestation.get("content_sha256") != _canonical_sha256(core)
         or attestation.get("component") != component
         or attestation.get("seed_sha256") != seed.get("content_sha256")
@@ -1941,8 +2348,14 @@ def configured_seed_path() -> Path | None:
     return Path(value).expanduser().resolve(strict=False) if value else None
 
 
-def configured_process_attestation_path(component: str) -> Path:
+def configured_process_attestation_path(
+    component: str, *, seed: Mapping[str, Any] | None = None
+) -> Path:
     value = str(os.environ.get("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION") or "").strip()
+    if seed is not None and seed.get("authority") == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        return standalone_runtime_launch_dir(Path(str(seed.get("expected_root") or ""))) / "status" / (
+            f"{component}.runtime-process-attestation.json"
+        )
     if value:
         return Path(value).expanduser().resolve(strict=False)
     return (
@@ -1957,6 +2370,8 @@ def require_configured_runtime_launch(
     target_pid: int | None = None,
     create: bool = False,
 ) -> dict[str, Any]:
+    raw_seed_value = str(os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED") or "").strip()
+    raw_seed_path = Path(raw_seed_value).expanduser() if raw_seed_value else None
     seed_path = configured_seed_path()
     if seed_path is None:
         raise CliError(
@@ -1964,8 +2379,27 @@ def require_configured_runtime_launch(
             "canonical runtime launch seed is required but missing",
         )
     seed = _json_file(seed_path, label="runtime launch seed")
+    authority = seed.get("authority")
+    if authority not in RUNTIME_LAUNCH_AUTHORITIES:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime launch seed authority is invalid")
+    if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        if raw_seed_path is None or not raw_seed_path.is_absolute() or raw_seed_path.is_symlink():
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed path is a symlink or missing")
+        pointer = load_standalone_runtime_dispatch_pointer(Path(str(seed.get("expected_root") or "")))
+        if Path(str(pointer.get("seed_path") or "")) != raw_seed_path:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed is not the published dispatch seed")
+        if pointer.get("seed_sha256") != seed.get("content_sha256"):
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed digest does not match dispatch pointer")
     pid = target_pid or os.getpid()
-    attestation_path = configured_process_attestation_path(component)
+    attestation_path = configured_process_attestation_path(component, seed=seed)
+    if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        state = standalone_runtime_launch_dir(Path(str(seed.get("expected_root") or "")))
+        if attestation_path.is_symlink():
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "resident process attestation path is a symlink")
+        try:
+            attestation_path.resolve(strict=False).relative_to(state.resolve(strict=True))
+        except ValueError as exc:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "resident process attestation path escaped state directory") from exc
     if create:
         attestation = create_runtime_process_attestation(
             seed,
@@ -1974,6 +2408,18 @@ def require_configured_runtime_launch(
         )
         _atomic_write(attestation_path, attestation)
     else:
+        if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+            try:
+                if stat.S_IMODE(attestation_path.stat().st_mode) != 0o600:
+                    raise CliError(
+                        RUNTIME_ATTESTATION_ERROR,
+                        "resident process attestation permissions are unsafe",
+                    )
+            except OSError as exc:
+                raise CliError(
+                    RUNTIME_ATTESTATION_ERROR,
+                    "runtime process attestation is unreadable",
+                ) from exc
         attestation = _json_file(
             attestation_path,
             label="runtime process attestation",
