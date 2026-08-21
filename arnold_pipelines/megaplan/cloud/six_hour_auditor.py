@@ -14,6 +14,8 @@ and escalates them.
 """
 
 from __future__ import annotations
+from collections.abc import Sequence
+
 
 import logging
 import time
@@ -74,6 +76,24 @@ SIX_HOURS_SECONDS = 6 * 3600
 THREE_HOURS_SECONDS = 3 * 3600
 AUDITOR_RECONCILIATION_INTERVAL = "next_three_hour"
 LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY = True
+
+# The six-hour product keeps its legacy label while the canonical operational
+# cadence is next-three-hour.  The legacy value is a read-only alias.
+AUDITOR_CANONICAL_CADENCE = "next_three_hour"
+AUDITOR_LEGACY_CADENCE = "six_hour"
+AUDITOR_LEGACY_REPORT_TYPE = "six_hour_operational"
+AUDITOR_FORBIDDEN_MINT_SURFACES: frozenset[str] = frozenset(
+    {
+        "cadence",
+        "occurrence",
+        "custody",
+        "queue",
+        "dispatch",
+        "verification",
+        "efficiency_analysis",
+    }
+)
+
 
 # ── auditor completion evidence constants ─────────────────────────────
 
@@ -2705,11 +2725,13 @@ __all__ = [
     "SixHourAuditReport",
     "SixHourAuditor",
     "SIX_HOURS_SECONDS",
-    # Step 47 (T33): next-three-hour reconciliation is the positive-proof
-    # cadence; ``six_hour`` names remain only as legacy compatibility aliases.
     "THREE_HOURS_SECONDS",
     "AUDITOR_RECONCILIATION_INTERVAL",
     "LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY",
+    "AUDITOR_CANONICAL_CADENCE",
+    "AUDITOR_LEGACY_CADENCE",
+    "AUDITOR_LEGACY_REPORT_TYPE",
+    "AUDITOR_FORBIDDEN_MINT_SURFACES",
     # M2 (T16): strict operational AuditReport shadow adaptation
     "adapt_six_hour_audit_report",
     "build_six_hour_audit_report_event",
@@ -3137,19 +3159,20 @@ def build_six_hour_audit_report_event(
     plan: Optional[str] = None,
     stage: Optional[str] = None,
     classifier_version: str = "six-hour-auditor/1",
+    occurrence_id: Optional[str] = None,
+    window: Optional[Any] = None,
+    watermark: Optional[Any] = None,
+    evidence_refs: Optional[Sequence[Any]] = None,
+    policy_version: Optional[str] = None,
+    cadence: str = AUDITOR_CANONICAL_CADENCE,
 ) -> Any:
-    """Map a :class:`SixHourAuditReport` to a strict Maintenance ``AuditReport``.
+    """Build one strict, report-only Maintenance ``AuditReport`` event.
 
-    The strict event carries the operational product identity
-    (``report_type="six_hour_operational"``), a typed verdict derived from
-    the report's severities, one strict finding per legacy finding
-    (finding_id / severity / message / immutable evidence refs), and the
-    occurrence-scoped identity (``occurrence_id == report.audit_id``, the
-    idempotency scope).  Only immutable references are embedded — owner
-    payloads are never copied.
-
-    This builder performs no I/O, no dispatch, and no mutation; it can
-    never produce an ``EfficiencyAnalysis`` payload.
+    The legacy call shape remains readable, but a caller that supplies any
+    canonical audit context must supply the complete occurrence/window/
+    watermark/policy binding.  The builder never invents those values.
+    ``six_hour`` is accepted only as a compatibility alias for the canonical
+    ``next_three_hour`` cadence.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -3163,53 +3186,192 @@ def build_six_hour_audit_report_event(
     )
     from arnold_pipelines.megaplan.maintenance.identity import (
         EventWindow,
+        Extensions,
         UtcTime,
         Watermark,
-        utc_now,
     )
 
-    def _parse(iso: str) -> datetime:
-        try:
-            value = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            value = utc_now()
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+    def _parse(value: Any, *, field_name: str) -> datetime:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(f"{field_name} must be an ISO-8601 timestamp") from exc
+        else:
+            raise ValueError(f"{field_name} must be an aware datetime or ISO timestamp")
+        if parsed.tzinfo is None:
+            raise ValueError(f"{field_name} must carry an explicit UTC offset")
+        return parsed.astimezone(timezone.utc)
 
-    started = _parse(report.started_at)
-    completed = _parse(report.completed_at)
+    def _coerce_window(value: Any) -> EventWindow:
+        if isinstance(value, EventWindow):
+            return value
+        if isinstance(value, Mapping):
+            try:
+                start = value["start"]
+                end = value["end"]
+            except KeyError as exc:
+                raise ValueError("canonical window requires start and end") from exc
+            return EventWindow(
+                start=UtcTime(_parse(start, field_name="window.start")),
+                end=UtcTime(_parse(end, field_name="window.end")),
+            )
+        raise ValueError("canonical window must be an EventWindow or start/end mapping")
+
+    def _coerce_watermark(value: Any) -> Watermark:
+        if isinstance(value, Watermark):
+            return value
+        if isinstance(value, Mapping):
+            if "root" not in value:
+                raise ValueError("canonical watermark requires root")
+            value = value["root"]
+        return Watermark(_parse(value, field_name="watermark"))
+
+    normalized_cadence = _normalize_auditor_cadence(cadence)
+    canonical_context = any(
+        value is not None
+        for value in (occurrence_id, window, watermark, evidence_refs, policy_version)
+    )
+    if canonical_context:
+        missing = [
+            name
+            for name, value in (
+                ("occurrence_id", occurrence_id),
+                ("window", window),
+                ("watermark", watermark),
+                ("policy_version", policy_version),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "canonical six-hour audit context is partial; missing: "
+                + ", ".join(missing)
+            )
+        canonical_window = _coerce_window(window)
+        canonical_watermark = _coerce_watermark(watermark)
+    else:
+        canonical_window = None
+        canonical_watermark = None
+
+    started = _parse(report.started_at, field_name="report.started_at")
+    completed = _parse(report.completed_at, field_name="report.completed_at")
     if completed <= started:
         completed = started + timedelta(seconds=1)
-    if report.ok:
-        verdict = "ok"
-    elif report.requires_attention:
-        verdict = "attention"
-    else:
-        verdict = "anomaly"
+
+    # Stable finding order makes equivalent reports byte-identical even when
+    # source readers deliver findings out of order.  Repeated identities and
+    # malformed/censored counters are uncertainty, never green evidence.
+    ordered_findings = tuple(
+        sorted(
+            report.findings,
+            key=lambda item: (
+                item.finding_id,
+                item.severity.value,
+                item.category,
+                item.detail,
+                item.occurred_at,
+            ),
+        )
+    )
+    finding_ids = [finding.finding_id for finding in ordered_findings]
+    duplicate_finding_ids = len(finding_ids) != len(set(finding_ids))
+    invalid_report_data = (
+        not isinstance(report.duration_seconds, (int, float))
+        or not math.isfinite(float(report.duration_seconds))
+        or report.duration_seconds < 0
+        or not isinstance(report.events_checked, int)
+        or not isinstance(report.requests_checked, int)
+        or not isinstance(report.slo_violations, int)
+        or report.events_checked < 0
+        or report.requests_checked < 0
+        or report.slo_violations < 0
+    )
     strict_findings = tuple(
         StrictAuditFinding(
             finding_id=finding.finding_id,
             severity=finding.severity.value,
             message=finding.detail,
         )
-        for finding in report.findings
+        for finding in ordered_findings
     )
-    return MaintenanceEvent.build(
-        event_id=f"six-hour-audit:{report.audit_id}",
-        occurrence_id=report.audit_id,
-        observed_at=observed_at or started,
-        event_time=started,
-        window=EventWindow(
+
+    if canonical_context and (
+        not evidence_refs or duplicate_finding_ids or invalid_report_data
+    ):
+        verdict = "unknown"
+    elif report.ok:
+        verdict = "ok"
+    elif report.requires_attention:
+        verdict = "attention"
+    else:
+        verdict = "anomaly"
+
+    if canonical_context:
+        final_occurrence_id = str(occurrence_id)
+        final_window = canonical_window
+        final_watermark = canonical_watermark
+        final_event_time = (
+            _parse(observed_at, field_name="observed_at")
+            if observed_at is not None
+            else final_window.end.root
+        )
+        resolution_proof = tuple(
+            sorted(
+                tuple(evidence_refs or ()),
+                key=lambda ref: (
+                    getattr(ref, "owner", "") or "",
+                    getattr(ref, "locator", "") or "",
+                    getattr(ref, "digest", "") or "",
+                    getattr(ref, "cursor", "") or "",
+                ),
+            )
+        )
+        extensions = Extensions(
+            root={
+                "cadence": normalized_cadence,
+                "report_type": AUDITOR_LEGACY_REPORT_TYPE,
+                "policy_version": str(policy_version),
+                "classifier_version": classifier_version,
+                "input_ids": [finding.finding_id for finding in strict_findings],
+                "evidence_refs": [
+                    ref.model_dump(mode="json", exclude_none=False)
+                    for ref in resolution_proof
+                ],
+            }
+        )
+        event_time = final_event_time
+        event_observed_at = (
+            _parse(observed_at, field_name="observed_at")
+            if observed_at is not None
+            else final_window.end.root
+        )
+    else:
+        final_occurrence_id = report.audit_id
+        final_window = EventWindow(
             start=UtcTime(started),
             end=UtcTime(completed),
-        ),
-        watermark=Watermark(started - timedelta(seconds=1)),
+        )
+        final_watermark = Watermark(started - timedelta(seconds=1))
+        event_time = started
+        event_observed_at = started
+        resolution_proof = ()
+        extensions = None
+
+    return MaintenanceEvent.build(
+        event_id=f"six-hour-audit:{final_occurrence_id}",
+        occurrence_id=final_occurrence_id,
+        observed_at=event_observed_at,
+        event_time=event_time,
+        window=final_window,
+        watermark=final_watermark,
         classifier=ClassifierInfo(classifier_version=classifier_version),
-        cluster=RootCauseCluster(signature="six_hour_operational"),
+        cluster=RootCauseCluster(signature=AUDITOR_LEGACY_REPORT_TYPE),
         budget=OccurrenceBudget(max_attempts=1),
         payload=AuditReport(
-            report_type="six_hour_operational",
+            report_type=AUDITOR_LEGACY_REPORT_TYPE,
             verdict=verdict,
             summary=(
                 f"{len(report.findings)} findings, {report.escalated_count} "
@@ -3223,7 +3385,21 @@ def build_six_hour_audit_report_event(
         chain=chain,
         plan=plan,
         stage=stage,
+        resolution_proof=resolution_proof,
+        extensions=extensions,
     )
+
+
+def _normalize_auditor_cadence(cadence: str) -> str:
+    """Normalize the legacy cadence alias without minting a new cadence."""
+    if cadence == AUDITOR_LEGACY_CADENCE:
+        return AUDITOR_CANONICAL_CADENCE
+    if cadence != AUDITOR_CANONICAL_CADENCE:
+        raise ValueError(
+            f"unknown auditor cadence {cadence!r}; expected "
+            f"{AUDITOR_CANONICAL_CADENCE!r}"
+        )
+    return AUDITOR_CANONICAL_CADENCE
 
 
 def adapt_six_hour_audit_report(
@@ -3238,10 +3414,19 @@ def adapt_six_hour_audit_report(
     chain: Optional[str] = None,
     plan: Optional[str] = None,
     stage: Optional[str] = None,
+    occurrence_id: Optional[str] = None,
+    window: Optional[Any] = None,
+    watermark: Optional[Any] = None,
+    evidence_refs: Optional[Sequence[Any]] = None,
+    policy_version: Optional[str] = None,
+    classifier_version: str = "six-hour-auditor/1",
+    cadence: str = AUDITOR_CANONICAL_CADENCE,
 ) -> dict[str, Any]:
-    """Adapt *report* to a strict operational ``AuditReport`` and shadow-append it.
+    """Adapt a six-hour report into one strict, report-only AuditReport event.
 
-    Returns a read-only dict:
+    Canonical occurrence, window, watermark, evidence, policy, and cadence
+    context is passed through unchanged; partial context fails closed in the
+    builder.  The optional ledger is the existing shadow append seam only.
 
     * ``event`` — the strict ``MaintenanceEvent`` as a canonical dict
       (payload kind is always ``audit_report``; never ``efficiency_analysis``);
@@ -3277,6 +3462,13 @@ def adapt_six_hour_audit_report(
             chain=chain,
             plan=plan,
             stage=stage,
+            occurrence_id=occurrence_id,
+            window=window,
+            watermark=watermark,
+            evidence_refs=evidence_refs,
+            policy_version=policy_version,
+            classifier_version=classifier_version,
+            cadence=cadence,
         )
     )
     result: dict[str, Any] = {

@@ -1972,3 +1972,261 @@ def test_auditor_enqueue_report_only_finding_needs_no_writer(tmp_path: Path) -> 
     result = enqueue_audit_repair_request(item, queue_root=queue_root)
     assert result is None
     assert not queue_root.exists()
+
+
+def _strict_t33_report(*, findings: tuple[object, ...] = ()) -> object:
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        AuditFinding,
+        AuditSeverity,
+        SixHourAuditReport,
+    )
+
+    normalized = findings or (
+        AuditFinding(
+            finding_id="f1",
+            severity=AuditSeverity.OK,
+            category="source",
+            detail="source evidence is complete",
+            occurred_at="2026-08-18T10:00:00+00:00",
+        ),
+    )
+    return SixHourAuditReport(
+        audit_id="audit-t33",
+        started_at="2026-08-18T10:00:00+00:00",
+        completed_at="2026-08-18T10:00:05+00:00",
+        duration_seconds=5.0,
+        findings=tuple(normalized),
+        events_checked=10,
+        requests_checked=2,
+        slo_violations=0,
+        escalated_count=sum(1 for finding in normalized if finding.severity.value != "ok"),
+    )
+
+
+def _strict_t33_context() -> dict[str, object]:
+    from arnold_pipelines.megaplan.maintenance.identity import (
+        EventWindow,
+        OwnerRef,
+        UtcTime,
+        Watermark,
+    )
+
+    return {
+        "occurrence_id": "occ-t33-1",
+        "window": EventWindow(
+            start=UtcTime("2026-08-18T10:00:00+00:00"),
+            end=UtcTime("2026-08-18T13:00:00+00:00"),
+        ),
+        "watermark": Watermark("2026-08-18T10:00:00+00:00"),
+        "evidence_refs": (
+            OwnerRef(owner="wbc", locator="wbc/1", digest="a" * 64),
+            OwnerRef(owner="run_authority", locator="ra/1", digest="b" * 64),
+        ),
+        "policy_version": "policy-t33",
+        "classifier_version": "six-hour-auditor/2",
+    }
+
+
+def test_t33_strict_window_watermark_and_late_boundary_are_conservative() -> None:
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        build_six_hour_audit_report_event,
+    )
+
+    context = _strict_t33_context()
+    event = build_six_hour_audit_report_event(
+        _strict_t33_report(), **context, observed_at="2026-08-18T10:00:00+00:00"
+    )
+    from arnold_pipelines.megaplan.maintenance.identity import UtcTime
+
+    assert event.window.contains(UtcTime("2026-08-18T10:00:00+00:00"))
+    assert not event.window.contains(UtcTime("2026-08-18T13:00:00+00:00"))
+    assert event.lateness.value == "late"
+    assert event.payload.verdict == "ok"
+    skewed = build_six_hour_audit_report_event(
+        _strict_t33_report(),
+        **context,
+        observed_at="2026-08-18T12:00:00+02:00",
+    )
+    assert skewed.observed_at.root.isoformat() == event.observed_at.root.isoformat()
+    assert skewed.lateness == event.lateness
+
+
+    with pytest.raises(ValueError, match="start < end"):
+        build_six_hour_audit_report_event(
+            _strict_t33_report(),
+            **{
+                **context,
+                "window": {
+                    "start": "2026-08-18T13:00:00+00:00",
+                    "end": "2026-08-18T10:00:00+00:00",
+                },
+            },
+        )
+
+
+def test_t33_out_of_order_and_duplicate_reports_are_deterministic() -> None:
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        AuditFinding,
+        AuditSeverity,
+        build_six_hour_audit_report_event,
+    )
+    from arnold_pipelines.megaplan.maintenance.identity import canonical_digest
+
+    findings = (
+        AuditFinding(
+            finding_id="z",
+            severity=AuditSeverity.OK,
+            category="source",
+            detail="z",
+            occurred_at="2026-08-18T10:00:00+00:00",
+        ),
+        AuditFinding(
+            finding_id="a",
+            severity=AuditSeverity.OK,
+            category="source",
+            detail="a",
+            occurred_at="2026-08-18T10:00:00+00:00",
+        ),
+    )
+    first = build_six_hour_audit_report_event(
+        _strict_t33_report(findings=findings), **_strict_t33_context()
+    )
+    second = build_six_hour_audit_report_event(
+        _strict_t33_report(findings=tuple(reversed(findings))),
+        **_strict_t33_context(),
+    )
+    assert canonical_digest(first) == canonical_digest(second)
+    assert [finding.finding_id for finding in first.payload.findings] == ["a", "z"]
+    assert first.occurrence_id == second.occurrence_id
+    duplicate = build_six_hour_audit_report_event(
+        _strict_t33_report(findings=(findings[0], findings[0])),
+        **_strict_t33_context(),
+    )
+    assert duplicate.payload.verdict == "unknown"
+
+
+def test_t33_censored_and_missing_evidence_never_promote_green() -> None:
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        AuditFinding,
+        AuditSeverity,
+        build_six_hour_audit_report_event,
+    )
+
+    censored = _strict_t33_report(
+        findings=(
+            AuditFinding(
+                finding_id="censored",
+                severity=AuditSeverity.DEGRADED,
+                category="censored_source",
+                detail="source interval is censored",
+                occurred_at="2026-08-18T10:00:00+00:00",
+            ),
+        )
+    )
+    context = {
+        key: value
+        for key, value in _strict_t33_context().items()
+        if key != "evidence_refs"
+    }
+    event = build_six_hour_audit_report_event(censored, **context)
+    assert event.payload.verdict == "unknown"
+    assert event.resolution_proof == ()
+    assert event.extensions.root["evidence_refs"] == []
+
+
+@pytest.mark.parametrize("cadence", ["daily", "six_hourly", ""])
+def test_t33_invalid_cadence_fails_closed(cadence: str) -> None:
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        build_six_hour_audit_report_event,
+    )
+
+    with pytest.raises(ValueError, match="unknown auditor cadence"):
+        build_six_hour_audit_report_event(_strict_t33_report(), cadence=cadence)
+
+
+def test_t33_mutation_spy_proves_adapter_has_no_control_plane_authority() -> None:
+    import ast
+    import inspect
+
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        adapt_six_hour_audit_report,
+        build_six_hour_audit_report_event,
+    )
+
+    forbidden = {
+        "enqueue",
+        "claim",
+        "grant",
+        "lease",
+        "transition_writer",
+        "repair_queue",
+        "simple_fixer",
+        "terminal_verification",
+        "efficiency_analysis",
+        "write_plan_state",
+        "save_chain_state",
+        "custody_refs=",
+        "fence_refs=",
+    }
+    for function in (build_six_hour_audit_report_event, adapt_six_hour_audit_report):
+        identifiers = {
+            node.id
+            for node in ast.walk(ast.parse(inspect.getsource(function)))
+
+
+            if isinstance(node, ast.Name)
+        }
+        identifiers.update(
+            node.attr
+            for node in ast.walk(ast.parse(inspect.getsource(function)))
+            if isinstance(node, ast.Attribute)
+        )
+        assert not forbidden.intersection(identifiers)
+
+    adapted = adapt_six_hour_audit_report(
+        _strict_t33_report(), **_strict_t33_context()
+    )
+    assert adapted["event"]["payload"]["kind"] == "audit_report"
+    assert adapted["efficiency_analysis"] is False
+    assert adapted["custody_overwrite"] is False
+def test_t33_read_only_paths_do_not_reach_control_plane_mutation_spies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arnold_pipelines.megaplan.cloud.progress_auditor_controller as controller
+    import arnold_pipelines.megaplan.cloud.six_hour_auditor as auditor
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("read-only audit path reached a mutation seam")
+
+    for module, names in (
+        (
+            auditor,
+            (
+                "enqueue_audit_repair_request",
+                "append_incident_record",
+            ),
+        ),
+        (
+            controller,
+            (
+                "enqueue_audit_repair_request",
+                "_atomic_json",
+                "_append_l3_evidence",
+                "initialize_maintenance_dispatch_receipt",
+                "record_maintenance_started",
+            ),
+        ),
+    ):
+        for name in names:
+            monkeypatch.setattr(module, name, fail_if_called)
+
+    result = auditor.audit_projection_input(_projection_input())
+    assert isinstance(result["findings"], list)
+    controller_result = controller.run_escalation_controller(
+        {"findings": [], "green_checks": []},
+        state_root=Path("/unused-state-root"),
+        queue_root=Path("/unused-queue-root"),
+        authorized=False,
+        trigger_argv=None,
+    )
+    assert controller_result["l3_escalation_summary"]["dispatched"] == 0
