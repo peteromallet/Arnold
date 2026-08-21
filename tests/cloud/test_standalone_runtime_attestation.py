@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import stat
 import sys
 from pathlib import Path
@@ -532,7 +533,7 @@ def test_standalone_publication_rejects_unsafe_reused_directory_at_0755(
     assert paths["pointer"].read_bytes() == pointer_before
 
 
-@pytest.mark.parametrize("directory_name", ["seeds", "receipts"])
+@pytest.mark.parametrize("directory_name", ["seeds", "receipts", "status"])
 def test_standalone_load_rejects_unsafe_reused_directory_at_0755(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -547,6 +548,22 @@ def test_standalone_load_rejects_unsafe_reused_directory_at_0755(
         attestation.load_standalone_runtime_dispatch_pointer(root)
     assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
     assert paths["pointer"].read_bytes() == pointer_before
+
+
+def test_standalone_load_rejects_missing_status_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    pointer_before = paths["pointer"].read_bytes()
+    shutil.rmtree(state / "status")
+    with pytest.raises(CliError):
+        attestation.load_standalone_runtime_dispatch_pointer(root)
+    assert not (state / "status").exists()  # never repaired
+    assert paths["pointer"].read_bytes() == pointer_before
+    assert stat.S_IMODE((state / "seeds").stat().st_mode) == 0o700
+    assert stat.S_IMODE((state / "receipts").stat().st_mode) == 0o700
 
 
 def test_resident_process_create_rejects_unsafe_status_directory_at_0755(

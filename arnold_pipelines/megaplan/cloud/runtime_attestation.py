@@ -1343,7 +1343,8 @@ def build_standalone_runtime_attestation_receipt(
 
 def load_standalone_runtime_dispatch_pointer(root: Path) -> dict[str, Any]:
     state = standalone_runtime_launch_dir(root)
-    _require_standalone_operational_dir(state, "seeds", create=False)
+    for name in ("seeds", "receipts", "status"):
+        _require_standalone_operational_dir(state, name, create=False)
     pointer_path = state / "seeds" / "dispatch-current.json"
     if pointer_path.is_symlink() or pointer_path.parent.is_symlink():
         raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is a symlink")
