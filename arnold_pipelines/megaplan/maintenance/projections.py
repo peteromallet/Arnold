@@ -90,6 +90,7 @@ from arnold_pipelines.megaplan.maintenance.events import (
     VerifierProvenance,
 )
 from arnold_pipelines.megaplan.maintenance.identity import (
+    EventWindow,
     Lateness,
     MaintenanceCodecError,
     OwnerRef,
@@ -122,9 +123,33 @@ class ProjectionFreshness(str, Enum):
 
 
 class CorrectionKind(str, Enum):
-    """Closed correction vocabulary (append-only; never rewrites a result)."""
+    """Closed correction vocabulary (append-only; never rewrites a result).
+
+    ``LATE_EVIDENCE`` is the automatic M4 correction appended for a late
+    legacy event.  ``KEYED`` is the explicit M5 daily correction (Plan Step 6
+    / T6): a ``DAILY_EFFICIENCY_CORRECTION`` event bypasses the automatic
+    record and appends exactly one keyed correction validated against its
+    declared supersedes target (kind + exact half-open window + sha256
+    digest) — never the immediately preceding stream digest.
+    """
 
     LATE_EVIDENCE = "late_evidence"
+    KEYED = "keyed"
+
+
+#: The four additive M5 daily kinds (Plan Step 5 / T5A).  Daily events
+#: advance ONLY the efficiency projection: they are strict no-ops for the
+#: operational custody and verification projections — a proposal or favorable
+#: analytical report never closes custody, turns verification green, or
+#: becomes dispatchable (Plan Step 6 / T6).
+DAILY_EVENT_KINDS: frozenset[EventKind] = frozenset(
+    {
+        EventKind.DAILY_EFFICIENCY_REPORT,
+        EventKind.DAILY_EFFICIENCY_CLUSTER,
+        EventKind.DAILY_EFFICIENCY_PROPOSAL,
+        EventKind.DAILY_EFFICIENCY_CORRECTION,
+    }
+)
 
 
 class VerificationCoherence(str, Enum):
@@ -257,8 +282,25 @@ class CorrectionRecord(BaseModel):
 
 #: Metadata fields excluded from ``output_digest`` (the digest is over the
 #: projection's *materialized output*, never over its own bookkeeping).
+#: The M5 per-stream cursors are bookkeeping like the projection-wide
+#: ``cursor``; the per-stream digests are materialized output and stay
+#: included so a committed daily payload always changes the output digest.
 _METADATA_FIELDS: frozenset[str] = frozenset(
-    {"sequence", "cursor", "source_digest", "output_digest", "lag", "freshness"}
+    {
+        "sequence",
+        "cursor",
+        "source_digest",
+        "output_digest",
+        "lag",
+        "freshness",
+        "report_cursor",
+        "baseline_cursor",
+        "cluster_cursor",
+        "proposal_cursor",
+        "correction_cursor",
+        "coverage_cursor",
+        "precision_cursor",
+    }
 )
 
 
@@ -432,6 +474,17 @@ class EfficiencyProjection(_ProjectionState):
     bucket counts, classifier version, and the half-open reporting window
     ``[start, end)`` plus the watermark.  Missing values stay explicit
     ``None`` (unknown) — never coerced to zero or to green.
+
+    Plan Step 6 (T6) extends the projection with the four additive M5 daily
+    kinds.  Daily events advance ONLY this projection — they are no-ops for
+    operational custody and verification (a proposal or favorable analytical
+    report never closes custody, turns verification green, or becomes
+    dispatchable).  Each daily stream advances on its OWN source cursor and
+    exposes its own canonical digest, independent of the projection-wide
+    metadata and of the other streams; the ``committed_daily`` registry maps
+    every committed daily payload ``(kind, window)`` to its commit sequence
+    and canonical digest so explicit corrections are validated against
+    exactly the declared supersedes target.
     """
 
     projection: Literal["efficiency_analysis"] = "efficiency_analysis"
@@ -448,6 +501,69 @@ class EfficiencyProjection(_ProjectionState):
     window_end: str | None = None
     watermark: str | None = None
     corrections: tuple[CorrectionRecord, ...] = ()
+
+    # ── M5 independent per-stream coordinates (Plan Step 6 / T6) ────────
+    # A stream cursor advances exactly when a payload for that stream is
+    # committed; the stream digest is the canonical digest of that stream's
+    # materialized output (the embedded ``daily_efficiency.v1`` contract
+    # instance, or the embedded baseline / coverage / precision collection —
+    # never fabricated when the report carries none).
+    report_cursor: int = 0
+    report_digest: str | None = None
+    baseline_cursor: int = 0
+    baseline_digest: str | None = None
+    cluster_cursor: int = 0
+    cluster_digest: str | None = None
+    proposal_cursor: int = 0
+    proposal_digest: str | None = None
+    correction_cursor: int = 0
+    correction_digest: str | None = None
+    coverage_cursor: int = 0
+    coverage_digest: str | None = None
+    precision_cursor: int = 0
+    precision_digest: str | None = None
+
+    #: Keyed supersedes registry: every committed daily payload maps
+    #: ``f"{kind}|{window_start}|{window_end}"`` to
+    #: ``(projection_sequence_at_commit, canonical_payload_digest)``.
+    committed_daily: dict[str, tuple[int, str]] = Field(default_factory=dict)
+
+    @field_validator(
+        "report_cursor",
+        "baseline_cursor",
+        "cluster_cursor",
+        "proposal_cursor",
+        "correction_cursor",
+        "coverage_cursor",
+        "precision_cursor",
+    )
+    @classmethod
+    def _validate_stream_cursors(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(
+                f"projection stream cursor must be >= 0, got {value}"
+            )
+        return value
+
+    @field_validator(
+        "report_digest",
+        "baseline_digest",
+        "cluster_digest",
+        "proposal_digest",
+        "correction_digest",
+        "coverage_digest",
+        "precision_digest",
+    )
+    @classmethod
+    def _validate_stream_digests(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+            raise ValueError(
+                "projection stream digest must be a 64-character lowercase "
+                "sha256 hex digest"
+            )
+        return value
 
     @property
     def coverage(self) -> float | None:
@@ -542,21 +658,30 @@ def _advance(
     event_digest: str,
     cursor: int,
     updates: dict[str, Any],
+    explicit_correction: CorrectionRecord | None = None,
 ) -> _ProjectionState:
     """Advance *state* by one consumed event and finalize its metadata.
 
     Appends a late-evidence correction (without rewriting the prior result)
     when the event is late and a prior result exists, then recomputes the
-    order-sensitive source digest and the canonical output digest.
+    order-sensitive source digest and the canonical output digest.  When
+    *explicit_correction* is supplied (Plan Step 6 / T6), the automatic
+    ``LATE_EVIDENCE`` correction is BYPASSED entirely and exactly that keyed
+    record is appended instead — an explicit ``DAILY_EFFICIENCY_CORRECTION``
+    event never produces a second, automatic correction even when it is
+    itself classified LATE.
     """
     new_sequence = state.sequence + 1
     corrections = state.corrections
-    correction = _correction_for(
-        state,
-        event=event,
-        sequence=new_sequence,
-        prior_output_digest=state.output_digest,
-    )
+    if explicit_correction is not None:
+        correction = explicit_correction
+    else:
+        correction = _correction_for(
+            state,
+            event=event,
+            sequence=new_sequence,
+            prior_output_digest=state.output_digest,
+        )
     if correction is not None:
         corrections = corrections + (correction,)
 
@@ -906,7 +1031,13 @@ def reduce_verification(
             cursor=cursor,
             updates=updates,
         )
-    if event.event_kind is EventKind.EFFICIENCY_ANALYSIS:
+    if (
+        event.event_kind is EventKind.EFFICIENCY_ANALYSIS
+        or event.event_kind in DAILY_EVENT_KINDS
+    ):
+        # Efficiency events and the four additive M5 daily kinds never alter
+        # verification: a proposal or favorable analytical report can never
+        # turn verification green or close custody (Plan Step 6 / T6).
         return state
 
     updates: dict[str, Any] = {
@@ -937,6 +1068,167 @@ def reduce_verification(
     )
 
 
+def daily_commit_key(kind: str, window: EventWindow) -> str:
+    """Canonical ``(kind, window)`` registry key for a committed daily payload.
+
+    The key binds the closed daily kind to the exact half-open window
+    boundaries, so a correction can target exactly one committed payload and
+    a one-second boundary shift derives a different target.
+    """
+    return f"{kind}|{window.start.root.isoformat()}|{window.end.root.isoformat()}"
+
+
+def _stream_collection_digest(items: Sequence[BaseModel]) -> str:
+    """Canonical sha256 over a sorted collection of embedded contracts.
+
+    The embedded ``daily_efficiency.v1`` collections (baselines, denominators,
+    shadow measures) are already sorted by their contract validators, so the
+    digest is deterministic and input-order independent.
+    """
+    material = canonical_json([item.model_dump(mode="json") for item in items])
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _daily_report_updates(
+    event: MaintenanceEvent, state: EfficiencyProjection, *, cursor: int
+) -> dict[str, Any]:
+    """Materialize the M5 daily-report stream updates (Plan Step 6 / T6).
+
+    The report advances the report stream plus the derived baseline, coverage,
+    and precision streams when the report actually carries that content
+    (never fabricated when absent), and registers the committed payload in
+    the keyed supersedes registry.
+    """
+    payload = event.payload.report
+    commit_key = daily_commit_key(payload.kind, payload.window)
+    new_sequence = state.sequence + 1
+    payload_digest = canonical_digest(payload)
+    updates: dict[str, Any] = {
+        "occurrence_id": event.occurrence_id,
+        "event_id": event.event_id,
+        "classifier_version": event.classifier.classifier_version,
+        "report_cursor": cursor,
+        "report_digest": payload_digest,
+        "committed_daily": {
+            **state.committed_daily,
+            commit_key: (new_sequence, payload_digest),
+        },
+    }
+    if payload.baselines:
+        updates["baseline_cursor"] = cursor
+        updates["baseline_digest"] = _stream_collection_digest(payload.baselines)
+    if payload.denominators:
+        updates["coverage_cursor"] = cursor
+        updates["coverage_digest"] = _stream_collection_digest(payload.denominators)
+    if payload.shadow_measures:
+        updates["precision_cursor"] = cursor
+        updates["precision_digest"] = _stream_collection_digest(payload.shadow_measures)
+    return updates
+
+
+def _daily_cluster_updates(
+    event: MaintenanceEvent, state: EfficiencyProjection, *, cursor: int
+) -> dict[str, Any]:
+    """Materialize the M5 daily-cluster stream updates (Plan Step 6 / T6)."""
+    payload = event.payload.cluster
+    commit_key = daily_commit_key(payload.kind, payload.window)
+    new_sequence = state.sequence + 1
+    payload_digest = canonical_digest(payload)
+    return {
+        "occurrence_id": event.occurrence_id,
+        "event_id": event.event_id,
+        "classifier_version": event.classifier.classifier_version,
+        "cluster_cursor": cursor,
+        "cluster_digest": payload_digest,
+        "committed_daily": {
+            **state.committed_daily,
+            commit_key: (new_sequence, payload_digest),
+        },
+    }
+
+
+def _daily_proposal_updates(
+    event: MaintenanceEvent, state: EfficiencyProjection, *, cursor: int
+) -> dict[str, Any]:
+    """Materialize the M5 daily-proposal stream updates (Plan Step 6 / T6).
+
+    The proposal is INERT (``auto_materialization`` is locked ``False`` by the
+    T4 contract): it advances only the efficiency proposal stream and never
+    grants ticket/initiative/repair operational semantics.
+    """
+    payload = event.payload.proposal
+    commit_key = daily_commit_key(payload.kind, payload.window)
+    new_sequence = state.sequence + 1
+    payload_digest = canonical_digest(payload)
+    return {
+        "occurrence_id": event.occurrence_id,
+        "event_id": event.event_id,
+        "classifier_version": event.classifier.classifier_version,
+        "proposal_cursor": cursor,
+        "proposal_digest": payload_digest,
+        "committed_daily": {
+            **state.committed_daily,
+            commit_key: (new_sequence, payload_digest),
+        },
+    }
+
+
+def _daily_correction_updates(
+    event: MaintenanceEvent, state: EfficiencyProjection, *, cursor: int
+) -> tuple[dict[str, Any], CorrectionRecord]:
+    """Validate and materialize one explicit daily correction (Plan Step 6).
+
+    The declared keyed supersedes target (kind + exact half-open window +
+    sha256 digest) is validated against the committed outputs registry; an
+    uncommitted target or a digest that diverges from the committed payload
+    FAILS CLOSED (``ValueError``) and nothing advances.  On success exactly
+    one ``KEYED`` :class:`CorrectionRecord` is produced, targeting the
+    DECLARED digest — never the immediately preceding stream digest — and the
+    automatic ``LATE_EVIDENCE`` record is bypassed.
+    """
+    payload = event.payload.correction
+    target_key = daily_commit_key(
+        payload.supersedes_kind.value, payload.supersedes_window
+    )
+    committed = state.committed_daily.get(target_key)
+    if committed is None:
+        raise ValueError(
+            "daily correction supersedes an uncommitted target "
+            f"{target_key!r}; nothing applied"
+        )
+    committed_sequence, committed_digest = committed
+    if committed_digest != payload.supersedes_digest:
+        raise ValueError(
+            "daily correction supersedes digest does not match the committed "
+            f"target {target_key!r}: declared {payload.supersedes_digest!r} "
+            f"!= committed {committed_digest!r}; nothing applied"
+        )
+    commit_key = daily_commit_key(payload.kind, payload.window)
+    new_sequence = state.sequence + 1
+    payload_digest = canonical_digest(payload)
+    explicit_correction = CorrectionRecord(
+        kind=CorrectionKind.KEYED,
+        sequence=new_sequence,
+        corrected_sequence=committed_sequence,
+        prior_output_digest=payload.supersedes_digest,
+        event_id=event.event_id,
+        occurrence_id=event.occurrence_id,
+        reason=payload.reason,
+    )
+    updates: dict[str, Any] = {
+        "occurrence_id": event.occurrence_id,
+        "event_id": event.event_id,
+        "classifier_version": event.classifier.classifier_version,
+        "correction_cursor": cursor,
+        "correction_digest": payload_digest,
+        "committed_daily": {
+            **state.committed_daily,
+            commit_key: (new_sequence, payload_digest),
+        },
+    }
+    return updates, explicit_correction
+
+
 def reduce_efficiency(
     event: MaintenanceEvent | OperationalEvent,
     state: EfficiencyProjection,
@@ -944,35 +1236,66 @@ def reduce_efficiency(
     cursor: int,
     event_digest: str,
 ) -> EfficiencyProjection:
-    """Reduce an efficiency_analysis event into the efficiency projection.
+    """Reduce an efficiency event into the efficiency projection.
 
-    Detection, audit_report, and M3 operational lifecycle events are a no-op
-    (they never alter the efficiency projection).
+    ``efficiency_analysis`` events and the four additive M5 daily kinds
+    (report / cluster / proposal / correction) advance the efficiency
+    projection; detection, audit_report, and M3 operational lifecycle events
+    are a no-op (they never alter the efficiency projection).  Daily events
+    advance their own independent stream cursors/digests, and an explicit
+    daily correction validates its keyed supersedes target against committed
+    outputs before appending exactly one ``KEYED`` correction.
     """
     if isinstance(event, OperationalEvent):
         return state
-    if event.event_kind is not EventKind.EFFICIENCY_ANALYSIS:
-        return state
-    payload = event.payload
-    return _advance(
-        state,
-        event=event,
-        event_digest=event_digest,
-        cursor=cursor,
-        updates={
-            "occurrence_id": event.occurrence_id,
-            "event_id": event.event_id,
-            "classifier_version": event.classifier.classifier_version,
-            "product": payload.product,
-            "coverage_denominator": payload.coverage_denominator,
-            "covered_count": payload.covered_count,
-            "censored_duration_seconds": payload.censored_duration_seconds,
-            "bucket_counts": payload.bucket_counts,
-            "window_start": event.window.start.root.isoformat(),
-            "window_end": event.window.end.root.isoformat(),
-            "watermark": event.watermark.root.isoformat(),
-        },
-    )
+    if event.event_kind is EventKind.EFFICIENCY_ANALYSIS:
+        payload = event.payload
+        return _advance(
+            state,
+            event=event,
+            event_digest=event_digest,
+            cursor=cursor,
+            updates={
+                "occurrence_id": event.occurrence_id,
+                "event_id": event.event_id,
+                "classifier_version": event.classifier.classifier_version,
+                "product": payload.product,
+                "coverage_denominator": payload.coverage_denominator,
+                "covered_count": payload.covered_count,
+                "censored_duration_seconds": payload.censored_duration_seconds,
+                "bucket_counts": payload.bucket_counts,
+                "window_start": event.window.start.root.isoformat(),
+                "window_end": event.window.end.root.isoformat(),
+                "watermark": event.watermark.root.isoformat(),
+            },
+        )
+    if event.event_kind in DAILY_EVENT_KINDS:
+        if event.event_kind is EventKind.DAILY_EFFICIENCY_REPORT:
+            updates = _daily_report_updates(event, state, cursor=cursor)
+        elif event.event_kind is EventKind.DAILY_EFFICIENCY_CLUSTER:
+            updates = _daily_cluster_updates(event, state, cursor=cursor)
+        elif event.event_kind is EventKind.DAILY_EFFICIENCY_PROPOSAL:
+            updates = _daily_proposal_updates(event, state, cursor=cursor)
+        else:  # DAILY_EFFICIENCY_CORRECTION
+            updates, explicit_correction = _daily_correction_updates(
+                event, state, cursor=cursor
+            )
+            return _advance(
+                state,
+                event=event,
+                event_digest=event_digest,
+                cursor=cursor,
+                updates=updates,
+                explicit_correction=explicit_correction,
+            )
+        return _advance(
+            state,
+            event=event,
+            event_digest=event_digest,
+            cursor=cursor,
+            updates=updates,
+        )
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -1078,21 +1401,34 @@ class ProjectionEngine:
             )
         self._seen[lifecycle_key] = digest
 
+        prior_source_cursor = self._source_cursor
         if cursor is None:
             self._source_cursor += 1
         else:
             self._source_cursor = max(self._source_cursor, int(cursor))
 
         source = self._source_cursor
-        self._custody = reduce_custody(
-            model, self._custody, cursor=source, event_digest=digest
-        )
-        self._verification = reduce_verification(
-            model, self._verification, cursor=source, event_digest=digest
-        )
-        self._efficiency = reduce_efficiency(
-            model, self._efficiency, cursor=source, event_digest=digest
-        )
+        try:
+            self._custody = reduce_custody(
+                model, self._custody, cursor=source, event_digest=digest
+            )
+            self._verification = reduce_verification(
+                model, self._verification, cursor=source, event_digest=digest
+            )
+            self._efficiency = reduce_efficiency(
+                model, self._efficiency, cursor=source, event_digest=digest
+            )
+        except Exception:
+            # Fail closed: a rejected event (e.g. an explicit daily
+            # correction whose keyed supersedes target does not match a
+            # committed output) leaves NO trace — the idempotency
+            # registration and the source cursor are rolled back so a
+            # corrected retry still replays deterministically and a repeated
+            # invalid emission keeps surfacing the rejection instead of
+            # being silently deduped.
+            self._seen.pop(lifecycle_key, None)
+            self._source_cursor = prior_source_cursor
+            raise
 
         self._custody = self._custody.model_copy(
             update={"lag": source - self._custody.cursor}
@@ -1151,9 +1487,10 @@ def replay(
 
 
 __all__ = [
-    "ApplyDisposition",
-    "CheckpointOutcome",
     "CorrectionKind",
+    "DAILY_EVENT_KINDS",
+    "daily_commit_key",
+    "CheckpointOutcome",
     "CorrectionRecord",
     "CustodyProjection",
     "EfficiencyProjection",

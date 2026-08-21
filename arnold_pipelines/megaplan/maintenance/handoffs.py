@@ -577,7 +577,7 @@ M3_VIEW_VERSION: str = "m3.handoff.v1"
 FROZEN_SCHEMA_DIGESTS: dict[str, str] = {
     "identity": "0ea6f35d77fdef6a8d664ec863a37e68c5fd070750235c672b1b4642132c4834",
     "contracts": "8743c5d94219b564883c10edcff8cd6f3754e145a5b1ecb71af9109a2fe031c3",
-    "events": "c130736d215bf947755160dd3dec4729984665f2f6d81d54b53341a7d366cb5b",
+    "events": "e359d457c41e8a7ffae0fde2580780251afac1b90b5db3cbb2216f89b974443b",
     #: ``handoffs`` is content-addressed over the declarative registry data
     #: (handoffs.json) — the registry schema is a data file, and a module
     #: digest would be self-referential (the constant lives in the module).
@@ -585,7 +585,7 @@ FROZEN_SCHEMA_DIGESTS: dict[str, str] = {
     "sources": "e2ece168591190c470d4eef10c824874724c83685e525074883d20f90889160b",
     "boundaries": "85e84195b5e6662f87effde7749ab70b791a12378d16b0bd6b0a626f5f8fac04",
     "observation": "62039424ae301dcb8dd0d6529523c5d16d577b556a560d79c4c98e884531f5b6",
-    "projections": "499282bcd47bd5e47a6ededc61bf0c90708af1642ae23af37b4ae94f75f6f273",
+    "projections": "93ad5c99dd509ec5e323614f83f3332dc29130a025f25cac0ccb63f5823aa0b1",
     "ledger": "f15027f711d4a2da5cc52ebd1347447cf49c6e30ceaf1eb6d53b6e530b317ce3",
     #: T10 compatibility facade module (replaces the old coherence algorithm).
     "authority.coherence": "d8a51d34e9607a849ebfb792f6db3ed6e2d92d459219789b85d8c2e2cac6b77e",

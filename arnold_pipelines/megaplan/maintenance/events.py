@@ -34,13 +34,14 @@ canonical codec (``canonical_dumps`` / ``strict_loads``).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StrictStr,
@@ -122,11 +123,22 @@ def _sort_refs(refs: Sequence[OwnerRef]) -> tuple[OwnerRef, ...]:
 
 
 class EventKind(str, Enum):
-    """Closed discriminated Maintenance event kinds."""
+    """Closed discriminated Maintenance event kinds.
+
+    The four additive M5 daily kinds (``daily_efficiency_report`` /
+    ``daily_efficiency_cluster`` / ``daily_efficiency_proposal`` /
+    ``daily_efficiency_correction``) are strictly disjoint from the legacy
+    M2/M4 vocabulary; their payloads embed the locked ``daily_efficiency.v1``
+    contracts (Plan Step 5 / T5A).
+    """
 
     DETECTION = "detection"
     EFFICIENCY_ANALYSIS = "efficiency_analysis"
     AUDIT_REPORT = "audit_report"
+    DAILY_EFFICIENCY_REPORT = "daily_efficiency_report"
+    DAILY_EFFICIENCY_CLUSTER = "daily_efficiency_cluster"
+    DAILY_EFFICIENCY_PROPOSAL = "daily_efficiency_proposal"
+    DAILY_EFFICIENCY_CORRECTION = "daily_efficiency_correction"
 
 
 # ---------------------------------------------------------------------------
@@ -450,9 +462,109 @@ class AuditReport(BaseModel):
             raise ValueError("audit fields must be non-empty strings when present")
         return value
 
+# ---------------------------------------------------------------------------
+# M5 additive daily payloads (Plan Step 5 / T5A)
+# ---------------------------------------------------------------------------
+# The four additive closed daily kinds extend the MaintenancePayload union
+# WITHOUT widening legacy event serialization.  Each daily event payload
+# EMBEDS the single locked ``daily_efficiency.v1`` contract from
+# efficiency_contracts (T4) as a nested strict model, so M5 never creates a
+# competing representation of an existing analytical fact: the nested payload
+# is validated by the canonical T4 contract at construction AND at strict
+# decode (extra fields are forbidden, identities are checked against the
+# locked derivations, half-open windows are exact).  The T4 contracts are
+# resolved lazily at validation time because efficiency_contracts imports this
+# module at module scope; resolving them at class-definition time would create
+# an import cycle.  The four kinds are strictly disjoint from the legacy
+# vocabulary, so no M5 event can strict-decode as a legacy payload (or vice
+# versa) and daily events never appear in the operational report scan.
+
+
+def _validate_daily_contract(contract: str) -> Callable[[Any], Any]:
+    """Return a strict validator that binds *value* to the named T4 contract.
+
+    The validator lazy-imports the canonical ``daily_efficiency.v1`` contract
+    (breaking the events <-> efficiency_contracts module cycle), accepts an
+    already-validated contract instance, and otherwise strict-validates the
+    raw value with the canonical model — missing/unknown fields and identity
+    mismatches fail exactly as they do everywhere else.
+    """
+
+    def _validator(value: Any) -> Any:
+        from arnold_pipelines.megaplan.maintenance.efficiency_contracts import (  # noqa: PLC0415
+            DailyEfficiencyCluster,
+            DailyEfficiencyCorrection,
+            DailyEfficiencyProposal,
+            DailyEfficiencyReport,
+        )
+
+        model = {
+            "DailyEfficiencyReport": DailyEfficiencyReport,
+            "DailyEfficiencyCluster": DailyEfficiencyCluster,
+            "DailyEfficiencyProposal": DailyEfficiencyProposal,
+            "DailyEfficiencyCorrection": DailyEfficiencyCorrection,
+        }[contract]
+        if isinstance(value, model):
+            return value
+        return model.model_validate(value)
+
+    return _validator
+
+
+class DailyEfficiencyReportPayload(BaseModel):
+    """Closed M5 payload embedding the strict daily report contract (T4).
+
+    ``report`` is the canonical :class:`DailyEfficiencyReport` from
+    efficiency_contracts; the envelope's ``cluster.signature`` binding and the
+    payload's root-cause fingerprint stay exact by contract construction.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["daily_efficiency_report"] = "daily_efficiency_report"
+    report: Annotated[Any, BeforeValidator(_validate_daily_contract("DailyEfficiencyReport"))]
+
+
+class DailyEfficiencyClusterPayload(BaseModel):
+    """Closed M5 payload embedding the strict daily cluster contract (T4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["daily_efficiency_cluster"] = "daily_efficiency_cluster"
+    cluster: Annotated[Any, BeforeValidator(_validate_daily_contract("DailyEfficiencyCluster"))]
+
+
+class DailyEfficiencyProposalPayload(BaseModel):
+    """Closed M5 payload embedding the strict INERT proposal contract (T4).
+
+    The embedded proposal is recommendation-only: ``auto_materialization`` is
+    locked ``False`` by the T4 contract, so routing this payload grants no
+    ticket/initiative/repair operational semantics.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["daily_efficiency_proposal"] = "daily_efficiency_proposal"
+    proposal: Annotated[Any, BeforeValidator(_validate_daily_contract("DailyEfficiencyProposal"))]
+
+
+class DailyEfficiencyCorrectionPayload(BaseModel):
+    """Closed M5 payload embedding the strict digest-linked correction (T4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["daily_efficiency_correction"] = "daily_efficiency_correction"
+    correction: Annotated[Any, BeforeValidator(_validate_daily_contract("DailyEfficiencyCorrection"))]
+
 
 MaintenancePayload = Annotated[
-    DetectionEvent | EfficiencyAnalysis | AuditReport,
+    DetectionEvent
+    | EfficiencyAnalysis
+    | AuditReport
+    | DailyEfficiencyReportPayload
+    | DailyEfficiencyClusterPayload
+    | DailyEfficiencyProposalPayload
+    | DailyEfficiencyCorrectionPayload,
     Field(discriminator="kind"),
 ]
 
@@ -1169,9 +1281,12 @@ __all__ = [
     "AuditFinding",
     "AuditReport",
     "CheckpointVerificationPayload",
-    "CheckpointWindowKind",
-    "ClassifierInfo",
+    "DailyEfficiencyClusterPayload",
+    "DailyEfficiencyCorrectionPayload",
+    "DailyEfficiencyProposalPayload",
+    "DailyEfficiencyReportPayload",
     "DetectionEvent",
+    "ClassifierInfo",
     "EfficiencyAnalysis",
     "EscalationReference",
     "EventKind",
