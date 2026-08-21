@@ -7896,42 +7896,35 @@ record = control_liveness_from_current_target(target, action="mutation")
 print(record["state"] if record.get("known") is True else "unknown")
 PY
   )"
-  # Known live/dead is diagnostic eligibility, not a grant. UNKNOWN still
-  # fences wrapper mutation so incomplete identity cannot relaunch. A known
-  # state is not itself MutationCapability; Python repair seams mint that.
-  local canonical_mutation_permitted=1
+  # Known live/dead is diagnostic eligibility only. It is never a grant.
+  # Babysitter/relaunch/drive require a minted MutationCapability; without
+  # one this wrapper stays observe-only. UNKNOWN remains a non-granting
+  # denial so incomplete identity cannot relaunch.
+  local canonical_liveness_known=1
   if [[ "$canonical_control_state" == "unknown" ]]; then
-    canonical_mutation_permitted=0
+    canonical_liveness_known=0
     log "canonical target liveness is UNKNOWN; continuing read-only classification while mutation/retrigger/escalation/retirement remain fenced session=$session"
   fi
-  log "current-target canonical-control session=$session state=$canonical_control_state evidence=$current_target_observation"
-
-  # STOPPED PRE-EXECUTE STALL (drive, NOT repair): a milestone plan born but
-  # never driven (initialized/planned/finalized, no active step, no live
-  # driver) is a genuine stoppage the fixer must DRIVE via chain start /
-  # resume.  This runs BEFORE the liveness fence because a parked chain has no
-  # live driver by definition (that is why it is parked) — fencing it on
-  # unknown liveness would keep it parked forever.  The drive is non-
-  # destructive (never --fresh, never a state wipe), so it is exempt from the
-  # mutation fence.
-  if babysitter_parked_chain_stall "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
-    log "session $session parked pre-execute; dispatching babysitter to drive (non-fenced)"
-    babysitter_policy_dispatch "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$report_items" \
-      "parked pre-execute stall (plan born, no driver)"
-    return 0
-  fi
+  log "current-target canonical-control session=$session state=$canonical_control_state known=$canonical_liveness_known evidence=$current_target_observation"
 
   canonical_mutation_fenced() {
     local action="${1:-mutation}"
-    if [[ "$canonical_mutation_permitted" == "1" ]]; then
-      return 1
-    fi
-    log "canonical target liveness is UNKNOWN; fenced action=$action session=$session"
-    report_item "$report_items" "$session" "observe" "liveness_unknown" \
-      "canonical identity-bound liveness unavailable; fenced $action while legacy PID/tmux evidence remains diagnostic-only" \
+    log "canonical MutationCapability absent; observe-only fenced action=$action session=$session liveness=$canonical_control_state"
+    report_item "$report_items" "$session" "observe" "capability_absent" \
+      "known liveness is eligibility only; babysitter/relaunch/drive require a minted MutationCapability; fenced $action" \
       "$workspace" "$remote_spec"
     return 0
   }
+
+  # STOPPED PRE-EXECUTE STALL is still a mutation (drive). Known liveness
+  # does not authorize it; without a minted capability the wrapper observes.
+  if babysitter_parked_chain_stall "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
+    if canonical_mutation_fenced "parked pre-execute drive"; then
+      return 0
+    fi
+  fi
+
+
 
   # A deterministic phase-contract failure is not a stopped process waiting
   # for a mechanical restart: the same input will deterministically fail
@@ -8171,7 +8164,7 @@ PY
 
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || authority_gap_continue "T29-BYPASS-186" "authority-risk bypass converted to typed evidence gap")"
-  if [[ "$canonical_mutation_permitted" == "1" && "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
+  if [[ "$canonical_liveness_known" == "1" && "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
 
@@ -8192,7 +8185,7 @@ PY
   # tolerates transient deploy gaps; at threshold the session is retired cleanly
   # instead of looping repair against a missing env. Below threshold we log the
   # strike and skip dispatch this tick; if the env recovers, the sidecar clears.
-  if [[ "$canonical_mutation_permitted" == "1" ]]; then
+  if [[ "$canonical_liveness_known" == "1" ]]; then
     local env_gone_out env_gone_rc
     env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
     env_gone_rc=$?
@@ -8275,20 +8268,17 @@ PY
     # Alive and phase-healthy: any prior repair dispatch succeeded, so clear the
     # marker so a future stop dispatches the primary repair fresh instead of
     # falling back.
-    if [[ "$canonical_mutation_permitted" == "1" ]]; then
+    if [[ "$canonical_liveness_known" == "1" ]]; then
       kimi_dispatch_marker_clear "$session"
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-191" "authority-risk bypass converted to typed evidence gap"
       write_partial_liveness_tick "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$health"
     fi
-    # STOPPED PRE-EXECUTE STALL: a milestone plan born but never driven
-    # (initialized/planned/finalized with no active step and no live driver)
-    # is a genuine stoppage the fixer must DRIVE, even though the session is
-    # 'alive' and carries no failure. Without this it parks forever.
+    # STOPPED PRE-EXECUTE STALL is still a mutation (drive). Known liveness
+    # does not authorize it; without a minted capability the wrapper observes.
     if babysitter_parked_chain_stall "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
-      log "session $session parked pre-execute; dispatching babysitter to drive"
-      babysitter_policy_dispatch "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$report_items" \
-        "parked pre-execute stall (plan born, no driver)"
-      return 0
+      if canonical_mutation_fenced "parked pre-execute drive"; then
+        return 0
+      fi
     fi
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
@@ -8300,8 +8290,8 @@ PY
     pr_reconcile="$(reconcile_awaiting_pr_merge "$session" "$workspace" "$remote_spec" 2>/dev/null || authority_gap_continue "T29-BYPASS-192" "authority-risk bypass converted to typed evidence gap")"
     IFS=$'\t' read -r pr_reconcile_status pr_reconcile_message <<< "$pr_reconcile"
     if [[ "$pr_reconcile_status" == "merged" ]]; then
-      if [[ "$canonical_mutation_permitted" == "1" ]]; then
-        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-193" "authority-risk bypass converted to typed evidence gap"
+      if canonical_mutation_fenced "PR-merge marker clear"; then
+        :
       fi
       log "session awaiting PR merge reconciled merged; falling through to relaunch session=$session detail=$pr_reconcile_message"
     else
@@ -8403,7 +8393,7 @@ PY
     log "audit recovery selected one provider retry session=$session gate=${resolver_human_verdict#provider_retry:}"
     report_item "$report_items" "$session" "recovery" "provider_retry_selected" "audit-only retry selected for typed provider gate ${resolver_human_verdict#provider_retry:}" "$workspace" "$remote_spec"
   fi
-  if [[ "$canonical_mutation_permitted" == "1" && "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
+  if [[ "$canonical_liveness_known" == "1" && "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
   if [[ "$health" == "stopped" && "${PLAN_STATUS_ACTIVE_STEP_PRESENT:-0}" == "1" && "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" != "1" ]]; then
@@ -8420,15 +8410,10 @@ PY
     case "${PLAN_STATUS_CURRENT_STATE:-}" in
       initialized|planned|finalized|critiqued|gated)
         if [[ "${PLAN_STATUS_AWAITING_HUMAN:-0}" != "1" ]]; then
-          log "driveable plan with dead leftover active-step PID; dispatching drive session=$session state=${PLAN_STATUS_CURRENT_STATE:-unknown}"
-          # Direct drive dispatch.  The leftover active_step record (dead
-          # worker in a foreign container namespace) makes
-          # babysitter_parked_chain_stall return false, but the plan is
-          # driveable and NOT human-gated — the between-milestones drive is
-          # the non-destructive, unfenced path that gets it moving again.
-          babysitter_policy_dispatch "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$report_items" \
-            "driveable plan with dead leftover worker: ${PLAN_STATUS_PLAN_NAME:-unknown} in state ${PLAN_STATUS_CURRENT_STATE:-unknown}"
-          return 0
+          log "driveable plan with dead leftover active-step PID remains observe-only without MutationCapability session=$session state=${PLAN_STATUS_CURRENT_STATE:-unknown}"
+          if canonical_mutation_fenced "driveable leftover-worker drive"; then
+            return 0
+          fi
         fi
         ;;
     esac
@@ -8600,10 +8585,10 @@ PY
   # on relaunch, so the marker is stale -- clear it and fall through to the
   # relaunch path instead of suppressing it with a stale needs_human.
   if [[ "$resolver_human_verdict" != provider_retry:* && -f "$(repair_needs_human_path "$session")" ]]; then
-    if [[ "$canonical_mutation_permitted" != "1" ]]; then
+    if canonical_mutation_fenced "repair-needs-human marker mutation"; then
       local repair_summary
       repair_summary="$(repair_needs_human_summary "$session")"
-      log "session marked needs human by repair loop; canonical UNKNOWN preserves marker read-only session=$session summary=$repair_summary"
+      log "session marked needs human by repair loop; observe-only without MutationCapability session=$session summary=$repair_summary"
       report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
       return 0
     fi

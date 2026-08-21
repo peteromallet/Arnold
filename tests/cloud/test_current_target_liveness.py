@@ -399,3 +399,18 @@ def test_legacy_classifier_is_explicitly_diagnostic_only() -> None:
     assert result["diagnostic_only"] is True
     assert result["authoritative"] is False
     assert result["control_permitted"] is False
+
+
+def test_watchdog_wrapper_requires_minted_capability() -> None:
+    wrapper = Path(__file__).resolve().parents[2] / (
+        "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"
+    )
+    source = wrapper.read_text(encoding="utf-8")
+    assert "canonical_mutation_permitted=1" not in source
+    assert "canonical_liveness_known" in source
+    assert "babysitter/relaunch/drive require a minted MutationCapability" in source
+    assert "canonical MutationCapability absent; observe-only" in source
+    assert source.count("canonical_mutation_fenced \"parked pre-execute drive\"") >= 2
+    assert "canonical_mutation_fenced \"driveable leftover-worker drive\"" in source
+    assert "if [[ \"$canonical_mutation_permitted\" == \"1\" ]]; then" not in source
+
