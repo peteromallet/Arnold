@@ -237,3 +237,11 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - J4 ruling: `AMEND` / `A-extended`. Apply per-field redaction to the exact set `{DEEPSEEK_API_KEY, DISCORD_BOT_TOKEN, GROQ_API_KEY}`; retain the existing placeholder for `DEEPSEEK_API_KEY`; replace only the two newly authorized field values with their named placeholders; preserve all other fields and structure. Do not redact `MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV` (field length 12) or any other non-flagged field.
 - Push disposition: `BLOCKED`. J4 alone does not rewrite history or unblock the push. Push remains blocked until the receipt, chained digests, complete reachable-history rewrite, broader non-echoing scan, validator pass, and independent `[HARD-REVIEW]` pass are complete.
 - Next route: Luna evidence recorder → Luna `[HARD-REVISION]` implementer → independent Luna `[HARD-REVIEW]` → existing integration/push role using `HEAD:fixer/runtime-convergence-r` and no additional refspec.
+
+## F-004/J4 hygiene chain — CLOSED (push unblocked, round 2)
+
+- J4 Grok judgment (mrc-21e4d426…): AMEND/A-extended — redact DISCORD_BOT_TOKEN + GROQ_API_KEY values only (exact set {DEEPSEEK_API_KEY, DISCORD_BOT_TOKEN, GROQ_API_KEY}); receipt adjudications/J4-grok-judgment.json (0f2bb741…); operator to rotate those keys outside consolidation.
+- R004 [HARD-REVISION] (mrc-cdaef3df…): two-field redaction + F-004-redaction-receipt.json (2a5af4f6…, 1MB old→new map) + digest chain + history rewrite + broader scan (Discord/Groq/original patterns, 0 matches) + validator valid. Commit 45abf338fc "evidence(mrc): redact F-004 credentials and rewrite history". Worktree clean.
+- Independent F-004 HARD-REVIEW (mrc-0ebfccde…): **PASS, no findings** — scope discipline, digest chain, broader scan, validator, R002 interaction (one-field reviews remain valid for one-field scope), J1/J2/J3/G0 untouched.
+- All J4 push-unblock conditions met. NEXT: final push (explicit HEAD:fixer/runtime-convergence-r, force-with-lease vs a610c220da) → then Batch 1.
+
