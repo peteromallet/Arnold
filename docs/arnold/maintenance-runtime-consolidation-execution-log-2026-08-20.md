@@ -245,3 +245,10 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Independent F-004 HARD-REVIEW (mrc-0ebfccde…): **PASS, no findings** — scope discipline, digest chain, broader scan, validator, R002 interaction (one-field reviews remain valid for one-field scope), J1/J2/J3/G0 untouched.
 - All J4 push-unblock conditions met. NEXT: final push (explicit HEAD:fixer/runtime-convergence-r, force-with-lease vs a610c220da) → then Batch 1.
 
+
+## BATCH-0 PUSH — SUCCESS (durable)
+
+- INT-b0push4 (mrc-da46d423…): commit log closure record (e28cfe7f), broader clean scan (0 matches), explicit force-with-lease `HEAD:fixer/runtime-convergence-r` vs observed a610c220da → exit 0. Remote origin/fixer/runtime-convergence-r = e28cfe7fcee2c64fe67d7e1d5a53c0e5351119ef = local HEAD. Worktree clean. Safety refs untouched (local only).
+- Batch 0 complete and durable: G0 PASS, plan amendment, F-002/F-004 hygiene, wrapper lifecycle, registry, log, all receipts.
+- NEXT: preserve epic fix commits 7fe994abf + 0425372ec under safety refs (T0.1 additive) → route Grok J5 review of amended frozen contracts → Batch 1 (T1.1/T1.2/T1.3) under relaxed review cadence.
+
