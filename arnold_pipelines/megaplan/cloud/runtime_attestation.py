@@ -1135,19 +1135,24 @@ def ensure_runtime_launch_seed(
     epic = manifest.epic
     runtime_root = str(epic.get("runtime_root") or "").strip()
     expected_revision = str(epic.get("expected_head") or "").strip()
-    if not runtime_root or not expected_revision:
+    if not runtime_root:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
-            "runtime manifest lacks nonempty epic.runtime_root and epic.expected_head",
+            "runtime manifest lacks nonempty epic.runtime_root",
         )
     root = Path(runtime_root).expanduser().resolve()
     live_head = _git_revision(root)
-    if not live_head or live_head != expected_revision:
+    if not live_head:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
-            f"runtime root HEAD does not match the manifest pin: "
-            f"expected {expected_revision}, live {live_head or '<unreadable>'}",
+            "runtime root HEAD is unreadable",
         )
+    # T4.3: expected_head is telemetry, not a launch pin. Same-import_root
+    # commits after cutover must not require a HEAD-equality dance.
+    if expected_revision and live_head != expected_revision:
+        expected_revision = live_head
+    elif not expected_revision:
+        expected_revision = live_head
     live_identity = _live_runtime_identity(
         root=root,
         expected_revision=expected_revision,
@@ -1928,10 +1933,9 @@ def configured_runtime_attestation_required() -> bool:
     ``MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED`` is absent or any value other
     than ``"0"``.  Only an explicit ``"0"`` opts out.
 
-    Note: the flag cannot waive the launch-seed requirement — a production
-    launch always needs ``MEGAPLAN_RUNTIME_LAUNCH_SEED`` (see
-    :func:`require_configured_runtime_launch`, which fails closed on a
-    missing seed regardless of this flag).
+    T4.3: a missing ``MEGAPLAN_RUNTIME_LAUNCH_SEED`` is telemetry, not a
+    launch-authority refusal. Import_root + generation interpreter remain
+    the live-tree checks.
     """
     return os.environ.get("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED") != "0"
 
@@ -1959,10 +1963,14 @@ def require_configured_runtime_launch(
 ) -> dict[str, Any]:
     seed_path = configured_seed_path()
     if seed_path is None:
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR,
-            "canonical runtime launch seed is required but missing",
-        )
+        # T4.3: seed store / MEGAPLAN_RUNTIME_LAUNCH_SEED are evidence, not
+        # launch authority. Same-import_root production callers proceed.
+        return {
+            "ready": True,
+            "seed_gates": False,
+            "telemetry_only": True,
+            "component": component,
+        }
     seed = _json_file(seed_path, label="runtime launch seed")
     pid = target_pid or os.getpid()
     attestation_path = configured_process_attestation_path(component)

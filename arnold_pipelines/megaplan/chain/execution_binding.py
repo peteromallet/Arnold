@@ -2081,8 +2081,12 @@ def cutover_runtime_identity(
     spec_path: Path,
     state: Any,
     *,
-    expected_previous_runtime_sha256: str,
-    expected_active_runtime_sha256: str,
+    expected_previous_runtime_sha256: str | None = None,
+    expected_active_runtime_sha256: str | None = None,
+    expected_previous_import_root: str | None = None,
+    expected_previous_interpreter: str | None = None,
+    expected_active_import_root: str | None = None,
+    expected_active_interpreter: str | None = None,
     expected_current_milestone: str,
     expected_current_plan: str,
     reason: str,
@@ -2090,23 +2094,41 @@ def cutover_runtime_identity(
     direction: str = "cutover",
     verified_external_runtime_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Chain runtime cutover: rebind the runtime AND move engine_root atomically.
+    """Thin wrapper: rebind runtime AND move engine_root atomically.
 
-    T-0101c: like :func:`rebind_runtime_identity` but additionally moves
-    ``metadata.execution_environment.engine_root`` old->new inside the same
-    CAS-guarded transaction.  The recorded root must match the previous
-    runtime identity's ``import_root`` (fail-closed, zero mutation otherwise),
-    and the new root is derived from the adopted runtime identity's
-    ``import_root`` — the root the relaunch preflight (``epic_chain.py``) will
-    subsequently require.  Runs only on chains whose runtime binding already
-    exists (post T-0101b migration); a missing persisted identity is refused.
+    Cutover CAS is import_root + generation interpreter. SHA-256 flags are
+    refused the same way :func:`rebind_runtime_identity` refuses them. Skip
+    when no chain runtime binding exists — the coordinator still owns
+    selector/marker publication.
     """
 
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    execution_binding = metadata.get("execution_binding")
+    execution_binding = (
+        execution_binding if isinstance(execution_binding, Mapping) else {}
+    )
+    persisted_runtime_binding = execution_binding.get("runtime_binding")
+    persisted_runtime_binding = (
+        persisted_runtime_binding
+        if isinstance(persisted_runtime_binding, Mapping)
+        else {}
+    )
+    persisted_identity = persisted_runtime_binding.get("current_identity")
+    if not isinstance(persisted_identity, Mapping):
+        return {
+            "changed": False,
+            "skipped": "no_chain_runtime_binding",
+            "wrapper": "cutover_runtime_identity",
+        }
     return rebind_runtime_identity(
         spec_path,
         state,
         expected_previous_runtime_sha256=expected_previous_runtime_sha256,
         expected_active_runtime_sha256=expected_active_runtime_sha256,
+        expected_previous_import_root=expected_previous_import_root,
+        expected_previous_interpreter=expected_previous_interpreter,
+        expected_active_import_root=expected_active_import_root,
+        expected_active_interpreter=expected_active_interpreter,
         expected_current_milestone=expected_current_milestone,
         expected_current_plan=expected_current_plan,
         reason=reason,

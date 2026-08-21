@@ -221,6 +221,35 @@ def _selection_snapshot(
     }
 
 
+def current_selector_marker_authority(
+    *,
+    manifest_path: Path,
+    marker_path: Path,
+) -> dict[str, Any]:
+    """Read current selector/marker authority. Torn pairs fail closed.
+
+    A half-published selector/marker pair is never readable as current. The
+    caller must resume from the delivery journal or restore the prior target.
+    """
+
+    snapshot = _selection_snapshot(manifest_path=manifest_path, marker_path=marker_path)
+    manifest_root = str(snapshot.get("runtime_root") or "").strip()
+    marker_root = str(snapshot.get("marker_import_root") or "").strip()
+    if not manifest_root or not marker_root:
+        raise CliError(
+            "torn_selector_marker",
+            "selector/marker pair is incomplete and is not current authority",
+            extra=snapshot,
+        )
+    if Path(manifest_root).expanduser().resolve() != Path(marker_root).expanduser().resolve():
+        raise CliError(
+            "torn_selector_marker",
+            "selector/marker pair is inconsistent and is not current authority",
+            extra=snapshot,
+        )
+    return snapshot
+
+
 def _assert_selector_marker_match(
     *,
     manifest_path: Path,
@@ -661,12 +690,14 @@ def deliver_runtime_cutover(
 
         identity_result: dict[str, Any] | None = None
         _inject(failure_injector, "before_identity")
-        if chain_state is not None and expected_previous_runtime_sha256_identity:
+        if chain_state is not None:
             identity_result = cutover_runtime_identity(
                 Path(spec_path),
                 chain_state,
-                expected_previous_runtime_sha256=expected_previous_runtime_sha256_identity,
-                expected_active_runtime_sha256=expected_active_runtime_sha256_identity,
+                expected_previous_import_root=from_import_root,
+                expected_previous_interpreter=from_interpreter,
+                expected_active_import_root=to_import_root,
+                expected_active_interpreter=to_interpreter,
                 expected_current_milestone=expected_current_milestone,
                 expected_current_plan=expected_current_plan,
                 reason=reason,
@@ -677,7 +708,10 @@ def deliver_runtime_cutover(
             journal["identity"] = {
                 "wrapper": "cutover_runtime_identity",
                 "second_lock": False,
+                "cas": "import_root+interpreter",
             }
+            if isinstance(identity_result, Mapping) and identity_result.get("skipped"):
+                journal["identity"]["skipped"] = identity_result.get("skipped")
         else:
             journal["identity"] = {
                 "wrapper": "cutover_runtime_identity",
@@ -928,6 +962,7 @@ __all__ = [
     "DELIVERY_JOURNAL_SCHEMA",
     "DELIVERY_SENTINEL",
     "PUBLICATION_BOUNDARIES",
+    "current_selector_marker_authority",
     "deliver_runtime_cutover",
     "inspect_transition",
     "prove_quiesced_writers",

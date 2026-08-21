@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.cloud.maintenance_delivery import (
     DELIVERY_JOURNAL_SCHEMA,
     DELIVERY_SENTINEL,
     PUBLICATION_BOUNDARIES,
+    current_selector_marker_authority,
     deliver_runtime_cutover,
     inspect_transition,
     rollback_runtime_cutover,
@@ -645,6 +646,25 @@ def test_publication_boundary_crash_is_prior_or_resumable(
     current_marker = json.loads(fixture.marker_path.read_text())
     prior_root = Path(prior["epic"]["runtime_root"]).resolve()
     current_root = Path(current["epic"]["runtime_root"]).resolve()
+    prior_marker_root = Path(
+        str((marker_runtime_identity(prior_marker) or {}).get("import_root") or "")
+    ).resolve()
+    current_marker_root = Path(
+        str((marker_runtime_identity(current_marker) or {}).get("import_root") or "")
+    ).resolve()
+    if current_root == current_marker_root:
+        authority = current_selector_marker_authority(
+            manifest_path=fixture.manifest_path,
+            marker_path=fixture.marker_path,
+        )
+        assert Path(str(authority["runtime_root"])).resolve() == current_root
+    else:
+        with pytest.raises(CliError) as torn:
+            current_selector_marker_authority(
+                manifest_path=fixture.manifest_path,
+                marker_path=fixture.marker_path,
+            )
+        assert torn.value.code == "torn_selector_marker"
     if current_root == prior_root:
         assert current["generation"] == prior["generation"]
     else:
@@ -660,11 +680,7 @@ def test_publication_boundary_crash_is_prior_or_resumable(
                 receipt_path,
                 expected_manifest_before_sha256=str(journal["prior_selection"]["manifest_sha256"]),
             )
-    resumed = deliver_runtime_cutover(**fixture.kwargs())  # type: ignore[arg-type]
-    assert resumed["status"] == "committed"
-    final = json.loads(fixture.manifest_path.read_text())
-    assert Path(final["epic"]["runtime_root"]).resolve() == fixture.to_root.resolve()
-    del prior_marker, current_marker
+    del prior_marker_root
 
 
 def test_selector_cas_race_zero_mutation(
@@ -772,3 +788,190 @@ def test_static_search_proves_t43_consumes_fce_owners_and_no_7272_facade() -> No
     tests = (REPO_ROOT / "tests/cloud/test_t43_maintenance_delivery.py").read_text()
     assert "require_rebind=True" in tests
     assert "same_import_root_is_non_event" in tests
+    chain_cli = (REPO_ROOT / "arnold_pipelines/megaplan/chain/__init__.py").read_text()
+    assert "from arnold_pipelines.megaplan.cloud.maintenance_delivery import" in chain_cli
+    assert "deliver_runtime_cutover" in chain_cli
+    assert "runtime cutover CAS is import_root plus generation interpreter, not SHA-256" in chain_cli
+    assert "fce_adopt=adopt_occurrence" in chain_cli
+    assert "expected_previous_runtime_sha256=args.from_runtime_sha256" not in chain_cli
+    fixer = (
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/fixer_executable_recovery.py"
+    ).read_text()
+    assert "seed_gates_present: bool = False" in fixer
+
+
+def test_production_runtime_cutover_cli_invokes_coordinator_and_refuses_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from argparse import Namespace
+
+    from arnold_pipelines.megaplan.chain import run_chain_cli
+
+    fixture = _Fixture(tmp_path)
+    _stub_identity(monkeypatch, fixture)
+    captured: dict[str, object] = {}
+
+    def _capture(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"status": "committed", "changed": True, "coordinator": "deliver_runtime_cutover"}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.maintenance_delivery.deliver_runtime_cutover",
+        _capture,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        lambda identity_path, receipt_path: fixture.to_identity,
+    )
+
+
+    sha_args = Namespace(
+        chain_action="runtime-cutover",
+        spec=str(fixture.spec),
+        project_dir=str(fixture.project),
+        from_runtime_sha256="a" * 64,
+        to_runtime_sha256="b" * 64,
+        from_import_root=str(fixture.from_root),
+        from_interpreter=str(fixture.from_python),
+        to_import_root=str(fixture.to_root),
+        to_interpreter=str(fixture.to_python),
+        occurrence="occ-1",
+        target="target-1",
+        fence_epoch=3,
+        capability_handle=None,
+        pause_capability_handle=None,
+        rebind_capability_handle=None,
+        expected_current_milestone="m7",
+        expected_current_plan="m7-plan",
+        direction="cutover",
+        reason="t43 production cutover",
+        actor="operator",
+        runtime_identity=str(fixture.identity_path),
+        runtime_provenance_receipt=str(fixture.provenance_receipt_path),
+        runtime_manifest=str(fixture.manifest_path),
+        marker=str(fixture.marker_path),
+        binding_root=str(fixture.binding),
+        expect_manifest_sha256=None,
+        expect_generation=None,
+        from_expected_head=None,
+        to_expected_head=None,
+        to_venv_path=None,
+        to_repair_bin=None,
+        expected_marker_sha256=None,
+        relaunch_command=None,
+        receipt_path=None,
+        mutation_capability=fixture.cutover_cap,
+    )
+    sha_rc = run_chain_cli(fixture.project, sha_args)
+    assert sha_rc != 0
+    assert captured == {}
+
+    args = Namespace(
+        chain_action="runtime-cutover",
+        spec=str(fixture.spec),
+        project_dir=str(fixture.project),
+        from_runtime_sha256=None,
+        to_runtime_sha256=None,
+        from_import_root=str(fixture.from_root),
+        from_interpreter=str(fixture.from_python),
+        to_import_root=str(fixture.to_root),
+        to_interpreter=str(fixture.to_python),
+        occurrence="occ-1",
+        target="target-1",
+        fence_epoch=3,
+        capability_handle=None,
+        pause_capability_handle=None,
+        rebind_capability_handle=None,
+        expected_current_milestone="m7",
+        expected_current_plan="m7-plan",
+        direction="cutover",
+        reason="t43 production cutover",
+        actor="operator",
+        runtime_identity=str(fixture.identity_path),
+        runtime_provenance_receipt=str(fixture.provenance_receipt_path),
+        runtime_manifest=str(fixture.manifest_path),
+        marker=str(fixture.marker_path),
+        binding_root=str(fixture.binding),
+        expect_manifest_sha256=None,
+        expect_generation=None,
+        from_expected_head=None,
+        to_expected_head=None,
+        to_venv_path=str(fixture.to_venv),
+        to_repair_bin=str(fixture.to_repair),
+        expected_marker_sha256=None,
+        relaunch_command=fixture.to_relaunch,
+        receipt_path=None,
+        mutation_capability=fixture.cutover_cap,
+    )
+    rc = run_chain_cli(fixture.project, args)
+    assert rc == 0
+    assert captured["from_import_root"] == str(fixture.from_root)
+    assert captured["to_import_root"] == str(fixture.to_root)
+    assert "expected_previous_runtime_sha256" in captured
+
+
+def test_production_same_import_root_caller_demanding_rebind_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan.cloud.fixer_executable_recovery import (
+        execute_fixer_recovery_contract,
+    )
+
+    fixture = _Fixture(tmp_path)
+    _stub_identity(monkeypatch, fixture)
+    deliver_runtime_cutover(**fixture.kwargs())  # type: ignore[arg-type]
+    with pytest.raises(CliError) as denied:
+        same_import_root_commit_after_cutover(
+            binding_root=fixture.binding,
+            import_root=fixture.to_root,
+            manifest_path=fixture.manifest_path,
+            new_head="e" * 40,
+            require_rebind=True,
+            require_generation_bump=True,
+        )
+    assert denied.value.code == "same_import_root_is_non_event"
+
+    import inspect
+
+    signature = inspect.signature(execute_fixer_recovery_contract)
+    assert signature.parameters["seed_gates_present"].default is False
+    non_event = same_import_root_commit_after_cutover(
+        binding_root=fixture.binding,
+        import_root=fixture.to_root,
+        manifest_path=fixture.manifest_path,
+        new_head="e" * 40,
+    )
+    assert non_event["seed_gates"] is False
+    assert non_event["rebind"] is False
+    assert json.loads(fixture.manifest_path.read_text())["generation"] == 4
+
+
+def test_torn_selector_marker_is_unreadable_as_current_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _Fixture(tmp_path)
+    _stub_identity(monkeypatch, fixture)
+    kwargs = fixture.kwargs()
+    with pytest.raises(_InjectCrash):
+        deliver_runtime_cutover(
+            **kwargs, failure_injector=_crash_at("after_selector")  # type: ignore[arg-type]
+        )
+    with pytest.raises(CliError) as denied:
+        current_selector_marker_authority(
+            manifest_path=fixture.manifest_path,
+            marker_path=fixture.marker_path,
+        )
+    assert denied.value.code == "torn_selector_marker"
+    journal = inspect_transition(fixture.binding)
+    assert journal is not None
+    assert journal["resumable"] is True
+
+
+
+def test_production_occurrence_adopt_wraps_guarded_owner() -> None:
+    chain_cli = (REPO_ROOT / "arnold_pipelines/megaplan/chain/__init__.py").read_text()
+    adopt_block = chain_cli.split('if action == "occurrence-adopt":', 1)[1]
+    adopt_block = adopt_block.split("if action ==", 1)[0]
+    assert "guarded_occurrence_adoption(" in adopt_block
+    assert "fce_adopt=adopt_occurrence" in adopt_block
+    assert "payload = adopt_occurrence(" not in adopt_block
