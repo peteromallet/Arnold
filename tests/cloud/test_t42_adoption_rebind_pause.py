@@ -732,6 +732,9 @@ def test_static_search_proves_t42_owners_and_no_7272_facade() -> None:
         REPO_ROOT / "arnold_pipelines/megaplan/cloud/operator_pause.py": "def pause_chain",
         REPO_ROOT / "arnold_pipelines/megaplan/cloud/target_rebind.py": "def target_rebind",
         REPO_ROOT / "arnold_pipelines/megaplan/cloud/fixer_executable_recovery.py": "def execute_fixer_recovery_contract",
+        REPO_ROOT / "arnold_pipelines/megaplan/chain/__init__.py": "from arnold_pipelines.megaplan.cloud.operator_pause import pause_chain",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/operator_control.py": "from arnold_pipelines.megaplan.cloud.operator_pause import",
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/cli.py": "--capability-handle",
     }
     for path, needle in owners.items():
         source = path.read_text(encoding="utf-8")
@@ -740,6 +743,17 @@ def test_static_search_proves_t42_owners_and_no_7272_facade() -> None:
         tree = ast.parse(source)
         names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
         assert "prepare_cutover" not in names
+    chain_cli = (
+        REPO_ROOT / "arnold_pipelines/megaplan/chain/__init__.py"
+    ).read_text(encoding="utf-8")
+    assert "from arnold_pipelines.megaplan.cloud.target_rebind import runtime_rebind" in chain_cli
+    assert "from arnold_pipelines.megaplan.cloud.target_rebind import target_rebind" in chain_cli
+    assert ".t42-adoption" not in (
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/occurrence_adoption.py"
+    ).read_text(encoding="utf-8")
+    assert ".t42-runtime-binding.json" not in (
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/target_rebind.py"
+    ).read_text(encoding="utf-8")
     assert "_identity_labels" in (
         REPO_ROOT / "arnold_pipelines/megaplan/cloud/target_rebind.py"
     ).read_text(encoding="utf-8")
@@ -752,3 +766,129 @@ def test_chain_start_one_argv_is_seed_import_bound() -> None:
     argv = chain_start_argv(spec="/tmp/disposable/chain.yaml", project_dir="/tmp/disposable")
     assert argv[-1] == "--one"
     assert "--spec" in argv
+
+def test_second_pause_different_identity_fails_closed(tmp_path: Path) -> None:
+    project, spec, _plan_dir = _chain_fixture(tmp_path)
+    cap = _mint(tmp_path, action=PAUSE_ACTION)
+    first = pause_chain(
+        spec,
+        project,
+        reason="operator pause",
+        capability=cap,
+        occurrence="occ-1",
+        target="target-1",
+        fence_epoch=3,
+        binding_root=project,
+    )
+    assert first["changed"] is True
+    assert first["authority"]["occurrence"] == "occ-1"
+    other = _mint(tmp_path / "occ-2", action=PAUSE_ACTION, occurrence="occ-2")
+    with pytest.raises(CliError) as denied:
+        pause_chain(
+            spec,
+            project,
+            reason="other occurrence",
+            capability=other,
+            occurrence="occ-2",
+            target="target-1",
+            fence_epoch=3,
+            binding_root=project,
+        )
+    assert denied.value.code == "identity_contradiction"
+
+
+def test_production_chain_pause_requires_minted_capability(tmp_path: Path) -> None:
+    from argparse import Namespace
+    from arnold_pipelines.megaplan.chain import run_chain_cli
+
+    project, spec, _plan_dir = _chain_fixture(tmp_path)
+    args = Namespace(
+        chain_action="pause",
+        spec=str(spec),
+        project_dir=str(project),
+        reason="operator pause",
+        actor="operator",
+        occurrence="",
+        target="",
+        fence_epoch=None,
+        capability_handle="",
+        mutation_capability=None,
+    )
+    rc = run_chain_cli(project, args)
+    assert rc != 0
+
+
+def test_production_runtime_rebind_rejects_sequence_index(tmp_path: Path) -> None:
+    from argparse import Namespace
+    from arnold_pipelines.megaplan.chain import run_chain_cli
+
+    project, spec, _plan_dir = _chain_fixture(tmp_path)
+    cap = _mint(tmp_path, action=REBIND_ACTION)
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        attach_mutation_capability,
+    )
+
+    attach_mutation_capability(cap, identity="occ-1")
+    args = Namespace(
+        chain_action="runtime-rebind",
+        spec=str(spec),
+        project_dir=str(project),
+        from_runtime_sha256=None,
+        to_runtime_sha256=None,
+        from_import_root=cap.import_root,
+        from_interpreter=cap.interpreter,
+        to_import_root=cap.import_root,
+        to_interpreter=cap.interpreter,
+        expected_current_milestone="6",
+        expected_current_plan="m7-plan",
+        direction="cutover",
+        reason="rebind",
+        actor="operator",
+        runtime_identity="",
+        runtime_provenance_receipt="",
+        occurrence="occ-1",
+        target="target-1",
+        fence_epoch=3,
+        capability_handle="occ-1",
+        mutation_capability=cap,
+    )
+    rc = run_chain_cli(project, args)
+    assert rc != 0
+
+
+
+def test_production_runtime_rebind_rejects_sha_cas(tmp_path: Path) -> None:
+    from argparse import Namespace
+    from arnold_pipelines.megaplan.chain import run_chain_cli
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        attach_mutation_capability,
+    )
+
+    project, spec, _plan_dir = _chain_fixture(tmp_path)
+    cap = _mint(tmp_path, action=REBIND_ACTION)
+    attach_mutation_capability(cap, identity="occ-1")
+    args = Namespace(
+        chain_action="runtime-rebind",
+        spec=str(spec),
+        project_dir=str(project),
+        from_runtime_sha256="a" * 64,
+        to_runtime_sha256="b" * 64,
+        from_import_root=cap.import_root,
+        from_interpreter=cap.interpreter,
+        to_import_root=cap.import_root,
+        to_interpreter=cap.interpreter,
+        expected_current_milestone="m7",
+        expected_current_plan="m7-plan",
+        direction="cutover",
+        reason="rebind",
+        actor="operator",
+        runtime_identity="",
+        runtime_provenance_receipt="",
+        occurrence="occ-1",
+        target="target-1",
+        fence_epoch=3,
+        capability_handle="occ-1",
+        mutation_capability=cap,
+    )
+    rc = run_chain_cli(project, args)
+    assert rc != 0

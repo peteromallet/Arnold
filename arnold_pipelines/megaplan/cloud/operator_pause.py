@@ -69,7 +69,7 @@ def pause_chain(
             "action, occurrence, target, and fence epoch",
             code="capability_absent",
         )
-    bind_operator_intent(
+    minted = bind_operator_intent(
         capability,
         action=PAUSE_ACTION,
         occurrence=occurrence,
@@ -93,6 +93,10 @@ def pause_chain(
         project_root,
         reason=reason,
         actor=actor,
+        occurrence=minted.occurrence,
+        target=minted.target,
+        capability_token=minted.token,
+        fence_epoch=minted.fence_epoch,
     )
     plan_after = _load_plan(project_root, state.current_plan_name)
     if isinstance(plan_before, Mapping) and isinstance(plan_after, Mapping):
@@ -134,13 +138,19 @@ def reconcile_quiesced_plan_pause(
             "reconcile_quiesced_plan_pause requires a minted MutationCapability",
             code="capability_absent",
         )
+    minted_action = getattr(capability, "action", RECONCILE_ACTION) or RECONCILE_ACTION
+    if minted_action not in {RECONCILE_ACTION, PAUSE_ACTION}:
+        raise MutationDenied(
+            f"capability action {minted_action!r} cannot authorize pause reconcile",
+            code="action_mismatch",
+        )
     bind_operator_intent(
         capability,
-        action=RECONCILE_ACTION,
+        action=minted_action,
         occurrence=occurrence,
         target=target,
         fence_epoch=fence_epoch,
-        scope=RECONCILE_ACTION,
+        scope=getattr(capability, "scope", minted_action) or minted_action,
     )
     return _fce_reconcile_quiesced_plan_pause(
         spec_path,
@@ -150,9 +160,63 @@ def reconcile_quiesced_plan_pause(
     )
 
 
+
+def resume_chain(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    actor: str = "operator",
+    capability: MutationCapability | Mapping[str, Any] | None = None,
+    occurrence: str = "",
+    target: str = "",
+    fence_epoch: int | None = None,
+    verify_execution_binding: bool = True,
+    expected_resume_authority: Mapping[str, Any] | None = None,
+    allow_legacy_authority_cleared_hold: bool = False,
+    binding_root: Path | None = None,
+) -> dict[str, Any]:
+    """Clear pause authority only for the exact bound identity."""
+
+    from arnold_pipelines.megaplan.chain.operator_pause import (
+        resume_chain as _fce_resume_chain,
+    )
+
+    if binding_root is not None:
+        assert_disposable_root(binding_root)
+    if capability is None or not occurrence or not target or fence_epoch is None:
+        raise MutationDenied(
+            "resume_chain requires a minted MutationCapability bound to "
+            "action, occurrence, target, and fence epoch",
+            code="capability_absent",
+        )
+    minted_action = getattr(capability, "action", PAUSE_ACTION) or PAUSE_ACTION
+    if minted_action not in {PAUSE_ACTION, "resume_chain"}:
+        raise MutationDenied(
+            f"capability action {minted_action!r} cannot authorize resume",
+            code="action_mismatch",
+        )
+    bind_operator_intent(
+        capability,
+        action=minted_action,
+        occurrence=occurrence,
+        target=target,
+        fence_epoch=fence_epoch,
+        scope=getattr(capability, "scope", minted_action) or minted_action,
+    )
+    return _fce_resume_chain(
+        spec_path,
+        project_root,
+        actor=actor,
+        verify_execution_binding=verify_execution_binding,
+        expected_resume_authority=expected_resume_authority,
+        allow_legacy_authority_cleared_hold=allow_legacy_authority_cleared_hold,
+    )
+
+
 __all__ = [
     "PAUSE_ACTION",
     "RECONCILE_ACTION",
     "pause_chain",
     "reconcile_quiesced_plan_pause",
+    "resume_chain",
 ]

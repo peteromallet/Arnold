@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import patch
@@ -66,7 +67,9 @@ def seed_import_environment(*, import_root: Path, manifest_path: Path) -> dict[s
 
 
 def require_seed_import_env(env: Mapping[str, str], *, import_root: Path) -> None:
-    pythonpath = Path(str(env.get("PYTHONPATH") or "")).expanduser().resolve()
+    raw = str(env.get("PYTHONPATH") or "")
+    first = raw.split(os.pathsep)[0] if raw else ""
+    pythonpath = Path(first).expanduser().resolve() if first else Path()
     if pythonpath != Path(import_root).expanduser().resolve():
         raise MutationDenied(
             "operator recovery commands that admit engine_runtime refuse unless "
@@ -229,36 +232,8 @@ def execute_fixer_recovery_contract(
         steps.append("expected_head_telemetry_only")
         dest_root = to_import_root or import_root
         dest_python = to_interpreter or interpreter
-        rebind_capability = mint_mutation_capability(
-            action=REBIND_ACTION,
-            evidence={
-                "occurrence": occurrence,
-                "target": target,
-                "cursor": "cursor-rebind",
-                "fence_epoch": fence_epoch,
-                "evidence_digest": hashlib.sha256(f"rebind:{occurrence}".encode()).hexdigest(),
-                "scope": REBIND_ACTION,
-                "custody": {
-                    "identity": f"custody:rebind:{occurrence}",
-                    "occurrence": occurrence,
-                    "occurrence_fingerprint": occurrence,
-                },
-                "import_root": str(import_root),
-                "interpreter": str(interpreter),
-                "runtime_manifest": {
-                    "epic": {
-                        "runtime_root": str(import_root),
-                        "dependency_generation": {
-                            "interpreter_path": str(interpreter)
-                        },
-                    }
-                },
-            },
-            process_root=Path(import_root),
-            process_python=Path(interpreter),
-        )
         rebind_result = runtime_rebind(
-            capability=rebind_capability,
+            capability=capability,
             occurrence=occurrence,
             target=target,
             fence_epoch=fence_epoch,

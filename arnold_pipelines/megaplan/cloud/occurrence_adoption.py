@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.current_target_liveness import (
     MutationCapability,
     MutationDenied,
     require_mutation_capability,
+    resolve_mutation_capability,
 )
 from arnold_pipelines.megaplan.types import CliError
 
@@ -139,10 +140,55 @@ def bind_operator_intent(
     return minted
 
 
+def require_production_operator_binding(
+    args: Any,
+    *,
+    action: str,
+    scope: str,
+) -> MutationCapability:
+    """Bind production CLI args to one minted capability and exact identity."""
+
+    occurrence = str(
+        getattr(args, "occurrence", None)
+        or getattr(args, "expected_session_id", None)
+        or ""
+    ).strip()
+    target = str(
+        getattr(args, "bound_target", None)
+        or getattr(args, "target", None)
+        or occurrence
+    ).strip()
+    fence_raw = getattr(args, "fence_epoch", None)
+    try:
+        fence_epoch = int(fence_raw) if fence_raw is not None else None
+    except (TypeError, ValueError):
+        fence_epoch = None
+    handle = str(getattr(args, "capability_handle", None) or occurrence).strip()
+    capability = resolve_mutation_capability(handle)
+    if capability is None:
+        capability = getattr(args, "mutation_capability", None)
+    if capability is None or not occurrence or not target or fence_epoch is None:
+        raise MutationDenied(
+            f"{action} requires a minted MutationCapability bound to "
+            "action, occurrence, target, and fence epoch",
+            code="capability_absent",
+        )
+    return bind_operator_intent(
+        capability,
+        action=action,
+        occurrence=occurrence,
+        target=target,
+        fence_epoch=fence_epoch,
+        scope=scope,
+    )
+
+
+
 def _adoption_path(root: Path, occurrence: str) -> Path:
-    directory = root / ".t42-adoption"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"{occurrence}.json"
+    # Diagnostic fixture path only. Production adoption writes the fce owner
+    # record under plan evidence/occurrence-adoptions/.
+    directory = root / ".megaplan" / "plans"
+    return directory / f"{occurrence}.adoption-binding.json"
 
 
 def _refuse_operational_authority(evidence: Mapping[str, Any] | None) -> None:
@@ -169,12 +215,14 @@ def guarded_occurrence_adoption(
     occurrence: str,
     target: str,
     fence_epoch: int,
-    binding_root: Path,
+    binding_root: Path | None = None,
     plan: Mapping[str, Any] | None = None,
     runtime_identity: Mapping[str, Any] | None = None,
     expected_plan: str = "",
     expected_runtime: str = "",
     evidence: Mapping[str, Any] | None = None,
+    fce_adopt: Any | None = None,
+    fce_kwargs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Adopt one exact occurrence under a minted root capability.
 
@@ -184,7 +232,7 @@ def guarded_occurrence_adoption(
     resume cursor or plan payload.
     """
 
-    root = assert_disposable_root(binding_root)
+    root = assert_disposable_root(binding_root) if binding_root is not None else None
     _refuse_operational_authority(evidence)
     capability = bind_operator_intent(
         capability,
@@ -238,23 +286,47 @@ def guarded_occurrence_adoption(
         "runtime": runtime_name or expected_runtime,
         "cursor_sha256": resume_cursor_bytes(plan or {}).hex() if plan else "",
     }
-    path = _adoption_path(root, capability.occurrence)
+    if fce_adopt is not None:
+        result = fce_adopt(**dict(fce_kwargs or {}))
+        result["bound_occurrence"] = capability.occurrence
+        result["bound_target"] = capability.target
+        result["bound_fence_epoch"] = capability.fence_epoch
+        result["bound_action"] = ADOPTION_ACTION
+        result["record"] = record
+        if isinstance(plan, Mapping):
+            if resume_cursor_bytes(plan) != cursor_before:
+                raise CliError("cursor_mutated", "adoption must not move the logical resume cursor")
+            if plan_payload_without_pause(plan) != payload_before:
+                raise CliError("plan_payload_mutated", "adoption must not alter the plan payload")
+        return result
+
+    # Fixture-only identity proof: no parallel store. Same bound identity is
+    # idempotent in-process via the fce owner when production calls.
+    if isinstance(plan, Mapping):
+        if resume_cursor_bytes(plan) != cursor_before:
+            raise CliError("cursor_mutated", "adoption must not move the logical resume cursor")
+        if plan_payload_without_pause(plan) != payload_before:
+            raise CliError("plan_payload_mutated", "adoption must not alter the plan payload")
+    if root is None:
+        return {"changed": True, "adopted": True, "record": record}
+    # Fixture identity is recorded beside the disposable plan tree in the same
+    # fce evidence layout so there is no second adoption authority.
+    evidence_dir = root / ".megaplan" / "evidence" / "occurrence-adoptions"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    path = evidence_dir / "current.json"
     if path.exists():
         existing = json.loads(path.read_text(encoding="utf-8"))
-        if existing != record:
+        identity_keys = ("occurrence", "target", "fence_epoch", "action")
+        existing_id = {key: existing.get(key) for key in identity_keys}
+        requested_id = {key: record.get(key) for key in identity_keys}
+        if existing_id != requested_id:
             raise CliError(
                 "identity_contradiction",
                 "duplicate adoption with a different bound identity fails closed",
                 extra={"existing": existing, "requested": record},
             )
         return {"changed": False, "adopted": True, "record": existing, "path": str(path)}
-
     path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    if isinstance(plan, Mapping):
-        if resume_cursor_bytes(plan) != cursor_before:
-            raise CliError("cursor_mutated", "adoption must not move the logical resume cursor")
-        if plan_payload_without_pause(plan) != payload_before:
-            raise CliError("plan_payload_mutated", "adoption must not alter the plan payload")
     return {"changed": True, "adopted": True, "record": record, "path": str(path)}
 
 
@@ -263,6 +335,7 @@ __all__ = [
     "ADOPTION_SCHEMA",
     "assert_disposable_root",
     "bind_operator_intent",
+    "require_production_operator_binding",
     "guarded_occurrence_adoption",
     "plan_payload_without_pause",
     "resume_cursor_bytes",

@@ -201,99 +201,178 @@ def target_rebind(
 
 
 def runtime_rebind(
+    spec_path: Path | None = None,
+    state: Any | None = None,
     *,
     capability: MutationCapability | Mapping[str, Any] | None,
     occurrence: str,
     target: str,
     fence_epoch: int,
     expected_current_milestone: str,
-    binding_root: Path,
+    expected_current_plan: str = "",
     from_import_root: str,
     from_interpreter: str,
     to_import_root: str,
     to_interpreter: str,
     direction: str = "cutover",
     identity: Mapping[str, Any] | None = None,
+    reason: str = "operator runtime rebind",
+    actor: str = "operator",
+    verified_external_runtime_identity: Mapping[str, Any] | None = None,
+    update_engine_root: bool = False,
+    binding_root: Path | None = None,
 ) -> dict[str, Any]:
     """Rebind only import_root + generation interpreter under CAS/fence.
 
-    Live Tree Authority: Git SHA is telemetry, not the CAS. Rollback returns
-    the exact prior binding. Label ``m7`` is required; index ``6`` is refused
-    with an error naming ``_identity_labels``.
+    Live Tree Authority: Git SHA is telemetry, not the CAS. Production
+    callers must supply the chain spec/state so this wraps
+    ``execution_binding.rebind_runtime_identity``. Isolated fixtures may
+    omit spec/state and still exercise the CAS + milestone-label guards
+    without writing a parallel store.
     """
 
-    root = assert_disposable_root(binding_root)
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        rebind_runtime_identity as _fce_rebind_runtime_identity,
+    )
+
+    if binding_root is not None:
+        assert_disposable_root(binding_root)
     if direction not in {"cutover", "rollback"}:
         raise CliError("project_source_rebind_refused", "direction must be cutover or rollback")
-    minted = bind_operator_intent(
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        require_mutation_capability,
+    )
+
+    minted_raw = require_mutation_capability(
         capability,
-        action=REBIND_ACTION,
+        action=getattr(capability, "action", REBIND_ACTION) or REBIND_ACTION,
+        occurrence=occurrence,
+        scope=getattr(capability, "scope", "") or "",
+    )
+    allowed = {REBIND_ACTION, "recover-blocked", "engine_runtime"}
+    if minted_raw.action not in allowed:
+        raise MutationDenied(
+            f"capability action {minted_raw.action!r} cannot authorize runtime rebind",
+            code="action_mismatch",
+        )
+    minted = bind_operator_intent(
+        minted_raw,
+        action=minted_raw.action,
         occurrence=occurrence,
         target=target,
         fence_epoch=fence_epoch,
-        scope=REBIND_ACTION,
+        scope=minted_raw.scope,
     )
     label = require_milestone_identity_label(
         expected_current_milestone,
         identity=identity,
     )
-    store = root / ".t42-runtime-binding.json"
-    prior = json.loads(store.read_text(encoding="utf-8")) if store.exists() else None
     from_root = str(Path(from_import_root).expanduser().resolve())
     from_python = str(Path(from_interpreter).expanduser().resolve())
     to_root = str(Path(to_import_root).expanduser().resolve())
     to_python = str(Path(to_interpreter).expanduser().resolve())
-    if direction == "cutover" and Path(minted.import_root).resolve() != Path(from_root):
-        raise MutationDenied(
-            "rebind CAS is import_root plus generation interpreter",
-            code="import_root_mismatch",
-        )
+    minted_root = str(Path(minted.import_root).expanduser().resolve()) if minted.import_root else ""
+    minted_python = (
+        str(Path(minted.interpreter).expanduser().resolve()) if minted.interpreter else ""
+    )
     if direction == "cutover":
-        binding = {
-            "schema": "arnold.megaplan.t42-runtime-rebind.v1",
-            "direction": "cutover",
-            "occurrence": minted.occurrence,
-            "target": minted.target,
-            "fence_epoch": minted.fence_epoch,
-            "milestone_label": label,
-            "from": {"import_root": from_root, "interpreter": from_python},
-            "to": {"import_root": to_root, "interpreter": to_python},
-        }
+        if minted_root and minted_root != from_root:
+            raise MutationDenied(
+                "rebind CAS is import_root plus generation interpreter",
+                code="import_root_mismatch",
+            )
+        if minted_python and minted_python != from_python:
+            raise MutationDenied(
+                "rebind CAS is import_root plus generation interpreter",
+                code="interpreter_mismatch",
+            )
+    if spec_path is None or state is None:
+        # Fixture-only CAS/rollback proof without a second authority store.
+        # Persist the current binding on the disposable root in the fce
+        # evidence layout so rollback can restore the exact prior pair.
+        if binding_root is None:
+            raise CliError(
+                "project_source_rebind_refused",
+                "fixture runtime_rebind requires binding_root",
+            )
+        store_dir = Path(binding_root) / ".megaplan" / "plans" / "fixture" / "evidence"
+        store_dir.mkdir(parents=True, exist_ok=True)
+        store = store_dir / "runtime-binding.json"
+        prior = json.loads(store.read_text(encoding="utf-8")) if store.exists() else None
+        if direction == "rollback":
+            if not isinstance(prior, Mapping):
+                raise CliError(
+                    "project_source_rebind_refused",
+                    "rollback requires the exact prior binding",
+                )
+            expected_from = prior.get("to") if isinstance(prior, Mapping) else None
+            expected_to = prior.get("from") if isinstance(prior, Mapping) else None
+            if not isinstance(expected_from, Mapping) or not isinstance(expected_to, Mapping):
+                raise CliError("project_source_rebind_refused", "prior binding is malformed")
+            if (
+                str(expected_from.get("import_root")) != from_root
+                or str(expected_from.get("interpreter")) != from_python
+                or str(expected_to.get("import_root")) != to_root
+                or str(expected_to.get("interpreter")) != to_python
+            ):
+                raise CliError(
+                    "project_source_rebind_refused",
+                    "rollback must return to the exact prior binding",
+                    extra={"prior": prior, "requested_from": from_root, "requested_to": to_root},
+                )
+            binding = {
+                "schema": "arnold.megaplan.runtime-rebind.v1",
+                "direction": "rollback",
+                "occurrence": minted.occurrence,
+                "target": minted.target,
+                "fence_epoch": minted.fence_epoch,
+                "milestone_label": label,
+                "from": {"import_root": from_root, "interpreter": from_python},
+                "to": {"import_root": to_root, "interpreter": to_python},
+                "restored": dict(expected_to),
+            }
+        else:
+            binding = {
+                "schema": "arnold.megaplan.runtime-rebind.v1",
+                "direction": "cutover",
+                "occurrence": minted.occurrence,
+                "target": minted.target,
+                "fence_epoch": minted.fence_epoch,
+                "milestone_label": label,
+                "from": {"import_root": from_root, "interpreter": from_python},
+                "to": {"import_root": to_root, "interpreter": to_python},
+            }
         store.write_text(json.dumps(binding, indent=2) + "\n", encoding="utf-8")
-        return {"changed": True, "binding": binding, "prior": prior, "path": str(store)}
-    if prior is None:
-        raise CliError(
-            "project_source_rebind_refused",
-            "rollback requires the exact prior binding",
-        )
-    expected_from = prior.get("to") if isinstance(prior, Mapping) else None
-    expected_to = prior.get("from") if isinstance(prior, Mapping) else None
-    if not isinstance(expected_from, Mapping) or not isinstance(expected_to, Mapping):
-        raise CliError("project_source_rebind_refused", "prior binding is malformed")
-    if (
-        str(expected_from.get("import_root")) != from_root
-        or str(expected_from.get("interpreter")) != from_python
-        or str(expected_to.get("import_root")) != to_root
-        or str(expected_to.get("interpreter")) != to_python
-    ):
-        raise CliError(
-            "project_source_rebind_refused",
-            "rollback must return to the exact prior binding",
-            extra={"prior": prior, "requested_from": from_root, "requested_to": to_root},
-        )
-    rolled = {
-        "schema": "arnold.megaplan.t42-runtime-rebind.v1",
-        "direction": "rollback",
-        "occurrence": minted.occurrence,
-        "target": minted.target,
-        "fence_epoch": minted.fence_epoch,
-        "milestone_label": label,
-        "from": {"import_root": from_root, "interpreter": from_python},
-        "to": {"import_root": to_root, "interpreter": to_python},
-        "restored": dict(expected_to),
-    }
-    store.write_text(json.dumps(rolled, indent=2) + "\n", encoding="utf-8")
-    return {"changed": True, "binding": rolled, "prior": prior, "path": str(store)}
+        return {
+            "changed": True,
+            "binding": binding,
+            "prior": prior,
+            "path": str(store),
+            "cas": "import_root+interpreter",
+        }
+    result = _fce_rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_current_milestone=label,
+        expected_current_plan=expected_current_plan,
+        reason=reason,
+        actor=actor,
+        direction=direction,
+        verified_external_runtime_identity=verified_external_runtime_identity,
+        update_engine_root=update_engine_root,
+        expected_previous_import_root=from_root,
+        expected_previous_interpreter=from_python,
+        expected_active_import_root=to_root,
+        expected_active_interpreter=to_python,
+        capability=minted,
+    )
+    result["bound_occurrence"] = minted.occurrence
+    result["bound_target"] = minted.target
+    result["bound_fence_epoch"] = minted.fence_epoch
+    result["bound_action"] = REBIND_ACTION
+    result["milestone_label"] = label
+    result["cas"] = "import_root+interpreter"
+    return result
 
 
 __all__ = [

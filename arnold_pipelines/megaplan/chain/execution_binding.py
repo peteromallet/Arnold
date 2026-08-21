@@ -1679,8 +1679,12 @@ def rebind_runtime_identity(
     spec_path: Path,
     state: Any,
     *,
-    expected_previous_runtime_sha256: str,
-    expected_active_runtime_sha256: str,
+    expected_previous_runtime_sha256: str | None = None,
+    expected_active_runtime_sha256: str | None = None,
+    expected_previous_import_root: str | None = None,
+    expected_previous_interpreter: str | None = None,
+    expected_active_import_root: str | None = None,
+    expected_active_interpreter: str | None = None,
     expected_current_milestone: str,
     expected_current_plan: str,
     reason: str,
@@ -1688,6 +1692,7 @@ def rebind_runtime_identity(
     direction: str = "cutover",
     verified_external_runtime_identity: Mapping[str, Any] | None = None,
     update_engine_root: bool = False,
+    capability: object | None = None,
 ) -> dict[str, Any]:
     """Adopt or roll back an exact runtime without rewriting the spec binding.
 
@@ -1704,10 +1709,36 @@ def rebind_runtime_identity(
         raise CliError(
             RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback"
         )
-    if not _FULL_SHA256.fullmatch(expected_previous_runtime_sha256):
-        raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 is invalid")
-    if not _FULL_SHA256.fullmatch(expected_active_runtime_sha256):
-        raise CliError(RUNTIME_DRIFT_ERROR, "active runtime SHA-256 is invalid")
+    sha_cas = bool(expected_previous_runtime_sha256 or expected_active_runtime_sha256)
+    root_cas = bool(
+        expected_previous_import_root
+        or expected_previous_interpreter
+        or expected_active_import_root
+        or expected_active_interpreter
+    )
+    if sha_cas and not root_cas:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind CAS is import_root plus generation interpreter, not SHA-256",
+        )
+    if not root_cas:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind requires import_root plus generation interpreter CAS",
+        )
+    if not all(
+        str(value or "").strip()
+        for value in (
+            expected_previous_import_root,
+            expected_previous_interpreter,
+            expected_active_import_root,
+            expected_active_interpreter,
+        )
+    ):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind requires import_root plus generation interpreter CAS",
+        )
     if not all(
         str(value or "").strip()
         for value in (expected_current_milestone, expected_current_plan, reason, actor)
@@ -1792,10 +1823,62 @@ def rebind_runtime_identity(
             f"runtime rebind refused: status is {report.get('status')!r}, not drift",
         )
     active = report.get("active") or {}
-    if persisted_previous_sha256 != expected_previous_runtime_sha256:
-        raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 does not match")
-    if active.get("content_sha256") != expected_active_runtime_sha256:
-        raise CliError(RUNTIME_DRIFT_ERROR, "active runtime SHA-256 does not match")
+
+    def _resolved(value: object) -> str:
+        text_value = str(value or "").strip()
+        return str(Path(text_value).expanduser().resolve()) if text_value else ""
+
+    persisted_root = _resolved(persisted_identity.get("import_root"))
+    persisted_interpreter = _resolved(
+        persisted_identity.get("interpreter")
+        or persisted_identity.get("interpreter_path")
+        or ((persisted_identity.get("generation") or {}) if isinstance(persisted_identity.get("generation"), Mapping) else {}).get("interpreter")
+        or ((persisted_identity.get("dependency_generation") or {}) if isinstance(persisted_identity.get("dependency_generation"), Mapping) else {}).get("interpreter_path")
+    )
+    active_root = _resolved(active.get("import_root"))
+    active_interpreter = _resolved(
+        active.get("interpreter")
+        or active.get("interpreter_path")
+        or ((active.get("generation") or {}) if isinstance(active.get("generation"), Mapping) else {}).get("interpreter")
+        or ((active.get("dependency_generation") or {}) if isinstance(active.get("dependency_generation"), Mapping) else {}).get("interpreter_path")
+    )
+    expected_from_root = _resolved(expected_previous_import_root)
+    expected_from_python = _resolved(expected_previous_interpreter)
+    expected_to_root = _resolved(expected_active_import_root)
+    expected_to_python = _resolved(expected_active_interpreter)
+    if persisted_root != expected_from_root:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "previous runtime import_root does not match",
+        )
+    if persisted_interpreter and expected_from_python and persisted_interpreter != expected_from_python:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "previous runtime interpreter does not match",
+        )
+    if active_root != expected_to_root:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "active runtime import_root does not match",
+        )
+    if active_interpreter and expected_to_python and active_interpreter != expected_to_python:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "active runtime interpreter does not match",
+        )
+    minted = capability
+    minted_root = _resolved(getattr(minted, "import_root", "") if minted is not None else "")
+    minted_python = _resolved(getattr(minted, "interpreter", "") if minted is not None else "")
+    if minted_root and minted_root != expected_from_root:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "minted capability import_root does not match rebind CAS",
+        )
+    if minted_python and minted_python != expected_from_python:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "minted capability interpreter does not match rebind CAS",
+        )
     if report.get("active_errors"):
         raise CliError(
             RUNTIME_DRIFT_ERROR,

@@ -2,11 +2,49 @@ from __future__ import annotations
 
 import json
 import subprocess
+_REAL_SUBPROCESS_RUN = subprocess.run
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
 
 from arnold_pipelines.megaplan.cloud import operator_control
+
+def _pause_capability(tmp_path: Path, *, occurrence: str = "demo"):
+    import hashlib
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        mint_mutation_capability,
+    )
+
+    live = tmp_path / "cap-root"
+    live.mkdir(exist_ok=True)
+    interpreter = live / "generation" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+    with patch.object(subprocess, "run", _REAL_SUBPROCESS_RUN):
+        return mint_mutation_capability(
+        action="pause_chain",
+        evidence={
+            "occurrence": occurrence,
+            "target": occurrence,
+            "cursor": "cursor-1",
+            "fence_epoch": 3,
+            "evidence_digest": hashlib.sha256(occurrence.encode()).hexdigest(),
+            "scope": "pause_chain",
+            "custody": f"custody:{occurrence}",
+            "import_root": str(live),
+            "interpreter": str(interpreter),
+            "runtime_manifest": {
+                "epic": {
+                    "runtime_root": str(live),
+                    "dependency_generation": {"interpreter_path": str(interpreter)},
+                }
+            },
+        },
+        process_root=live,
+        process_python=interpreter,
+    )
+
 
 
 def test_resume_injects_managed_repair_route_into_tmux_session(
@@ -61,12 +99,17 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
     sleeps: list[float] = []
     monkeypatch.setattr(operator_control.time, "sleep", sleeps.append)
 
+    cap = _pause_capability(tmp_path, occurrence="demo")
     result = operator_control.resume_session(
         spec=tmp_path / "chain.yaml",
         workspace=workspace,
         session="demo",
         marker_path=marker_path,
         actor="test",
+        capability=cap,
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
     )
 
     launch = calls[1]
@@ -77,7 +120,9 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
     assert f"ARNOLD_REPAIR_MARKER_DIR={marker_dir}" in launch
     assert "ARNOLD_REPAIR_SESSION=demo" in launch
     assert "ARNOLD_REPAIR_RUN_KIND=chain" in launch
-    assert resume_calls == [{"actor": "test", "verify_execution_binding": True}]
+    assert resume_calls[0]["actor"] == "test"
+    assert resume_calls[0]["verify_execution_binding"] is True
+    assert resume_calls[0]["capability"] is not None
     assert not any(item.startswith("MEGAPLAN_CHAIN_NO_PUSH=") for item in launch)
     assert launch[-1] == "python -m demo"
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -129,12 +174,17 @@ def test_resume_no_push_preserves_dirty_milestone_checkout(
 
     monkeypatch.setattr(operator_control.subprocess, "run", fake_run)
 
+    cap = _pause_capability(tmp_path, occurrence="demo")
     result = operator_control.resume_session(
         spec=tmp_path / "chain.yaml",
         workspace=workspace,
         session="demo",
         marker_path=marker_path,
         actor="test",
+        capability=cap,
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
         no_push=True,
     )
 
@@ -182,17 +232,24 @@ def test_resume_authority_only_does_not_start_runner(
         lambda argv, **kwargs: calls.append(list(argv)),
     )
 
+    cap = _pause_capability(tmp_path, occurrence="demo")
     result = operator_control.resume_session(
         spec=tmp_path / "chain.yaml",
         workspace=workspace,
         session="demo",
         marker_path=marker_path,
         actor="test",
+        capability=cap,
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
         start_runner=False,
     )
 
     assert calls == []
-    assert resume_calls == [{"actor": "test", "verify_execution_binding": False}]
+    assert resume_calls[0]["actor"] == "test"
+    assert resume_calls[0]["verify_execution_binding"] is False
+    assert resume_calls[0]["capability"] is not None
     assert result["runner_started"] is False
     assert result["authority_only"] is True
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -249,6 +306,10 @@ def test_resume_fails_closed_when_marker_changes_concurrently(
             session="demo",
             marker_path=marker_path,
             actor="test",
+            capability=_pause_capability(tmp_path, occurrence="demo"),
+            occurrence="demo",
+            target="demo",
+            fence_epoch=3,
         )
 
     assert calls == [["tmux", "has-session", "-t", "demo"]]
@@ -275,6 +336,10 @@ def test_resume_rejects_stale_marker_command_after_runtime_cutover(
             session="demo",
             marker_path=marker_path,
             actor="test",
+            capability=_pause_capability(tmp_path, occurrence="demo"),
+            occurrence="demo",
+            target="demo",
+            fence_epoch=3,
         )
 
 
@@ -327,6 +392,10 @@ def test_resume_restores_authority_hold_when_runner_dies_before_handshake(
             session="demo",
             marker_path=marker_path,
             actor="test",
+            capability=_pause_capability(tmp_path, occurrence="demo"),
+            occurrence="demo",
+            target="demo",
+            fence_epoch=3,
         )
 
     stopped = json.loads(marker_path.read_text())
@@ -384,6 +453,10 @@ def test_post_launch_failure_does_not_overwrite_concurrent_marker_change(
             session="demo",
             marker_path=marker_path,
             actor="test",
+            capability=_pause_capability(tmp_path, occurrence="demo"),
+            occurrence="demo",
+            target="demo",
+            fence_epoch=3,
         )
 
     concurrent = json.loads(marker_path.read_text())

@@ -65,6 +65,10 @@ def pause_chain(
     *,
     reason: str,
     actor: str = "operator",
+    occurrence: str = "",
+    target: str = "",
+    capability_token: str = "",
+    fence_epoch: int | None = None,
 ) -> dict[str, Any]:
     """Persist pause authority without deleting workspace, cursor, or artifacts."""
 
@@ -74,8 +78,35 @@ def pause_chain(
     state = chain_spec.load_chain_state(spec_path)
     if state.current_milestone_index >= len(spec.milestones) and len(state.completed) >= len(spec.milestones):
         raise CliError("chain_complete", "completed chains cannot be paused")
+    bound_occurrence = str(occurrence or "").strip()
+    bound_target = str(target or "").strip()
+    bound_capability = str(capability_token or "").strip()
     existing = pause_record(state)
     if existing is not None:
+        requested = {
+            "occurrence": bound_occurrence,
+            "target": bound_target,
+            "capability": bound_capability,
+            "fence_epoch": fence_epoch,
+        }
+        recorded = {
+            "occurrence": str(existing.get("occurrence") or "").strip(),
+            "target": str(existing.get("target") or "").strip(),
+            "capability": str(existing.get("capability") or "").strip(),
+            "fence_epoch": existing.get("fence_epoch"),
+        }
+        requested_bound = any(
+            value not in (None, "") for value in requested.values()
+        )
+        recorded_bound = any(
+            value not in (None, "") for value in recorded.values()
+        )
+        if requested_bound and recorded_bound and recorded != requested:
+            raise CliError(
+                "identity_contradiction",
+                "duplicate pause with a different bound identity fails closed",
+                extra={"existing": existing, "requested": requested},
+            )
         return {"changed": False, "paused": True, "authority": existing}
 
     plan_dir = find_plan_dir(project_root, state.current_plan_name) if state.current_plan_name else None
@@ -95,6 +126,10 @@ def pause_chain(
         "previous_chain_last_state": state.last_state,
         "previous_plan_state": previous_plan_state,
         "plan": state.current_plan_name,
+        "occurrence": bound_occurrence,
+        "target": bound_target,
+        "capability": bound_capability,
+        "fence_epoch": fence_epoch,
     }
     state.metadata[AUTHORITY_KEY] = authority
     state.last_state = STATE_PAUSED
@@ -113,6 +148,10 @@ def pause_chain(
                     "reason": authority["reason"],
                     "previous_current_state": previous_plan_state,
                     "previous_chain_last_state": authority["previous_chain_last_state"],
+                    "occurrence": bound_occurrence,
+                    "target": bound_target,
+                    "capability": bound_capability,
+                    "fence_epoch": fence_epoch,
                 }
             return True
 

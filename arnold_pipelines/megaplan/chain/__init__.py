@@ -10949,8 +10949,16 @@ def build_chain_parser(subparsers: Any) -> None:
     )
     runtime_rebind_parser.add_argument("--spec", required=True)
     runtime_rebind_parser.add_argument("--project-dir", required=False)
-    runtime_rebind_parser.add_argument("--from-runtime-sha256", required=True)
-    runtime_rebind_parser.add_argument("--to-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--from-runtime-sha256", required=False)
+    runtime_rebind_parser.add_argument("--to-runtime-sha256", required=False)
+    runtime_rebind_parser.add_argument("--from-import-root", required=False)
+    runtime_rebind_parser.add_argument("--from-interpreter", required=False)
+    runtime_rebind_parser.add_argument("--to-import-root", required=False)
+    runtime_rebind_parser.add_argument("--to-interpreter", required=False)
+    runtime_rebind_parser.add_argument("--occurrence", required=False)
+    runtime_rebind_parser.add_argument("--target", required=False)
+    runtime_rebind_parser.add_argument("--fence-epoch", type=int, required=False)
+    runtime_rebind_parser.add_argument("--capability-handle", required=False)
     runtime_rebind_parser.add_argument("--expected-current-milestone", required=True)
     runtime_rebind_parser.add_argument(
         "--expected-current-plan",
@@ -11118,6 +11126,10 @@ def build_chain_parser(subparsers: Any) -> None:
     target_rebind_parser.add_argument("--expected-plan-state-sha256", required=True)
     target_rebind_parser.add_argument("--reason", required=True)
     target_rebind_parser.add_argument("--actor", default="operator")
+    target_rebind_parser.add_argument("--occurrence", required=False)
+    target_rebind_parser.add_argument("--target", dest="bound_target", required=False)
+    target_rebind_parser.add_argument("--fence-epoch", type=int, required=False)
+    target_rebind_parser.add_argument("--capability-handle", required=False)
     target_rebind_parser.add_argument(
         "--runtime-identity",
         help="Verified external runtime identity used by a newer paused control interpreter",
@@ -11173,6 +11185,10 @@ def build_chain_parser(subparsers: Any) -> None:
     pause_parser.add_argument("--project-dir", required=False)
     pause_parser.add_argument("--reason", required=True)
     pause_parser.add_argument("--actor", default="operator")
+    pause_parser.add_argument("--occurrence", required=False)
+    pause_parser.add_argument("--target", required=False)
+    pause_parser.add_argument("--fence-epoch", type=int, required=False)
+    pause_parser.add_argument("--capability-handle", required=False)
 
     resume_chain_parser = chain_sub.add_parser(
         "resume", help="Explicitly clear a durable operator pause"
@@ -11180,6 +11196,10 @@ def build_chain_parser(subparsers: Any) -> None:
     resume_chain_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
     resume_chain_parser.add_argument("--project-dir", required=False)
     resume_chain_parser.add_argument("--actor", default="operator")
+    resume_chain_parser.add_argument("--occurrence", required=False)
+    resume_chain_parser.add_argument("--target", required=False)
+    resume_chain_parser.add_argument("--fence-epoch", type=int, required=False)
+    resume_chain_parser.add_argument("--capability-handle", required=False)
 
     occurrence_join_parser = chain_sub.add_parser(
         "occurrence-join",
@@ -11489,7 +11509,11 @@ def run_chain_cli(
     spec_path = Path(spec_arg).expanduser().resolve()
 
     if action in {"pause", "resume"}:
-        from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
+        from arnold_pipelines.megaplan.cloud.current_target_liveness import MutationDenied
+        from arnold_pipelines.megaplan.cloud.operator_pause import pause_chain, resume_chain
+        from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
+            require_production_operator_binding,
+        )
 
         project_root = root
         project_dir_arg = getattr(args, "project_dir", None)
@@ -11497,14 +11521,38 @@ def run_chain_cli(
             project_root = Path(project_dir_arg).expanduser().resolve()
         try:
             if action == "pause":
+                binding = require_production_operator_binding(
+                    args,
+                    action="pause_chain",
+                    scope="pause_chain",
+                )
                 payload = pause_chain(
                     spec_path,
                     project_root,
                     reason=args.reason,
                     actor=args.actor,
+                    capability=binding,
+                    occurrence=binding.occurrence,
+                    target=binding.target,
+                    fence_epoch=binding.fence_epoch,
                 )
             else:
-                payload = resume_chain(spec_path, project_root, actor=args.actor)
+                binding = require_production_operator_binding(
+                    args,
+                    action="pause_chain",
+                    scope="pause_chain",
+                )
+                payload = resume_chain(
+                    spec_path,
+                    project_root,
+                    actor=args.actor,
+                    capability=binding,
+                    occurrence=binding.occurrence,
+                    target=binding.target,
+                    fence_epoch=binding.fence_epoch,
+                )
+        except MutationDenied as denied:
+            return _emit_error(CliError(denied.code, str(denied)))
         except CliError as exc:
             return _emit_error(exc)
         sys.stdout.write(
@@ -11556,7 +11604,19 @@ def run_chain_cli(
             from arnold_pipelines.megaplan.chain.occurrence_adopt import (
                 adopt_occurrence,
             )
+            from arnold_pipelines.megaplan.cloud.current_target_liveness import MutationDenied
+            from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
+                guarded_occurrence_adoption,
+            )
+            from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
+                require_production_operator_binding,
+            )
 
+            binding = require_production_operator_binding(
+                args,
+                action="occurrence_adoption",
+                scope="occurrence_adoption",
+            )
             payload = adopt_occurrence(
                 spec_path=spec_path,
                 project_dir=project_root,
@@ -11585,8 +11645,10 @@ def run_chain_cli(
                 reason=args.reason,
                 receipt_path=Path(receipt_arg).expanduser(),
             )
-        except CliError as exc:
-            return _emit_error(exc)
+        except MutationDenied as denied:
+            return _emit_error(CliError(denied.code, str(denied)))
+        except CliError as extra:
+            return _emit_error(extra)
         sys.stdout.write(
             json.dumps({"success": True, "spec": str(spec_path), **payload}, indent=2) + "\n"
         )
@@ -11682,9 +11744,13 @@ def run_chain_cli(
             )
             before = chain_state.to_dict()
             from arnold_pipelines.megaplan.chain.execution_binding import (
-                rebind_runtime_identity,
                 verify_external_runtime_identity,
             )
+            from arnold_pipelines.megaplan.cloud.current_target_liveness import MutationDenied
+            from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
+                require_production_operator_binding,
+            )
+            from arnold_pipelines.megaplan.cloud.target_rebind import runtime_rebind
 
             identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
             receipt_arg = str(
@@ -11704,17 +11770,62 @@ def run_chain_cli(
                 if identity_arg
                 else None
             )
-            result = rebind_runtime_identity(
+            if getattr(args, "from_runtime_sha256", None) or getattr(args, "to_runtime_sha256", None):
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "runtime rebind CAS is import_root plus generation interpreter, not SHA-256",
+                )
+            binding = require_production_operator_binding(
+                args,
+                action="target_rebind",
+                scope="target_rebind",
+            )
+            from_root = str(
+                getattr(args, "from_import_root", None)
+                or getattr(binding, "import_root", "")
+                or ""
+            )
+            from_python = str(
+                getattr(args, "from_interpreter", None)
+                or getattr(binding, "interpreter", "")
+                or ""
+            )
+            to_root = str(getattr(args, "to_import_root", None) or "")
+            to_python = str(getattr(args, "to_interpreter", None) or "")
+            if not to_root and isinstance(external_identity, dict):
+                to_root = str(external_identity.get("import_root") or "")
+            if not to_python and isinstance(external_identity, dict):
+                to_python = str(
+                    external_identity.get("interpreter")
+                    or external_identity.get("interpreter_path")
+                    or ""
+                )
+            if not to_root or not to_python:
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "runtime rebind requires --to-import-root and --to-interpreter "
+                    "(import_root + generation interpreter CAS)",
+                )
+            result = runtime_rebind(
                 spec_path,
                 chain_state,
-                expected_previous_runtime_sha256=args.from_runtime_sha256,
-                expected_active_runtime_sha256=args.to_runtime_sha256,
+                capability=binding,
+                occurrence=binding.occurrence,
+                target=binding.target,
+                fence_epoch=binding.fence_epoch,
                 expected_current_milestone=args.expected_current_milestone,
                 expected_current_plan=args.expected_current_plan,
+                from_import_root=from_root,
+                from_interpreter=from_python,
+                to_import_root=to_root,
+                to_interpreter=to_python,
                 direction=args.direction,
                 reason=args.reason,
                 actor=args.actor,
                 verified_external_runtime_identity=external_identity,
+                identity=chain_state.metadata.get("execution_binding", {}).get("runtime_binding", {}).get("current_identity")
+                if isinstance(chain_state.metadata, dict)
+                else None,
             )
             after = chain_state.to_dict()
             for field in before:
@@ -11724,8 +11835,10 @@ def run_chain_cli(
                         f"chain runtime rebind refused: operational field {field!r} changed",
                     )
             chain_spec.save_chain_state(spec_path, chain_state)
-        except CliError as exc:
-            return _emit_error(exc)
+        except MutationDenied as denied:
+            return _emit_error(CliError(denied.code, str(denied)))
+        except CliError as extra:
+            return _emit_error(extra)
         sys.stdout.write(
             json.dumps(
                 {
@@ -11862,10 +11975,14 @@ def run_chain_cli(
     if action == "target-rebind":
         project_root = Path(args.project_dir).expanduser().resolve()
         try:
-            from arnold_pipelines.megaplan.chain.target_rebind import target_rebind
             from arnold_pipelines.megaplan.chain.execution_binding import (
                 verify_external_runtime_identity,
             )
+            from arnold_pipelines.megaplan.cloud.current_target_liveness import MutationDenied
+            from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
+                require_production_operator_binding,
+            )
+            from arnold_pipelines.megaplan.cloud.target_rebind import target_rebind
 
             identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
             receipt_arg = str(
@@ -11886,6 +12003,11 @@ def run_chain_cli(
                 else None
             )
 
+            binding = require_production_operator_binding(
+                args,
+                action="target_rebind",
+                scope="target_rebind",
+            )
             result = target_rebind(
                 spec_path,
                 project_root,
@@ -11907,9 +12029,15 @@ def run_chain_cli(
                 reason=args.reason,
                 actor=args.actor,
                 verified_external_runtime_identity=external_identity,
+                capability=binding,
+                occurrence=binding.occurrence,
+                target=binding.target,
+                fence_epoch=binding.fence_epoch,
             )
-        except CliError as exc:
-            return _emit_error(exc)
+        except MutationDenied as denied:
+            return _emit_error(CliError(denied.code, str(denied)))
+        except CliError as extra:
+            return _emit_error(extra)
         sys.stdout.write(
             json.dumps(
                 {

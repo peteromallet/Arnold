@@ -788,6 +788,10 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     pause_chain_parser.add_argument("--reason", required=True)
     pause_chain_parser.add_argument("--actor", default="operator")
+    pause_chain_parser.add_argument("--occurrence", required=False)
+    pause_chain_parser.add_argument("--target", required=False)
+    pause_chain_parser.add_argument("--fence-epoch", type=int, required=False)
+    pause_chain_parser.add_argument("--capability-handle", required=False)
 
     resume_chain_parser = cloud_sub.add_parser(
         "resume-chain", parents=[shared], help="Explicitly resume a durably paused chain"
@@ -1379,6 +1383,18 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             ]
             if action == "pause-chain":
                 argv.extend(["--reason", str(args.reason)])
+                occurrence = str(getattr(args, "occurrence", "") or "").strip()
+                target = str(getattr(args, "target", "") or "").strip()
+                fence_epoch = getattr(args, "fence_epoch", None)
+                handle = str(getattr(args, "capability_handle", "") or "").strip()
+                if occurrence:
+                    argv.extend(["--occurrence", occurrence])
+                if target:
+                    argv.extend(["--target", target])
+                if fence_epoch is not None:
+                    argv.extend(["--fence-epoch", str(fence_epoch)])
+                if handle:
+                    argv.extend(["--capability-handle", handle])
             elif bool(getattr(args, "no_start", False)):
                 argv.append("--no-start")
             result = provider.ssh_exec(shlex.join(argv))

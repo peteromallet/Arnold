@@ -14,7 +14,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from arnold_pipelines.megaplan.chain.operator_pause import (
+from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
+    require_production_operator_binding,
+)
+from arnold_pipelines.megaplan.cloud.operator_pause import (
     pause_chain,
     reconcile_quiesced_plan_pause,
     resume_chain,
@@ -82,9 +85,37 @@ def pause_session(
     marker_path: Path,
     reason: str,
     actor: str,
+    capability: object | None = None,
+    occurrence: str = "",
+    target: str = "",
+    fence_epoch: int | None = None,
 ) -> dict[str, Any]:
     marker, marker_sha256 = _load_marker(marker_path)
-    result = pause_chain(spec, workspace, reason=reason, actor=actor)
+    if capability is None:
+        class _Args:
+            pass
+        args = _Args()
+        args.occurrence = occurrence or session
+        args.target = target or session
+        args.fence_epoch = fence_epoch
+        args.capability_handle = occurrence or session
+        args.mutation_capability = None
+        capability = require_production_operator_binding(
+            args, action="pause_chain", scope="pause_chain"
+        )
+        occurrence = capability.occurrence
+        target = capability.target
+        fence_epoch = capability.fence_epoch
+    result = pause_chain(
+        spec,
+        workspace,
+        reason=reason,
+        actor=actor,
+        capability=capability,
+        occurrence=occurrence,
+        target=target,
+        fence_epoch=fence_epoch,
+    )
     stopped = (
         subprocess.run(
             ["tmux", "kill-session", "-t", session],
@@ -112,6 +143,10 @@ def pause_session(
         workspace,
         session=session,
         authority=result["authority"],
+        capability=capability,
+        occurrence=occurrence,
+        target=target,
+        fence_epoch=fence_epoch,
     )
     marker["operator_pause"] = result["authority"]
     marker["should_run"] = False
@@ -134,8 +169,27 @@ def resume_session(
     actor: str,
     no_push: bool = False,
     start_runner: bool = True,
+    capability: object | None = None,
+    occurrence: str = "",
+    target: str = "",
+    fence_epoch: int | None = None,
 ) -> dict[str, Any]:
     marker, marker_sha256 = _load_marker(marker_path)
+    if capability is None:
+        class _Args:
+            pass
+        args = _Args()
+        args.occurrence = occurrence or session
+        args.target = target or session
+        args.fence_epoch = fence_epoch
+        args.capability_handle = occurrence or session
+        args.mutation_capability = None
+        capability = require_production_operator_binding(
+            args, action="pause_chain", scope="pause_chain"
+        )
+        occurrence = capability.occurrence
+        target = capability.target
+        fence_epoch = capability.fence_epoch
     relaunch: str | None = None
     if start_runner:
         relaunch = marker_relaunch_command(marker)
@@ -164,6 +218,10 @@ def resume_session(
             actor=actor,
             verify_execution_binding=start_runner,
             expected_resume_authority=hold["resume_authority"],
+            capability=capability,
+            occurrence=occurrence,
+            target=target,
+            fence_epoch=fence_epoch,
         )
     elif marker.get("should_run") is False and not isinstance(marker.get("operator_pause"), dict):
         # Compatibility for authority-cleared holds created before the typed
@@ -184,6 +242,10 @@ def resume_session(
             actor=actor,
             verify_execution_binding=start_runner,
             allow_legacy_authority_cleared_hold=True,
+            capability=capability,
+            occurrence=occurrence,
+            target=target,
+            fence_epoch=fence_epoch,
         )
     else:
         result = resume_chain(
@@ -191,6 +253,10 @@ def resume_session(
             workspace,
             actor=actor,
             verify_execution_binding=start_runner,
+            capability=capability,
+            occurrence=occurrence,
+            target=target,
+            fence_epoch=fence_epoch,
         )
     if not start_runner:
         marker.pop("operator_pause", None)
@@ -335,6 +401,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--marker", required=True)
     parser.add_argument("--reason", default="operator requested pause")
     parser.add_argument("--actor", default="operator")
+    parser.add_argument("--occurrence", default="")
+    parser.add_argument("--target", default="")
+    parser.add_argument("--fence-epoch", type=int, default=None)
+    parser.add_argument("--capability-handle", default="")
     parser.add_argument(
         "--no-push",
         action="store_true",
@@ -357,7 +427,13 @@ def main(argv: list[str] | None = None) -> int:
         "actor": args.actor,
     }
     payload = (
-        pause_session(**common, reason=args.reason)
+        pause_session(
+            **common,
+            reason=args.reason,
+            occurrence=args.occurrence,
+            target=args.target,
+            fence_epoch=args.fence_epoch,
+        )
         if args.action == "pause"
         else resume_session(
             **common,

@@ -1,14 +1,53 @@
 from __future__ import annotations
 
 import json
+import subprocess
+_REAL_SUBPROCESS_RUN = subprocess.run
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
 
 from arnold_pipelines.megaplan.chain.operator_pause import is_paused, pause_chain, resume_chain
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, save_chain_state
 from arnold_pipelines.megaplan.types import CliError
 
+
+
+def _pause_capability(tmp_path: Path, *, occurrence: str = "demo"):
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        mint_mutation_capability,
+    )
+    import hashlib, json
+    live = tmp_path / "cap-root"
+    live.mkdir(exist_ok=True)
+    interpreter = live / "generation" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+    evidence = {
+        "occurrence": occurrence,
+        "target": occurrence,
+        "cursor": "cursor-1",
+        "fence_epoch": 3,
+        "evidence_digest": hashlib.sha256(occurrence.encode()).hexdigest(),
+        "scope": "pause_chain",
+        "custody": f"custody:{occurrence}",
+        "import_root": str(live),
+        "interpreter": str(interpreter),
+        "runtime_manifest": {
+            "epic": {
+                "runtime_root": str(live),
+                "dependency_generation": {"interpreter_path": str(interpreter)},
+            }
+        },
+    }
+    with patch.object(subprocess, "run", _REAL_SUBPROCESS_RUN):
+        return mint_mutation_capability(
+        action="pause_chain",
+        evidence=evidence,
+        process_root=live,
+        process_python=interpreter,
+    )
 
 def _chain(tmp_path: Path, *, complete: bool = False) -> tuple[Path, Path]:
     initiative = tmp_path / ".megaplan" / "initiatives" / "demo"
@@ -151,6 +190,7 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
         calls.append(argv)
         return Completed()
 
+    cap = _pause_capability(tmp_path, occurrence="demo")
     monkeypatch.setattr(operator_control.subprocess, "run", fake_run)
     monkeypatch.setattr(operator_control, "_stop_owned_pidfile", lambda path, session: True)
     result = operator_control.pause_session(
@@ -160,6 +200,10 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
         marker_path=marker,
         reason="operator",
         actor="test",
+        capability=cap,
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
     )
     assert calls == [["tmux", "kill-session", "-t", "demo"]]
     assert result["runner_stopped"] is True
@@ -183,6 +227,10 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
         session="demo",
         marker_path=marker,
         actor="test",
+        capability=_pause_capability(tmp_path, occurrence="demo"),
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
     )
     assert calls == [
         ["tmux", "has-session", "-t", "demo"],
@@ -237,6 +285,7 @@ def test_cloud_pause_reconciles_dead_writer_flush_after_tmux_stop(
             (plan / "state.json").write_text(json.dumps(raced))
         return Completed()
 
+    cap = _pause_capability(tmp_path, occurrence="demo")
     monkeypatch.setattr(operator_control.subprocess, "run", race_after_pause)
     monkeypatch.setattr(operator_control.time, "sleep", lambda _: None)
     monkeypatch.setattr(
@@ -250,6 +299,10 @@ def test_cloud_pause_reconciles_dead_writer_flush_after_tmux_stop(
         marker_path=marker,
         reason="contain",
         actor="test",
+        capability=cap,
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
     )
 
     paused_plan = json.loads((plan / "state.json").read_text())
@@ -319,6 +372,10 @@ def test_authority_only_hold_resumes_after_direct_phase_advances_plan(
         marker_path=marker,
         actor="test",
         start_runner=False,
+        capability=_pause_capability(tmp_path, occurrence="demo"),
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
     )
     held = json.loads(marker.read_text())
     assert held["operator_resume_hold"]["active"] is True
@@ -347,6 +404,10 @@ def test_authority_only_hold_resumes_after_direct_phase_advances_plan(
         session="demo",
         marker_path=marker,
         actor="test",
+        capability=_pause_capability(tmp_path, occurrence="demo"),
+        occurrence="demo",
+        target="demo",
+        fence_epoch=3,
     )
 
     assert resumed["already_resumed"] is True
@@ -386,5 +447,9 @@ def test_marker_only_stop_without_resume_authority_fails_closed(
             session="demo",
             marker_path=marker,
             actor="test",
+            capability=_pause_capability(tmp_path, occurrence="demo"),
+            occurrence="demo",
+            target="demo",
+            fence_epoch=3,
         )
     assert json.loads(marker.read_text()) == before
