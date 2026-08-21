@@ -1,0 +1,243 @@
+{
+  "schema": "maintenance-runtime-consolidation-t0.1-fixer-commits-custody.v1",
+  "version": 1,
+  "task_id": "T0.1-additive-2",
+  "purpose": "Additive local custody receipt for the two operator-directed epic fixer commits; provenance evidence only.",
+  "observed_at_utc": "2026-08-21T03:16:14Z",
+  "minted_at_utc": "2026-08-21T03:16:19Z",
+  "integration": {
+    "worktree": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution",
+    "branch": "integration/goal-maintenance-runtime-20260820",
+    "starting_head": "221291c6d84a9675b2a0d41e253cbcd1bdd2e348",
+    "final_evidence_commit_sha": "unknown_at_record_creation",
+    "final_evidence_commit_sha_note": "The exact commit SHA is produced by the single allowed commit and is recorded in the implementation receipt; embedding it in this committed file would require a self-referential commit or a second commit.",
+    "preflight_status_command": "git status --short --untracked-files=all",
+    "preflight_status_exit_status": 0,
+    "preflight_status_output": "",
+    "push_attempted": false
+  },
+  "source_commits": [
+    {
+      "short_anchor": "7fe994abf",
+      "sha": "7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8",
+      "safety_ref": "refs/heads/safety/maintenance-fixer-transport-7fe994abf",
+      "object_type": "commit",
+      "tree_sha": "2e8d262469eb7b98354eb3b25c6d8e324ddf8bf9",
+      "subject": "fix(babysitter): investigators run danger-full-access; false success returns rc 1",
+      "intended_downstream_bindings": [
+        "T2.4"
+      ],
+      "local_reachable_object_count": 75203
+    },
+    {
+      "short_anchor": "0425372ec",
+      "sha": "0425372eca588a878dfffc5fbce44cbb2624d2c1",
+      "safety_ref": "refs/heads/safety/maintenance-stdout-tee-0425372ec",
+      "object_type": "commit",
+      "tree_sha": "4e8cc61997a8cc071247803b8c64a0c9433dc64a",
+      "subject": "fix(resident): swallow BrokenPipe when teeing provider stdout",
+      "intended_downstream_bindings": [
+        "T2.4",
+        "T7.1"
+      ],
+      "local_reachable_object_count": 75192
+    }
+  ],
+  "source_provenance": {
+    "candidate_path": "/workspace/runtime-candidates/astrid-first",
+    "candidate_gitdir": "/workspace/arnold-ref/.git/worktrees/astrid-first",
+    "candidate_branch": "fixer/astrid-first-20260814",
+    "candidate_head": "390eb09795b95d83344399b29c628b7f62487016",
+    "cloud_host": "root@159.69.51.216",
+    "container": "megaplan-cloud-agent-resident-only",
+    "read_only": true,
+    "cloud_commands": [
+      {
+        "command": "ssh root@159.69.51.216 \"docker exec megaplan-cloud-agent-resident-only git -C /workspace/runtime-candidates/astrid-first cat-file -e 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8^{commit}\"",
+        "exit_status": 0
+      },
+      {
+        "command": "ssh root@159.69.51.216 \"docker exec megaplan-cloud-agent-resident-only git -C /workspace/runtime-candidates/astrid-first cat-file -e 0425372eca588a878dfffc5fbce44cbb2624d2c1^{commit}\"",
+        "exit_status": 0
+      },
+      {
+        "command": "ssh root@159.69.51.216 \"docker exec megaplan-cloud-agent-resident-only git -C /workspace/runtime-candidates/astrid-first show -s --format='%H%x00%s' 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8 0425372eca588a878dfffc5fbce44cbb2624d2c1\"",
+        "exit_status": 0,
+        "resolved_subjects": [
+          "7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8 fix(babysitter): investigators run danger-full-access; false success returns rc 1",
+          "0425372eca588a878dfffc5fbce44cbb2624d2c1 fix(resident): swallow BrokenPipe when teeing provider stdout"
+        ]
+      },
+      {
+        "command": "ssh root@159.69.51.216 \"docker exec megaplan-cloud-agent-resident-only git -C /workspace/runtime-candidates/astrid-first rev-parse 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8^{tree} 0425372eca588a878dfffc5fbce44cbb2624d2c1^{tree}\"",
+        "exit_status": 0,
+        "resolved_trees": [
+          "2e8d262469eb7b98354eb3b25c6d8e324ddf8bf9",
+          "4e8cc61997a8cc071247803b8c64a0c9433dc64a"
+        ]
+      },
+      {
+        "command": "ssh root@159.69.51.216 \"docker exec megaplan-cloud-agent-resident-only git -C /workspace/runtime-candidates/astrid-first rev-parse HEAD\"",
+        "exit_status": 0,
+        "observed": "390eb09795b95d83344399b29c628b7f62487016"
+      },
+      {
+        "command": "ssh root@159.69.51.216 \"docker exec megaplan-cloud-agent-resident-only git -C /workspace/runtime-candidates/astrid-first status --short --untracked-files=all\"",
+        "exit_status": 0,
+        "observed": ""
+      }
+    ],
+    "cloud_mutations_attempted": false,
+    "cloud_mutations": "No fetch, push, update-ref, checkout, reset, commit, pack installation, or command writing under the candidate or cloud gitdir was run."
+  },
+  "transfer": {
+    "method": "Streamed non-thin git pack over SSH from docker exec; local index-pack installation.",
+    "requested_tips": [
+      "7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8",
+      "0425372eca588a878dfffc5fbce44cbb2624d2c1"
+    ],
+    "source_pack_command": "printf '%s\\n' 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8 0425372eca588a878dfffc5fbce44cbb2624d2c1 | ssh root@159.69.51.216 \"docker exec -i megaplan-cloud-agent-resident-only git -C /workspace/runtime-candidates/astrid-first pack-objects --revs --stdout --no-thin\" > /tmp/t0.1-fixer-commits-95953.pack",
+    "source_pack_exit_status": 0,
+    "pack_digest_algorithm": "SHA-256",
+    "pack_digest": "353967d38d1dc6712ff84c4c8dc7e16cd6ef4779607d8763bc61eacabf0c3672",
+    "pack_byte_count": 137328246,
+    "pack_output_path": "/tmp/t0.1-fixer-commits-95953.pack",
+    "local_digest_command": "shasum -a 256 /tmp/t0.1-fixer-commits-95953.pack",
+    "local_digest_exit_status": 0,
+    "local_byte_count_command": "wc -c < /tmp/t0.1-fixer-commits-95953.pack",
+    "local_byte_count_exit_status": 0,
+    "install_command": "git index-pack --stdin --fix-thin < /tmp/t0.1-fixer-commits-95953.pack",
+    "install_exit_status": 0,
+    "installed_pack_checksum_from_index_pack": "2bc8707601cd007368795aa0cabdb496696ee543",
+    "thin_pack_fixup": false,
+    "minimality_note": "The pack was requested only from the two source tips and may include their reachable ancestry; no six-milestone-tip refetch or broad candidate clone was used."
+  },
+  "local_object_verification": {
+    "checks": [
+      {
+        "command": "git cat-file -e 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8^{commit}",
+        "exit_status": 0
+      },
+      {
+        "command": "git cat-file -e 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8^{tree}",
+        "exit_status": 0
+      },
+      {
+        "command": "git cat-file -e 0425372eca588a878dfffc5fbce44cbb2624d2c1^{commit}",
+        "exit_status": 0
+      },
+      {
+        "command": "git cat-file -e 0425372eca588a878dfffc5fbce44cbb2624d2c1^{tree}",
+        "exit_status": 0
+      },
+      {
+        "command": "git rev-list --objects 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8 | wc -l",
+        "exit_status": 0,
+        "reachable_object_count": 75203
+      },
+      {
+        "command": "git rev-list --objects 0425372eca588a878dfffc5fbce44cbb2624d2c1 | wc -l",
+        "exit_status": 0,
+        "reachable_object_count": 75192
+      }
+    ]
+  },
+  "ref_custody": {
+    "preexisting_target_dispositions": {
+      "refs/heads/safety/maintenance-fixer-transport-7fe994abf": "absent",
+      "refs/heads/safety/maintenance-stdout-tee-0425372ec": "absent"
+    },
+    "target_inspection": [
+      {
+        "command": "git show-ref --verify refs/heads/safety/maintenance-fixer-transport-7fe994abf",
+        "exit_status": 128,
+        "observed": "absent; fatal: not a valid ref"
+      },
+      {
+        "command": "git show-ref --verify refs/heads/safety/maintenance-stdout-tee-0425372ec",
+        "exit_status": 128,
+        "observed": "absent; fatal: not a valid ref"
+      }
+    ],
+    "cas": [
+      {
+        "ref": "refs/heads/safety/maintenance-fixer-transport-7fe994abf",
+        "command": "git update-ref refs/heads/safety/maintenance-fixer-transport-7fe994abf 7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8 0000000000000000000000000000000000000000",
+        "expected_old_sha": "0000000000000000000000000000000000000000",
+        "exit_status": 0
+      },
+      {
+        "ref": "refs/heads/safety/maintenance-stdout-tee-0425372ec",
+        "command": "git update-ref refs/heads/safety/maintenance-stdout-tee-0425372ec 0425372eca588a878dfffc5fbce44cbb2624d2c1 0000000000000000000000000000000000000000",
+        "expected_old_sha": "0000000000000000000000000000000000000000",
+        "exit_status": 0
+      }
+    ],
+    "post_cas_verification": [
+      {
+        "command": "git show-ref --verify refs/heads/safety/maintenance-fixer-transport-7fe994abf",
+        "exit_status": 0,
+        "observed": "7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8 refs/heads/safety/maintenance-fixer-transport-7fe994abf"
+      },
+      {
+        "command": "git show-ref --verify refs/heads/safety/maintenance-stdout-tee-0425372ec",
+        "exit_status": 0,
+        "observed": "0425372eca588a878dfffc5fbce44cbb2624d2c1 refs/heads/safety/maintenance-stdout-tee-0425372ec"
+      }
+    ]
+  },
+  "safety_ref_snapshot": {
+    "pre": {
+      "refs/heads/safety/maintenance-m1": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+      "refs/heads/safety/maintenance-m2": "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+      "refs/heads/safety/maintenance-m3": "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+      "refs/heads/safety/maintenance-m3b": "7272cdc7f4303219fb399aefd2966f410d79d208",
+      "refs/heads/safety/maintenance-m4": "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+      "refs/heads/safety/maintenance-m5": "800fa27648245115d5c1412d16ec583d91bdea02",
+      "refs/heads/safety/maintenance-t3.1-external-seed": "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e"
+    },
+    "post": {
+      "refs/heads/safety/maintenance-fixer-transport-7fe994abf": "7fe994abfb6fca372bfd2bf0d88945b3e6ab69d8",
+      "refs/heads/safety/maintenance-m1": "67e7b94a4da248b5e92ad56eb4bfa5ba261d9145",
+      "refs/heads/safety/maintenance-m2": "15b881cb47274447b3795c9438fd2de1d9f9d33d",
+      "refs/heads/safety/maintenance-m3": "58d4a935539597c2aa3f323e1515054ec1f95fe7",
+      "refs/heads/safety/maintenance-m3b": "7272cdc7f4303219fb399aefd2966f410d79d208",
+      "refs/heads/safety/maintenance-m4": "759e3186f773ae40e58dc9de1e716dfd2ebb8438",
+      "refs/heads/safety/maintenance-m5": "800fa27648245115d5c1412d16ec583d91bdea02",
+      "refs/heads/safety/maintenance-stdout-tee-0425372ec": "0425372eca588a878dfffc5fbce44cbb2624d2c1",
+      "refs/heads/safety/maintenance-t3.1-external-seed": "3a94a1f54492292ac1bb5fbdad0db4c7eaadb73e"
+    },
+    "complete_pre_listing_command": "git for-each-ref --format='%(refname) %(objectname)' refs/heads/safety/",
+    "complete_post_listing_command": "git for-each-ref --format='%(refname) %(objectname)' refs/heads/safety/",
+    "preexisting_refs_unchanged": true,
+    "preexisting_ref_count": 7,
+    "post_ref_count": 9,
+    "note": "The pre-snapshot contained seven pre-existing safety refs, not an eighth; no additional pre-existing safety ref was invented or overwritten. The post-snapshot contains those seven plus the two additive refs."
+  },
+  "authority": {
+    "authority_statement": "provenance evidence, not launch authority — these commits are T2.4/T7.1 source, selected post-G0 by operator directive",
+    "limitation": "The safety refs and local object reachability authorize no launch, rebind, admission, claim, cutover, recovery, selector change, seed ceremony, or live-epic action.",
+    "t0_2_binding": "The T0.2 selection manifest needs a follow-on additive binding for T2.4/T7.1; this card does not modify source-selection-manifest.json or any T0.2 artifact.",
+    "scope": [
+      "Additive local object custody, two CAS safety refs, and this additive evidence record only.",
+      "No source-selection manifest, refs manifest, execution plan, goal, execution log, selector, marker, lease, fence, chain, candidate, process, runtime, or live-state mutation."
+    ]
+  },
+  "rejected_alternatives": [
+    "Refetching or rewriting any of the six already-custodied milestone tips.",
+    "Using git push, remote ref updates, a mirror, or a broad candidate clone as the transfer mechanism.",
+    "Mutating the cloud candidate, cloud gitdir, live state, active plan or chain, selector, marker, lease, fence, process, or runtime.",
+    "Force-updating, deleting, or silently replacing a conflicting target safety ref; a conflict is a stop condition.",
+    "Editing source-selection-manifest.json or any T0.2 artifact in this card.",
+    "Treating local object reachability or these refs as launch, rebind, admission, claim, cutover, or recovery authority.",
+    "Adding production code, tests, validators, T4.4 material, state pins, a second claim/cutover owner, or babysitter ceremony.",
+    "Running Megaplan initialization, launching a live workflow, or using a cloud sandbox mode prohibited by the brief."
+  ],
+  "residual_risks": [
+    "The two commits remain provenance-only until the follow-on additive T0.2 selection binding maps them to T2.4/T7.1.",
+    "The non-thin pack includes ancestry beyond the two tips; its exact digest and object checks are recorded for audit.",
+    "A future conflicting pre-existing target ref is a custody collision and must stop rather than be repaired.",
+    "The historical pre-T0 environment HEAD was not used as a reset target; custody was built on the observed current integration HEAD.",
+    "Future T2.4/T7.1 implementation and review must prove behavior, tests, and authority discipline; this receipt supplies source custody only."
+  ]
+}
