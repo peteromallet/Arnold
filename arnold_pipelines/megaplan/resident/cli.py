@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from arnold_pipelines.megaplan.store import DBStore, FileStore, Store
 from arnold_pipelines.megaplan.types import CliError
 
@@ -54,7 +56,6 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     )
     discord_parser.add_argument(
         "--profile",
-        choices=["megaplan", "agentbox_operator"],
         help="Resident profile to run for Discord.",
     )
 
@@ -682,7 +683,14 @@ def _resident_inspect_subagent_queue(
 
 
 def _resident_config(args: argparse.Namespace) -> ResidentConfig:
-    config = ResidentConfig.from_env()
+    try:
+        config = ResidentConfig.from_env()
+    except ValidationError as exc:
+        details = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise CliError("invalid_args", f"Invalid resident configuration: {details}") from exc
     mode = getattr(args, "mode", None)
     profile = getattr(args, "profile", None)
     updates = {}
@@ -995,6 +1003,7 @@ def _resident_discord(
     recovery_seed: str | None = None,
 ) -> dict[str, Any]:
     token = discord_token_from_env(config.discord_bot_token_env)
+    _validate_resident_profile(config.profile)
     if dry_run:
         return {
             "success": True,
@@ -1053,6 +1062,8 @@ def _resident_discord(
         authorizer=authorizer,
         store=store,
         profile=_resident_profile(
+            root=root,
+            profile=config.profile,
             store=store,
             authorizer=authorizer,
             config=config,
@@ -1112,15 +1123,26 @@ def _resident_runner(config: ResidentConfig, root: Path, *, store: Store | None 
     return OpenAICompatibleAgentRunner(config)
 
 
+def _validate_resident_profile(profile: str) -> None:
+    if profile not in {"megaplan", "agentbox_operator"}:
+        raise CliError(
+            "invalid_args",
+            f"Unknown resident profile {profile!r}; expected 'megaplan' or 'agentbox_operator'",
+        )
+
+
 def _resident_profile(
     *,
+    root: Path,
+    profile: str,
     store: Store,
     authorizer: ResidentAuthorizer,
     config: ResidentConfig,
     confirmation_manager: StoreBackedConfirmationManager | None = None,
 ):
+    _validate_resident_profile(profile)
     confirmation_manager = confirmation_manager or StoreBackedConfirmationManager(config, store)
-    if config.profile == "agentbox_operator":
+    if profile == "agentbox_operator":
         from agentbox.resident_profile import AgentBoxOperatorProfile
 
         return AgentBoxOperatorProfile(

@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from arnold.runtime.durable_ops import OperationState
 from agentbox.config import AgentBoxConfig
 from agentbox.operations import (
@@ -25,6 +27,9 @@ from arnold_pipelines.megaplan.resident.cli import (
     _resident_discord,
     _resident_profile,
 )
+from arnold_pipelines.megaplan.cli import main as megaplan_main
+from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.resident.agent_loop import (
     AgentRequest,
     AgentResponse,
@@ -265,9 +270,18 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
         dry_run=True,
     )
     selected = _resident_profile(
+        root=tmp_path,
+        profile=config.profile,
         store=FileStore(tmp_path / "profile-store"),
         authorizer=None,
         config=config,
+    )
+    megaplan_selected = _resident_profile(
+        root=tmp_path,
+        profile="megaplan",
+        store=FileStore(tmp_path / "megaplan-profile-store"),
+        authorizer=None,
+        config=ResidentConfig(),
     )
     env_config = ResidentConfig.from_env({"MEGAPLAN_RESIDENT_PROFILE": "agentbox_operator"})
 
@@ -276,10 +290,67 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
     assert dry_run["model_provider"] == "hermes"
     assert dry_run["model"] == "zhipu:glm-5.2"
     assert isinstance(selected, AgentBoxOperatorProfile)
+    assert isinstance(megaplan_selected, MegaplanResidentProfile)
     assert ResidentConfig().profile == "megaplan"
     assert ResidentConfig().model_provider == "hermes"
     assert ResidentConfig().model_name == "zhipu:glm-5.2"
     assert env_config.profile == "agentbox_operator"
+
+
+@pytest.mark.parametrize("profile_value", ["", "   "])
+def test_invalid_profile_environment_is_a_cli_error(
+    profile_value: str,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_RESIDENT_PROFILE", profile_value)
+
+    result = megaplan_main(["resident", "health"])
+
+    assert result == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["success"] is False
+    assert payload["error"] == "invalid_args"
+    assert "Invalid resident configuration" in payload["message"]
+    assert "Traceback" not in captured.err
+
+
+def test_non_builtin_profile_parses_but_dispatch_rejects_with_cli_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_PROFILE", raising=False)
+    parser = argparse.ArgumentParser()
+    _register_resident_subcommands(parser)
+    args = parser.parse_args(["discord", "--profile", "custom_profile", "--dry-run"])
+
+    assert args.profile == "custom_profile"
+    result = megaplan_main(
+        ["resident", "discord", "--profile", "custom_profile", "--dry-run"]
+    )
+
+    assert result == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is False
+    assert payload["error"] == "invalid_args"
+    assert "Unknown resident profile 'custom_profile'" in payload["message"]
+
+
+def test_non_builtin_profile_rejected_by_profile_constructor(
+    tmp_path: Path,
+) -> None:
+    config = ResidentConfig(profile="custom_profile")
+
+    with pytest.raises(CliError, match="Unknown resident profile"):
+        _resident_profile(
+            root=tmp_path,
+            profile=config.profile,
+            store=FileStore(tmp_path / "store"),
+            authorizer=None,
+            config=config,
+        )
 
 
 def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outbound_sink(

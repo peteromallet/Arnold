@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 ResidentMode = Literal["dev", "production"]
-ResidentProfileName = Literal["megaplan", "agentbox_operator"]
+ResidentProfileName = str
 DiscordBotRole = Literal["test", "production"]
 
 
@@ -81,6 +81,13 @@ class ResidentConfig(BaseModel):
     special_requests_subagent_max_tokens: int = Field(default=65536, gt=0)
     default_timezone: str = "UTC"
     guild_timezone_defaults: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("profile")
+    @classmethod
+    def _validate_profile(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("profile must be a non-empty string")
+        return value
 
     @field_validator(
         "allowed_guild_ids",
