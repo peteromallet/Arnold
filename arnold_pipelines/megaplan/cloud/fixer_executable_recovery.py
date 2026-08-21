@@ -1,15 +1,15 @@
 """FIXER-EXECUTABLE recovery contract fixtures (T4.2).
 
-Operator item 4 / T3.2 emission: land patch on import_root → (until T4.3
-deletes the seed gates) expected_head telemetry update WITHOUT
-``advance_generation`` → runtime-rebind with milestone identity LABEL
-``m7``, never sequence index ``6`` → recover-blocked with
-``--repair-commit`` + ``--failure-fingerprint`` + ``--repair-scope
-engine_runtime`` + ``--user-approved`` → ``chain start --one``, all under
-the seed/import environment.
+Operator item 4 / T3.2 emission: land patch on import_root → expected_head
+telemetry update WITHOUT ``advance_generation`` (telemetry only) →
+runtime-rebind with milestone identity LABEL ``m7``, never sequence index
+``6`` → recover-blocked with ``--repair-commit`` + ``--failure-fingerprint``
++ ``--repair-scope engine_runtime`` + ``--user-approved`` → ``chain start
+--one``, all under the seed/import environment.
 
-Live-box recovery is out of scope (SD-009). These fixtures execute the
-command contract against disposable roots, not live epics.
+T4.3 deleted seed/launch-seed/receipt-byte-equality as AUTHORITY. Same
+import_root after cutover is a non-event: no rebind, no generation bump.
+Live-box recovery is out of scope (SD-009).
 """
 
 from __future__ import annotations
@@ -185,13 +185,13 @@ def execute_fixer_recovery_contract(
     to_import_root: Path | None = None,
     to_interpreter: Path | None = None,
     process_root: Path | None = None,
-    seed_gates_present: bool = True,
+    seed_gates_present: bool = False,
 ) -> dict[str, Any]:
     """Execute the documented fixer verbs against a disposable fixture.
 
-    Does not mutate a live epic. ``seed_gates_present`` models the known tax
-    until T4.3 deletes those gates: expected_head bump + content-digest
-    rebind. After deletion, same-import_root is a non-event.
+    Does not mutate a live epic. ``seed_gates_present`` is leftover tax
+    modeling only. T4.3 production default is False: same-import_root is a
+    non-event (no expected_head dance, no content-digest rebind).
     """
 
     root = assert_disposable_root(binding_root)

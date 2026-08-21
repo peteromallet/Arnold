@@ -10993,13 +10993,24 @@ def build_chain_parser(subparsers: Any) -> None:
         "runtime-cutover",
         help=(
             "Guardedly cut over or roll back the bound runtime AND the recorded "
-            "metadata.execution_environment.engine_root atomically"
+            "metadata.execution_environment.engine_root atomically via the "
+            "frozen-order T4.3 coordinator"
         ),
     )
     runtime_cutover_parser.add_argument("--spec", required=True)
     runtime_cutover_parser.add_argument("--project-dir", required=False)
-    runtime_cutover_parser.add_argument("--from-runtime-sha256", required=True)
-    runtime_cutover_parser.add_argument("--to-runtime-sha256", required=True)
+    runtime_cutover_parser.add_argument("--from-runtime-sha256", required=False)
+    runtime_cutover_parser.add_argument("--to-runtime-sha256", required=False)
+    runtime_cutover_parser.add_argument("--from-import-root", required=False)
+    runtime_cutover_parser.add_argument("--from-interpreter", required=False)
+    runtime_cutover_parser.add_argument("--to-import-root", required=False)
+    runtime_cutover_parser.add_argument("--to-interpreter", required=False)
+    runtime_cutover_parser.add_argument("--occurrence", required=False)
+    runtime_cutover_parser.add_argument("--target", required=False)
+    runtime_cutover_parser.add_argument("--fence-epoch", type=int, required=False)
+    runtime_cutover_parser.add_argument("--capability-handle", required=False)
+    runtime_cutover_parser.add_argument("--pause-capability-handle", required=False)
+    runtime_cutover_parser.add_argument("--rebind-capability-handle", required=False)
     runtime_cutover_parser.add_argument("--expected-current-milestone", required=True)
     runtime_cutover_parser.add_argument(
         "--expected-current-plan",
@@ -11032,6 +11043,18 @@ def build_chain_parser(subparsers: Any) -> None:
             "runtime's interpreter. Requires --runtime-identity."
         ),
     )
+    runtime_cutover_parser.add_argument("--runtime-manifest", required=False)
+    runtime_cutover_parser.add_argument("--marker", required=False)
+    runtime_cutover_parser.add_argument("--binding-root", required=False)
+    runtime_cutover_parser.add_argument("--expect-manifest-sha256", required=False)
+    runtime_cutover_parser.add_argument("--expect-generation", type=int, required=False)
+    runtime_cutover_parser.add_argument("--from-expected-head", required=False)
+    runtime_cutover_parser.add_argument("--to-expected-head", required=False)
+    runtime_cutover_parser.add_argument("--to-venv-path", required=False)
+    runtime_cutover_parser.add_argument("--to-repair-bin", required=False)
+    runtime_cutover_parser.add_argument("--expected-marker-sha256", required=False)
+    runtime_cutover_parser.add_argument("--relaunch-command", required=False)
+    runtime_cutover_parser.add_argument("--receipt-path", required=False)
 
     execution_binding_migrate_parser = chain_sub.add_parser(
         "execution-binding-migrate",
@@ -11308,6 +11331,11 @@ def build_chain_parser(subparsers: Any) -> None:
         "--expected-runtime-roots-sha256", required=True, help="Exact canonical sha256 of the six-root payload"
     )
     occurrence_adopt_parser.add_argument("--reason", required=True)
+    occurrence_adopt_parser.add_argument("--occurrence", required=False)
+    occurrence_adopt_parser.add_argument("--target", required=False)
+    occurrence_adopt_parser.add_argument("--fence-epoch", type=int, required=False)
+    occurrence_adopt_parser.add_argument("--capability-handle", required=False)
+
     occurrence_adopt_parser.add_argument("--actor", default="operator")
     occurrence_adopt_parser.add_argument(
         "--receipt",
@@ -11617,33 +11645,42 @@ def run_chain_cli(
                 action="occurrence_adoption",
                 scope="occurrence_adoption",
             )
-            payload = adopt_occurrence(
-                spec_path=spec_path,
-                project_dir=project_root,
-                session=args.session,
-                expected_current_plan=args.expected_current_plan,
-                expected_phase=args.expected_phase,
-                expected_failure_kind=args.expected_failure_kind,
-                expected_failure_code=args.expected_failure_code,
-                expected_failure_recorded_at=args.expected_failure_recorded_at,
-                expected_resume_phase=args.expected_resume_phase,
-                expected_retry_strategy=args.expected_retry_strategy,
-                expected_chain_state_sha256=args.expected_chain_state_sha256,
-                expected_plan_state_sha256=args.expected_plan_state_sha256,
-                expected_latest_failure_sha256=args.expected_latest_failure_sha256,
-                expected_resume_cursor_sha256=args.expected_resume_cursor_sha256,
-                expected_pause_authority_sha256=args.expected_pause_authority_sha256,
-                runtime_manifest_path=args.runtime_manifest,
-                expected_runtime_manifest_sha256=args.expected_runtime_manifest_sha256,
-                marker_path=args.marker,
-                expected_marker_sha256=args.expected_marker_sha256,
-                runtime_identity_path=args.runtime_identity,
-                runtime_provenance_receipt_path=args.runtime_provenance_receipt,
-                candidate_root=args.candidate_root,
-                expected_runtime_roots_sha256=args.expected_runtime_roots_sha256,
-                actor=args.actor,
-                reason=args.reason,
-                receipt_path=Path(receipt_arg).expanduser(),
+            payload = guarded_occurrence_adoption(
+                capability=binding,
+                occurrence=binding.occurrence,
+                target=binding.target,
+                fence_epoch=binding.fence_epoch,
+                expected_plan=args.expected_current_plan,
+                expected_runtime=str(args.candidate_root or ""),
+                fce_adopt=adopt_occurrence,
+                fce_kwargs={
+                    "spec_path": spec_path,
+                    "project_dir": project_root,
+                    "session": args.session,
+                    "expected_current_plan": args.expected_current_plan,
+                    "expected_phase": args.expected_phase,
+                    "expected_failure_kind": args.expected_failure_kind,
+                    "expected_failure_code": args.expected_failure_code,
+                    "expected_failure_recorded_at": args.expected_failure_recorded_at,
+                    "expected_resume_phase": args.expected_resume_phase,
+                    "expected_retry_strategy": args.expected_retry_strategy,
+                    "expected_chain_state_sha256": args.expected_chain_state_sha256,
+                    "expected_plan_state_sha256": args.expected_plan_state_sha256,
+                    "expected_latest_failure_sha256": args.expected_latest_failure_sha256,
+                    "expected_resume_cursor_sha256": args.expected_resume_cursor_sha256,
+                    "expected_pause_authority_sha256": args.expected_pause_authority_sha256,
+                    "runtime_manifest_path": args.runtime_manifest,
+                    "expected_runtime_manifest_sha256": args.expected_runtime_manifest_sha256,
+                    "marker_path": args.marker,
+                    "expected_marker_sha256": args.expected_marker_sha256,
+                    "runtime_identity_path": args.runtime_identity,
+                    "runtime_provenance_receipt_path": args.runtime_provenance_receipt,
+                    "candidate_root": args.candidate_root,
+                    "expected_runtime_roots_sha256": args.expected_runtime_roots_sha256,
+                    "actor": args.actor,
+                    "reason": args.reason,
+                    "receipt_path": Path(receipt_arg).expanduser(),
+                },
             )
         except MutationDenied as denied:
             return _emit_error(CliError(denied.code, str(denied)))
@@ -11854,17 +11891,42 @@ def run_chain_cli(
         return 0
 
     if action == "runtime-cutover":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
         try:
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+            from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+                MutationDenied,
+                resolve_mutation_capability,
+            )
+            from arnold_pipelines.megaplan.cloud.maintenance_delivery import (
+                deliver_runtime_cutover,
+                rollback_runtime_cutover,
+            )
+            from arnold_pipelines.megaplan.cloud.occurrence_adoption import (
+                require_production_operator_binding,
+            )
+            from arnold_pipelines.megaplan.cloud.runtime_cutover import (
+                marker_runtime_identity,
+            )
+            from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
+
+            if getattr(args, "from_runtime_sha256", None) or getattr(
+                args, "to_runtime_sha256", None
+            ):
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "runtime cutover CAS is import_root plus generation interpreter, not SHA-256",
+                )
             chain_state = chain_spec.load_chain_state(
                 spec_path,
                 verify_execution_binding=False,
             )
             before = chain_state.to_dict()
-            from arnold_pipelines.megaplan.chain.execution_binding import (
-                cutover_runtime_identity,
-                verify_external_runtime_identity,
-            )
-
             identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
             receipt_arg = str(
                 getattr(args, "runtime_provenance_receipt", "") or ""
@@ -11883,18 +11945,188 @@ def run_chain_cli(
                 if identity_arg
                 else None
             )
-            result = cutover_runtime_identity(
-                spec_path,
-                chain_state,
-                expected_previous_runtime_sha256=args.from_runtime_sha256,
-                expected_active_runtime_sha256=args.to_runtime_sha256,
-                expected_current_milestone=args.expected_current_milestone,
-                expected_current_plan=args.expected_current_plan,
-                direction=args.direction,
-                reason=args.reason,
-                actor=args.actor,
-                verified_external_runtime_identity=external_identity,
+            binding = require_production_operator_binding(
+                args,
+                action="maintenance_cutover",
+                scope="maintenance_cutover",
             )
+            pause_handle = str(
+                getattr(args, "pause_capability_handle", None) or ""
+            ).strip()
+            rebind_handle = str(
+                getattr(args, "rebind_capability_handle", None) or ""
+            ).strip()
+            pause_cap = (
+                resolve_mutation_capability(pause_handle) if pause_handle else binding
+            )
+            rebind_cap = (
+                resolve_mutation_capability(rebind_handle) if rebind_handle else binding
+            )
+            from_root = str(getattr(args, "from_import_root", None) or "").strip()
+            from_python = str(getattr(args, "from_interpreter", None) or "").strip()
+            to_root = str(getattr(args, "to_import_root", None) or "").strip()
+            to_python = str(getattr(args, "to_interpreter", None) or "").strip()
+            if not to_root and isinstance(external_identity, dict):
+                to_root = str(external_identity.get("import_root") or "")
+            if not to_python and isinstance(external_identity, dict):
+                to_python = str(
+                    external_identity.get("interpreter")
+                    or external_identity.get("interpreter_path")
+                    or ""
+                )
+            if not from_root:
+                from_root = str(getattr(binding, "import_root", "") or "")
+            if not from_python:
+                from_python = str(getattr(binding, "interpreter", "") or "")
+            if not from_root or not from_python or not to_root or not to_python:
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "runtime cutover requires --from-import-root, "
+                    "--from-interpreter, --to-import-root, and --to-interpreter "
+                    "(import_root + generation interpreter CAS)",
+                )
+            manifest_arg = str(getattr(args, "runtime_manifest", "") or "").strip()
+            marker_arg = str(getattr(args, "marker", "") or "").strip()
+            if not manifest_arg or not marker_arg:
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "runtime cutover requires --runtime-manifest and --marker",
+                )
+            manifest_path = Path(manifest_arg).expanduser().resolve(strict=False)
+            marker_path = Path(marker_arg).expanduser().resolve(strict=False)
+            binding_root_arg = str(getattr(args, "binding_root", "") or "").strip()
+            if not binding_root_arg:
+                raise CliError(
+                    "disposable_root_required",
+                    "runtime cutover requires --binding-root pointing at a "
+                    "disposable journal root",
+                )
+            binding_root = Path(binding_root_arg).expanduser().resolve(strict=False)
+            identity_path = (
+                Path(identity_arg).expanduser().resolve(strict=False)
+                if identity_arg
+                else None
+            )
+            provenance_path = (
+                Path(receipt_arg).expanduser().resolve(strict=False)
+                if receipt_arg
+                else None
+            )
+            marker_payload = json.loads(marker_path.read_text(encoding="utf-8"))
+            previous_identity = marker_runtime_identity(marker_payload) or {}
+            expect_generation = getattr(args, "expect_generation", None)
+            if expect_generation is None:
+                expect_generation = int(load_manifest(manifest_path).generation)
+            from_head = str(getattr(args, "from_expected_head", None) or "").strip()
+            to_head = str(getattr(args, "to_expected_head", None) or "").strip()
+            if not from_head:
+                from_head = str(load_manifest(manifest_path).epic.get("expected_head") or "")
+            if not to_head and isinstance(external_identity, dict):
+                to_head = str(external_identity.get("source_revision") or "")
+            to_venv = str(getattr(args, "to_venv_path", None) or "").strip()
+            to_repair = str(getattr(args, "to_repair_bin", None) or "").strip()
+            if not to_venv:
+                to_venv = str(Path(to_root) / "venv")
+            if not to_repair:
+                to_repair = str(Path(to_root) / "bin" / "repair")
+            expect_manifest_sha256 = str(
+                getattr(args, "expect_manifest_sha256", None) or ""
+            ).strip()
+            if not expect_manifest_sha256:
+                expect_manifest_sha256 = hashlib.sha256(
+                    manifest_path.read_bytes()
+                ).hexdigest()
+            expected_marker_sha256 = str(
+                getattr(args, "expected_marker_sha256", None) or ""
+            ).strip()
+            if not expected_marker_sha256:
+                expected_marker_sha256 = hashlib.sha256(
+                    marker_path.read_bytes()
+                ).hexdigest()
+            relaunch = str(getattr(args, "relaunch_command", None) or "").strip()
+            if not relaunch:
+                relaunch = f"exec {to_root}/bin/chain"
+            active_identity = (
+                dict(external_identity)
+                if isinstance(external_identity, dict)
+                else {
+                    "import_root": to_root,
+                    "interpreter": to_python,
+                    "source_revision": to_head,
+                }
+            )
+            coordinator_kwargs = {
+                "capability": binding,
+                "pause_capability": pause_cap,
+                "rebind_capability": rebind_cap,
+                "occurrence": binding.occurrence,
+                "target": binding.target,
+                "fence_epoch": binding.fence_epoch,
+                "binding_root": binding_root,
+                "spec_path": spec_path,
+                "project_root": project_root,
+                "reason": args.reason,
+                "actor": args.actor,
+                "expected_current_milestone": args.expected_current_milestone,
+                "expected_current_plan": args.expected_current_plan,
+                "from_import_root": from_root,
+                "from_interpreter": from_python,
+                "to_import_root": to_root,
+                "to_interpreter": to_python,
+                "verified_external_runtime_identity": external_identity,
+            }
+            direction = str(getattr(args, "direction", "cutover") or "cutover")
+            if direction == "rollback":
+                receipt_path = str(getattr(args, "receipt_path", None) or "").strip()
+                if not receipt_path:
+                    raise CliError(
+                        "incomplete_rollback_evidence",
+                        "runtime cutover rollback requires --receipt-path",
+                    )
+                result = rollback_runtime_cutover(
+                    **coordinator_kwargs,
+                    manifest_path=manifest_path,
+                    receipt_path=Path(receipt_path).expanduser().resolve(strict=False),
+                    expected_manifest_before_sha256=expect_manifest_sha256,
+                    marker_path=marker_path,
+                    expected_marker_sha256=expected_marker_sha256,
+                    expected_previous_runtime_sha256=str(
+                        previous_identity.get("content_sha256") or ""
+                    ),
+                    prior_runtime_identity=active_identity,
+                    relaunch_command=relaunch,
+                )
+            else:
+                if identity_path is None or provenance_path is None:
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        "runtime cutover requires --runtime-identity and "
+                        "--runtime-provenance-receipt",
+                    )
+                result = deliver_runtime_cutover(
+                    **coordinator_kwargs,
+                    manifest_path=manifest_path,
+                    expect_manifest_sha256=expect_manifest_sha256,
+                    expect_generation=int(expect_generation),
+                    from_runtime_root=from_root,
+                    from_expected_head=from_head,
+                    to_runtime_root=to_root,
+                    to_expected_head=to_head,
+                    to_venv_path=to_venv,
+                    to_repair_bin=to_repair,
+                    runtime_identity_path=identity_path,
+                    runtime_provenance_receipt_path=provenance_path,
+                    marker_path=marker_path,
+                    expected_marker_sha256=expected_marker_sha256,
+                    expected_previous_runtime_sha256=str(
+                        previous_identity.get("content_sha256") or ""
+                    ),
+                    active_runtime_identity=active_identity,
+                    relaunch_command=relaunch,
+                    marker=marker_payload,
+                    marker_dir=marker_path.parent,
+                    chain_state=chain_state,
+                )
             after = chain_state.to_dict()
             for field in before:
                 if field != "metadata" and before[field] != after[field]:
@@ -11903,8 +12135,10 @@ def run_chain_cli(
                         f"chain runtime cutover refused: operational field {field!r} changed",
                     )
             chain_spec.save_chain_state(spec_path, chain_state)
-        except CliError as exc:
-            return _emit_error(exc)
+        except MutationDenied as denied:
+            return _emit_error(CliError(denied.code, str(denied)))
+        except CliError as extra:
+            return _emit_error(extra)
         sys.stdout.write(
             json.dumps(
                 {
