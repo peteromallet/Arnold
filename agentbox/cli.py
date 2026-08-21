@@ -7,6 +7,7 @@ import asyncio
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -222,6 +223,17 @@ def build_parser() -> argparse.ArgumentParser:
     version_parser = subparsers.add_parser("version", help="Show AgentBox version.")
     version_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
 
+    install_parser = subparsers.add_parser(
+        "install-omp-agent",
+        help="Install a packaged omp agent definition into ~/.omp/agent/agents.",
+    )
+    install_parser.add_argument("name", help="Agent name (e.g. 'arnold').")
+    install_parser.add_argument(
+        "--target",
+        help="Target agents directory (default ~/.omp/agent/agents).",
+    )
+    install_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
     return parser
 
 
@@ -276,6 +288,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _notify(config, args, json_output=json_output)
         if args.command == "version":
             return _version(json_output=json_output)
+        if args.command == "install-omp-agent":
+            return _install_omp_agent(args, json_output=json_output)
     except (AgentBoxConfigError, AgentBoxOperationError, CredentialBackendError, FileNotFoundError, ValueError) as exc:
         return _diagnostic(str(exc), json_output=json_output)
     return _diagnostic(f"unknown command: {args.command}", json_output=json_output)
@@ -525,6 +539,55 @@ def _notify(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
 
 def _version(*, json_output: bool) -> int:
     _emit(agentbox_version(), json_output=json_output)
+    return 0
+
+
+def _packaged_omp_agent_path(name: str) -> Path:
+    return Path(__file__).resolve().parent / "agents" / f"{name}.md"
+
+
+def _agent_frontmatter_name(text: str) -> str | None:
+    if not text.startswith("---"):
+        return None
+    _head, frontmatter, _body = text.split("---", 2)
+    for line in frontmatter.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("name:"):
+            value = stripped[len("name:"):].strip().strip("\"'")
+            return value or None
+    return None
+
+
+def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
+    name = args.name
+    source = _packaged_omp_agent_path(name)
+    if not source.is_file():
+        return _diagnostic(
+            f"no packaged omp agent named {name!r} (expected {source})",
+            json_output=json_output,
+        )
+    text = source.read_text(encoding="utf-8")
+    parsed_name = _agent_frontmatter_name(text)
+    if parsed_name != name:
+        return _diagnostic(
+            f"frontmatter name mismatch: {parsed_name!r} != {name!r}",
+            json_output=json_output,
+        )
+    target_dir = Path(args.target) if args.target else Path.home() / ".omp" / "agent" / "agents"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{name}.md"
+    tmp = target.with_name(f".{name}.md.tmp-{uuid4().hex[:8]}")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, target)
+    _emit(
+        {
+            "agent": name,
+            "source": str(source),
+            "target": str(target),
+            "installed": True,
+        },
+        json_output=json_output,
+    )
     return 0
 
 

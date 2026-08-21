@@ -83,3 +83,33 @@ def test_cli_guardian_parser_has_all_subcommands() -> None:
     args = parser.parse_args(["guardian", "status", "--json"])
     assert args.guardian_command == "status"
     assert args.json is True
+
+
+def test_cli_install_omp_agent_installs_packaged_agent(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    target = tmp_path / "agents"
+
+    result = main(["install-omp-agent", "arnold", "--target", str(target), "--json"])
+
+    assert result == 0
+    installed = target / "arnold.md"
+    assert installed.is_file()
+    text = installed.read_text(encoding="utf-8")
+    assert text.startswith("---\nname: arnold\n")
+    assert "You are the AgentBox Operator for Discord" in text
+
+
+def test_cli_install_omp_agent_rejects_unknown_name(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+    target = tmp_path / "agents"
+
+    result = main(["install-omp-agent", "does-not-exist", "--target", str(target), "--json"])
+
+    assert result == 1
+    assert not (target / "does-not-exist.md").exists()
