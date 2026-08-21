@@ -1298,20 +1298,14 @@ def _review_quality_block_failure(
     rework_items: list[dict[str, Any]] | None,
     review_artifact_hash: str,
 ) -> dict[str, Any]:
+    """Build the only review failure shape eligible for automatic repair.
+
+    The classifier deliberately requires the producer to bind evidence to the
+    exact plan-state identity, review artifact, cursor, and scoped task set.
+    A diagnostic without the corresponding live target reread remains
+    non-dispatchable.
+    """
     deterministic_evidence = _deterministic_review_block_evidence(rework_items)
-    fingerprint_payload = {
-        "blockers": sorted(blockers),
-        "deterministic_evidence": deterministic_evidence,
-        "review_artifact_hash": review_artifact_hash,
-    }
-    digest = hashlib.sha256(
-        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    cursor = {
-        "history_index": len(state.get("history", [])),
-        "review_artifact_hash": review_artifact_hash,
-    }
-    deterministic = bool(deterministic_evidence)
     blocked_task_ids = sorted(
         {
             str(item.get("task_id") or "").strip()
@@ -1319,6 +1313,65 @@ def _review_quality_block_failure(
             if str(item.get("task_id") or "").strip()
         }
     )
+    cursor = {
+        "history_index": len(state.get("history", [])),
+        "review_artifact_hash": review_artifact_hash,
+    }
+    plan_name = str(state.get("name") or "").strip()
+    target_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "current_state": str(state.get("current_state") or "").strip(),
+                "history_index": cursor["history_index"],
+                "phase": "review",
+                "plan_name": plan_name,
+                "evidence_cursor": cursor,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    scope = {
+        "plan_name": plan_name,
+        "phase": "review",
+        "blocked_task_ids": blocked_task_ids,
+    }
+    target = {
+        "plan_name": plan_name,
+        "target_fingerprint": target_fingerprint,
+    }
+    manifest = {
+        "artifact": "review.json",
+        "sha256": review_artifact_hash,
+    }
+    producer_provenance = {
+        "schema": "arnold.megaplan.review_quality_failure_provenance.v1",
+        "producer": "arnold_pipelines.megaplan.handlers.review",
+        "function": "_review_quality_block_failure",
+        "trusted": True,
+    }
+    digest_payload = {
+        "cursor": cursor,
+        "deterministic_evidence": deterministic_evidence,
+        "manifest": manifest,
+        "producer_provenance": producer_provenance,
+        "scope": scope,
+        "target": target,
+    }
+    evidence_digest = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    blocker_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "blockers": sorted(blockers),
+                "evidence_digest": evidence_digest,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    deterministic = bool(deterministic_evidence) and bool(blocked_task_ids)
     return {
         "kind": "quality_gate_blocked" if deterministic else "review_quality_blocked_unknown",
         "message": "review rework budget exhausted with unresolved quality blockers",
@@ -1331,8 +1384,13 @@ def _review_quality_block_failure(
             if deterministic
             else "Collect structured deterministic evidence before selecting a recovery action."
         ),
-        "blocker_ids": [f"quality:review:{digest}"],
+        "blocker_ids": [f"quality:review:{blocker_digest}"],
         "evidence_cursor": cursor,
+        "evidence_digest": evidence_digest,
+        "scope": scope,
+        "target": target,
+        "manifest": manifest,
+        "producer_provenance": producer_provenance,
         "metadata": {
             "repairability": "deterministic_machine" if deterministic else "unknown",
             "deterministic": deterministic,
@@ -1340,6 +1398,11 @@ def _review_quality_block_failure(
             "blocking_reasons": list(blockers),
             "blocked_task_ids": blocked_task_ids,
             "evidence_cursor": cursor,
+            "evidence_digest": evidence_digest,
+            "scope": scope,
+            "target": target,
+            "manifest": manifest,
+            "producer_provenance": producer_provenance,
         },
     }
 
