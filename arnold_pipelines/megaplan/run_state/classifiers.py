@@ -101,7 +101,6 @@ _IMPLEMENTATION_BLOCK_TOKENS = (
     "missing_fallthrough_route",
     "stale_assertion",
     "fixture_refresh",
-    "quality_gate_blocked",
     "deterministic_quality_blocked",
     "blocked_recovery_not_resolved",
 )

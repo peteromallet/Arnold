@@ -62,7 +62,6 @@ MACHINE_REPAIRABLE_FAILURE_KINDS = frozenset(
         "deterministic_quality_blocked",
         "execution_blocked",
         "no_next_step_state_mapping_failure",
-        "quality_gate_blocked",
         "route_metadata_mismatch",
         "workflow_cursor_mismatch",
     }

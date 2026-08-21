@@ -1300,9 +1300,10 @@ def _review_quality_block_failure(
 ) -> dict[str, Any]:
     """Build the only review failure shape eligible for automatic repair.
 
-    The classifier deliberately requires the producer to bind evidence to the
-    exact plan-state identity, review artifact, cursor, and scoped task set.
-    A diagnostic without the corresponding live target reread remains
+    Fingerprint the POST-block projection: ``current_state=blocked``, history
+    index after the review row, and the same cursor the live target rereads.
+    Callers MUST project to blocked and append the review history row first.
+    A diagnostic hashed against the pre-block ``executed`` cursor remains
     non-dispatchable.
     """
     deterministic_evidence = _deterministic_review_block_evidence(rework_items)
@@ -1313,16 +1314,18 @@ def _review_quality_block_failure(
             if str(item.get("task_id") or "").strip()
         }
     )
+    current_state = str(state.get("current_state") or "").strip()
+    history_index = len(state.get("history", []))
     cursor = {
-        "history_index": len(state.get("history", [])),
+        "history_index": history_index,
         "review_artifact_hash": review_artifact_hash,
     }
     plan_name = str(state.get("name") or "").strip()
     target_fingerprint = hashlib.sha256(
         json.dumps(
             {
-                "current_state": str(state.get("current_state") or "").strip(),
-                "history_index": cursor["history_index"],
+                "current_state": current_state,
+                "history_index": history_index,
                 "phase": "review",
                 "plan_name": plan_name,
                 "evidence_cursor": cursor,
@@ -1339,6 +1342,8 @@ def _review_quality_block_failure(
     target = {
         "plan_name": plan_name,
         "target_fingerprint": target_fingerprint,
+        "current_state": current_state,
+        "history_index": history_index,
     }
     manifest = {
         "artifact": "review.json",
@@ -1371,7 +1376,12 @@ def _review_quality_block_failure(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    deterministic = bool(deterministic_evidence) and bool(blocked_task_ids)
+    post_block_projection = current_state == STATE_BLOCKED
+    deterministic = (
+        bool(deterministic_evidence)
+        and bool(blocked_task_ids)
+        and post_block_projection
+    )
     return {
         "kind": "quality_gate_blocked" if deterministic else "review_quality_blocked_unknown",
         "message": "review rework budget exhausted with unresolved quality blockers",
@@ -2391,6 +2401,8 @@ def _finalize_review_outcome(
     force_proceed_blocked = (
         result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED
     )
+    blocked_rework_items: list[dict[str, Any]] = []
+    blocker_reasons: list[str] = []
     if force_proceed_blocked:
         raw_rework_items = worker.payload.get("rework_items")
         blocked_rework_items = (
@@ -2402,18 +2414,6 @@ def _finalize_review_outcome(
             criteria if isinstance(criteria, list) else None,
             blocked_rework_items,
         )
-        review_artifact_hash = sha256_file(plan_dir / "review.json")
-        state["latest_failure"] = _review_quality_block_failure(
-            state=state,
-            blockers=blocker_reasons,
-            rework_items=blocked_rework_items,
-            review_artifact_hash=review_artifact_hash,
-        )
-        state["resume_cursor"] = {
-            "phase": "review",
-            "retry_strategy": "manual_review",
-            "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
-        }
     apply_state_projection(
         state, next_state, route_signal=str(decision.route_signal)
     )
@@ -2454,6 +2454,21 @@ def _finalize_review_outcome(
             finalize_hash=finalize_hash,
         ),
     )
+    if force_proceed_blocked:
+        # Production order: executed -> project blocked -> append history ->
+        # fingerprint the resulting cursor so the live target reread matches.
+        review_artifact_hash = sha256_file(plan_dir / "review.json")
+        state["latest_failure"] = _review_quality_block_failure(
+            state=state,
+            blockers=blocker_reasons,
+            rework_items=blocked_rework_items,
+            review_artifact_hash=review_artifact_hash,
+        )
+        state["resume_cursor"] = {
+            "phase": "review",
+            "retry_strategy": "manual_review",
+            "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
+        }
     worker.receipt_metrics = review_metrics(worker.payload, plan_dir / "review.json")
     _emit_receipt(
         plan_dir=plan_dir,
