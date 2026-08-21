@@ -2990,6 +2990,13 @@ def _prerequisite_blocked_task_ids(
         for task in tasks
         if task.get("status") == "blocked"
         and not _is_harness_generated_block(task)
+        # A validation_blocked row is not a prerequisite: it is a quality
+        # gate the strict recheck can clear (admission-by-evidence, P1).
+        # Excluding it routes the phase to blocked_by_quality + fresh_session
+        # (bounded retry) instead of execution_blocked + manual_review, which
+        # looped forever on m8 T7/T9 (2026-08-21). Genuine prereq /
+        # user-action / dependency blockers still count.
+        and str(task.get("blocker_kind") or "") != "validation_blocked"
         and isinstance(task.get("id"), str)
         and task["id"] in active_task_ids
     }
@@ -5885,6 +5892,49 @@ def _rerun_deferred_selector_validation_jobs(
             # state publication.  The row stays blocked; the next
             # --retry-blocked-tasks dispatch resets it for a fresh compliant
             # attempt (authority adoption never overrides the gate).
+            # Admission-by-evidence (2026-08-21 m8 T7/T9): a validation-
+            # blocked row (no genuine prereq/user-action blocker) must RUN
+            # the strict recheck on the CURRENT worktree before parking; a
+            # current-digest strict pass admits the task (loop-break).
+            # Genuine task-level blockers park immediately; a strict run
+            # that fails also parks.
+            if not _has_genuine_task_level_blocker(task):
+                _rerun_ceiling = _validation_comparison_ceiling(finalize_data)
+                _run_batch_validation_jobs(
+                    plan_dir=plan_dir,
+                    project_dir=project_dir,
+                    finalize_data=finalize_data,
+                    batch_task_ids=[task_id],
+                    force_strict_gate=True,
+                    comparison_ceiling_override=_rerun_ceiling,
+                )
+                strict_record = _find_binding_valid_strict_pass(
+                    verification_dir=verification_dir,
+                    job_id=job_id,
+                    job=job,
+                    project_dir=project_dir,
+                )
+                if strict_record is not None:
+                    try:
+                        admitted = _accept_strictly_verified_test_budget_debt(
+                            plan_dir=plan_dir,
+                            project_dir=project_dir,
+                            finalize_data=finalize_data,
+                            payload=payload,
+                            deviations=[],
+                        )
+                    except Exception:
+                        admitted = []
+                    if admitted:
+                        rerun_results.append(
+                            {
+                                "job_id": job_id,
+                                "task_id": task_id,
+                                "status": "done",
+                                "admission": "strict_pass",
+                            }
+                        )
+                        continue
             rerun_results.append(
                 _park_post_merge_policy_block(
                     verification_dir=verification_dir,
