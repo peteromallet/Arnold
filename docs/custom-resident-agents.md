@@ -6,18 +6,20 @@ with `agentbox new-resident`.
 
 ## Run arnold (R1)
 
-Install the packaged named agent, then use omp's binary explicitly:
+Install the packaged named agent, then talk to it with the `arnold` console
+command:
 
 ```bash
 agentbox install-omp-agent arnold
-~/.bun/bin/agent list
-~/.bun/bin/agent run arnold "State your name and rules."
+arnold "State your name and rules."      # one-shot question
+arnold                                   # interactive AgentBox Operator session
+arnold --agent scout "…                  # talk to a different installed agent
 ```
 
-**PATH caveat:** on this machine, bare `agent` resolves to grok's binary
-(`~/.grok/bin/agent`). Use `~/.bun/bin/agent`, or set `OMP_BIN` to the intended
-omp binary. In-session dispatch is separate:
-`{"agent": "arnold", "task": "…"}`.
+The workflow/operator tooling lives on the `megaplan` command. If you drive
+omp's launcher manually instead, note that bare `agent` may resolve to another
+vendor's binary — prefer `~/.bun/bin/agent` or set `OMP_BIN`. In-session
+dispatch is separate: `{"agent": "arnold", "task": "…"}`.
 
 The body of `agentbox/agents/arnold.md` is byte-identical to
 `AgentBoxOperatorProfile.system_prompt()` (`agentbox-operator-v1`). The parity
