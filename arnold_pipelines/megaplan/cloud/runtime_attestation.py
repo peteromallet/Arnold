@@ -294,10 +294,28 @@ def _pth_owners(site_dir: Path) -> dict[Path, list[str]]:
     return owners
 
 
+def _arnold_import_root() -> Path | None:
+    """Root checkout of the ``arnold_pipelines`` package this interpreter imports.
+
+    ``None`` when the package is not importable; callers then keep strict
+    (fail-closed) classification.
+    """
+    try:
+        import arnold_pipelines
+    except ImportError:
+        return None
+    module_file = getattr(arnold_pipelines, "__file__", None)
+    if not isinstance(module_file, str) or not module_file:
+        return None
+    return Path(module_file).resolve().parents[1]
+
+
 def _pth_vector(expected_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
     expected = expected_root.resolve(strict=False)
     records: list[dict[str, Any]] = []
     errors: list[str] = []
+    import_root = _arnold_import_root()
+    imports_shadowed = import_root is not None and import_root.is_relative_to(expected)
     for site_dir in _active_site_dirs():
         owners = _pth_owners(site_dir)
         for path in sorted(site_dir.glob("*.pth")):
@@ -325,6 +343,19 @@ def _pth_vector(expected_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
                     if not candidate.is_absolute():
                         candidate = site_dir / candidate
                     resolved = str(candidate.resolve(strict=False))
+                    if (
+                        imports_shadowed
+                        and candidate != expected
+                        and (
+                            (candidate / "arnold").exists()
+                            or (candidate / "arnold_pipelines").exists()
+                        )
+                    ):
+                        # Import precedence already resolves arnold under the
+                        # expected root, so a .pth entry naming a different
+                        # checkout is shadowed inert evidence, never an error
+                        # (mirrors runtime_provenance's shadowed-editable rule).
+                        kind = "shadowed"
                 lines.append({"kind": kind, "raw": raw, "resolved": resolved})
                 if kind == "executable" and not owners.get(path):
                     errors.append(f"unowned_executable_pth:{path}")

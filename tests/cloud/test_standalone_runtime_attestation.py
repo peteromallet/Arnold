@@ -263,6 +263,117 @@ def test_standalone_seed_vector_drift_fails_closed(
         attestation.validate_standalone_runtime_launch_seed(seed)
 
 
+def _foreign_pth_site(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Site dir holding one .pth that names a different arnold checkout."""
+    foreign_root = tmp_path / "other-checkout"
+    (foreign_root / "arnold_pipelines").mkdir(parents=True)
+    site_dir = tmp_path / "site-packages"
+    site_dir.mkdir()
+    pth = site_dir / "_editable_impl_arnold.pth"
+    pth.write_text(f"{foreign_root}\n", encoding="utf-8")
+    return site_dir, pth, foreign_root
+
+
+def test_pth_foreign_arnold_root_is_shadowed_when_imports_resolve_under_expected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    site_dir, _pth, foreign_root = _foreign_pth_site(tmp_path)
+    expected = tmp_path / "runtime"
+    monkeypatch.setattr(attestation, "_active_site_dirs", lambda: [site_dir])
+    monkeypatch.setattr(attestation, "_arnold_import_root", lambda: expected)
+
+    first, first_errors = attestation._pth_vector(expected)
+    second, second_errors = attestation._pth_vector(expected)
+
+    assert first_errors == []
+    assert second_errors == []
+    assert first[0]["lines"][0] == {
+        "kind": "shadowed",
+        "raw": str(foreign_root),
+        "resolved": str(foreign_root),
+    }
+    assert first == second
+
+
+def test_pth_foreign_arnold_root_still_errors_when_imports_resolve_elsewhere(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    site_dir, pth, _foreign_root = _foreign_pth_site(tmp_path)
+    expected = tmp_path / "runtime"
+    monkeypatch.setattr(attestation, "_active_site_dirs", lambda: [site_dir])
+    monkeypatch.setattr(attestation, "_arnold_import_root", lambda: tmp_path / "elsewhere")
+
+    vector, errors = attestation._pth_vector(expected)
+
+    assert errors == [f"pth_mixed_arnold_root:{pth}"]
+    assert vector[0]["lines"][0]["kind"] == "path"
+
+
+def test_pth_import_error_keeps_fail_closed_classification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    site_dir, pth, _foreign_root = _foreign_pth_site(tmp_path)
+    # None in sys.modules makes the helper's real `import arnold_pipelines`
+    # raise ImportError, exercising its fail-closed fallback.
+    monkeypatch.setitem(sys.modules, "arnold_pipelines", None)
+    monkeypatch.setattr(attestation, "_active_site_dirs", lambda: [site_dir])
+
+    vector, errors = attestation._pth_vector(tmp_path / "runtime")
+
+    assert errors == [f"pth_mixed_arnold_root:{pth}"]
+    assert vector[0]["lines"][0]["kind"] == "path"
+
+
+def test_standalone_seed_ready_and_validates_with_shadowed_foreign_pth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A coexisting editable install naming another checkout stays inert."""
+    root = Path(__file__).resolve().parents[2]
+    revision = attestation._git_revision(root)
+    provenance = {
+        "ok": True,
+        "errors": [],
+        "expected_root": str(root),
+        "expected_revision": revision,
+        "import_root": str(root),
+        "editable_root": "",
+        "direct_url": {},
+        "pth": [],
+        "source_revision": revision,
+        "runtime_revision": revision,
+        "imports": {},
+    }
+    modules = attestation._module_vector(root)[0]
+    site_dir, _pth, foreign_root = _foreign_pth_site(tmp_path)
+    monkeypatch.setattr(attestation, "runtime_provenance", lambda **_: provenance)
+    monkeypatch.setattr(attestation, "_module_vector", lambda _root: (modules, []))
+    # Real _pth_vector with real import resolution: arnold_pipelines imports
+    # from this repo, so expected == import root and the entry is shadowed.
+    monkeypatch.setattr(attestation, "_active_site_dirs", lambda: [site_dir])
+
+    seed = attestation.build_standalone_runtime_launch_seed(
+        project_root=root,
+        expected_project_revision=revision,
+        runtime_root=root,
+        expected_runtime_revision=revision,
+        generated_at="2026-08-22T00:00:00Z",
+    )
+
+    assert seed["ready"] is True
+    assert seed["errors"] == []
+    assert seed["site_pth"][0]["lines"][0] == {
+        "kind": "shadowed",
+        "raw": str(foreign_root),
+        "resolved": str(foreign_root),
+    }
+    result = attestation.validate_standalone_runtime_launch_seed(seed)
+    assert result["status"] == "ready"
+
+
 def test_edited_seed_and_cloud_dispatch_path_fail_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
