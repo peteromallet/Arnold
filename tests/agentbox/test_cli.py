@@ -624,3 +624,51 @@ def test_run_resident_propagates_attest_failure_without_starting_discord(tmp_pat
     records = _read_stub_records(tmp_path)
     assert len(records) == 1
     assert "<resident> <attest>" in records[0]["argv"]
+
+
+def _init_empty_megaplan_repo(tmp_path: Path, name: str) -> Path:
+    import subprocess
+
+    repo = tmp_path / name
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    return repo
+
+
+def test_resident_dispatch_creates_only_resident_owned_state(
+    tmp_path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.cli import _main as megaplan_main
+
+    repo = _init_empty_megaplan_repo(tmp_path, "resident-repo")
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_MODE", raising=False)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_STORE_ROOT", raising=False)
+
+    exit_code = megaplan_main(["resident", "health"])
+
+    assert exit_code == 0
+    # Resident-owned state is created lazily by the FileStore constructor.
+    assert (repo / ".megaplan" / "resident").is_dir()
+    # Generic runtime layout must not be materialized by resident dispatch.
+    for generic in ("plans", "initiatives", "schemas"):
+        assert not (repo / ".megaplan" / generic).exists(), generic
+
+
+def test_non_resident_dispatch_still_initializes_generic_layout(
+    tmp_path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.cli import _main as megaplan_main
+
+    repo = _init_empty_megaplan_repo(tmp_path, "generic-repo")
+    monkeypatch.chdir(repo)
+    # Isolate HOME so skill auto-sync cannot touch real user directories.
+    home = tmp_path / "isolated-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    exit_code = megaplan_main(["brief", "list"])
+
+    assert exit_code == 0
+    for generic in ("plans", "initiatives", "schemas"):
+        assert (repo / ".megaplan" / generic).is_dir(), generic

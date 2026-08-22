@@ -3,7 +3,8 @@ from pathlib import Path
 from agentbox.resident_profile import AgentBoxOperatorProfile
 
 
-_PROJECT_AGENT_PATH = Path("{{REPO}}") / ".omp" / "agents" / "{{NAME}}.md"
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_PROJECT_AGENT_PATH = _PROJECT_ROOT / ".omp" / "agents" / "{{NAME}}.md"
 
 
 def _project_system_prompt() -> str:

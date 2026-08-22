@@ -3581,7 +3581,6 @@ def _main(argv: list[str] | None = None) -> int:
         _register_resident_subcommands(resident_parser)
         resident_args = resident_parser.parse_args(argv[1:])
         root = _find_megaplan_root(Path.cwd())
-        ensure_runtime_layout(root)
         try:
             return render_response(run_resident_cli(root, resident_args))
         except CliError as error:

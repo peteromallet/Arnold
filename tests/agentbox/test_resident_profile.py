@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import contextvars
 import asyncio
+import contextvars
+import importlib.util
 import json
+import os
+import subprocess
 import sys
+import sysconfig
+import textwrap
+from contextlib import redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -884,6 +891,267 @@ def test_external_profile_dry_run_constructs_profile_without_starting_discord(
     assert payload["dry_run"] is True
     assert payload["token_configured"] is False
     assert payload["profile"] == spec
+
+
+def test_generated_resident_startup_attests_constructs_profile_creates_process_attestation_and_starts_mock_service(
+    tmp_path: Path,
+) -> None:
+    """Exercise the generated resident's complete no-network startup custody chain."""
+    source_root = Path(__file__).parents[2].resolve()
+    repo = tmp_path / "generated-resident"
+    subprocess.run(
+        ["git", "clone", "--quiet", "--local", str(source_root), str(repo)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    from agentbox.cli import main as agentbox_main
+    assert (
+        agentbox_main(
+            ["new-resident", "demo", "--repo", str(repo)]
+        )
+        == 0
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "add", ".omp", ".agentbox"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "--quiet",
+            "-m",
+            "generated resident",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    dist_info = repo / "arnold-0.0.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: arnold\nVersion: 0.0.0\n",
+        encoding="utf-8",
+    )
+    (dist_info / "direct_url.json").write_text(
+        json.dumps({"url": repo.as_uri(), "dir_info": {"editable": True}}),
+        encoding="utf-8",
+    )
+    venv = tmp_path / "runtime-venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(venv)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_site = tmp_path / "runtime-site-packages"
+    runtime_site.mkdir()
+    for entry in Path(sysconfig.get_paths()["purelib"]).iterdir():
+        if entry.suffix == ".pth":
+            continue
+        (runtime_site / entry.name).symlink_to(
+            entry, target_is_directory=entry.is_dir()
+        )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join((str(repo), str(runtime_site)))
+    env["TEST_SYSTEM_PURELIB"] = str(runtime_site)
+    env["TEST_RESIDENT_REPO"] = str(repo)
+    env["TEST_RESIDENT_HEAD"] = head
+    attest_child = (
+        "from arnold_pipelines.megaplan.cli import main; "
+        "from arnold_pipelines.megaplan.resident import cli as _resident_cli; "
+        "from agentbox.resident_profile import AgentBoxOperatorProfile; "
+        "import os, sys; "
+        "raise SystemExit(main(['resident', 'attest', '--repo-root', "
+        "r'" + str(repo) + "', '--expected-head', r'" + head + "']))"
+    )
+    attest_result = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", attest_child],
+        cwd=repo,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    seed_path = Path(attest_result.stdout.strip())
+    assert seed_path.is_file()
+    env["TEST_RESIDENT_SEED"] = str(seed_path)
+    child = textwrap.dedent(
+        """
+        import json
+        import os
+        import sys
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from pathlib import Path
+
+        from arnold_pipelines.megaplan.cloud import runtime_attestation
+        from arnold_pipelines.megaplan.cli import main
+        from arnold_pipelines.megaplan.resident import cli as resident_cli
+        from arnold_pipelines.megaplan.resident.auth import (
+            ResidentAuthorizer,
+            StoreBackedConfirmationManager,
+        )
+        from arnold_pipelines.megaplan.resident.config import ResidentConfig
+        from arnold_pipelines.megaplan.store import FileStore
+
+        sys.path = [
+            item
+            for item in sys.path
+            if item != os.environ["TEST_SYSTEM_PURELIB"]
+        ]
+
+        repo = Path(os.environ["TEST_RESIDENT_REPO"]).resolve()
+        head = os.environ["TEST_RESIDENT_HEAD"]
+        spec = ".agentbox/resident_profile.py:DemoResidentProfile"
+
+        seed_path = Path(os.environ["TEST_RESIDENT_SEED"]).resolve()
+        assert seed_path.is_file()
+        seed = json.loads(seed_path.read_text(encoding="utf-8"))
+        assert seed["expected_revision"] == os.environ["TEST_RESIDENT_HEAD"]
+
+        config = ResidentConfig(profile=spec)
+        store = FileStore(repo / ".megaplan" / "resident")
+        authorizer = ResidentAuthorizer(config)
+        confirmation_manager = StoreBackedConfirmationManager(config, store)
+        profile = resident_cli._resident_profile(
+            root=repo,
+            profile=spec,
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+        )
+        assert profile.system_prompt().startswith("# Resident operator")
+
+        runtime_attestation._proc_identity = lambda pid: {
+            "pid": pid,
+            "start_ticks": "mock-start",
+            "executable": "/mock/python",
+            "executable_sha256": "mock-sha256",
+            "selectors": {},
+        }
+        service_starts = []
+
+        class MockResidentDiscordService:
+            def __init__(self, *args, **kwargs):
+                self.runtime = kwargs["runtime"]
+
+            def run(self):
+                service_starts.append(self)
+
+        resident_cli.ResidentDiscordService = MockResidentDiscordService
+        os.environ["DISCORD_BOT_TOKEN"] = "test-token"
+        os.environ["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = str(seed_path)
+        assert (
+            main(
+                [
+                    "resident",
+                    "discord",
+                    "--store-root",
+                    str(repo / ".megaplan" / "resident"),
+                    "--profile",
+                    spec,
+                ]
+            )
+            == 0
+        )
+        assert len(service_starts) == 1
+
+        attestation_path = runtime_attestation.configured_process_attestation_path(
+            "resident", seed=seed
+        )
+        process_attestation = json.loads(
+            attestation_path.read_text(encoding="utf-8")
+        )
+        validation = runtime_attestation.validate_runtime_process_attestation(
+            seed,
+            process_attestation,
+            component="resident",
+            target_pid=os.getpid(),
+        )
+        assert validation["status"] == "ready"
+        assert service_starts[0].runtime.profile.system_prompt().startswith(
+            "# Resident operator"
+        )
+        print(json.dumps({"service_starts": len(service_starts), "validated": True}))
+        """
+    )
+    result = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", child],
+        cwd=repo,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout.splitlines()[-1]) == {
+        "service_starts": 1,
+        "validated": True,
+    }
+
+
+def test_cli_new_resident_profile_is_relocatable(
+    tmp_path: Path,
+) -> None:
+    from agentbox.cli import main as agentbox_main
+
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    assert agentbox_main(["new-resident", "demo", "--repo", str(generated)]) == 0
+
+    relocated = tmp_path / "relocated"
+    generated.rename(relocated)
+    profile_path = relocated / ".agentbox" / "resident_profile.py"
+    module_spec = importlib.util.spec_from_file_location(
+        "relocated_resident_profile", profile_path
+    )
+    assert module_spec is not None and module_spec.loader is not None
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+
+    assert module._PROJECT_ROOT == relocated.resolve()
+    assert module._project_system_prompt().startswith("# Resident operator")
+    env_text = (relocated / ".agentbox" / "resident.env.example").read_text(
+        encoding="utf-8"
+    )
+    assert "MEGAPLAN_RESIDENT_PROFILE" not in env_text
+    assert "MEGAPLAN_RESIDENT_STORE_ROOT" not in env_text
+
+
+def test_cli_new_resident_creates_exactly_five_files(tmp_path: Path) -> None:
+    from agentbox.cli import main as agentbox_main
+
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+    assert agentbox_main(["new-resident", "demo", "--repo", str(repo)]) == 0
+
+    assert {
+        path.relative_to(repo)
+        for path in repo.rglob("*")
+        if path.is_file()
+    } == {
+        Path(".omp/agents/demo.md"),
+        Path(".agentbox/resident_profile.py"),
+        Path(".agentbox/resident.env.example"),
+        Path(".agentbox/run-resident"),
+        Path(".agentbox/demo-resident.service"),
+    }
 
 
 def test_external_profile_constructor_failure_is_a_concise_dry_run_cli_error(
@@ -2653,6 +2921,14 @@ class _FakeSubRunner:
         self.received_request = request
         self.received_tools = tools
         return self.response
+
+
+@pytest.fixture(autouse=True)
+def _isolate_resident_runtime_from_host_attestation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.runtime_attestation.require_configured_runtime_launch",
+        lambda *_args, **_kwargs: {},
+    )
 
 
 async def _receive_and_flush(runtime: ResidentRuntime, event: InboundEvent) -> None:
