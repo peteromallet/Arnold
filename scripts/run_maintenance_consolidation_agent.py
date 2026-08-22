@@ -24,10 +24,10 @@ LAUNCHERS = {
     "ox-alpha": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "openrouter/stealth/ox-alpha"),
 }
 ROUTES = {
-    "XHARD": "ox-alpha", "XHARD-REVIEW": "ox-alpha", "XHARD-REVISION": "ox-alpha", "JUDGMENT": "ox-alpha",
-    "HARD": "ox-alpha", "HARD-REVIEW": "ox-alpha", "HARD-REVISION": "ox-alpha",
+    "XHARD": "ox-alpha", "XHARD-REVIEW": "gpt-5.6-sol", "XHARD-REVISION": "ox-alpha", "JUDGMENT": "gpt-5.6-sol",
+    "HARD": "ox-alpha", "HARD-REVIEW": "gpt-5.6-sol", "HARD-REVISION": "ox-alpha",
     "BRIEF": "ox-alpha", "WORKSPACE": "ox-alpha", "INTEGRATION": "ox-alpha",
-    "VALIDATION": "ox-alpha", "REPORT": "ox-alpha", "SOL-REVIEW": "ox-alpha",
+    "VALIDATION": "ox-alpha", "REPORT": "gpt-5.6-sol", "SOL-REVIEW": "gpt-5.6-sol",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 

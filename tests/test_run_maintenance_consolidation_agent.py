@@ -291,18 +291,18 @@ def test_sol_review_dispatch_builds_sol_command_and_rejects_wrong_route(tmp_path
 
     monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
     root = tmp_path / "sol-review"
-    assert launcher.main(_args(root, role="[SOL-REVIEW]", route="ox-alpha")) == 0
+    assert launcher.main(_args(root, role="[SOL-REVIEW]", route="gpt-5.6-sol")) == 0
 
     command = commands[0]
     assert command[1] == str(
         launcher.INTEGRATION_WORKTREE
-        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py"
+        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
     )
-    assert "--model=openrouter/stealth/ox-alpha" in command
+    assert "--model=codex:gpt-5.6-sol" in command
 
     capsys.readouterr()
     wrong_root = tmp_path / "sol-review-wrong-route"
-    assert launcher.main(_args(wrong_root, role="[SOL-REVIEW]", route="gpt-5.6-sol")) == 2
+    assert launcher.main(_args(wrong_root, role="[SOL-REVIEW]", route="ox-alpha")) == 2
     assert "WRONG_MODEL_ROUTE" in capsys.readouterr().err
     assert len(commands) == 1
 
