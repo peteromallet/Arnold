@@ -672,6 +672,11 @@ def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
             f"installed frontmatter name mismatch: {_agent_frontmatter_name(installed_text)!r} != {output_name!r}",
             json_output=json_output,
         )
+    if args.target is not None and not args.target.strip():
+        return _diagnostic(
+            f"invalid target directory {args.target!r}; omit --target for the default",
+            json_output=json_output,
+        )
     target_dir = Path(args.target).expanduser() if args.target else Path.home() / ".omp" / "agent" / "agents"
     if target_dir.exists() and not target_dir.is_dir():
         return _diagnostic(
@@ -756,6 +761,11 @@ def _new_resident(args: argparse.Namespace, *, json_output: bool) -> int:
             json_output=json_output,
         )
 
+    if not args.repo.strip():
+        return _diagnostic(
+            f"invalid repository directory {args.repo!r}",
+            json_output=json_output,
+        )
     repo = Path(args.repo).expanduser().resolve()
     if not repo.is_dir():
         if repo.exists() or repo.is_symlink():
@@ -1048,3 +1058,7 @@ def _new_operation_id(kind: str) -> str:
 
 
 __all__ = ["build_parser", "main"]
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

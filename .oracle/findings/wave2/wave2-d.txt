@@ -1,0 +1,8 @@
+**Wave 2 verdict: no inaccuracies found; no fixes needed.**
+
+Verified read-only against implementations:
+- **Templates**: all five render clean (no leftover `{{}}`); `bash -n run-resident` OK; `py_compile resident_profile.py` OK.
+- **`resident attest`** (doc lines 113–123, 152–157): `--repo-root/--expected-head/--runtime-root/--expected-runtime-head` all required — matches `resident/cli.py:75-96` and live `--help` exactly. Success prints seed path only (`cli.py:449`); mismatch code `runtime_launch_attestation_mismatch` (`runtime_attestation.py:52`); state dir `.megaplan/resident/runtime-launch` (`:51`); two roots admitted independently, runtime provenance requires import from `--runtime-root`.
+- **`resident discord`**: `--store-root/--profile/--dry-run` exist; `--profile` overrides env (`cli.py:845-851`); dry-run constructs profile without network (`:1162-1194`); launcher token check precedes exec.
+- **`new-resident`/`install-omp-agent`**: five files, default `Resident operator ({name})`, name regex + `.`/`..` exclusion, atomic `os.link`, never overwrite — all as documented. 36 tests pass (byte-parity included). `OMP_BIN`, `~/.bun/bin/agent`, `~/.grok/bin/agent` real; doc links exist; env vars match `config.py`.
+0

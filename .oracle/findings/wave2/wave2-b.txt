@@ -1,0 +1,15 @@
+**Verdict: PASS.** No fixes needed; nothing committed. Suites: **111 passed** (18s).
+
+**Wave-1 verification**
+- `_proc_identity` (runtime_attestation.py:2351): lazy `import psutil` resolves via cached `sys.modules`, so `monkeypatch.setattr(psutil, "Process", …)` in `test_proc_identity_empty_executable_raises_typed_error` lands correctly. `start_ticks` = `str(create_time())`; both comparison sides run this function, so PID-reuse protection holds. Empty-exe guard precedes `Path`/digest. Live-process no-mock test exercises the real macOS path.
+
+**Hunt results**
+- *Two-root swaps*: fail closed — validation re-admits both roots independently (git toplevel+HEAD) and re-collects provenance/module/pth/wrapper vectors against each; swapped fields break vector equality.
+- *Rejection mutation*: all load paths use `create=False`; publication preflights dirs non-mutating; pointer written last, reload-compared. Tested (`…rejection_does_not_mutate_filesystem`).
+- *Ordering*: seed O_EXCL → receipt O_EXCL → atomic pointer → re-validate; collision reuse requires byte-equal custody.
+- *Authority*: exact-match dispatch everywhere; `_launch_seed_current` and `refresh_runtime_launch_seed_for_worker_dispatch` reject standalone pre-return; no legacy-field fallbacks.
+
+**Notes (big, not fixed)**
+1. Pointer/receipt pin runtime domain only transitively via `seed_sha256` — sound now, fragile if seed re-admission ever weakens. Consider mirroring `runtime_root`/revision into the pointer later.
+2. `_resident_attest` maps every CliError to exit 2, including environmental "unreadable" custody states — defensible but broader than contract §4's split.
+0

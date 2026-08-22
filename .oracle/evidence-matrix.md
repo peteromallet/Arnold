@@ -22,3 +22,37 @@ Evidence was collected on `oracle-run` by `codex:gpt-5.6-luna` during T11. No co
 - `.oracle/evidence/package-smoke.txt`: 5 package smoke tests passed, including archive resource assertions and clean-venv installed generation.
 - `.oracle/evidence/agentbox-import.txt`: `python -c "import agentbox.cli"` exited 0.
 - `.oracle/evidence/sdist-contents.txt`: `python -m build --sdist` succeeded; archive inspection found exactly five resident-template paths.
+
+## Done-criteria coverage (.oracle/agent_goal.md)
+
+| # | Criterion | Status | Evidence |
+|---|---|---|---|
+| 1 | `agent run arnold` returns agentbox-operator-v1 behavior; body byte-parity test green | Pass | R1 row above; `.oracle/evidence/agent-run-arnold.txt`; parity test in `.oracle/evidence/targeted-resident-tests.txt` |
+| 2 | `install-omp-agent --name/--description` renames and re-describes; tests green | Pass | R2 row above |
+| 3 | `new-resident` scaffolds five files; generated profile imports and dry-run validates; external profile loading rejects bad profiles | Pass | R3 + Batch 3 rows above; `.oracle/evidence/new-resident-demo2.txt`; `.oracle/evidence/package-smoke.txt` |
+| 4 | Targeted suites green (`tests/agentbox/test_cli.py`, `test_resident_profile.py`) | Pass with documented exceptions | Batch 2–4 rows above; 89 passed, six pre-existing attestation-env failures |
+| 5 | Evidence matrix maps every criterion to a receipt/evidence path | Pass | This table plus rows above |
+| 6 | Final oracle review (Sol) passes; North Star alignment confirmed | Pending | Final review scheduled at end of oracle run, before sync/promotion |
+
+Note (wave1-E sense-check): wheel/sdist artifact completeness re-verified against
+`git ls-files agentbox arnold_pipelines/megaplan/skills`; dead legacy
+`arnold/pipelines/evidence_pack/*` artifact entries removed from `pyproject.toml`
+(the active evidence-pack docs ship via `arnold_pipelines/evidence_pack/`);
+planning-skill artifact path corrected to
+`arnold_pipelines/megaplan/planning/skills/planning/SKILL.md`. See
+`.oracle/findings/wave1-e-report.md`.
+
+## Wave 2 packaging deep pass (2026-08-22)
+
+Re-audit of wheel AND sdist data-file shipping against all tracked non-Python
+files (`git ls-files` across `agentbox/`, `arnold/`, `arnold_pipelines/`; 190
+files). Model: `openrouter/stealth/ox-alpha`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Wheel ships every tracked runtime data file (skills data, evidence_pack, strategy CONTRACT/TEMPLATE, profiles, cloud templates/wrappers, conformance allowlists, native SQL migration, agentbox templates) | Pass — sole omission is `arnold_pipelines/megaplan/skills/babysit/SKILL.md`, deliberate via `[tool.hatch.build.targets.wheel].exclude`; runtime babysit installs read `megaplan/data/babysit_skill.md`, which ships | `.oracle/evidence/wave2-packaging.txt`; regression test `tests/agentbox/test_package_smoke.py::test_wheel_ships_every_tracked_runtime_data_file` |
+| Sdist ships every tracked runtime data file | Pass — sole omission is dead legacy `arnold/pipelines/evidence_pack/py.typed` (globally excluded; no runtime importer; stray wheel copy exists only because the broad `"py.typed"` artifact re-include overrides exclusion) | same receipt; regression test `::test_sdist_ships_every_tracked_runtime_data_file` |
+| pyproject artifact globs | Unchanged — audit found nothing runtime-needed missing from either artifact | same receipt |
+
+Done-criteria impact: criterion 5 receipts strengthened; criterion 4 now also
+covered by `7 passed in 22.32s` for the package smoke suite.

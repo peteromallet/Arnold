@@ -1,0 +1,18 @@
+Done. Audit results:
+
+**Wheel vs tracked data (190 non-Py files):** all ship except `arnold_pipelines/megaplan/skills/babysit/SKILL.md` — deliberate (`[tool.hatch.build.targets.wheel].exclude`; runtime installs read `megaplan/data/babysit_skill.md`, which ships).
+
+**Sdist:** all ship except dead legacy `arnold/pipelines/evidence_pack/py.typed` (global exclude; zero runtime importers; its stray wheel copy exists only because the broad `"py.typed"` artifact re-include overrides exclusion — cosmetic, left as-is since deleting the file is out of scope).
+
+**Spot-checked in both artifacts:** megaplan data/skills, profiles, workflows JSON/pypelines, strategy CONTRACT/TEMPLATE, evidence_pack, conformance allowlists, native SQL migration, agentbox templates/systemd/agents.
+
+**pyproject.toml:** unchanged — nothing runtime-needed was missing.
+
+**Tests extended** (`tests/agentbox/test_package_smoke.py`, +98 lines): two regression tests pin full tracked-data coverage for wheel and sdist against explicit intentional-gap sets; any future data file failing to ship now fails loudly.
+
+**Verification:** `python -m pytest tests/agentbox/test_package_smoke.py -q` → **7 passed in 22.32s**.
+
+**Evidence matrix:** appended Wave 2 section mapping checks to receipts in `.oracle/evidence/wave2-packaging.txt`; done criteria 1–5 covered with receipts, 6 remains pending final oracle review as before.
+
+No commit. Note: `agentbox/cli.py`/`test_cli.py` show concurrent edits from a sibling wave — untouched by me.
+0

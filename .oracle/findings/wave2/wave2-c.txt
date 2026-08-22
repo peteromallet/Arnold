@@ -1,0 +1,14 @@
+All hunt areas probed; suite green (81 passed, 35.6s). No code changes were warranted — findings:
+
+**Profile-spec parsing** (`_parse_external_profile_spec`, cli.py:1314): fuzzed ~20 edges — Windows drive-relative (`C:a.py:Cls`), single-letter-colon dirs, empty path/class, trailing class space, extra colons, `.PY` case, NUL/newline paths — all classify correctly (malformed vs containment_escape); NUL/newline fall through to fail-closed `missing_file` at strict resolve. Module identity canonicalizes `./a.py` ≡ `a.py`.
+
+**Containment**: strict-resolve both root and candidate + `relative_to` both directions; symlink cases tested; loader evicts module on every failure path incl. BaseException; bytecode flag restored in `finally`.
+
+**Dry-run**: read-only verified — no `mkdir`/write reachable from `preflight_configured_launch_seed`; `token_configured: False` is asserted contract (token never read); no process-status write (asserted).
+
+**Injection drift**: builtin sets match across `_validate_resident_profile`/`_resident_profile`; config normalizes whitespace pre-validation.
+
+**Seed binding**: startup binds root (create), dry-run prefights root, runtime.py:146 re-checks pid-bound attestation derived from seed's own project_root — no unbound standalone-seed consumer remains.
+
+**Reported (not fixed)** [INFERENCE on impact]: `run_resident_cli`:287 builds the store before discord attestation admission; `FileStore.__init__` mkdirs `<root>/.megaplan/resident` (file.py:236) and production opens `DBStore` — dry-run's only filesystem side effect. Lazy-store refactor too broad for this pass.
+0

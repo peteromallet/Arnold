@@ -1,0 +1,129 @@
+{
+  "briefs_dir": "/tmp/wave2-briefs",
+  "default_model": "openrouter:stealth/ox-alpha",
+  "failed_count": 0,
+  "isolation": "threads",
+  "max_tokens": 65536,
+  "max_workers": 5,
+  "model_map": [],
+  "output_dir": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2",
+  "project_dir": "/Users/peteromalley/Documents/arnold-oracle",
+  "stopped_by_signal": false,
+  "succeeded_count": 5,
+  "sum_agent_seconds": 2987.787,
+  "task_timeout_s": 1800,
+  "tasks": [
+    {
+      "brief": "/private/tmp/wave2-briefs/wave2-a.md",
+      "elapsed_s": 460.969,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-22T11:46:04Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-a.meta.json",
+      "model": "openrouter:stealth/ox-alpha",
+      "pid": 91442,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 1332,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-a.txt",
+      "started_at": "2026-08-22T11:38:23Z",
+      "status": "ok",
+      "stem": "wave2-a",
+      "task_timeout_s": 1800,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/private/tmp/wave2-briefs/wave2-b.md",
+      "elapsed_s": 400.203,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-22T11:45:04Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-b.meta.json",
+      "model": "openrouter:stealth/ox-alpha",
+      "pid": 91441,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 1645,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-b.txt",
+      "started_at": "2026-08-22T11:38:23Z",
+      "status": "ok",
+      "stem": "wave2-b",
+      "task_timeout_s": 1800,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/private/tmp/wave2-briefs/wave2-c.md",
+      "elapsed_s": 1116.01,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-22T11:56:59Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-c.meta.json",
+      "model": "openrouter:stealth/ox-alpha",
+      "pid": 91440,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 1602,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-c.txt",
+      "started_at": "2026-08-22T11:38:23Z",
+      "status": "ok",
+      "stem": "wave2-c",
+      "task_timeout_s": 1800,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/private/tmp/wave2-briefs/wave2-d.md",
+      "elapsed_s": 334.295,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-22T11:43:58Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-d.meta.json",
+      "model": "openrouter:stealth/ox-alpha",
+      "pid": 91439,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 1233,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-d.txt",
+      "started_at": "2026-08-22T11:38:23Z",
+      "status": "ok",
+      "stem": "wave2-d",
+      "task_timeout_s": 1800,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/private/tmp/wave2-briefs/wave2-e.md",
+      "elapsed_s": 676.31,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-22T11:49:40Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-e.meta.json",
+      "model": "openrouter:stealth/ox-alpha",
+      "pid": 91443,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 1505,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-e.txt",
+      "started_at": "2026-08-22T11:38:23Z",
+      "status": "ok",
+      "stem": "wave2-e",
+      "task_timeout_s": 1800,
+      "tool_calls": 0
+    }
+  ],
+  "toolsets": [
+    "('file'",
+    "'web'",
+    "'terminal')"
+  ],
+  "total_count": 5,
+  "wall_clock_s": 1116.012
+}

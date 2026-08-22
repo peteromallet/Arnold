@@ -1,0 +1,21 @@
+{
+  "brief": "/private/tmp/wave2-briefs/wave2-e.md",
+  "elapsed_s": 676.31,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-22T11:49:40Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-e.meta.json",
+  "model": "openrouter:stealth/ox-alpha",
+  "pid": 91443,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 1505,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/wave2/wave2-e.txt",
+  "started_at": "2026-08-22T11:38:23Z",
+  "status": "ok",
+  "stem": "wave2-e",
+  "task_timeout_s": 1800,
+  "tool_calls": 0
+}

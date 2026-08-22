@@ -619,6 +619,29 @@ def test_cli_new_resident_rejects_file_repo(tmp_path, monkeypatch, capsys) -> No
     )
 
 
+def test_cli_install_omp_agent_rejects_empty_target(tmp_path, monkeypatch, capsys) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = main(["install-omp-agent", "arnold", "--target", ""])
+
+    assert result == 1
+    assert capsys.readouterr().err == (
+        "agentbox: invalid target directory ''; omit --target for the default\n"
+    )
+    assert not (Path.home() / ".omp" / "agent" / "agents" / "arnold.md").exists()
+
+
+def test_cli_new_resident_rejects_empty_repo(tmp_path, monkeypatch, capsys) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+
+    result = main(["new-resident", "astrid", "--repo", ""])
+
+    assert result == 1
+    assert capsys.readouterr().err == "agentbox: invalid repository directory ''\n"
+    assert not (Path.cwd() / ".agentbox").exists()
+
+
 def test_cli_install_omp_agent_oserror_is_diagnostic(tmp_path, monkeypatch, capsys) -> None:
     _write_cli_config(tmp_path, monkeypatch)
     target = tmp_path / "agents"

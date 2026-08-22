@@ -1,0 +1,13 @@
+**Wave 2 complete.** Suite: **49 passed** (47 baseline + 2 new). Not committed.
+
+**Breaks found & fixed** (`agentbox/cli.py`, fail-closed):
+1. `install-omp-agent --target ""` silently installed into `$HOME/.omp/agent/agents` — now rc 1 diagnostic (`agentbox/cli.py:675`).
+2. `new-resident --repo ""` resolved to CWD and spilled `.agentbox`/`.omp` into wherever you ran it, rc 0 — now rc 1 (`agentbox/cli.py:764`). Regression tests added at `tests/agentbox/test_cli.py:622` and `:631`.
+
+**Held up under attack:** real-process 3-way races for both commands (exactly one winner, losers get clean diagnostics, zero tmp leftovers, no clobbering); unicode targets/repos; symlinked target dir; ambiguous YAML names (`on`) quote + round-trip; `---` inside descriptions is lossless (body byte-identical, YAML parses); single-pass substitution holds; mid-publication rollback + empty-dir pruning clean; ENAMETOOLONG → clean OSError diagnostic.
+
+**Architecture notes:**
+- `_emit`'s json/human branches are identical — `--json` is a no-op on success output; decide whether non-JSON success should ever be human text.
+- No `__main__` guard: `python -m agentbox.cli` exits 0 doing nothing. Add `raise SystemExit(main())` or document the console-script entry point only.
+- Empty-string required-path args were the one systemic hole; both closed.
+0
