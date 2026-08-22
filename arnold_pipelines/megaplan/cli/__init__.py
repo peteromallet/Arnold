@@ -3558,7 +3558,8 @@ def _main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     argv = _normalize_execute_compat_argv(list(argv))
-    maybe_auto_sync_repo_editor_support(Path.cwd())
+    if not (argv and argv[0] == "resident"):
+        maybe_auto_sync_repo_editor_support(Path.cwd())
     if argv and argv[0] == "cloud":
         from arnold_pipelines.megaplan.cloud.cli import _register_cloud_subcommands, run_cloud_cli
 

@@ -13,9 +13,12 @@ Evidence was collected on `oracle-run` by `codex:gpt-5.6-luna` during T11. No co
 | Batch 4 checkpoint — dry-run/backend behavior | `tests/agentbox/test_resident_profile.py::test_agentbox_profile_cloud_resume_uses_injected_backend`; `::test_generated_agentbox_profile_subclass_retains_exact_v0_tool_catalog`; `.oracle/evidence/targeted-resident-tests.txt` | Pass for backend/profile contract tests; runtime integration subset is blocked only by missing launch seed as recorded. | codex:gpt-5.6-luna |
 | Batch 5 checkpoint — standalone custody | `.oracle/evidence/standalone-attestation-tests.txt`; `tests/cloud/test_standalone_runtime_attestation.py::test_resident_attest_json_and_plain_contract_via_adapter`; `::test_resident_attest_wrong_head_returns_admission_exit_code_2` | Pass: 42 tests. | codex:gpt-5.6-luna |
 | Batch 6 checkpoint — five-file generator and launcher | `.oracle/evidence/new-resident-demo2.txt`; `.oracle/evidence/package-smoke.txt`; `tests/agentbox/test_cli.py::test_run_resident_*` | Pass for generated artifacts and installed package smoke; launcher integration tests are included in the targeted run, with six pre-existing seed-env failures elsewhere. | codex:gpt-5.6-luna |
+| Batch 7 checkpoint — wheel/sdist resident-template shipping | `.oracle/evidence/wheel-build.txt`; `.oracle/evidence/sdist-contents.txt`; `tests/agentbox/test_package_smoke.py::test_agentbox_wheel_includes_package_and_installed_entrypoint` | Pass: wheel and sdist ship exactly the five resident-template paths; sdist inspection receipt is recorded. | codex:gpt-5.6-luna |
+| Batch 7 checkpoint — clean-installed generation and deployment docs | `.oracle/evidence/package-smoke.txt`; `.oracle/evidence/sdist-contents.txt`; `docs/custom-resident-agents.md` | Pass: clean-installed package generation remains covered by package smoke, and docs describe the name-specific env file as the sole secret/deployment source. | codex:gpt-5.6-luna |
 
 ## T11 packaging receipts
 
 - `.oracle/evidence/wheel-build.txt`: Hatch wheel build succeeded and includes `agentbox/templates/resident/*`.
 - `.oracle/evidence/package-smoke.txt`: 5 package smoke tests passed, including archive resource assertions and clean-venv installed generation.
 - `.oracle/evidence/agentbox-import.txt`: `python -c "import agentbox.cli"` exited 0.
+- `.oracle/evidence/sdist-contents.txt`: `python -m build --sdist` succeeded; archive inspection found exactly five resident-template paths.

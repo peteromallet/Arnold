@@ -646,14 +646,27 @@ def test_resident_dispatch_creates_only_resident_owned_state(
     monkeypatch.delenv("MEGAPLAN_RESIDENT_MODE", raising=False)
     monkeypatch.delenv("MEGAPLAN_RESIDENT_STORE_ROOT", raising=False)
 
-    exit_code = megaplan_main(["resident", "health"])
+    first_exit = megaplan_main(["resident", "health"])
 
-    assert exit_code == 0
+    assert first_exit == 0
     # Resident-owned state is created lazily by the FileStore constructor.
     assert (repo / ".megaplan" / "resident").is_dir()
     # Generic runtime layout must not be materialized by resident dispatch.
     for generic in ("plans", "initiatives", "schemas"):
         assert not (repo / ".megaplan" / generic).exists(), generic
+    # Repo editor auto-sync must not run for top-level resident dispatch:
+    # an absent .gitattributes stays absent and .vscode/settings.json is
+    # never created.
+    assert not (repo / ".gitattributes").exists()
+    assert not (repo / ".vscode" / "settings.json").exists()
+
+    sentinel_bytes = b"*.png binary\n"
+    (repo / ".gitattributes").write_bytes(sentinel_bytes)
+
+    second_exit = megaplan_main(["resident", "health"])
+
+    assert second_exit == 0
+    assert (repo / ".gitattributes").read_bytes() == sentinel_bytes
 
 
 def test_non_resident_dispatch_still_initializes_generic_layout(

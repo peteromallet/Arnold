@@ -70,7 +70,7 @@ agentbox new-resident astrid \
 |---|---|
 | `.omp/agents/astrid.md` | Project-scoped named agent; it shadows the user-level agent inside this repo. |
 | `.agentbox/resident_profile.py` | `AstridResidentProfile`, a subclass of `AgentBoxOperatorProfile`. |
-| `.agentbox/resident.env.example` | Starting environment file with token, profile, mode, store, and allowlists. |
+| `.agentbox/resident.env.example` | Starting environment file with token, mode, and allowlists. |
 | `.agentbox/run-resident` | Fixed-root executable launcher. |
 | `.agentbox/astrid-resident.service` | Systemd unit that runs the launcher. |
 
@@ -92,11 +92,10 @@ ${EDITOR:-vi} .agentbox/astrid.env
 chmod 600 .agentbox/astrid.env
 ```
 
-Set `DISCORD_BOT_TOKEN`, the guild/channel/user/admin allowlists, and any model
-settings needed by the profile. Keep this file uncommitted. The generated
-launcher sets the exact external profile and store root itself; its source
-environment file remains the single place for the secret and deployment
-configuration.
+Set `DISCORD_BOT_TOKEN`, `MEGAPLAN_RESIDENT_MODE`, and the guild/channel/user/admin
+allowlists. Keep this file uncommitted. The generated launcher owns the exact
+external profile and store root; `.agentbox/astrid.env` is the sole secret and
+deployment source.
 
 An empty or missing token is refused before attestation:
 

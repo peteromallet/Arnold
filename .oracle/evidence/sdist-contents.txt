@@ -1,0 +1,17 @@
+F3 sdist packaging receipt
+
+Command:
+  python -m build --sdist
+
+Result:
+  Successfully built arnold-0.23.0.tar.gz
+  Archive: dist/arnold-0.23.0.tar.gz
+
+Exactly five shipped resident-template paths:
+  arnold-0.23.0/agentbox/templates/resident/agent.md.tmpl
+  arnold-0.23.0/agentbox/templates/resident/resident.env.example.tmpl
+  arnold-0.23.0/agentbox/templates/resident/resident_profile.py.tmpl
+  arnold-0.23.0/agentbox/templates/resident/run-resident.tmpl
+  arnold-0.23.0/agentbox/templates/resident/service.tmpl
+
+Inspection method: tarfile member listing filtered to agentbox/templates/resident/.

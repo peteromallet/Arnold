@@ -1153,6 +1153,22 @@ def test_cli_new_resident_creates_exactly_five_files(tmp_path: Path) -> None:
         Path(".agentbox/demo-resident.service"),
     }
 
+def test_cli_new_resident_service_requires_name_specific_env_file(
+    tmp_path: Path,
+) -> None:
+    from agentbox.cli import main as agentbox_main
+
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+    assert agentbox_main(["new-resident", "demo", "--repo", str(repo)]) == 0
+
+    service_text = (repo / ".agentbox" / "demo-resident.service").read_text(
+        encoding="utf-8"
+    )
+    assert "Environment=DISCORD_BOT_TOKEN" not in service_text
+    assert ".agentbox/demo.env" in service_text
+    assert "before startup" in service_text
+
 
 def test_external_profile_constructor_failure_is_a_concise_dry_run_cli_error(
     tmp_path: Path,

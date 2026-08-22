@@ -5,12 +5,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory={{REPO}}
-# Set the real token with a drop-in, e.g.:
-#   sudo systemctl edit {{NAME}}-resident
-# and add:
-#   [Service]
-#   Environment=DISCORD_BOT_TOKEN=<token>
-Environment=DISCORD_BOT_TOKEN=
+# Required before startup: create {{REPO}}/.agentbox/{{NAME}}.env from
+# resident.env.example and keep it mode 0600. run-resident loads this file.
 ExecStart={{REPO}}/.agentbox/run-resident
 Restart=on-failure
 RestartSec=10
