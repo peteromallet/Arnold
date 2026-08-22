@@ -1207,7 +1207,13 @@ def test_success_outcomes_match_planned_lattice() -> None:
 
 def test_non_success_outcomes_include_liveness_and_exhaustion() -> None:
     assert "live_with_fresh_activity" in repair_contract.NON_SUCCESS_OUTCOMES
-    assert "partial_liveness" in repair_contract.NON_SUCCESS_OUTCOMES
+    # T4.x canonical spelling; the legacy "partial_liveness" alias is still
+    # accepted on read and normalizes into the lattice.
+    assert "provisional_liveness" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert repair_contract.normalize_repair_outcome("partial_liveness") == (
+        "provisional_liveness"
+    )
+    assert "partial_liveness" not in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_timeout" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_exhausted" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "needs_human" in repair_contract.NON_SUCCESS_OUTCOMES
@@ -1377,13 +1383,14 @@ def test_classify_progressed_beats_fresh_and_blocker() -> None:
 
 
 def test_classify_fresh_activity_beats_blocker_and_liveness() -> None:
-    """Fresh activity is now partial_liveness (non-success), not a success outcome."""
+    """Fresh activity is provisional_liveness (non-success), not a success outcome."""
     outcome = repair_contract.classify_verification_outcome(
         has_fresh_activity=True,
         has_true_human_blocker=True,
         is_live=True,
     )
-    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert outcome == repair_contract.PROVISIONAL_LIVENESS
+    assert outcome == "provisional_liveness"
     assert not repair_contract.is_success_outcome(outcome)
 
 
@@ -1398,9 +1405,11 @@ def test_classify_true_human_blocker_beats_liveness() -> None:
 
 
 def test_classify_liveness_only_becomes_partial_liveness() -> None:
-    """The critical semantic: held tmux with no delta is partial_liveness, NOT success."""
+    """The critical semantic: held tmux with no delta is provisional_liveness
+    (the canonical M1 spelling of the former partial_liveness), NOT success."""
     outcome = repair_contract.classify_verification_outcome(is_live=True)
-    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert outcome == repair_contract.PROVISIONAL_LIVENESS
+    assert outcome == "provisional_liveness"
     assert not repair_contract.is_success_outcome(outcome)
 
 
@@ -1412,7 +1421,7 @@ def test_classify_liveness_only_with_no_flags_is_not_success() -> None:
         has_fresh_activity=False,
         has_true_human_blocker=False,
     )
-    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert outcome == repair_contract.PROVISIONAL_LIVENESS
     assert not repair_contract.is_success_outcome(outcome)
 
 
@@ -1440,7 +1449,7 @@ def test_classify_every_outcome_reachable() -> None:
     )
     assert (
         repair_contract.classify_verification_outcome(has_fresh_activity=True)
-        == repair_contract.PARTIAL_LIVENESS
+        == repair_contract.PROVISIONAL_LIVENESS
     )
     assert (
         repair_contract.classify_verification_outcome(has_true_human_blocker=True)
@@ -1448,7 +1457,7 @@ def test_classify_every_outcome_reachable() -> None:
     )
     assert (
         repair_contract.classify_verification_outcome(is_live=True)
-        == repair_contract.PARTIAL_LIVENESS
+        == repair_contract.PROVISIONAL_LIVENESS
     )
     assert (
         repair_contract.classify_verification_outcome()

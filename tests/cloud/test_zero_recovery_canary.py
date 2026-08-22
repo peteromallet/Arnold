@@ -3673,8 +3673,11 @@ def test_runner_post_init_binds_canonical_schema_runtime_and_rejects_drift(
         "--robustness",
         "full",
         "--no-adaptive-critique",
-        "--vendor",
-        "codex",
+        # T5.x window: the vendor-synthesized "all-codex" profile was retired
+        # (its absence is pinned by test_gpt56_execution_policy); the
+        # sanctioned codex-vendor-locked successor is partnered-codex.
+        "--profile",
+        "partnered-codex",
     ]
     completed = subprocess.run(
         command,

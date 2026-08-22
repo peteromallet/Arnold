@@ -356,32 +356,53 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
         "retry_budget": {"claim_retries_used": 2, "claim_alerted": False},
     }
 
+    # T4.1: the enqueue is fail-closed — an actionable true-stall handoff
+    # without a minted root MutationCapability is denied before any queue
+    # interaction, even when the item carries no repair identity.
+    _, digest = _auditor_spec_and_digest(tmp_path)
+    denied_item = {
+        "plan": "c1-contract-reality-20260711-1433",
+        "session": "workflow-boundary-contracts-corrective-20260710",
+        "workspace": str(workspace),
+        "session_header": {"kind": "chain"},
+        "deterministic_superfixer_evidence": evidence,
+        "l3_escalation_gate": {
+            "eligible": True,
+            "decision": "true_stall",
+            "escalation_id": "l3-escalation:fixture",
+            "evidence_digest": "f" * 64,
+            "route": {
+                "requested_difficulty": 9,
+                "effective_difficulty": 9,
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "high",
+                "child_difficulty_ceiling": 9,
+            },
+        },
+        "l3_repair_context_path": "/workspace/audit-reports/escalations/fixture/repair-context.json",
+        "l3_repair_context_digest": "c" * 64,
+    }
+    with pytest.raises(
+        ValueError, match="mutation requires a root MutationCapability"
+    ):
+        enqueue_audit_repair_request(
+            denied_item,
+            queue_root=queue_root,
+            transition_writer=RuntimeTransitionWriter(tmp_path / "cycle-ledger-denied"),
+            chain_spec_sha256=digest,
+        )
+
+    # Authorized caller: with the sanctioned minted capability attached, the
+    # denial is gone and the enqueue proceeds to its zero-authority rejection
+    # (the item carries no occurrence-bound repair identity to queue under).
     result = enqueue_audit_repair_request(
         {
-            "plan": "c1-contract-reality-20260711-1433",
-            "session": "workflow-boundary-contracts-corrective-20260710",
-            "workspace": str(workspace),
-            "session_header": {"kind": "chain"},
-            "deterministic_superfixer_evidence": evidence,
-            "l3_escalation_gate": {
-                "eligible": True,
-                "decision": "true_stall",
-                "escalation_id": "l3-escalation:fixture",
-                "evidence_digest": "f" * 64,
-                "route": {
-                    "requested_difficulty": 9,
-                    "effective_difficulty": 9,
-                    "model": "gpt-5.6-sol",
-                    "reasoning_effort": "high",
-                    "child_difficulty_ceiling": 9,
-                },
-            },
-            "l3_repair_context_path": "/workspace/audit-reports/escalations/fixture/repair-context.json",
-            "l3_repair_context_digest": "c" * 64,
+            **denied_item,
+            "mutation_capability": _mint_escalation_capability(tmp_path),
         },
         queue_root=queue_root,
         transition_writer=RuntimeTransitionWriter(tmp_path / "cycle-ledger"),
-        chain_spec_sha256=_auditor_spec_and_digest(tmp_path)[1],
+        chain_spec_sha256=digest,
     )
 
     assert result is not None
@@ -480,6 +501,9 @@ def test_auditor_enqueue_uses_canonical_occurrence_identity(
     )
     assert identity is not None
     complete_item["repair_identity"] = identity
+    # T4.1: even an identity-complete enqueue is denied without a minted
+    # root capability; the sanctioned grant unblocks the authorized caller.
+    complete_item["mutation_capability"] = _mint_escalation_capability(tmp_path)
 
     from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
 
@@ -513,6 +537,10 @@ def test_auditor_enqueue_uses_canonical_occurrence_identity(
         "deterministic_superfixer_evidence": base_evidence,
         "l3_escalation_gate": base_gate,
         # No current_target or repair_custody_summary → partial F01 tuple.
+        # The capability clears the T4.1 gate; the zero-authority rejection
+        # below still fires because no authority may be minted from a
+        # partial report tuple.
+        "mutation_capability": _mint_escalation_capability(tmp_path),
     }
 
     result2 = enqueue_audit_repair_request(
@@ -1718,6 +1746,49 @@ def _auditor_spec_and_digest(tmp_path: Path) -> tuple[Path, str]:
     return spec_path, "sha256:" + hashlib.sha256(spec_path.read_bytes()).hexdigest()
 
 
+def _mint_escalation_capability(tmp_path: Path):
+    """Mint a root escalation MutationCapability via the sanctioned T4.1 path.
+
+    Mirrors the test-side grant pattern pinned by
+    tests/cloud/test_t41_mutation_capability.py: complete evidence identity,
+    disposable import root, generation interpreter, HMAC-signed mint. The
+    live minted object is authority; a serialized Mapping is not.
+    """
+    import hashlib
+    import json
+
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        mint_mutation_capability,
+    )
+
+    root = tmp_path / "capability-live-root"
+    root.mkdir(parents=True, exist_ok=True)
+    interpreter = tmp_path / "capability-generation" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+    occurrence = "occ-six-hour-audit-escalation"
+    cursor = "cursor-six-hour-audit-escalation"
+    evidence = {
+        "occurrence": occurrence,
+        "target": "target-six-hour-audit-escalation",
+        "cursor": cursor,
+        "fence_epoch": 1,
+        "evidence_digest": hashlib.sha256(
+            json.dumps({"occurrence": occurrence, "cursor": cursor},
+                       sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "scope": "escalation",
+        "custody": f"custody:{occurrence}",
+        "import_root": str(root),
+        "interpreter": str(interpreter),
+    }
+    return mint_mutation_capability(
+        action="escalation",
+        evidence=evidence,
+        process_root=root,
+        process_python=interpreter,
+    )
+
 def test_runtime_transition_absence_findings_map_to_auditor_shape(
     tmp_path: Path,
 ) -> None:
@@ -1853,6 +1924,9 @@ def test_auditor_enqueue_emits_runtime_transitions_before_request_creation(
         "session_header": {"kind": "chain"},
         "deterministic_superfixer_evidence": base_evidence,
         "l3_escalation_gate": base_gate,
+        # T4.1: the sanctioned root capability authorizes the handoff so the
+        # test can observe the mandatory transition emission order.
+        "mutation_capability": _mint_escalation_capability(tmp_path),
     }
     writer = RuntimeTransitionWriter(ledger_root)
 

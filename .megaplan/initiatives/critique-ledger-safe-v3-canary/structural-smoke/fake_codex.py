@@ -212,7 +212,8 @@ function payload(schemaName, output, prompt) {
         },
         narrow_tests: {
           selectors: ["tests/cloud/test_zero_recovery_canary.py"],
-          max_seconds: 120,
+          budget_semantics: "elapsed_wall_clock_v2",
+          test_budget_seconds: 120,
           max_runs: 2,
         },
         checkpoint: {
