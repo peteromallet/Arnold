@@ -10,7 +10,6 @@ import importlib
 import importlib.metadata
 import json
 import os
-import psutil
 import re
 import site
 import stat
@@ -2358,6 +2357,8 @@ def _proc_identity(pid: int) -> dict[str, Any]:
     # (seconds since the epoch) replaces Linux stat field 21 clock ticks;
     # both sides of every comparison run this same function, so per-boot
     # PID-reuse protection is preserved.
+    import psutil  # lazy: only process inspection needs it (clean-venv imports stay light)
+
     try:
         process = psutil.Process(pid)
         start_time = str(process.create_time())
