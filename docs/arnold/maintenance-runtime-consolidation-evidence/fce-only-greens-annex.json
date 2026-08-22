@@ -1,0 +1,223 @@
+{
+  "key": "fce_only_greens_annex_v1",
+  "schema_version": "mrc.fce-only-greens.v1",
+  "generated_at": "2026-08-22T16:30:11Z",
+  "generated_by_task": "EVDIG-B",
+  "integration_head": "4243cc13a96831c8e52cd672fbf5ca921cf662ec",
+  "fce_baseline_head": "fce48030a82d4d35d9b4a5184e4c789792b9c172",
+  "purpose": "Comparison/flakiness annex of the 26 fce-only flips observed during the T7.2d node-level sweep: nodes that PASSED at HEAD in the canonical T7.2 shard run but FAILED when the same file ran once at the fce baseline in a disposable clone. These are explicitly NOT waivers and NOT known failures; they are excluded from known_failures and from every expected_exit computation. Suspected mechanism (T7.2d residual-risk note): flaky or sandbox-ordering effects, e.g. agentbox package_smoke wheel builds.",
+  "sources": [
+    "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/shard_failure_classification.json#extras_fce_only_failures_not_in_443",
+    "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/t72d_node_split.json#extra",
+    "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/t72d_fce_node_level_results.json"
+  ],
+  "count": 25,
+  "note_on_ids": "The classification corpus stored some parametrized ids truncated at commas; each entry here carries the canonical full node id as collected at integration HEAD 4243cc13a9, matched uniquely by prefix.",
+  "entries": [
+    {
+      "node_id": "tests/arnold/agent/test_codex_adapter.py::test_run_codex_step_plan_prefers_json_payload_over_transcript_text",
+      "shard_id": "shard8",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/arnold/agent/test_codex_adapter.py",
+      "family": "tests/arnold/agent/test_codex_adapter.py"
+    },
+    {
+      "node_id": "tests/arnold/agent/test_codex_adapter.py::test_run_codex_step_plan_uses_strict_stream_evidence",
+      "shard_id": "shard8",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/arnold/agent/test_codex_adapter.py",
+      "family": "tests/arnold/agent/test_codex_adapter.py"
+    },
+    {
+      "node_id": "tests/cloud/test_recovery_topology_surfaces.py::test_final_route_authority_closure_has_zero_unplanned_and_zero_planned_pending",
+      "shard_id": "shard8",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/cloud/test_recovery_topology_surfaces.py",
+      "family": "tests/cloud/test_recovery_topology_surfaces.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[chain_health_failure-\\nsession_health_status()",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[progress_stall-\\nsession_health_status()",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[stale-\\nsession_health_status()",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[state_mismatch-\\nsession_health_status()",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[stopped-\\nsession_health_status()",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[unhealthy-\\nsession_health_status()",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_accepted_root_marker_command_is_preserved[PYTHONPATH={root}:${{PYTHONPATH:-}}",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_accepted_root_marker_command_is_preserved[cd",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_accepted_root_marker_command_is_preserved[{root}/bin/python",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_foreign_per_epic_marker_command_is_regenerated[/workspace/runtime-candidates/arnold-old/bin/python",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_foreign_per_epic_marker_command_is_regenerated[PYTHONPATH=/workspace/runtime-candidates/arnold-old:${PYTHONPATH:-}",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_foreign_per_epic_marker_command_is_regenerated[cd",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_invocation_marker_is_regenerated[/workspace/arnold/bin/python",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_invocation_marker_is_regenerated[env",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_param_expansion_marker_is_regenerated[${MEGAPLAN_RUNTIME_SRC:+/workspace/arnold}/bin/python",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_param_expansion_marker_is_regenerated[MEGAPLAN_RUNTIME_SRC=${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_param_expansion_marker_is_regenerated[cd",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": null,
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_needs_human_fixture_workspace_cannot_reach_delivery",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/cloud/test_watchdog_wrappers.py",
+      "family": "tests/cloud/test_watchdog_wrappers.py"
+    },
+    {
+      "node_id": "tests/m9/test_bypass_gating.py::test_authority_gap_schema_does_not_authorize_action_or_hide_failures",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/m9/test_bypass_gating.py",
+      "family": "tests/m9/test_bypass_gating.py"
+    },
+    {
+      "node_id": "tests/m9/test_bypass_gating.py::test_no_audited_bypass_line_can_swallow_authority_risk_with_naked_true",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/m9/test_bypass_gating.py",
+      "family": "tests/m9/test_bypass_gating.py"
+    },
+    {
+      "node_id": "tests/test_managed_agent.py::test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt",
+      "shard_id": "shard7",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/test_managed_agent.py",
+      "family": "tests/test_managed_agent.py"
+    },
+    {
+      "node_id": "tests/workers/test_session_cache_regression.py::test_shannon_revise_uses_versioned_prompt_and_fresh_session",
+      "shard_id": "shard9",
+      "head_status": "pass@HEAD-in-shard",
+      "fce_status": "fail@fce48030a8",
+      "fce_evidence_file_run": "tests/workers/test_session_cache_regression.py",
+      "family": "tests/workers/test_session_cache_regression.py"
+    }
+  ],
+  "corrections": {
+    "corrected_by": "EVDIG-B2",
+    "corrected_at": "2026-08-22T18:11:50Z",
+    "summary": "Verification against the canonical shard stdout + t72d fce sweep found: (1) 17 entries carried ids prefix-expanded at integration head onto variants that actually FAILED at classification head 6c75652572 (6 test_launch_chain_tick OURS-REGRESSION nodes + 11 persisted-marker PREEXISTING nodes) — re-expanded to the canonical fce-sweep node ids recorded in t72d_fce_node_level_results.json, which are the ids that actually carry the fail@fce48030a8 evidence; (2) 1 entry (test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot[arnold-watchdog-ARNOLD_WATCHDOG]) is not an fce-only green at all — it FAILED at classification head (shard9 stdout, the seeded known failure) and moved to known_failures + preexisting-waiver-register.json. 26 -> 25 entries."
+  }
+}
