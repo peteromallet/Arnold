@@ -979,8 +979,16 @@ def _verify_dependency_generation_binding(
             f"new commit's frozen spec digest is {candidate!r}; rebuild or "
             "select the matching content-addressed generation before advancing"
         )
-    interpreter = Path(str(proof.get("interpreter_path") or "")).expanduser()
-    generation_dir = interpreter.resolve(strict=False).parent.parent
+    # Do NOT .resolve() the interpreter here: a POSIX venv's ``bin/python``
+    # is a symlink to the base interpreter, so resolving it relocates
+    # ``parent.parent`` out of the content-addressed generation dir and
+    # refuses every legitimately built generation.  Residency only needs
+    # the RECORDED path's grandparent directory NAME; normalize without
+    # following symlinks.
+    interpreter = Path(
+        os.path.abspath(os.path.expanduser(str(proof.get("interpreter_path") or "")))
+    )
+    generation_dir = interpreter.parent.parent
     if generation_dir.name != candidate:
         raise ManifestError(
             "advance_generation refused: dependency-generation "

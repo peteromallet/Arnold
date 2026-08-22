@@ -797,6 +797,198 @@
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
+    },
+    {
+      "path": ".tmp/gpt55-native-parity-audit/codex.out",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical GPT-5.5 native-parity audit transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/gpt55-native-parity-audit/codex.out",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical GPT-5.5 native-parity audit transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-parity-existing-work-swarm/results/05-s1d-builder-slice-code.txt",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical native-parity swarm result transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-parity-existing-work-swarm/results/15-s7-final-conformance-code.txt",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical native-parity swarm result transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-parity-existing-work-swarm/results/16-cross-previous-epics-executed-work.txt",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical native-parity swarm result transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-parity-existing-work-swarm/results/18-cross-schema-artifact-surfaces.txt",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical native-parity swarm result transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-parity-sprint-sizing-codex/compression-strategist.out",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical sprint-sizing model output; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-master-plan/brief.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical semantic-parity planning transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-master-plan/codex.out",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical semantic-parity planning transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-master-plan/codex.out",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical semantic-parity planning transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-master-plan/codex.out",
+      "pattern": "python -m arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical semantic-parity planning transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/codex-overkill-review.out",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/codex-review-stage-design.out",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/codex-review-stage-design.out",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/codex-revise-stage-northstar.out",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/codex-revise-stage-northstar.out",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/codex-revise-stage-northstar.out",
+      "pattern": "python -m arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/codex-sprint-sequencing-and-review-one-sprint.out",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/deepseek.err",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/native-semantic-parity-question-audit/deepseek.out",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical question-audit model transcript; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/oracle-review-packet/arnold-native-workflow-oracle-review-2026-07-21 2/01_NATIVE_REPRESENTATION_REPORT.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical oracle-review packet; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/oracle-review-packet/arnold-native-workflow-oracle-review-2026-07-21/01_NATIVE_REPRESENTATION_REPORT.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical oracle-review packet; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/oracle-review-packet/arnold-native-workflow-oracle-review-2026-07-23 2/01_FULL_PIPELINE_AND_END_STATE.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical oracle-review packet; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp/oracle-review-packet/arnold-native-workflow-oracle-review-2026-07-23/01_FULL_PIPELINE_AND_END_STATE.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical oracle-review packet; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp_m10_generated_skill_allowlist_category.patch",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical M10 patch capture; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp_m10_generated_skill_legacy_allowlist.patch",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical M10 patch capture; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp_m10_legacy_negative_fixture.patch",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical M10 patch capture; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": ".tmp_m10_misc.patch",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Tracked historical M10 patch capture; names the deleted legacy package only as past-tense provenance."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard8.stdout",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.1); pytest output quotes the deleted legacy package verbatim."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard9.stdout",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.1); pytest output quotes the deleted legacy package verbatim."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard9.stdout",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.1); pytest output quotes the deleted legacy package verbatim."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard9.stdout",
+      "pattern": "python -m arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.1); pytest output quotes the deleted legacy package verbatim."
     }
   ]
 }
