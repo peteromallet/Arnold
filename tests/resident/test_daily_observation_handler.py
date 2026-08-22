@@ -95,10 +95,13 @@ class RecordingRunner:
         with self._lock:
             self.calls.append(kwargs)
         # The runner probes custody liveness under the handoff, exactly as
-        # the T6.2 contract requires before any write boundary.
+        # the landed T6.2 contract requires before any write boundary: the
+        # fence coordinates are handed back to the probe per boundary.
         if callable(kwargs.get("fence_check")):
             with self._lock:
-                self.probe_results.append(bool(kwargs["fence_check"]()))
+                self.probe_results.append(
+                    bool(kwargs["fence_check"](kwargs["occurrence_fence"]))
+                )
         if self._delay:
             import time
 
@@ -273,14 +276,27 @@ def test_committed_occurrence_runs_runner_once_and_t21_terminalizes(tmp_path) ->
     assert len(runner.calls) == 1
 
     call = runner.calls[0]
-    custody = call["custody"]
-    assert custody["schedule_id"] == fixture.definition.schedule_id
-    assert custody["occurrence_id"] == fixture.occurrence_id
-    assert custody["occurrence_key"] == fixture.occurrence_key
-    assert custody["observation_only"] is True
-    assert custody["claim"]["fence"] > fixture.projection.fence
+    fence = call["occurrence_fence"]
+    assert fence.occurrence_id == fixture.occurrence_id
+    assert fence.fence > fixture.projection.fence
+    assert isinstance(fence.claim_token, str) and fence.claim_token
     assert callable(call["fence_check"])
-    # Probed DURING custody: the T2.1 re-read answered True under the claim.
+    # Landed T6.2 entry-point signature (INT-1): the observer hands the
+    # full envelope — ledger facade, proven daily window ending at the
+    # occurrence's nominal time, and the claimed fence coordinates.
+    assert set(call) >= {
+        "ledger",
+        "previous_boundary",
+        "candidate_boundary",
+        "environment",
+        "generated_at",
+        "occurrence_fence",
+        "fence_check",
+    }
+    assert call["previous_boundary"] < call["candidate_boundary"]
+    assert call["candidate_boundary"] == fixture.projection.occurrence.nominal_at
+    # Probed DURING custody with the handed coordinates: the T2.1 re-read
+    # answered True under the claim.
     assert runner.probe_results == [True]
 
     released = fixture.projection_now()
@@ -301,7 +317,7 @@ def test_committed_occurrence_runs_runner_once_and_t21_terminalizes(tmp_path) ->
     assert terminal.state == "terminal"
     assert terminal.decision == "scheduled_job_fired"
     # The probe now honestly reports the lost custody.
-    assert call["fence_check"]() is False
+    assert call["fence_check"](call["occurrence_fence"]) is False
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +622,7 @@ def test_cross_window_lease_holds_fail_closed_without_leaking(
     # Window A is independent: it claims and runs under its own fence.
     asyncio.run(handlers_a.handle_daily_observation(window_a.payload))
     assert len(runner.calls) == 1
-    assert runner.calls[0]["custody"]["schedule_id"] == "sched_daily_window_a"
+    assert runner.calls[0]["occurrence_fence"].occurrence_id == window_a.occurrence_id
 
     # The foreign lease was never disturbed by window A's run.
     held = window_b.projection_now()
@@ -646,3 +662,73 @@ def test_cancelled_schedule_delivery_noops_with_byte_identical_store(tmp_path) -
 
     assert runner.calls == []
     assert _tree_digest(fixture.root) == before  # byte-for-byte: no write at all
+
+
+# ---------------------------------------------------------------------------
+# G6.3-N1: the lazy runner seam + consumed-occurrence mapping (post-T6.2)
+# ---------------------------------------------------------------------------
+
+
+def test_load_daily_runner_resolves_the_landed_t62_entry_point() -> None:
+    """Post-T6.2 the seam resolves the REAL landed module (no stub needed)."""
+    from arnold_pipelines.megaplan.maintenance.daily_runner import (
+        run_daily_efficiency,
+    )
+
+    assert scheduler_module._load_daily_runner() is run_daily_efficiency
+
+
+def test_load_daily_runner_missing_module_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing runner module raises DailyRunnerUnavailable — never silent."""
+    monkeypatch.setattr(
+        scheduler_module,
+        "DAILY_RUNNER_MODULE",
+        "arnold_pipelines.megaplan.maintenance.__no_such_module__",
+    )
+    with pytest.raises(
+        scheduler_module.DailyRunnerUnavailable, match="not importable"
+    ):
+        scheduler_module._load_daily_runner()
+
+
+def test_load_daily_runner_missing_contract_symbol_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An importable module without the contract symbols fails closed too."""
+    monkeypatch.setattr(
+        scheduler_module, "DAILY_RUNNER_ENTRYPOINT", "__no_such_entrypoint__"
+    )
+    with pytest.raises(
+        scheduler_module.DailyRunnerUnavailable, match="does not expose"
+    ):
+        scheduler_module._load_daily_runner()
+
+
+def test_already_consumed_occurrence_is_an_idempotent_noop(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The T2.1 committed-launch CAS refusal maps to a silent no-op.
+
+    ``DailyObservationAlreadyConsumed`` is caught by the handler: the
+    observer never launches a second run, never writes, and never fails
+    the delivery for an occurrence that already carries its record.
+    """
+    fixture = _fixture(tmp_path)
+    runner = RecordingRunner()
+    handlers = fixture.handlers(runner)
+
+    def _consumed(*_args, **_kwargs):
+        raise RuntimeError(
+            f"occurrence {fixture.occurrence_id} already carries a "
+            "committed launch record"
+        )
+
+    monkeypatch.setattr(
+        schedules_module.ScheduleService, "claim_superfixer_occurrence", _consumed
+    )
+    asyncio.run(handlers.handle_daily_observation(fixture.payload))
+
+    assert runner.calls == []  # never launched
+    assert len(fixture._events()) == fixture.event_count  # no write at all

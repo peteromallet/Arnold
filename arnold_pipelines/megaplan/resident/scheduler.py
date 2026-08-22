@@ -112,9 +112,11 @@ class SuperfixerOccurrenceAlreadyLaunched(Exception):
 DAILY_OBSERVATION_LEASE_SECONDS = 120
 
 # T6.2 contract: the daily runner lives in ONE module exposing ONE entry
-# point that returns a typed closure receipt.  The handoff resolves it by
-# import (never re-implements window closure); if the symbol name differs
-# at integration time this constant is the single adaptation point.
+# point that returns a typed closure receipt, plus the envelope types the
+# observer hands it (OccurrenceFence custody coordinates, MaintenanceLedger
+# facade).  The handoff resolves all three by import through these
+# constants (never re-implements window closure or custody models); this
+# is the single integration seam between the resident and the runner.
 DAILY_RUNNER_MODULE = "arnold_pipelines.megaplan.maintenance.daily_runner"
 DAILY_RUNNER_ENTRYPOINT = "run_daily_efficiency"
 
@@ -132,28 +134,40 @@ class DailyRunnerUnavailable(RuntimeError):
     """The T6.2 daily-runner entry point could not be resolved (fail closed)."""
 
 
-def _load_daily_runner() -> Callable[..., Any]:
-    """Resolve the T6.2 daily-runner entry point by import (single seam).
+def _load_daily_runner_seam() -> tuple[Callable[..., Any], Any, Any]:
+    """Resolve the T6.2 runner seam by import (single seam).
 
-    The import is lazy: this branch integrates before the T6.2 runner
-    lands, and importing it eagerly would break the resident.  A missing
-    module or entry point raises :class:`DailyRunnerUnavailable` — never a
-    silent fallback, never a local re-implementation of the runner.
+    Returns ``(entry_point, OccurrenceFence, MaintenanceLedger)`` from the
+    canonical module.  The import is lazy: importing the maintenance
+    package eagerly into the resident scheduler would widen its authority
+    surface (proven statically in
+    tests/resident/test_daily_observation_negative_authority.py).  A
+    missing module or contract symbol raises :class:`DailyRunnerUnavailable`
+    — never a silent fallback, never a local re-implementation of the
+    runner.
     """
     import importlib
 
     try:
         module = importlib.import_module(DAILY_RUNNER_MODULE)
-    except ImportError as exc:  # pragma: no cover - exercised via stub modules
+    except ImportError as exc:
         raise DailyRunnerUnavailable(
             f"{DAILY_RUNNER_MODULE} is not importable: {exc}"
         ) from exc
     entry = getattr(module, DAILY_RUNNER_ENTRYPOINT, None)
-    if not callable(entry):
+    fence_type = getattr(module, "OccurrenceFence", None)
+    ledger_type = getattr(module, "MaintenanceLedger", None)
+    if not (callable(entry) and callable(fence_type) and callable(ledger_type)):
         raise DailyRunnerUnavailable(
-            f"{DAILY_RUNNER_MODULE}.{DAILY_RUNNER_ENTRYPOINT} is not callable"
+            f"{DAILY_RUNNER_MODULE} does not expose the T6.2 contract "
+            f"({DAILY_RUNNER_ENTRYPOINT}/OccurrenceFence/MaintenanceLedger)"
         )
-    return entry
+    return entry, fence_type, ledger_type
+
+
+def _load_daily_runner() -> Callable[..., Any]:
+    """Resolve the T6.2 daily-runner entry point (see :func:`_load_daily_runner_seam`)."""
+    return _load_daily_runner_seam()[0]
 
 
 def _daily_observation_coordinates(
@@ -218,24 +232,6 @@ def _daily_fence_check(
         )
 
     return fence_check
-
-
-def _daily_custody_coordinates(
-    job: ScheduledJob, item: Any, claim: Any
-) -> dict[str, Any]:
-    """Locator-only custody coordinates bound into the runner handoff."""
-    return {
-        "schema_version": "arnold-resident-daily-observation-custody-v1",
-        "job_id": job.id,
-        "schedule_id": item.schedule_id,
-        "schedule_revision": item.schedule_revision,
-        "generation": item.generation,
-        "occurrence_id": item.occurrence_id,
-        "occurrence_key": item.occurrence_key,
-        "nominal_at": item.nominal_at.isoformat(),
-        "claim": {"claim_owner": claim.claim_owner, "fence": claim.fence},
-        "observation_only": True,
-    }
 
 
 # ── end T6.3 module-level seam ──────────────────────────────────────────────
@@ -1182,9 +1178,10 @@ class ResidentJobHandlers:
         consumer custody through the ONE one-shot CAS
         (``ScheduleService.claim_superfixer_occurrence`` over the repository
         fence/claim-token CAS), verifies the returned claim still binds THIS
-        occurrence/worker/fence, and hands a live ``fence_check`` (a T2.1
-        projection re-read) plus locator-only custody coordinates to the
-        T6.2 daily runner.  Its ONLY write is the single CAS-guarded
+        occurrence/worker/fence, and hands the claimed ``OccurrenceFence``
+        coordinates with a live fence probe over them to the T6.2 daily
+        runner under the landed entry-point signature.  Its ONLY write is
+        the single CAS-guarded
         custody release after a successful run (fence + one-shot token,
         the same seam the superfixer consumer uses); TERMINALIZATION stays
         with ``ScheduleService.reconcile_terminal_runs``.
@@ -1260,15 +1257,40 @@ class ResidentJobHandlers:
         if gate_reason is not None:
             raise RuntimeError(f"daily_observation custody gate denied: {gate_reason}")
 
+        # Landed T6.2 entry-point signature (INT-1): the observer hands the
+        # runner the claimed OccurrenceFence coordinates, a live T2.1 custody
+        # probe bound to exactly those coordinates, and the proven daily
+        # window ending at the occurrence's nominal time.  The envelope types
+        # resolve through the same lazy seam; an injected runner (tests)
+        # replaces ONLY the entry point, never the handoff shape.
+        _, fence_type, ledger_type = _load_daily_runner_seam()
         runner = self.daily_runner or _load_daily_runner()
+        occurrence_fence = fence_type(
+            occurrence_id=occurrence_id,
+            fence=claim.fence,
+            claim_token=claim.claim_token,
+        )
+        custody_probe = _daily_fence_check(
+            service,
+            occurrence_id=occurrence_id,
+            worker_id=self.worker_id,
+            fence=claim.fence,
+        )
+
+        def fence_check(fence: Any) -> bool:
+            """Landed protocol: the runner hands the fence back per boundary."""
+            if fence != occurrence_fence:
+                return False  # not the coordinates THIS handler claimed
+            return custody_probe()
+
         runner(
-            fence_check=_daily_fence_check(
-                service,
-                occurrence_id=occurrence_id,
-                worker_id=self.worker_id,
-                fence=claim.fence,
-            ),
-            custody=_daily_custody_coordinates(job, item, claim),
+            ledger=ledger_type(self.store.root),
+            previous_boundary=item.nominal_at - timedelta(hours=24),
+            candidate_boundary=item.nominal_at,
+            environment=None,
+            generated_at=utc_now(),
+            occurrence_fence=occurrence_fence,
+            fence_check=fence_check,
         )
         # Release consumed custody through the ONE T2.1 repository CAS
         # (expected fence + one-shot claim token) — the handler's ONLY
