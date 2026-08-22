@@ -400,3 +400,7 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Audit found 16 batch-interaction regressions introduced by OUR batches: BF-001 six-hour auditor MutationCapability fixture drift (T4.1), BF-002 repair_contract stale liveness assertions pass at fce / fail at HEAD (5), BF-003 zero-recovery init canary x7 + elapsed_wall_clock_v2 schema-vs-fake-fixture (T5.1 window). Plus LM-001 import-order landmine mitigated by shard7 ordering; omp-rpc env gap fixed.
 - DECISION: these are our regressions, not legacy debt — fix before T7.2 via one focused test-side card; refreeze counts only if collection changes. G7 cannot recommend promotion with self-inflicted reds.
 - PROCESS DEVIATION: T7.1 implementer committed 8775c69833 DIRECTLY on the integration branch instead of a task worktree. Content verified == allowance (test-shards.json + audit script only); accepted to avoid churn; future cards reiterate the prohibition in the first line.
+
+## OPERATOR DIRECTIVE (2026-08-22): oracle/sense-checking → Codex
+
+- Reviews (XHARD-REVIEW, HARD-REVIEW, SOL-REVIEW), JUDGMENT, and REPORT audits now route through `codex:gpt-5.6-sol` (launch_hermes_agent). Implementation/revision/integration/validation remain ox-alpha. Restores cross-model diversity for the end-stage reviews (named drift in DEEP check-ins #1/#2).
