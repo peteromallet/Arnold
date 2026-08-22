@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+import psutil
+
 from arnold_pipelines.megaplan.cloud import runtime_attestation as attestation
 from arnold_pipelines.megaplan.cli import _main
 from arnold_pipelines.megaplan.types import CliError
@@ -1021,7 +1023,7 @@ def test_proc_identity_empty_executable_raises_typed_error(
             return {}
 
     monkeypatch.setattr(
-        attestation.psutil, "Process", lambda _pid: _EmptyExeProcess()
+        psutil, "Process", lambda _pid: _EmptyExeProcess()
     )
     with pytest.raises(CliError) as excinfo:
         attestation._proc_identity(4242)
