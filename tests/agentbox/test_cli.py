@@ -384,23 +384,139 @@ def test_cli_new_resident_rolls_back_mid_publication(tmp_path, monkeypatch) -> N
     _write_cli_config(tmp_path, monkeypatch)
     repo = tmp_path / "resident-repo"
     repo.mkdir()
-    original_replace = cli_module.os.replace
+    original_link = cli_module.os.link
     calls = 0
 
-    def fail_on_second_replace(source, destination):
+    def fail_on_second_link(source, destination, *, follow_symlinks=True):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise OSError("publication failure")
-        return original_replace(source, destination)
+        return original_link(source, destination, follow_symlinks=follow_symlinks)
 
-    monkeypatch.setattr(cli_module.os, "replace", fail_on_second_replace)
+    monkeypatch.setattr(cli_module.os, "link", fail_on_second_link)
 
     result = main(["new-resident", "astrid", "--repo", str(repo)])
 
     assert result == 1
     assert not any(path.is_file() for path in repo.rglob("*"))
     assert not (repo / ".agentbox").exists() or not any((repo / ".agentbox").iterdir())
+
+
+def test_cli_new_resident_race_does_not_clobber_concurrent_files(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    original_link = cli_module.os.link
+
+    # Race at first publication: a concurrent creator fills every destination
+    # before the first link; nothing of ours may clobber or remove them.
+    first_repo = tmp_path / "race-first"
+    first_repo.mkdir()
+    first_files = [
+        first_repo / ".omp" / "agents" / "astrid.md",
+        first_repo / ".agentbox" / "resident_profile.py",
+        first_repo / ".agentbox" / "resident.env.example",
+        first_repo / ".agentbox" / "run-resident",
+        first_repo / ".agentbox" / "astrid-resident.service",
+    ]
+
+    def create_all_before_publish(source, destination, *, follow_symlinks=True):
+        for path in first_files:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"created concurrently\n")
+        return original_link(source, destination, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(cli_module.os, "link", create_all_before_publish)
+
+    assert main(["new-resident", "astrid", "--repo", str(first_repo)]) == 1
+    for path in first_files:
+        assert path.read_bytes() == b"created concurrently\n"
+    assert list(first_repo.rglob(".*.tmp-*")) == []
+    assert capsys.readouterr().err.startswith(
+        "agentbox: failed to create resident scaffold"
+    )
+
+    # Race at a later publication: earlier invocation links roll back, the
+    # concurrently created file keeps its bytes, and no later files appear.
+    later_repo = tmp_path / "race-later"
+    later_repo.mkdir()
+    collided = later_repo / ".agentbox" / "resident.env.example"
+    calls = 0
+
+    def create_third_before_publish(source, destination, *, follow_symlinks=True):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            collided.parent.mkdir(parents=True, exist_ok=True)
+            collided.write_bytes(b"created concurrently\n")
+        return original_link(source, destination, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(cli_module.os, "link", create_third_before_publish)
+
+    assert main(["new-resident", "astrid", "--repo", str(later_repo)]) == 1
+    assert not (later_repo / ".omp" / "agents" / "astrid.md").exists()
+    assert not (later_repo / ".agentbox" / "resident_profile.py").exists()
+    assert collided.read_bytes() == b"created concurrently\n"
+    assert not (later_repo / ".agentbox" / "run-resident").exists()
+    assert not (later_repo / ".agentbox" / "astrid-resident.service").exists()
+    assert list(later_repo.rglob(".*.tmp-*")) == []
+    assert capsys.readouterr().err.startswith(
+        "agentbox: failed to create resident scaffold"
+    )
+
+
+def test_cli_new_resident_substitution_is_single_pass(tmp_path, monkeypatch) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+
+    result = main(
+        [
+            "new-resident",
+            "my-op",
+            "--repo",
+            str(repo),
+            "--description",
+            "Operator for {{REPO}} and {{NAME}}",
+        ]
+    )
+
+    assert result == 0
+    agent = (repo / ".omp/agents/my-op.md").read_text(encoding="utf-8")
+    assert 'description: "Operator for {{REPO}} and {{NAME}}"' in agent
+    assert "name: my-op" in agent
+    service = (repo / ".agentbox/my-op-resident.service").read_text(encoding="utf-8")
+    assert f"WorkingDirectory={repo}" in service
+    assert "{{PASCAL_NAME}}" not in service
+
+
+def test_cli_install_omp_agent_oserror_is_diagnostic(tmp_path, monkeypatch, capsys) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    target = tmp_path / "agents"
+
+    def refuse_link(source, destination, *, follow_symlinks=True):
+        raise OSError("publication refused")
+
+    monkeypatch.setattr(cli_module.os, "link", refuse_link)
+
+    result = main(["install-omp-agent", "arnold", "--target", str(target)])
+
+    assert result == 1
+    assert not (target / "arnold.md").exists()
+    assert list(target.glob(".arnold.md.tmp-*")) == []
+    assert (
+        capsys.readouterr().err
+        == "agentbox: failed to install omp agent: publication refused\n"
+    )
+
+    result = main(["install-omp-agent", "arnold", "--target", str(target), "--json"])
+
+    assert result == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "failed to install omp agent: publication refused"
+    }
+    assert list(target.glob(".arnold.md.tmp-*")) == []
 
 
 _RUN_RESIDENT_STUB_LOG_ENV = "RUN_RESIDENT_STUB_LOG"

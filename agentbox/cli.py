@@ -667,19 +667,24 @@ def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
             f"target already exists: {target}",
             json_output=json_output,
         )
-    target_dir.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{output_name}.md.tmp-{uuid4().hex[:8]}")
     try:
-        tmp.write_bytes(installed_text.encode("utf-8"))
+        target_dir.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f".{output_name}.md.tmp-{uuid4().hex[:8]}")
         try:
+            tmp.write_bytes(installed_text.encode("utf-8"))
             os.link(tmp, target, follow_symlinks=False)
         except FileExistsError:
             return _diagnostic(
                 f"target already exists: {target}",
                 json_output=json_output,
             )
-    finally:
-        tmp.unlink(missing_ok=True)
+        finally:
+            tmp.unlink(missing_ok=True)
+    except OSError as exc:
+        return _diagnostic(
+            f"failed to install omp agent: {exc}",
+            json_output=json_output,
+        )
     _emit(
         {
             "agent": output_name,
@@ -704,11 +709,15 @@ def _resident_pascal_name(name: str) -> str:
     return result
 
 
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
+
+
 def _render_resident_template(path: Path, replacements: dict[str, str]) -> str:
     rendered = path.read_text(encoding="utf-8")
-    for key, value in replacements.items():
-        rendered = rendered.replace(f"{{{{{key}}}}}", value)
-    return rendered
+    return _PLACEHOLDER_PATTERN.sub(
+        lambda match: replacements.get(match.group(1), match.group(0)),
+        rendered,
+    )
 
 
 def _new_resident(args: argparse.Namespace, *, json_output: bool) -> int:
@@ -772,7 +781,7 @@ def _new_resident(args: argparse.Namespace, *, json_output: bool) -> int:
             if destination.name == "run-resident":
                 temporary_path.chmod(0o755)
         for temporary_path, destination in zip(temporary, destinations):
-            os.replace(temporary_path, destination)
+            os.link(temporary_path, destination, follow_symlinks=False)
             created.append(destination)
     except OSError as exc:
         for temporary_path in temporary:

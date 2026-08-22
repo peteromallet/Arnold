@@ -465,6 +465,31 @@ def test_external_profile_injects_exact_builtin_constructor_dependencies(tmp_pat
     assert profile.received_confirmation_manager is confirmation_manager
 
 
+def test_external_profile_preserves_profile_supplied_cloud_backend(tmp_path: Path) -> None:
+    source = """
+from agentbox.resident_profile import AgentBoxOperatorProfile
+
+
+class DemoResidentProfile(AgentBoxOperatorProfile):
+    provided_cloud_backend = object()
+
+    def __init__(self, *, store, authorizer, config, confirmation_manager):
+        super().__init__(
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+        )
+        self.cloud_backend = type(self).provided_cloud_backend
+"""
+    spec = _write_external_profile(tmp_path, source)
+
+    profile = _load_external_profile(tmp_path, spec)
+
+    assert profile.cloud_backend is type(profile).provided_cloud_backend
+    assert not isinstance(profile.cloud_backend, CloudCliBackend)
+
+
 @pytest.mark.parametrize(
     ("spec", "code"),
     [
@@ -891,6 +916,21 @@ def test_external_profile_dry_run_constructs_profile_without_starting_discord(
     assert payload["dry_run"] is True
     assert payload["token_configured"] is False
     assert payload["profile"] == spec
+
+
+def test_external_profile_dry_run_does_not_write_bytecode(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    spec = _write_external_profile(tmp_path, _demo_external_profile_source("no-bytecode"))
+
+    assert megaplan_main(["resident", "discord", "--profile", spec, "--dry-run"]) == 0
+
+    assert sys.dont_write_bytecode is False
+    assert not list(tmp_path.rglob("__pycache__"))
+    assert not list(tmp_path.rglob("*.pyc"))
 
 
 def test_generated_resident_startup_attests_constructs_profile_creates_process_attestation_and_starts_mock_service(

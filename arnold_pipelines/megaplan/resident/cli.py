@@ -1398,6 +1398,8 @@ def _load_external_resident_profile(
     with _EXTERNAL_PROFILE_IMPORT_LOCK:
         sys.modules.pop(module_name, None)
         module_loaded_successfully = False
+        previous_dont_write_bytecode = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
         try:
             spec = spec_from_file_location(module_name, resolved_candidate)
             if spec is None or spec.loader is None:
@@ -1453,6 +1455,7 @@ def _load_external_resident_profile(
                 f"Could not import resident profile {path_text!r}: {exc}",
             ) from exc
         finally:
+            sys.dont_write_bytecode = previous_dont_write_bytecode
             if not module_loaded_successfully:
                 sys.modules.pop(module_name, None)
 
@@ -1488,7 +1491,8 @@ def _resident_profile(
             config=config,
             confirmation_manager=confirmation_manager,
         )
-        profile_instance.cloud_backend = CloudCliBackend()
+        if getattr(profile_instance, "cloud_backend", None) is None:
+            profile_instance.cloud_backend = CloudCliBackend()
         return profile_instance
     if profile == "megaplan":
         return MegaplanResidentProfile(
@@ -1506,7 +1510,8 @@ def _resident_profile(
         config=config,
         confirmation_manager=confirmation_manager,
     )
-    profile_instance.cloud_backend = CloudCliBackend()
+    if getattr(profile_instance, "cloud_backend", None) is None:
+        profile_instance.cloud_backend = CloudCliBackend()
     return profile_instance
 
 
