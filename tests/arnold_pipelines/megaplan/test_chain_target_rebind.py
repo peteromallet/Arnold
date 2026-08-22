@@ -419,6 +419,13 @@ def _runtime_fixture(fixture: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
     return runtime_a, runtime_b, marker
 
 
+def _generation_interpreter(runtime: Mapping[str, Any]) -> str:
+    # The generation-interpreter launch recipe for one runtime side: the
+    # T4.3 rebind CAS pins import_root PLUS this interpreter, replacing
+    # the retired SHA-256 content guard.
+    return f"{str(runtime['import_root']).rstrip('/')}/bin/python"
+
+
 def _runtime_rebind(
     fixture: dict[str, Any],
     *,
@@ -433,8 +440,13 @@ def _runtime_rebind(
     result = rebind_runtime_identity(
         fixture["spec"],
         state,
-        expected_previous_runtime_sha256=str(source["content_sha256"]),
-        expected_active_runtime_sha256=str(target["content_sha256"]),
+        # T4.3: SHA-256 CAS is retired. The rebind guard is the launch
+        # recipe itself: import_root + generation interpreter on BOTH
+        # sides (previous and active). SHA-only guards now refuse.
+        expected_previous_import_root=str(source["import_root"]),
+        expected_previous_interpreter=_generation_interpreter(source),
+        expected_active_import_root=str(target["import_root"]),
+        expected_active_interpreter=_generation_interpreter(target),
         expected_current_milestone=MILESTONE,
         expected_current_plan=PLAN_NAME,
         reason=f"{direction} integrated runtime",

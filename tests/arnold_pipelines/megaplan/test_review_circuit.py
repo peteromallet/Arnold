@@ -401,15 +401,21 @@ class TestReviewReworkWaveEnforcement:
 class TestReviewQualityBlockFailure:
     """Verify quality-block failure records stop at configured budget."""
 
-    def _minimal_state(self, history_len: int = 3) -> dict:
+    def _minimal_state(
+        self, history_len: int = 3, current_state: str = "reviewed"
+    ) -> dict:
         return {
             "history": [{} for _ in range(history_len)],
             "config": {},
-            "current_state": "reviewed",
+            "current_state": current_state,
         }
 
     def test_quality_block_failure_has_structured_signature(self) -> None:
-        state = self._minimal_state()
+        # Dispatchability requires the POST-block projection: the failure is
+        # quality_gate_blocked only when current_state is already blocked
+        # (handlers/review.py::_review_quality_block_failure); a pre-block
+        # cursor stays review_quality_blocked_unknown.
+        state = self._minimal_state(current_state="blocked")
         rework_items = [
             {
                 "task_id": "T1",

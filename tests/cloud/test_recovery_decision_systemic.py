@@ -27,6 +27,19 @@ from tests.cloud.repair_identity_fixtures import identity_for_signature
 
 
 def _target(plan_state: dict[str, object], *, cursor: str = "sha256:cursor-1") -> dict[str, object]:
+    # T2.3: the resolver projection must carry the review evidence cursor so
+    # the evidence-bound classifier can bind the persisted quality failure
+    # to the LIVE target (cursor + fingerprint + blocked projection).
+    failure = plan_state.get("latest_failure")
+    evidence_cursor = (
+        failure.get("evidence_cursor") if isinstance(failure, dict) else None
+    )
+    event_cursors: dict[str, object] = {
+        "resume_retry_strategy": "manual_review",
+        "latest_failure_kind": "quality_gate_blocked",
+    }
+    if isinstance(evidence_cursor, dict) and evidence_cursor:
+        event_cursors["review_evidence_cursor"] = evidence_cursor
     return {
         "schema_version": 1,
         "target_session": "wbc",
@@ -45,10 +58,7 @@ def _target(plan_state: dict[str, object], *, cursor: str = "sha256:cursor-1") -
         "active_step_heartbeat": {"active": False},
         "needs_human": {"present": False, "plan_refs": []},
         "stale_evidence": [],
-        "event_cursors": {
-            "resume_retry_strategy": "manual_review",
-            "latest_failure_kind": "quality_gate_blocked",
-        },
+        "event_cursors": event_cursors,
     }
 
 
@@ -295,13 +305,30 @@ def test_status_watchdog_and_custody_share_cursor_counts_and_unclaimed_retry(
 
 
 def test_stale_marker_cannot_override_newer_authoritative_recovery_evidence() -> None:
+    """T2.3 revisions (3b9100dd5d): ``quality_gate_blocked`` was dropped from
+    MACHINE_REPAIRABLE_FAILURE_KINDS — that label is admitted only through
+    the evidence-bound classifier, so a newer quality failure does NOT
+    blanket-supersede a needs-human marker. Genuinely machine-repairable
+    kinds still do."""
     marker = {"recorded_at": "2026-07-11T21:44:00+00:00", "summary": "old"}
-    state = _quality_state()
-    state["latest_failure"]["recorded_at"] = "2026-07-11T21:45:00+00:00"  # type: ignore[index]
 
+    quality_state = _quality_state()
+    quality_failure = quality_state["latest_failure"]
+    assert isinstance(quality_failure, dict)
+    quality_failure["recorded_at"] = "2026-07-11T21:45:00+00:00"
+    assert not _needs_human_superseded_by_authoritative_recovery(
+        needs_human=marker,
+        plan_state=quality_state,
+    )
+
+    cursor_state = _quality_state()
+    cursor_failure = cursor_state["latest_failure"]
+    assert isinstance(cursor_failure, dict)
+    cursor_failure["recorded_at"] = "2026-07-11T21:45:00+00:00"
+    cursor_failure["kind"] = "workflow_cursor_mismatch"
     assert _needs_human_superseded_by_authoritative_recovery(
         needs_human=marker,
-        plan_state=state,
+        plan_state=cursor_state,
     )
 
 

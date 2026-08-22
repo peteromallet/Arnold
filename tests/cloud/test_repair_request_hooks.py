@@ -9,8 +9,7 @@ Covers:
 - Missing hook_extensions no-op behavior
 """
 
-from __future__ import annotations
-
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -39,6 +38,54 @@ def _owned_identity(
         task=task,
     )
 
+
+
+def _minted_repair_capability(tmp_path: Path) -> Any:
+    """Mint one T4.1 MutationCapability (action=repair) for enqueue paths.
+
+    T4.1: a reconstructed Mapping is never authority — the supervisor
+    producer only queues when the current-target carrier carries a minted
+    grant, mirroring the production require_mutation_capability call.
+    """
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        mint_mutation_capability,
+    )
+
+    root = tmp_path / "live-import-root"
+    root.mkdir(parents=True, exist_ok=True)
+    interpreter = tmp_path / "generation" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+    occurrence = "occ-supervisor-enqueue"
+    evidence = {
+        "occurrence": occurrence,
+        "target": "target-supervisor-enqueue",
+        "cursor": "cursor-supervisor-enqueue",
+        "fence_epoch": 1,
+        "evidence_digest": hashlib.sha256(
+            json.dumps(
+                {"occurrence": occurrence, "cursor": "cursor-supervisor-enqueue"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
+        "scope": "repair",
+        "custody": f"custody:{occurrence}",
+        "import_root": str(root),
+        "interpreter": str(interpreter),
+        "runtime_manifest": {
+            "epic": {
+                "runtime_root": str(root),
+                "dependency_generation": {"interpreter_path": str(interpreter)},
+            }
+        },
+    }
+    return mint_mutation_capability(
+        action="repair",
+        evidence=evidence,
+        process_root=root,
+        process_python=interpreter,
+    )
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -508,6 +555,9 @@ class TestLifecycleFailureEnqueue:
             return_value={
                 "current_refs": {"current_plan_name": "demo-plan"},
                 "repair_identity": supervisor_identity,
+                # T4.1: enqueue authorization requires a MINTED grant; a
+                # Mapping-only carrier is zero-authority and is rejected.
+                "mutation_capability": _minted_repair_capability(tmp_path),
             },
         ):
             first_supervisor = enqueue_supervisor_repair_request(
@@ -567,6 +617,8 @@ class TestLifecycleFailureEnqueue:
                     phase="chain_execution_binding",
                     task="chain_execution_binding:editable_runtime_import_root_mismatch",
                 ),
+                # T4.1: a minted grant is required for the enqueue to queue.
+                "mutation_capability": _minted_repair_capability(tmp_path),
             },
         ):
             result = enqueue_supervisor_repair_request(

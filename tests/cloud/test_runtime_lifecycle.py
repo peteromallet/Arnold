@@ -29,6 +29,18 @@ CLOSE = WRAPPER_DIR / "arnold-close"
 GC_SWEEP = WRAPPER_DIR / "arnold-gc-sweep"
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_generation_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    """G20 environmental hermeticity: ``arnold-runtime-create`` verifies the
+    dependency generation with the interpreter named by
+    ``ARNOLD_GENERATION_PYTHON`` and otherwise falls back to a hardcoded
+    machine-specific path (/root/.pyenv/versions/3.13.6/bin/python) that
+    does not exist off the reference box, refusing every sandbox runtime.
+    Pin it to the interpreter running these tests so the wrapper always has
+    a verifiable generation regardless of host layout."""
+    monkeypatch.setenv("ARNOLD_GENERATION_PYTHON", sys.executable)
+
+
 def _git(cwd: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *(("-C", str(cwd)) if cwd else ()), *args],

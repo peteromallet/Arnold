@@ -1126,7 +1126,16 @@ def test_ensure_runtime_launch_seed_refuses_drifted_head(
     assert isinstance(state, dict)
     monkeypatch.setattr(attestation, "_git_revision", lambda _root: "e" * 40)
 
-    with pytest.raises(CliError, match="HEAD does not match the manifest pin"):
+    # T4.3/G14: the gate refuses EARLIER with a structured, code-bearing
+    # message (both the chain-state and marker revision mismatches are
+    # reported together) instead of the retired prose-only pin complaint.
+    with pytest.raises(
+        CliError,
+        match=(
+            "runtime launch seed is not release-ready: "
+            "chain_runtime_revision_mismatch, marker_runtime_revision_mismatch"
+        ),
+    ):
         attestation.ensure_runtime_launch_seed(
             manifest_path=manifest,
             chain_spec_path=paths["chain_spec"],
@@ -1324,16 +1333,20 @@ def test_worker_preflight_reads_configured_launch_seed_env(
 def test_attestation_disable_without_seed_does_not_authorize_production_launch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P3 follow-up: explicit attestation-disable (MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=0)
-    without a launch seed must NOT authorize a production launch — the gate
-    still fails closed because the launch seed is mandatory.
-    """
+    """P3 follow-up, restated by T4.3: without a configured launch seed the
+    gate does NOT mint launch authority and does NOT raise — it degrades to
+    telemetry-only. A missing MEGAPLAN_RUNTIME_LAUNCH_SEED is evidence of no
+    seed-derived authorization (seed_gates=False), never a grant; live-tree
+    authority stays with import_root + generation-interpreter CAS."""
     monkeypatch.delenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", raising=False)
     monkeypatch.delenv("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION", raising=False)
     monkeypatch.setenv("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED", "0")
 
-    with pytest.raises(CliError, match="required but missing"):
-        attestation.require_configured_runtime_launch("resident")
+    result = attestation.require_configured_runtime_launch("resident")
+    assert result["ready"] is True
+    assert result["seed_gates"] is False
+    assert result["telemetry_only"] is True
+    assert result["component"] == "resident"
 
 
 def test_build_cli_records_explicit_manifest_pointer(

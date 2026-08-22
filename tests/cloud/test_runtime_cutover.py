@@ -401,8 +401,16 @@ def test_chain_runtime_cutover_composes_with_marker_runtime_update(
     cutover = cutover_runtime_identity(
         spec_path,
         state,
-        expected_previous_runtime_sha256=old_runtime["content_sha256"],
-        expected_active_runtime_sha256=new_runtime["content_sha256"],
+        # T4.3: SHA-256 CAS retired — the guard is import_root plus the
+        # generation-interpreter launch recipe on both sides.
+        expected_previous_import_root=str(old_runtime["import_root"]),
+        expected_previous_interpreter=(
+            f"{str(old_runtime['import_root']).rstrip('/')}/bin/python"
+        ),
+        expected_active_import_root=str(new_runtime["import_root"]),
+        expected_active_interpreter=(
+            f"{str(new_runtime['import_root']).rstrip('/')}/bin/python"
+        ),
         expected_current_milestone="c1",
         expected_current_plan="c1-plan",
         reason="chain cutover then marker sync",
@@ -454,12 +462,17 @@ def test_chain_runtime_cutover_composes_with_marker_runtime_update(
         marker_result["runtime_binding"]["current_identity"]["content_sha256"]
         == new_runtime["content_sha256"]
     )
-    assert marker_result["event"]["from_runtime_sha256"] == cutover["event"][
-        "from_runtime_sha256"
-    ]
-    assert marker_result["event"]["to_runtime_sha256"] == cutover["event"][
-        "to_runtime_sha256"
-    ]
+    # T4.3: the CHAIN rebind event no longer records SHA-256 fields (the
+    # guard is import_root + generation interpreter); the MARKER event
+    # keeps its own content-addressed from/to SHA fields.
+    assert cutover["event"]["from_runtime_sha256"] is None
+    assert cutover["event"]["to_runtime_sha256"] is None
+    assert marker_result["event"]["from_runtime_sha256"] == (
+        old_runtime["content_sha256"]
+    )
+    assert marker_result["event"]["to_runtime_sha256"] == (
+        new_runtime["content_sha256"]
+    )
     updated_marker = json.loads(marker_path.read_text(encoding="utf-8"))
     assert (
         updated_marker["runtime_binding"]["current_identity"]["content_sha256"]
