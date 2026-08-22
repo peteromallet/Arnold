@@ -1160,6 +1160,14 @@ def _resident_discord(
 ) -> dict[str, Any]:
     _validate_resident_profile(config.profile)
     if dry_run:
+        # Custody signal without custody obligations (2026-08-22 defect fix):
+        # a CONFIGURED launch seed is still loaded and validated so --dry-run
+        # cannot bless a corrupt or foreign seed, while no seed is required,
+        # no process status is created, and no network/token/runner/service
+        # surface is touched.
+        from arnold_pipelines.megaplan.cloud import runtime_attestation
+
+        runtime_attestation.preflight_configured_launch_seed(root)
         authorizer = ResidentAuthorizer(config)
         confirmation_manager = StoreBackedConfirmationManager(config, store)
         _resident_profile(

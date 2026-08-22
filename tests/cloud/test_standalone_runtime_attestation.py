@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -917,3 +919,122 @@ def test_standalone_preflight_rejects_foreign_project_root_before_status_mutatio
 
     # Explicit None keeps non-threaded callers on unchanged behavior.
     attestation.ensure_standalone_launch_seed_binds_root(None)
+
+
+def _publish_healthy_standalone_seed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[dict[str, Any], Path]:
+    """Issue, publish, and pointer-bind a healthy standalone seed in tmp."""
+    seed, _root, _revision = _healthy_runtime_fixture(monkeypatch)
+    state = tmp_path / "runtime-launch"
+    state.mkdir(mode=0o700)
+    state.chmod(0o700)
+    monkeypatch.setattr(
+        attestation,
+        "standalone_runtime_launch_dir",
+        lambda _root, create=True: state,
+    )
+    paths = attestation.standalone_dispatch_paths(
+        Path(str(seed["project_root"])),
+        head=str(seed["expected_project_revision"]),
+        seed_sha256=str(seed["content_sha256"]),
+    )
+    attestation.write_standalone_runtime_publication(
+        seed=seed,
+        seed_path=paths["seed"],
+        root=Path(str(seed["project_root"])),
+        generated_at=seed["generated_at"],
+    )
+    return seed, paths["seed"]
+
+
+def _static_process_identity() -> dict[str, Any]:
+    return {
+        "pid": 123,
+        "start_ticks": "456",
+        "executable": str(Path(sys.executable).resolve()),
+        "executable_sha256": hashlib.sha256(
+            Path(sys.executable).read_bytes()
+        ).hexdigest(),
+        "selectors": {},
+    }
+
+
+def test_proc_identity_reads_a_live_process_without_mocks(tmp_path: Path) -> None:
+    """Unpatched platform proof: a live child process is fully inspectable
+    through the real psutil path on THIS operating system."""
+    runtime_src = str(tmp_path / "runtime-src")
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(10)"],
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "MEGAPLAN_RUNTIME_SRC": runtime_src,
+        },
+    )
+    try:
+        identity = attestation._proc_identity(child.pid)
+    finally:
+        child.kill()
+        child.wait()
+    assert identity["pid"] == child.pid
+    assert Path(identity["executable"]).resolve() == Path(sys.executable).resolve()
+    assert identity["executable_sha256"] == hashlib.sha256(
+        Path(sys.executable).read_bytes()
+    ).hexdigest()
+    assert identity["selectors"] == {"MEGAPLAN_RUNTIME_SRC": runtime_src}
+    assert identity["start_ticks"]
+
+
+def test_require_configured_runtime_launch_accepts_relative_seed_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A relative MEGAPLAN_RUNTIME_LAUNCH_SEED loads identically to absolute."""
+    seed, seed_path = _publish_healthy_standalone_seed(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        attestation, "_proc_identity", lambda _pid: _static_process_identity()
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(
+        "MEGAPLAN_RUNTIME_LAUNCH_SEED", os.path.relpath(seed_path, tmp_path)
+    )
+    relative = attestation.require_configured_runtime_launch(
+        "resident", target_pid=123, create=True
+    )
+    assert relative["authority"] == attestation.RUNTIME_LAUNCH_STANDALONE_AUTHORITY
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(seed_path))
+    absolute = attestation.require_configured_runtime_launch(
+        "resident", target_pid=123, create=True
+    )
+    assert absolute["content_sha256"] == relative["content_sha256"]
+
+
+def test_preflight_configured_launch_seed_surfaces_custody_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Unset stays inert; configured-valid passes without creating process
+    status; corrupt and foreign configurations fail typed."""
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", raising=False)
+    assert attestation.preflight_configured_launch_seed(tmp_path) is None
+
+    seed, seed_path = _publish_healthy_standalone_seed(monkeypatch, tmp_path)
+    project_root = Path(str(seed["project_root"]))
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(seed_path))
+    loaded = attestation.preflight_configured_launch_seed(project_root)
+    assert loaded is not None
+    assert loaded["content_sha256"] == seed["content_sha256"]
+
+    foreign = tmp_path / "other-project"
+    foreign.mkdir()
+    with pytest.raises(CliError) as root_exc:
+        attestation.preflight_configured_launch_seed(foreign)
+    assert root_exc.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+
+    payload = json.loads(seed_path.read_text(encoding="utf-8"))
+    payload["loaded_modules"] = [{"tampered": True}]
+    seed_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(CliError) as corrupt_exc:
+        attestation.preflight_configured_launch_seed(project_root)
+    assert corrupt_exc.value.code == attestation.RUNTIME_ATTESTATION_ERROR

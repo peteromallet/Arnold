@@ -3407,3 +3407,104 @@ def _isolate_resident_runtime_from_host_attestation(monkeypatch: pytest.MonkeyPa
 async def _receive_and_flush(runtime: ResidentRuntime, event: InboundEvent) -> None:
     await runtime.receive(event)
     await runtime.coalescer.flush_all()
+
+
+def test_discord_dry_run_validates_configured_launch_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--dry-run`` surfaces typed custody failures for a CONFIGURED launch
+    seed while staying fully inert when none is configured."""
+    import argparse
+
+    from arnold_pipelines.megaplan.cloud import runtime_attestation
+
+    source_root = Path(__file__).parents[2].resolve()
+    revision = runtime_attestation._git_revision(source_root)
+    provenance = {
+        "ok": True,
+        "errors": [],
+        "expected_root": str(source_root),
+        "expected_revision": revision,
+        "import_root": str(source_root),
+        "editable_root": "",
+        "direct_url": {},
+        "pth": [],
+        "source_revision": revision,
+        "runtime_revision": revision,
+        "imports": {},
+    }
+    modules = runtime_attestation._module_vector(source_root)[0]
+    wrappers = runtime_attestation._wrapper_vector(source_root)[0]
+    monkeypatch.setattr(runtime_attestation, "runtime_provenance", lambda **_: provenance)
+    monkeypatch.setattr(runtime_attestation, "_pth_vector", lambda _root: ([], []))
+    monkeypatch.setattr(
+        runtime_attestation, "_module_vector", lambda _root: (modules, [])
+    )
+    monkeypatch.setattr(
+        runtime_attestation, "_wrapper_vector", lambda _root: (wrappers, [])
+    )
+    seed = runtime_attestation.build_standalone_runtime_launch_seed(
+        project_root=source_root,
+        expected_project_revision=revision,
+        runtime_root=source_root,
+        expected_runtime_revision=revision,
+        generated_at="2026-08-22T00:00:00Z",
+    )
+    state = tmp_path / "runtime-launch"
+    state.mkdir(mode=0o700)
+    state.chmod(0o700)
+    monkeypatch.setattr(
+        runtime_attestation,
+        "standalone_runtime_launch_dir",
+        lambda _root, create=True: state,
+    )
+    paths = runtime_attestation.standalone_dispatch_paths(
+        source_root,
+        head=revision,
+        seed_sha256=str(seed["content_sha256"]),
+    )
+    runtime_attestation.write_standalone_runtime_publication(
+        seed=seed,
+        seed_path=paths["seed"],
+        root=source_root,
+        generated_at=seed["generated_at"],
+    )
+
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_MODEL_PROVIDER", raising=False)
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_MODEL", raising=False)
+    parser = argparse.ArgumentParser()
+    _register_resident_subcommands(parser)
+    args = parser.parse_args(
+        [
+            "discord",
+            "--store-root",
+            str(tmp_path / "store"),
+            "--profile",
+            "agentbox_operator",
+            "--dry-run",
+        ]
+    )
+    config = _resident_config(args)
+    store = FileStore(tmp_path / "store")
+
+    # Unset configuration: dry-run behaves exactly as before.
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", raising=False)
+    result = _resident_discord(source_root, store, config, dry_run=True)
+    assert result["dry_run"] is True
+
+    # Configured-valid seed: dry-run succeeds with custody validated and
+    # still creates no process status.
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(paths["seed"]))
+    result = _resident_discord(source_root, store, config, dry_run=True)
+    assert result["dry_run"] is True
+    assert not (state / "status" / "resident.runtime-process-attestation.json").exists()
+
+    # Configured-corrupt (tampered) seed: typed failure before any
+    # profile/runner/service work.
+    payload = json.loads(paths["seed"].read_text(encoding="utf-8"))
+    payload["loaded_modules"] = [{"tampered": True}]
+    paths["seed"].write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(CliError) as excinfo:
+        _resident_discord(source_root, store, config, dry_run=True)
+    assert excinfo.value.code == "runtime_launch_attestation_mismatch"

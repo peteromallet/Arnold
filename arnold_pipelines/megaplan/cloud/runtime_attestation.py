@@ -10,6 +10,7 @@ import importlib
 import importlib.metadata
 import json
 import os
+import psutil
 import re
 import site
 import stat
@@ -2342,31 +2343,37 @@ def validate_runtime_launch_seed(
 
 
 def _proc_identity(pid: int) -> dict[str, Any]:
-    proc = Path("/proc") / str(pid)
+    # Platform-aware process identity (2026-08-22 defect fix): Linux /proc
+    # does not exist on macOS, so inspection goes through psutil everywhere.
+    # Key names are stable for consumers: create_runtime_process_attestation
+    # persists this dict and validate_runtime_process_attestation compares it
+    # whole. Only ``start_ticks`` semantics changed — psutil's create_time
+    # (seconds since the epoch) replaces Linux stat field 21 clock ticks;
+    # both sides of every comparison run this same function, so per-boot
+    # PID-reuse protection is preserved.
     try:
-        stat_fields = (proc / "stat").read_text(encoding="utf-8").split()
-        start_ticks = stat_fields[21]
-        executable = (proc / "exe").resolve(strict=True)
-        environ_raw = (proc / "environ").read_bytes()
-    except (OSError, IndexError) as exc:
+        process = psutil.Process(pid)
+        start_time = str(process.create_time())
+        executable = Path(process.exe())
+        raw_environ = process.environ()
+    except (psutil.Error, OSError) as exc:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
             f"cannot inspect target process {pid}",
         ) from exc
-    environ: dict[str, str] = {}
-    for item in environ_raw.split(b"\0"):
-        if b"=" not in item:
-            continue
-        name, value = item.split(b"=", 1)
-        decoded_name = name.decode("utf-8", errors="replace")
-        if decoded_name in RUNTIME_SELECTOR_NAMES:
-            environ[decoded_name] = value.decode("utf-8", errors="replace")
+    if not executable:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, f"cannot inspect target process {pid}")
+    selectors = {
+        str(name): str(value)
+        for name, value in raw_environ.items()
+        if str(name) in RUNTIME_SELECTOR_NAMES
+    }
     return {
         "pid": pid,
-        "start_ticks": start_ticks,
+        "start_ticks": start_time,
         "executable": str(executable),
         "executable_sha256": _sha256_file(executable),
-        "selectors": environ,
+        "selectors": selectors,
     }
 
 
@@ -2591,14 +2598,68 @@ def ensure_standalone_launch_seed_binds_root(project_root: Path | None) -> None:
         )
 
 
+def _validate_standalone_dispatch_binding(seed: Mapping[str, Any]) -> None:
+    """Bind a configured standalone seed to its published dispatch pointer.
+
+    The configured name must be absolute after cwd resolution (a relative
+    ``MEGAPLAN_RUNTIME_LAUNCH_SEED`` resolves against the caller's working
+    directory exactly like :func:`configured_seed_path`), must not itself be
+    a symlink, must be the pointer's published seed, and must carry the
+    pointer's digest.
+    """
+    raw_seed_value = str(os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED") or "").strip()
+    raw_seed_path = Path(raw_seed_value).expanduser() if raw_seed_value else None
+    if raw_seed_path is not None and not raw_seed_path.is_absolute():
+        # Resolve against the cwd WITHOUT following symlinks: the is_symlink
+        # check below inspects the configured name itself.
+        raw_seed_path = Path(os.path.abspath(raw_seed_path))
+    if (
+        raw_seed_path is None
+        or not raw_seed_path.is_absolute()
+        or raw_seed_path.is_symlink()
+    ):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed path is a symlink or missing")
+    pointer = load_standalone_runtime_dispatch_pointer(Path(str(seed.get("project_root") or "")))
+    if Path(str(pointer.get("seed_path") or "")) != raw_seed_path:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed is not the published dispatch seed")
+    if pointer.get("seed_sha256") != seed.get("content_sha256"):
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed digest does not match dispatch pointer")
+
+
+def preflight_configured_launch_seed(
+    project_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Load and validate a CONFIGURED launch seed; require nothing.
+
+    Dry-run deployments keep custody signal without custody obligations: a
+    configured seed is loaded and digest/authority-validated (standalone
+    seeds additionally re-validate live evidence and their dispatch-pointer
+    binding), while an unset configuration behaves exactly as if no
+    attestation existed.  No process status is created, and no network,
+    token, runner, or service surface is touched.
+    """
+    ensure_standalone_launch_seed_binds_root(project_root)
+    seed_path = configured_seed_path()
+    if seed_path is None:
+        return None
+    seed = _json_file(seed_path, label="runtime launch seed")
+    authority = seed.get("authority")
+    if not isinstance(authority, str) or authority not in RUNTIME_LAUNCH_AUTHORITIES:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime launch seed authority is invalid")
+    if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        _validate_standalone_dispatch_binding(seed)
+        validate_standalone_runtime_launch_seed(seed)
+    else:
+        _verify_seed_digest(seed)
+    return seed
+
+
 def require_configured_runtime_launch(
     component: str,
     *,
     target_pid: int | None = None,
     create: bool = False,
 ) -> dict[str, Any]:
-    raw_seed_value = str(os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED") or "").strip()
-    raw_seed_path = Path(raw_seed_value).expanduser() if raw_seed_value else None
     seed_path = configured_seed_path()
     if seed_path is None:
         raise CliError(
@@ -2610,13 +2671,7 @@ def require_configured_runtime_launch(
     if not isinstance(authority, str) or authority not in RUNTIME_LAUNCH_AUTHORITIES:
         raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime launch seed authority is invalid")
     if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
-        if raw_seed_path is None or not raw_seed_path.is_absolute() or raw_seed_path.is_symlink():
-            raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed path is a symlink or missing")
-        pointer = load_standalone_runtime_dispatch_pointer(Path(str(seed.get("project_root") or "")))
-        if Path(str(pointer.get("seed_path") or "")) != raw_seed_path:
-            raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed is not the published dispatch seed")
-        if pointer.get("seed_sha256") != seed.get("content_sha256"):
-            raise CliError(RUNTIME_ATTESTATION_ERROR, "configured resident seed digest does not match dispatch pointer")
+        _validate_standalone_dispatch_binding(seed)
     pid = target_pid or os.getpid()
     attestation_path = configured_process_attestation_path(component, seed=seed)
     if authority == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
