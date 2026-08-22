@@ -764,11 +764,11 @@ def _cmd_graph(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Return the ``arnold workflow`` argument parser."""
+def build_parser(prog: str = "megaplan workflow") -> argparse.ArgumentParser:
+    """Return the ``<program> workflow`` argument parser."""
 
     parser = argparse.ArgumentParser(
-        prog="arnold workflow",
+        prog=prog,
         description="Compile, inspect, and run explicit-node Arnold workflows.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -862,8 +862,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
+def main(argv: Sequence[str] | None = None, prog: str = "megaplan workflow") -> int:
+    parser = build_parser(prog)
 
     dispatch = {
         "check": _cmd_check,
