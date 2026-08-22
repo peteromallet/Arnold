@@ -8,3 +8,4 @@
 - Commits: B1 9224f52ce2 · B2 fd4f58b77a+1d9dc17f60 · B3 97bf1264c5+028cf9db97+f3bdcb9635 · B4 f4122bbebe+42f86de734+c522810273 · B5 c0c3af88a0(T8a)+902a2a46dd(T8b)+rework commits
 - Blockers: none in-run. Main-tree purge (bg_7) timed out mid-edit — post-run resolution owed to user.
 - STANDING ORDER (user): every 3 hours, deploy a subagent for a DEEP check-in — code quality, North Star alignment, progress efficiency, reported in depth to the user. Timer armed 2026-08-21 ~22:40Z; re-arm after each firing.
+- Mechanism: bash sleep clamps at 1h → hourly wake jobs. Deep subagent audit fires when now − last_deep_checkin ≥ 3h. LAST_DEEP_CHECKIN: 2026-08-21T22:45Z (standing order accepted). Next due ≈ 2026-08-22T01:45Z.
