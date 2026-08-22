@@ -26,9 +26,11 @@ arnold --resume <id-prefix> "…"           # resume a specific session
 arnold                                    # interactive TUI (has a session picker)
 ```
 
-Sessions are global to omp (not per-agent), so `-c` continues whatever ran
-last regardless of which agent it belonged to. Use `--resume` when you need
-a specific thread.
+Session scope follows your working directory: `-c` continues the most
+recent conversation started from the same directory, regardless of which
+agent it belonged to — interleaving agents in one repo threads them
+together. Use `--resume <id>` (or the interactive picker) to pin a
+specific thread.
 
 The workflow/operator tooling lives on the `megaplan` command. The `arnold`
 entry resolves its omp launcher itself: `ARNOLD_AGENT_LAUNCHER` env var, then
