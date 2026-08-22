@@ -1,4 +1,4 @@
-"""Shared debug session infrastructure for Hermes tools.
+"""Shared debug session infrastructure for omp tools.
 
 Replaces the identical DEBUG_MODE / _log_debug_call / _save_debug_log /
 get_debug_session_info boilerplate previously duplicated across web_tools,

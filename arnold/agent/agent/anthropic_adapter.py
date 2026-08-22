@@ -1,6 +1,6 @@
-"""Anthropic Messages API adapter for Hermes Agent.
+"""Anthropic Messages API adapter for the omp runtime.
 
-Translates between Hermes's internal OpenAI-style message format and
+Translates between the runtime's internal OpenAI-style message format and
 Anthropic's Messages API. Follows the same pattern as the codex_responses
 adapter — all provider-specific logic is isolated here.
 
@@ -298,7 +298,7 @@ def _resolve_claude_code_token_from_credentials(creds: Optional[Dict[str, Any]] 
 def _prefer_refreshable_claude_code_token(env_token: str, creds: Optional[Dict[str, Any]]) -> Optional[str]:
     """Prefer Claude Code creds when a persisted env OAuth token would shadow refresh.
 
-    Hermes historically persisted setup tokens into ANTHROPIC_TOKEN. That makes
+    The legacy runtime historically persisted setup tokens into ANTHROPIC_TOKEN. That makes
     later refresh impossible because the static env token wins before we ever
     inspect Claude Code's refreshable credential file. If we have a refreshable
     Claude Code credential record, prefer it over the static env OAuth token.
@@ -350,7 +350,7 @@ def resolve_anthropic_token() -> Optional[str]:
     """Resolve an Anthropic token from all available sources.
 
     Priority:
-      1. ANTHROPIC_TOKEN env var (OAuth/setup token saved by Hermes)
+      1. ANTHROPIC_TOKEN env var (OAuth/setup token saved by the runtime)
       2. CLAUDE_CODE_OAUTH_TOKEN env var
       3. Claude Code credentials (~/.claude.json or ~/.claude/.credentials.json)
          — with automatic refresh if expired and a refresh token is available
@@ -360,7 +360,7 @@ def resolve_anthropic_token() -> Optional[str]:
     """
     creds = read_claude_code_credentials()
 
-    # 1. Hermes-managed OAuth/setup token env var
+    # 1. Runtime-managed OAuth/setup token env var
     token = os.getenv("ANTHROPIC_TOKEN", "").strip()
     if token:
         preferred = _prefer_refreshable_claude_code_token(token, creds)
@@ -376,7 +376,7 @@ def resolve_anthropic_token() -> Optional[str]:
             return preferred
         return cc_token
 
-    # 3. Hermes-managed OAuth credentials (~/.hermes/.anthropic_oauth.json)
+    # 3. Legacy runtime OAuth credentials (~/.hermes/.anthropic_oauth.json)
     hermes_creds = read_hermes_oauth_credentials()
     if hermes_creds:
         if is_claude_code_token_valid(hermes_creds):
@@ -394,7 +394,7 @@ def resolve_anthropic_token() -> Optional[str]:
         return resolved_claude_token
 
     # 5. Regular API key, or a legacy OAuth token saved in ANTHROPIC_API_KEY.
-    # This remains as a compatibility fallback for pre-migration Hermes configs.
+    # This remains as a compatibility fallback for pre-migration configs.
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if api_key:
         return api_key
@@ -442,7 +442,7 @@ def run_oauth_setup_token() -> Optional[str]:
     return None
 
 
-# ── Hermes-native PKCE OAuth flow ────────────────────────────────────────
+# ── Native PKCE OAuth flow ──────────────────────────────────────────────
 # Mirrors the flow used by Claude Code, pi-ai, and OpenCode.
 # Stores credentials in ~/.hermes/.anthropic_oauth.json (our own file).
 
@@ -467,7 +467,7 @@ def _generate_pkce() -> tuple:
 
 
 def run_hermes_oauth_login() -> Optional[str]:
-    """Run Hermes-native OAuth PKCE flow for Claude Pro/Max subscription.
+    """Run the native OAuth PKCE flow for Claude Pro/Max subscription.
 
     Opens a browser to claude.ai for authorization, prompts for the code,
     exchanges it for tokens, and stores them in ~/.hermes/.anthropic_oauth.json.
@@ -566,7 +566,7 @@ def run_hermes_oauth_login() -> Optional[str]:
 
     # Store credentials
     expires_at_ms = int(time.time() * 1000) + (expires_in * 1000)
-    _save_hermes_oauth_credentials(access_token, refresh_token, expires_at_ms)
+    _save_oauth_credentials(access_token, refresh_token, expires_at_ms)
 
     # Also write to Claude Code's credential file for backward compat
     _write_claude_code_credentials(access_token, refresh_token, expires_at_ms)
@@ -575,7 +575,7 @@ def run_hermes_oauth_login() -> Optional[str]:
     return access_token
 
 
-def _save_hermes_oauth_credentials(access_token: str, refresh_token: str, expires_at_ms: int) -> None:
+def _save_oauth_credentials(access_token: str, refresh_token: str, expires_at_ms: int) -> None:
     """Save OAuth credentials to ~/.hermes/.anthropic_oauth.json."""
     data = {
         "accessToken": access_token,
@@ -591,7 +591,7 @@ def _save_hermes_oauth_credentials(access_token: str, refresh_token: str, expire
 
 
 def read_hermes_oauth_credentials() -> Optional[Dict[str, Any]]:
-    """Read Hermes-managed OAuth credentials from ~/.hermes/.anthropic_oauth.json."""
+    """Read runtime-managed OAuth credentials from ~/.hermes/.anthropic_oauth.json."""
     if _HERMES_OAUTH_FILE.exists():
         try:
             data = json.loads(_HERMES_OAUTH_FILE.read_text(encoding="utf-8"))
@@ -640,7 +640,7 @@ def refresh_hermes_oauth_token() -> Optional[str]:
 
         if new_access:
             new_expires_ms = int(time.time() * 1000) + (expires_in * 1000)
-            _save_hermes_oauth_credentials(new_access, new_refresh, new_expires_ms)
+            _save_oauth_credentials(new_access, new_refresh, new_expires_ms)
             # Also update Claude Code's credential file
             _write_claude_code_credentials(new_access, new_refresh, new_expires_ms)
             logger.debug("Successfully refreshed Hermes OAuth token")

@@ -1,15 +1,15 @@
 """
-Configuration management for Hermes Agent.
+Configuration management for the omp agent.
 
 Config files are stored in ~/.hermes/ for easy access:
 - ~/.hermes/config.yaml  - All settings (model, toolsets, terminal, etc.)
 - ~/.hermes/.env         - API keys and secrets
 
 This module provides:
-- hermes config          - Show current configuration
-- hermes config edit     - Open config in editor
-- hermes config set      - Set a specific value
-- hermes config wizard   - Re-run setup wizard
+- omp config          - Show current configuration
+- omp config edit     - Open config in editor
+- omp config set      - Set a specific value
+- omp config wizard   - Re-run setup wizard
 """
 
 import importlib
@@ -71,7 +71,7 @@ Colors = _LazyColorsProxy()
 # =============================================================================
 
 def get_hermes_home() -> Path:
-    """Get the Hermes home directory (~/.hermes)."""
+    """Get the home directory (~/.hermes)."""
     return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 
 def get_config_path() -> Path:

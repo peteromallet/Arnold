@@ -1,4 +1,4 @@
-"""Shared fan-out primitives for parallel Hermes orchestration."""
+"""Shared fan-out primitives for parallel omp orchestration."""
 
 from __future__ import annotations
 

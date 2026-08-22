@@ -69,7 +69,7 @@ class HonchoSessionManager:
     """
     Manages conversation sessions using Honcho.
 
-    Runs alongside hermes' existing SQLite state and file-based memory,
+    Runs alongside the runtime's existing SQLite state and file-based memory,
     adding persistent cross-session user modeling via Honcho's AI-native memory.
     """
 
@@ -493,7 +493,7 @@ class HonchoSessionManager:
 
         try:
             result = target_peer.chat(query, reasoning_level=level) or ""
-            # Apply Hermes-side char cap before caching
+            # Apply the runtime-side char cap before caching
             if result and self._dialectic_max_chars and len(result) > self._dialectic_max_chars:
                 result = result[:self._dialectic_max_chars].rsplit(" ", 1)[0] + " …"
             return result
@@ -607,7 +607,7 @@ class HonchoSessionManager:
         except Exception as e:
             logger.warning("Failed to fetch user context from Honcho: %s", e)
 
-        # Also fetch AI peer's own representation so Hermes knows itself.
+        # Also fetch AI peer's own representation so the runtime knows itself.
         try:
             ai_ctx = honcho_session.context(
                 summary=False,

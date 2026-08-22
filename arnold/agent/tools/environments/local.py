@@ -19,8 +19,8 @@ from arnold.agent.tools.interrupt import is_interrupted
 # printf (no trailing newline) keeps the boundaries clean for splitting.
 _OUTPUT_FENCE = "__HERMES_FENCE_a9f7b3__"
 
-# Hermes-internal env vars that should NOT leak into terminal subprocesses.
-# These are loaded from ~/.hermes/.env for Hermes' own LLM/provider calls
+# Runtime-internal env vars that should NOT leak into terminal subprocesses.
+# These are loaded from ~/.hermes/.env for the runtime's own LLM/provider calls
 # but can break external CLIs (e.g. codex) that also honor them.
 # See: https://github.com/NousResearch/hermes-agent/issues/1002
 #
@@ -34,7 +34,7 @@ def _build_provider_env_blocklist() -> frozenset:
 
     Automatically picks up api_key_env_vars and base_url_env_var from
     every registered provider, plus tool/messaging env vars from the
-    optional config registry, so new Hermes-managed secrets are blocked
+    optional config registry, so new runtime-managed secrets are blocked
     in subprocesses without having to maintain multiple static lists.
     """
     blocked: set[str] = set()
@@ -59,7 +59,7 @@ def _build_provider_env_blocklist() -> frozenset:
     except ImportError:
         pass
 
-    # Vars not covered above but still Hermes-internal / conflict-prone.
+    # Vars not covered above but still runtime-internal / conflict-prone.
     blocked.update({
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
@@ -134,7 +134,7 @@ _HERMES_PROVIDER_ENV_BLOCKLIST = _build_provider_env_blocklist()
 
 
 def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = None) -> dict:
-    """Filter Hermes-managed secrets from a subprocess environment.
+    """Filter runtime-managed secrets from a subprocess environment.
 
     `_HERMES_FORCE_<VAR>` entries in ``extra_env`` opt a blocked variable back in
     intentionally for callers that truly need it.

@@ -1,8 +1,8 @@
 """
 Canonical model catalogs and lightweight validation helpers.
 
-Add, remove, or reorder entries here — both `hermes setup` and
-`hermes` provider-selection will pick up the change automatically.
+Add, remove, or reorder entries here — both the setup wizard and
+provider selection will pick up the change automatically.
 """
 
 from __future__ import annotations
@@ -534,7 +534,7 @@ def _find_openrouter_slug(model_name: str) -> Optional[str]:
 
 
 def normalize_provider(provider: Optional[str]) -> str:
-    """Normalize provider aliases to Hermes' canonical provider ids.
+    """Normalize provider aliases to omp's canonical provider ids.
 
     Note: ``"auto"`` passes through unchanged — use
     ``hermes_cli.auth.resolve_provider()`` to resolve it to a concrete

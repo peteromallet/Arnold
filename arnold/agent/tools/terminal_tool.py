@@ -1,8 +1,8 @@
-"""Compatibility loader for Hermes' terminal tool implementation.
+"""Compatibility loader for the legacy runtime's terminal tool implementation.
 
 The native agent registry still expects ``arnold.agent.tools.terminal_tool`` to
 provide the terminal schema, handler, environment cache, and requirement check.
-Those implementations currently live in the bundled Hermes tree.  Load that
+Those implementations currently live in the bundled legacy runtime tree.  Load that
 file under this canonical module name so registry state and tool imports share
 one runtime module.
 """
@@ -41,7 +41,7 @@ _previous_tools = sys.modules.get("tools")
 _previous_terminal = sys.modules.get("tools.terminal_tool")
 _previous_minisweagent_path = sys.modules.get("minisweagent_path")
 try:
-    # The bundled Hermes module uses its historical top-level import names.
+    # The bundled legacy runtime module uses its historical top-level import names.
     # Expose those aliases only while executing it; leaving ``tools`` globally
     # rebound corrupts unrelated imports according to test/runtime order.
     sys.modules["tools"] = _TOOLS_PACKAGE

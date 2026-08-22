@@ -1,7 +1,7 @@
 """Honcho client initialization and configuration.
 
 Resolution order for config file:
-  1. $HERMES_HOME/honcho.json  (instance-local, enables isolated Hermes instances)
+  1. $HERMES_HOME/honcho.json  (instance-local, enables isolated runtime instances)
   2. ~/.honcho/config.json     (global, shared across all Honcho-enabled apps)
   3. Environment variables     (HONCHO_API_KEY, HONCHO_ENVIRONMENT)
 
@@ -29,7 +29,7 @@ GLOBAL_CONFIG_PATH = Path.home() / ".honcho" / "config.json"
 HOST = "hermes"
 
 
-def _get_hermes_home() -> Path:
+def _get_agent_home() -> Path:
     """Get HERMES_HOME without importing hermes_cli (avoids circular deps)."""
     return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 
@@ -41,7 +41,7 @@ def resolve_config_path() -> Path:
     to ~/.honcho/config.json (global).  Returns the global path if neither
     exists (for first-time setup writes).
     """
-    local_path = _get_hermes_home() / "honcho.json"
+    local_path = _get_agent_home() / "honcho.json"
     if local_path.exists():
         return local_path
     return GLOBAL_CONFIG_PATH
@@ -119,7 +119,7 @@ class HonchoClientConfig:
     # reasoning_level: "minimal" | "low" | "medium" | "high" | "max"
     # Used as the default; prefetch_dialectic may bump it dynamically.
     dialectic_reasoning_level: str = "low"
-    # Max chars of dialectic result to inject into Hermes system prompt
+    # Max chars of dialectic result to inject into the system prompt
     dialectic_max_chars: int = 600
     # Recall mode: how memory retrieval works when Honcho is active.
     # "hybrid"  — auto-injected context + Honcho tools available (model decides)
@@ -309,8 +309,8 @@ class HonchoClientConfig:
 
         Resolution order:
           1. Manual directory override from sessions map
-          2. Hermes session title (from /title command)
-          3. per-session strategy — Hermes session_id ({timestamp}_{hex})
+          2. session title (from /title command)
+          3. per-session strategy — the runtime session_id ({timestamp}_{hex})
           4. per-repo strategy — git repo root directory name
           5. per-directory strategy — directory basename
           6. global strategy — workspace name
@@ -333,7 +333,7 @@ class HonchoClientConfig:
                     return f"{self.peer_name}-{sanitized}"
                 return sanitized
 
-        # per-session: inherit Hermes session_id (new Honcho session each run)
+        # per-session: inherit the runtime session_id (new Honcho session each run)
         if self.session_strategy == "per-session" and session_id:
             if self.session_peer_prefix and self.peer_name:
                 return f"{self.peer_name}-{session_id}"

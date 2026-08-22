@@ -1,5 +1,5 @@
 """
-Hermes CLI - Unified command-line interface for Hermes Agent.
+omp CLI - Unified command-line interface for the omp agent.
 
 Provides subcommands for:
 - hermes chat          - Interactive chat (same as ./hermes)

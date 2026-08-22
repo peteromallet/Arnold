@@ -1,5 +1,5 @@
 """
-Multi-provider authentication system for Hermes Agent.
+Multi-provider authentication system for the omp agent.
 
 Supports OAuth device code flows (Nous Portal, future: OpenAI Codex) and
 traditional API key providers (OpenRouter, custom endpoints). Auth state
@@ -651,7 +651,7 @@ def get_active_provider() -> Optional[str]:
 
 def clear_provider_auth(provider_id: Optional[str] = None) -> bool:
     """
-    Clear auth state for a provider. Used by `hermes logout`.
+    Clear auth state for a provider. Used by `omp logout`.
     If provider_id is None, clears the active provider.
     Returns True if something was cleared.
     """
@@ -843,17 +843,17 @@ def _is_remote_session() -> bool:
 
 
 # =============================================================================
-# OpenAI Codex auth — live CLI session first, Hermes store as fallback.
+# OpenAI Codex auth — live CLI session first, auth store as fallback.
 #
 # resolve_codex_runtime_credentials() prefers the Codex CLI's own OAuth bundle
-# (~/.codex/auth.json) and refreshes it in place, so omp/hermes and the CLI
-# share one live session.  The Hermes-owned store (~/.hermes/auth.json) still
+# (~/.codex/auth.json) and refreshes it in place, so omp and the CLI
+# share one live session.  The legacy store (~/.hermes/auth.json) still
 # exists for legacy independent sessions and is used only when no CLI login
 # is present.
 # =============================================================================
 
 def _read_codex_tokens(*, _lock: bool = True) -> Dict[str, Any]:
-    """Read Codex OAuth tokens from Hermes auth store (~/.hermes/auth.json).
+    """Read Codex OAuth tokens from the auth store (~/.hermes/auth.json).
     
     Returns dict with 'tokens' (access_token, refresh_token) and 'last_refresh'.
     Raises AuthError if no Codex tokens are stored.

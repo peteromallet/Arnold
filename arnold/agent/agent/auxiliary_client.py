@@ -474,7 +474,7 @@ def _nous_base_url() -> str:
 
 
 def _read_codex_access_token() -> Optional[str]:
-    """Read a valid, non-expired Codex OAuth access token from Hermes auth store."""
+    """Read a valid, non-expired Codex OAuth access token from the runtime auth store."""
     try:
         from arnold.agent.hermes_cli.auth import _read_codex_tokens
         data = _read_codex_tokens()

@@ -1,7 +1,7 @@
 """Arnold agent tools package.
 
-M6 note: legacy compatibility shims that re-exported vendored Hermes tools
-from the deleted ``arnold.pipelines`` package were removed.  The remaining
+M6 note: legacy compatibility shims that re-exported vendored tools from the
+deleted ``arnold.pipelines`` package were removed.  The remaining
 modules in this package are native Arnold implementations.
 """
 

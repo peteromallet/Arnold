@@ -1,9 +1,9 @@
-"""OpenAI-compatible shim that forwards Hermes requests to `copilot --acp`.
+"""OpenAI-compatible shim that forwards runtime requests to `copilot --acp`.
 
-This adapter lets Hermes treat the GitHub Copilot ACP server as a chat-style
+This adapter lets omp treat the GitHub Copilot ACP server as a chat-style
 backend. Each request starts a short-lived ACP session, sends the formatted
 conversation as a single prompt, collects text chunks, and converts the result
-back into the minimal shape Hermes expects from an OpenAI client.
+back into the minimal shape the runtime expects from an OpenAI client.
 """
 
 from __future__ import annotations

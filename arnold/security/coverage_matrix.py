@@ -1,7 +1,7 @@
 """Machine-readable credential surface coverage matrix for M2 Security Broker.
 
 Each :class:`CoverageEntry` classifies one credential surface discovered in
-the Arnold/Hermes codebase.  The matrix is the single source of truth for
+the Arnold codebase.  The matrix is the single source of truth for
 conformance checks and audit reporting.
 
 Classification rules

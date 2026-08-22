@@ -174,7 +174,7 @@ def clear_file_ops_cache(task_id: str = None):
 def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = "default") -> str:
     """Read a file with pagination and line numbers."""
     try:
-        # Security: block direct reads of internal Hermes cache/index files
+        # Security: block direct reads of internal omp cache/index files
         # to prevent prompt injection via catalog or hub metadata files.
         import pathlib as _pathlib
         _resolved = _pathlib.Path(path).expanduser().resolve()

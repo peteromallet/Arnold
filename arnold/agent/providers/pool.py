@@ -43,7 +43,7 @@ _PROVIDER_KEY_VARS = {
     "xai": "XAI_API_KEY",
 }
 _ENV_ALIASES = {
-    # Z.AI has used all three names in its Hermes/OpenAI-compatible
+    # Z.AI has used all three names in its OpenAI-compatible
     # integrations.  Keep the canonical name first, but accept the aliases
     # everywhere the key pool is consulted (not just in user-facing hints).
     "ZHIPU_API_KEY": (
@@ -191,7 +191,7 @@ class KeyPool:
             return self._keys_path_source.keys_path()
         return None
 
-    def _load_hermes_env_unlocked(self) -> dict[str, str]:
+    def _load_legacy_env_unlocked(self) -> dict[str, str]:
         result: dict[str, str] = {}
         env_path = Path.home() / ".hermes" / ".env"
         if env_path.exists():
@@ -241,7 +241,7 @@ class KeyPool:
     def _load_keys_unlocked(self, now: float) -> None:
         if now < self._next_reload:
             return
-        hermes_env = self._load_hermes_env_unlocked()
+        hermes_env = self._load_legacy_env_unlocked()
         self._hermes_env = hermes_env
         for provider, env_var in _PROVIDER_KEY_VARS.items():
             keys = self._collect_key_values(env_var, hermes_env)

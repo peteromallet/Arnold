@@ -62,7 +62,7 @@ _PROVIDER_BASE_URL_VARS: dict[str, str] = {
 
 
 def _provider_model(model: str | None) -> tuple[str, str | None]:
-    """Return ``(provider, model_name)`` for Hermes provider-prefixed models."""
+    """Return ``(provider, model_name)`` for provider-prefixed models."""
     if not model:
         return "deepseek", model
     provider, sep, rest = model.partition(":")

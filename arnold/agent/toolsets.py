@@ -230,7 +230,7 @@ TOOLSETS = {
     },
 
     # ==========================================================================
-    # Full Hermes toolsets (CLI + messaging platforms)
+    # Full omp toolsets (CLI + messaging platforms)
     #
     # All platforms share the same core tools (including send_message,
     # which is gated on gateway running via its check_fn).

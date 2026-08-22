@@ -1,8 +1,8 @@
-"""Project-directory sandbox for hermes tool calls.
+"""Project-directory sandbox for omp tool calls.
 
 Background
 ----------
-The hermes worker invokes ``AIAgent`` from the vendored agent SDK to run
+The omp worker invokes ``AIAgent`` from the vendored agent SDK to run
 megaplan phases.  In bakeoff runs each profile gets its own worktree
 (``.megaplan-worktrees/<plan>/<profile>/``) and the worktree path is
 communicated to the model via a ``Project directory: <abs path>`` line in

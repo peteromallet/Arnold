@@ -2,7 +2,7 @@
 """
 Code Execution Tool -- Programmatic Tool Calling (PTC)
 
-Lets the LLM write a Python script that calls Hermes tools via RPC,
+Lets the LLM write a Python script that calls omp tools via RPC,
 collapsing multi-step tool chains into a single inference turn.
 
 Architecture:
@@ -344,7 +344,7 @@ def execute_code(
 ) -> str:
     """
     Run a Python script in a sandboxed child process with RPC access
-    to a subset of Hermes tools.
+    to a subset of omp tools.
 
     Args:
         code:          Python source code to execute.
@@ -435,7 +435,7 @@ def execute_code(
                 child_env[k] = v
         child_env["HERMES_RPC_SOCKET"] = sock_path
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
-        # Ensure the hermes-agent root is importable in the sandbox so
+        # Ensure the agent package root is importable in the sandbox so
         # modules like minisweagent_path are available to child scripts.
         _hermes_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         _existing_pp = child_env.get("PYTHONPATH", "")
@@ -677,7 +677,7 @@ _TOOL_DOC_LINES = [
 def build_execute_code_schema(enabled_sandbox_tools: set = None) -> dict:
     """Build the execute_code schema with description listing only enabled tools.
 
-    When tools are disabled via ``hermes tools`` (e.g. web is turned off),
+    When tools are disabled via the CLI (e.g. web is turned off),
     the schema description should NOT mention web_search / web_extract —
     otherwise the model thinks they are available and keeps trying to use them.
     """

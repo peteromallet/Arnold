@@ -555,7 +555,7 @@ def _canonical_budget_model_name(model: str) -> str:
     model names, but budget classification cares about the underlying model
     family, not the provider path.
 
-    Also strips hermes-style ``provider:`` prefixes (e.g. ``deepseek:``,
+    Also strips legacy-runtime-style ``provider:`` prefixes (e.g. ``deepseek:``,
     ``fireworks:``, ``mimo:``) that ``resolve_model`` in ``key_pool`` normally
     removes before dispatch, but which can reach the budget seam when
     fanout callers pass the raw ``resolved_model`` from ``AgentMode``
@@ -569,7 +569,7 @@ def _canonical_budget_model_name(model: str) -> str:
         candidate = name[lowered.rfind(marker) + len(marker):].strip("/")
         if candidate:
             return candidate
-    # Strip hermes-style provider: prefix (resolved_model may still carry it).
+    # Strip legacy-runtime-style provider: prefix (resolved_model may still carry it).
     _HERMES_PROVIDER_COLON_PREFIXES = (
         "deepseek:", "fireworks:", "mimo:", "openrouter:",
         "minimax:", "zhipu:", "google:",

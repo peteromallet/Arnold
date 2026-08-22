@@ -556,7 +556,7 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
 
     Args:
         skip_disabled: If True, return ALL skills regardless of disabled
-            state (used by ``hermes skills`` config UI). Default False
+            state (used by the CLI skills config UI). Default False
             filters out disabled skills.
 
     Returns:

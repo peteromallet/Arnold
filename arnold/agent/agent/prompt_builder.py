@@ -73,7 +73,7 @@ def _find_git_root(start: Path) -> Optional[Path]:
 _HERMES_MD_NAMES = (".hermes.md", "HERMES.md")
 
 
-def _find_hermes_md(cwd: Path) -> Optional[Path]:
+def _find_agent_md(cwd: Path) -> Optional[Path]:
     """Discover the nearest ``.hermes.md`` or ``HERMES.md``.
 
     Search order: *cwd* first, then each parent directory up to (and
@@ -457,9 +457,9 @@ def load_soul_md() -> Optional[str]:
         return None
 
 
-def _load_hermes_md(cwd_path: Path) -> str:
+def _load_agent_md(cwd_path: Path) -> str:
     """.hermes.md / HERMES.md — walk to git root."""
-    hermes_md_path = _find_hermes_md(cwd_path)
+    hermes_md_path = _find_agent_md(cwd_path)
     if not hermes_md_path:
         return ""
     try:
@@ -585,7 +585,7 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
 
     # Priority-based project context: first match wins
     project_context = (
-        _load_hermes_md(cwd_path)
+        _load_agent_md(cwd_path)
         or _load_agents_md(cwd_path)
         or _load_claude_md(cwd_path)
         or _load_cursorrules(cwd_path)

@@ -26,7 +26,7 @@ _MODELS_DEV_CACHE_TTL = 3600  # 1 hour in-memory
 _models_dev_cache: Dict[str, Any] = {}
 _models_dev_cache_time: float = 0
 
-# Provider ID mapping: Hermes provider names → models.dev provider IDs
+# Provider ID mapping: omp provider names → models.dev provider IDs
 PROVIDER_TO_MODELS_DEV: Dict[str, str] = {
     "openrouter": "openrouter",
     "anthropic": "anthropic",

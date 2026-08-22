@@ -392,7 +392,7 @@ HONCHO_TOOL_NAMES = {
 class _SafeWriter:
     """Transparent stdio wrapper that catches OSError/ValueError from broken pipes.
 
-    When hermes-agent runs as a systemd service, Docker container, or headless
+    When the runtime runs as a systemd service, Docker container, or headless
     daemon, the stdout/stderr pipe can become unavailable (idle timeout, buffer
     exhaustion, socket reset). Any print() call then raises
     ``OSError: [Errno 5] Input/output error``, which can crash agent setup or
@@ -794,7 +794,7 @@ def configure_logging(
     """Configure process-wide logging once.
 
     Idempotent under repeated calls with the same arguments.  Must be called
-    at process startup (CLI entry, Hermes worker process entry, gateway/ACP
+    at process startup (CLI entry, worker process entry, gateway/ACP
     entry) before any AIAgent instances are constructed.
 
     Args:
@@ -1061,7 +1061,7 @@ class AIAgent:
         # instead of going directly to stdout where patch_stdout's StdoutProxy
         # would mangle the escape sequences.  None = use builtins.print.
         self._print_fn = None
-        # Injectable output stream for worker contexts (e.g. hermes worker).
+        # Injectable output stream for worker contexts (e.g. worker processes).
         # When set and _print_fn is None, _safe_print routes output here.
         # Spinners (KawaiiSpinner) also receive this stream so their animation
         # goes to the same sink.  Defaults to None (uses sys.stdout).
@@ -1102,7 +1102,7 @@ class AIAgent:
 
         # Direct OpenAI sessions use the Responses API path.  GPT-5.x tool
         # calls with reasoning are rejected on /v1/chat/completions, and
-        # Hermes is a tool-using client by default.
+        # The runtime is a tool-using client by default.
         if self.api_mode == "chat_completions" and self._is_direct_openai_url():
             self.api_mode = "codex_responses"
 
@@ -2862,7 +2862,7 @@ class AIAgent:
         if tool_guidance:
             prompt_parts.append(" ".join(tool_guidance))
 
-        # Honcho CLI awareness: tell Hermes about its own management commands
+        # Honcho CLI awareness: tell the agent about its own management commands
         # so it can refer the user to them rather than reinventing answers.
         if self._honcho and self._honcho_session_key:
             hcfg = self._honcho_config
@@ -3172,7 +3172,7 @@ class AIAgent:
         if self.api_mode == "anthropic_messages":
             return False
         # DeepSeek's direct OpenAI-compatible endpoint currently rejects
-        # response_format=json_schema. Hermes prompts already include a schema
+        # response_format=json_schema. Our prompts already include a schema
         # template and the caller parses/validates JSON, so omit the API hint.
         if "api.deepseek.com" in self._base_url_lower:
             return False
@@ -7858,7 +7858,7 @@ class AIAgent:
                     # silently and reissues — from the worker's view there is
                     # no event between llm_call_start and llm_call_end. The
                     # ``_megaplan_retry_error_callback`` attribute is set by the
-                    # hermes worker (see ``megaplan/workers/hermes.py``); when
+                    # worker (see ``megaplan/workers/hermes.py``); when
                     # present, it is invoked once per retry-classified error
                     # with a structured payload that the worker maps onto
                     # ``llm_call_error``. Failures inside the callback are

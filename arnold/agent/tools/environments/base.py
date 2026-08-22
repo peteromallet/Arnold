@@ -1,4 +1,4 @@
-"""Base class for all Hermes execution environment backends."""
+"""Base class for all omp execution environment backends."""
 
 from abc import ABC, abstractmethod
 import os
@@ -24,7 +24,7 @@ def get_sandbox_dir() -> Path:
 
 
 class BaseEnvironment(ABC):
-    """Common interface for all Hermes execution backends.
+    """Common interface for all omp execution backends.
 
     Subclasses implement execute() and cleanup(). Shared helpers eliminate
     duplicated subprocess boilerplate across backends.

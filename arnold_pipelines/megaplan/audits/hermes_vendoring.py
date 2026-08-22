@@ -1,4 +1,4 @@
-"""Audit helpers for the vendored Hermes runtime surface."""
+"""Audit helpers for the vendored legacy runtime surface."""
 
 from __future__ import annotations
 

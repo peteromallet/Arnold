@@ -1213,7 +1213,7 @@ def terminal_tool(
 def check_terminal_requirements() -> bool:
     """Check if all requirements for the terminal tool are met.
 
-    Important: local and singularity backends now use Hermes' own environment
+    Important: local and singularity backends now use the runtime's own environment
     wrappers directly and do not require the ``minisweagent`` Python package to
     be installed. Docker and Modal still rely on mini-swe-agent internals.
     """
@@ -1222,7 +1222,7 @@ def check_terminal_requirements() -> bool:
 
     try:
         if env_type == "local":
-            # Local execution uses Hermes' own LocalEnvironment wrapper and does
+            # Local execution uses the runtime's own LocalEnvironment wrapper and does
             # not depend on minisweagent being importable.
             return True
 

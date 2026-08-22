@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # Path Configuration
 # ============================================================================
 
-# Path to tinker-atropos submodule (relative to hermes-agent root)
+# Path to tinker-atropos submodule (relative to the omp root)
 HERMES_ROOT = Path(__file__).parent.parent
 TINKER_ATROPOS_ROOT = HERMES_ROOT / "tinker-atropos"
 ENVIRONMENTS_DIR = TINKER_ATROPOS_ROOT / "tinker_atropos" / "environments"

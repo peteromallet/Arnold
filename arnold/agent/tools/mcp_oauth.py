@@ -1,7 +1,7 @@
 """Thin OAuth adapter for MCP HTTP servers.
 
 Wraps the MCP SDK's built-in ``OAuthClientProvider`` (which implements
-``httpx.Auth``) with Hermes-specific token storage and browser-based
+``httpx.Auth``) with runtime-specific token storage and browser-based
 authorization.  The SDK handles all of the heavy lifting: PKCE generation,
 metadata discovery, dynamic client registration, token exchange, and refresh.
 

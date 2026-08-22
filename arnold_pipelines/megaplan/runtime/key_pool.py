@@ -73,7 +73,7 @@ def _current_envelope(*_args):  # type: ignore[no-untyped-def]
     return _envelope_ctx.get()
 
 
-def _load_hermes_env() -> dict[str, str]:
+def _load_legacy_env() -> dict[str, str]:
     return _pool.load_hermes_env()
 def _get_api_credential(env_var: str, hermes_env: dict[str, str] | None = None) -> str:
     return _pool.get_api_credential(env_var, hermes_env)
