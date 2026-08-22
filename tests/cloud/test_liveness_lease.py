@@ -204,6 +204,11 @@ def test_lifecycle_terminalizes_on_cancellation(tmp_path: Path, monkeypatch) -> 
     marker = _marker(tmp_path)
     monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "run")
     monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(tmp_path))
+    # Runner-identity leaks from the ambient environment must not influence
+    # the managed lifecycle under test.
+    monkeypatch.delenv("ARNOLD_BABYSITTER_SESSION", raising=False)
+    monkeypatch.delenv("ARNOLD_RUNNER_OWNER_PID", raising=False)
+    monkeypatch.delenv("ARNOLD_RUNNER_OWNER_START", raising=False)
 
     try:
         with ll.managed_runner_lifecycle():
