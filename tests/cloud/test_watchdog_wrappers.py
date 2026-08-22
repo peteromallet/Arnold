@@ -7056,7 +7056,11 @@ def test_watchdog_needs_human_fixture_workspace_cannot_reach_delivery(tmp_path: 
         encoding="utf-8",
     )
     curl_path.chmod(curl_path.stat().st_mode | stat.S_IXUSR)
-    fixture_workspace = tmp_path / "ws"
+    # Hermetic fixture: nest under the conventional ``pytest-of-*`` layout so
+    # the production fixture-suppression classifier matches on durable path
+    # evidence even when the outer pytest basetemp is relocated by shard
+    # runners (``--basetemp`` away from the default tree).
+    fixture_workspace = tmp_path / "pytest-of-runner" / "pytest-current" / "ws"
     report_path = tmp_path / "report.tsv"
     log_path = tmp_path / "watchdog.log"
     script = "\n\n".join(

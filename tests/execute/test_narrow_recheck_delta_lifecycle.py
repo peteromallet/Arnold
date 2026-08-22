@@ -1625,6 +1625,7 @@ def test_pre_dispatch_second_invocation_reuses_production_shaped_envelope(
 
 def test_pre_dispatch_subtest_failure_captures_envelope_and_dispatches(
     tmp_path: Path,
+    isolate_nested_pytest_env: None,
 ) -> None:
     """End-to-end (REAL pytest subprocess): a narrow_recheck whose selector
     yields failing subtests (``SUBFAILED`` lines; parents PASSED) is a

@@ -119,6 +119,7 @@ def _make_execute_authority_plan(tmp_path: Path) -> tuple[Path, list[dict[str, o
 
 def test_stale_recorded_test_failure_blocker_drops_when_nodeid_now_passes(
     tmp_path: Path,
+    isolate_nested_pytest_env: None,
 ) -> None:
     project_dir = tmp_path / "project"
     tests_dir = project_dir / "tests"

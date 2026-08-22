@@ -1343,7 +1343,12 @@ def test_terminal_verifier_fails_closed_on_active_repair_goal(tmp_path) -> None:
 
 
 def test_production_completion_sweep_suppresses_pytest_fixture_manifest(tmp_path) -> None:
-    manifest_path = _terminal_manifest(tmp_path)
+    # Hermetic fixture: shard runners point --basetemp away from the default
+    # ``pytest-of-*`` tree. Nest the simulated workspace under that layout so
+    # the production fixture-suppression classifier matches on path evidence
+    # regardless of where the outer pytest basetemp lives.
+    fixture_root = tmp_path / "pytest-of-runner" / "pytest-current"
+    manifest_path = _terminal_manifest(fixture_root)
 
     class _ProductionOutbound:
         delivery_environment = "production"
@@ -1354,7 +1359,7 @@ def test_production_completion_sweep_suppresses_pytest_fixture_manifest(tmp_path
     result = asyncio.run(
         sweep_managed_agent_deliveries(
             outbound=_ProductionOutbound(),
-            project_root=tmp_path,
+            project_root=fixture_root,
             workspace_root=None,
         )
     )

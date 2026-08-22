@@ -24,6 +24,33 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture
+def isolate_nested_pytest_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermeticity boundary for tests that spawn nested pytest processes.
+
+    Shard/hermetic runners export ``PYTEST_ADDOPTS`` (for example
+    ``--basetemp=<shared shard temp>``) into the outer test process. Nested
+    pytest runs spawned by these tests inherit that option, clear the shared
+    basetemp on startup, and delete the outer test's tmp tree mid-flight. Strip
+    the outer pytest CLI environment at the boundary so nested validation runs
+    manage their own temporary state.
+    """
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+
+
+@pytest.fixture
+def isolate_user_megaplan_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hermeticity boundary for tests that load megaplan profiles.
+
+    ``load_profiles`` consults the operator's real ``$XDG_CONFIG_HOME``/
+    ``~/.config/megaplan/profiles.toml``. Point the lookup at the test's own
+    tmp tree so profile resolution depends only on repo and fixture state.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+
+
 @dataclasses.dataclass
 class PlanFixture:
     """Lightweight handle for a freshly initialized megaplan plan."""

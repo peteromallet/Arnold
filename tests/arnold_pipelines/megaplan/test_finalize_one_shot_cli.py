@@ -167,6 +167,7 @@ def _patch_finalize_shell(
 def test_direct_finalize_cli_after_attempt_8_cancel_is_exactly_attempt_9(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    isolate_user_megaplan_config: None,
 ) -> None:
     plan_dir, attempt_8 = _paused_attempt_8(tmp_path)
     ordinals = _patch_finalize_shell(monkeypatch, plan_dir=plan_dir)
@@ -209,6 +210,7 @@ def test_direct_finalize_cli_after_attempt_8_cancel_is_exactly_attempt_9(
 def test_direct_finalize_cli_failure_stops_without_attempt_10(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    isolate_user_megaplan_config: None,
 ) -> None:
     plan_dir, attempt_8 = _paused_attempt_8(tmp_path)
     ordinals = _patch_finalize_shell(

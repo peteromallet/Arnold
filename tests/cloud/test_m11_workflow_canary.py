@@ -188,6 +188,7 @@ def test_caller_authored_pass_booleans_are_never_consumed(tmp_path: Path) -> Non
 
 def test_real_handler_runner_and_independent_verifier_round_trip(
     tmp_path: Path,
+    isolate_nested_pytest_env: None,
 ) -> None:
     root, _, _ = _admit(tmp_path)
     project_dir = Path(__file__).resolve().parents[2]
@@ -268,6 +269,7 @@ def test_direct_store_fabrication_without_handler_provenance_is_rejected(
 
 def test_frozen_bundle_rejects_extra_stale_cross_stitched_and_misordered_evidence(
     tmp_path: Path,
+    isolate_nested_pytest_env: None,
 ) -> None:
     root, _, _ = _admit(tmp_path)
     project_dir = Path(__file__).resolve().parents[2]

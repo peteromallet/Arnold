@@ -1007,6 +1007,13 @@ def test_isolated_git_installer_atomic_modes_replacement_and_no_token_output(
         'if home != "/root":', f'if home != {str(home)!r}:'
     )
     uid, gid = os.getuid(), os.getgid()
+    # Hermetic fixture: BSD-derived filesystems hand new nodes the PARENT
+    # directory's group, so under a relocated basetemp (e.g. a root-group
+    # /private/tmp path) children would inherit a gid that is not this
+    # process's and the rewritten root-custody assertions could never match.
+    # Pin the simulated home to this process's custody identity; child nodes
+    # then inherit it exactly as they would from root's home in the container.
+    os.chown(home, uid, gid)
     script = script.replace(
         "current.st_uid != 0 or current.st_gid != 0",
         f"current.st_uid != {uid} or current.st_gid != {gid}",
