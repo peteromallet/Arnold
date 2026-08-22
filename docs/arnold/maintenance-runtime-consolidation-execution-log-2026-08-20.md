@@ -388,3 +388,8 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 
 - Operator directive: every task role (XHARD*, HARD*, BRIEF, WORKSPACE, INTEGRATION, VALIDATION, REPORT, SOL-REVIEW, JUDGMENT) routes through `openrouter/stealth/ox-alpha` — supersedes the earlier Luna-for-HARD / Sol-for-SOL-REVIEW mapping.
 - Wrapper ROUTES remapped wholesale; committed `chore(mrc): route ALL roles…`; 15 wrapper tests pass. Availability already probed live (omp built-in openrouter provider, ping OK).
+
+## STANDING DIRECTIVE (2026-08-22): 3-hourly DEEP check-ins
+
+- Operator directive: every 3 hours, deploy an ox-alpha subagent (wrapper role REPORT) producing a DEEP in-progress report: integrated-code quality, north-star alignment, progress efficiency (throughput, revision overhead), discipline/risk scan (worktrees, disk, validator), recommendations.
+- Timer implemented as a background 3h job waking the orchestrator; check-ins land at natural seams without blocking in-flight dispatches.
