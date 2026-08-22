@@ -13,7 +13,7 @@ command:
 agentbox install-omp-agent arnold
 arnold "State your name and rules."      # one-shot question
 arnold                                   # interactive AgentBox Operator session
-arnold --agent scout "…                  # talk to a different installed agent
+arnold --agent scout "…"                  # talk to a different installed agent
 ```
 
 ### Continue a conversation
@@ -30,10 +30,13 @@ Sessions are global to omp (not per-agent), so `-c` continues whatever ran
 last regardless of which agent it belonged to. Use `--resume` when you need
 a specific thread.
 
-The workflow/operator tooling lives on the `megaplan` command. If you drive
-omp's launcher manually instead, note that bare `agent` may resolve to another
-vendor's binary — prefer `~/.bun/bin/agent` or set `OMP_BIN`. In-session
-dispatch is separate: `{"agent": "arnold", "task": "…"}`.
+The workflow/operator tooling lives on the `megaplan` command. The `arnold`
+entry resolves its omp launcher itself: `ARNOLD_AGENT_LAUNCHER` env var, then
+`~/.bun/bin/agent`, then a trusted `agent` on PATH. If you drive omp's
+launcher manually instead (outside the `arnold` entry), note that bare
+`agent` may resolve to another vendor's binary — prefer `~/.bun/bin/agent`
+or set `OMP_BIN` for that manual invocation. In-session dispatch is separate:
+`{"agent": "arnold", "task": "…"}`.
 
 The body of `agentbox/agents/arnold.md` is byte-identical to
 `AgentBoxOperatorProfile.system_prompt()` (`agentbox-operator-v1`). The parity

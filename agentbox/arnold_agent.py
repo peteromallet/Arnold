@@ -25,7 +25,24 @@ DEFAULT_AGENT = "arnold"
 _LAUNCHER_CANDIDATES: tuple[Path, ...] = (
     Path.home() / ".bun" / "bin" / "agent",
 )
-_UNTRUSTED_PATH_MARKERS: tuple[str, ...] = (".grok",)
+_PATH_FALLBACK_BLOCKLIST: tuple[str, ...] = (".grok",)
+
+
+# Flags that ask for the usage text instead of an agent run.
+_HELP_FLAGS = frozenset({"-h", "--help"})
+_USAGE = """\
+usage: arnold [flags] [message...]
+
+Run an omp named agent. Bare = interactive session; a message = one-shot
+(printed answer). Leading flags pass through to omp.
+
+  --agent NAME     talk to a different installed agent (default: arnold)
+  -c               continue the most recent conversation
+  --resume ID      resume a specific session
+  -h, --help       show this help
+
+Launcher: ARNOLD_AGENT_LAUNCHER env var, else ~/.bun/bin/agent.
+"""
 
 
 def _find_launcher() -> Path | None:
@@ -37,7 +54,7 @@ def _find_launcher() -> Path | None:
         if candidate.is_file():
             return candidate
     on_path = shutil.which("agent")
-    if on_path and not any(marker in on_path for marker in _UNTRUSTED_PATH_MARKERS):
+    if on_path and not any(marker in on_path for marker in _PATH_FALLBACK_BLOCKLIST):
         return Path(on_path)
     return None
 
@@ -67,9 +84,27 @@ def main(argv: list[str] | None = None) -> int:
         index = rest.index("--agent")
         rest.pop(index)
         if index >= len(rest):
-            print("arnold: --agent requires a value", file=sys.stderr)
+            print(
+                'arnold: --agent requires a value (e.g. arnold --agent scout "hi")',
+                file=sys.stderr,
+            )
             return 1
         agent = rest.pop(index)
+    # Leading omp flags (continue/resume/session-dir/profile) pass through.
+    # A trailing message implies one-shot mode (--print); flags alone keep the
+    # interactive TUI/picker.
+    flags, message = _split_flags(rest)
+
+    if not message and _HELP_FLAGS.intersection(flags):
+        print(_USAGE, end="")
+        return 0
+
+    if any(token.startswith("-") for token in message):
+        print(
+            'arnold: flags must precede the message, e.g. arnold -c "follow-up"',
+            file=sys.stderr,
+        )
+        return 1
 
     launcher = _find_launcher()
     if launcher is None:
@@ -80,19 +115,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    # Leading omp flags (continue/resume/session-dir/profile) pass through.
-    # A trailing message implies one-shot mode (--print); flags alone keep the
-    # interactive TUI/picker. Hand the terminal over wholesale either way.
-    flags, message = _split_flags(rest)
+    exec_argv = [str(launcher), "run", agent, *flags]
     if message:
         # One-shot: answer printed to stdout, then exit.
-        os.execvp(
-            str(launcher),
-            [str(launcher), "run", agent, *flags, "--print", *message],
-        )
-    else:
-        # Flags alone: interactive TUI / session picker owns the terminal.
-        os.execvp(str(launcher), [str(launcher), "run", agent, *flags])
+        exec_argv += ["--print", *message]
+    # Hand the terminal over wholesale either way.
+    os.execvp(str(launcher), exec_argv)
 
 
 if __name__ == "__main__":  # pragma: no cover

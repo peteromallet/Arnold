@@ -87,7 +87,8 @@ def test_main_rejects_dangling_agent_flag(monkeypatch, capsys) -> None:
 
     assert arnold_agent.main(["--agent"]) == 1
 
-    assert "--agent requires a value" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert '--agent requires a value (e.g. arnold --agent scout "hi")' in err
 
 
 def test_leading_flags_pass_through_and_message_implies_print(monkeypatch) -> None:
@@ -116,3 +117,29 @@ def test_value_flag_consumes_its_argument(monkeypatch) -> None:
     arnold_agent.main(["--resume", "abc123"])
 
     assert captured["argv"] == ["/l/agent", "run", "arnold", "--resume", "abc123"]
+
+
+def test_help_flag_prints_usage_without_exec(monkeypatch, capsys) -> None:
+    def fail_execvp(*_args: object) -> None:
+        raise AssertionError("execvp must not run for --help")
+
+    monkeypatch.setattr(arnold_agent.os, "execvp", fail_execvp)
+
+    assert arnold_agent.main(["-h"]) == 0
+    assert arnold_agent.main(["--agent", "scout", "--help"]) == 0
+
+    out = capsys.readouterr().out
+    assert "usage: arnold [flags] [message...]" in out
+    assert "--agent NAME" in out
+
+
+def test_flags_after_message_are_rejected(monkeypatch, capsys) -> None:
+    def fail_execvp(*_args: object) -> None:
+        raise AssertionError("execvp must not run for misplaced flags")
+
+    monkeypatch.setattr(arnold_agent.os, "execvp", fail_execvp)
+    monkeypatch.setattr(arnold_agent, "_find_launcher", lambda: Path("/l/agent"))
+
+    assert arnold_agent.main(["follow-up", "-c"]) == 1
+
+    assert "flags must precede the message" in capsys.readouterr().err

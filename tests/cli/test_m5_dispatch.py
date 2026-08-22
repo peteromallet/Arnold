@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -93,6 +94,7 @@ def test_top_level_dispatch_routes_workflow_without_importing_legacy_modules() -
 def test_top_level_dispatch_routes_operator_commands(capsys) -> None:
     """arnold status/trace/inspect/override route to the operators module."""
 
+    prog = Path(sys.argv[0]).stem or "arnold"
     for cmd in EXPECTED_OPERATOR_COMMANDS:
         try:
             cli_package.main([cmd, "--help"])
@@ -100,12 +102,13 @@ def test_top_level_dispatch_routes_operator_commands(capsys) -> None:
             pass
         out, err = capsys.readouterr()
         combined = out + err
-        assert f"usage: arnold {cmd}" in combined, f"{cmd} did not route to operators module"
+        assert f"usage: {prog} {cmd}" in combined, f"{cmd} did not route to operators module"
 
 
 def test_top_level_dispatch_routes_execution_approval_commands(capsys) -> None:
     """arnold approve/deny/cancel/resume route to the execution module."""
 
+    prog = Path(sys.argv[0]).stem or "arnold"
     for cmd in EXPECTED_EXECUTION_COMMANDS:
         try:
             cli_package.main([cmd, "--help"])
@@ -113,5 +116,5 @@ def test_top_level_dispatch_routes_execution_approval_commands(capsys) -> None:
             pass
         out, err = capsys.readouterr()
         combined = out + err
-        assert f"usage: arnold {cmd}" in combined, f"{cmd} did not route to execution module"
+        assert f"usage: {prog} {cmd}" in combined, f"{cmd} did not route to execution module"
 

@@ -63,9 +63,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _print_usage(*, file=None) -> None:  # type: ignore[no-untyped-def]
     target = file or sys.stdout
+    prog = Path(sys.argv[0]).stem or "arnold"
     print(
-        "usage: arnold workflow {check,manifest,dot,dry-run,run,resume,describe} | "
-        "arnold {status,trace,inspect,override,approve,deny,cancel,resume}",
+        f"usage: {prog} workflow {{check,manifest,dot,dry-run,run,resume,describe}} | "
+        f"{prog} {{status,trace,inspect,override,approve,deny,cancel,resume}}",
         file=target,
     )
 

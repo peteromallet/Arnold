@@ -108,9 +108,13 @@ def _cmd_override(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    prog: str | None = None,
+) -> int:
     parser = argparse.ArgumentParser(
-        prog="arnold",
+        prog=prog or f"{Path(sys.argv[0]).stem or 'arnold'}",
         description="Retained Arnold operator commands.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

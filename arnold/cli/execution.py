@@ -319,7 +319,7 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None, *, prog: str = "arnold execution") -> int:
+def main(argv: Sequence[str] | None = None, *, prog: str = "megaplan execution") -> int:
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Run compiled Arnold workflow manifests and broker approval gates.",
