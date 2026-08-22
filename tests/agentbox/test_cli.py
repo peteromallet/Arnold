@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -280,3 +281,346 @@ def test_cli_install_omp_agent_rejects_unknown_name(tmp_path, monkeypatch) -> No
 
     assert result == 1
     assert not target.exists()
+
+
+def _write_cli_config(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {tmp_path / 'agentbox'}\n", encoding="utf-8"
+    )
+
+
+def test_cli_new_resident_creates_exactly_five_files(tmp_path, monkeypatch, capsys) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+
+    result = main(["new-resident", "my-op", "--repo", str(repo), "--json"])
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "my-op"
+    assert payload["repo"] == str(repo.resolve())
+    assert payload["created"] is True
+    files = [Path(path) for path in payload["files"]]
+    assert len(files) == 5
+    assert all(path.is_file() for path in files)
+    assert {path.relative_to(repo) for path in files} == {
+        Path(".omp/agents/my-op.md"),
+        Path(".agentbox/resident_profile.py"),
+        Path(".agentbox/resident.env.example"),
+        Path(".agentbox/run-resident"),
+        Path(".agentbox/my-op-resident.service"),
+    }
+    profile = (repo / ".agentbox/resident_profile.py").read_text(encoding="utf-8")
+    assert "class MyOpResidentProfile(AgentBoxOperatorProfile):" in profile
+    env = (repo / ".agentbox/resident.env.example").read_text(encoding="utf-8")
+    assert "MEGAPLAN_RESIDENT_PROFILE=.agentbox/resident_profile.py:MyOpResidentProfile" in env
+    assert "MEGAPLAN_RESIDENT_STORE_ROOT=" + str(repo.resolve()) in env
+    assert (repo / ".agentbox/run-resident").stat().st_mode & 0o111 == 0o111
+
+
+def test_cli_new_resident_refuses_collision_without_partial_files(tmp_path, monkeypatch) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+    existing = repo / ".agentbox" / "resident_profile.py"
+    existing.parent.mkdir()
+    existing.write_text("keep me\n", encoding="utf-8")
+
+    result = main(["new-resident", "astrid", "--repo", str(repo)])
+
+    assert result == 1
+    assert existing.read_text(encoding="utf-8") == "keep me\n"
+    assert not (repo / ".omp").exists()
+    assert list((repo / ".agentbox").iterdir()) == [existing]
+
+
+def test_cli_new_resident_description_override_and_prompt_body(tmp_path, monkeypatch) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+
+    result = main(
+        [
+            "new-resident",
+            "astrid",
+            "--repo",
+            str(repo),
+            "--description",
+            "Astrid operations",
+        ]
+    )
+
+    assert result == 0
+    agent = (repo / ".omp/agents/astrid.md").read_text(encoding="utf-8")
+    assert 'description: "Astrid operations"' in agent
+    assert "This file is the project-owned resident persona." in agent
+
+
+def test_cli_new_resident_profile_imports_and_reads_agent_body(tmp_path, monkeypatch) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+    assert main(["new-resident", "astrid", "--repo", str(repo)]) == 0
+
+    profile_path = repo / ".agentbox/resident_profile.py"
+    spec = importlib.util.spec_from_file_location("generated_resident_profile", profile_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    profile = module.AstridResidentProfile(
+        store=None,
+        authorizer=None,
+        config=None,
+        confirmation_manager=None,
+    )
+
+    assert profile.system_prompt().startswith("# Resident operator")
+
+
+def test_cli_new_resident_rolls_back_mid_publication(tmp_path, monkeypatch) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+    original_replace = cli_module.os.replace
+    calls = 0
+
+    def fail_on_second_replace(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("publication failure")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(cli_module.os, "replace", fail_on_second_replace)
+
+    result = main(["new-resident", "astrid", "--repo", str(repo)])
+
+    assert result == 1
+    assert not any(path.is_file() for path in repo.rglob("*"))
+    assert not (repo / ".agentbox").exists() or not any((repo / ".agentbox").iterdir())
+
+
+_RUN_RESIDENT_STUB_LOG_ENV = "RUN_RESIDENT_STUB_LOG"
+_FAKE_LAUNCH_SEED = "/fake/custody/seeds/standalone-fake.json"
+
+_PYTHON_STUB_SOURCE = """#!/bin/sh
+{
+    echo "==="
+    echo "cwd=$PWD"
+    printf 'argv:'
+    for argument in "$@"; do
+        printf ' <%s>' "$argument"
+    done
+    echo
+    echo "seed=${MEGAPLAN_RUNTIME_LAUNCH_SEED-}"
+} >> "$RUN_RESIDENT_STUB_LOG"
+case "$*" in
+    *"resident attest"*)
+        if [ -n "${RUN_RESIDENT_STUB_ATTEST_FAIL-}" ]; then
+            echo '{"success": false, "error": "runtime_launch_attestation_mismatch", "message": "stub admission failure"}'
+            exit 2
+        fi
+        echo "{seed_path}"
+        exit 0
+        ;;
+esac
+exit 0
+"""
+
+
+def _render_run_resident(repo: Path, name: str) -> Path:
+    content = cli_module._render_resident_template(
+        cli_module._resident_template_path("run-resident.tmpl"),
+        {
+            "NAME": name,
+            "PASCAL_NAME": cli_module._resident_pascal_name(name),
+            "DESCRIPTION": '"stub"',
+            "REPO": str(repo),
+        },
+    )
+    destination = repo / ".agentbox" / "run-resident"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(content, encoding="utf-8")
+    destination.chmod(0o755)
+    return destination
+
+
+def _init_launcher_repo(tmp_path: Path, name: str) -> tuple[Path, str]:
+    import subprocess
+
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+    _render_run_resident(repo, name)
+    env_file = repo / ".agentbox" / f"{name}.env"
+    env_file.write_text("DISCORD_BOT_TOKEN=real-token\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "--allow-empty", "-q", "-m", "init"],
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return repo, head
+
+
+def _install_python_stub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import os
+
+    stub_dir = tmp_path / "python-stub"
+    stub_dir.mkdir()
+    log_path = tmp_path / "python-stub.log"
+    for binary in ("python", "python3"):
+        stub = stub_dir / binary
+        stub.write_text(
+            _PYTHON_STUB_SOURCE.replace("{seed_path}", _FAKE_LAUNCH_SEED),
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv(_RUN_RESIDENT_STUB_LOG_ENV, str(log_path))
+
+
+def _read_stub_records(tmp_path: Path) -> list[dict[str, str]]:
+    log_path = tmp_path / "python-stub.log"
+    if not log_path.exists():
+        return []
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if line == "===":
+            if current:
+                records.append(current)
+            current = {}
+        elif line.startswith("cwd="):
+            current["cwd"] = line[len("cwd="):]
+        elif line.startswith("argv:"):
+            current["argv"] = line[len("argv:"):].lstrip()
+        elif line.startswith("seed="):
+            current["seed"] = line[len("seed="):]
+    if current:
+        records.append(current)
+    return records
+
+
+def test_run_resident_attests_head_then_execs_discord_with_seed(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    repo, head = _init_launcher_repo(tmp_path, "demo")
+    repo = repo.resolve(strict=True)
+    _install_python_stub(monkeypatch, tmp_path)
+    launcher = repo / ".agentbox" / "run-resident"
+
+    # Deliberately launched from OUTSIDE the repo: the launcher must resolve
+    # and cd to the repository root itself.
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    result = subprocess.run(
+        [str(launcher)],
+        cwd=outside,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    records = _read_stub_records(tmp_path)
+    assert len(records) == 2
+    attest_record, discord_record = records
+    assert attest_record["cwd"] == str(repo)
+    assert (
+        f"<-m> <arnold_pipelines.megaplan> <resident> <attest>"
+        f" <--repo-root> <{repo}> <--expected-head> <{head}>"
+        == attest_record["argv"]
+    )
+    assert discord_record["cwd"] == str(repo)
+    assert (
+        f"<-m> <arnold_pipelines.megaplan> <resident> <discord>"
+        f" <--store-root> <{repo}/.megaplan/resident>"
+        f" <--profile> <.agentbox/resident_profile.py:DemoResidentProfile>"
+        == discord_record["argv"]
+    )
+    assert discord_record["seed"] == _FAKE_LAUNCH_SEED
+
+
+def test_run_resident_forwards_extra_arguments_to_discord(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    repo, _head = _init_launcher_repo(tmp_path, "demo")
+    _install_python_stub(monkeypatch, tmp_path)
+
+    result = subprocess.run(
+        [str(repo / ".agentbox" / "run-resident"), "--dry-run"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    records = _read_stub_records(tmp_path)
+    assert len(records) == 2
+    assert records[1]["argv"].endswith("<--dry-run>")
+
+
+def test_run_resident_refuses_missing_env_file_before_any_launch(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    repo, _head = _init_launcher_repo(tmp_path, "demo")
+    (repo / ".agentbox" / "demo.env").unlink()
+    _install_python_stub(monkeypatch, tmp_path)
+
+    result = subprocess.run(
+        [str(repo / ".agentbox" / "run-resident")],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "missing" in result.stderr and "demo.env" in result.stderr
+    assert _read_stub_records(tmp_path) == []
+
+
+def test_run_resident_refuses_empty_discord_token_before_any_launch(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    repo, _head = _init_launcher_repo(tmp_path, "demo")
+    (repo / ".agentbox" / "demo.env").write_text("DISCORD_BOT_TOKEN=\n", encoding="utf-8")
+    _install_python_stub(monkeypatch, tmp_path)
+
+    result = subprocess.run(
+        [str(repo / ".agentbox" / "run-resident")],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "DISCORD_BOT_TOKEN is empty" in result.stderr
+    assert _read_stub_records(tmp_path) == []
+
+
+def test_run_resident_propagates_attest_failure_without_starting_discord(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    repo, _head = _init_launcher_repo(tmp_path, "demo")
+    _install_python_stub(monkeypatch, tmp_path)
+    monkeypatch.setenv("RUN_RESIDENT_STUB_ATTEST_FAIL", "1")
+
+    result = subprocess.run(
+        [str(repo / ".agentbox" / "run-resident")],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "runtime_launch_attestation_mismatch" in result.stdout + result.stderr
+    records = _read_stub_records(tmp_path)
+    assert len(records) == 1
+    assert "<resident> <attest>" in records[0]["argv"]

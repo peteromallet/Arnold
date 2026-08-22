@@ -1,0 +1,20 @@
+[Unit]
+Description={{NAME}} Discord resident
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={{REPO}}
+# Set the real token with a drop-in, e.g.:
+#   sudo systemctl edit {{NAME}}-resident
+# and add:
+#   [Service]
+#   Environment=DISCORD_BOT_TOKEN=<token>
+Environment=DISCORD_BOT_TOKEN=
+ExecStart={{REPO}}/.agentbox/run-resident
+Restart=on-failure
+RestartSec=10
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

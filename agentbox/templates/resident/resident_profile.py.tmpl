@@ -1,0 +1,30 @@
+from pathlib import Path
+
+from agentbox.resident_profile import AgentBoxOperatorProfile
+
+
+_PROJECT_AGENT_PATH = Path("{{REPO}}") / ".omp" / "agents" / "{{NAME}}.md"
+
+
+def _project_system_prompt() -> str:
+    text = _PROJECT_AGENT_PATH.read_text(encoding="utf-8")
+    marker = "\n---"
+    if marker not in text:
+        raise ValueError(f"resident agent file has no closing frontmatter delimiter: {_PROJECT_AGENT_PATH}")
+    return text.split(marker, 1)[1].strip()
+
+
+class {{PASCAL_NAME}}ResidentProfile(AgentBoxOperatorProfile):
+    # DOMAIN TOOLS SLOT: add project-specific domain tools to this profile when needed.
+
+    def __init__(self, *, store, authorizer, config, confirmation_manager):
+        super().__init__(
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+        )
+        self._project_system_prompt = _project_system_prompt()
+
+    def system_prompt(self) -> str:
+        return self._project_system_prompt

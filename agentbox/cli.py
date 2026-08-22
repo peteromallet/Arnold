@@ -246,6 +246,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target agents directory (default ~/.omp/agent/agents).",
     )
     install_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+    resident_parser = subparsers.add_parser(
+        "new-resident",
+        help="Create a five-file Discord resident scaffold in another repository.",
+    )
+    resident_parser.add_argument("name", help="Resident name.")
+    resident_parser.add_argument("--repo", required=True, help="Target repository root.")
+    resident_parser.add_argument("--description", help="Resident prompt description.")
+    resident_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
 
     return parser
 
@@ -303,6 +311,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _version(json_output=json_output)
         if args.command == "install-omp-agent":
             return _install_omp_agent(args, json_output=json_output)
+        if args.command == "new-resident":
+            return _new_resident(args, json_output=json_output)
     except (AgentBoxConfigError, AgentBoxOperationError, CredentialBackendError, FileNotFoundError, ValueError) as exc:
         return _diagnostic(str(exc), json_output=json_output)
     return _diagnostic(f"unknown command: {args.command}", json_output=json_output)
@@ -680,6 +690,115 @@ def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
         json_output=json_output,
     )
     return 0
+
+
+def _resident_template_path(name: str) -> Path:
+    return Path(__file__).resolve().parent / "templates" / "resident" / name
+
+
+def _resident_pascal_name(name: str) -> str:
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", name) if part]
+    result = "".join(part[:1].upper() + part[1:] for part in parts)
+    if not result or not result[0].isalpha():
+        result = f"Resident{result}"
+    return result
+
+
+def _render_resident_template(path: Path, replacements: dict[str, str]) -> str:
+    rendered = path.read_text(encoding="utf-8")
+    for key, value in replacements.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", value)
+    return rendered
+
+
+def _new_resident(args: argparse.Namespace, *, json_output: bool) -> int:
+    name = args.name
+    if not _valid_agent_name(name):
+        return _diagnostic(
+            f"invalid resident name {name!r}; use only letters, numbers, '.', '_' and '-'",
+            json_output=json_output,
+        )
+
+    repo = Path(args.repo).expanduser().resolve()
+    if not repo.is_dir():
+        return _diagnostic(f"repository directory does not exist: {repo}", json_output=json_output)
+
+    description = (
+        args.description if args.description is not None else f"Resident operator ({name})"
+    )
+    pascal_name = _resident_pascal_name(name)
+    replacements = {
+        "NAME": name,
+        "PASCAL_NAME": pascal_name,
+        "DESCRIPTION": _frontmatter_scalar(description),
+        "REPO": str(repo),
+    }
+    destinations = [
+        repo / ".omp" / "agents" / f"{name}.md",
+        repo / ".agentbox" / "resident_profile.py",
+        repo / ".agentbox" / "resident.env.example",
+        repo / ".agentbox" / "run-resident",
+        repo / ".agentbox" / f"{name}-resident.service",
+    ]
+    template_names = (
+        "agent.md.tmpl",
+        "resident_profile.py.tmpl",
+        "resident.env.example.tmpl",
+        "run-resident.tmpl",
+        "service.tmpl",
+    )
+
+    rendered = [
+        (destination, _render_resident_template(_resident_template_path(template), replacements))
+        for destination, template in zip(destinations, template_names)
+    ]
+    collisions = [path for path in destinations if path.exists() or path.is_symlink()]
+    if collisions:
+        return _diagnostic(
+            f"resident destination already exists: {collisions[0]}",
+            json_output=json_output,
+        )
+
+    temporary: list[Path] = []
+    created: list[Path] = []
+    try:
+        for destination, content in rendered:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = destination.with_name(
+                f".{destination.name}.tmp-{uuid4().hex}"
+            )
+            temporary.append(temporary_path)
+            temporary_path.write_text(content, encoding="utf-8")
+            if destination.name == "run-resident":
+                temporary_path.chmod(0o755)
+        for temporary_path, destination in zip(temporary, destinations):
+            os.replace(temporary_path, destination)
+            created.append(destination)
+    except OSError as exc:
+        for temporary_path in temporary:
+            temporary_path.unlink(missing_ok=True)
+        for destination in created:
+            destination.unlink(missing_ok=True)
+        return _diagnostic(
+            f"failed to create resident scaffold: {exc}",
+            json_output=json_output,
+        )
+    finally:
+        for temporary_path in temporary:
+            temporary_path.unlink(missing_ok=True)
+
+    _emit(
+        {
+            "name": name,
+            "repo": str(repo),
+            "files": [str(path) for path in destinations],
+            "created": True,
+        },
+        json_output=json_output,
+    )
+    return 0
+
+
 
 
 def _guardian(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
