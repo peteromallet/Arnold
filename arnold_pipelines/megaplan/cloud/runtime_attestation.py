@@ -2570,6 +2570,20 @@ def ensure_standalone_launch_seed_binds_root(project_root: Path | None) -> None:
     :func:`require_configured_runtime_launch`'s canonical handling.
     """
     if project_root is None:
+        # A future caller omitting the root would silently skip the binding
+        # and reopen the cross-project seed hole; fail closed when the
+        # configured seed is standalone instead of silently skipping.
+        seed_path = configured_seed_path()
+        if seed_path is not None:
+            try:
+                configured = _json_file(seed_path, label="runtime launch seed")
+            except CliError:
+                return
+            if configured.get("authority") == RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+                raise CliError(
+                    RUNTIME_ATTESTATION_ERROR,
+                    "standalone resident launch requires an explicit project root binding",
+                )
         return
     seed_path = configured_seed_path()
     if seed_path is None:
