@@ -1,0 +1,94 @@
+diff --git a/tests/arnold_pipelines/megaplan/test_launch_hermes_agent.py b/tests/arnold_pipelines/megaplan/test_launch_hermes_agent.py
+index 37576dd11e..afac0f3375 100644
+--- a/tests/arnold_pipelines/megaplan/test_launch_hermes_agent.py
++++ b/tests/arnold_pipelines/megaplan/test_launch_hermes_agent.py
+@@ -1,9 +1,7 @@
+ from __future__ import annotations
+ 
+-import builtins
+ import importlib.util
+ import sys
+-import types
+ from pathlib import Path
+ 
+ 
+@@ -25,52 +23,40 @@ def _load_module():
+     return module
+ 
+ 
+-def test_import_runtime_treats_megaplan_agent_missing_as_legacy_fallback(monkeypatch) -> None:
+-    module = _load_module()
+-
+-    fake_run_agent = types.ModuleType("arnold.agent.run_agent")
+-    fake_run_agent.AIAgent = type("AIAgent", (), {})
+-    fake_state = types.ModuleType("arnold.agent.hermes_state")
+-    fake_state.SessionDB = type("SessionDB", (), {})
+-    fake_key_pool = types.ModuleType("arnold_pipelines.megaplan.runtime.key_pool")
+-    fake_key_pool.resolve_model = lambda value: value
+-
+-    monkeypatch.setitem(sys.modules, "arnold", types.ModuleType("arnold"))
+-    monkeypatch.setitem(sys.modules, "arnold.agent", types.ModuleType("arnold.agent"))
+-    monkeypatch.setitem(sys.modules, "arnold.agent.run_agent", fake_run_agent)
+-    monkeypatch.setitem(sys.modules, "arnold.agent.hermes_state", fake_state)
+-    monkeypatch.setitem(sys.modules, "arnold_pipelines", types.ModuleType("arnold_pipelines"))
+-    monkeypatch.setitem(sys.modules, "arnold_pipelines.megaplan", types.ModuleType("arnold_pipelines.megaplan"))
+-    monkeypatch.setitem(sys.modules, "arnold_pipelines.megaplan.runtime", types.ModuleType("arnold_pipelines.megaplan.runtime"))
+-    monkeypatch.setitem(sys.modules, "arnold_pipelines.megaplan.runtime.key_pool", fake_key_pool)
+-
+-    real_import = builtins.__import__
+-
+-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+-        if name == "megaplan.agent":
+-            raise ModuleNotFoundError("No module named 'megaplan.agent'", name="megaplan.agent")
+-        return real_import(name, globals, locals, fromlist, level)
++def test_run_survives_incomplete_megaplan_namespace_without_agent_import(
++    tmp_path: Path, monkeypatch, capsys
++) -> None:
++    # A project-local `megaplan/` directory without `megaplan.agent` must not
++    # break the omp-backed launcher: it never imports a megaplan agent runtime.
++    (tmp_path / "megaplan").mkdir()
++    monkeypatch.syspath_prepend(str(tmp_path))
++    for name in list(sys.modules):
++        if name == "megaplan" or name.startswith("megaplan."):
++            monkeypatch.delitem(sys.modules, name, raising=False)
+ 
+-    monkeypatch.setattr(builtins, "__import__", fake_import)
++    module = _load_module()
+ 
+-    AIAgent, SessionDB, resolve_model = module._import_runtime()
++    # Dispatch refuses only on the missing omp binary — never on imports.
++    exit_code = module.run(query="demo", omp_bin=str(tmp_path / "no-such-omp"))
+ 
+-    assert AIAgent is fake_run_agent.AIAgent
+-    assert SessionDB is fake_state.SessionDB
+-    assert resolve_model("demo-model") == "demo-model"
++    assert exit_code == 3
++    assert "omp CLI not found" in capsys.readouterr().err
++    assert not any(name == "megaplan.agent" for name in sys.modules)
+ 
+ 
+ def test_model_shortcut_normalizes_chain_hermes_provider_prefix() -> None:
+     module = _load_module()
+ 
++    def selector(model: str) -> str:
++        translated, thinking = module._translate_model(model)
++        assert thinking is None
++        return translated
++
++    assert selector("hermes:zhipu:glm-5.2") == "openrouter/z-ai/glm-latest"
+     assert (
+-        module._resolve_model_shortcut("hermes:zhipu:glm-5.2")
+-        == "zhipu:glm-5.2"
+-    )
+-    assert (
+-        module._resolve_model_shortcut(" hermes:deepseek:deepseek-v4-pro ")
+-        == "deepseek:deepseek-v4-pro"
++        selector(" hermes:deepseek:deepseek-v4-pro ")
++        == "deepseek/deepseek-v4-pro"
+     )
+-    assert module._resolve_model_shortcut("pro") == "deepseek:deepseek-v4-pro"
+-    assert module._resolve_model_shortcut("hermes:pro") == "deepseek:deepseek-v4-pro"
+-    assert module._resolve_model_shortcut("custom:model") == "custom:model"
++    assert selector("pro") == "deepseek/deepseek-v4-pro"
++    assert selector("hermes:pro") == "deepseek/deepseek-v4-pro"
++    assert selector("custom:model") == "custom:model"

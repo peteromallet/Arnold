@@ -1,0 +1,26 @@
+diff --git a/tests/arnold_pipelines/megaplan/test_task_feasibility.py b/tests/arnold_pipelines/megaplan/test_task_feasibility.py
+index eca3398f1c..0e09264e1d 100644
+--- a/tests/arnold_pipelines/megaplan/test_task_feasibility.py
++++ b/tests/arnold_pipelines/megaplan/test_task_feasibility.py
+@@ -44,7 +44,8 @@ def _task(
+         "write_set": {"paths": paths or [f"src/{task_id.lower()}.py"], "complete": True},
+         "narrow_tests": {
+             "selectors": [f"tests/test_{task_id.lower()}.py"],
+-            "max_seconds": 120,
++            "budget_semantics": "elapsed_wall_clock_v2",
++            "test_budget_seconds": 120,
+             "max_runs": 2,
+         },
+         "checkpoint": {
+@@ -215,8 +216,9 @@ def test_report_diagnostic_ordering_is_deterministic() -> None:
+         (lambda task: task.update(estimated_minutes=16), "task_duration_exceeded"),
+         (lambda task: task.update(objective="x; y"), "task_objective_oversized"),
+         (lambda task: task["write_set"].update(paths=[f"src/{i}.py" for i in range(6)]), "task_path_budget_exceeded"),
+-        (lambda task: task["narrow_tests"].update(selectors=[f"tests/test_{i}.py" for i in range(4)]), "task_test_selector_budget_exceeded"),
+-        (lambda task: task["narrow_tests"].update(max_seconds=121), "task_test_time_budget_exceeded"),
++        (lambda task: task["narrow_tests"].update(test_budget_seconds=121), "task_test_time_budget_exceeded"),
++        (lambda task: task["narrow_tests"].update(max_seconds=60), "task_test_budget_v1_on_v2_graph"),
++        (lambda task: (task["narrow_tests"].pop("budget_semantics"), task["narrow_tests"].update(max_seconds=60)), "task_test_budget_v2_required"),
+         (lambda task: task["narrow_tests"].update(max_runs=3), "task_test_run_budget_exceeded"),
+     ],
+ )
