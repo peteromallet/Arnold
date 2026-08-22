@@ -1,0 +1,4 @@
+$ python -m pytest tests/agentbox/test_cli.py tests/agentbox/test_resident_profile.py -q
+89 passed, 6 failed
+Expected pre-existing failures: six resident runtime tests reject missing canonical runtime launch seed with `CliError: canonical runtime launch seed is required but missing`.
+exit=1 (expected by T11 brief)

@@ -1,0 +1,3 @@
+$ marker search: docs/custom-resident-agents.md for '[T11:'
+No matches found.
+Verified against implementation: `new-resident` five destinations in `agentbox/cli.py`; `resident attest --repo-root --expected-head [--json]` in `arnold_pipelines/megaplan/resident/cli.py`; launcher token refusal and dry-run flow in `agentbox/templates/resident/run-resident.tmpl`.

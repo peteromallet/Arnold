@@ -1,0 +1,5 @@
+$ python -m pytest tests/agentbox/test_package_smoke.py -q
+.....                                                                    [100%]
+5 passed in 14.70s
+exit=0
+Coverage includes wheel resource assertions and installed-package `python -m agentbox new-resident demo2` generation in a clean venv.

@@ -1,0 +1,5 @@
+$ python -m pip wheel --no-deps -w /tmp/t11-wheels .
+Successfully built arnold
+wheel: arnold-0.23.0-py3-none-any.whl
+sha256: 671a115f65e09f4a0a0ed251925649f9ad8ff836d9a512eefaf90f945f108bf3
+exit=0

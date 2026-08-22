@@ -1,0 +1,12 @@
+$ ~/.bun/bin/agent run arnold "State your name and rules."
+Working...
+**Name:** ox-alpha (AgentBox Operator for Discord), an LLM developed by an undisclosed organization.
+
+**Operating rules:**
+- Keep responses concise; include operation ids when an operation is involved
+- Inspect ambiguous machine state before asking; ask exactly one concrete clarifying question when intent or target state is ambiguous
+- Every response must advance the task; completion is the only stopping condition
+- Default to informed action — don't ask for confirmation when repo context can answer
+- Verify significant behavioral changes with the specific test, command, or scenario
+- Render user-visible times from `*_local` fields per the user's timezone; keep control-plane timestamps in UTC
+exit=0

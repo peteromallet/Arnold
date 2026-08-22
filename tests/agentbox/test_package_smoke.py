@@ -80,10 +80,16 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
         "agentbox/worktrees.py",
         "agentbox/py.typed",
     }
+    expected_resident_templates = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (AGENTBOX_ROOT / "templates" / "resident").iterdir()
+        if path.is_file()
+    }
 
     with ZipFile(wheel) as archive:
         names = set(archive.namelist())
         assert expected_package_files <= names
+        assert expected_resident_templates <= names
         entry_points_name = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))
         entry_points = configparser.ConfigParser()
         entry_points.read_string(archive.read(entry_points_name).decode())
@@ -93,7 +99,28 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
     venv.create(venv_dir, with_pip=True)
     python = venv_dir / "bin" / "python"
     subprocess.run(
-        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            str(wheel),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "PyYAML",
+            "pydantic",
+            "python-ulid",
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -107,8 +134,41 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
         "import agentbox\n"
         "assert agentbox.__name__ == 'agentbox'\n"
     )
-    result = subprocess.run([str(python), "-c", probe], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [str(python), "-c", probe],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
+
+    generated_repo = tmp_path / "installed-resident"
+    generated_repo.mkdir()
+    generation = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "agentbox",
+            "new-resident",
+            "demo2",
+            "--repo",
+            str(generated_repo),
+        ],
+        cwd=generated_repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert generation.returncode == 0, generation.stderr
+    assert {
+        generated_repo / ".omp" / "agents" / "demo2.md",
+        generated_repo / ".agentbox" / "resident_profile.py",
+        generated_repo / ".agentbox" / "resident.env.example",
+        generated_repo / ".agentbox" / "run-resident",
+        generated_repo / ".agentbox" / "demo2-resident.service",
+    } <= {path for path in generated_repo.rglob("*") if path.is_file()}
+    assert (generated_repo / ".agentbox" / "run-resident").stat().st_mode & 0o111
 
 
 def test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surfaces() -> None:
@@ -126,6 +186,12 @@ def test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surface
         "resident_profile.py": {
             "arnold_pipelines.megaplan.resident.reply_chain",
             "arnold_pipelines.megaplan.resident.timezone",
+        },
+        "services.py": {
+            "arnold_pipelines.megaplan.cloud.runtime_manifest",
+        },
+        "cleanup.py": {
+            "arnold_pipelines.megaplan.cloud.runtime_references",
         },
     }
 

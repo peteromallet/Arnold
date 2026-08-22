@@ -1,0 +1,4 @@
+$ ~/.bun/bin/agent list
+arnold             user     "Arnold resident operator (agentbox-operator-v1): concise, state-first, one clarifying question."
+[other installed agents omitted]
+exit=0

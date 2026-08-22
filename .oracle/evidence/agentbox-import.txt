@@ -1,0 +1,3 @@
+$ python -c "import agentbox.cli"
+(no output)
+exit=0

@@ -4,73 +4,172 @@ This document covers the full custom-agent workflow: running `arnold` locally,
 customizing agents, and scaffolding a Discord resident bot into any repository
 with `agentbox new-resident`.
 
-> STATUS: skeleton drafted by the megado orchestrator (host). Executor T11
-> completes sections marked `[T11]` against the implemented behavior.
-
 ## Run arnold (R1)
 
+Install the packaged named agent, then use omp's binary explicitly:
+
 ```bash
-agentbox install-omp-agent arnold        # packaged source -> ~/.omp/agent/agents/
-~/.bun/bin/agent list                    # arnold appears
+agentbox install-omp-agent arnold
+~/.bun/bin/agent list
 ~/.bun/bin/agent run arnold "State your name and rules."
 ```
 
-**PATH caveat:** bare `agent` resolves to grok's binary (`~/.grok/bin/agent`) on
-this machine. Use `~/.bun/bin/agent` or set `OMP_BIN`.
+**PATH caveat:** on this machine, bare `agent` resolves to grok's binary
+(`~/.grok/bin/agent`). Use `~/.bun/bin/agent`, or set `OMP_BIN` to the intended
+omp binary. In-session dispatch is separate:
+`{"agent": "arnold", "task": "…"}`.
 
-In-session dispatch: `{"agent": "arnold", "task": "…"}`.
-
-The prompt body of `agentbox/agents/arnold.md` is byte-identical to the live
-Discord resident prompt (`AgentBoxOperatorProfile.system_prompt()`,
-`agentbox-operator-v1`). A parity test enforces this.
+The body of `agentbox/agents/arnold.md` is byte-identical to
+`AgentBoxOperatorProfile.system_prompt()` (`agentbox-operator-v1`). The parity
+test is the guard against the named agent and Discord resident drifting apart.
 
 ## Customize (R2)
 
-Two CLI flags only — everything else is edited in markdown:
+The installer exposes only name and description overrides. Edit all other
+omp-owned settings in the generated markdown:
 
 ```bash
-agentbox install-omp-agent arnold --name my-op --description "Op for X" --target <dir>
+agentbox install-omp-agent arnold \
+  --name my-op \
+  --description "Operator for X" \
+  --target /path/to/agents
 ```
 
-- positional = source template; `--name` renames output + frontmatter;
-  `--description` replaces description; body bytes untouched.
-- names must match `^[A-Za-z0-9._-]+$` (not `.` / `..`); writes are atomic and
-  non-overwriting.
-- model / thinking-level / tools: edit the agent file frontmatter directly
-  (`model:`, `thinking-level:`, `tools:`), or use omp-native
-  `task.agentModelOverrides.<name>` / `modelRoles`.
-- **Agent-file `tools` never change Discord actions** — Discord tools come from
-  the resident profile's tool registry + authorizer.
+- The positional argument is the source template. `--name` changes the output
+  filename and frontmatter `name`; `--description` changes frontmatter only.
+  The prompt body is unchanged.
+- Names must match `^[A-Za-z0-9._-]+$`, excluding `.` and `..`. Writes are
+  atomic and never overwrite an existing destination.
+- Edit the agent file's `model`, `thinking-level`, and `tools` frontmatter for
+  omp named-agent behavior. Do not add installer flags that duplicate those
+  markdown fields.
 
-Canonical persona changes require all three: edit `agentbox/agents/arnold.md`,
-apply the identical change to `AgentBoxOperatorProfile.system_prompt()`, bump
-`AGENTBOX_OPERATOR_PROMPT_VERSION`. The parity test enforces byte equality.
+**Agent-tools versus Discord-tools:** the agent file's `tools` field controls
+the omp named-agent run. It does not grant Discord actions. Discord actions
+come from the selected resident profile's tool registry and authorizer.
+
+Canonical persona changes follow three steps: update
+`agentbox/agents/arnold.md`, apply the identical body change to
+`AgentBoxOperatorProfile.system_prompt()`, and bump
+`AGENTBOX_OPERATOR_PROMPT_VERSION`. The byte-parity test must remain green.
 
 ## Scaffold a bot in another repo (R3)
 
+From an installed package, run:
+
 ```bash
-agentbox new-resident astrid --repo /path/to/astrid --description "…"
+agentbox new-resident astrid \
+  --repo /path/to/astrid \
+  --description "Astrid resident operator"
 ```
 
-Generates exactly five files `[T11: confirm final set]`:
+`--description` is optional; without it the implementation uses
+`Resident operator (astrid)`. The command creates exactly these five files:
 
 | File | Purpose |
 |---|---|
-| `.omp/agents/<name>.md` | project-scoped named agent (shadows user-level inside this repo) |
-| `.agentbox/resident_profile.py` | profile subclass; system prompt from the project agent file |
-| `.agentbox/resident.env.example` | token var, model, allowlists, mode, store root |
-| `.agentbox/run-resident` | fixed-cwd launcher (executable) |
-| `.agentbox/<name>-resident.service` | systemd unit |
+| `.omp/agents/astrid.md` | Project-scoped named agent; it shadows the user-level agent inside this repo. |
+| `.agentbox/resident_profile.py` | `AstridResidentProfile`, a subclass of `AgentBoxOperatorProfile`. |
+| `.agentbox/resident.env.example` | Starting environment file with token, profile, mode, store, and allowlists. |
+| `.agentbox/run-resident` | Fixed-root executable launcher. |
+| `.agentbox/astrid-resident.service` | Systemd unit that runs the launcher. |
 
-External profiles are loaded repo-relative via `.agentbox/resident_profile.py:<Class>`
-— trusted project code, imported unsandboxed, contained under the repo root.
+The profile reads the body below the agent file's frontmatter as its Discord
+system prompt. The external profile selector is the trusted, repo-relative
+`.agentbox/resident_profile.py:AstridResidentProfile`; loading is unsandboxed
+project code and is contained under the target repository.
 
-## Deploy `[T11]`
+## Deploy
 
-- one Discord application per repo (developer portal: name/avatar/message-content intent/permissions)
-- env file (uncommitted): `DISCORD_BOT_TOKEN`, allowlists, mode, store root
-- store: `<repo>/.megaplan/resident/` (FileStore; created on demand)
-- attestation: `<repo>` must be a clean git checkout at the expected HEAD;
-  provision the launch seed with `resident attest` `[T11: exact command per implementation]`
-- dry-run first: `--dry-run` constructs the profile without network
-- then systemd: `systemctl enable --now <name>-resident.service`
+### Configure the environment
+
+Copy the generated example to the name-specific file that the launcher reads:
+
+```bash
+cd /path/to/astrid
+cp .agentbox/resident.env.example .agentbox/astrid.env
+${EDITOR:-vi} .agentbox/astrid.env
+chmod 600 .agentbox/astrid.env
+```
+
+Set `DISCORD_BOT_TOKEN`, the guild/channel/user/admin allowlists, and any model
+settings needed by the profile. Keep this file uncommitted. The generated
+launcher sets the exact external profile and store root itself; its source
+environment file remains the single place for the secret and deployment
+configuration.
+
+An empty or missing token is refused before attestation:
+
+```text
+run-resident: DISCORD_BOT_TOKEN is empty in .../.agentbox/astrid.env; refusing to start
+```
+
+### Attest the exact runtime
+
+The implemented subcommand is `resident attest`, with required
+`--repo-root` and `--expected-head` flags:
+
+```bash
+REPO_ROOT="$(pwd -P)"
+HEAD="$(git rev-parse HEAD)"
+python -m arnold_pipelines.megaplan resident attest \
+  --repo-root "$REPO_ROOT" \
+  --expected-head "$HEAD"
+```
+
+The target repository must have the Arnold runtime importable for this
+interpreter. Either install Arnold (`python -m pip install -e /path/to/arnold`)
+or expose the checkout explicitly:
+
+```bash
+PYTHONPATH=/path/to/arnold python -m arnold_pipelines.megaplan resident attest \
+  --repo-root "$REPO_ROOT" \
+  --expected-head "$HEAD"
+```
+
+Attestation admits only the exact Git top-level passed as `--repo-root` and
+the live HEAD supplied as `--expected-head`; runtime provenance must also
+resolve to the importable Arnold runtime. The generated launcher performs this
+same check automatically, exports the returned seed as
+`MEGAPLAN_RUNTIME_LAUNCH_SEED`, and refuses startup on any failure.
+
+### Dry-run, then systemd
+
+Run the generated launcher from the target repository:
+
+```bash
+./.agentbox/run-resident --dry-run
+```
+
+This performs attestation and constructs the selected profile without opening
+a Discord connection. The launcher still requires a non-empty token because
+its shell-level secret check runs before the no-network resident dry-run.
+
+Install the generated unit and start it only after the dry-run succeeds:
+
+```bash
+sudo install -m 0644 .agentbox/astrid-resident.service \
+  /etc/systemd/system/astrid-resident.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now astrid-resident.service
+sudo systemctl status astrid-resident.service
+```
+
+### Discord developer portal (manual)
+
+1. Open the Discord Developer Portal and create one application for this
+   repository.
+2. Add a bot, reset/copy its token into `.agentbox/astrid.env`, and enable the
+   Message Content Intent when the bot needs message contents.
+3. Configure the OAuth2 installation URL with only the bot/application-command
+   scopes and permissions required by the resident's Discord profile.
+4. Install the bot in the intended guild, then set the generated environment
+   allowlists before starting systemd. Keep the token out of the repository
+   and out of the service unit.
+
+The runtime boundary, configuration surface, and cloud/deployment day-2
+operations are documented separately:
+
+- [Resident boundary](agentbox-resident-boundary.md)
+- [Configuration](configuration.md)
+- [Bootstrap and day-2 operations](agentbox/bootstrap-and-day2.md)

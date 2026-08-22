@@ -1,0 +1,17 @@
+$ python -m pip install --no-deps -e .
+Successfully installed arnold-0.23.0 (refreshed local console entrypoint)
+
+$ agentbox new-resident demo2 --repo /tmp/demo2-r
+{
+  "created": true,
+  "files": [
+    "/private/tmp/demo2-r/.omp/agents/demo2.md",
+    "/private/tmp/demo2-r/.agentbox/resident_profile.py",
+    "/private/tmp/demo2-r/.agentbox/resident.env.example",
+    "/private/tmp/demo2-r/.agentbox/run-resident",
+    "/private/tmp/demo2-r/.agentbox/demo2-resident.service"
+  ],
+  "name": "demo2",
+  "repo": "/private/tmp/demo2-r"
+}
+Follow-up profile import and executable-bit assertions: exit=0.

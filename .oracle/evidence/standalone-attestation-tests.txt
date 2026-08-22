@@ -1,0 +1,3 @@
+$ python -m pytest tests/cloud/test_standalone_runtime_attestation.py -q
+42 passed in 6.06s
+exit=0
