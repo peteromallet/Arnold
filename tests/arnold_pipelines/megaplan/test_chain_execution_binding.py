@@ -36,12 +36,24 @@ from arnold_pipelines.megaplan.chain.spec import (
     save_chain_state,
 )
 from arnold_pipelines.megaplan.cloud.runtime_cutover import normalize_runtime_identity
+from argparse import Namespace
+
+from arnold_pipelines.megaplan.chain import run_chain_cli
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    attach_mutation_capability,
+)
+from arnold_pipelines.megaplan.cloud.target_rebind import REBIND_ACTION
+from tests.cloud.test_t42_adoption_rebind_pause import _mint as _mint_capability
+from arnold_pipelines.megaplan.cloud.maintenance_delivery import (
+    deliver_runtime_cutover,
+)
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     MANIFEST_SCHEMA_VERSION,
     RuntimeManifest,
     write_manifest,
 )
 from arnold_pipelines.megaplan.types import CliError
+from tests.cloud.test_t43_maintenance_delivery import _Fixture, _stub_identity
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -61,6 +73,21 @@ def _canonical_sha256(value: dict) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _generation_interpreter(runtime: dict) -> str:
+    # T4.3 launch recipe: import_root plus the generation interpreter
+    # replaces the retired SHA-256 content guard on both CAS sides.
+    return f"{str(runtime['import_root']).rstrip('/')}/bin/python"
+
+
+def _runtime_cas(previous: dict, active: dict) -> dict:
+    return {
+        "expected_previous_import_root": str(previous["import_root"]),
+        "expected_previous_interpreter": _generation_interpreter(previous),
+        "expected_active_import_root": str(active["import_root"]),
+        "expected_active_interpreter": _generation_interpreter(active),
+    }
 
 
 @pytest.fixture(scope="module")
@@ -722,10 +749,7 @@ def test_runtime_cutover_is_separate_from_spec_binding(
     cutover = rebind_runtime_identity(
         spec_path,
         state,
-        expected_previous_runtime_sha256=original_runtime["content_sha256"],
-        expected_active_runtime_sha256=drift["runtime_binding"]["active"][
-            "content_sha256"
-        ],
+        **_runtime_cas(original_runtime, drift["runtime_binding"]["active"]),
         expected_current_milestone="c1",
         expected_current_plan="c1-plan",
         reason="activate verified runtime b",
@@ -823,10 +847,7 @@ def test_runtime_cutover_command_moves_engine_root_atomically(
     cutover = cutover_runtime_identity(
         spec_path,
         state,
-        expected_previous_runtime_sha256=original_runtime["content_sha256"],
-        expected_active_runtime_sha256=drift["runtime_binding"]["active"][
-            "content_sha256"
-        ],
+        **_runtime_cas(original_runtime, drift["runtime_binding"]["active"]),
         expected_current_milestone="c1",
         expected_current_plan="c1-plan",
         reason="cut over to verified runtime b",
@@ -892,8 +913,10 @@ def test_runtime_cutover_rollback_direction_moves_engine_root_back(
         state,
         # Swapped guards: X is the current (successor) runtime, Y is the
         # runtime being restored via its independently receipted identity.
-        expected_previous_runtime_sha256=successor_identity["content_sha256"],
-        expected_active_runtime_sha256=original_runtime["content_sha256"],
+        expected_previous_import_root=str(successor_identity["import_root"]),
+        expected_previous_interpreter=_generation_interpreter(successor_identity),
+        expected_active_import_root=str(original_runtime["import_root"]),
+        expected_active_interpreter=_generation_interpreter(original_runtime),
         expected_current_milestone="c1",
         expected_current_plan="c1-plan",
         direction="rollback",
@@ -937,10 +960,7 @@ def test_runtime_cutover_refuses_missing_engine_root_before_any_mutation(
         cutover_runtime_identity(
             spec_path,
             state,
-            expected_previous_runtime_sha256=original_runtime["content_sha256"],
-            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
-                "content_sha256"
-            ],
+            **_runtime_cas(original_runtime, drift["runtime_binding"]["active"]),
             expected_current_milestone="c1",
             expected_current_plan="c1-plan",
             reason="must fail closed without a recorded engine root",
@@ -964,10 +984,7 @@ def test_runtime_cutover_refuses_engine_root_mismatch_before_any_mutation(
         cutover_runtime_identity(
             spec_path,
             state,
-            expected_previous_runtime_sha256=original_runtime["content_sha256"],
-            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
-                "content_sha256"
-            ],
+            **_runtime_cas(original_runtime, drift["runtime_binding"]["active"]),
             expected_current_milestone="c1",
             expected_current_plan="c1-plan",
             reason="must refuse split engine root custody",
@@ -976,26 +993,19 @@ def test_runtime_cutover_refuses_engine_root_mismatch_before_any_mutation(
     assert state.metadata["execution_environment"]["engine_root"] != successor_root
 
 
-def test_runtime_cutover_refuses_unbound_chain_before_any_mutation(
+def test_runtime_cutover_skips_unbound_chain_before_any_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cutover requires the T-0101b migrate output: an unbound progressed
-    chain is refused exactly like a runtime rebind."""
-    spec_path = _pinned_chain(tmp_path)
-    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
-    raw["driver"]["require_editable_runtime_match"] = True
-    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-    _git(tmp_path, "add", ".")
-    _git(tmp_path, "commit", "-m", "require runtime binding")
-    raw["driver"]["intended_initiative_revision"] = _git(
-        tmp_path, "rev-parse", "HEAD"
-    )
-    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    """Ratified T4.3 skip contract (Sol Q1): a state-present/unbound
+    progressed chain does NOT refuse — the wrapper returns the exact typed
+    skip mapping so the delivery coordinator continues selector/marker
+    publication, and no chain state is mutated."""
+    spec_path = _pinned_chain(tmp_path, require_runtime_match=True)
     # This is deliberately an unbound legacy chain.  Construct that state
     # directly instead of briefly binding through the developer's current
     # editable interpreter, whose diagnostic root is irrelevant to the
-    # fail-before-mutation contract under test.
+    # skip-before-mutation contract under test.
     state = ChainState()
     state.current_milestone_index = 0
     state.current_plan_name = "c1-plan"
@@ -1005,53 +1015,127 @@ def test_runtime_cutover_refuses_unbound_chain_before_any_mutation(
     }
     before = json.loads(json.dumps(state.to_dict()))
 
-    with pytest.raises(CliError, match="persisted runtime identity is missing"):
-        cutover_runtime_identity(
-            spec_path,
-            state,
-            expected_previous_runtime_sha256="a" * 64,
-            expected_active_runtime_sha256="b" * 64,
-            expected_current_milestone="c1",
-            expected_current_plan="c1-plan",
-            reason="migrate must run before any cutover",
-        )
+    result = cutover_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256="a" * 64,
+        expected_active_runtime_sha256="b" * 64,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        reason="migrate must run before any cutover",
+    )
+    assert result == {
+        "changed": False,
+        "skipped": "no_chain_runtime_binding",
+        "wrapper": "cutover_runtime_identity",
+    }
     assert state.to_dict() == before
 
 
-def test_runtime_cutover_inherits_runtime_sha_cas_guards(
+def test_delivery_with_unbound_chain_state_commits_publication_and_records_skip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Coordinator-level pin (Sol Q1): a delivery whose chain state is
+    present but runtime-unbound still commits the selector AND marker
+    publication, records ``identity.skipped ==
+    "no_chain_runtime_binding"`` in the delivery journal, and leaves the
+    chain state unmutated by the identity stage."""
+    fixture = _Fixture(tmp_path)
+    _stub_identity(monkeypatch, fixture)
+    state = load_chain_state(fixture.spec)
+    persisted_binding = (state.metadata.get("execution_binding") or {}).get(
+        "runtime_binding"
+    )
+    # precondition: the chain state is present but runtime-unbound
+    assert not isinstance(
+        (persisted_binding or {}).get("current_identity"), dict
+    )
+    before = json.loads(json.dumps(state.to_dict()))
+    kwargs = fixture.kwargs()
+    kwargs["chain_state"] = state
+    result = deliver_runtime_cutover(**kwargs)  # type: ignore[arg-type]
+
+    assert result["status"] == "committed"
+    # selector publication committed
+    manifest = json.loads(
+        fixture.manifest_path.read_text(encoding="utf-8")
+    )
+    assert manifest["generation"] == 4
+    assert manifest["epic"]["runtime_root"] == str(fixture.to_root)
+    # marker publication committed
+    marker = json.loads(fixture.marker_path.read_text(encoding="utf-8"))
+    assert marker["runtime_binding"]["current_identity"]["import_root"] == (
+        str(fixture.to_root)
+    )
+    # journal records the ratified identity skip
+    journal_path = (
+        fixture.binding
+        / ".megaplan"
+        / "plans"
+        / "fixture"
+        / "evidence"
+        / "delivery-journal.json"
+    )
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal["identity"] == {
+        "wrapper": "cutover_runtime_identity",
+        "second_lock": False,
+        "cas": "import_root+interpreter",
+        "skipped": "no_chain_runtime_binding",
+    }
+    # the identity stage never mutated the chain state
+    assert state.to_dict() == before
+    after = load_chain_state(fixture.spec)
+    after_binding = (after.metadata.get("execution_binding") or {}).get(
+        "runtime_binding"
+    )
+    assert not isinstance(
+        (after_binding or {}).get("current_identity"), dict
+    )
+
+
+def test_runtime_cutover_refuses_retired_sha_only_cas(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T4.3: SHA-256 flags alone are no longer a CAS. Both retired guard
+    shapes refuse with the typed import_root+generation-interpreter CAS
+    error before any other guard runs."""
     spec_path, state, original_runtime, drift, _successor_root = (
         _engine_root_drift_case(tmp_path, monkeypatch)
     )
     before = json.loads(json.dumps(state.to_dict()))
 
-    with pytest.raises(CliError, match="previous runtime SHA-256 does not match"):
+    with pytest.raises(
+        CliError, match="CAS is import_root plus generation interpreter"
+    ):
         cutover_runtime_identity(
             spec_path,
             state,
-            expected_previous_runtime_sha256="0" * 64,
+            expected_previous_runtime_sha256=original_runtime["content_sha256"],
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            reason="retired sha-only from-guard must refuse",
+        )
+    assert state.to_dict() == before
+
+    with pytest.raises(
+        CliError, match="CAS is import_root plus generation interpreter"
+    ):
+        cutover_runtime_identity(
+            spec_path,
+            state,
             expected_active_runtime_sha256=drift["runtime_binding"]["active"][
                 "content_sha256"
             ],
             expected_current_milestone="c1",
             expected_current_plan="c1-plan",
-            reason="wrong from-guard must refuse",
+            reason="retired sha-only to-guard must refuse",
         )
     assert state.to_dict() == before
 
-    with pytest.raises(CliError, match="active runtime SHA-256 does not match"):
-        cutover_runtime_identity(
-            spec_path,
-            state,
-            expected_previous_runtime_sha256=original_runtime["content_sha256"],
-            expected_active_runtime_sha256="f" * 64,
-            expected_current_milestone="c1",
-            expected_current_plan="c1-plan",
-            reason="wrong to-guard must refuse",
-        )
-    assert state.to_dict() == before
+
 
 
 def _terminal_runtime_drift_case(
@@ -1129,10 +1213,7 @@ def test_runtime_cutover_accepts_exact_completed_terminal_cursor(
     cutover = rebind_runtime_identity(
         spec_path,
         state,
-        expected_previous_runtime_sha256=original_runtime["content_sha256"],
-        expected_active_runtime_sha256=drift["runtime_binding"]["active"][
-            "content_sha256"
-        ],
+        **_runtime_cas(original_runtime, drift["runtime_binding"]["active"]),
         expected_current_milestone="@terminal",
         expected_current_plan="@none",
         reason="promote a verified runtime after chain completion",
@@ -1176,6 +1257,7 @@ def test_runtime_cutover_cas_uses_verified_legacy_persisted_digest(
         expected_active_runtime_sha256=drift["runtime_binding"]["active"][
             "content_sha256"
         ],
+        **_runtime_cas(legacy_runtime, drift["runtime_binding"]["active"]),
         expected_current_milestone="@terminal",
         expected_current_plan="@none",
         reason="accept the exact legacy persisted runtime digest",
@@ -1187,10 +1269,12 @@ def test_runtime_cutover_cas_uses_verified_legacy_persisted_digest(
     ]
 
 
-def test_runtime_cutover_rejects_normalized_alias_for_legacy_persisted_digest(
+def test_runtime_rebind_refuses_aliased_previous_import_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The from-guard is the persisted import_root itself: an aliased root
+    cannot satisfy the CAS even against a valid legacy-digest identity."""
     spec_path, state, original_runtime, drift = _terminal_runtime_drift_case(
         tmp_path, monkeypatch
     )
@@ -1211,18 +1295,26 @@ def test_runtime_cutover_rejects_normalized_alias_for_legacy_persisted_digest(
         "current_identity"
     ] = legacy_runtime
 
-    with pytest.raises(CliError, match="previous runtime SHA-256 does not match"):
+    with pytest.raises(
+        CliError, match="previous runtime import_root does not match"
+    ):
         rebind_runtime_identity(
             spec_path,
             state,
-            expected_previous_runtime_sha256=original_runtime["content_sha256"],
-            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
-                "content_sha256"
-            ],
+            expected_previous_import_root=str(tmp_path / "aliased-import-root"),
+            expected_previous_interpreter=_generation_interpreter(legacy_runtime),
+            expected_active_import_root=str(
+                drift["runtime_binding"]["active"]["import_root"]
+            ),
+            expected_active_interpreter=_generation_interpreter(
+                drift["runtime_binding"]["active"]
+            ),
             expected_current_milestone="@terminal",
             expected_current_plan="@none",
-            reason="reject a normalized alias instead of the persisted digest",
+            reason="reject an aliased from-guard root",
         )
+
+
 
 
 @pytest.mark.parametrize("tamper", ["digest", "unknown_field"])
@@ -1263,6 +1355,7 @@ def test_runtime_cutover_rejects_unverified_persisted_runtime_extensions(
             expected_active_runtime_sha256=drift["runtime_binding"]["active"][
                 "content_sha256"
             ],
+            **_runtime_cas(persisted, drift["runtime_binding"]["active"]),
             expected_current_milestone="@terminal",
             expected_current_plan="@none",
             reason="reject an unauthenticated persisted identity",
@@ -1319,10 +1412,7 @@ def test_runtime_cutover_terminal_path_fails_closed(
         rebind_runtime_identity(
             spec_path,
             state,
-            expected_previous_runtime_sha256=original_runtime["content_sha256"],
-            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
-                "content_sha256"
-            ],
+            **_runtime_cas(original_runtime, drift["runtime_binding"]["active"]),
             expected_current_milestone=expected_milestone,
             expected_current_plan=expected_plan,
             reason="terminal guard regression",
@@ -1333,7 +1423,11 @@ def test_runtime_cutover_terminal_path_fails_closed(
 def test_b_cli_rolls_back_to_independently_receipted_a_runtime(
     tmp_path: Path,
     offline_rollback_runtime: dict[str, Path | str],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """A real python_b-bound chain rolls back to the independently receipted
+    A runtime through the production runtime-rebind CLI handler, under a
+    minted operator capability and the import_root+interpreter CAS."""
     spec_path = _pinned_chain(tmp_path)
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["require_editable_runtime_match"] = True
@@ -1382,44 +1476,49 @@ def test_b_cli_rolls_back_to_independently_receipted_a_runtime(
         Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8")
     )
 
-    command = subprocess.run(
-        [
-            str(python_b),
-            "-P",
-            "-m",
-            "arnold_pipelines.megaplan",
-            "chain",
-            "runtime-rebind",
-            "--spec",
-            str(spec_path),
-            "--project-dir",
-            str(tmp_path),
-            "--from-runtime-sha256",
-            runtime_b["content_sha256"],
-            "--to-runtime-sha256",
-            identity_a["content_sha256"],
-            "--expected-current-milestone",
-            "c1",
-            "--expected-current-plan",
-            "c1-plan",
-            "--direction",
-            "rollback",
-            "--reason",
-            "real B CLI to independently observed A runtime",
-            "--actor",
-            "test-operator",
-            "--runtime-identity",
-            str(offline_rollback_runtime["identity"]),
-            "--runtime-provenance-receipt",
-            str(offline_rollback_runtime["receipt"]),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env_b,
+    capability = _mint_capability(
+        tmp_path,
+        action=REBIND_ACTION,
+        extra={
+            "import_root": str(runtime_b["import_root"]),
+            "interpreter": _generation_interpreter(runtime_b),
+            "runtime_manifest": {
+                "epic": {
+                    "runtime_root": str(runtime_b["import_root"]),
+                    "dependency_generation": {
+                        "interpreter_path": _generation_interpreter(runtime_b)
+                    },
+                }
+            },
+        },
     )
-    assert command.returncode == 0, command.stderr
-    payload = json.loads(command.stdout)
+    attach_mutation_capability(capability, identity="occ-1")
+    args = Namespace(
+        chain_action="runtime-rebind",
+        spec=str(spec_path),
+        project_dir=str(tmp_path),
+        from_runtime_sha256=None,
+        to_runtime_sha256=None,
+        from_import_root=str(runtime_b["import_root"]),
+        from_interpreter=_generation_interpreter(runtime_b),
+        to_import_root=str(identity_a["import_root"]),
+        to_interpreter=_generation_interpreter(identity_a),
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        direction="rollback",
+        reason="real B chain to independently observed A runtime",
+        actor="test-operator",
+        runtime_identity=str(offline_rollback_runtime["identity"]),
+        runtime_provenance_receipt=str(offline_rollback_runtime["receipt"]),
+        occurrence="occ-1",
+        target="target-1",
+        fence_epoch=3,
+        capability_handle="occ-1",
+        mutation_capability=None,
+    )
+    assert run_chain_cli(tmp_path, args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "runtime-rebind"
     assert payload["verification_mode"] == "external_interpreter_receipt"
     assert payload["event"]["direction"] == "rollback"
     assert payload["runtime_binding"]["status"] == "match"
@@ -1433,19 +1532,23 @@ def test_b_cli_rolls_back_to_independently_receipted_a_runtime(
     assert after.completed == before.completed
 
 
-def test_b_cli_runtime_cutover_moves_engine_root_to_receipted_a(
+
+
+def test_receipted_a_rollback_moves_engine_root_back_to_a(
     tmp_path: Path,
     offline_rollback_runtime: dict[str, Path | str],
 ) -> None:
+    """Engine-root custody follows an externally receipted rollback: after
+    adopting the independently receipted A runtime over a real python_b-bound
+    chain, engine_root points at A's import_root and the cursor is
+    byte-preserved."""
     spec_path = _pinned_chain(tmp_path)
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["require_editable_runtime_match"] = True
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-m", "require runtime binding")
-    raw["driver"]["intended_initiative_revision"] = _git(
-        tmp_path, "rev-parse", "HEAD"
-    )
+    raw["driver"]["intended_initiative_revision"] = _git(tmp_path, "rev-parse", "HEAD")
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
     python_b = Path(offline_rollback_runtime["python_b"])
@@ -1482,82 +1585,59 @@ def test_b_cli_runtime_cutover_moves_engine_root_to_receipted_a(
         env=env_b,
     )
     assert setup.returncode == 0, setup.stderr
-    before = load_chain_state(spec_path, verify_execution_binding=False)
-    runtime_b = before.metadata["execution_binding"]["runtime_binding"][
+    state = load_chain_state(spec_path, verify_execution_binding=False)
+    successor_identity = state.metadata["execution_binding"]["runtime_binding"][
         "current_identity"
     ]
-    recorded_root = before.metadata["execution_environment"]["engine_root"]
+    recorded_root = state.metadata["execution_environment"]["engine_root"]
     assert str(Path(recorded_root).resolve()) == str(
-        Path(runtime_b["import_root"]).resolve()
+        Path(successor_identity["import_root"]).resolve()
     )
     identity_a = json.loads(
         Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8")
     )
+    before = json.loads(json.dumps(state.to_dict()))
 
-    command = subprocess.run(
-        [
-            str(python_b),
-            "-P",
-            "-m",
-            "arnold_pipelines.megaplan",
-            "chain",
-            "runtime-cutover",
-            "--spec",
-            str(spec_path),
-            "--project-dir",
-            str(tmp_path),
-            "--from-runtime-sha256",
-            runtime_b["content_sha256"],
-            "--to-runtime-sha256",
-            identity_a["content_sha256"],
-            "--expected-current-milestone",
-            "c1",
-            "--expected-current-plan",
-            "c1-plan",
-            "--direction",
-            "rollback",
-            "--reason",
-            "real B CLI cutover to independently observed A runtime",
-            "--actor",
-            "test-operator",
-            "--runtime-identity",
-            str(offline_rollback_runtime["identity"]),
-            "--runtime-provenance-receipt",
-            str(offline_rollback_runtime["receipt"]),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env_b,
+    result = cutover_runtime_identity(
+        spec_path,
+        state,
+        **_runtime_cas(successor_identity, identity_a),
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        direction="rollback",
+        reason="roll the engine root back to the independently receipted A runtime",
+        verified_external_runtime_identity=identity_a,
     )
-    assert command.returncode == 0, command.stderr
-    payload = json.loads(command.stdout)
-    assert payload["action"] == "runtime-cutover"
-    assert payload["verification_mode"] == "external_interpreter_receipt"
-    assert payload["event"]["direction"] == "rollback"
-    assert payload["runtime_binding"]["status"] == "match"
-    assert payload["engine_root_transition"]["to_engine_root"] == str(
+
+    assert result["runtime_binding"]["status"] == "match"
+    assert result["verification_mode"] == "external_interpreter_receipt"
+    assert result["event"]["direction"] == "rollback"
+    assert result["engine_root_transition"]["to_engine_root"] == str(
         Path(identity_a["import_root"]).resolve()
     )
-    after = load_chain_state(spec_path, verify_execution_binding=False)
     assert (
-        after.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+        state.metadata["execution_environment"]["engine_root"]
+        == str(Path(identity_a["import_root"]).resolve())
+    )
+    assert (
+        state.metadata["execution_binding"]["runtime_binding"]["current_identity"]
         == identity_a
     )
-    assert after.metadata["execution_environment"]["engine_root"] == str(
-        Path(identity_a["import_root"]).resolve()
-    )
-    assert after.current_milestone_index == before.current_milestone_index
-    assert after.current_plan_name == before.current_plan_name
-    assert after.completed == before.completed
+    for field in before:
+        if field != "metadata":
+            assert state.to_dict()[field] == before[field]
 
 
-def test_cli_runtime_cutover_refuses_engine_root_drift_without_writing(
+
+
+def test_cli_runtime_rebind_refuses_cas_drift_without_writing(
     tmp_path: Path,
     offline_rollback_runtime: dict[str, Path | str],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """CLI-level fail-closed proof: a mismatched recorded engine_root refuses
-    with a typed drift error and the persisted chain state is untouched."""
+    """CLI-level fail-closed proof: a from-guard that does not match the
+    persisted runtime refuses with a typed drift error and the persisted
+    chain-state bytes are untouched."""
     spec_path = _pinned_chain(tmp_path)
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["require_editable_runtime_match"] = True
@@ -1591,7 +1671,6 @@ def test_cli_runtime_cutover_refuses_engine_root_drift_without_writing(
                 "assert r['runtime_binding']['status']=='match',r;"
                 "s.current_milestone_index=0;"
                 "s.current_plan_name='c1-plan';"
-                "s.metadata['execution_environment']={'engine_root': '/unrelated/recorded-root'};"
                 "save_chain_state(p,s)"
             ),
         ],
@@ -1624,48 +1703,54 @@ def test_cli_runtime_cutover_refuses_engine_root_drift_without_writing(
     assert state_path.is_file()
     before_bytes = state_path.read_bytes()
 
-    command = subprocess.run(
-        [
-            str(python_b),
-            "-P",
-            "-m",
-            "arnold_pipelines.megaplan",
-            "chain",
-            "runtime-cutover",
-            "--spec",
-            str(spec_path),
-            "--project-dir",
-            str(tmp_path),
-            "--from-runtime-sha256",
-            runtime_b["content_sha256"],
-            "--to-runtime-sha256",
-            identity_a["content_sha256"],
-            "--expected-current-milestone",
-            "c1",
-            "--expected-current-plan",
-            "c1-plan",
-            "--direction",
-            "rollback",
-            "--reason",
-            "must refuse split engine root custody",
-            "--actor",
-            "test-operator",
-            "--runtime-identity",
-            str(offline_rollback_runtime["identity"]),
-            "--runtime-provenance-receipt",
-            str(offline_rollback_runtime["receipt"]),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env_b,
+    capability = _mint_capability(
+        tmp_path,
+        action=REBIND_ACTION,
+        extra={
+            "import_root": str(runtime_b["import_root"]),
+            "interpreter": _generation_interpreter(runtime_b),
+            "runtime_manifest": {
+                "epic": {
+                    "runtime_root": str(runtime_b["import_root"]),
+                    "dependency_generation": {
+                        "interpreter_path": _generation_interpreter(runtime_b)
+                    },
+                }
+            },
+        },
     )
-    assert command.returncode != 0
-    payload = json.loads(command.stdout)
+    attach_mutation_capability(capability, identity="occ-1")
+    args = Namespace(
+        chain_action="runtime-rebind",
+        spec=str(spec_path),
+        project_dir=str(tmp_path),
+        from_runtime_sha256=None,
+        to_runtime_sha256=None,
+        from_import_root="/unrelated/recorded-root",
+        from_interpreter=_generation_interpreter(runtime_b),
+        to_import_root=str(identity_a["import_root"]),
+        to_interpreter=_generation_interpreter(identity_a),
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        direction="rollback",
+        reason="must refuse a from-guard that does not match the persisted runtime",
+        actor="test-operator",
+        runtime_identity=str(offline_rollback_runtime["identity"]),
+        runtime_provenance_receipt=str(offline_rollback_runtime["receipt"]),
+        occurrence="occ-1",
+        target="target-1",
+        fence_epoch=3,
+        capability_handle="occ-1",
+        mutation_capability=None,
+    )
+    assert run_chain_cli(tmp_path, args) != 0
+    payload = json.loads(capsys.readouterr().out)
     assert payload["success"] is False
     assert payload["error"] == "chain_runtime_binding_drift"
-    assert "recorded engine root does not match" in payload["message"]
+    assert "previous runtime import_root does not match" in payload["message"]
     assert state_path.read_bytes() == before_bytes
+
+
 
 
 def test_external_runtime_receipt_rejects_b_self_asserting_a(
