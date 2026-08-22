@@ -128,6 +128,10 @@ import stat
 import sys
 from pathlib import Path
 
+# GENROOT-001: the census default store comes from the ONE shared resolver,
+# never from a locally re-spelled precedence chain.
+from arnold_pipelines.megaplan.cloud.install_sync import configured_generations_root
+
 # Path-bearing keys whose value is a candidate runtime-root reference.  The
 # list is curated to the field names the runtime truth stores actually use;
 # values are only compared by EXACT normalized path equality with the target.
@@ -223,12 +227,13 @@ DEFAULT_OPS_STORE = os.environ.get(
 )
 # Content-addressed dependency-generation store root (T-0301): one immutable
 # venv per frozen-spec digest at <root>/<sha256> with a .generation.json
-# proof.  Matches the arnold-runtime-create default
-# ($ARNOLD_RUNTIME_VENVS_DIR or <base>/runtime-venvs) and the legacy
-# /workspace/runtime-venvs/arnold-<sha>-live pattern.
-DEFAULT_GENERATION_ROOT = os.environ.get(
-    "ARNOLD_REFERENCE_RUNTIME_VENVS_DIR", "/workspace/runtime-venvs"
-)
+# proof.  GENROOT-001: resolved through install_sync.configured_generations_root
+# — the SAME precedence chain the creation wrapper (arnold-runtime-create) and
+# gc-sweep use: ARNOLD_RUNTIME_VENVS_DIR -> ARNOLD_REFERENCE_RUNTIME_VENVS_DIR
+# (legacy alias) -> $ARNOLD_BASE_DIR/runtime-venvs.  Never a hard-coded
+# absolute path and never a locally re-spelled chain; legacy
+# /workspace/runtime-venvs/arnold-<sha>-live venvs still match via path-keys.
+DEFAULT_GENERATION_ROOT = str(configured_generations_root())
 
 # Content-addressed generation dir names are 64-char hex spec digests; the
 # legacy /workspace/runtime-venvs/arnold-<sha>-live venvs predate T-0301 and

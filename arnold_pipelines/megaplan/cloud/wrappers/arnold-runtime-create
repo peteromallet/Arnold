@@ -46,7 +46,9 @@
 #   ARNOLD_WORKSPACE_MARKERS    marker/lock state root                (default: $ARNOLD_BASE_DIR/markers)
 #   ARNOLD_RUNTIME_MANIFEST_DIR dir of per-epic runtime manifests     (default: $ARNOLD_BASE_DIR/.megaplan)
 #   ARNOLD_RUNTIME_VENVS_DIR    shared content-addressed dependency-generation
-#                               store root (T-0301)                   (default: $ARNOLD_BASE_DIR/runtime-venvs)
+#                               store root (T-0301); legacy alias
+#                               ARNOLD_REFERENCE_RUNTIME_VENVS_DIR honored
+#                               via the shared resolver    (default: $ARNOLD_BASE_DIR/runtime-venvs)
 #   ARNOLD_RUNTIME_MANIFEST     active-pointer path (bootstrap root)  (default: $ARNOLD_RUNTIME_MANIFEST_DIR/runtime-manifest.json)
 #   ARNOLD_RUNTIME_POLICY       per-chain runtime policy sidecar (.runtime_policy.json)
 #                               holding an optional allow_manifestless permit;
@@ -127,7 +129,14 @@ fi
 # LOUDLY — a runtime without a verifiable immutable generation is never
 # created (no manifest without proof, no per-worktree .venv, no editable
 # install).
-GEN_ROOT="${ARNOLD_RUNTIME_VENVS_DIR:-$BASE_DIR/runtime-venvs}"
+# GENROOT-001: resolve the store with the ONE shared resolver
+# (install_sync.configured_generations_root: ARNOLD_RUNTIME_VENVS_DIR ->
+# ARNOLD_REFERENCE_RUNTIME_VENVS_DIR -> $ARNOLD_BASE_DIR/runtime-venvs) so
+# creation judges residency against the SAME root verification (gc-sweep
+# reference census, runtime_manifest trusted-root containment) uses under
+# EVERY configuration — legacy-only deployments included. Do NOT re-inline
+# this precedence here; a mirror would drift apart again.
+GEN_ROOT="$(python3 -c 'from arnold_pipelines.megaplan.cloud.install_sync import configured_generations_root; print(configured_generations_root())')"
 DEPS_LOCKFILE="$RUNTIME_DIR/uv.lock"
 GEN_PROOF_JSON="$(python3 - "$RUNTIME_DIR" "$GEN_ROOT" <<'PY'
 import json, os, sys

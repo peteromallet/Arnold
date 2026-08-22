@@ -84,6 +84,10 @@
 #   ARNOLD_BASE_DIR             dir that contains runtime-candidates/ (default: /workspace)
 #   ARNOLD_BASE_REPO            repo that owns the worktrees          (default: $ARNOLD_BASE_DIR/arnold)
 #   ARNOLD_ORIGIN_URL           origin URL/remote used to resolve     (default: origin)
+#   ARNOLD_RUNTIME_VENVS_DIR    content-addressed dependency-generation store
+#                               fed to the reference census; legacy alias
+#                               ARNOLD_REFERENCE_RUNTIME_VENVS_DIR honored
+#                               via the shared resolver    (default: $ARNOLD_BASE_DIR/runtime-venvs)
 #   ARNOLD_SCHEDULE_STORE       schedule store dir to reconcile        (default: /workspace/arnold/.megaplan/resident/scheduled_jobs + /workspace/arnold/.megaplan/resident/schedules/heads + /workspace/.megaplan/ops/schedules)
 #
 set -euo pipefail
@@ -132,7 +136,14 @@ mkdir -p "$ARCHIVE_DIR"
 # generation blocks deletion (UNKNOWN) and a referenced generation is never
 # rm -rf'd; the generation itself is deleted only when the census proves
 # zero references to it.
-GEN_ROOT="${ARNOLD_RUNTIME_VENVS_DIR:-$BASE_DIR/runtime-venvs}"
+# GENROOT-001: resolve the store with the ONE shared resolver
+# (install_sync.configured_generations_root: ARNOLD_RUNTIME_VENVS_DIR ->
+# ARNOLD_REFERENCE_RUNTIME_VENVS_DIR -> $ARNOLD_BASE_DIR/runtime-venvs) so the
+# census judges residency against the SAME root creation (arnold-runtime-create)
+# and verification (runtime_manifest trusted-root containment) use under EVERY
+# configuration — legacy-only deployments included. Do NOT re-inline this
+# precedence here; a mirror would drift apart again.
+GEN_ROOT="$(python3 -c 'from arnold_pipelines.megaplan.cloud.install_sync import configured_generations_root; print(configured_generations_root())')"
 
 # Schedule store reconciliation (design rule 6 / Phase 5): probe-4 trees are
 # referenced by the schedule store and must NEVER be swept. Default stores are

@@ -273,3 +273,156 @@ def test_configured_generations_root_single_source_precedence(
     assert configured_generations_root() == tmp_path / "ref-store"
     monkeypatch.setenv("ARNOLD_RUNTIME_VENVS_DIR", str(tmp_path / "creation-store"))
     assert configured_generations_root() == tmp_path / "creation-store"
+
+
+# ─── GENROOT-001: every remaining store-root caller shares ONE resolver ─────
+#
+# Sol must-finding mrc-fdb72fb3: arnold-runtime-create, arnold-gc-sweep, and
+# runtime_references.DEFAULT_GENERATION_ROOT each re-spelled the generations-
+# store precedence locally, so a LEGACY-ONLY deployment (only
+# ARNOLD_REFERENCE_RUNTIME_VENVS_DIR set) split creation ($BASE/runtime-venvs)
+# from verification/census (the alias) and refused legitimate promotions.
+# All three must resolve IDENTICALLY to install_sync.configured_generations_root
+# under every configuration: legacy-only, both-vars (creation name wins), and
+# default (derived $ARNOLD_BASE_DIR/runtime-venvs).
+
+RUNTIME_CREATE_WRAPPER = (
+    REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-runtime-create"
+)
+GC_SWEEP_WRAPPER = (
+    REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-gc-sweep"
+)
+
+
+def _sandbox_store_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> Path:
+    """Configure ONLY the documented env surface for *mode*, disposable root.
+
+    legacy-only: ARNOLD_REFERENCE_RUNTIME_VENVS_DIR set, creation name unset.
+    both-vars:   both set — the creation-store name must win everywhere.
+    default:     neither set — derived ``$ARNOLD_BASE_DIR/runtime-venvs``.
+    Returns the ONE root every surface must resolve to.
+    """
+    assert mode in ("legacy-only", "both-vars", "default")
+    for var in STORE_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    base_dir = tmp_path / "base"
+    (base_dir / ".megaplan").mkdir(parents=True)
+    monkeypatch.setenv("ARNOLD_BASE_DIR", str(base_dir))
+    monkeypatch.setenv(
+        "ARNOLD_RUNTIME_MANIFEST",
+        str(base_dir / ".megaplan" / "runtime-manifest.json"),
+    )
+    monkeypatch.setenv("ARNOLD_GENERATION_BUILD_STRATEGY", "pip")
+    if mode in ("legacy-only", "both-vars"):
+        monkeypatch.setenv(
+            "ARNOLD_REFERENCE_RUNTIME_VENVS_DIR",
+            str(tmp_path / "legacy-reference-store"),
+        )
+    if mode == "both-vars":
+        monkeypatch.setenv("ARNOLD_RUNTIME_VENVS_DIR", str(tmp_path / "creation-store"))
+    return {
+        "legacy-only": tmp_path / "legacy-reference-store",
+        "both-vars": tmp_path / "creation-store",
+        "default": base_dir / "runtime-venvs",
+    }[mode]
+
+
+def _wrapper_env() -> dict:
+    """Subprocess env for wrapper-source execution: pytest interpreter's bin
+    dir first so the wrappers' bare ``python3`` is the SAME interpreter that
+    can import arnold_pipelines via PYTHONPATH."""
+def _wrapper_resolved_gen_root(wrapper: Path) -> str:
+    """Execute the wrapper's ACTUAL GEN_ROOT resolution, verbatim from its
+    source text (no re-spelling here either) together with the BASE_DIR
+    assignment GEN_ROOT historically depended on, and print the value."""
+    text = wrapper.read_text(encoding="utf-8")
+    assignments = [
+        line
+        for line in text.splitlines()
+        if line.startswith(("BASE_DIR=", "GEN_ROOT="))
+    ]
+    script = "\n".join(assignments) + "\nprintf '%s' \"$GEN_ROOT\"\n"
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env=_wrapper_env(),
+        timeout=120,
+    )
+    assert proc.returncode == 0, (
+        f"{wrapper.name}: GEN_ROOT resolution failed\n{proc.stderr}"
+    )
+    return proc.stdout
+
+
+def _fresh_interpreter_default_generation_root() -> str:
+    """DEFAULT_GENERATION_ROOT as a FRESH interpreter sees it (the census CLI
+    runs as its own process, so import-time capture is the real semantic)."""
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from arnold_pipelines.megaplan.cloud.runtime_references import "
+            "DEFAULT_GENERATION_ROOT as root; print(root)",
+        ],
+        capture_output=True,
+        text=True,
+        env=_wrapper_env(),
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
+
+
+@pytest.mark.parametrize("mode", ["legacy-only", "both-vars", "default"])
+def test_genroot001_all_surfaces_resolve_identical_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Creation wrapper, gc-sweep, DEFAULT_GENERATION_ROOT, and the
+    trusted-root containment resolver MUST derive the one configured store
+    identically — the finding's split surfaces can never disagree again."""
+    expected = _sandbox_store_config(tmp_path, monkeypatch, mode)
+
+    # surfaces 1+2: shell wrappers execute their own verbatim assignment
+    assert _wrapper_resolved_gen_root(RUNTIME_CREATE_WRAPPER) == str(expected)
+    assert _wrapper_resolved_gen_root(GC_SWEEP_WRAPPER) == str(expected)
+    # surface 3: census default constant (fresh interpreter = CLI semantics)
+    assert _fresh_interpreter_default_generation_root() == str(expected)
+    # surface 4: runtime_manifest trusted-root containment resolver (call time)
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        _configured_generations_root,
+    )
+
+    assert _configured_generations_root() == str(expected)
+
+
+def test_genroot001_legacy_only_config_promotes_built_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The finding's failure scenario, end-to-end under LEGACY-ONLY config:
+    a generation built into the reference-alias store (what creation resolves
+    through the shared resolver) is accepted by advance_generation, whose
+    trusted-root containment resolves INDEPENDENTLY via the same resolver."""
+    gen_root = _sandbox_store_config(tmp_path, monkeypatch, "legacy-only")
+    repo, head0, head1 = _runtime_repo(tmp_path)
+    proof = ensure_dependency_generation(str(repo), str(gen_root))
+    manifest = _bound_manifest(repo, head0, proof)
+    slug_path = tmp_path / "manifests" / "runtime-promo-default.json"
+    slug_path.parent.mkdir(parents=True, exist_ok=True)
+    write_manifest(manifest, slug_path)
+    rc = main(
+        [
+            "advance_generation",
+            str(slug_path),
+            head1,
+            "--reason",
+            "GENROOT-001 legacy-only promotion",
+        ]
+    )
+    assert rc == 0, "legitimately built runtime refused under legacy-only config"
+    advanced = load_manifest(slug_path)
+    assert advanced.epic["expected_head"] == head1
+    # residency was judged against the ONE alias-configured store
+    assert generation_dir(gen_root, str(proof["id"])).is_dir()
