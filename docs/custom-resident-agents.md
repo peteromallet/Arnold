@@ -98,6 +98,21 @@ system prompt. The external profile selector is the trusted, repo-relative
 `.agentbox/resident_profile.py:AstridResidentProfile`; loading is unsandboxed
 project code and is contained under the target repository.
 
+### Domain tools: the gateway-tool pattern
+
+Your generated profile replaces the operator catalog by overriding
+`_register_default_tools`. The proven shape (used by the Astrid media
+resident): register ONE gateway tool whose handler shells out to your
+project's own CLI/SDK with an allowlist of families — the model navigates
+your domain through it. Rules learned the hard way:
+
+- allowlist the first argv token (family); never daemonize from a tool call;
+- run the subprocess inside your repo root with a timeout; JSON out;
+- no package-relative imports in the profile (it loads by path);
+- if your toolkit needs first-run bootstrap (stores, indexes), do it in the
+  bootstrap/docs step of deployment — health checks fail before bootstrap.
+
+
 ## Deploy
 
 ### Configure the environment

@@ -16,7 +16,17 @@ def _project_system_prompt() -> str:
 
 
 class {{PASCAL_NAME}}ResidentProfile(AgentBoxOperatorProfile):
-    # DOMAIN TOOLS SLOT: add project-specific domain tools to this profile when needed.
+    # DOMAIN TOOLS SLOT — two proven patterns:
+    #   1. Gateway tool (recommended): ONE tool that shells out to your
+    #      project's CLI/SDK gateway with an allowlist of families/verbs;
+    #      never daemonize from a tool call.
+    #   2. Catalog replacement: override _register_default_tools entirely and
+    #      register your own ToolRegistration set (lazy-import
+    #      arnold_pipelines.megaplan.resident.tool_registry/tool_schemas).
+    # CONSTRAINTS (this file loads by path, not as a package):
+    #   - no package-relative imports (from .x import y FAILS);
+    #   - import resident-framework symbols lazily via a helper;
+    #   - pydantic input models subclass the lazily imported ToolInput.: add project-specific domain tools to this profile when needed.
 
     def __init__(self, *, store, authorizer, config, confirmation_manager):
         super().__init__(
