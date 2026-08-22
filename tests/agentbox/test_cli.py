@@ -523,6 +523,14 @@ _RUN_RESIDENT_STUB_LOG_ENV = "RUN_RESIDENT_STUB_LOG"
 _FAKE_LAUNCH_SEED = "/fake/custody/seeds/standalone-fake.json"
 
 _PYTHON_STUB_SOURCE = """#!/bin/sh
+case "$*" in
+    *"arnold_pipelines.__file__"*)
+        # The launcher's launch-interpreter probe resolving the imported
+        # Arnold runtime root.  Not a custody step: never logged.
+        echo "${RUN_RESIDENT_STUB_RUNTIME_ROOT-}"
+        exit 0
+        ;;
+esac
 {
     echo "==="
     echo "cwd=$PWD"
@@ -591,7 +599,12 @@ def _init_launcher_repo(tmp_path: Path, name: str) -> tuple[Path, str]:
     return repo, head
 
 
-def _install_python_stub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _install_python_stub(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    runtime_root: Path,
+) -> None:
     import os
 
     stub_dir = tmp_path / "python-stub"
@@ -606,6 +619,34 @@ def _install_python_stub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv(_RUN_RESIDENT_STUB_LOG_ENV, str(log_path))
+    monkeypatch.setenv("RUN_RESIDENT_STUB_RUNTIME_ROOT", str(runtime_root))
+
+
+def _init_runtime_checkout(tmp_path: Path) -> tuple[Path, str]:
+    """Create a distinct external Arnold-runtime Git checkout."""
+    import subprocess
+
+    runtime = tmp_path / "arnold-runtime"
+    runtime.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=runtime, check=True)
+    subprocess.run(
+        ["git", "-C", str(runtime), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(runtime), "config", "user.name", "Test"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(runtime), "commit", "--allow-empty", "-q", "-m", "rt"],
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(runtime), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return runtime.resolve(strict=True), head
 
 
 def _read_stub_records(tmp_path: Path) -> list[dict[str, str]]:
@@ -635,7 +676,8 @@ def test_run_resident_attests_head_then_execs_discord_with_seed(tmp_path, monkey
 
     repo, head = _init_launcher_repo(tmp_path, "demo")
     repo = repo.resolve(strict=True)
-    _install_python_stub(monkeypatch, tmp_path)
+    runtime, runtime_head = _init_runtime_checkout(tmp_path)
+    _install_python_stub(monkeypatch, tmp_path, runtime_root=runtime)
     launcher = repo / ".agentbox" / "run-resident"
 
     # Deliberately launched from OUTSIDE the repo: the launcher must resolve
@@ -657,6 +699,7 @@ def test_run_resident_attests_head_then_execs_discord_with_seed(tmp_path, monkey
     assert (
         f"<-m> <arnold_pipelines.megaplan> <resident> <attest>"
         f" <--repo-root> <{repo}> <--expected-head> <{head}>"
+        f" <--runtime-root> <{runtime}> <--expected-runtime-head> <{runtime_head}>"
         == attest_record["argv"]
     )
     assert discord_record["cwd"] == str(repo)
@@ -673,7 +716,8 @@ def test_run_resident_forwards_extra_arguments_to_discord(tmp_path, monkeypatch)
     import subprocess
 
     repo, _head = _init_launcher_repo(tmp_path, "demo")
-    _install_python_stub(monkeypatch, tmp_path)
+    runtime, _runtime_head = _init_runtime_checkout(tmp_path)
+    _install_python_stub(monkeypatch, tmp_path, runtime_root=runtime)
 
     result = subprocess.run(
         [str(repo / ".agentbox" / "run-resident"), "--dry-run"],
@@ -692,7 +736,7 @@ def test_run_resident_refuses_missing_env_file_before_any_launch(tmp_path, monke
 
     repo, _head = _init_launcher_repo(tmp_path, "demo")
     (repo / ".agentbox" / "demo.env").unlink()
-    _install_python_stub(monkeypatch, tmp_path)
+    _install_python_stub(monkeypatch, tmp_path, runtime_root=tmp_path)
 
     result = subprocess.run(
         [str(repo / ".agentbox" / "run-resident")],
@@ -710,7 +754,7 @@ def test_run_resident_refuses_empty_discord_token_before_any_launch(tmp_path, mo
 
     repo, _head = _init_launcher_repo(tmp_path, "demo")
     (repo / ".agentbox" / "demo.env").write_text("DISCORD_BOT_TOKEN=\n", encoding="utf-8")
-    _install_python_stub(monkeypatch, tmp_path)
+    _install_python_stub(monkeypatch, tmp_path, runtime_root=tmp_path)
 
     result = subprocess.run(
         [str(repo / ".agentbox" / "run-resident")],
@@ -727,7 +771,8 @@ def test_run_resident_propagates_attest_failure_without_starting_discord(tmp_pat
     import subprocess
 
     repo, _head = _init_launcher_repo(tmp_path, "demo")
-    _install_python_stub(monkeypatch, tmp_path)
+    runtime, _runtime_head = _init_runtime_checkout(tmp_path)
+    _install_python_stub(monkeypatch, tmp_path, runtime_root=runtime)
     monkeypatch.setenv("RUN_RESIDENT_STUB_ATTEST_FAIL", "1")
 
     result = subprocess.run(
@@ -741,6 +786,25 @@ def test_run_resident_propagates_attest_failure_without_starting_discord(tmp_pat
     records = _read_stub_records(tmp_path)
     assert len(records) == 1
     assert "<resident> <attest>" in records[0]["argv"]
+
+
+def test_run_resident_refuses_unresolvable_runtime_root_before_attest(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    repo, _head = _init_launcher_repo(tmp_path, "demo")
+    _install_python_stub(
+        monkeypatch, tmp_path, runtime_root=tmp_path / "missing-runtime"
+    )
+
+    result = subprocess.run(
+        [str(repo / ".agentbox" / "run-resident")],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "could not resolve the imported Arnold runtime root" in result.stderr
+    assert _read_stub_records(tmp_path) == []
 
 
 def _init_empty_megaplan_repo(tmp_path: Path, name: str) -> Path:

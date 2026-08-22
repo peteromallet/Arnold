@@ -41,8 +41,10 @@ def _healthy_runtime_fixture(
     monkeypatch.setattr(attestation, "_module_vector", lambda _root: (modules, []))
     monkeypatch.setattr(attestation, "_wrapper_vector", lambda _root: (wrappers, []))
     seed = attestation.build_standalone_runtime_launch_seed(
-        expected_root=root,
-        expected_revision=revision,
+        project_root=root,
+        expected_project_revision=revision,
+        runtime_root=root,
+        expected_runtime_revision=revision,
         generated_at="2026-08-22T00:00:00Z",
     )
     assert seed["ready"] is True
@@ -86,14 +88,14 @@ def test_standalone_seed_validates_and_process_attestation_binds_authority(
     state.chmod(0o700)
     monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", lambda _root, create=True: state)
     paths = attestation.standalone_dispatch_paths(
-        Path(str(seed["expected_root"])),
-        head=str(seed["expected_revision"]),
+        Path(str(seed["project_root"])),
+        head=str(seed["expected_project_revision"]),
         seed_sha256=str(seed["content_sha256"]),
     )
     published = attestation.write_standalone_runtime_publication(
         seed=seed,
         seed_path=paths["seed"],
-        root=Path(str(seed["expected_root"])),
+        root=Path(str(seed["project_root"])),
         generated_at=seed["generated_at"],
     )
     seed_path = paths["seed"]
@@ -108,14 +110,72 @@ def test_standalone_seed_validates_and_process_attestation_binds_authority(
     )
 
 
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "schema",
+        "authority",
+        "project_root",
+        "expected_project_revision",
+        "live_project_revision",
+        "runtime_root",
+        "expected_runtime_revision",
+        "live_runtime_revision",
+        "generated_at",
+        "runtime_provenance",
+        "loaded_modules",
+        "interpreter",
+        "site_pth",
+        "wrappers",
+        "errors",
+        "ready",
+        "content_sha256",
+    ],
+)
+def test_standalone_seed_requires_every_digest_covered_field(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    """The two-root schema has no missing-field fallback for ANY seed field."""
+    seed, _root, _revision = _healthy_runtime_fixture(monkeypatch)
+    missing = {key: value for key, value in seed.items() if key != field}
+    if field != "content_sha256":
+        # Recache re-derives content_sha256 itself; dropping the digest field
+        # must stay dropped so the digest gate rejects it.
+        _recache(missing)
+    with pytest.raises(CliError):
+        attestation.validate_standalone_runtime_launch_seed(missing)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["expected_root", "expected_revision", "live_revision"],
+)
+def test_standalone_seed_rejects_legacy_one_root_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    """Retired one-root field names are tampering evidence, never fallbacks."""
+    seed, _root, _revision = _healthy_runtime_fixture(monkeypatch)
+    altered = {**seed, field: "legacy-value"}
+    _recache(altered)
+    with pytest.raises(CliError, match="legacy field"):
+        attestation.validate_standalone_runtime_launch_seed(altered)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
         ("authority", attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY),
         ("authority", "arnold.megaplan.runtime-launch/unknown/v1"),
-        ("expected_root", "/tmp/foreign-repository"),
-        ("expected_revision", "a" * 40),
-        ("live_revision", "b" * 40),
+        ("project_root", "/tmp/foreign-repository"),
+        ("expected_project_revision", "a" * 40),
+        ("live_project_revision", "b" * 40),
+        ("runtime_root", "/tmp/foreign-runtime"),
+        ("expected_runtime_revision", "a" * 40),
+        ("live_runtime_revision", "b" * 40),
     ],
 )
 def test_standalone_seed_wrong_authority_root_or_head_fails_closed(
@@ -252,8 +312,10 @@ def test_standalone_admission_rejects_expected_head_whitespace(
     _seed, root, revision = _healthy_runtime_fixture(monkeypatch)
     with pytest.raises(CliError):
         attestation.build_standalone_runtime_launch_seed(
-            expected_root=root,
-            expected_revision=f" {revision} ",
+            project_root=root,
+            expected_project_revision=f" {revision} ",
+            runtime_root=root,
+            expected_runtime_revision=revision,
         )
 
 
@@ -332,6 +394,9 @@ def test_resident_attest_json_and_plain_contract_via_adapter(
         "root": str(Path.cwd()),
         "expected_head": "a" * 40,
         "live_head": "a" * 40,
+        "runtime_root": "/runtime/arnold",
+        "expected_runtime_head": "d" * 40,
+        "live_runtime_head": "d" * 40,
         "seed_path": "/repo/.megaplan/resident/runtime-launch/seeds/seed.json",
         "seed_sha256": "b" * 64,
         "receipt_path": "/repo/.megaplan/resident/runtime-launch/receipts/r.json",
@@ -339,7 +404,15 @@ def test_resident_attest_json_and_plain_contract_via_adapter(
         "pointer_path": "/repo/.megaplan/resident/runtime-launch/seeds/dispatch-current.json",
         "generated_at": "2026-08-22T00:00:00Z",
     }
-    seed = {"expected_root": str(Path.cwd()), "expected_revision": "a" * 40, "content_sha256": "b" * 64}
+    seed = {
+        "project_root": str(Path.cwd()),
+        "expected_project_revision": "a" * 40,
+        "live_project_revision": "a" * 40,
+        "runtime_root": "/runtime/arnold",
+        "expected_runtime_revision": "d" * 40,
+        "live_runtime_revision": "d" * 40,
+        "content_sha256": "b" * 64,
+    }
     paths = {
         "seed": Path(expected["seed_path"]),
         "pointer": Path(expected["pointer_path"]),
@@ -354,7 +427,18 @@ def test_resident_attest_json_and_plain_contract_via_adapter(
     monkeypatch.setattr(attestation, "standalone_dispatch_paths", lambda *_args, **_kwargs: paths)
     monkeypatch.setattr(attestation, "write_standalone_runtime_publication", lambda **_: published)
     assert _main(
-        ["resident", "attest", "--repo-root", "/repo", "--expected-head", "a" * 40]
+        [
+            "resident",
+            "attest",
+            "--repo-root",
+            "/repo",
+            "--expected-head",
+            "a" * 40,
+            "--runtime-root",
+            "/runtime/arnold",
+            "--expected-runtime-head",
+            "d" * 40,
+        ]
     ) == 0
     assert capsys.readouterr().out == expected["seed_path"] + "\n"
     assert _main(
@@ -365,6 +449,10 @@ def test_resident_attest_json_and_plain_contract_via_adapter(
             "/repo",
             "--expected-head",
             "a" * 40,
+            "--runtime-root",
+            "/runtime/arnold",
+            "--expected-runtime-head",
+            "d" * 40,
             "--json",
         ]
     ) == 0
@@ -391,6 +479,10 @@ def test_resident_attest_wrong_head_returns_admission_exit_code_2(
             str(Path.cwd()),
             "--expected-head",
             "0" * 40,
+            "--runtime-root",
+            "/runtime/arnold",
+            "--expected-runtime-head",
+            "0" * 40,
         ]
     )
     assert rc == 2
@@ -415,8 +507,12 @@ def test_resident_attest_publication_failure_does_not_advance_pointer(
     paths["pointer"].write_text('{"sentinel":true}\n', encoding="utf-8")
     before = paths["pointer"].read_bytes()
     seed = {
-        "expected_root": str(root),
-        "expected_revision": head,
+        "project_root": str(root),
+        "expected_project_revision": head,
+        "live_project_revision": head,
+        "runtime_root": str(root),
+        "expected_runtime_revision": head,
+        "live_runtime_revision": head,
         "content_sha256": "a" * 64,
     }
 
@@ -451,6 +547,10 @@ def test_resident_attest_publication_failure_does_not_advance_pointer(
             "--repo-root",
             str(root),
             "--expected-head",
+            head,
+            "--runtime-root",
+            str(root),
+            "--expected-runtime-head",
             head,
         ]
     )

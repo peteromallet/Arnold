@@ -7,9 +7,15 @@
 #      credentials (a still-empty DISCORD_BOT_TOKEN never reaches Discord)
 #   3. select the external resident profile shipped in this repo
 #   4. pin the repo-local resident store root
-#   5. attest the exact HEAD via `resident attest` and export the returned
-#      launch seed as MEGAPLAN_RUNTIME_LAUNCH_SEED
-#   6. exec `resident discord`, which validates that seed against the
+#   5. resolve the imported Arnold runtime root with this interpreter and pin
+#      its exact checkout HEAD (the runtime is a separate custody identity
+#      from this project repository; an editable install or PYTHONPATH
+#      checkout both satisfy the contract as long as imports resolve there)
+#   6. attest BOTH roots via `resident attest` (--repo-root/--expected-head
+#      for this project, --runtime-root/--expected-runtime-head for the
+#      imported Arnold runtime) and export the returned launch seed as
+#      MEGAPLAN_RUNTIME_LAUNCH_SEED
+#   7. exec `resident discord`, which validates that seed against the
 #      published dispatch pointer and constructs the process attestation
 #
 # Attestation is never disabled or waived here. If any custody step fails,
@@ -50,6 +56,26 @@ STORE_ROOT="$REPO_ROOT/.megaplan/resident"
 
 HEAD="$(git rev-parse HEAD)"
 
+# Resolve the imported Arnold runtime with the SAME interpreter that will
+# run the resident, so the attest-time and startup-time runtime vectors
+# describe one runtime. Fail closed when imports do not resolve to a real
+# Git checkout.
+RUNTIME_OUTPUT=""
+RUNTIME_STATUS=0
+RUNTIME_OUTPUT="$(
+    "$PYTHON_BIN" -c 'import os, arnold_pipelines; print(os.path.dirname(os.path.dirname(os.path.abspath(arnold_pipelines.__file__))))'
+)" || RUNTIME_STATUS=$?
+if [ "$RUNTIME_STATUS" -ne 0 ] || [ -z "$RUNTIME_OUTPUT" ] || [ ! -d "$RUNTIME_OUTPUT" ]; then
+    echo "run-resident: could not resolve the imported Arnold runtime root via $PYTHON_BIN (exit $RUNTIME_STATUS); refusing to start" >&2
+    echo "run-resident: install Arnold (python -m pip install -e /path/to/arnold) or export PYTHONPATH=/path/to/arnold" >&2
+    exit 1
+fi
+RUNTIME_ROOT="$RUNTIME_OUTPUT"
+if ! RUNTIME_HEAD="$(git -C "$RUNTIME_ROOT" rev-parse HEAD)"; then
+    echo "run-resident: $RUNTIME_ROOT is not a usable Git checkout; refusing to start" >&2
+    exit 1
+fi
+
 # `resident attest` prints exactly the seed path on success. On failure it
 # prints the adapter's structured diagnostic on stdout and exits non-zero;
 # capture both, republish the diagnostic, and exit with the same code so a
@@ -59,7 +85,9 @@ ATTEST_STATUS=0
 ATTEST_OUTPUT="$(
     "$PYTHON_BIN" -m arnold_pipelines.megaplan resident attest \
         --repo-root "$REPO_ROOT" \
-        --expected-head "$HEAD"
+        --expected-head "$HEAD" \
+        --runtime-root "$RUNTIME_ROOT" \
+        --expected-runtime-head "$RUNTIME_HEAD"
 )" || ATTEST_STATUS=$?
 if [ "$ATTEST_STATUS" -ne 0 ]; then
     printf '%s\n' "$ATTEST_OUTPUT" >&2

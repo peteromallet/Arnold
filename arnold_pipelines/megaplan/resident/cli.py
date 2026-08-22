@@ -76,12 +76,23 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
         "--repo-root",
         required=True,
         type=Path,
-        help="Repository root to admit as the standalone resident runtime",
+        help="Project repository root admitted for standalone custody",
     )
     attest_parser.add_argument(
         "--expected-head",
         required=True,
-        help="Full Git commit OID expected at admission",
+        help="Full Git commit OID expected for the project repository",
+    )
+    attest_parser.add_argument(
+        "--runtime-root",
+        required=True,
+        type=Path,
+        help="Imported Arnold runtime checkout root bound to the code vectors",
+    )
+    attest_parser.add_argument(
+        "--expected-runtime-head",
+        required=True,
+        help="Full Git commit OID expected for the Arnold runtime checkout",
     )
     attest_parser.add_argument(
         "--json",
@@ -336,6 +347,9 @@ _STANDALONE_ATTEST_JSON_FIELDS = (
     "root",
     "expected_head",
     "live_head",
+    "runtime_root",
+    "expected_runtime_head",
+    "live_runtime_head",
     "seed_path",
     "seed_sha256",
     "receipt_path",
@@ -343,7 +357,6 @@ _STANDALONE_ATTEST_JSON_FIELDS = (
     "pointer_path",
     "generated_at",
 )
-
 
 def _resident_attest(args: argparse.Namespace) -> dict[str, Any] | str:
     """Issue and publish one standalone resident runtime attestation.
@@ -357,14 +370,16 @@ def _resident_attest(args: argparse.Namespace) -> dict[str, Any] | str:
 
     try:
         seed = runtime_attestation.build_standalone_runtime_launch_seed(
-            expected_root=args.repo_root,
-            expected_revision=args.expected_head,
+            project_root=args.repo_root,
+            expected_project_revision=args.expected_head,
+            runtime_root=args.runtime_root,
+            expected_runtime_revision=args.expected_runtime_head,
         )
         runtime_attestation.validate_standalone_runtime_launch_seed(seed)
-        root = Path(str(seed["expected_root"])).resolve(strict=True)
+        root = Path(str(seed["project_root"])).resolve(strict=True)
         paths = runtime_attestation.standalone_dispatch_paths(
             root,
-            head=str(seed["expected_revision"]),
+            head=str(seed["expected_project_revision"]),
             seed_sha256=str(seed["content_sha256"]),
         )
         published = runtime_attestation.write_standalone_runtime_publication(
@@ -380,6 +395,9 @@ def _resident_attest(args: argparse.Namespace) -> dict[str, Any] | str:
             "root": receipt["root"],
             "expected_head": receipt["expected_head"],
             "live_head": receipt["live_head"],
+            "runtime_root": str(seed["runtime_root"]),
+            "expected_runtime_head": str(seed["expected_runtime_revision"]),
+            "live_runtime_head": str(seed["live_runtime_revision"]),
             "seed_path": str(paths["seed"]),
             "seed_sha256": str(seed["content_sha256"]),
             "receipt_path": str(published["receipt_path"]),

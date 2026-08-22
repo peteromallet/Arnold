@@ -103,34 +103,66 @@ An empty or missing token is refused before attestation:
 run-resident: DISCORD_BOT_TOKEN is empty in .../.agentbox/astrid.env; refusing to start
 ```
 
-### Attest the exact runtime
+### Attest the exact project and runtime
 
-The implemented subcommand is `resident attest`, with required
-`--repo-root` and `--expected-head` flags:
+The implemented subcommand is `resident attest`, with two independent
+custody identities: the target repository (`--repo-root`, `--expected-head`)
+and the imported Arnold runtime checkout (`--runtime-root`,
+`--expected-runtime-head`):
 
 ```bash
 REPO_ROOT="$(pwd -P)"
 HEAD="$(git rev-parse HEAD)"
+RUNTIME_ROOT="$(python -c 'import os, arnold_pipelines; print(os.path.dirname(os.path.dirname(os.path.abspath(arnold_pipelines.__file__))))')"
+RUNTIME_HEAD="$(git -C "$RUNTIME_ROOT" rev-parse HEAD)"
 python -m arnold_pipelines.megaplan resident attest \
   --repo-root "$REPO_ROOT" \
-  --expected-head "$HEAD"
+  --expected-head "$HEAD" \
+  --runtime-root "$RUNTIME_ROOT" \
+  --expected-runtime-head "$RUNTIME_HEAD"
 ```
 
-The target repository must have the Arnold runtime importable for this
-interpreter. Either install Arnold (`python -m pip install -e /path/to/arnold`)
-or expose the checkout explicitly:
+The target repository does NOT need to contain (or be) Arnold — a fresh
+non-Arnold repository succeeds using an external Arnold checkout. The two
+roots are admitted separately and may be equal only when the target repo
+genuinely is the Arnold checkout:
+
+- **Project custody** (`--repo-root` + `--expected-head`): Git admission of
+  the exact top-level, its live HEAD, the launch state directory
+  (`<project_root>/.megaplan/resident/runtime-launch`), dispatch pointer,
+  issuance receipt, and process-status attestation.
+- **Runtime custody** (`--runtime-root` + `--expected-runtime-head`): strict
+  provenance (`import_root == --runtime-root`), the exact runtime revision,
+  and every loaded-code vector (modules, `.pth`, wrappers, interpreter),
+  re-collected on each validation.
+
+Any mismatch exits with `runtime_launch_attestation_mismatch` before the
+dispatch pointer advances or Discord starts.
+
+**Runtime import contract:** the interpreter must import `arnold_pipelines`
+from `--runtime-root`. Either install Arnold editable from that checkout:
+
+```bash
+python -m pip install -e /path/to/arnold
+```
+
+or expose the checkout explicitly through `PYTHONPATH`:
 
 ```bash
 PYTHONPATH=/path/to/arnold python -m arnold_pipelines.megaplan resident attest \
   --repo-root "$REPO_ROOT" \
-  --expected-head "$HEAD"
+  --expected-head "$HEAD" \
+  --runtime-root "$RUNTIME_ROOT" \
+  --expected-runtime-head "$RUNTIME_HEAD"
 ```
 
-Attestation admits only the exact Git top-level passed as `--repo-root` and
-the live HEAD supplied as `--expected-head`; runtime provenance must also
-resolve to the importable Arnold runtime. The generated launcher performs this
-same check automatically, exports the returned seed as
-`MEGAPLAN_RUNTIME_LAUNCH_SEED`, and refuses startup on any failure.
+Attestation admits only the exact Git top-levels passed as `--repo-root` and
+`--runtime-root` with their live HEADs as `--expected-head` and
+`--expected-runtime-head`; runtime provenance must also resolve to the
+importable Arnold runtime at `--runtime-root`. The generated launcher resolves
+the imported runtime root with its own interpreter, performs this same check
+automatically, exports the returned seed as `MEGAPLAN_RUNTIME_LAUNCH_SEED`,
+and refuses startup on any failure.
 
 ### Dry-run, then systemd
 

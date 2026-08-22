@@ -933,23 +933,22 @@ def test_external_profile_dry_run_does_not_write_bytecode(
     assert not list(tmp_path.rglob("*.pyc"))
 
 
-def test_generated_resident_startup_attests_constructs_profile_creates_process_attestation_and_starts_mock_service(
-    tmp_path: Path,
-) -> None:
-    """Exercise the generated resident's complete no-network startup custody chain."""
-    source_root = Path(__file__).parents[2].resolve()
-    repo = tmp_path / "generated-resident"
+def _init_genuine_project(tmp_path: Path) -> tuple[Path, str]:
+    """Create a genuine NON-Arnold Git project with a scaffolded resident."""
+    repo = tmp_path / "genuine-project"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(
-        ["git", "clone", "--quiet", "--local", str(source_root), str(repo)],
+        ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
         check=True,
-        capture_output=True,
-        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Test"], check=True
     )
     from agentbox.cli import main as agentbox_main
+
     assert (
-        agentbox_main(
-            ["new-resident", "demo", "--repo", str(repo)]
-        )
+        agentbox_main(["new-resident", "demo", "--repo", str(repo)])
         == 0
     )
     subprocess.run(
@@ -982,16 +981,19 @@ def test_generated_resident_startup_attests_constructs_profile_creates_process_a
         capture_output=True,
         text=True,
     ).stdout.strip()
-    dist_info = repo / "arnold-0.0.0.dist-info"
-    dist_info.mkdir()
-    (dist_info / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: arnold\nVersion: 0.0.0\n",
-        encoding="utf-8",
-    )
-    (dist_info / "direct_url.json").write_text(
-        json.dumps({"url": repo.as_uri(), "dir_info": {"editable": True}}),
-        encoding="utf-8",
-    )
+    return repo.resolve(strict=True), head
+
+
+def _runtime_head_of(checkout: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _make_isolated_runtime_venv(tmp_path: Path) -> Path:
     venv = tmp_path / "runtime-venv"
     subprocess.run(
         [sys.executable, "-m", "venv", "--without-pip", str(venv)],
@@ -999,26 +1001,82 @@ def test_generated_resident_startup_attests_constructs_profile_creates_process_a
         capture_output=True,
         text=True,
     )
+    return venv
+
+
+def _build_child_site_packages(tmp_path: Path, *, runtime: Path) -> None:
+    """Give the bare venv host packages minus every influence the vectors
+    must not inherit: no ``.pth`` execution, no host Arnold metadata.  One
+    deterministic editable-arnold identity is bound to *runtime* instead."""
     runtime_site = tmp_path / "runtime-site-packages"
     runtime_site.mkdir()
     for entry in Path(sysconfig.get_paths()["purelib"]).iterdir():
-        if entry.suffix == ".pth":
+        if entry.suffix == ".pth" or entry.name.startswith("arnold"):
             continue
-        (runtime_site / entry.name).symlink_to(
-            entry, target_is_directory=entry.is_dir()
-        )
+        (runtime_site / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    identity = tmp_path / "runtime-identity"
+    dist_info = identity / "arnold-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: arnold\nVersion: 0.0.0\n",
+        encoding="utf-8",
+    )
+    (dist_info / "direct_url.json").write_text(
+        json.dumps({"url": runtime.as_uri(), "dir_info": {"editable": True}}),
+        encoding="utf-8",
+    )
+
+
+def _two_root_runtime(
+    tmp_path: Path,
+    *,
+    repo: Path,
+    head: str,
+    runtime: Path,
+) -> tuple[Path, dict[str, str]]:
+    """Launch interpreter + child env importing Arnold ONLY from *runtime*."""
+    venv = _make_isolated_runtime_venv(tmp_path)
+    _build_child_site_packages(tmp_path, runtime=runtime)
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join((str(repo), str(runtime_site)))
-    env["TEST_SYSTEM_PURELIB"] = str(runtime_site)
+    env["PYTHONPATH"] = os.pathsep.join(
+        (
+            str(runtime),
+            str(tmp_path / "runtime-site-packages"),
+            str(tmp_path / "runtime-identity"),
+        )
+    )
     env["TEST_RESIDENT_REPO"] = str(repo)
     env["TEST_RESIDENT_HEAD"] = head
+    env["TEST_RESIDENT_RUNTIME"] = str(runtime)
+    return venv, env
+
+
+def test_generated_resident_startup_attests_distinct_roots_constructs_profile_creates_process_attestation_and_starts_mock_service(
+    tmp_path: Path,
+) -> None:
+    """Genuine two-root custody chain: a fresh NON-Arnold Git project is
+    attested against a separately imported external Arnold runtime, then the
+    full startup path runs — issuance, profile construction, process
+    attestation, exactly one mocked service start."""
+    source_root = Path(__file__).parents[2].resolve()
+    repo, head = _init_genuine_project(tmp_path)
+    # The project must be a genuinely distinct custody identity from the
+    # imported runtime: unequal roots, neither containing the other.
+    assert repo != source_root
+    assert source_root not in repo.parents
+    assert repo not in source_root.parents
+    runtime_head = _runtime_head_of(source_root)
+    venv, env = _two_root_runtime(tmp_path, repo=repo, head=head, runtime=source_root)
+
     attest_child = (
         "from arnold_pipelines.megaplan.cli import main; "
         "from arnold_pipelines.megaplan.resident import cli as _resident_cli; "
         "from agentbox.resident_profile import AgentBoxOperatorProfile; "
         "import os, sys; "
         "raise SystemExit(main(['resident', 'attest', '--repo-root', "
-        "r'" + str(repo) + "', '--expected-head', r'" + head + "']))"
+        "r'" + str(repo) + "', '--expected-head', r'" + head + "', "
+        "'--runtime-root', r'" + str(source_root) + "', "
+        "'--expected-runtime-head', r'" + runtime_head + "']))"
     )
     attest_result = subprocess.run(
         [str(venv / "bin" / "python"), "-c", attest_child],
@@ -1031,13 +1089,19 @@ def test_generated_resident_startup_attests_constructs_profile_creates_process_a
     seed_path = Path(attest_result.stdout.strip())
     assert seed_path.is_file()
     env["TEST_RESIDENT_SEED"] = str(seed_path)
+    seed = json.loads(seed_path.read_text(encoding="utf-8"))
+    assert seed["project_root"] == str(repo)
+    assert seed["runtime_root"] == str(source_root)
+    assert seed["project_root"] != seed["runtime_root"]
+    assert seed["expected_project_revision"] == head
+    assert seed["live_project_revision"] == head
+    assert seed["expected_runtime_revision"] == runtime_head
+    assert seed["live_runtime_revision"] == runtime_head
     child = textwrap.dedent(
         """
         import json
         import os
         import sys
-        from contextlib import redirect_stdout
-        from io import StringIO
         from pathlib import Path
 
         from arnold_pipelines.megaplan.cloud import runtime_attestation
@@ -1050,20 +1114,18 @@ def test_generated_resident_startup_attests_constructs_profile_creates_process_a
         from arnold_pipelines.megaplan.resident.config import ResidentConfig
         from arnold_pipelines.megaplan.store import FileStore
 
-        sys.path = [
-            item
-            for item in sys.path
-            if item != os.environ["TEST_SYSTEM_PURELIB"]
-        ]
-
         repo = Path(os.environ["TEST_RESIDENT_REPO"]).resolve()
+        runtime = Path(os.environ["TEST_RESIDENT_RUNTIME"]).resolve()
         head = os.environ["TEST_RESIDENT_HEAD"]
         spec = ".agentbox/resident_profile.py:DemoResidentProfile"
 
         seed_path = Path(os.environ["TEST_RESIDENT_SEED"]).resolve()
         assert seed_path.is_file()
         seed = json.loads(seed_path.read_text(encoding="utf-8"))
-        assert seed["expected_revision"] == os.environ["TEST_RESIDENT_HEAD"]
+        assert seed["project_root"] == str(repo)
+        assert seed["runtime_root"] == str(runtime)
+        assert seed["project_root"] != seed["runtime_root"]
+        assert seed["expected_project_revision"] == head
 
         config = ResidentConfig(profile=spec)
         store = FileStore(repo / ".megaplan" / "resident")
@@ -1144,6 +1206,147 @@ def test_generated_resident_startup_attests_constructs_profile_creates_process_a
         "service_starts": 1,
         "validated": True,
     }
+
+
+
+ATTEST_SNIPPET = (
+    "from arnold_pipelines.megaplan.cli import main; "
+    "raise SystemExit(main(['resident', 'attest', '--repo-root', "
+    "r'{repo}', '--expected-head', r'{head}', "
+    "'--runtime-root', r'{runtime}', "
+    "'--expected-runtime-head', r'{runtime_head}']))"
+)
+
+
+def _attest_exit_payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
+    """Parse one CLI JSON response document printed on stdout."""
+    assert result.stdout.strip(), result.stderr
+    return json.loads(result.stdout)
+
+
+def test_generated_resident_two_root_attest_rejects_stale_or_swapped_roots(
+    tmp_path: Path,
+) -> None:
+    """Stale project HEAD, stale runtime HEAD, or swapped roots fail closed
+    with ``runtime_launch_attestation_mismatch`` before any custody state is
+    created."""
+    source_root = Path(__file__).parents[2].resolve()
+    repo, head = _init_genuine_project(tmp_path)
+    runtime_head = _runtime_head_of(source_root)
+    venv, env = _two_root_runtime(tmp_path, repo=repo, head=head, runtime=source_root)
+
+    def run_attest(extra: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(venv / "bin" / "python"), "-c", ATTEST_SNIPPET.format(repo=str(repo), **extra)],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+    stale_project = run_attest({"head": "0" * 40, "runtime": str(source_root), "runtime_head": runtime_head})
+    assert stale_project.returncode == 2, stale_project.stderr
+    assert _attest_exit_payload(stale_project)["error"] == "runtime_launch_attestation_mismatch"
+    assert not (repo / ".megaplan" / "resident" / "runtime-launch").exists()
+
+    stale_runtime = run_attest({"head": head, "runtime": str(source_root), "runtime_head": "0" * 40})
+    assert stale_runtime.returncode == 2, stale_runtime.stderr
+    assert _attest_exit_payload(stale_runtime)["error"] == "runtime_launch_attestation_mismatch"
+    assert not (repo / ".megaplan" / "resident" / "runtime-launch").exists()
+
+    swapped = run_attest({"head": runtime_head, "runtime": str(repo), "runtime_head": head})
+    assert swapped.returncode == 2, swapped.stderr
+    assert _attest_exit_payload(swapped)["error"] == "runtime_launch_attestation_mismatch"
+    assert not (repo / ".megaplan" / "resident" / "runtime-launch").exists()
+
+
+def test_generated_resident_validation_rejects_runtime_vector_drift(tmp_path: Path) -> None:
+    """A seed issued against the real runtime fails closed when validation
+    imports Arnold from a different checkout: provenance, loaded-module, and
+    wrapper vectors all drift together."""
+    source_root = Path(__file__).parents[2].resolve()
+    repo, head = _init_genuine_project(tmp_path)
+    runtime_head = _runtime_head_of(source_root)
+    venv, env = _two_root_runtime(tmp_path, repo=repo, head=head, runtime=source_root)
+    attest_child = (
+        "from arnold_pipelines.megaplan.cli import main; "
+        "import os; "
+        "raise SystemExit(main(['resident', 'attest', '--repo-root', "
+        "r'" + str(repo) + "', '--expected-head', r'" + head + "', "
+        "'--runtime-root', r'" + str(source_root) + "', "
+        "'--expected-runtime-head', r'" + runtime_head + "']))"
+    )
+    attest_result = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", attest_child],
+        cwd=repo,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    seed_path = Path(attest_result.stdout.strip())
+    assert seed_path.is_file()
+
+    foreign = tmp_path / "foreign-runtime"
+    subprocess.run(
+        ["git", "clone", "--quiet", "--local", str(source_root), str(foreign)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    drift_env = dict(env)
+    drift_env["PYTHONPATH"] = os.pathsep.join(
+        (
+            str(foreign),
+            str(tmp_path / "runtime-site-packages"),
+            str(tmp_path / "runtime-identity"),
+        )
+    )
+    drift_env["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = str(seed_path)
+    drift_child = textwrap.dedent(
+        """
+        import json
+        from arnold_pipelines.megaplan.cloud import runtime_attestation
+        from arnold_pipelines.megaplan.types import CliError
+
+        try:
+            runtime_attestation.require_configured_runtime_launch("resident", create=True)
+        except CliError as exc:
+            print(json.dumps({"code": exc.code, "message": exc.message}))
+        else:
+            raise SystemExit("drifted runtime vectors were accepted")
+        """
+    )
+    drift_result = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", drift_child],
+        cwd=repo,
+        env=drift_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(drift_result.stdout)
+    assert payload["code"] == "runtime_launch_attestation_mismatch"
+
+    # Edited evidence: a re-digested seed mutation never matches the pointer.
+    edited = json.loads(seed_path.read_text(encoding="utf-8"))
+    edited["live_runtime_revision"] = "0" * 40
+    core = {key: value for key, value in edited.items() if key != "content_sha256"}
+    edited["content_sha256"] = hashlib.sha256(
+        json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    seed_path.write_text(json.dumps(edited), encoding="utf-8")
+    edited_env = dict(drift_env)
+    edited_env["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = str(seed_path)
+    edited_result = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", drift_child],
+        cwd=repo,
+        env=edited_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(edited_result.stdout)["code"] == "runtime_launch_attestation_mismatch"
 
 
 def test_cli_new_resident_profile_is_relocatable(
