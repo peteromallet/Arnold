@@ -14,8 +14,11 @@ from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 from arnold_pipelines.megaplan.incident.ledger import RuntimeTransitionWriter
 from tests.cloud.test_progress_auditor_escalation import (
     _approval_gate_after_superfixer_repair,
-    _true_stall,
+    _true_stall as _bare_true_stall,
     _valid_manifest,
+)
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    mint_mutation_capability,
 )
 from tests.cloud.repair_identity_fixtures import repair_identity
 
@@ -31,6 +34,43 @@ def _transition_args(tmp_path: Path) -> tuple[RuntimeTransitionWriter, str]:
     return writer, "sha256:" + "0" * 64
 
 
+_ESCALATION_CAPABILITY_REF: list[object] = []  # weak-valued registry needs a pin
+
+
+
+
+def _escalation_capability() -> object:
+    """T4.1 authorized path: one minted root escalation capability.
+
+    L3 dispatch refuses findings without a minted MutationCapability
+    (action/scope ``escalation``). Dispatch-expecting fixtures attach it;
+    non-dispatching gates ignore its presence.
+    """
+    if not _ESCALATION_CAPABILITY_REF:
+        _ESCALATION_CAPABILITY_REF.append(
+            mint_mutation_capability(
+                action="escalation",
+                evidence={
+                    "occurrence": "escalation-fixture",
+                    "target": "target-1",
+                    "cursor": "cursor-1",
+                    "fence_epoch": 3,
+                    "evidence_digest": "sha256:" + "0" * 64,
+                    "scope": "escalation",
+                    "custody": "custody:escalation-fixture",
+                    "import_root": "/fixture/import-root",
+                    "interpreter": "/fixture/bin/python",
+                },
+            )
+        )
+    return _ESCALATION_CAPABILITY_REF[0]
+
+
+def _true_stall() -> dict:
+    """Canonical true-stall finding carrying minted escalation authority."""
+    finding = _bare_true_stall()
+    finding["mutation_capability"] = _escalation_capability()
+    return finding
 def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path: Path) -> None:
     true_stall = _true_stall()
     ordinary = _true_stall()

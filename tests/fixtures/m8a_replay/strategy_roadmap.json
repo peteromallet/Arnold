@@ -17,7 +17,7 @@
       "dependency_reasons": {},
       "routing_group": "",
       "write_set": {"paths": ["evidence/strategy-contract-parsed.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_strategy_contract.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_strategy_contract.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -33,7 +33,7 @@
       "dependency_reasons": {"S1": {"kind": "consumes_output", "reason": "S2 requires the parsed strategy contract to locate roadmap sections.", "required_output": "evidence/strategy-contract-parsed.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/roadmap-horizons.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_roadmap_horizons.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_roadmap_horizons.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -49,7 +49,7 @@
       "dependency_reasons": {"S2": {"kind": "consumes_output", "reason": "S3 needs the extracted roadmap entries to know which artifacts to resolve.", "required_output": "evidence/roadmap-horizons.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/artifact-resolution.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_artifact_resolution.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_artifact_resolution.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -65,7 +65,7 @@
       "dependency_reasons": {},
       "routing_group": "chain-validation",
       "write_set": {"paths": ["evidence/chain-validation.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_chain_validation.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_chain_validation.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -81,7 +81,7 @@
       "dependency_reasons": {"S4": {"kind": "consumes_output", "reason": "S5 uses the chain validation results to determine which preconditions need checking.", "required_output": "evidence/chain-validation.json"}},
       "routing_group": "chain-validation",
       "write_set": {"paths": ["evidence/precondition-validation.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_preconditions.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_preconditions.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -100,7 +100,7 @@
       },
       "routing_group": "",
       "write_set": {"paths": ["evidence/roadmap-chain-crossref.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_cross_reference.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_cross_reference.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -116,7 +116,7 @@
       "dependency_reasons": {"S3": {"kind": "consumes_output", "reason": "S7 needs resolved artifacts to know which tickets exist vs which are roadmap-referenced.", "required_output": "evidence/artifact-resolution.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/orphaned-tickets.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_orphaned_tickets.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_orphaned_tickets.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -132,7 +132,7 @@
       "dependency_reasons": {"S3": {"kind": "consumes_output", "reason": "S8 needs resolved artifacts to check ticket statuses against roadmap entries.", "required_output": "evidence/artifact-resolution.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/stale-roadmap-entries.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_stale_entries.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_stale_entries.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -148,7 +148,7 @@
       "dependency_reasons": {"S6": {"kind": "consumes_output", "reason": "S9 uses the cross-reference results to generate an accurate projection.", "required_output": "evidence/roadmap-chain-crossref.json"}},
       "routing_group": "",
       "write_set": {"paths": [".megaplan/strategy.projection.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_strategy_projection.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_strategy_projection.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -164,7 +164,7 @@
       "dependency_reasons": {"S9": {"kind": "consumes_output", "reason": "S10 validates the generated projection for North Star compliance.", "required_output": ".megaplan/strategy.projection.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/northstar-validation.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_northstar_validation.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_northstar_validation.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -180,7 +180,7 @@
       "dependency_reasons": {"S6": {"kind": "consumes_output", "reason": "S11 uses the cross-reference to identify which migration steps correspond to roadmap entries.", "required_output": "evidence/roadmap-chain-crossref.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/migration-strategy-audit.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_migration_audit.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_migration_audit.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -201,7 +201,7 @@
       },
       "routing_group": "",
       "write_set": {"paths": ["evidence/strategic-health-report.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_health_report.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_health_report.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -217,7 +217,7 @@
       "dependency_reasons": {},
       "routing_group": "structure-validation",
       "write_set": {"paths": ["evidence/initiative-structure-check.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_initiative_structure.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_initiative_structure.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -233,7 +233,7 @@
       "dependency_reasons": {"S13": {"kind": "consumes_output", "reason": "S14 uses the structure check to locate all epic directories for promotion audit.", "required_output": "evidence/initiative-structure-check.json"}},
       "routing_group": "structure-validation",
       "write_set": {"paths": ["evidence/promotion-audit.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_promotion_audit.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_promotion_audit.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -252,7 +252,7 @@
       },
       "routing_group": "",
       "write_set": {"paths": ["evidence/strategy-audit-report.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_strategy_audit.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_strategy_audit.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     }
   ]

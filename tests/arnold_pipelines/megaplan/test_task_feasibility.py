@@ -44,7 +44,8 @@ def _task(
         "write_set": {"paths": paths or [f"src/{task_id.lower()}.py"], "complete": True},
         "narrow_tests": {
             "selectors": [f"tests/test_{task_id.lower()}.py"],
-            "max_seconds": 120,
+            "budget_semantics": "elapsed_wall_clock_v2",
+            "test_budget_seconds": 120,
             "max_runs": 2,
         },
         "checkpoint": {
@@ -208,6 +209,20 @@ def test_report_diagnostic_ordering_is_deterministic() -> None:
     assert report_a["task_contract_hash"] == report_b["task_contract_hash"]
     assert report_a["admitted"] == report_b["admitted"]
 
+def _assert_v2_graph_rejects_v1_budget_fields() -> None:
+    """v1 budget fields on a task_contract_version=2 graph fail closed."""
+    mixed = _task("T1")
+    mixed["narrow_tests"]["max_seconds"] = 60
+    assert "task_test_budget_v1_on_v2_graph" in _codes(
+        compile_task_feasibility(_payload([mixed]))
+    )
+
+    stripped = _task("T1")
+    stripped["narrow_tests"].pop("budget_semantics")
+    stripped["narrow_tests"]["max_seconds"] = 60
+    assert "task_test_budget_v2_required" in _codes(
+        compile_task_feasibility(_payload([stripped]))
+    )
 
 @pytest.mark.parametrize(
     ("mutation", "code"),
@@ -216,11 +231,12 @@ def test_report_diagnostic_ordering_is_deterministic() -> None:
         (lambda task: task.update(objective="x; y"), "task_objective_oversized"),
         (lambda task: task["write_set"].update(paths=[f"src/{i}.py" for i in range(6)]), "task_path_budget_exceeded"),
         (lambda task: task["narrow_tests"].update(selectors=[f"tests/test_{i}.py" for i in range(4)]), "task_test_selector_budget_exceeded"),
-        (lambda task: task["narrow_tests"].update(max_seconds=121), "task_test_time_budget_exceeded"),
+        (lambda task: task["narrow_tests"].update(test_budget_seconds=121), "task_test_time_budget_exceeded"),
         (lambda task: task["narrow_tests"].update(max_runs=3), "task_test_run_budget_exceeded"),
     ],
 )
 def test_task_budgets_fail_closed(mutation, code: str) -> None:
+    _assert_v2_graph_rejects_v1_budget_fields()
     task = _task("T1")
     mutation(task)
     assert code in _codes(compile_task_feasibility(_payload([task])))
@@ -280,10 +296,12 @@ def test_runtime_test_budget_blocks_unbounded_or_widened_evidence() -> None:
             "timeout 60s pytest tests/test_t1.py",
             "timeout 60s pytest tests/test_t1.py",
         ],
+        "test_run_durations_seconds": [30.0, 30.0],
     }
     issues: list[str] = []
     _enforce_task_test_budgets([valid], targets_by_id={"T1": target}, issues=issues)
     assert valid["status"] == "done"
+    assert valid["budget_classification"] == "elapsed_wall_clock_v2"
     assert issues == []
 
     invalid = {
@@ -300,8 +318,9 @@ def test_runtime_test_budget_blocks_unbounded_or_widened_evidence() -> None:
     ]
     assert issues
 
-    # Explicit recurrence shape (occurrence 4c0190500877): two declared
-    # `timeout 120` runs sum to 240s > max_seconds=120 -> blocked, even though
+    # Explicit recurrence shape (occurrence 4c0190500877), now under the v2
+    # elapsed contract: two `timeout 120` runs charge 240s of wall clock
+    # against test_budget_seconds=120 -> exhausted and blocked, even though
     # each individual run is within the admitted selector budget.
     doubled = {
         "task_id": "T1",
@@ -315,9 +334,10 @@ def test_runtime_test_budget_blocks_unbounded_or_widened_evidence() -> None:
     issues.clear()
     _enforce_task_test_budgets([doubled], targets_by_id={"T1": target}, issues=issues)
     assert doubled["status"] == "blocked"
-    assert "declared test timeout total 240s exceeds max_seconds=120" in doubled[
+    assert "elapsed wall-clock budget exhausted" in doubled[
         "executor_notes"
     ]
+    assert doubled["budget_classification"] == "elapsed_wall_clock_v2"
     assert issues
 
 
@@ -339,6 +359,9 @@ def test_runtime_test_budget_admits_subshell_wrapped_timeout_prefix() -> None:
         "commands_run": [
             "cd /workspace/project && time (timeout 120 /venv/bin/python -m pytest -q tests/test_t1.py --tb=short)",
         ],
+        # Recorded worker durations keep the elapsed charge inside budget;
+        # the wrapper-boundary regex is still exercised above.
+        "test_run_durations_seconds": [5.0],
     }
     issues: list[str] = []
     _enforce_task_test_budgets([subshell], targets_by_id={"T1": target}, issues=issues)

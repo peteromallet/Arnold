@@ -71,7 +71,8 @@ def _task(
         "write_set": {"paths": [f"src/{task_id.lower()}.py"], "complete": True},
         "narrow_tests": {
             "selectors": [f"tests/test_{task_id.lower()}.py"],
-            "max_seconds": 120,
+            "budget_semantics": "elapsed_wall_clock_v2",
+            "test_budget_seconds": 120,
             "max_runs": 2,
         },
         "checkpoint": {

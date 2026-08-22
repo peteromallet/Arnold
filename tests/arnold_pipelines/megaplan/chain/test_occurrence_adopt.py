@@ -39,6 +39,12 @@ from arnold_pipelines.megaplan.chain.spec import (
 )
 from arnold_pipelines.megaplan.cli import build_parser
 from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    attach_mutation_capability,
+    mint_mutation_capability,
+    resolve_mutation_capability,
+)
+from arnold_pipelines.megaplan.cloud.occurrence_adoption import ADOPTION_ACTION
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     MANIFEST_SCHEMA_VERSION,
     RuntimeManifest,
@@ -310,6 +316,22 @@ def adopt_tree(tmp_path_factory: pytest.TempPathFactory) -> dict:
     return _build_tree(tmp_path_factory.mktemp("adopt-tree"))
 
 
+@pytest.fixture(autouse=True)
+def _pin_independent_import_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic T4.3 import-root observation: the control runtime under test
+    IS this checkout. The production seam observes the INSTALLED package via
+    an isolated interpreter, which in a dev sandbox resolves to the editable
+    install rather than the checkout; pin it to REPO_ROOT so the six-way
+    runtime-roots equality (all roots == checkout) is asserted, not the
+    ambient install layout.
+    """
+    from arnold_pipelines.megaplan.chain import occurrence_adopt
+
+    monkeypatch.setattr(
+        occurrence_adopt, "_independent_import_root", lambda: str(REPO_ROOT)
+    )
+
+
 def _fresh_tree(base: Path, canonical: dict) -> dict:
     """Copy the canonical tree and rematerialize the chain state for the copy.
 
@@ -346,6 +368,40 @@ def _roots() -> dict:
     }
 
 
+_ADOPT_CAPABILITY_REF: list[object] = []  # process-lifetime strong refs (handle registry is weak-valued)
+
+
+def _minted_adopt_capability() -> str:
+    """Mint and attach the T4.1 root MutationCapability for adoption.
+
+    The occurrence-adopt CLI refuses operational authority without a minted,
+    evidence-bound MutationCapability (T4.1). Tests take the authorized path:
+    mint against the repo import root via the sanctioned API and hold it by
+    occurrence identity so ``--capability-handle`` resolves in-process. The
+    handle registry is weak-valued, so the minted object is pinned for the
+    process lifetime here.
+    """
+    if resolve_mutation_capability(SESSION) is not None:
+        return SESSION
+    capability = mint_mutation_capability(
+        action=ADOPTION_ACTION,
+        evidence={
+            "occurrence": SESSION,
+            "target": f"target:{SESSION}",
+            "cursor": "cursor-1",
+            "fence_epoch": 3,
+            "evidence_digest": "sha256:" + _canonical_sha256({"occurrence": SESSION}),
+            "scope": ADOPTION_ACTION,
+            "custody": f"custody:{SESSION}",
+            "import_root": str(REPO_ROOT),
+            "interpreter": sys.executable,
+        },
+        process_root=REPO_ROOT,
+        process_python=Path(sys.executable),
+    )
+    _ADOPT_CAPABILITY_REF.append(capability)
+    attach_mutation_capability(capability, identity=SESSION)
+    return SESSION
 def _adopt_argv(
     tree: dict,
     *,
@@ -356,6 +412,8 @@ def _adopt_argv(
 
     state = load_chain_state(tree["spec_path"], verify_execution_binding=False)
     pause = state.metadata.get("operator_pause")
+
+
     pause_sha = (
         "sha256:" + _canonical_sha256(pause)
         if pause is not None
@@ -390,9 +448,12 @@ def _adopt_argv(
         "--expected-runtime-roots-sha256", "sha256:" + _canonical_sha256(_roots()),
         "--reason", "T-0101e' unit adoption",
         "--actor", actor,
+        "--occurrence", SESSION,
+        "--target", f"target:{SESSION}",
+        "--fence-epoch", "3",
+        "--capability-handle", _minted_adopt_capability(),
         "--receipt", str(tree["plan_dir"] / "evidence" / receipt_name),
     ]
-
 
 def _chain_cli(
     root: Path, argv: list[str], capsys: pytest.CaptureFixture[str]

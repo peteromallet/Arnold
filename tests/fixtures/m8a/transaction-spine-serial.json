@@ -23,7 +23,8 @@
         "selectors": [
           "tests/test_t1.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -62,7 +63,8 @@
         "selectors": [
           "tests/test_t2.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -101,7 +103,8 @@
         "selectors": [
           "tests/test_t3.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -140,7 +143,8 @@
         "selectors": [
           "tests/test_t4.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -179,7 +183,8 @@
         "selectors": [
           "tests/test_t5.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -218,7 +223,8 @@
         "selectors": [
           "tests/test_t6.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -257,7 +263,8 @@
         "selectors": [
           "tests/test_t7.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -296,7 +303,8 @@
         "selectors": [
           "tests/test_t8.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -335,7 +343,8 @@
         "selectors": [
           "tests/test_t9.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -374,7 +383,8 @@
         "selectors": [
           "tests/test_t10.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -413,7 +423,8 @@
         "selectors": [
           "tests/test_t11.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -452,7 +463,8 @@
         "selectors": [
           "tests/test_t12.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -491,7 +503,8 @@
         "selectors": [
           "tests/test_t13.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -530,7 +543,8 @@
         "selectors": [
           "tests/test_t14.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -569,7 +583,8 @@
         "selectors": [
           "tests/test_t15.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -608,7 +623,8 @@
         "selectors": [
           "tests/test_t16.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -647,7 +663,8 @@
         "selectors": [
           "tests/test_t17.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -686,7 +703,8 @@
         "selectors": [
           "tests/test_t18.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -725,7 +743,8 @@
         "selectors": [
           "tests/test_t19.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -764,7 +783,8 @@
         "selectors": [
           "tests/test_t20.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -803,7 +823,8 @@
         "selectors": [
           "tests/test_t21.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -842,7 +863,8 @@
         "selectors": [
           "tests/test_t22.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -881,7 +903,8 @@
         "selectors": [
           "tests/test_t23.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -920,7 +943,8 @@
         "selectors": [
           "tests/test_t24.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -959,7 +983,8 @@
         "selectors": [
           "tests/test_t25.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -998,7 +1023,8 @@
         "selectors": [
           "tests/test_t26.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -1037,7 +1063,8 @@
         "selectors": [
           "tests/test_t27.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -1076,7 +1103,8 @@
         "selectors": [
           "tests/test_t28.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -1115,7 +1143,8 @@
         "selectors": [
           "tests/test_t29.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {
@@ -1154,7 +1183,8 @@
         "selectors": [
           "tests/test_t30.py"
         ],
-        "max_seconds": 120,
+        "budget_semantics": "elapsed_wall_clock_v2",
+        "test_budget_seconds": 120,
         "max_runs": 2
       },
       "checkpoint": {

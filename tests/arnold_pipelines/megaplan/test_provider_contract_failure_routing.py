@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,9 +30,47 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    attach_mutation_capability,
+    mint_mutation_capability,
+    resolve_mutation_capability,
+)
 
 
 FINGERPRINT = "a" * 64
+
+
+_RECOVER_CAPABILITY_REF: list[object] = []  # weak-valued handle registry needs a pin
+
+
+def _mint_recover_capability(fingerprint: str) -> str:
+    """T4.1 authorized path: mint the recover-blocked root capability.
+
+    engine_runtime-scope deterministic/provider repairs are refused without a
+    minted MutationCapability bound to the exact failure fingerprint and the
+    live control tree (import_root plus generation interpreter). The minted
+    object is pinned because the handle registry is weak-valued.
+    """
+    if resolve_mutation_capability(fingerprint) is not None:
+        return fingerprint
+    repo_root = Path(__file__).resolve().parents[3]
+    capability = mint_mutation_capability(
+        action="recover-blocked",
+        evidence={
+            "occurrence": fingerprint,
+            "target": f"engine:{repo_root}",
+            "cursor": "cursor-1",
+            "fence_epoch": 3,
+            "evidence_digest": hashlib.sha256(fingerprint.encode()).hexdigest(),
+            "scope": "engine_runtime",
+            "custody": f"custody:{fingerprint[:24]}",
+            "import_root": str(repo_root),
+            "interpreter": sys.executable,
+        },
+    )
+    _RECOVER_CAPABILITY_REF.append(capability)
+    attach_mutation_capability(capability, identity=fingerprint)
+    return fingerprint
 
 
 def _contract_error() -> ExternalError:
@@ -282,9 +322,11 @@ def test_recover_provider_contract_requires_commit_bound_receipt(
     subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-qm", "provider contract repair"], cwd=tmp_path, check=True)
+    # T4.1/T4.3: engine_runtime repairs bind to the CONTROL runtime import
+    # root, so the receipt commit must be this checkout's own HEAD.
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=tmp_path,
+        cwd=Path(__file__).resolve().parents[3],
         check=True,
         capture_output=True,
         text=True,
@@ -303,6 +345,7 @@ def test_recover_provider_contract_requires_commit_bound_receipt(
             "c" * 64,
         )
 
+    _mint_recover_capability(failure_fingerprint)
     evidence = validated_deterministic_phase_repair(
         tmp_path,
         state,
@@ -367,9 +410,12 @@ def test_deterministic_phase_repair_can_bind_explicit_engine_scope(
         subprocess.run(
             ["git", "commit", "-qm", f"{marker} repair"], cwd=root, check=True
         )
+    # T4.1/T4.3: explicit engine_runtime scope binds to the CONTROL runtime
+    # import root (this checkout), not an ambient engine repo. The workspace
+    # repo keeps a divergent HEAD so both target_workspace refusals hold.
     engine_head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=engine,
+        cwd=Path(__file__).resolve().parents[3],
         check=True,
         capture_output=True,
         text=True,
@@ -393,6 +439,7 @@ def test_deterministic_phase_repair_can_bind_explicit_engine_scope(
             workspace, state, cursor, engine_head, fingerprint
         )
 
+    _mint_recover_capability(fingerprint)
     evidence = validated_deterministic_phase_repair(
         workspace,
         state,

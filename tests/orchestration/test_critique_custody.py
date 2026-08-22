@@ -198,7 +198,7 @@ def _admitted_graph() -> dict[str, Any]:
                 "dependency_reasons": {},
                 "routing_group": "custody",
                 "write_set": {"paths": ["src/custody.py", "tests/test_custody.py"], "complete": True},
-                "narrow_tests": {"selectors": ["tests/test_custody.py"], "max_seconds": 120, "max_runs": 2},
+                "narrow_tests": {"selectors": ["tests/test_custody.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
                 "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
             }
         ],

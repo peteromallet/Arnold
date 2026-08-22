@@ -17,7 +17,7 @@
       "dependency_reasons": {},
       "routing_group": "",
       "write_set": {"paths": ["evidence/run-authority-reconciliation.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_reconciliation.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_reconciliation.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -33,7 +33,7 @@
       "dependency_reasons": {"T1": {"kind": "consumes_output", "reason": "T2 requires reconciled lineage from T1 to identify M1 commit ranges.", "required_output": "evidence/run-authority-reconciliation.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/m1-evidence.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_m1_evidence.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_m1_evidence.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -49,7 +49,7 @@
       "dependency_reasons": {"T2": {"kind": "consumes_output", "reason": "T3 requires M1 evidence to validate M2's prerequisite chain.", "required_output": "evidence/m1-evidence.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/m2-evidence.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_m2_evidence.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_m2_evidence.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -65,7 +65,7 @@
       "dependency_reasons": {"T3": {"kind": "consumes_output", "reason": "T4 requires M2 evidence to validate M3's prerequisite chain.", "required_output": "evidence/m2-evidence.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/m3-evidence.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_m3_evidence.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_m3_evidence.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -81,7 +81,7 @@
       "dependency_reasons": {"T4": {"kind": "consumes_output", "reason": "T5 needs M3 evidence to establish the full lineage for WBC merge verification.", "required_output": "evidence/m3-evidence.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/wbc-merge-verification.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_wbc_merge.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_wbc_merge.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -97,7 +97,7 @@
       "dependency_reasons": {"T5": {"kind": "consumes_output", "reason": "T6 requires verified WBC merge evidence to locate the correct contract instances.", "required_output": "evidence/wbc-merge-verification.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/boundary-contracts-parsed.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_boundary_contracts.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_boundary_contracts.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -113,7 +113,7 @@
       "dependency_reasons": {"T6": {"kind": "consumes_output", "reason": "T7 consumes the parsed boundary contracts from T6 to produce the inventory.", "required_output": "evidence/boundary-contracts-parsed.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/wbc-boundary-inventory.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_wbc_inventory.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_wbc_inventory.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -129,7 +129,7 @@
       "dependency_reasons": {"T7": {"kind": "consumes_output", "reason": "T8 requires the complete WBC inventory to classify each surface.", "required_output": "evidence/wbc-boundary-inventory.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/surface-classification.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_surface_classification.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_surface_classification.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -145,7 +145,7 @@
       "dependency_reasons": {"T8": {"kind": "consumes_output", "reason": "T9 needs the surface classification to assign categories and owners correctly.", "required_output": "evidence/surface-classification.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/controlled-writer-registry.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_writer_registry.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_writer_registry.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -161,7 +161,7 @@
       "dependency_reasons": {"T9": {"kind": "consumes_output", "reason": "T10 uses the writer registry structure as a reference template for reader classification.", "required_output": "evidence/controlled-writer-registry.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/controlled-reader-registry.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_reader_registry.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_reader_registry.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -177,7 +177,7 @@
       "dependency_reasons": {"T10": {"kind": "consumes_output", "reason": "T11 uses the reader registry to validate that finding prevention measures don't create new reader surfaces.", "required_output": "evidence/controlled-reader-registry.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/finding-prevention-register.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_finding_register.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_finding_register.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -193,7 +193,7 @@
       "dependency_reasons": {"T11": {"kind": "consumes_output", "reason": "T12 uses the finding register to ensure migration steps don't reintroduce known failure classes.", "required_output": "evidence/finding-prevention-register.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/migration-matrix-reconciled.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_migration_matrix.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_migration_matrix.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -209,7 +209,7 @@
       "dependency_reasons": {"T12": {"kind": "consumes_output", "reason": "T13 requires the reconciled migration matrix to determine platform scope boundaries.", "required_output": "evidence/migration-matrix-reconciled.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/pc-scope-decision.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_pc_scope.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_pc_scope.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -225,7 +225,7 @@
       "dependency_reasons": {"T13": {"kind": "consumes_output", "reason": "T14 consumes the PC scope decision to determine which surfaces are in scope for ownership assignment.", "required_output": "evidence/pc-scope-decision.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/ownership-decision.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_ownership.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_ownership.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -241,7 +241,7 @@
       "dependency_reasons": {"T14": {"kind": "consumes_output", "reason": "T15 requires final ownership decisions to determine rollout status for each surface.", "required_output": "evidence/ownership-decision.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/rollout-register.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_rollout.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_rollout.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -257,7 +257,7 @@
       "dependency_reasons": {"T15": {"kind": "consumes_output", "reason": "T16 uses rollout register to determine which work classes need ledger entries.", "required_output": "evidence/rollout-register.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/work-ledger-vocabulary.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_work_ledger.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_work_ledger.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -273,7 +273,7 @@
       "dependency_reasons": {"T16": {"kind": "consumes_output", "reason": "T17 uses the work-ledger vocabulary to classify proof entries by work class.", "required_output": "evidence/work-ledger-vocabulary.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/proof-index.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_proof_index.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_proof_index.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -289,7 +289,7 @@
       "dependency_reasons": {"T17": {"kind": "consumes_output", "reason": "T18 uses the proof index to verify all prerequisite evidence artifacts exist.", "required_output": "evidence/proof-index.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/m6-prerequisite-verification.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_prerequisites.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_prerequisites.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -305,7 +305,7 @@
       "dependency_reasons": {"T18": {"kind": "consumes_output", "reason": "T19 requires confirmation that all prerequisites are satisfied before checking schema integrity.", "required_output": "evidence/m6-prerequisite-verification.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/schema-integrity-check.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_schema_integrity.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_schema_integrity.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -321,7 +321,7 @@
       "dependency_reasons": {"T19": {"kind": "consumes_output", "reason": "T20 requires schema integrity confirmation before auditing ledger boundaries.", "required_output": "evidence/schema-integrity-check.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/ledger-boundary-audit.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_ledger_boundary.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_ledger_boundary.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -337,7 +337,7 @@
       "dependency_reasons": {"T20": {"kind": "consumes_output", "reason": "T21 needs the ledger boundary audit to confirm custody policy consistency.", "required_output": "evidence/ledger-boundary-audit.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/custody-policy-audit.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_custody_policy.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_custody_policy.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -353,7 +353,7 @@
       "dependency_reasons": {"T21": {"kind": "consumes_output", "reason": "T22 requires custody policy audit to ensure fixture captures only authorized surfaces.", "required_output": "evidence/custody-policy-audit.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/replay/transaction-spine.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_replay_fixtures.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_replay_fixtures.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -369,7 +369,7 @@
       "dependency_reasons": {"T22": {"kind": "consumes_output", "reason": "T23 uses the transaction spine fixture format as a template for the strategy fixture.", "required_output": "evidence/replay/transaction-spine.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/replay/strategy-roadmap.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_replay_fixtures.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_replay_fixtures.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -385,7 +385,7 @@
       "dependency_reasons": {"T23": {"kind": "consumes_output", "reason": "T24 requires both fixtures to perform cross-validation.", "required_output": "evidence/replay/strategy-roadmap.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/fixture-cross-validation.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_fixture_validation.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_fixture_validation.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -401,7 +401,7 @@
       "dependency_reasons": {"T24": {"kind": "consumes_output", "reason": "T25 requires cross-validation confirmation before compiling the final manifest.", "required_output": "evidence/fixture-cross-validation.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/evidence-manifest.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_manifest.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_manifest.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -417,7 +417,7 @@
       "dependency_reasons": {"T25": {"kind": "consumes_output", "reason": "T26 uses the evidence manifest to locate all artifacts for divergence checking.", "required_output": "evidence/evidence-manifest.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/divergence-check.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_divergence.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_divergence.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -433,7 +433,7 @@
       "dependency_reasons": {"T26": {"kind": "consumes_output", "reason": "T27 requires zero-divergence confirmation before regenerating the manifest.", "required_output": "evidence/divergence-check.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/completion-manifest.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_completion_manifest.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_completion_manifest.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -449,7 +449,7 @@
       "dependency_reasons": {"T27": {"kind": "consumes_output", "reason": "T28 requires the completion manifest to bind the retirement attestation.", "required_output": "evidence/completion-manifest.json"}},
       "routing_group": "",
       "write_set": {"paths": [".megaplan/initiatives/runauthority-epic/.retired"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_retirement.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_retirement.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -465,7 +465,7 @@
       "dependency_reasons": {"T28": {"kind": "consumes_output", "reason": "T29 requires the retirement marker to include in the closeout attestation.", "required_output": ".megaplan/initiatives/runauthority-epic/.retired"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/m5-closeout-attestation.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_closeout.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_closeout.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -481,7 +481,7 @@
       "dependency_reasons": {"T29": {"kind": "consumes_output", "reason": "T30 requires the closeout attestation to perform final integrity verification.", "required_output": "evidence/m5-closeout-attestation.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/final-integrity-report.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_final_integrity.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_final_integrity.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     }
   ]

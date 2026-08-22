@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    attach_mutation_capability,
+    mint_mutation_capability,
+    resolve_mutation_capability,
+)
 from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
     ENGINE_RUNTIME_EFFECT_CLASS,
     ENGINE_RUNTIME_REPAIR_SCHEMA,
@@ -39,8 +47,42 @@ def _admission(occurrence: str = "sha256:occurrence") -> dict[str, object]:
     }
 
 
+_ENGINE_CAPABILITY_REF: list[object] = []  # weak-valued handle registry needs a pin
+
+
+def _mint_engine_runtime_capability(fingerprint: str) -> str:
+    """T4.1 authorized path: mint the engine_runtime root capability.
+
+    Admission is only valid when bound to a minted MutationCapability for the
+    exact occurrence; the validator resolves it by fingerprint identity. The
+    capability must bind the live control tree (import_root plus generation
+    interpreter), so it is minted against this checkout.
+    """
+    if resolve_mutation_capability(fingerprint) is not None:
+        return fingerprint
+    repo_root = Path(__file__).resolve().parents[2]
+    capability = mint_mutation_capability(
+        action="engine_runtime",
+        evidence={
+            "occurrence": fingerprint,
+            "target": f"engine:{repo_root}",
+            "cursor": "cursor-1",
+            "fence_epoch": 3,
+            "evidence_digest": "sha256:" + fingerprint.removeprefix("sha256:")[:64],
+            "scope": "engine_runtime",
+            "custody": f"custody:{fingerprint[:24]}",
+            "import_root": str(repo_root),
+            "interpreter": sys.executable,
+        },
+    )
+    _ENGINE_CAPABILITY_REF.append(capability)
+    attach_mutation_capability(capability, identity=fingerprint)
+    return fingerprint
+
+
 def test_horizon_a_admission_is_bound_to_exact_occurrence():
     payload = _admission()
+    _mint_engine_runtime_capability("sha256:occurrence")
     ok, reason = validate_engine_runtime_repair_admission(
         payload, occurrence_fingerprint="sha256:occurrence"
     )

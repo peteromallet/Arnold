@@ -27,7 +27,7 @@
       "dependency_reasons": {},
       "routing_group": "",
       "write_set": {"paths": ["evidence/existing-plan-audit.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_existing_plan_audit.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_existing_plan_audit.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -43,7 +43,7 @@
       "dependency_reasons": {"E1": {"kind": "consumes_output", "reason": "E2 requires the audit results to identify which plans need feasibility diagnostics.", "required_output": "evidence/existing-plan-audit.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/feasibility-diagnostics.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_feasibility_diagnostics.py"], "max_seconds": 120, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_feasibility_diagnostics.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 120, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -59,7 +59,7 @@
       "dependency_reasons": {"E2": {"kind": "consumes_output", "reason": "E3 uses the feasibility diagnostics to identify which plans need hash validation.", "required_output": "evidence/feasibility-diagnostics.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/contract-hash-validation.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_contract_hash.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_contract_hash.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -75,7 +75,7 @@
       "dependency_reasons": {},
       "routing_group": "metrics-computation",
       "write_set": {"paths": ["evidence/seriality-metrics.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_seriality_metrics.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_seriality_metrics.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -91,7 +91,7 @@
       "dependency_reasons": {},
       "routing_group": "metrics-computation",
       "write_set": {"paths": ["evidence/batch-metrics.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_batch_metrics.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_batch_metrics.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -110,7 +110,7 @@
       },
       "routing_group": "",
       "write_set": {"paths": ["evidence/unified-metrics-report.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_unified_metrics.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_unified_metrics.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -129,7 +129,7 @@
       },
       "routing_group": "",
       "write_set": {"paths": ["evidence/existing-plan-baseline.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_baseline_manifest.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_baseline_manifest.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     },
     {
@@ -145,7 +145,7 @@
       "dependency_reasons": {"E7": {"kind": "consumes_output", "reason": "E8 uses the baseline manifest to verify all outputs are accounted for in non-historical directories.", "required_output": "evidence/existing-plan-baseline.json"}},
       "routing_group": "",
       "write_set": {"paths": ["evidence/output-directory-audit.json"], "complete": true},
-      "narrow_tests": {"selectors": ["tests/test_output_audit.py"], "max_seconds": 60, "max_runs": 2},
+      "narrow_tests": {"selectors": ["tests/test_output_audit.py"], "budget_semantics": "elapsed_wall_clock_v2", "test_budget_seconds": 60, "max_runs": 2},
       "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
     }
   ]
