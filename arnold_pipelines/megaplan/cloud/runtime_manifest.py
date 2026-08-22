@@ -952,19 +952,18 @@ def advance_generation(
 def _configured_generations_root() -> str:
     """The canonical content-addressed dependency-generation store root.
 
-    Explicit configuration wins (``ARNOLD_REFERENCE_RUNTIME_VENVS_DIR``);
-    the built-in default matches the arnold-runtime-create store. The
-    trusted root comes from CONFIGURATION, never from the candidate proof
-    itself.
+    GENROOT-FIX single source of truth: delegates to
+    :func:`install_sync.configured_generations_root` so generation creation
+    (watchdog promotion transaction, ``arnold-runtime-create``) and the
+    trusted-root containment check below resolve the SAME root from the
+    SAME configuration. The trusted root comes from CONFIGURATION, never
+    from the candidate proof itself.
     """
-    from arnold_pipelines.megaplan.cloud.runtime_references import (
-        DEFAULT_GENERATION_ROOT,
+    from arnold_pipelines.megaplan.cloud.install_sync import (
+        configured_generations_root,
     )
 
-    return (
-        os.environ.get("ARNOLD_REFERENCE_RUNTIME_VENVS_DIR")
-        or DEFAULT_GENERATION_ROOT
-    )
+    return str(configured_generations_root())
 
 
 def _verify_dependency_generation_binding(
@@ -2064,6 +2063,7 @@ def main(argv: list[str] | None = None) -> int:
                     if args.dependency_generation
                     else None
                 ),
+                generations_root=_configured_generations_root(),
             )
             pointer = active_manifest_path()
             if Path(args.path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):

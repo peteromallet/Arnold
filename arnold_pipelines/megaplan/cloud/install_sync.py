@@ -329,6 +329,38 @@ def _frozen_path_source_roots(
 # ── generation store ─────────────────────────────────────────────────────────
 
 
+def configured_generations_root() -> Path:
+    """The ONE configured content-addressed generation store root.
+
+    GENROOT-FIX: every promotion-path caller MUST resolve the store through
+    this helper so creation (:func:`ensure_dependency_generation`) and
+    verification (:func:`runtime_manifest.advance_generation`'s trusted-root
+    containment check) judge residency against the SAME root derived from
+    the SAME configuration:
+
+    1. ``ARNOLD_RUNTIME_VENVS_DIR`` — the creation-store name used by the
+       ``arnold-runtime-create`` / ``arnold-gc-sweep`` wrappers
+       (``GEN_ROOT="${ARNOLD_RUNTIME_VENVS_DIR:-$BASE_DIR/runtime-venvs}"``).
+    2. ``ARNOLD_REFERENCE_RUNTIME_VENVS_DIR`` — legacy alias honored for
+       deployments that pinned only the reference-census spelling.
+    3. ``$ARNOLD_BASE_DIR/runtime-venvs`` — derived default, identical to
+       the wrappers' ``BASE_DIR="${ARNOLD_BASE_DIR:-/workspace}"`` fallback,
+       so an UNCONFIGURED box resolves one shared store everywhere (the old
+       per-caller defaults ``/workspace/.megaplan/generations`` vs
+       ``/workspace/runtime-venvs`` diverged and refused every legitimate
+       default-config promotion).
+
+    The trusted root comes from CONFIGURATION, never from a candidate proof.
+    """
+    base_dir = os.environ.get("ARNOLD_BASE_DIR") or "/workspace"
+    return Path(
+        os.environ.get("ARNOLD_RUNTIME_VENVS_DIR")
+        or os.environ.get("ARNOLD_REFERENCE_RUNTIME_VENVS_DIR")
+        or Path(base_dir)
+        / "runtime-venvs"
+    )
+
+
 def generation_dir(generations_root: Path | str, spec_digest: str) -> Path:
     """The content-addressed generation dir ``<root>/<spec_digest>``."""
     if not _FULL_HEX64.fullmatch(spec_digest):
@@ -690,6 +722,7 @@ __all__ = [
     "GenerationError",
     "apply_install_sync",
     "compute_venv_digest",
+    "configured_generations_root",
     "ensure_dependency_generation",
     "frozen_requirements",
     "frozen_spec_sha256",

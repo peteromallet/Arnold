@@ -3140,7 +3140,9 @@ from pathlib import Path
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     ManifestError, advance_generation, load_manifest, write_active_pointer, active_manifest_path,
 )
-from arnold_pipelines.megaplan.cloud.install_sync import ensure_dependency_generation
+from arnold_pipelines.megaplan.cloud.install_sync import (
+    configured_generations_root, ensure_dependency_generation,
+)
 
 manifest_path, new_commit, runtime_root, before, after = sys.argv[1:6]
 manifest = load_manifest(Path(manifest_path))
@@ -3149,10 +3151,14 @@ if str(manifest.epic.get("expected_head") or "") == new_commit:
     print("promotion no-op: manifest already at", new_commit)
     sys.exit(0)
 # build/select the matching content-addressed dependency generation for the
-# candidate checkout's frozen spec BEFORE advancing (fail-closed).
-generations_root = Path(__import__("os").environ.get("ARNOLD_GENERATIONS_ROOT", "/workspace/.megaplan/generations"))
-proof = ensure_dependency_generation(runtime_root, generations_root)
-advanced = advance_generation(manifest, new_commit, reason=f"promotion after engine sync ({before} -> {after})", dependency_generation=proof)
+# candidate checkout's frozen spec BEFORE advancing (fail-closed).  GENROOT-FIX:
+# the store root comes from the ONE configured source of truth and is threaded
+# into advance_generation so creation and trusted-root containment verification
+# judge residency against the SAME store (divergent per-caller defaults used to
+# refuse every legitimate default-config promotion).
+generations_root = configured_generations_root()
+proof = ensure_dependency_generation(runtime_root, str(generations_root))
+advanced = advance_generation(manifest, new_commit, reason=f"promotion after engine sync ({before} -> {after})", dependency_generation=proof, generations_root=str(generations_root))
 pointer = active_manifest_path()
 if Path(manifest_path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
     write_active_pointer(advanced, pointer)
