@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from arnold.runtime.durable_ops import OperationState
 from agentbox.config import AgentBoxConfig
@@ -497,6 +498,8 @@ class DemoResidentProfile(AgentBoxOperatorProfile):
         ("resident_profile.py", "resident_profile_malformed"),
         ("resident_profile.py:bad-name", "resident_profile_malformed"),
         ("resident_profile.py:DemoResidentProfile:Extra", "resident_profile_malformed"),
+        (" resident_profile.py:Cls", "resident_profile_malformed"),
+        ("\tresident_profile.py:Cls", "resident_profile_malformed"),
     ],
 )
 def test_external_profile_rejects_malformed_specs(
@@ -509,6 +512,16 @@ def test_external_profile_rejects_malformed_specs(
 
     assert error.value.code == code
 
+
+def test_resident_config_profile_whitespace_is_normalized() -> None:
+    assert ResidentConfig(profile="  agentbox_operator  ").profile == "agentbox_operator"
+    assert (
+        ResidentConfig.from_env({"MEGAPLAN_RESIDENT_PROFILE": " megaplan "}).profile
+        == "megaplan"
+    )
+
+    with pytest.raises(ValidationError):
+        ResidentConfig(profile="   ")
 
 def test_external_profile_rejects_absolute_path(tmp_path: Path) -> None:
     path = tmp_path / "resident_profile.py"

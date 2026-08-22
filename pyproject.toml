@@ -130,8 +130,6 @@ exclude = [
 packages = ["arnold", "arnold_pipelines", "agentbox"]
 artifacts = [
     "py.typed",
-    "arnold/pipelines/evidence_pack/SKILL.md",
-    "arnold/pipelines/evidence_pack/pipeline_ids.json",
     "arnold_pipelines/**/pipeline_ids.json",
     "arnold_pipelines/megaplan/SKILL.md",
     "arnold_pipelines/megaplan/skills/superfixer-debug/SKILL.md",
@@ -147,7 +145,7 @@ artifacts = [
     "arnold_pipelines/megaplan/skills/fix-the-fixer/SKILL.md",
     "arnold_pipelines/megaplan/skills/babysitting-principles/SKILL.md",
     "arnold_pipelines/megaplan/skills/babysitter/SKILL.md",
-    "arnold_pipelines/planning/skills/planning/SKILL.md",
+    "arnold_pipelines/megaplan/planning/skills/planning/SKILL.md",
     "arnold_pipelines/pipelines/**/SKILL.md",
     "arnold_pipelines/_template/**/SKILL.md",
     "arnold_pipelines/evidence_pack/SKILL.md",
@@ -157,8 +155,6 @@ artifacts = [
     "arnold_pipelines/megaplan/skills/fix-the-fixer/agents/*.yaml",
     "arnold_pipelines/megaplan/strategy/CONTRACT.md",
     "arnold_pipelines/megaplan/strategy/TEMPLATE.md",
-    "arnold_pipelines/megaplan/skills/fix-the-fixer/references/*.md",
-    "arnold_pipelines/megaplan/skills/fix-the-fixer/agents/*.yaml",
     "agentbox/systemd/*.service",
     "agentbox/agents/*.md",
     "agentbox/templates/resident/*",

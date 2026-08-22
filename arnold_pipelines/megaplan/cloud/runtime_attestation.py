@@ -1443,10 +1443,17 @@ def load_standalone_runtime_dispatch_pointer(root: Path) -> dict[str, Any]:
     if pointer_path.is_symlink() or pointer_path.parent.is_symlink():
         raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is a symlink")
     try:
-        if stat.S_IMODE(pointer_path.stat().st_mode) != 0o600:
-            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer permissions are unsafe")
-    except OSError:
-        pass
+        pointer_mode = stat.S_IMODE(pointer_path.stat().st_mode)
+    except FileNotFoundError as exc:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is unavailable"
+        ) from exc
+    except OSError as exc:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is unreadable"
+        ) from exc
+    if pointer_mode != 0o600:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer permissions are unsafe")
     pointer = _json_file(pointer_path, label="standalone runtime dispatch pointer")
     if pointer.get("schema") != STANDALONE_DISPATCH_POINTER_SCHEMA or pointer.get("authority") != RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
         raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer authority is invalid")
@@ -2354,14 +2361,19 @@ def _proc_identity(pid: int) -> dict[str, Any]:
     try:
         process = psutil.Process(pid)
         start_time = str(process.create_time())
-        executable = Path(process.exe())
+        executable_value = str(process.exe() or "")
         raw_environ = process.environ()
     except (psutil.Error, OSError) as exc:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
             f"cannot inspect target process {pid}",
         ) from exc
-    if not executable:
+    # psutil can report an empty exe for a just-reaped or restricted
+    # target. ``Path("")`` normalizes to "." and is truthy, so emptiness is
+    # checked on the raw string BEFORE any Path conversion or digest read;
+    # otherwise _sha256_file would leak an untyped IsADirectoryError.
+    executable = Path(executable_value)
+    if not executable_value:
         raise CliError(RUNTIME_ATTESTATION_ERROR, f"cannot inspect target process {pid}")
     selectors = {
         str(name): str(value)

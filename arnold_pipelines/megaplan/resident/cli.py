@@ -1322,7 +1322,12 @@ def _parse_external_profile_spec(profile: str) -> tuple[str, str]:
             f"Malformed resident profile {profile!r}; expected path.py:Class",
         )
     path_text, class_name = profile[:separator], profile[separator + 1 :]
-    if not path_text or not class_name or _PROFILE_CLASS_NAME.fullmatch(class_name) is None:
+    if (
+        not path_text
+        or not class_name
+        or _PROFILE_CLASS_NAME.fullmatch(class_name) is None
+        or path_text != path_text.strip()
+    ):
         raise _external_profile_error(
             "resident_profile_malformed",
             f"Malformed resident profile {profile!r}; expected path.py:Class",

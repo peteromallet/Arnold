@@ -85,9 +85,10 @@ class ResidentConfig(BaseModel):
     @field_validator("profile")
     @classmethod
     def _validate_profile(cls, value: str) -> str:
-        if not value.strip():
+        stripped = value.strip()
+        if not stripped:
             raise ValueError("profile must be a non-empty string")
-        return value
+        return stripped
 
     @field_validator(
         "allowed_guild_ids",

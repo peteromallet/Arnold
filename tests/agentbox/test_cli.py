@@ -171,6 +171,8 @@ def test_cli_install_omp_agent_description_override_preserves_name_and_body(
         ("", None),
         ("arnold", ""),
         ("arnold", "unsafe name"),
+        ("café", None),
+        ("arnold", "café"),
     ],
 )
 def test_cli_install_omp_agent_rejects_unsafe_names(
@@ -489,6 +491,132 @@ def test_cli_new_resident_substitution_is_single_pass(tmp_path, monkeypatch) -> 
     service = (repo / ".agentbox/my-op-resident.service").read_text(encoding="utf-8")
     assert f"WorkingDirectory={repo}" in service
     assert "{{PASCAL_NAME}}" not in service
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Opérateur réseau ✅",
+        "first line\nsecond line",
+        'quotes "inside" and \\ backslash',
+    ],
+)
+def test_cli_install_omp_agent_description_escapes_yaml_scalar(
+    tmp_path, monkeypatch, description
+) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    target = tmp_path / "agents"
+
+    result = main(
+        ["install-omp-agent", "arnold", "--description", description, "--target", str(target)]
+    )
+
+    assert result == 0
+    installed = (target / "arnold.md").read_text(encoding="utf-8")
+    assert f"description: {json.dumps(description, ensure_ascii=False)}\n" in installed
+
+
+@pytest.mark.parametrize("output_name", ["123", "true", ".hidden", "-lead"])
+def test_cli_install_omp_agent_quotes_ambiguous_names(
+    tmp_path, monkeypatch, output_name
+) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    target = tmp_path / "agents"
+
+    result = main(
+        [
+            "install-omp-agent",
+            "arnold",
+            f"--name={output_name}",
+            "--target",
+            str(target),
+            "--json",
+        ]
+    )
+    assert result == 0
+    text = (target / f"{output_name}.md").read_text(encoding="utf-8")
+    assert f'name: "{output_name}"' in text
+    assert cli_module._agent_frontmatter_name(text) == output_name
+
+
+def test_cli_new_resident_quotes_frontmatter_but_keeps_raw_paths(
+    tmp_path, monkeypatch
+) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+
+    assert main(["new-resident", "123", "--repo", str(repo)]) == 0
+
+    agent = (repo / ".omp/agents/123.md").read_text(encoding="utf-8")
+    assert 'name: "123"' in agent
+    profile = (repo / ".agentbox/resident_profile.py").read_text(encoding="utf-8")
+    assert '"123.md"' in profile
+
+
+def test_cli_new_resident_unicode_description_round_trips(tmp_path, monkeypatch) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+
+    result = main(
+        [
+            "new-resident",
+            "astrid",
+            "--repo",
+            str(repo),
+            "--description",
+            "Astrid ✅ opérateur",
+        ]
+    )
+
+    assert result == 0
+    agent = (repo / ".omp/agents/astrid.md").read_text(encoding="utf-8")
+    assert 'name: astrid' in agent
+    assert 'description: "Astrid ✅ opérateur"' in agent
+
+
+def test_cli_new_resident_failure_prunes_created_dirs(tmp_path, monkeypatch) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+
+    def refuse_link(source, destination, *, follow_symlinks=True):
+        raise OSError("publication refused")
+
+    monkeypatch.setattr(cli_module.os, "link", refuse_link)
+
+    assert main(["new-resident", "astrid", "--repo", str(repo)]) == 1
+    assert not (repo / ".omp").exists()
+    assert not (repo / ".agentbox").exists()
+    assert repo.is_dir()
+
+
+def test_cli_install_omp_agent_rejects_file_target(tmp_path, monkeypatch, capsys) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    target_file = tmp_path / "agents"
+    target_file.write_text("occupied\n", encoding="utf-8")
+
+    result = main(["install-omp-agent", "arnold", "--target", str(target_file)])
+
+    assert result == 1
+    assert capsys.readouterr().err == (
+        f"agentbox: target is not a directory: {target_file}\n"
+    )
+    assert target_file.read_text(encoding="utf-8") == "occupied\n"
+
+
+def test_cli_new_resident_rejects_file_repo(tmp_path, monkeypatch, capsys) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo_file = tmp_path / "repo"
+    repo_file.write_text("occupied\n", encoding="utf-8")
+
+    result = main(["new-resident", "astrid", "--repo", str(repo_file)])
+
+    assert result == 1
+    assert capsys.readouterr().err == (
+        f"agentbox: repository is not a directory: {repo_file.resolve()}\n"
+    )
 
 
 def test_cli_install_omp_agent_oserror_is_diagnostic(tmp_path, monkeypatch, capsys) -> None:

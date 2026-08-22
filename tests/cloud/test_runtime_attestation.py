@@ -491,7 +491,15 @@ def _install_test_runtime(
         (dist / "RECORD").write_text("arnold-editable.pth,,\n", encoding="utf-8")
     else:
         for package in ("arnold", "arnold_pipelines", "agentbox"):
-            shutil.copytree(source / package, site_dir / package)
+            # Package data may carry committed symlinks whose targets are
+            # machine-specific (e.g. skills/babysit/SKILL.md); a dangling one
+            # must not break the supervisor-venv fixture, which attests
+            # importable modules only.
+            shutil.copytree(
+                source / package,
+                site_dir / package,
+                ignore_dangling_symlinks=True,
+            )
         (dist / "RECORD").write_text("", encoding="utf-8")
     return python
 

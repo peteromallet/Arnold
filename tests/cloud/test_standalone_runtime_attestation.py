@@ -786,6 +786,24 @@ def test_standalone_load_rejects_missing_status_directory(
     assert stat.S_IMODE((state / "receipts").stat().st_mode) == 0o700
 
 
+def test_standalone_load_missing_pointer_fails_typed_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vanished dispatch pointer is its own typed custody failure, not a
+    misleading JSON-decode error, and a rejected load never recreates it."""
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    os.unlink(paths["pointer"])
+    with pytest.raises(CliError) as excinfo:
+        attestation.load_standalone_runtime_dispatch_pointer(root)
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert "unavailable" in excinfo.value.message
+    assert not paths["pointer"].exists()  # never recreated by rejection
+    assert stat.S_IMODE((state / "seeds").stat().st_mode) == 0o700
+    assert stat.S_IMODE((state / "receipts").stat().st_mode) == 0o700
+
+
 def test_resident_process_create_rejects_unsafe_status_directory_at_0755(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -984,6 +1002,31 @@ def test_proc_identity_reads_a_live_process_without_mocks(tmp_path: Path) -> Non
     ).hexdigest()
     assert identity["selectors"] == {"MEGAPLAN_RUNTIME_SRC": runtime_src}
     assert identity["start_ticks"]
+
+
+def test_proc_identity_empty_executable_raises_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty psutil exe is a typed custody failure, never an untyped
+    OSError leaked from the digest read (Path('') is truthy '.')."""
+
+    class _EmptyExeProcess:
+        def create_time(self) -> float:
+            return 123.5
+
+        def exe(self) -> str:
+            return ""
+
+        def environ(self) -> dict[str, str]:
+            return {}
+
+    monkeypatch.setattr(
+        attestation.psutil, "Process", lambda _pid: _EmptyExeProcess()
+    )
+    with pytest.raises(CliError) as excinfo:
+        attestation._proc_identity(4242)
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert "cannot inspect target process 4242" in excinfo.value.message
 
 
 def test_require_configured_runtime_launch_accepts_relative_seed_path(
