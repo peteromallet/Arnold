@@ -308,7 +308,8 @@ class Target(BaseModel):
     description: str = "Scheduled resident-managed work"
     project_dir: str | None = None
     operation: Literal[
-        "managed_launch", "vp_todo_sweep", "probe", "superfixer_proactive"
+        "managed_launch", "vp_todo_sweep", "probe", "superfixer_proactive",
+        "daily_observation",
     ] = "managed_launch"
     dependencies: list[str] = Field(default_factory=list, max_length=8)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -323,11 +324,11 @@ class Target(BaseModel):
         if self.kind == "resident_managed_agent" and self.operation != "managed_launch":
             raise ValueError("resident_managed_agent targets require managed_launch")
         if self.kind == "resident_orchestrator_turn" and self.operation not in {
-            "vp_todo_sweep", "probe", "superfixer_proactive",
+            "vp_todo_sweep", "probe", "superfixer_proactive", "daily_observation",
         }:
             raise ValueError(
                 "resident_orchestrator_turn targets require vp_todo_sweep, probe, "
-                "or superfixer_proactive"
+                "superfixer_proactive, or daily_observation"
             )
         return self
 
@@ -1401,6 +1402,42 @@ class ScheduleService:
                     expected_fence=fence, expected_token=token,
                     changes={"state": "launched", "run_id": f"scheduled-job:{job.id}",
                              "decision": "superfixer_proactive_committed", "claim_owner": None,
+                             "claim_token": None, "claim_expires_at": None},
+                )
+                return "launched"
+            if target.kind == "resident_orchestrator_turn" and target.operation == "daily_observation":
+                from arnold_pipelines.megaplan.store import (
+                    FileStore, ScheduledJobInput, deterministic_idempotency_key,
+                )
+                store = FileStore(self.repo.root.parent)
+                payload = dict(target.payload)
+                payload.update({
+                    "schedule_owned": True,
+                    "recurrence_owner": occurrence.schedule_id,
+                    "schedule_occurrence": schedule_context,
+                })
+                job = store.create_scheduled_job(
+                    ScheduledJobInput(
+                        job_type="daily_observation", scheduled_for=now,
+                        payload=payload,
+                        max_attempts=RetryPolicy.model_validate(pinned["retry"]).launch_max_attempts,
+                    ),
+                    idempotency_key=deterministic_idempotency_key(
+                        "resident-schedule-daily-observation-turn", occurrence.occurrence_key
+                    ),
+                )
+                # The occurrence is handed to the daily_observation consumer
+                # (scheduler.ResidentJobHandlers.handle_daily_observation) as a
+                # schedule-owned job.  Committing the job is NOT an observation:
+                # the consumer takes one-shot CAS custody (the T2.1 claim seam)
+                # and hands a live fence probe to the maintenance daily runner.
+                # Recurrence custody stays with the schedule; T2.1 reconciles
+                # the occurrence terminal when the job settles.
+                self.repo.transition(
+                    occurrence.occurrence_id, event="daily_observation_turn_committed", actor=worker_id,
+                    expected_fence=fence, expected_token=token,
+                    changes={"state": "launched", "run_id": f"scheduled-job:{job.id}",
+                             "decision": "daily_observation_committed", "claim_owner": None,
                              "claim_token": None, "claim_expires_at": None},
                 )
                 return "launched"

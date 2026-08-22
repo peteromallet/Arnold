@@ -94,6 +94,153 @@ class SuperfixerOccurrenceAlreadyLaunched(Exception):
     """
 
 
+# ── T6.3 canonical daily-observer handoff ───────────────────────────────────
+# The daily observer runs the maintenance daily runner from ONE explicitly
+# owned schedule occurrence.  Custody is consumed exclusively through the
+# T2.1 claim seam (``ScheduleService.claim_superfixer_occurrence`` over the
+# ScheduleRepository fence/claim-token CAS); this module never implements
+# claim, replay, terminalization, or stale-lease semantics a second time.
+# Observation cannot escalate: the handler performs no launch, no ticket,
+# no repair dispatch, no provider/model routing, no schedule-definition
+# change, and writes no receipt of its own (proven statically in
+# tests/resident/test_daily_observation_negative_authority.py).
+
+# Consumer custody lease for a claimed daily-observation occurrence:
+# shorter than the job retry cadence so a crashed consumer's claim is
+# reclaimed (with a newer fence) on the next delivery instead of burning
+# the occurrence.
+DAILY_OBSERVATION_LEASE_SECONDS = 120
+
+# T6.2 contract: the daily runner lives in ONE module exposing ONE entry
+# point that returns a typed closure receipt.  The handoff resolves it by
+# import (never re-implements window closure); if the symbol name differs
+# at integration time this constant is the single adaptation point.
+DAILY_RUNNER_MODULE = "arnold_pipelines.megaplan.maintenance.daily_runner"
+DAILY_RUNNER_ENTRYPOINT = "run_daily_efficiency"
+
+
+class DailyObservationAlreadyConsumed(Exception):
+    """The occurrence already carries a committed downstream record.
+
+    Raised only when the T2.1 one-shot CAS reports a committed launch
+    record on the occurrence; the handler treats it as an idempotent
+    no-op (terminal remains terminal, never a second observation run).
+    """
+
+
+class DailyRunnerUnavailable(RuntimeError):
+    """The T6.2 daily-runner entry point could not be resolved (fail closed)."""
+
+
+def _load_daily_runner() -> Callable[..., Any]:
+    """Resolve the T6.2 daily-runner entry point by import (single seam).
+
+    The import is lazy: this branch integrates before the T6.2 runner
+    lands, and importing it eagerly would break the resident.  A missing
+    module or entry point raises :class:`DailyRunnerUnavailable` — never a
+    silent fallback, never a local re-implementation of the runner.
+    """
+    import importlib
+
+    try:
+        module = importlib.import_module(DAILY_RUNNER_MODULE)
+    except ImportError as exc:  # pragma: no cover - exercised via stub modules
+        raise DailyRunnerUnavailable(
+            f"{DAILY_RUNNER_MODULE} is not importable: {exc}"
+        ) from exc
+    entry = getattr(module, DAILY_RUNNER_ENTRYPOINT, None)
+    if not callable(entry):
+        raise DailyRunnerUnavailable(
+            f"{DAILY_RUNNER_MODULE}.{DAILY_RUNNER_ENTRYPOINT} is not callable"
+        )
+    return entry
+
+
+def _daily_observation_coordinates(
+    payload: Mapping[str, Any]
+) -> tuple[str, str, str]:
+    """Extract and validate the bound occurrence coordinates; fail closed.
+
+    A job that is not schedule-owned, carries no occurrence context, or is
+    missing any coordinate never reaches the claim seam.
+    """
+    context = (
+        payload.get("schedule_occurrence")
+        if bool(payload.get("schedule_owned"))
+        else None
+    )
+    if not isinstance(context, Mapping):
+        raise ValueError(
+            "daily_observation job is not bound to a schedule-owned occurrence"
+        )
+    schedule_id = str(context.get("schedule_id") or "")
+    occurrence_id = str(context.get("occurrence_id") or "")
+    occurrence_key = str(context.get("occurrence_key") or "")
+    missing = [
+        name
+        for name, value in (
+            ("schedule_id", schedule_id),
+            ("occurrence_id", occurrence_id),
+            ("occurrence_key", occurrence_key),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            f"daily_observation payload is missing occurrence coordinates: {missing}"
+        )
+    return schedule_id, occurrence_id, occurrence_key
+
+
+def _daily_fence_check(
+    service: Any,
+    *,
+    occurrence_id: str,
+    worker_id: str,
+    fence: int,
+) -> Callable[[], bool]:
+    """Live-custody probe handed to the T6.2 runner: a T2.1 projection RE-READ.
+
+    The runner invokes this under its own write boundaries; it constructs
+    no custody and mutates nothing — it answers whether the ORIGINAL claim
+    (same occurrence, same fence, same worker) is still the live lease.
+    """
+
+    def fence_check() -> bool:
+        current = service.load_occurrence(occurrence_id)
+        return bool(
+            current is not None
+            and current.state == "claimed"
+            and current.claim_owner == worker_id
+            and current.fence == fence
+            and current.claim_expires_at is not None
+            and current.claim_expires_at > utc_now()
+        )
+
+    return fence_check
+
+
+def _daily_custody_coordinates(
+    job: ScheduledJob, item: Any, claim: Any
+) -> dict[str, Any]:
+    """Locator-only custody coordinates bound into the runner handoff."""
+    return {
+        "schema_version": "arnold-resident-daily-observation-custody-v1",
+        "job_id": job.id,
+        "schedule_id": item.schedule_id,
+        "schedule_revision": item.schedule_revision,
+        "generation": item.generation,
+        "occurrence_id": item.occurrence_id,
+        "occurrence_key": item.occurrence_key,
+        "nominal_at": item.nominal_at.isoformat(),
+        "claim": {"claim_owner": claim.claim_owner, "fence": claim.fence},
+        "observation_only": True,
+    }
+
+
+# ── end T6.3 module-level seam ──────────────────────────────────────────────
+
+
 def hourly_superfixer_enabled(env: Mapping[str, str] | None = None) -> bool:
     """Return whether the hourly superfixer launch flag is on (fail-closed).
 
@@ -437,6 +584,9 @@ class ResidentJobHandlers:
     runtime: ResidentRuntime | None = None
     worker_id: str = "resident-scheduler"
     reschedule_interval_s: int | None = None
+    #: Injectable T6.2 daily-runner entry point.  ``None`` (production)
+    #: resolves the canonical seam lazily by import; tests inject fakes.
+    daily_runner: Callable[..., Any] | None = None
 
     def handlers(self) -> dict[str, JobHandler]:
         return {
@@ -446,6 +596,7 @@ class ResidentJobHandlers:
             "confirmation_expiry": self.handle_confirmation_expiry,
             "vp_todo_sweep": self.handle_vp_todo_sweep,
             "superfixer_proactive": self.handle_superfixer_proactive,
+            "daily_observation": self.handle_daily_observation,
         }
 
     async def handle_cloud_check(self, job_payload: dict[str, Any]) -> None:
@@ -645,7 +796,7 @@ class ResidentJobHandlers:
             raise ValueError(
                 "superfixer_proactive schedule-owned job lost its occurrence binding"
             )
-        service = self._superfixer_schedule_service()
+        service = self._resident_schedule_service()
         if service is None:
             raise ValueError("superfixer_proactive requires the resident schedule store")
         from .schedules import TERMINAL_OCCURRENCE_STATES
@@ -745,7 +896,7 @@ class ResidentJobHandlers:
             ),
         )
 
-    def _superfixer_schedule_service(self) -> Any | None:
+    def _resident_schedule_service(self) -> Any | None:
         """Return the resident ScheduleService, or ``None`` without a store root."""
         from .schedules import ScheduleService, schedule_store_root
 
@@ -762,7 +913,7 @@ class ResidentJobHandlers:
         occurrence_id = context.get("occurrence_id")
         if not occurrence_id:
             return None
-        service = self._superfixer_schedule_service()
+        service = self._resident_schedule_service()
         if service is None:
             return None
         return service.load_occurrence(str(occurrence_id))
@@ -799,7 +950,7 @@ class ResidentJobHandlers:
                 occurrence_id = context.get("occurrence_id")
                 occurrence_key = context.get("occurrence_key")
         if service is None:
-            service = self._superfixer_schedule_service()
+            service = self._resident_schedule_service()
         if service is not None:
             service.record_superfixer_single_shot(
                 decision=decision,
@@ -1020,6 +1171,161 @@ class ResidentJobHandlers:
                 getattr(result, "run_id", ""),
             ),
         )
+
+    # ── T6.3: canonical daily-observer handoff (T2.1 consumer only) ─────────
+
+    async def handle_daily_observation(self, job_payload: dict[str, Any]) -> None:
+        """Consume ONE schedule-owned ``daily_observation`` occurrence.
+
+        Custody chain (T2.1 ONLY — never a second implementation): this
+        handler resolves the occurrence bound to this delivery, takes
+        consumer custody through the ONE one-shot CAS
+        (``ScheduleService.claim_superfixer_occurrence`` over the repository
+        fence/claim-token CAS), verifies the returned claim still binds THIS
+        occurrence/worker/fence, and hands a live ``fence_check`` (a T2.1
+        projection re-read) plus locator-only custody coordinates to the
+        T6.2 daily runner.  Its ONLY write is the single CAS-guarded
+        custody release after a successful run (fence + one-shot token,
+        the same seam the superfixer consumer uses); TERMINALIZATION stays
+        with ``ScheduleService.reconcile_terminal_runs``.
+
+        Fail-closed invariants:
+
+        * missing or tampered coordinates (not schedule-owned, unknown or
+          foreign occurrence, non-daily pinned operation) raise before any
+          custody is taken;
+        * a live foreign/cross-window lease raises so the worker retry
+          machinery joins later; terminal occurrences are a no-op;
+        * a stale lease is reclaimed ONLY through T2.1's newer-fence CAS;
+        * a runner failure propagates WITHOUT releasing the claim, so the
+          occurrence stays retryable;
+        * observation cannot escalate: no ticket create/edit/address, no
+          repair claim/dispatch, no provider/model reroute, no
+          schedule-definition change, and no receipt writer is callable
+          from this path (statically proven in
+          tests/resident/test_daily_observation_negative_authority.py).
+        """
+        job = _job_from_payload(job_payload)
+        persisted_job = self.store.load_scheduled_job(job.id)
+        if persisted_job is not None:
+            job = persisted_job
+        schedule_id, occurrence_id, occurrence_key = _daily_observation_coordinates(
+            job.payload
+        )
+
+        service = self._resident_schedule_service()
+        if service is None:
+            raise RuntimeError("daily_observation requires the resident schedule store")
+
+        bound = service.load_occurrence(occurrence_id)  # T2.1 read-only projection
+        if bound is None:
+            raise ValueError(
+                f"daily_observation occurrence {occurrence_id!r} does not exist"
+            )
+        item = bound.occurrence
+        if item.schedule_id != schedule_id or item.occurrence_key != occurrence_key:
+            raise ValueError(
+                "daily_observation occurrence binding mismatch: payload names "
+                f"{schedule_id}/{occurrence_key}, store holds "
+                f"{item.schedule_id}/{item.occurrence_key}"
+            )
+        if str(job.payload.get("recurrence_owner") or "") != item.schedule_id:
+            raise ValueError(
+                "daily_observation recurrence owner does not match the bound schedule"
+            )
+        pinned = item.pinned_launch_spec
+        target = pinned.get("target") if isinstance(pinned, Mapping) else None
+        if not isinstance(target, Mapping) or target.get("operation") != "daily_observation":
+            raise ValueError(
+                "bound occurrence is not pinned to the daily_observation operation"
+            )
+
+        from .schedules import TERMINAL_OCCURRENCE_STATES
+
+        if bound.state in TERMINAL_OCCURRENCE_STATES:
+            return  # replayed wakeup after reconcile: terminal remains terminal
+        definition_state = service.schedule_state(item.schedule_id)
+        if definition_state not in {"active", "exhausted"}:
+            # Schedule custody was withdrawn (paused/cancelled) after the
+            # commit.  The observer never launches, never writes a
+            # non-launch receipt, and never releases the occurrence: T2.1
+            # reconciles it terminal when this delivery settles.
+            return
+
+        try:
+            claim = self._claim_daily_observation(service, job, occurrence_id)
+        except DailyObservationAlreadyConsumed:
+            return
+        gate_reason = self._daily_custody_gate(claim)
+        if gate_reason is not None:
+            raise RuntimeError(f"daily_observation custody gate denied: {gate_reason}")
+
+        runner = self.daily_runner or _load_daily_runner()
+        runner(
+            fence_check=_daily_fence_check(
+                service,
+                occurrence_id=occurrence_id,
+                worker_id=self.worker_id,
+                fence=claim.fence,
+            ),
+            custody=_daily_custody_coordinates(job, item, claim),
+        )
+        # Release consumed custody through the ONE T2.1 repository CAS
+        # (expected fence + one-shot claim token) — the handler's ONLY
+        # write, and the same seam the superfixer consumer uses for its
+        # launch receipt.  Clearing the claim prevents a stale lease from
+        # resurrecting this occurrence; the TERMINAL transition itself
+        # stays with ``ScheduleService.reconcile_terminal_runs``.  A lost
+        # race fails the CAS here and propagates to the retry machinery.
+        service.repo.transition(
+            occurrence_id,
+            event="daily_observation_completed",
+            actor=self.worker_id,
+            expected_fence=claim.fence,
+            expected_token=claim.claim_token,
+            changes={
+                "state": "launched",
+                "decision": "daily_observation_completed",
+                "claim_owner": None,
+                "claim_token": None,
+                "claim_expires_at": None,
+            },
+        )
+
+    def _claim_daily_observation(
+        self, service: Any, job: ScheduledJob, occurrence_id: str
+    ) -> Any:
+        """Take one-shot consumer custody through the T2.1 CAS (no re-implementation)."""
+        try:
+            return service.claim_superfixer_occurrence(
+                occurrence_id,
+                job_id=job.id,
+                worker_id=self.worker_id,
+                now=utc_now(),
+                lease_seconds=DAILY_OBSERVATION_LEASE_SECONDS,
+            )
+        except RuntimeError as exc:
+            if "already carries a committed launch" in str(exc):
+                raise DailyObservationAlreadyConsumed(str(exc)) from exc
+            raise
+
+    def _daily_custody_gate(self, claim: Any) -> str | None:
+        """Identity-only verification of the claim T2.1 just returned.
+
+        Reads nothing and mutates nothing: a claim that does not bind THIS
+        worker to a live, fenced, unexpired lease fails closed before the
+        runner is invoked.  Foreign ownership and expired leases can never
+        authorize an observation run.
+        """
+        if getattr(claim, "state", None) != "claimed":
+            return f"state={getattr(claim, 'state', None)!r}"
+        if claim.claim_owner != self.worker_id:
+            return f"owner={claim.claim_owner!r}"
+        if not claim.fence:
+            return "fence=0"
+        if claim.claim_expires_at is None or claim.claim_expires_at <= utc_now():
+            return "lease_expired"
+        return None
 
     async def handle_vp_todo_sweep(self, job_payload: dict[str, Any]) -> None:
         job = _job_from_payload(job_payload)
