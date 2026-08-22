@@ -26,9 +26,11 @@ arnold --resume <id-prefix> "…"           # resume a specific session
 arnold                                    # interactive TUI (has a session picker)
 ```
 
-Sessions are global to omp (not per-agent), so `-c` continues whatever ran
-last regardless of which agent it belonged to. Use `--resume` when you need
-a specific thread.
+Session scope follows your working directory: `-c` continues the most
+recent conversation started from the same directory, regardless of which
+agent it belonged to — interleaving agents in one repo threads them
+together. Use `--resume <id>` (or the interactive picker) to pin a
+specific thread.
 
 The workflow/operator tooling lives on the `megaplan` command. The `arnold`
 entry resolves its omp launcher itself: `ARNOLD_AGENT_LAUNCHER` env var, then
@@ -97,6 +99,21 @@ The profile reads the body below the agent file's frontmatter as its Discord
 system prompt. The external profile selector is the trusted, repo-relative
 `.agentbox/resident_profile.py:AstridResidentProfile`; loading is unsandboxed
 project code and is contained under the target repository.
+
+### Domain tools: the gateway-tool pattern
+
+Your generated profile replaces the operator catalog by overriding
+`_register_default_tools`. The proven shape (used by the Astrid media
+resident): register ONE gateway tool whose handler shells out to your
+project's own CLI/SDK with an allowlist of families — the model navigates
+your domain through it. Rules learned the hard way:
+
+- allowlist the first argv token (family); never daemonize from a tool call;
+- run the subprocess inside your repo root with a timeout; JSON out;
+- no package-relative imports in the profile (it loads by path);
+- if your toolkit needs first-run bootstrap (stores, indexes), do it in the
+  bootstrap/docs step of deployment — health checks fail before bootstrap.
+
 
 ## Deploy
 
